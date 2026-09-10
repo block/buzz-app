@@ -12,11 +12,17 @@ export type ComposerToolProps = Readonly<{
   disabled: boolean;
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
+  /** Atomically insert display text and explicit notification intent at the caret.
+   * Prose never resolves to identities. Membership is checked by session delivery.
+   * Like insertText, this command is revoked with the tool/destination lifetime. */
+  insertMention(recipient: Readonly<{ pubkey: string; name: string }>): boolean;
   focus(): void;
 }>;
 export type ComposerTool = Readonly<{
   id: string;
   title: string;
+  /** Lower values appear first; defaults to zero. Equal values sort by contribution key. */
+  order?: number;
   component: ComponentType<ComposerToolProps>;
 }>;
 export type InlineContent = Readonly<{

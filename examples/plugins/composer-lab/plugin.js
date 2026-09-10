@@ -6,22 +6,6 @@ export function apply(ctx) {
   const h = React.createElement;
   const ui = ctx.conversation;
   const relay = ctx.relay;
-  ui.registerTool({
-    id: "timestamp",
-    title: "Insert timestamp",
-    component: ({ disabled, insertText }) =>
-      h(
-        "button",
-        {
-          type: "button",
-          disabled,
-          title: "Insert timestamp",
-          "aria-label": "Insert timestamp",
-          onClick: () => insertText(new Date().toISOString()),
-        },
-        "Time",
-      ),
-  });
   function Connected({ connection }) {
     const session = connection.session;
     const list = React.useSyncExternalStore(

@@ -39,6 +39,13 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         .getByRole("button", { name: `Honey ${key}`, exact: true })
         .click();
     };
+    const order = () =>
+      page
+        .getByRole("button", { name: /^(Mention a member|Insert emoji)$/ })
+        .evaluateAll((buttons) =>
+          buttons.map((button) => button.getAttribute("aria-label")),
+        );
+    await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
     await choose(keys.first);
     await choose(keys.second);
     // The merged toolbar must preserve exact recipients while the new picker
@@ -97,6 +104,17 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     expect(first.tags.filter(([tag]) => tag === "h")).toEqual([["h", "c"]]);
     await page.getByRole("button", { name: "Toggle thread" }).click();
     await choose(keys.second);
+    await page.evaluate(() =>
+      window.mentionFixture.change("disable", "buzz.mentions"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Mention a member", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page
+        .getByRole("region", { name: "Notification recipients" })
+        .getByRole("button"),
+    ).toHaveCount(1);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
@@ -112,6 +130,10 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     expect(reply.tags.filter(([tag]) => tag === "p")).toEqual([
       ["p", keys.second],
     ]);
+    await page.evaluate(() =>
+      window.mentionFixture.change("enable", "buzz.mentions"),
+    );
+    await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
     await choose(keys.first);
     await page
       .getByRole("button", { name: "Remove first Honey", exact: true })
@@ -128,6 +150,32 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     expect(
       await page.evaluate(() => window.mentionFixture.publications.length),
     ).toBe(2);
+    // A child layout effect sees disabled DOM before parent command props refresh.
+    // Both commands must fail, even with the previous render's enabled closures.
+    await page
+      .getByRole("button", { name: "Toggle disabled", exact: true })
+      .click();
+    await expect(
+      page.getByRole("textbox", { name: "Reply to thread" }),
+    ).toBeDisabled();
+    expect(
+      await page.evaluate(() => window.mentionFixture.disabledCalls),
+    ).toEqual([{ inputDisabled: true, text: false, mention: false }]);
+    await expect(
+      page.getByRole("textbox", { name: "Reply to thread" }),
+    ).toHaveValue("@Honey ");
+    await expect(
+      page
+        .getByRole("region", { name: "Notification recipients" })
+        .getByRole("button"),
+    ).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Toggle disabled", exact: true })
+      .click();
+    await choose(keys.second);
+    await expect(
+      page.getByRole("textbox", { name: "Reply to thread" }),
+    ).toHaveValue("@Honey @Honey ");
     expect(errors).toEqual([]);
   } finally {
     await server.close();

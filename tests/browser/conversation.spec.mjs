@@ -40,6 +40,23 @@ test("independent packed author consumer and native-installed contribution survi
       source,
     );
     run("pnpm", ["build"], source);
+    // The global producer is a separate test-only artifact, never part of Lab.
+    const toolSource = join(temp, "timestamp-tool");
+    await cp(source, toolSource, { recursive: true });
+    await cp(
+      join(root, "tests/fixtures/timestamp-tool.ts"),
+      join(toolSource, "plugin.ts"),
+    );
+    await writeFile(
+      join(toolSource, "manifest.json"),
+      JSON.stringify({
+        id: "test.timestamp",
+        name: "Test timestamp tool",
+        apiVersion: 1,
+      }),
+    );
+    run("pnpm", ["build"], toolSource);
+    const toolCode = await readFile(join(toolSource, "dist/plugin.js"), "utf8");
     // The build must be possible after removing the unpacked producer tree.
     await rm(author, { recursive: true });
     run("pnpm", ["build"], source);
@@ -69,11 +86,15 @@ test("independent packed author consumer and native-installed contribution survi
         (p) => p.manifest.id === "example.composer-lab",
       ).enabled,
     ).toBe(false);
-    const id = "example.composer-lab";
-    const firstRevision = installed.catalog.plugins.find(
+    native("change", "enable", "example.composer-lab");
+    const id = "test.timestamp";
+    const toolInstalled = native("install", join(toolSource, "dist"));
+    const firstRevision = toolInstalled.catalog.plugins.find(
       (p) => p.manifest.id === id,
     ).revision;
-    native("change", "enable", id);
+    expect(
+      toolInstalled.catalog.plugins.find((p) => p.manifest.id === id).enabled,
+    ).toBe(false);
     server = await createServer({
       root,
       configFile: false,
@@ -104,13 +125,13 @@ test("independent packed author consumer and native-installed contribution survi
                     break;
                   case "/update":
                     await writeFile(
-                      join(source, "dist/plugin.js"),
-                      code.replaceAll(
+                      join(toolSource, "dist/plugin.js"),
+                      toolCode.replaceAll(
                         "Insert timestamp",
                         "Insert updated timestamp",
                       ),
                     );
-                    result = native("install", join(source, "dist"));
+                    result = native("install", join(toolSource, "dist"));
                     break;
                   default:
                     throw new Error("Unsupported proof route");
@@ -143,6 +164,48 @@ test("independent packed author consumer and native-installed contribution survi
     const draft = page.getByRole("textbox", { name: /Message #General/ });
     await expect(draft).toBeVisible();
     await expect(
+      page
+        .getByRole("navigation", { name: "Proof pages" })
+        .getByRole("button", { name: "Composer Lab" }),
+    ).toBeVisible();
+    const editor = await draft.elementHandle();
+    const tools = await page.evaluate(() => window.conversationFixture.tools());
+    expect(tools.some((tool) => tool.startsWith("example.composer-lab/"))).toBe(
+      false,
+    );
+    await expect(
+      page.getByRole("button", { name: "Insert timestamp", exact: true }),
+    ).toHaveCount(0);
+    await page.evaluate(() =>
+      window.conversationFixture.change("disable", "example.composer-lab"),
+    );
+    await expect(
+      page
+        .getByRole("navigation", { name: "Proof pages" })
+        .getByRole("button", { name: "Composer Lab" }),
+    ).toHaveCount(0);
+    expect(
+      await page.evaluate(() => window.conversationFixture.tools()),
+    ).toEqual(tools);
+    await page.evaluate(() =>
+      window.conversationFixture.change("enable", "example.composer-lab"),
+    );
+    await expect(
+      page
+        .getByRole("navigation", { name: "Proof pages" })
+        .getByRole("button", { name: "Composer Lab" }),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => window.conversationFixture.tools()),
+    ).toEqual(tools);
+    expect(await editor.evaluate((el) => el.isConnected)).toBe(true);
+    await expect(
+      page.getByRole("button", { name: "Insert timestamp", exact: true }),
+    ).toHaveCount(0);
+    await page.evaluate(() =>
+      window.conversationFixture.change("enable", "test.timestamp"),
+    );
+    await expect(
       page.getByRole("button", { name: "Insert timestamp", exact: true }),
     ).toHaveCount(1);
     await page
@@ -157,18 +220,36 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(draft).toHaveValue("bONETWOe");
     await expect(draft).toBeFocused();
     expect(await draft.evaluate((el) => el.selectionStart)).toBe(7);
+    await draft.fill("");
+    await page
+      .getByRole("button", { name: "Insert mixed", exact: true })
+      .click();
+    await expect(draft).toHaveValue("Hi @Member and @Member ");
+    await expect(
+      page
+        .getByRole("region", { name: "Notification recipients" })
+        .getByRole("button"),
+    ).toHaveCount(2);
     await page.evaluate(() => window.conversationFixture.saveEdit());
     await page.evaluate(() => window.conversationFixture.removeProbe());
     expect(
       await page.evaluate(() => window.conversationFixture.removedResult()),
     ).toBe(false);
-    await expect(draft).toHaveValue("bONETWOe");
+    expect(
+      await page.evaluate(() =>
+        window.conversationFixture.removedMentionResult(),
+      ),
+    ).toBe(false);
+    await expect(draft).toHaveValue("Hi @Member and @Member ");
     await page.evaluate(() => window.conversationFixture.enableProbe());
     await expect(
       page.getByRole("button", { name: "Insert twice", exact: true }),
     ).toHaveCount(1);
     expect(
       await page.evaluate(() => window.conversationFixture.callSaved()),
+    ).toBe(false);
+    expect(
+      await page.evaluate(() => window.conversationFixture.callSavedMention()),
     ).toBe(false);
     await draft.fill("Channels draft");
     await page
@@ -179,7 +260,39 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("heading", { name: "Composer Lab" }),
     ).toBeVisible();
     await expect(draft).toHaveValue("Channels draft");
+    // The independently built page consumes the host's registered Mentions tool.
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    const member = await page.evaluate(() => window.conversationFixture.member);
+    await page
+      .getByRole("button", { name: `Member ${member}`, exact: true })
+      .click();
+    const recipients = page.getByRole("region", {
+      name: "Notification recipients",
+    });
+    await expect(recipients.getByRole("button")).toHaveCount(1);
+    const withMention = await draft.inputValue();
     const textarea = await draft.elementHandle();
+    await page.evaluate(() =>
+      window.conversationFixture.change("disable", "buzz.mentions"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Mention a member", exact: true }),
+    ).toHaveCount(0);
+    await expect(draft).toHaveValue(withMention);
+    await expect(recipients.getByRole("button")).toHaveCount(1);
+    expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
+    await recipients.getByRole("button").click();
+    await expect(recipients).toHaveCount(0);
+    await expect(draft).toHaveValue(withMention);
+    await page.evaluate(() =>
+      window.conversationFixture.change("enable", "buzz.mentions"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Mention a member", exact: true }),
+    ).toHaveCount(1);
+    await draft.fill("Channels draft");
     await draft.focus();
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
     // Programmatic click avoids intentionally moving focus away from the editor.
@@ -293,6 +406,9 @@ test("independent packed author consumer and native-installed contribution survi
     expect(
       await page.evaluate(() => window.conversationFixture.callSaved()),
     ).toBe(false);
+    expect(
+      await page.evaluate(() => window.conversationFixture.callSavedMention()),
+    ).toBe(false);
     await expect(draft).toHaveValue("B draft");
     await page.evaluate(() => window.conversationFixture.update());
     await expect(
@@ -308,7 +424,7 @@ test("independent packed author consumer and native-installed contribution survi
     expect(updated.revision).not.toBe(firstRevision);
     expect(updated.previous).toBe(firstRevision);
     await page.evaluate(() =>
-      window.conversationFixture.change("rollback", "example.composer-lab"),
+      window.conversationFixture.change("rollback", "test.timestamp"),
     );
     await expect(
       page.getByRole("button", { name: "Insert timestamp", exact: true }),
@@ -321,10 +437,19 @@ test("independent packed author consumer and native-installed contribution survi
     ).toHaveCount(0);
     await expect(draft).toHaveValue("B draft");
     await page.evaluate(() =>
-      window.conversationFixture.change("disable", "example.composer-lab"),
+      window.conversationFixture.change("disable", "test.timestamp"),
     );
     await expect(
       page.getByRole("button", { name: "Insert timestamp", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.getByRole("heading", { name: "Composer Lab" }),
+    ).toBeVisible();
+    await page.evaluate(() =>
+      window.conversationFixture.change("disable", "example.composer-lab"),
+    );
+    await expect(
+      page.getByRole("heading", { name: "Composer Lab" }),
     ).toHaveCount(0);
     await page
       .getByRole("navigation", { name: "Proof pages" })

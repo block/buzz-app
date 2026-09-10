@@ -4,7 +4,6 @@ import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
-import { MentionPicker } from "./MentionPicker";
 import {
   mentionDraft,
   editMentionDraft,
@@ -98,58 +97,53 @@ function Composer({
     input.current?.setSelectionRange(caret.current, caret.current);
     caret.current = undefined;
   });
-  function insertText(text: string) {
+  function insert(text: string, recipient?: MentionRecipient) {
     if (
       disabled ||
       !outbox?.supports(9) ||
       !input.current?.isConnected ||
+      // DOM props are committed before child layout effects; closures can still
+      // carry the preceding render's enabled state during that interval.
+      input.current.disabled ||
       typeof text !== "string"
     )
       return false;
     const current = valueRef.current;
     const start = caret.current ?? input.current.selectionStart;
     const end = caret.current ?? input.current.selectionEnd;
-    const next = current.text.slice(0, start) + text + current.text.slice(end);
-    if (next.length > 16000) {
+    const edited = replaceMentionDraft(current, start, end, text);
+    if (edited.text.length > 16000) {
       setError("Message is too long to insert text");
       return false;
     }
+    if (recipient && edited.recipients.length >= 32) {
+      setError("Choose at most 32 recipients");
+      return false;
+    }
+    const next = recipient
+      ? mentionDraft({
+          text: edited.text,
+          recipients: [
+            ...edited.recipients,
+            { ...recipient, start, end: start + text.length - 1 },
+          ],
+        })
+      : edited;
     caret.current = start + text.length;
-    saveDraft(replaceMentionDraft(current, start, end, text));
+    saveDraft(next);
     setError(undefined);
     return true;
   }
   function insertMention(recipient: MentionRecipient) {
-    if (value.recipients.length >= 32) {
-      setError("Choose at most 32 recipients");
-      return;
-    }
-    const start = input.current?.selectionStart ?? draft.length;
-    const end = input.current?.selectionEnd ?? start;
-    const token = `@${recipient.name} `;
-    const text = draft.slice(0, start) + token + draft.slice(end);
-    if (text.length > 16000) {
-      setError("Message is too long to insert a mention");
-      return;
-    }
-    const edited = replaceMentionDraft(value, start, end, token);
-    saveDraft(
-      mentionDraft({
-        text,
-        recipients: [
-          ...edited.recipients,
-          { ...recipient, start, end: start + token.length - 1 },
-        ],
-      }),
-    );
-    setError(undefined);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(
-        start + token.length,
-        start + token.length,
-      );
-    });
+    if (
+      !recipient ||
+      typeof recipient.pubkey !== "string" ||
+      !/^[0-9a-f]{64}$/.test(recipient.pubkey) ||
+      typeof recipient.name !== "string" ||
+      !recipient.name.trim()
+    )
+      return false;
+    return insert(`@${recipient.name} `, recipient);
   }
   function send() {
     if (disabled || !draft.trim() || !outbox) return;
@@ -249,12 +243,6 @@ function Composer({
       )}
       <div className={styles.composerActions}>
         <div className={styles.composerTools}>
-          <MentionPicker
-            session={session}
-            channelId={channelId}
-            disabled={disabled}
-            select={insertMention}
-          />
           {extensions && (
             <ComposerTools
               registry={extensions.tools}
@@ -263,7 +251,8 @@ function Composer({
               channelId={channelId}
               threadRootId={threadRootId}
               disabled={disabled}
-              insertText={insertText}
+              insertText={(text) => insert(text)}
+              insertMention={insertMention}
               focus={() => input.current?.focus()}
             />
           )}

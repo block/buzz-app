@@ -5,8 +5,9 @@ Ready to install: select this folder in desktop Settings → Plugins, then enabl
 required. Use the matching host branch with the conversation capability.
 
 An independent API-v1 plugin consuming `ctx.conversation.ui.Composer` and `.Message`
-and the existing relay session. It also contributes a non-emoji timestamp tool to
-all shared composers. No Channels/Emoji implementation or host runtime import.
+and the existing relay session. It registers only its test page: enabling the Lab
+does not add tools to normal composers. No Channels/Emoji implementation or host
+runtime import. Automated tests keep their demo tool in a separate fixture.
 
 For source changes only: copy this folder outside the host checkout, install the host-matched packed
 `@buzz/author` preview with `pnpm add -D /absolute/path/buzz-author-VERSION.tgz`,

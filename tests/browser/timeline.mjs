@@ -67,21 +67,29 @@ export async function expectAnchor(page, expected) {
     )
     .toBeLessThan(4);
 }
-export async function end(page) {
+export async function edge(page, direction) {
+  const distance = () =>
+    history(page).evaluate(
+      (element, direction) =>
+        direction < 0
+          ? element.scrollTop
+          : element.scrollHeight - element.scrollTop - element.clientHeight,
+      direction,
+    );
   await history(page).hover();
-  await page.mouse.wheel(
-    0,
-    await history(page).evaluate((element) => element.scrollHeight),
-  );
-  await settle(page);
+  // Send one real gesture for the actual distance, not an arbitrary 100,000px
+  // overshoot. At the boundary, retain input so production can initiate paging.
+  await page.mouse.wheel(0, direction * Math.max(1, await distance()));
   await expect
-    .poll(() =>
-      history(page).evaluate(
-        (element) =>
-          element.scrollHeight - element.scrollTop - element.clientHeight,
-      ),
-    )
+    .poll(distance, { message: "wheel reaches timeline edge" })
     .toBeLessThan(4);
+  await settle(page);
+  expect(await distance(), "timeline stays at the requested edge").toBeLessThan(
+    4,
+  );
+}
+export async function end(page) {
+  await edge(page, 1);
 }
 export async function open(page, app) {
   await page.goto(app.origin);

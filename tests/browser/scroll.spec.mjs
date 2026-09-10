@@ -1,6 +1,14 @@
 import { test, expect, historySize } from "./fixture.mjs";
 
-import { settle, anchor, expectAnchor, end, open, upper } from "./timeline.mjs";
+import {
+  settle,
+  anchor,
+  expectAnchor,
+  end,
+  open,
+  upper,
+  edge,
+} from "./timeline.mjs";
 
 // Keep non-paging reading gestures outside the unchanged near-top read zone,
 // even with a 20-row head. The cursor journey below keeps ordinary-height rows.
@@ -179,14 +187,12 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
     expect(app.pending.length).toBeLessThanOrEqual(1);
     const alreadyPending = app.pending.length === 1;
     const queriesBeforeWheel = app.report.queries.length;
-    await history(page).hover();
-    await page.mouse.wheel(0, -100000);
+    await edge(page, -1);
     await expect
       .poll(() => app.pending.length, {
         message: "wheel triggers production cursor read",
       })
       .toBe(1);
-    await settle(page);
     expect(app.pending).toHaveLength(1);
     if (alreadyPending)
       expect(app.report.queries.length).toBe(queriesBeforeWheel);
@@ -230,9 +236,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   ).toHaveLength(31);
   expect(app.pending).toHaveLength(0);
 
-  await history(page).hover();
-  await page.mouse.wheel(0, -100000);
-  await settle(page);
+  await edge(page, -1);
   const first = app.histories.get("primary/alpha")[0];
   await expect(
     history(page).locator(`[data-message-id="${first.id}"]`),
@@ -291,9 +295,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   await settle(page);
   await expectAnchor(page, reading);
   const queriesBeforeTraversal = app.report.queries.length;
-  await history(page).hover();
-  await page.mouse.wheel(0, -1000000);
-  await settle(page);
+  await edge(page, -1);
   const seen = new Set();
   for (let step = 0; step < 100; step++) {
     for (const id of await history(page)

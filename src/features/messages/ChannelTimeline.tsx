@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
@@ -43,7 +44,8 @@ function positionAt(element: HTMLElement): ReadingPosition {
       : {}),
   };
 }
-type ChannelTimelineProps = {
+export type ChannelTimelineProps = {
+  extensions?: ConversationExtensions | undefined;
   channelId: string;
   scope: string;
   queries: RelaySession;
@@ -64,6 +66,7 @@ export function ChannelTimeline(props: ChannelTimelineProps) {
 }
 function Timeline({
   channelId,
+  extensions,
   scope,
   queries,
   window,
@@ -271,6 +274,7 @@ function Timeline({
             <MessageRow
               key={row.id}
               row={row}
+              extensions={extensions}
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}
               media={queries.media}

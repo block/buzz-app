@@ -1,5 +1,5 @@
 import { ArrowUp, X } from "lucide-react";
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
@@ -13,9 +13,11 @@ import {
   type MentionEdit,
   type MentionRecipient,
 } from "./mention-draft";
-import { EmojiPicker } from "./EmojiPicker";
+import { ComposerTools } from "../conversation/ComposerTools";
+import type { ConversationExtensions } from "../conversation/contracts";
 
-type MessageComposerProps = {
+export type MessageComposerProps = {
+  extensions?: ConversationExtensions | undefined;
   scope: string;
   session: RelaySession;
   channelId: string;
@@ -41,6 +43,7 @@ export function MessageComposer(props: MessageComposerProps) {
 }
 function Composer({
   session,
+  extensions,
   scope,
   channelId,
   channelName,
@@ -57,11 +60,15 @@ function Composer({
     mentionDraft(readView<unknown>(scope, draftKey, "")),
   );
   const draft = value.text;
+  const valueRef = useRef(value);
+  const caret = useRef<number | undefined>(undefined);
   const saveDraft = (next: MentionDraft) => {
+    valueRef.current = next;
     updateDraft(next);
     writeView(scope, draftKey, next);
   };
-  const setDraft = (text: string) => saveDraft(editMentionDraft(value, text));
+  const setDraft = (text: string) =>
+    saveDraft(editMentionDraft(valueRef.current, text));
   const [error, setError] = useState<string>();
   const outbox = session.outbox;
   const input = useRef<HTMLTextAreaElement>(null);
@@ -85,23 +92,32 @@ function Composer({
   useEffect(() => {
     if (outbox?.supports(9)) void session.emoji.ensure();
   }, [session, outbox]);
-  function insertEmoji(text: string) {
-    const start = input.current?.selectionStart ?? draft.length;
-    const end = input.current?.selectionEnd ?? start;
-    const next = draft.slice(0, start) + text + draft.slice(end);
+  useLayoutEffect(() => {
+    if (caret.current === undefined) return;
+    input.current?.focus();
+    input.current?.setSelectionRange(caret.current, caret.current);
+    caret.current = undefined;
+  });
+  function insertText(text: string) {
+    if (
+      disabled ||
+      !outbox?.supports(9) ||
+      !input.current?.isConnected ||
+      typeof text !== "string"
+    )
+      return false;
+    const current = valueRef.current;
+    const start = caret.current ?? input.current.selectionStart;
+    const end = caret.current ?? input.current.selectionEnd;
+    const next = current.text.slice(0, start) + text + current.text.slice(end);
     if (next.length > 16000) {
-      setError("Message is too long to insert emoji");
-      return;
+      setError("Message is too long to insert text");
+      return false;
     }
-    saveDraft(replaceMentionDraft(value, start, end, text));
+    caret.current = start + text.length;
+    saveDraft(replaceMentionDraft(current, start, end, text));
     setError(undefined);
-    requestAnimationFrame(() => {
-      input.current?.focus();
-      input.current?.setSelectionRange(
-        start + text.length,
-        start + text.length,
-      );
-    });
+    return true;
   }
   function insertMention(recipient: MentionRecipient) {
     if (value.recipients.length >= 32) {
@@ -239,12 +255,18 @@ function Composer({
             disabled={disabled}
             select={insertMention}
           />
-          <EmojiPicker
-            session={session}
-            scope={scope}
-            disabled={disabled}
-            insert={insertEmoji}
-          />
+          {extensions && (
+            <ComposerTools
+              registry={extensions.tools}
+              session={session}
+              scope={scope}
+              channelId={channelId}
+              threadRootId={threadRootId}
+              disabled={disabled}
+              insertText={insertText}
+              focus={() => input.current?.focus()}
+            />
+          )}
         </div>
         <span className={styles.composerHint}>
           Shift + Enter for a new line
@@ -260,6 +282,23 @@ function Composer({
         </button>
       </div>
       {error && <p role="alert">{error}</p>}
+      {error && session.emoji?.snapshot().status === "error" && (
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={() => {
+            void session.emoji.refresh().then(() => {
+              if (
+                input.current?.isConnected &&
+                session.emoji.snapshot().status === "ready"
+              )
+                setError(undefined);
+            });
+          }}
+        >
+          Retry message preparation
+        </button>
+      )}
     </form>
   );
 }

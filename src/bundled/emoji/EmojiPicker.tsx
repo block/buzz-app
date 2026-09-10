@@ -6,8 +6,8 @@ import {
   useSyncExternalStore,
 } from "react";
 import { Smile } from "lucide-react";
-import type { RelaySession } from "../relay/session";
-import styles from "./Messages.module.css";
+import type { RelaySession } from "../../features/relay/session";
+import styles from "./Emoji.module.css";
 
 /** Reusable composer picker; data/signing remain owned by the community session. */
 export function EmojiPicker({

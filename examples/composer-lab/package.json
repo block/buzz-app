@@ -1,0 +1,12 @@
+{
+  "name": "example-composer-lab",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc && node build.mjs"
+  },
+  "devDependencies": {
+    "typescript": "7.0.2",
+    "@types/react": "19.2.18"
+  }
+}

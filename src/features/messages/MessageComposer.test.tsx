@@ -5,12 +5,26 @@ import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 
 // Production handlers with a shallow hook harness; not DOM focus/layout evidence.
-const hooks = vi.hoisted(() => ({ states: [] as unknown[], index: 0, id: 0 }));
+const hooks = vi.hoisted(() => ({
+  states: [] as unknown[],
+  refs: [] as unknown[],
+  refIndex: 0,
+  index: 0,
+  id: 0,
+}));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useEffect: () => {},
+  useLayoutEffect: () => {},
   useId: () => `composer-${++hooks.id}`,
-  useRef: () => ({ current: { focus: vi.fn() } }),
+  useRef: (initial: unknown) => {
+    const i = hooks.refIndex++;
+    if (!(i in hooks.refs))
+      hooks.refs[i] = {
+        current: initial === null ? { focus: vi.fn() } : initial,
+      };
+    return hooks.refs[i];
+  },
   useState(initial: unknown) {
     const i = hooks.index++;
     if (!(i in hooks.states))
@@ -31,6 +45,8 @@ function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
 const storage = new Map<string, string>();
 beforeEach(() => {
   hooks.states = [];
+  hooks.refs = [];
+  hooks.refIndex = 0;
   hooks.index = hooks.id = 0;
   storage.clear();
   vi.stubGlobal("requestAnimationFrame", () => 0);
@@ -42,6 +58,8 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 function mount(threadRootId?: string, scope = "scope", writable = true) {
   hooks.states = [];
+  hooks.refs = [];
+  hooks.refIndex = 0;
   const messages = {
     send: vi.fn(() => "channel-id"),
     reply: vi.fn(() => "reply-id"),
@@ -52,7 +70,7 @@ function mount(threadRootId?: string, scope = "scope", writable = true) {
     outbox: { supports: () => writable },
   } as unknown as RelaySession;
   const render = () => {
-    hooks.index = 0;
+    hooks.index = hooks.refIndex = 0;
     const scoped = MessageComposer({
       session,
       scope,

@@ -176,7 +176,7 @@ export function createEmojiDirectory(
         void ensure();
         throw new Error(
           snapshot.status === "error"
-            ? `Community emoji unavailable. Open the emoji picker to retry. ${snapshot.error ?? ""}`
+            ? `Community emoji unavailable. Retry message preparation or open the emoji picker. ${snapshot.error ?? ""}`
             : "Community emoji is loading. Your draft is kept; try sending again shortly.",
         );
       }

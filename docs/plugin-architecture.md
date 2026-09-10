@@ -283,7 +283,8 @@ export function apply(ctx: Context) {
 ```
 
 `binding` is one binding or a nonempty array of aliases. `key` matches the logical
-`KeyboardEvent.key` case-insensitively, not a physical `code`. `mod` means Command
+`KeyboardEvent.key` case-insensitively, not a physical `code` (Space is `" "`,
+not `"Space"`). `mod` means Command
 on Apple platforms and Control elsewhere; Shift/Alt and the other primary modifier
 match exactly. IME/AltGraph events and already-prevented events are never consumed.
 The window listener runs in the bubbling phase, after local editor handlers.

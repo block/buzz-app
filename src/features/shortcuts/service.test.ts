@@ -264,3 +264,28 @@ it("validates and copies bindings, keeps owner checks, and contains async handle
     await root.fiber.dispose();
   }
 });
+
+it("accepts the logical Space key but not an empty binding", async () => {
+  const b = browser(),
+    root = new Context(),
+    run = vi.fn();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const service = new ShortcutsService(root, b.host);
+  try {
+    expect(() =>
+      service.registerHost({ ...shortcut(), binding: { key: "" } }),
+    ).toThrow();
+    service.registerHost({
+      ...shortcut(run),
+      binding: { key: " ", mod: true },
+    });
+    expect(b.key(" ").defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledOnce();
+    expect(b.key("Space").defaultPrevented).toBe(false);
+  } finally {
+    await root.fiber.dispose();
+  }
+});

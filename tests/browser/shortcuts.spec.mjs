@@ -184,3 +184,43 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(count).toHaveText("Shortcut count: 1");
 });
+
+test("a shadow-root modal blocks Settings and plugin bindings but allows text zoom", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const modifier = await mod(page);
+  await button(page, "Shortcut counter").first().click();
+  await page.evaluate(() => {
+    const host = document.createElement("div");
+    host.id = "shadow-modal";
+    document.body.append(host);
+    const root = host.attachShadow({ mode: "open" });
+    const dialog = document.createElement("dialog");
+    const control = document.createElement("button");
+    control.textContent = "Modal control";
+    dialog.append(control);
+    root.append(dialog);
+    dialog.showModal();
+    control.focus();
+  });
+  const control = button(page, "Modal control");
+  await expect(control).toBeFocused();
+  await page.keyboard.press(`${modifier}+,`);
+  await expect(control).toBeFocused();
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toHaveCount(0);
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await expect(page.getByRole("status")).toHaveText("Shortcut count: 0");
+  await page.keyboard.press(`${modifier}+=`);
+  await scale(page, 1.1);
+  await page.keyboard.press(`${modifier}+0`);
+  await scale(page, 1);
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => document.getElementById("shadow-modal").remove());
+  await page.getByRole("main").focus();
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await expect(page.getByRole("status")).toHaveText("Shortcut count: 1");
+});

@@ -44,9 +44,12 @@ export class ShortcutsService extends Service implements Shortcuts {
       )
         return;
       const editable = inEditable(event);
-      const modal = !!host?.document.querySelector(
-        'dialog[open], [aria-modal="true"]',
-      );
+      const modalSelector = 'dialog[open], [aria-modal="true"]';
+      const modal =
+        !!host?.document.querySelector(modalSelector) ||
+        event
+          .composedPath()
+          .some((target) => (target as Element).matches?.(modalSelector));
       const eligible = (shortcut: Shortcut) => {
         try {
           return (

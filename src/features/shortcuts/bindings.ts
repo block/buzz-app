@@ -42,7 +42,7 @@ export function normalizeShortcut(shortcut: Shortcut): Shortcut {
       (binding) =>
         !binding ||
         typeof binding.key !== "string" ||
-        !binding.key.trim() ||
+        binding.key.length === 0 ||
         [binding.mod, binding.shift, binding.alt].some(
           (value) => value !== undefined && typeof value !== "boolean",
         ),

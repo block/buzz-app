@@ -9,7 +9,6 @@ Copy this folder outside the host checkout, install the host-matched packed
 then `pnpm build`. Install the resulting `dist` folder through desktop Settings
 or `buzzodz plugin install`. New installs start disabled.
 
-See [the host's laptop walkthrough](../../docs/emoji-plugin.md). This example uses
-real current-session data: sending posts to the selected channel. Notes and
+This example uses real current-session data: sending posts to the selected channel. Notes and
 Counter remain separate offline examples. Preview API/version compatibility is
 not guaranteed across hosts; this plugin requires the conversation capability.

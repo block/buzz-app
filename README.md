@@ -127,8 +127,8 @@ Browser installation is not supported; the browser shows a desktop-only explanat
 
 Emoji is independently toggleable in Settings. Its picker and custom rendering
 plug into shared conversation surfaces; catalog, event tags and delivery stay
-session-owned. [Try the preview on a laptop](docs/emoji-plugin.md), including the
-independent Composer Lab page and timestamp tool.
+session-owned. The independent Composer Lab example reuses those surfaces and
+contributes a timestamp tool.
 
 ## Plugin contract
 

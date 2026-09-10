@@ -11,7 +11,7 @@ Plugins are the unit of contribution and installation. They can contain substant
 **A page (target authoring experience).** A builder creates a plugin that registers
 a page, reads shared channel views, and builds a new interface. They should be able
 to reuse timeline/message components or build their own, owning the complete page
-implementation and its behavior and appearance. Bundled source demonstrates this composition. The [conversation preview](emoji-plugin.md)
+implementation and its behavior and appearance. Bundled source demonstrates this composition. The conversation preview
 now supplies host Composer/Message through a generated type-only author entry;
 broader supported external reuse remains an [author-contract gate](status.md#open-acceptance-and-product-gates).
 
@@ -209,7 +209,8 @@ write service. Dispose owned views when their plugin or session scope ends.
 
 ## Conversation contributions
 
-See [the Emoji/author preview](emoji-plugin.md) for top-level `registerTool` /
-`registerInline`, stable `conversation.ui` components, generated declaration
-archives, preview compatibility and independent Composer Lab proof. Shared session
+The conversation preview exposes top-level `registerTool` / `registerInline`
+methods and stable `conversation.ui.Composer` / `.Message` components. Generated
+type-only `@buzz/author` declarations support the independent Composer Lab example.
+This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.

@@ -1,0 +1,26 @@
+node_modules/
+.hermit/
+dist/
+src-tauri/target/
+src-tauri/gen/
+.DS_Store
+*.local
+target/
+test-results/
+playwright-report/
+blob-report/
+coverage/
+.pnpm-store/
+.vite/
+*.log
+*.tsbuildinfo
+
+# Local agent/workbench state is not project source.
+.buzz/
+.scratch/
+
+# Local deployment settings and credentials never belong in Git.
+.npmrc
+.env
+.env.*
+!.env.example

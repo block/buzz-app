@@ -1,0 +1,211 @@
+import { assert, describe, expect, it, vi } from "vitest";
+import { createRelaySession } from "./session";
+import {
+  bounds,
+  flush,
+  keypair,
+  message,
+  metadata,
+  profile,
+  roster,
+  scriptedTransport,
+} from "./testing";
+
+const relay = keypair(),
+  viewer = keypair(),
+  alice = keypair();
+const id = (n: number) => n.toString(16).padStart(64, "0");
+function setup(maxWindows = 2, now = Date.now) {
+  const scripted = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const store = createRelaySession(scripted.transport, { maxWindows, now });
+  return { ...scripted, store, queries: store.session.channels };
+}
+
+describe("channel store", () => {
+  it("is unavailable without a transport and rejects bad capacity", () => {
+    const store = createRelaySession(null);
+    expect(store.session.channels.list().status).toBe("unavailable");
+    store.session.channels.ensureList();
+    store.session.channels.ensure("x");
+    store.session.channels.loadOlder("x");
+    expect(store.session.channels.window("x")).toMatchObject({
+      status: "idle",
+      rows: [],
+    });
+    expect(store.session.media("https://x.test/a.png")).toBeUndefined();
+    expect(() => createRelaySession(null, { maxWindows: 0 })).toThrow();
+  });
+  it("loads the roster once, notifies list subscribers, and reports errors without losing state", async () => {
+    // Roster and metadata phases have identical asOf values for this dedupe check.
+    const { queries, next, pending } = setup(2, () => 1_000);
+    const listener = vi.fn();
+    queries.subscribeList(listener);
+    queries.ensureList();
+    queries.ensureList();
+    expect(pending.length).toBe(1);
+    expect(queries.list().status).toBe("loading");
+    next().respond([
+      roster(relay, "b", [viewer.pubkey]),
+      metadata(relay, "b", "Beta"),
+      roster(relay, "a", [alice.pubkey]),
+    ]);
+    await flush();
+    expect(queries.list()).toMatchObject({
+      status: "ready",
+      channels: [{ id: "b", name: "Beta" }],
+    });
+    expect(listener).toHaveBeenCalledTimes(2);
+    queries.ensureList();
+    expect(pending.length).toBe(0);
+    const failing = setup();
+    failing.queries.ensureList();
+    failing.next().fail(new Error("offline"));
+    await flush();
+    expect(failing.queries.list()).toMatchObject({
+      status: "error",
+      error: "offline",
+    });
+    failing.queries.ensureList();
+    expect(failing.queries.list().status).toBe("loading");
+  });
+  it("pages a window by the relay cursor, prepends older rows, and fetches missing profiles once", async () => {
+    const { store, queries, next, pending } = setup();
+    const listener = vi.fn();
+    queries.subscribeWindow("c", listener);
+    queries.ensure("c");
+    queries.ensure("c");
+    expect(pending.length).toBe(1);
+    expect(queries.window("c").status).toBe("loading");
+    const newer = message(alice, "c", "newer", 20),
+      older = message(alice, "c", "older", 10);
+    const head = next();
+    expect(head.filters[0]).toMatchObject({
+      "#h": ["c"],
+      top_level: true,
+      include_aux: true,
+      include_summaries: true,
+      limit: 20,
+    });
+    head.respond([
+      newer,
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 20, id: newer.id },
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c")).toMatchObject({
+      status: "ready",
+      hasMore: true,
+      loadingOlder: false,
+      rows: [{ id: newer.id }],
+    });
+    const profiles = next();
+    expect(profiles.filters[0]).toMatchObject({
+      kinds: [0],
+      authors: [alice.pubkey],
+    });
+    queries.loadOlder("c");
+    queries.loadOlder("c");
+    expect(pending.length).toBe(1);
+    expect(queries.window("c").loadingOlder).toBe(true);
+    const page = next();
+    expect(page.filters[0]).toMatchObject({
+      until: 20,
+      before_id: newer.id,
+      top_level: true,
+      include_aux: true,
+      include_summaries: true,
+      limit: 20,
+    });
+    // Older rows prepend; the duplicated `newer` row is deduped; alice is already pending so no second profile query.
+    page.respond([
+      older,
+      newer,
+      bounds(relay, "c", `20:${newer.id}`, {
+        has_more: false,
+        next_cursor: null,
+      }),
+    ]);
+    await flush();
+    expect(queries.window("c")).toMatchObject({
+      status: "ready",
+      hasMore: false,
+      loadingOlder: false,
+      rows: [{ id: older.id }, { id: newer.id }],
+    });
+    expect(pending.length).toBe(0);
+    profiles.respond([profile(alice, { name: "Alice" })]);
+    await flush();
+    expect(store.session.profiles.snapshot().get(alice.pubkey)).toEqual({
+      name: "Alice",
+    });
+    queries.loadOlder("c");
+    expect(pending.length).toBe(0);
+    expect(listener.mock.calls.length).toBeGreaterThanOrEqual(4);
+  });
+  it("evicts the least recently ensured window beyond capacity, aborting its request and rejecting late results", async () => {
+    const { queries, store, next, pending } = setup(2);
+    const evicted = vi.fn();
+    queries.subscribeWindow("a", evicted);
+    queries.ensure("a");
+    const requestA = next();
+    queries.ensure("b");
+    next().respond([
+      bounds(relay, "b", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    queries.ensure("c");
+    expect(store.retainedChannels()).toEqual(["b", "c"]);
+    expect(requestA.signal?.aborted).toBe(true);
+    expect(queries.window("a")).toMatchObject({ status: "idle", rows: [] });
+    requestA.respond([
+      message(alice, "a", "late", 1),
+      bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    expect(queries.window("a")).toMatchObject({ status: "idle", rows: [] });
+    // Re-ensuring a still-retained window only touches recency; re-ensuring the evicted one reloads it.
+    queries.ensure("b");
+    expect(store.retainedChannels()).toEqual(["c", "b"]);
+    queries.ensure("a");
+    expect(store.retainedChannels()).toEqual(["b", "a"]);
+    const lateRead = pending.at(-1);
+    assert.exists(lateRead);
+    expect(lateRead.filters[0]).toMatchObject({ "#h": ["a"] });
+    store.dispose();
+    lateRead.respond([
+      bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+    ]);
+    await flush();
+    expect(queries.window("a").status).not.toBe("ready");
+  });
+  it("surfaces bounds failures as window errors and lets ensure retry", async () => {
+    const { queries, next } = setup();
+    queries.ensure("c");
+    next().respond([message(alice, "c", "no bounds", 1)]);
+    await flush();
+    expect(queries.window("c")).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/window bounds/),
+    });
+    queries.ensure("c");
+    expect(queries.window("c").status).toBe("loading");
+    next().respond([
+      bounds(relay, "c", "head", {
+        has_more: true,
+        next_cursor: { created_at: 1, id: id(1) },
+      }),
+    ]);
+    await flush();
+    queries.loadOlder("c");
+    next().fail(new Error("relay down"));
+    await flush();
+    expect(queries.window("c")).toMatchObject({
+      status: "ready",
+      loadingOlder: false,
+      error: "relay down",
+      hasMore: true,
+    });
+  });
+});

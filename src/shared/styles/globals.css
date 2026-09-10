@@ -1,0 +1,210 @@
+@import "tailwindcss";
+@import "./tokens.css";
+
+@custom-variant dark (
+  &:where([data-color-mode="dark"], [data-color-mode="dark"] *)
+);
+
+/* One palette, exposed to both CSS modules and Tailwind utilities. */
+@theme inline {
+  --font-sans:
+    Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  --radius-3xl: var(--radius-card);
+  --radius-xl: var(--radius-control);
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-line: var(--border);
+  --color-soft: var(--surface-accent);
+  --color-shell: var(--workspace);
+  --color-surface: var(--surface);
+  --color-elevated: var(--surface-elevated);
+  --color-shell-edge: var(--shell-edge);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-input-line: var(--border-input);
+  --color-hover: var(--surface-hover);
+  --color-focus: var(--focus);
+  --color-danger: var(--danger);
+  --color-warning: var(--warning);
+  --color-warning-surface: var(--warning-surface);
+  --color-warning-border: var(--warning-border);
+  --color-overlay: var(--overlay);
+  --color-toggle-track: var(--toggle-track);
+  --color-toggle-thumb: var(--toggle-thumb);
+  --shadow-surface: var(--elevation-surface);
+}
+
+@layer base {
+  :root {
+    font-family: var(--font-sans);
+    color: var(--text);
+    background: var(--workspace);
+    font-synthesis: none;
+    -webkit-font-smoothing: antialiased;
+  }
+  * {
+    box-sizing: border-box;
+  }
+  body {
+    margin: 0;
+  }
+  button {
+    cursor: pointer;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    padding: 8px 14px;
+    background: var(--surface);
+    color: var(--accent);
+    font: inherit;
+    font-size: 14px;
+  }
+  input,
+  textarea,
+  select {
+    color: inherit;
+    accent-color: var(--primary);
+  }
+  input::placeholder,
+  textarea::placeholder {
+    color: var(--text-muted);
+    opacity: 1;
+  }
+  button:hover {
+    background: var(--surface-accent);
+  }
+  :where(
+    button,
+    a,
+    input,
+    textarea,
+    select,
+    summary,
+    [tabindex]
+  ):focus-visible {
+    outline: 2px solid var(--focus);
+    outline-offset: 3px;
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+  h1 {
+    font-size: clamp(28px, 4vw, 40px);
+    line-height: 1.2;
+    font-weight: 600;
+    margin: 8px 0 24px;
+    letter-spacing: -1px;
+  }
+  h2 {
+    font-size: 22px;
+    margin: 28px 0 8px;
+    font-weight: 600;
+  }
+  h3 {
+    font-size: 17px;
+    margin: 0 0 6px;
+    font-weight: 600;
+  }
+  p {
+    line-height: 1.6;
+    margin: 8px 0;
+    overflow-wrap: anywhere;
+  }
+}
+
+@layer components {
+  .ui-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-card);
+    background: var(--surface);
+    box-shadow: var(--elevation-surface);
+  }
+  .ui-choice {
+    border: 1px solid var(--border-input);
+    border-radius: var(--radius-control);
+    background: var(--surface);
+    color: var(--text);
+  }
+  .ui-choice:hover {
+    background: var(--surface-hover);
+  }
+  .ui-choice:has(:checked) {
+    border-color: var(--focus);
+    background: var(--selected);
+    color: var(--on-selected);
+  }
+  .ui-choice:has(:focus-visible) {
+    outline: 2px solid var(--focus);
+    outline-offset: 3px;
+  }
+  .shell-background {
+    background-image:
+      radial-gradient(circle, var(--shell-dot) 0.8px, transparent 1px),
+      var(--shell-image);
+    background-size:
+      36px 36px,
+      100% 100%,
+      100% 100%;
+    background-position:
+      16px 8px,
+      center,
+      center;
+    background-repeat: repeat, no-repeat, no-repeat;
+  }
+  .shell-header {
+    @apply grid h-14 shrink-0 items-center gap-3 px-4;
+    grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+  }
+  .shell-communities {
+    @apply flex min-w-0 items-center justify-start;
+  }
+  .shell-header-mac .shell-communities {
+    padding-left: 88px;
+  }
+  .shell-pages {
+    @apply flex min-w-0 items-center gap-1 overflow-x-auto rounded-full border border-shell-edge/70 bg-surface/25 p-1;
+    max-width: min(calc(100vw - 400px), 640px);
+  }
+  .shell-actions {
+    @apply flex items-center justify-end gap-2;
+  }
+  @media (max-width: 700px) {
+    .shell-header {
+      @apply h-auto gap-x-2 gap-y-1 px-2 pb-2 pt-2;
+      grid-template-columns: minmax(0, 1fr) auto;
+    }
+    .shell-pages {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      justify-self: center;
+      max-width: 100%;
+    }
+  }
+  .shell-tab {
+    @apply flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border-0 bg-transparent px-4 py-1.5 text-sm leading-4 text-ink hover:bg-surface/80 hover:text-ink;
+  }
+  .shell-icon {
+    @apply flex size-9 items-center justify-center rounded-full border-0 bg-surface/50 p-0 text-ink hover:bg-surface hover:text-ink;
+  }
+  .shell-tab[aria-current="page"],
+  .shell-icon[aria-current="page"] {
+    @apply bg-surface text-ink;
+  }
+  .muted {
+    @apply text-[13px] font-normal text-muted;
+  }
+  .eyebrow {
+    @apply text-[11px] font-semibold tracking-[0.16em] text-muted;
+  }
+  .actions {
+    @apply flex flex-wrap gap-2;
+  }
+  .notice {
+    @apply my-5 rounded-2xl border border-warning-border bg-warning-surface p-5 text-sm text-warning;
+  }
+  .error,
+  .danger {
+    @apply text-danger;
+  }
+}

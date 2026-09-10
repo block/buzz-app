@@ -1,0 +1,55 @@
+import type { VirtualizerHandle } from "virtua";
+import type { ChannelMessage, Profile } from "../relay/contracts";
+import type { ChannelQueries } from "../relay/contracts";
+
+type Entry = {
+  signature: string;
+  width: number;
+  cache: VirtualizerHandle["cache"];
+};
+/** Identity/session-scoped and bounded. Event content (not IDs alone) and exact layout width
+ * invalidate measurements. Weak ownership releases geometry with the query session. */
+const sessions = new WeakMap<ChannelQueries, Map<string, Entry>>();
+export function geometryFor(queries: ChannelQueries) {
+  const entries = sessions.get(queries) ?? new Map<string, Entry>();
+  sessions.set(queries, entries);
+  return {
+    get(channelId: string, signature: string, width: number) {
+      const entry = entries.get(channelId);
+      return entry?.signature === signature && entry.width === width
+        ? entry.cache
+        : undefined;
+    },
+    set(
+      channelId: string,
+      signature: string,
+      width: number,
+      cache: VirtualizerHandle["cache"],
+    ) {
+      entries.delete(channelId);
+      // Signatures include rendered text; bound that memory too, not only view count.
+      if (signature.length > 256 * 1024) return;
+      entries.set(channelId, { signature, width, cache });
+      while (entries.size > 3) {
+        const first = entries.keys().next().value;
+        if (first === undefined) break;
+        entries.delete(first);
+      }
+    },
+  };
+}
+const eventSignatures = new WeakMap<ChannelMessage, string>();
+export const geometrySignature = (
+  events: readonly ChannelMessage[],
+  profiles: ReadonlyMap<string, Profile>,
+) =>
+  events
+    .map((event) => {
+      let signature = eventSignatures.get(event);
+      if (!signature) {
+        signature = JSON.stringify(event);
+        eventSignatures.set(event, signature);
+      }
+      return `${signature.length}:${signature}:${JSON.stringify(profiles.get(event.authorId))}`;
+    })
+    .join("");

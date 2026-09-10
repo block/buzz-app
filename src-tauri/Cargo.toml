@@ -1,0 +1,18 @@
+[package]
+name = "buzz-foundation"
+version = "0.0.0"
+description = "Buzz application foundation"
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "buzz_foundation_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+buzzodz-plugins = { path = "../crates/plugin-manager" }
+tauri-plugin-dialog = "2"

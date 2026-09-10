@@ -1,0 +1,89 @@
+.root {
+  padding: 20px;
+  overflow-y: auto;
+  min-height: 0;
+  font-size: 13px;
+  color: var(--text);
+}
+.identity,
+.byline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.identity small,
+.identity strong {
+  display: block;
+  overflow-wrap: anywhere;
+}
+.identity small,
+.byline,
+.note {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+.icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: var(--surface-accent);
+  color: var(--accent);
+}
+.external {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 18px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface-accent);
+  color: var(--accent);
+  text-decoration: none;
+}
+.external:hover {
+  text-decoration: underline;
+}
+.root h2 {
+  margin: 16px 0;
+  font-size: 18px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.state {
+  border-radius: 6px;
+  padding: 3px 7px;
+  background: var(--surface-accent);
+  text-transform: capitalize;
+}
+.facts {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 5px 0;
+}
+.facts dt {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.facts dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+.body {
+  white-space: pre-wrap;
+}
+.note {
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}

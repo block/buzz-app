@@ -1,0 +1,357 @@
+import { test, expect } from "@playwright/test";
+import { createServer } from "vite";
+import react from "@vitejs/plugin-react";
+import { fileURLToPath } from "node:url";
+import { mkdtemp, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+test("community picker uses keyboard, proxy thumbnails, event-local history and scoped send/reply tags", async ({
+  page,
+}) => {
+  // Parallel fixtures must not invalidate each other’s optimized lazy imports.
+  const cacheDir = await mkdtemp(join(tmpdir(), "buzz-emoji-vite-"));
+  let server;
+  try {
+    server = await createServer({
+      cacheDir,
+      root: fileURLToPath(new URL("../../", import.meta.url)),
+      configFile: false,
+      envFile: false,
+      plugins: [react()],
+      logLevel: "error",
+      server: { host: "127.0.0.1", port: 0, strictPort: false },
+    });
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(String(error)));
+    await page.route("**/emoji-media/**", async (route) => {
+      if (route.request().url().includes("broken.png"))
+        return route.fulfill({ status: 404, body: "missing" });
+      return route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><circle cx="11" cy="11" r="10" fill="purple"/></svg>',
+      });
+    });
+    await server.listen();
+    // The host selection, not the operating system, chooses the widget mode.
+    await page.emulateMedia({ colorScheme: "dark" });
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html`,
+    );
+    const draft = () =>
+      page.getByRole("textbox", { name: /Message #general|Reply to thread/ });
+    const picker = page.getByRole("button", {
+      name: "Insert emoji",
+      exact: true,
+    });
+    await expect(
+      page.getByText("Broken :missing:", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByText("Unloadable :broken:", { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: "https://example.test/:party" }),
+    ).toHaveAttribute("href", "https://example.test/:party");
+    const historic = page.locator('img[src*="original.png"]');
+    const originalSrc = await historic.getAttribute("src");
+    expect(originalSrc).toContain("/emoji-media/a/");
+    await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
+    // Opening/reading does not load the Unicode dataset or Mart's global state.
+    expect(
+      await page.evaluate(() =>
+        performance
+          .getEntriesByType("resource")
+          .some((entry) => entry.name.includes("emoji-mart")),
+      ),
+    ).toBe(false);
+    await picker.focus();
+    await picker.press("Enter");
+    const search = page.getByRole("searchbox", {
+      name: "Search",
+    });
+    await expect(search).toBeFocused();
+    const surface = page.locator("em-emoji-picker #root");
+    const region = page.getByRole("region", { name: "Emoji picker" });
+    await expect(surface).toHaveAttribute("data-theme", "light");
+    await expect(region).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(region).toHaveCSS("box-shadow", "none");
+    await expect(region).toHaveCSS("border-top-width", "0px");
+    await expect(
+      page.getByRole("button", { name: "Refresh emoji" }),
+    ).toHaveCount(0);
+    await expect(surface).toHaveCSS("width", "316px");
+    expect(await region.boundingBox()).toEqual(await surface.boundingBox());
+    await page.screenshot({
+      path: test.info().outputPath("emoji-picker-dark-os.png"),
+    });
+    await search.fill("party");
+    const insert = page.getByRole("button", {
+      name: ":party:",
+      exact: true,
+    });
+    await expect(insert).toBeVisible();
+    const searchNode = await search.elementHandle();
+    // Exercise the actual widget boundary without recreating the picker/search.
+    for (const mode of ["dark", "light"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      await expect(surface).toHaveAttribute("data-theme", mode);
+      await expect(search).toHaveValue("party");
+      await expect(search).toBeFocused();
+      expect(await searchNode.evaluate((node) => node.isConnected)).toBe(true);
+    }
+    // Exercise the shared composer's containing-block sizing in a clipped 300px pane.
+    await page.locator("main").evaluate((el) => {
+      el.style.width = "300px";
+    });
+    await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
+      "width",
+      "208px",
+    );
+    await expect(search).toHaveValue("party");
+    await expect(page.locator("em-emoji-picker nav")).toHaveCount(0);
+    expect(await region.boundingBox()).toEqual(await surface.boundingBox());
+    const pane = await page.locator("main").boundingBox();
+    const popover = await page
+      .getByRole("region", { name: "Emoji picker" })
+      .boundingBox();
+    expect(popover.x).toBeGreaterThanOrEqual(pane.x);
+    expect(popover.x + popover.width).toBeLessThanOrEqual(pane.x + pane.width);
+    expect(
+      await insert.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return el.contains(
+          el.getRootNode().elementFromPoint(r.right - 2, r.top + r.height / 2),
+        );
+      }),
+    ).toBe(true);
+    await page.screenshot({
+      path: test.info().outputPath("community-emoji-picker.png"),
+    });
+    // Every result, including the last column, fits and is hit-testable in shadow DOM.
+    const results = page.locator("em-emoji-picker .category button");
+    expect(await results.count()).toBeGreaterThan(5);
+    for (const button of await results.all()) {
+      if (!(await button.isVisible())) continue;
+      expect(
+        await button.evaluate((el) => {
+          const r = el.getBoundingClientRect();
+          return el.contains(
+            el
+              .getRootNode()
+              .elementFromPoint(r.right - 2, r.top + r.height / 2),
+          );
+        }),
+      ).toBe(true);
+    }
+    await page.locator("main").evaluate((el) => {
+      el.style.width = "800px";
+    });
+    await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
+      "width",
+      "316px",
+    );
+    await expect(page.locator("em-emoji-picker nav")).toBeVisible();
+    await search.fill("party");
+    await expect(insert.locator("img")).toHaveAttribute(
+      "src",
+      /emoji-media\/a\/.*1.png/,
+    );
+    const retiredPicker = await page.locator("em-emoji-picker").elementHandle();
+    const retiredTheme = await retiredPicker.getAttribute("theme");
+    await search.press("Escape");
+    await expect(picker).toBeFocused();
+    await page.evaluate(async () => {
+      document.documentElement.dataset.colorMode = "dark";
+      await new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      );
+    });
+    expect(await retiredPicker.evaluate((el) => el.isConnected)).toBe(false);
+    // Closing owns the mode observer too; a retired widget must not update.
+    expect(await retiredPicker.getAttribute("theme")).toBe(retiredTheme);
+    await picker.click();
+    // Newly opened widgets must start in the selected mode without a later toggle.
+    await expect(surface).toHaveAttribute("data-theme", "dark");
+    for (const query of [
+      "party-parrot",
+      "party parrot",
+      "parrot",
+      ":party-parrot:",
+    ]) {
+      await search.fill(query);
+      await expect(
+        page.getByRole("button", { name: ":party-parrot:", exact: true }),
+      ).toBeVisible();
+    }
+    for (const query of [
+      "party-parrot-wave",
+      ":party-parrot-wave:",
+      "party parrot wave",
+    ]) {
+      await search.fill(query);
+      await expect(
+        page.getByRole("button", { name: ":party-parrot-wave:", exact: true }),
+      ).toBeVisible();
+    }
+    await search.fill("aonly");
+    await search.press("Enter");
+    await expect(draft()).toHaveValue(":aonly:");
+    await picker.click();
+    await search.fill("");
+    await expect(
+      page.locator(
+        'em-emoji-picker [data-id="frequent"] img[src*="aonly.png"]',
+      ),
+    ).toHaveCount(1);
+    await search.fill("grinning");
+    await expect(
+      page.getByRole("button", { name: ":grinning:", exact: true }),
+    ).toBeVisible();
+    await page.getByRole("button", { name: "😀", exact: true }).click();
+    await expect(draft()).toHaveValue(":aonly:😀");
+    await draft().fill("before after");
+    await draft().evaluate((el) => el.setSelectionRange(7, 7));
+    await picker.press("Enter");
+    await search.focus();
+    await search.fill("party");
+    await search.press("Enter");
+    await expect(draft()).toHaveValue("before :party:after");
+    await expect(draft()).toBeFocused();
+    await draft().press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(1);
+    const first = await page.evaluate(
+      () => window.emojiFixture.report.publications[0],
+    );
+    expect(first.community).toBe("a");
+    expect(first.event.tags).toContainEqual([
+      "emoji",
+      "party",
+      "https://a.test/media/1.png",
+    ]);
+    await expect(historic).toHaveAttribute("src", originalSrc);
+    await picker.click();
+    await search.fill("party");
+    await page.evaluate(() => window.emojiFixture.replace());
+    await expect(search).toHaveValue("party");
+    await expect(insert.locator("img")).toHaveAttribute("src", /2.png/);
+    await search.press("Escape");
+    await draft().fill("A draft");
+    await page.getByRole("button", { name: "Switch community" }).click();
+    await expect(draft()).toHaveValue("");
+    await picker.click();
+    await search.fill("aonly");
+    await expect(
+      page.getByRole("button", { name: ":aonly:", exact: true }),
+    ).toHaveCount(0);
+    await expect(
+      page.locator('em-emoji-picker img[src*="emoji-media/a/"]'),
+    ).toHaveCount(0);
+    await search.fill("");
+    await expect(
+      page.locator('em-emoji-picker img[src*="aonly.png"]'),
+    ).toHaveCount(0);
+    await search.fill("party");
+    await expect(insert.locator("img")).toHaveAttribute(
+      "src",
+      /emoji-media\/b\/.*1.png/,
+    );
+    await insert.click();
+    await expect(draft()).toHaveValue(":party:");
+    await expect(draft()).toBeFocused();
+    await draft().press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(2);
+    await page.getByRole("button", { name: "Toggle thread" }).click();
+    await picker.click();
+    await search.fill("party");
+    await insert.click();
+    await expect(draft()).toHaveValue(":party:");
+    await expect(draft()).toBeFocused();
+    await draft().press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(3);
+    const replies = await page.evaluate(() =>
+      window.emojiFixture.report.publications.slice(1),
+    );
+    for (const { community, event } of replies) {
+      expect(community).toBe("b");
+      expect(event.tags).toContainEqual([
+        "emoji",
+        "party",
+        "https://b.test/media/1.png",
+      ]);
+    }
+    expect(
+      replies[1].event.tags.some((tag) => tag[0] === "e" && tag[3] === "reply"),
+    ).toBe(true);
+    await page.getByRole("button", { name: "Toggle thread" }).click();
+    await page.getByRole("button", { name: "Switch community" }).click();
+    await expect(draft()).toHaveValue("A draft");
+    await picker.click();
+    await page.evaluate(async () => {
+      window.emojiFixture.fail(true);
+      await window.emojiFixture.refresh();
+    });
+    await expect(page.getByRole("alert")).toContainText(
+      "Fixture catalog offline",
+    );
+    await search.fill("grinning");
+    await page.getByRole("button", { name: "😀", exact: true }).click();
+    await expect(draft()).toHaveValue("😀A draft");
+    await draft().fill(":party:");
+    await draft().press("Enter");
+    await expect(draft()).toHaveValue(":party:");
+    await expect(page.getByRole("alert")).toContainText(
+      "Community emoji unavailable",
+    );
+    await picker.click();
+    await expect(region.getByRole("alert")).toContainText(
+      "Fixture catalog offline",
+    );
+    await page.evaluate(() => window.emojiFixture.fail(false));
+    await page
+      .getByRole("button", { name: "Retry emoji", exact: true })
+      .click();
+    await search.fill("party");
+    await expect(insert).toBeVisible();
+    await page.evaluate(() => window.emojiFixture.remove());
+    await expect(search).toHaveValue("party");
+    await expect(insert).toHaveCount(0);
+    await expect(
+      page.locator('em-emoji-picker [data-id="buzz-custom"]'),
+    ).toHaveCount(0);
+    await expect(historic).toHaveAttribute("src", originalSrc);
+    await search.fill("");
+    await expect(
+      page.locator('em-emoji-picker img[src*="emoji-media"]'),
+    ).toHaveCount(0);
+    await search.fill("aonly");
+    await expect(
+      page.getByRole("button", { name: ":aonly:", exact: true }),
+    ).toHaveCount(0);
+    await search.press("Escape");
+    await picker.click();
+    await search.fill("party");
+    await expect(insert).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    try {
+      await server?.close();
+    } finally {
+      await rm(cacheDir, { recursive: true, force: true });
+    }
+  }
+});

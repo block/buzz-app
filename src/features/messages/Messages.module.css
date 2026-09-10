@@ -1,0 +1,494 @@
+/* Reusable conversation components; plugins own placement and surrounding layout. */
+.thread {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-card);
+}
+.heading {
+  min-height: 58px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.heading button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: var(--surface-control);
+  padding: 7px 9px;
+  font-size: 12px;
+}
+.heading button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--on-selected);
+}
+.feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-anchor: none;
+  padding: 0 16px;
+  scrollbar-width: thin;
+}
+.feed ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.edge {
+  height: 56px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--text-muted);
+  gap: 8px;
+}
+.edge button {
+  border: 0;
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--text-muted);
+  background: var(--surface-control);
+}
+.day {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  color: var(--text);
+  font-size: 12px;
+  margin: 10px 0 30px;
+}
+.day::before,
+.day::after {
+  content: "";
+  height: 1px;
+  background: var(--border);
+  flex: 1;
+}
+.message {
+  display: flex;
+  gap: 12px;
+  padding: 8px 0 24px;
+}
+.avatar {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--surface-accent);
+  color: var(--text-muted);
+  display: grid;
+  place-items: center;
+  font-size: 12px;
+  overflow: hidden;
+}
+.avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.messageBody {
+  flex: 1;
+  min-width: 0;
+}
+.byline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 14px;
+  line-height: 20px;
+}
+.byline time {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.text {
+  margin: 4px 0 0;
+  font-size: 15px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.text a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.text a:hover {
+  text-decoration: underline;
+}
+.reactions {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+}
+.reactions > span {
+  background: var(--surface-control);
+  border-radius: 6px;
+  padding: 2px 6px;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.replies {
+  border: 0;
+  background: transparent;
+  padding: 4px 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 13px;
+  color: var(--text);
+}
+.attachment {
+  display: inline-block;
+  padding: 6px 9px;
+  margin: 6px 5px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--link);
+  font-size: 12px;
+}
+.composer {
+  border: 1px solid var(--border-input);
+  background: var(--surface);
+  border-radius: 16px;
+  padding: 14px 14px 8px;
+  margin: 12px 16px 16px;
+  display: flex;
+  flex-shrink: 0;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--text);
+  font-size: 14px;
+}
+.empty {
+  padding: 30px 18px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+@media (max-width: 650px) {
+  .heading {
+    padding: 12px;
+  }
+  .feed {
+    padding: 0 12px;
+  }
+  .composer {
+    margin: 8px 12px 12px;
+  }
+}
+.composer textarea {
+  width: 100%;
+  resize: none;
+  min-height: 3rem;
+  max-height: 12rem;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  line-height: 1.5;
+  background: transparent;
+  color: inherit;
+}
+.composerActions {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composerTools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: 1;
+}
+.composerHint {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+@media (max-width: 850px) {
+  .composerHint {
+    display: none;
+  }
+}
+.delivery {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--warning);
+  font-size: 12px;
+  margin-top: 6px;
+}
+.day span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 6px 14px;
+}
+.composer textarea::placeholder {
+  color: var(--text-muted);
+}
+.composer textarea:focus-visible {
+  outline: none;
+}
+.composer:focus-within {
+  border-color: var(--focus);
+  box-shadow: 0 0 0 1px var(--focus);
+}
+.composerTools > :where(fieldset) > button,
+.composerActions > .sendButton {
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+.composerTools > :where(fieldset) > button:hover,
+.composerTools > :where(fieldset) > button[aria-expanded="true"] {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.composerActions > .sendButton {
+  border-radius: 50%;
+  background: var(--action);
+  color: var(--on-action);
+}
+.composerActions > .sendButton:hover:not(:disabled) {
+  filter: brightness(0.95);
+}
+.composerActions > .sendButton:disabled {
+  background: var(--surface-control);
+  color: var(--text-muted);
+  opacity: 1;
+}
+.delivery button {
+  border: 0;
+  padding: 2px 6px;
+  font-size: inherit;
+  text-decoration: underline;
+  color: inherit;
+}
+.replies:hover {
+  text-decoration: underline;
+}
+.threadHistory {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 16px;
+  scrollbar-width: thin;
+}
+.threadHistory ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.threadDivider {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.threadHistoryControls {
+  flex-shrink: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 16px;
+}
+.threadHistoryControls button {
+  padding: 6px 10px;
+  background: var(--surface-accent);
+  border: 0;
+  font-size: 12px;
+}
+.threadNote {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.threadHistoryControls .threadNote {
+  width: 100%;
+}
+.threadAvatars {
+  display: inline-flex;
+  align-items: center;
+  padding-right: 3px;
+}
+.threadAvatar {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  margin-right: -3px;
+  overflow: hidden;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--surface-accent);
+  color: var(--text-muted);
+  font-size: 9px;
+  line-height: 1;
+}
+.threadAvatar img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.customEmoji {
+  display: inline-block;
+  width: 22px;
+  height: 22px;
+  object-fit: contain;
+  vertical-align: middle;
+}
+.emojiPicker {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.emojiPopover {
+  position: absolute;
+  bottom: 42px;
+  left: 0;
+  z-index: 5;
+  max-width: 100%;
+}
+.emojiMart em-emoji-picker {
+  height: min(435px, 50vh);
+}
+.emojiStatus {
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--elevation-card);
+  font-size: 12px;
+}
+.emojiStatus button {
+  width: auto;
+  height: auto;
+  padding: 4px 8px;
+  border-radius: 6px;
+  margin: 8px 0;
+}
+
+.mentionPopover {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(380px, 75vw);
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--elevation-popover);
+}
+.mentionPopover label {
+  display: grid;
+  gap: 6px;
+}
+.mentionPopover p {
+  font-size: 12px;
+}
+.mentionChoices {
+  display: grid;
+  gap: 4px;
+}
+.mentionPopover button {
+  width: auto;
+  height: auto;
+  border-radius: 6px;
+}
+.mentionChoices button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 8px;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  width: 100%;
+}
+.mentionChoices code {
+  font-size: 10px;
+  overflow-wrap: anywhere;
+}
+.mentionRecipients {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.mentionRecipients button {
+  border-radius: 6px;
+  padding: 3px 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border-color: var(--border);
+  background: var(--action);
+  color: var(--on-action);
+  font-size: 12px;
+}
+.mentionRecipients code {
+  font-size: 10px;
+}
+
+.mentionChoices button:hover {
+  background: var(--surface-accent);
+}
+.mentionLabel {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.mentionLabel > span {
+  font-size: 13px;
+  font-weight: 500;
+}
+.mentionLabel code {
+  display: block;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.mentionPopover p {
+  color: var(--text-muted);
+}
+.mentionPopover input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+}

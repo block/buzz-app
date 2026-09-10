@@ -1,0 +1,80 @@
+import { test, expect } from "./fixture.mjs";
+import { open } from "./timeline.mjs";
+
+test.use({ productionBroker: true, dmLabels: true });
+
+for (const cold of [false, true]) {
+  test(`DM names recover after ${cold ? "hidden channel deletion aborts a cold fetch" : "channel deletion purges loaded profiles"}`, async ({
+    page,
+    app,
+  }) => {
+    const sidebar = page.getByRole("navigation", {
+      name: "Subscribed channels",
+    });
+    const dm = sidebar.getByRole("button", {
+      name: "Alice Fixture",
+      exact: true,
+    });
+    const fallback = sidebar.getByRole("button", {
+      name: app.participants[0].slice(0, 10),
+      exact: true,
+    });
+    const labelReads = () =>
+      app.report.queries.filter(
+        ({ filter }) =>
+          filter.kinds?.includes(0) &&
+          filter.authors?.includes(app.participants[0]),
+      );
+    if (cold) {
+      app.hideChannel("beta");
+      app.relay.holdProfiles(app.participants);
+    }
+    try {
+      await open(page, app);
+      if (cold) {
+        await expect(fallback).toBeVisible();
+        await expect.poll(() => labelReads().length).toBe(1);
+        expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
+        await expect(
+          sidebar.getByRole("button", { name: "Beta", exact: true }),
+        ).toHaveCount(0);
+      } else {
+        await expect(dm).toBeVisible();
+        await expect(
+          sidebar.getByRole("button", { name: "Beta", exact: true }),
+        ).toBeVisible();
+        app.relay.holdProfiles(app.participants);
+      }
+      const before = labelReads().length;
+      app.omitChannel("beta");
+      // The deployed deletion trigger is not under test. Exercise the real
+      // refresh -> roster omission -> session purge -> page/hook recovery path.
+      await page.getByLabel("Conversation options", { exact: true }).click();
+      await page.getByText("Diagnostics", { exact: true }).click();
+      await page
+        .getByRole("button", { name: "Refresh channels", exact: true })
+        .click();
+      await expect(
+        page.getByText("Roster · 2 channels", { exact: true }),
+      ).toBeVisible();
+      await expect(fallback).toBeVisible();
+      await expect(dm).toHaveCount(0);
+      await expect.poll(() => labelReads().length).toBe(before + 1);
+      if (cold)
+        expect(app.report.profileHolds.some((held) => held.aborted)).toBe(true);
+      app.relay.releaseProfiles();
+      await expect(dm).toBeVisible();
+      await expect(fallback).toHaveCount(0);
+      await page.getByLabel("Conversation options", { exact: true }).click();
+      await dm.click();
+      await expect(
+        page
+          .getByRole("article", { name: "Conversation" })
+          .locator("header strong"),
+      ).toHaveText("Alice Fixture");
+      expect(labelReads()).toHaveLength(before + 1);
+    } finally {
+      app.relay.releaseProfiles();
+    }
+  });
+}

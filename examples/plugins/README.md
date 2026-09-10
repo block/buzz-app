@@ -5,12 +5,12 @@ All example plugins live here with `manifest.json` and prebuilt `plugin.js` file
 - `composer-lab`: shared composer/message UI and timestamp tool. Requires the
   matching host conversation capability; sending posts to the selected channel.
 - `counter` and `notes`: offline playgrounds.
-- `broken-page`: intentionally fails during activation to exercise error handling.
+- `broken-page`: intentionally fails when its page renders to exercise error handling.
 
 ## Try the offline playgrounds
 
-Counter and Notes are **ready-to-install**, readable API v1 modules need no build tools or
-runtime dependencies. They use the host's React instance and page service. Neither
+Counter and Notes are **ready-to-install**, readable API v1 modules that need no
+build tools or runtime dependencies. They use the host's React instance and page service. Neither
 makes network requests, writes files, nor reads your account. Plugins generally are
 trusted unsandboxed code; these examples do not change that trust model.
 

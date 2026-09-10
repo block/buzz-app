@@ -31,7 +31,9 @@ test("independent packed author consumer and native-installed contribution survi
     run("pnpm", ["author:build", author]);
     run("pnpm", ["pack", "--pack-destination", temp], author);
     const source = join(temp, "consumer");
-    await cp(join(root, "examples/composer-lab"), source, { recursive: true });
+    await cp(join(root, "examples/plugins/composer-lab"), source, {
+      recursive: true,
+    });
     run(
       "pnpm",
       ["add", "-D", join(temp, "buzz-author-0.0.0-preview.1.tgz")],

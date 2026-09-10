@@ -194,14 +194,10 @@ parallel jobs rather than running the entire recipe several times:
 
 Actions and tool versions are pinned, installs use the frozen lockfile, and
 Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
-Superseded PR runs are cancelled. JavaScript and Rust/tool integration use
-`ubuntu-24.04`; both browser phases use hosted Apple Silicon `macos-26`. These
-disposable runners use no live Buzz identity or signing credentials. Linux
-Chromium and WebKit browser coverage remains absent; see the
-[unresolved Linux limitation](browser-testing.md#ci-platform-and-unresolved-linux-coverage).
-This is not native GUI acceptance, a signed package, or a cross-platform release
-gate. `just scan` remains available locally; CI does not add full scans to
-commit/push or ordinary interactive feedback rounds.
+Superseded PR runs are cancelled. CI uses disposable Ubuntu runners and no live
+Buzz identity or signing credentials. It is not native GUI acceptance, a signed
+package, or a cross-platform release gate. `just scan` remains available locally;
+CI does not add full scans to commit/push or ordinary interactive feedback rounds.
 
 ## Test organization
 

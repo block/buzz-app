@@ -1,5 +1,6 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
 import { RecoveryScreen } from "./RecoveryScreen";
@@ -22,6 +23,20 @@ export function App({ services }: { services: AppServices }) {
     setHome(key === "home");
     if (key !== "home") pages.select(key);
   };
+  useEffect(
+    () =>
+      registerAppShortcuts(
+        services.shortcuts,
+        services.appearance,
+        () => {
+          setHome(false);
+          pages.select("settings");
+          document.getElementById("main-content")?.focus();
+        },
+        startup === "ready",
+      ),
+    [services, pages.select, startup],
+  );
   const selected = home ? "home" : pages.selected;
   const presentation = home
     ? shellPresentation.home

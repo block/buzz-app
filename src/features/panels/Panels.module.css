@@ -9,7 +9,7 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
   box-shadow: var(--elevation-card);
-  font-size: 14px;
+  font-size: calc(14px * var(--buzz-text-scale, 1));
   color: var(--text);
 }
 .heading {

@@ -65,7 +65,10 @@ test("editing selected name plus pasting same name cannot transfer notification 
         .getByRole("button", { name: `Honey ${first}`, exact: true })
         .click();
       await expect(input).toHaveValue("@Honey ");
-      await input.focus();
+      // The picker restores focus/caret on the next animation frame. Let that
+      // finish before establishing the selection this edit is meant to replace.
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      await expect(input).toBeFocused();
       await input.evaluate(
         (e, { start, end }) => e.setSelectionRange(start, end),
         scenario,

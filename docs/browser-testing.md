@@ -71,6 +71,29 @@ replaces that output; copy artifacts before a rerun if you need to compare them.
 A dirty-status listing is not a content hash; tie release claims to a separately
 verified clean commit or source manifest.
 
+## CI platform and unresolved Linux coverage
+
+Both browser phases use standard GitHub-hosted `macos-26` ARM64 runners, aligned
+with the original Apple Silicon baseline. JavaScript and Rust/tool integration
+remain on `ubuntu-24.04`. This is a CI platform choice, not a macOS-only product
+support policy. Hosted speed and repeatability must be measured on those runners;
+a local Mac pass is not hosted-runner evidence.
+
+**Linux Chromium and Linux WebKit are not covered by these browser jobs.** Linux
+unit/native checks do not replace that coverage. The pinned Playwright 1.60.0
+Linux WebKit has an unresolved open-stream live-edit delivery failure: the fetch
+reader can leave part of an event undelivered while the SSE connection remains
+open, preventing the edited row from updating. The
+[Linux measurement run at `d25ed65`](https://github.com/block/buzz-app/actions/runs/34538518724)
+remains failing evidence, not a waived assertion or a defect fixed by macOS CI.
+
+Closing this limitation requires unchanged Linux Chromium/WebKit journeys and
+budgets to pass, plus complete live-edit delivery while the stream remains open
+without a later write, heartbeat or close rescuing it. An engine update needs that
+verification; a suspected upstream fix alone is insufficient. Both engines,
+serial measurements, functional shards, zero retries and the strict aggregate
+remain mandatory on the selected CI platform.
+
 ## What fails the gate
 
 Actual-app scrolling and layout journeys run in each engine:

@@ -30,7 +30,7 @@ runs:
       if: inputs.browsers == 'true'
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
-        path: ~/.cache/ms-playwright
+        path: ${{ runner.os == 'macOS' && '~/Library/Caches/ms-playwright' || '~/.cache/ms-playwright' }}
         key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
     - name: Install pinned browser engines and libraries
       if: inputs.browsers == 'true'

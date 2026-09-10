@@ -2,8 +2,9 @@
 
 `pnpm test` and therefore `just scan` now run the checked-in Chromium and WebKit
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
-There is no repository-hosted CI configuration yet: this is an executable local
-and CI-ready gate, not a claim that the relay runs it on every push.
+[GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
+pushes: an isolated serial measurement job gates two functional shards. Both
+engines remain mandatory; failures and skipped dependencies keep CI red.
 Owner-specific tests are colocated in `src/` and `dev/`; separate manual diagnostic
 pages live in `tests/fixtures/`. See [test organization and fixture URLs](contributing.md#test-organization).
 
@@ -164,7 +165,7 @@ traffic. The existing channel-opening journey keeps optional names behind readin
 These tests model roster removal and explicitly refresh: they do **not** establish
 which event or reconnect triggers deployed deletion catch-up, or require the
 separate proposed relay notification patch. They run in both engines under the
-normal `pnpm test` / `just scan` gate, which is local/CI-ready but not relay-enforced.
+normal `pnpm test` / `just scan` gate, which also runs in GitHub Actions (not relay-enforced).
 
 ## Measurements, not timing guarantees
 

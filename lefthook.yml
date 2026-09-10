@@ -6,3 +6,8 @@ check-staged:
   jobs:
     - name: format-and-lint
       run: bin/node scripts/check-staged.mjs
+check-push:
+  jobs:
+    - name: related-unit-tests
+      use_stdin: true
+      run: bin/node scripts/check-push.mjs

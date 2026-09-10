@@ -25,9 +25,10 @@ and the pinned pnpm package's Intel Mac limitation.
 Run **one** of `just web` or `just desktop` at a time; both use port 1430.
 Without live opt-in they run the shell without relay identity access.
 `just iterate` applies formatting and runs fast checks plus the frontend build.
-`just scan` adds tests and native checks. CI is not configured.
-Install the fast, staged-file pre-commit guard once per worktree with
-`bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#pre-commit-checks).
+`just scan` adds tests and native checks. [PR CI](.github/workflows/ci.yml) runs
+those checks in cached, parallel jobs with sharded browser journeys.
+Install the fast staged-file pre-commit and related-test pre-push hooks once per worktree with
+`bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#git-hooks).
 
 ## Relay channels
 

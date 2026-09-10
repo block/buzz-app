@@ -155,8 +155,9 @@ scan; changes to tool/config dependencies still require broad validation.
 
 ### Fast pre-push feedback
 
-Pre-push runs only Vitest tests related to the branch's changed JS/TS inputs,
-using the locally available merge base with `origin/main`. Documentation-only
+Pre-push runs the project TypeScript check (`tsc --noEmit`), then Vitest tests
+related to the branch's changed JS/TS inputs, using the locally available merge
+base with `origin/main`. Documentation-only
 and native-only pushes skip this runner. Shared JS configuration/dependency
 changes, source deletions, or a missing base run the full Vitest suite instead.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
@@ -167,7 +168,9 @@ Install dependencies when switching branches, not during a push.
 
 This is advisory coverage of the current working tree, not a replacement for CI:
 uncommitted edits can affect results, dynamic dependencies may not be selected,
-and non-HEAD refs are explicitly left to CI. Test failures still block the push.
+and non-HEAD refs are explicitly left to CI. Type errors and test failures block
+the push. TypeScript uses the root `tsconfig.json`; it does not typecheck plain
+JavaScript browser tests or prove runtime service provisioning.
 Do not edit files concurrently with hooks. First-use Hermit tool downloads can
 add setup time; normal warm hooks use the pinned tools already installed.
 

@@ -314,6 +314,19 @@ function pushFixture(t, changes) {
   // A fake Vitest executable records the production hook's selected arguments.
   // It lives only in this disposable repository, never the source node_modules.
   rmSync(path.join(f.dir, "node_modules"));
+  mkdirSync(path.join(f.dir, "node_modules"));
+  symlinkSync(
+    path.join(root, "node_modules/typescript"),
+    path.join(f.dir, "node_modules/typescript"),
+    "dir",
+  );
+  f.write(
+    "tsconfig.json",
+    JSON.stringify({
+      compilerOptions: { types: [], skipLibCheck: true },
+      include: ["src", "untouched.ts", "vitest.config.ts"],
+    }),
+  );
   f.write(
     "node_modules/vitest/vitest.mjs",
     `import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -369,6 +382,21 @@ test("source deletion runs all JS tests instead of losing dependency coverage", 
   f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete source");
   assert.equal(f.push().status, 0);
   assert.deepEqual(f.args(), ["run"]);
+});
+
+test("a type error blocks the actual Git push before unit tests", (t) => {
+  const f = pushFixture(t, {
+    "src/type-error.ts": 'export const value: number = "wrong";\n',
+  });
+  const result = f.push();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /TS2322/);
+  assert.throws(() => f.args(), /ENOENT/);
+  assert.notEqual(
+    f.run("git", ["--git-dir=remote.git", "rev-parse", "refs/heads/probe"])
+      .status,
+    0,
+  );
 });
 
 test("failing related tests block the actual Git push", (t) => {

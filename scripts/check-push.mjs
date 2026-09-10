@@ -71,8 +71,15 @@ if (base.status === 0) {
     ];
 }
 console.log(
-  "Pre-push: JS unit tests only; no installs, native builds or browsers.",
+  "Pre-push: TypeScript and JS unit tests; no installs, native builds or browsers.",
 );
+const types = spawnSync(
+  process.execPath,
+  [resolve("node_modules/typescript/bin/tsc"), "--noEmit"],
+  { stdio: "inherit" },
+);
+if (types.error) console.error(types.error.message);
+if (types.status !== 0) process.exit(types.status ?? 1);
 const result = spawnSync(
   process.execPath,
   [resolve("node_modules/vitest/vitest.mjs"), ...args],

@@ -1,0 +1,107 @@
+import { test, expect } from "./fixture.mjs";
+import { open } from "./timeline.mjs";
+
+test.use({ productionBroker: true, largeSidebar: true });
+const heads = (app, channel) =>
+  app.report.queries.filter(
+    ({ filter }) =>
+      filter.kinds?.includes(9) &&
+      filter["#h"]?.includes(channel) &&
+      filter.until === undefined,
+  );
+
+test("cold opening bypasses held DM labels; warm switching paints within 100ms without a head read", async ({
+  page,
+  app,
+}) => {
+  const submittedHeads = [];
+  page.on("request", (request) => {
+    if (!new URL(request.url()).pathname.endsWith("/query")) return;
+    for (const filter of request.postDataJSON() ?? [])
+      if (filter.kinds?.includes(9) && filter.until === undefined)
+        submittedHeads.push(filter);
+  });
+  const labelReads = () =>
+    app.report.queries.filter(
+      ({ filter }) =>
+        filter.kinds?.includes(0) &&
+        filter.authors?.some((id) => app.participants.includes(id)),
+    );
+  app.relay.holdProfiles(app.participants);
+  try {
+    await open(page, app);
+    await expect.poll(() => labelReads().length).toBe(1);
+    expect(labelReads()[0].filter.authors).toHaveLength(500);
+    // The actual label hook has >1,000 missing participants. Keep its profile
+    // response held through cold opening; do not bypass that production caller.
+    expect(heads(app, "beta")).toHaveLength(0);
+    await page.getByRole("button", { name: "Beta", exact: true }).click();
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    await expect(page.locator("[data-message-id]").first()).toBeVisible();
+    expect(heads(app, "beta").length).toBeGreaterThan(0);
+    expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
+    expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
+    const before = submittedHeads.length;
+    // Browser-clock click → first visible row → paint, excluding Playwright IPC.
+    for (const name of ["Alpha", "Beta", "Alpha", "Beta"]) {
+      const visibleMs = await page
+        .getByRole("button", { name, exact: true })
+        .evaluate(
+          async (button, { name, ids }) => {
+            const start = performance.now();
+            button.click();
+            await new Promise((resolve, reject) => {
+              const deadline = setTimeout(
+                () => reject(new Error("warm switch did not paint")),
+                1000,
+              );
+              const check = () => {
+                const composer = document.querySelector(
+                  `textarea[placeholder="Message #${name}"]`,
+                );
+                const history = document.querySelector(
+                  '[aria-label="Channel message history"]',
+                );
+                const rect = history?.getBoundingClientRect();
+                const visible =
+                  rect &&
+                  [...history.querySelectorAll("[data-message-id]")].some(
+                    (row) => {
+                      const bounds = row.getBoundingClientRect();
+                      return (
+                        ids.includes(row.dataset.messageId) &&
+                        bounds.height > 0 &&
+                        bounds.bottom > rect.top &&
+                        bounds.top < rect.bottom
+                      );
+                    },
+                  );
+                if (!visible || !composer) return requestAnimationFrame(check);
+                requestAnimationFrame(() => {
+                  clearTimeout(deadline);
+                  resolve();
+                });
+              };
+              requestAnimationFrame(check);
+            });
+            return performance.now() - start;
+          },
+          {
+            name,
+            ids: app.histories
+              .get(`primary/${name.toLowerCase()}`)
+              .map((event) => event.id),
+          },
+        );
+      app.report.measurements.push({ name, warmVisibleMs: visibleMs });
+      expect(visibleMs).toBeLessThan(100);
+    }
+    expect(submittedHeads).toHaveLength(before);
+    expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
+    expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
+  } finally {
+    app.relay.releaseProfiles();
+  }
+});

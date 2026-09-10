@@ -1,36 +1,213 @@
-# buzz-app README
+# Buzz Foundation
 
-Congrats, project leads! You got a new project to grow!
+Shared React frontend for web and Tauri desktop, with bundled page plugins and
+local desktop plugins managed by `buzzodz`. Channels reads the relay through a
+shared data service; the GitHub plugin adds rich reference panels to channels.
 
-This stub is meant to help you form a strong community around your work. It's yours to adapt, and may 
-diverge from this initial structure. Just keep the files seeded in this repo, and the rest is yours to evolve! 
+## Run
 
-## Introduction
+Hermit pins just, Node.js 24, pnpm 11.8.0, and Rust in `bin/`; no global tool
+installation is needed. From the repository root, activate the pinned environment:
 
-Orient users to the project here. This is a good place to start with an assumption
-that the user knows very little - so start with the Big Picture and show how this
-project fits into it.
+```sh
+source bin/activate-hermit
+just web
+just desktop
+```
 
-Then maybe a dive into what this project does.
+Or run `bin/just web` / `bin/just desktop` without activation. Tools download from
+public Hermit sources. Dependencies use npm's public registry by default; local
+registry and CA settings remain in effect. Desktop
+builds still require the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
+See [contributing](docs/contributing.md) for exact pins, registry settings,
+and the pinned pnpm package's Intel Mac limitation.
 
-Diagrams and other visuals are helpful here. Perhaps code snippets showing usage.
+Run **one** of `just web` or `just desktop` at a time; both use port 1430.
+Without live opt-in they run the shell without relay identity access.
+`just iterate` applies formatting and runs fast checks plus the frontend build.
+`just scan` adds tests and native checks. CI is not configured.
+Install the fast, staged-file pre-commit guard once per worktree with
+`bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#pre-commit-checks).
 
-Project leads should complete, alongside this `README`:
+## Relay channels
 
-* [CODEOWNERS](./CODEOWNERS) - set project lead(s)
-* [CONTRIBUTING.md](./CONTRIBUTING.md) - Fill out how to: install prereqs, build, test, run, access CI, chat, discuss, file issues
-* [Bug-report.md](.github/ISSUE_TEMPLATE/bug-report.md) - Fill out `Assignees` add codeowners @names
-* [config.yml](.github/ISSUE_TEMPLATE/config.yml) - remove "(/add your discord channel..)" and replace the url with your Discord channel if applicable
+Live development currently requires **macOS and an existing Buzz account in the
+`buzz-desktop` / `secrets` Keychain entry**. This development broker is not native
+sign-in and is not included in packaged builds.
 
-The other files in this template repo may be used as-is:
+1. Copy your existing Buzz account's **public key** (npub or 64-character hex).
+2. Add it to the git-ignored `.env.local` at this repository's root. The optional
+   relay settings below are examples only; replace them with your community's origin:
+   ```dotenv
+   BUZZ_DEV_VIEWER=npub1YOUR_PUBLIC_KEY
+   # Optional default for unscoped development-broker requests:
+   BUZZ_RELAY_URL=wss://relay.example.com
+   # Optional compatibility map for memberships saved with short aliases:
+   BUZZ_COMMUNITY_ALIASES='{"example":"wss://relay.example.com"}'
+   ```
+   Never put an nsec/private key in this file. The public pin explicitly authorizes
+   the account to use; it does not import or change a key. Relay URLs and aliases
+   are public configuration, not secrets. With both relay settings unset, there is
+   no default relay or alias map; Personal space and communities saved by canonical
+   URL remain usable. Configuration does not automatically join a community.
+3. Start **one** live development target:
+   ```sh
+   BUZZ_LIVE=1 just web
+   # Or, instead of web:
+   BUZZ_LIVE=1 just desktop
+   ```
 
-* [GOVERNANCE.md](./GOVERNANCE.md)
-* [LICENSE](./LICENSE)
+The broker reads the existing Keychain credential only after validating the
+public pin, refuses mismatches and never falls back to another credential. If it
+reports a mismatch, check which account your existing Buzz installation uses;
+do not delete or replace its Keychain entry. Environment variables override
+`.env.local`. Restart the dev server after changing the configuration. Without
+an existing supported credential, live development is unavailable; shell and
+fixture tests still work.
 
-## Project Resources
+The broker supports reads, live traffic and basic message sending **as your real
+account**. Profile changes and invite admission can also write to real communities.
+Use **Switch community → Add a community** and type the community's `wss://` or
+`https://` relay origin (no path, credentials, query or fragment). For example,
+`wss://relay.example.com` and `https://relay.example.com` identify the same relay
+origin. Continue contacts that destination using your
+identity; joining or publishing a profile is a later explicit step. Then open
+Messages, choose a channel, and click a GitHub reference. See
+[the channel extension contract and data budgets](docs/channels.md) for ownership,
+performance, validation, and limitations.
 
-| Resource                                   | Description                                                                    |
-| ------------------------------------------ | ------------------------------------------------------------------------------ |
-| [CODEOWNERS](./CODEOWNERS)                 | Outlines the project lead(s)                                                   |
-| [GOVERNANCE.md](./GOVERNANCE.md)           | Project governance                                                             |
-| [LICENSE](./LICENSE)                       | Apache License, Version 2.0                                                    |
+Home, Channels, and GitHub can each be toggled independently in Settings.
+
+See [client and community ownership](docs/communities.md) for the minimal join/profile flow, session scopes, and switching checks.
+
+## CLI
+
+Run `pnpm buzzodz --help` from this repository, or install the standalone executable:
+
+```sh
+cargo install --locked --path crates/plugin-manager --bin buzzodz
+buzzodz plugin init /tmp/my-page example.page "My page"
+pnpm --dir /tmp/my-page install
+buzzodz plugin build /tmp/my-page
+buzzodz plugin install /tmp/my-page/dist
+buzzodz plugin enable example.page
+buzzodz plugin list
+```
+
+The CLI prints readable results and reports errors with a nonzero exit code.
+`disable`, `remove`, and
+`rollback` take a plugin ID. New installs start disabled; updates preserve their
+existing enabled state. `recover` backs up management settings and resets to
+bundled defaults, preserving artifacts for reinstallation.
+
+`--home ABSOLUTE_PATH` and `--profile NAME` precede `plugin`. The desktop and CLI
+also read `BUZZODZ_HOME` and `BUZZODZ_PROFILE` (default: `default`). Match these to
+target the same instance. Otherwise, profiles live under the OS application-data
+directory in `dev.local.buzz.foundation/profiles`.
+
+```sh
+BUZZODZ_PROFILE=experiment just desktop
+buzzodz --profile experiment plugin list
+```
+
+`BUZZODZ_SAFE_MODE=1 just desktop` opens the shell without external pages.
+Bundled pages work on web; their enabled settings are stored in that browser.
+Folder and Git/GitHub loading is available in **desktop Settings → Plugins**.
+Choose a folder, or enter an HTTPS/SSH repository URL and optional branch/tag;
+then select a built plugin subfolder and install it. New installs are disabled;
+updates retain their enabled state and may run immediately. Repositories must
+include built `manifest.json` + `plugin.js` artifacts—Buzz never runs project builds
+or install scripts. See [import behavior and limits](docs/plugin-architecture.md#loading-from-folders-and-repositories).
+Browser installation is not supported; the browser shows a desktop-only explanation.
+
+## Plugin contract
+
+`src/bundled/channels` is a bundled example. External projects have `manifest.json`
+(`id`, `name`, `apiVersion: 1`) and an entry point exporting
+`apply(ctx)`. `ctx` is a Cordis context. External JSX plugins export
+`inject = ["react", "pages"]` and obtain `const React = ctx.react` inside `apply`, then call
+`ctx.pages.register({ id, title, component })` to contribute a page. A plugin may register
+several pages or none. Page IDs are unique within their plugin. Buzz supplies React
+and owns the Cordis runtime (`@deepseek-ai/cordis` 4.0.2). Import their types only
+in external plugins; runtime imports are rejected by the scaffold's builder.
+
+The scaffold uses classic JSX, so normal JSX compiles against the local `React`
+variable. Components in other files can be created by a factory receiving that
+same React instance. Automatic `react/jsx-runtime` imports are not supported by
+the current standalone module format. Older plugins using `apply(ctx, host)` must
+switch to the React injectable and rebuild.
+
+Module evaluation must be pure. Enabled plugins activate even when their page is
+not selected. Register plugin resources with `ctx.effect(() => cleanup)`; these
+are disposed on disable, replacement, or app teardown. React effects belong to
+the visible page and clean up when navigating away. Plugin activation must finish
+within ten seconds, including waiting for required services. Losing a required
+service hides the plugin's pages while Cordis waits and reactivates it; each
+reactivation has a fresh ten-second deadline. Failed activation is shown in Settings;
+disable/enable or install a new revision to retry. Replacement waits for prior
+cleanup; if cleanup stalls, restart before that plugin can activate again.
+
+The CLI scaffolds `src/index.tsx`, a standard `vite.config.ts`, and a `pnpm build`
+script that type-checks and bundles the page. `buzzodz plugin build` runs that
+script; Node/pnpm are only needed for authoring, not installing or loading pages.
+
+API v1 distributes one self-contained JavaScript module; use inline styles or
+existing host classes. Separate CSS/assets are not supported. Type-check an
+external source project with `pnpm exec tsc` in that directory.
+
+The host owns navigation, Settings, loading errors, and render error boundaries.
+Settings controls and CLI management do not depend on plugin activation. Updates are detected while the app
+is running. A selected page remounts when its revision changes; its local React
+state resets. Plugin-specific persistent data has no host API yet.
+
+Plugins are trusted code executing in the app's JavaScript context. They are not
+sandboxed: infinite loops, global changes, and external side effects cannot be
+contained or rolled back by a React error boundary. Restart selects the bundled page, but enabled external plugins still activate.
+Use `BUZZODZ_SAFE_MODE=1` to pause external plugins for a launch if startup freezes.
+This leaves the profile’s saved enabled settings unchanged. The CLI remains usable if the UI
+freezes. Loaded JavaScript module revisions remain in memory until restart.
+
+See [foundation status and open gates](docs/status.md) for maintained decisions,
+remaining acceptance work and historical evidence.
+
+## Code entry points
+
+- `src/main.tsx` → `src/app/App.tsx`: startup and app shell
+- `src/plugins/api.ts` and `src/features/{pages,panels}/service.ts`: plugin contracts
+- `src/plugins/runtime.ts`: Cordis activation and disposal
+- `src/plugins/storage.ts`: web/desktop storage adapter
+- `crates/plugin-manager`: shared Rust manager and `buzzodz`
+- `src-tauri/src/lib.rs`: desktop commands delegating to that manager
+
+The app composes core services once in `src/app/services.ts` and passes the page
+reader directly to the React shell. Cordis owns plugin dependencies and effects;
+React owns rendering, subscriptions, and page selection. The shell is ordinary
+app UI and remains available when no plugins are active.
+
+`src/features/pages` owns page registration, activation filtering, and rendering.
+It observes plugin status through a Cordis service; it does not import app wiring.
+`src/plugins` owns installation and executable lifetimes, including the adapter
+from Cordis state changes to observable plugin status. Bundled features use the
+same registration contract as external plugins. Target-based panels provide a second extension point alongside pages; both use the same
+contribution ownership and readiness implementation.
+
+Release signing, updating, and distribution are not configured. To exercise a
+local macOS bundle with embedded frontend assets: `pnpm tauri build --debug --bundles app`.
+
+### Agents compatibility preview
+
+In live development mode, Agents reads the **installed Buzz** library on this
+Mac (`~/Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json`)
+without changing it. The separate Buzz development-build library is not merged.
+It shows selected definitions and linked public identities; Refresh reads changes
+made in Buzz. No creation, configuration, migration, member addition or runtime
+controls are included. Keep Buzz running for existing agents to answer selected
+`@` mentions in their channels and threads. See [scope and manual checks](docs/agents.md).
+
+## Project resources
+
+- [Contributing](docs/contributing.md)
+- [Project leads](CODEOWNERS)
+- [Governance](GOVERNANCE.md)
+- [Apache-2.0 license](LICENSE)
+- [Source attribution](NOTICE.md)

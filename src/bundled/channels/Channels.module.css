@@ -1,0 +1,295 @@
+/* Separate bento surfaces; the shell owns the gradient and outer gutter. */
+.root {
+  height: 100%;
+  min-height: 0;
+  color: var(--text);
+  font-size: 14px;
+}
+.root button {
+  color: inherit;
+}
+.board {
+  display: grid;
+  grid-template-columns: 216px minmax(0, 1fr);
+  gap: 16px;
+  height: 100%;
+  position: relative;
+  overflow: hidden;
+}
+.withPanel {
+  grid-template-columns: 216px minmax(320px, 1.1fr) minmax(300px, 1fr);
+}
+.sidebar,
+.conversation {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-card);
+}
+.sidebar {
+  padding: 10px;
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  margin-bottom: 16px;
+  border-radius: 14px;
+  background: var(--surface-input);
+  color: var(--text-muted);
+}
+.search input {
+  border: 0;
+  outline: none;
+  background: none;
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+}
+.search:focus-within {
+  outline: 2px solid var(--focus);
+}
+.channelList {
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  gap: 1px;
+  flex: 1;
+}
+.channelSection {
+  flex-shrink: 0;
+}
+.channelSection + .channelSection {
+  margin-top: 12px;
+}
+.channelSection > summary {
+  padding: 6px 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.channelList button {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 9px;
+  border: 0;
+  background: none;
+  padding: 5px 8px;
+  min-height: 30px;
+  line-height: 20px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+.channelList button svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+.channelList button:hover {
+  background: var(--surface-hover);
+}
+.channelList button[aria-current="page"] {
+  background: var(--surface-accent);
+  color: var(--text);
+  font-weight: 550;
+}
+.preferenceNotice {
+  padding: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  border-top: 1px solid var(--border);
+}
+.preferenceNotice button {
+  display: block;
+  margin-top: 5px;
+  border: 0;
+  background: none;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.heading {
+  min-height: 58px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.heading button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: var(--surface-control);
+  padding: 7px 9px;
+  font-size: 12px;
+}
+.heading button[aria-pressed="true"] {
+  background: var(--selected);
+  color: var(--on-selected);
+}
+.channelTitle {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+.channelTitle strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.empty {
+  padding: 30px 18px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.panelStack {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 12px;
+}
+.companion {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  min-height: 0;
+  min-width: 0;
+}
+.connect {
+  height: 100%;
+  background: color-mix(in srgb, var(--surface) 79%, transparent);
+  border-radius: var(--radius-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  padding: 32px;
+  text-align: center;
+}
+.connectIcon {
+  padding: 20px;
+  border-radius: 22px;
+  color: var(--link);
+  background: var(--surface-control);
+  margin-bottom: 16px;
+}
+.connect h1 {
+  font-size: 28px;
+}
+.connect p {
+  max-width: 550px;
+  color: var(--text-muted);
+}
+.connect button {
+  margin: 15px 0;
+}
+.note {
+  font-size: 12px;
+}
+@media (max-width: 1000px) {
+  .board,
+  .withPanel {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+  .withPanel .panelStack {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(420px, calc(100% - 206px));
+    z-index: 2;
+    box-shadow: var(--elevation-dock);
+  }
+}
+@media (max-width: 650px) {
+  .board,
+  .withPanel {
+    grid-template-columns: 124px minmax(0, 1fr);
+    gap: 8px;
+  }
+  .sidebar {
+    padding: 10px 5px;
+  }
+  .sidebar,
+  .conversation {
+    border-radius: var(--radius-card-compact);
+  }
+  .withPanel .panelStack {
+    width: 100%;
+  }
+  .heading {
+    padding: 12px;
+  }
+  .channelList button {
+    font-size: 12px;
+  }
+  .roster {
+    font-size: 10px;
+  }
+}
+.channelList button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.diagnostics {
+  position: relative;
+  flex-shrink: 0;
+}
+.diagnostics > summary {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  cursor: pointer;
+  list-style: none;
+  color: var(--text-muted);
+}
+.diagnostics > summary::-webkit-details-marker {
+  display: none;
+}
+.diagnostics > summary:hover {
+  background: var(--surface-accent);
+}
+.diagnosticsMenu {
+  position: absolute;
+  right: 0;
+  top: 36px;
+  z-index: 5;
+  width: min(300px, 70vw);
+  max-height: 60vh;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: var(--elevation-popover);
+  font-size: 12px;
+}
+.diagnosticsMenu summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.liveStatus {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 16px;
+  font-size: 12px;
+  background: var(--warning-surface);
+  color: var(--warning);
+  border-bottom: 1px solid var(--border);
+}

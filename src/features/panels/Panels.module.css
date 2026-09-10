@@ -1,0 +1,89 @@
+/* Shared card chrome; pages choose the surrounding layout. */
+.card {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--elevation-card);
+  font-size: 14px;
+  color: var(--text);
+}
+.heading {
+  min-height: 58px;
+  padding: 12px 16px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.heading button {
+  display: inline-flex;
+  flex-shrink: 0;
+  border: 0;
+  background: var(--surface-control);
+  color: inherit;
+  padding: 7px 9px;
+}
+.content {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+.frame {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+  gap: 16px;
+}
+.withCompanion {
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
+}
+.page {
+  min-width: 0;
+  min-height: 0;
+}
+.dock {
+  display: grid;
+  grid-auto-rows: minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+}
+@media (max-width: 1000px) {
+  .withCompanion {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .dock {
+    position: absolute;
+    inset: 0 0 0 auto;
+    width: min(420px, 100%);
+    z-index: 2;
+    box-shadow: var(--elevation-dock);
+  }
+}
+@media (max-width: 650px) {
+  .card {
+    border-radius: var(--radius-card-compact);
+  }
+  .heading {
+    padding: 12px;
+  }
+  .dock {
+    width: 100%;
+  }
+}

@@ -1,0 +1,67 @@
+import { useSyncExternalStore } from "react";
+import { Moon, Sun } from "lucide-react";
+import type { Appearance } from "../shared/theme/service";
+
+/** Native radios provide one Tab stop and standard arrow-key selection. */
+export function AppearanceSettings({ appearance }: { appearance: Appearance }) {
+  const { mode, error } = useSyncExternalStore(
+    appearance.subscribe,
+    appearance.snapshot,
+  );
+  return (
+    <section aria-labelledby="appearance-settings-title">
+      <h2
+        id="appearance-settings-title"
+        className="mt-0 mb-3 text-lg font-medium"
+      >
+        Appearance
+      </h2>
+      <div className="ui-card p-5 sm:p-6">
+        <fieldset
+          className="m-0 min-w-0 border-0 p-0"
+          aria-describedby="appearance-description"
+        >
+          <legend className="mb-2 text-base font-medium">Color mode</legend>
+          <p
+            id="appearance-description"
+            className="mt-0 mb-5 text-sm text-muted"
+          >
+            Choose how Buzz looks on this device. Your choice is saved
+            automatically.
+          </p>
+          <div className="grid gap-3 @min-[24rem]:grid-cols-2">
+            {(
+              [
+                ["light", "Light", Sun],
+                ["dark", "Dark", Moon],
+              ] as const
+            ).map(([value, label, Icon]) => (
+              <label
+                key={value}
+                className="ui-choice flex cursor-pointer items-center gap-3 p-4"
+              >
+                <input
+                  type="radio"
+                  name="color-mode"
+                  value={value}
+                  checked={mode === value}
+                  onChange={() => appearance.setMode(value)}
+                />
+                <Icon size={20} aria-hidden="true" />
+                <span className="font-medium">{label}</span>
+              </label>
+            ))}
+          </div>
+        </fieldset>
+        {error && (
+          <div role="alert" className="notice mb-0">
+            <p>{error}</p>
+            <button type="button" onClick={() => appearance.setMode(mode)}>
+              Retry saving appearance
+            </button>
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}

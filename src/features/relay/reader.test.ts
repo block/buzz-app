@@ -1,0 +1,187 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { createRelayReader } from "./reader";
+import { flush, scriptedTransport } from "./testing";
+
+const owners: ReturnType<typeof createRelayReader>[] = [];
+function setup(options: Parameters<typeof createRelayReader>[1] = {}) {
+  const scripted = scriptedTransport("viewer", "relay");
+  const owner = createRelayReader(scripted.transport, options);
+  owners.push(owner);
+  return { ...scripted, ...owner, read: owner.reader.read };
+}
+afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
+  vi.useRealTimers();
+});
+const filter = (id: string) => [{ kinds: [9], "#h": [id], limit: 80 }];
+
+it("shares equivalent concurrent filters but keeps each consumer's cancellation independent", async () => {
+  const { read, next, pending } = setup();
+  const a = new AbortController(),
+    b = new AbortController();
+  const first = read([{ kinds: [7, 5], "#e": ["b", "a"], limit: 50 }], {
+    signal: a.signal,
+  });
+  const second = read([{ limit: 50, "#e": ["a", "b", "a"], kinds: [5, 7] }], {
+    signal: b.signal,
+  });
+  expect(pending).toHaveLength(1);
+  const wire = next();
+  const rejected = expect(first).rejects.toMatchObject({ name: "AbortError" });
+  a.abort();
+  await rejected;
+  expect(wire.signal?.aborted).toBe(false);
+  wire.respond([]);
+  expect(await second).toEqual([]);
+  const again = read([{ kinds: [5, 7], "#e": ["a", "b"], limit: 50 }]);
+  expect(pending).toHaveLength(1); // Settled results are owned by domain models, not cached here.
+  next().respond([]);
+  await again;
+});
+it("reserves foreground capacity and promotes an existing queued background read", async () => {
+  const { read, pending, next } = setup();
+  const a = read(filter("a"), { priority: "background" });
+  const b = read(filter("b"), { priority: "background" });
+  expect(pending).toHaveLength(1);
+  const promoted = read(filter("b"));
+  const c = read(filter("c"));
+  expect(pending).toHaveLength(3);
+  next().respond([]);
+  next().respond([]);
+  next().respond([]);
+  await Promise.all([a, b, c, promoted]);
+});
+it("removes cancelled queued work and rejects late results after invalidation", async () => {
+  const { read, next, pending, invalidate } = setup();
+  const old = read(filter("a"), { priority: "background" });
+  const wire = next();
+  const controller = new AbortController();
+  const queued = read(filter("b"), {
+    priority: "background",
+    signal: controller.signal,
+  });
+  const stopped = expect(queued).rejects.toMatchObject({ name: "AbortError" });
+  controller.abort();
+  await stopped;
+  const revoked = expect(old).rejects.toMatchObject({ name: "AbortError" });
+  invalidate((filters) => filters.some((f) => f["#h"]?.includes("a")));
+  await revoked;
+  const fresh = read(filter("a"));
+  wire.respond([]);
+  await flush();
+  expect(pending).toHaveLength(1);
+  next().respond([]);
+  await fresh;
+});
+it("bounds stalled and queued reads and permits explicit retry", async () => {
+  vi.useFakeTimers();
+  const { read, next, pending } = setup({ timeoutMs: 100, maxPending: 2 });
+  const a = read(filter("a"), { priority: "background" });
+  const b = read(filter("b"), { priority: "background" });
+  const failures = Promise.all([
+    expect(a).rejects.toThrow("timed out"),
+    expect(b).rejects.toThrow("timed out"),
+  ]);
+  await expect(read(filter("c"))).rejects.toThrow("Too many");
+  const wire = next();
+  await vi.advanceTimersByTimeAsync(101);
+  await failures;
+  expect(wire.signal?.aborted).toBe(true);
+  // A queued job can start at the deadline of an earlier job; it still expires at its own deadline.
+  pending.splice(0);
+  const retry = read(filter("a"));
+  next().respond([]);
+  await retry;
+});
+it("propagates failures, isolates sessions, and settles all work on disposal", async () => {
+  const one = setup(),
+    two = setup();
+  const a = one.read(filter("a")),
+    b = two.read(filter("a"));
+  one.next().fail(new Error("offline"));
+  await expect(a).rejects.toThrow("offline");
+  two.next().respond([]);
+  await expect(b).resolves.toEqual([]);
+  const running = one.read(filter("a"));
+  const rejected = expect(running).rejects.toMatchObject({
+    name: "AbortError",
+  });
+  one.dispose();
+  await rejected;
+  await expect(one.read(filter("a"))).rejects.toMatchObject({
+    name: "AbortError",
+  });
+});
+it("supports the desktop's ID, reference, address, and application-data reads without channel state", async () => {
+  const { read, next } = setup();
+  const filters = [
+    { ids: ["event"], limit: 1 },
+    {
+      kinds: [40002, 9],
+      "#e": ["root"],
+      depth_limit: 10,
+      thread_cursor: 100,
+      thread_cursor_id: "reply",
+      limit: 80,
+    },
+    {
+      kinds: [9],
+      search: "design",
+      search_mode: "prefix" as const,
+      page: 2,
+      limit: 20,
+    },
+    { kinds: [9], feed_types: ["mentions", "activity"], since: 100, limit: 20 },
+    { kinds: [13534], authors: ["relay"], limit: 1 },
+    { kinds: [1621], "#a": ["30617:owner:repo"], limit: 200 },
+    {
+      kinds: [30078],
+      authors: ["viewer"],
+      "#t": ["read-state"],
+      since: 100,
+      limit: 500,
+    },
+    { kinds: [30030], "#d": ["emojis"], limit: 500 },
+  ];
+  for (const filter of filters) {
+    const result = read([filter]);
+    const wire = next();
+    expect(wire.filters).toEqual([filter]);
+    wire.respond([]);
+    await expect(result).resolves.toEqual([]);
+  }
+});
+
+it("preserves ordered bridge extensions and distinguishes their request identity", async () => {
+  const { read, next, pending } = setup();
+  const first = read([
+    { kinds: [9], feed_types: ["mentions", "activity"], limit: 20 },
+  ]);
+  const second = read([
+    { kinds: [9], feed_types: ["activity", "mentions"], limit: 20 },
+  ]);
+  expect(pending).toHaveLength(2);
+  const a = next(),
+    b = next();
+  expect(a.filters[0]?.feed_types).toEqual(["mentions", "activity"]);
+  expect(b.filters[0]?.feed_types).toEqual(["activity", "mentions"]);
+  a.respond([]);
+  b.respond([]);
+  await Promise.all([first, second]);
+});
+
+it("fresh reads retain scheduler bounds but never join older or simultaneous equal work", async () => {
+  const h = setup();
+  const old = h.read(filter("c"));
+  const one = h.read(filter("c"), { fresh: true });
+  const two = h.read(filter("c"), { fresh: true });
+  const three = h.read(filter("c"), { fresh: true });
+  expect(h.pending).toHaveLength(3);
+  h.next().respond([]);
+  await flush();
+  expect(h.pending).toHaveLength(3);
+  h.next().respond([]);
+  h.next().respond([]);
+  h.next().respond([]);
+  await Promise.all([old, one, two, three]);
+});

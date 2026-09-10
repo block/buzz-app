@@ -1,0 +1,8 @@
+# A custom group avoids Lefthook's implicit pre-commit stash/restage machinery.
+# .githooks/pre-commit invokes this group; the helper owns staged-file safety.
+min_version: 2.1.12
+no_auto_install: true
+check-staged:
+  jobs:
+    - name: format-and-lint
+      run: bin/node scripts/check-staged.mjs

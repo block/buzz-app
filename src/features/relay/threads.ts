@@ -1,0 +1,367 @@
+import type { ChannelMessage } from "./contracts";
+import type { EventData, RelayEvent } from "./events";
+import type { LocalEvents } from "./outbox";
+import type { RelayReader } from "./reader";
+import { byteSize } from "./budget";
+import { foldMessages } from "./fold";
+
+const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
+const PAGE_SIZE = 50;
+const MAX_PAGES = 10;
+const MAX_EVENTS = 2000;
+const MAX_BYTES = 4 * 1024 * 1024;
+const contentKind = (event: EventData) => [9, 40002].includes(event.kind);
+const inChannel = (event: EventData, channelId: string) =>
+  event.tags.some(([name, value]) => name === "h" && value === channelId);
+const compare = (a: EventData, b: EventData) =>
+  a.created_at - b.created_at || a.id.localeCompare(b.id);
+
+/** NIP-10 matches relay ingest: last valid marked root/reply wins; a lone root is not a reply. */
+export function threadReference(event: EventData) {
+  let root: string | undefined;
+  let reply: string | undefined;
+  for (const [name, value, , marker] of event.tags) {
+    if (name !== "e" || !value || !/^[0-9a-f]{64}$/i.test(value)) continue;
+    if (marker === "root") root = value.toLowerCase();
+    if (marker === "reply") reply = value.toLowerCase();
+  }
+  return reply ? { rootId: root ?? reply, parentId: reply } : undefined;
+}
+
+export type ThreadSnapshot = Readonly<{
+  status: "idle" | "loading" | "ready" | "error";
+  root: ChannelMessage | undefined;
+  replies: readonly ChannelMessage[];
+  error: string | undefined;
+  /** Continuation is possible, not a claim about total thread size or exhaustion. */
+  canLoadMore: boolean;
+  limited: boolean;
+}>;
+export type ThreadView = {
+  snapshot(): ThreadSnapshot;
+  subscribe(listener: () => void): () => void;
+  refresh(): Promise<void>;
+  loadMore(): Promise<void>;
+  dispose(): void;
+};
+
+/** Session-owned evidence. Finite page cursors NEVER come from the live/local display union. */
+export function createThreadView({
+  channelId,
+  messageId,
+  relayAuthor,
+  reader,
+  seed,
+  local,
+  canAccess,
+  visible,
+  notify,
+}: {
+  channelId: string;
+  messageId: string;
+  relayAuthor: string;
+  reader: RelayReader;
+  seed: RelayEvent | undefined;
+  local: LocalEvents | undefined;
+  canAccess(): boolean;
+  visible(events: readonly RelayEvent[]): readonly RelayEvent[];
+  notify(listener: () => void): void;
+}) {
+  let disposed = false;
+  let rootId: string | undefined;
+  let rootUnavailable = false;
+  let remote: readonly RelayEvent[] = [];
+  let cursor: RelayEvent | undefined;
+  let pages = 0;
+  let controller: AbortController | undefined;
+  let again = false;
+  let snapshot: ThreadSnapshot = Object.freeze({
+    status: "idle",
+    root: undefined,
+    replies: Object.freeze([]),
+    error: undefined,
+    canLoadMore: false,
+    limited: false,
+  });
+  const listeners = new Set<() => void>();
+  function related<T extends EventData>(events: readonly T[]): T[] {
+    if (!rootId) return [];
+    const rows = events.filter(
+      (event) =>
+        !AUX.has(event.kind) &&
+        inChannel(event, channelId) &&
+        (event.id === rootId || threadReference(event)?.rootId === rootId),
+    );
+    const ids = new Set([...remote, ...rows].map((event) => event.id));
+    const result = new Map(rows.map((event) => [event.id, event]));
+    // Aux closure includes deletion of an auxiliary, not just direct row overlays.
+    for (let hop = 0; hop < 2; hop++) {
+      for (const event of events) {
+        if (!AUX.has(event.kind) || result.has(event.id)) continue;
+        if (
+          event.tags.some(
+            ([name, value]) => name === "e" && ids.has(value ?? ""),
+          )
+        ) {
+          result.set(event.id, event);
+          ids.add(event.id);
+        }
+      }
+    }
+    return [...result.values()];
+  }
+  function union(...batches: readonly (readonly RelayEvent[])[]) {
+    return [
+      ...new Map(batches.flat().map((event) => [event.id, event])).values(),
+    ];
+  }
+  function publish(patch: Partial<ThreadSnapshot> = {}) {
+    if (disposed) return;
+    const operations = canAccess() ? (local?.snapshot() ?? []) : [];
+    const inputs = new Map(
+      remote.map((event) => [event.id, event as EventData]),
+    );
+    for (const event of related(
+      operations
+        // Failed reply intent stays visible for same-event retry, just like channel
+        // messages; failed edits/reactions must not change the rendered content.
+        .filter((item) => item.delivery !== "failed" || contentKind(item.event))
+        .map((item) => item.event),
+    ))
+      inputs.set(event.id, event);
+    const deliveries = new Map(operations.map((item) => [item.event.id, item]));
+    const rows = foldMessages(
+      channelId,
+      relayAuthor,
+      rootUnavailable ? [] : [...inputs.values()],
+      {
+        includeReplies: true,
+      },
+    ).map((row) => {
+      const item = deliveries.get(row.id);
+      return item
+        ? Object.freeze({
+            ...row,
+            delivery: item.delivery,
+            deliveryError: item.error,
+          })
+        : row;
+    });
+    // Thread forward order differs from channel-history's descending-ID tiebreak.
+    const replies = rows
+      .filter((row) => row.id !== rootId)
+      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    snapshot = Object.freeze({
+      ...snapshot,
+      ...patch,
+      root: rows.find((row) => row.id === rootId),
+      replies: Object.freeze(replies),
+    });
+    for (const listener of listeners) notify(listener);
+  }
+  function retain(events: readonly RelayEvent[]) {
+    if (events.length > MAX_EVENTS || byteSize(events) > MAX_BYTES) {
+      // Never silently evict a deletion/ancestor then display resurrected content.
+      controller?.abort();
+      remote = [];
+      rootId = undefined;
+      cursor = undefined;
+      pages = 0;
+      again = false;
+      publish({
+        status: "error",
+        limited: true,
+        canLoadMore: false,
+        error:
+          "Thread view exceeded its memory limit. Refresh to read from the beginning.",
+      });
+      return false;
+    }
+    remote = events;
+    return true;
+  }
+  function receive(events: readonly RelayEvent[]) {
+    if (disposed || !canAccess() || !rootId) return;
+    const incoming = related(events);
+    if (!incoming.length) return;
+    if (retain(union(remote, incoming))) {
+      publish();
+    }
+  }
+  if (seed && canAccess() && contentKind(seed) && inChannel(seed, channelId)) {
+    rootId = threadReference(seed)?.rootId ?? seed.id;
+    if (seed.id === rootId) remote = [seed];
+    publish();
+  }
+  function purge(clear = false) {
+    controller?.abort();
+    controller = undefined;
+    again = false;
+    if (clear || !canAccess()) {
+      remote = [];
+      rootId = undefined;
+      cursor = undefined;
+      pages = 0;
+    } else remote = visible(remote);
+    publish({
+      status: "idle",
+      canLoadMore: false,
+      limited: false,
+      error: canAccess()
+        ? "Thread read interrupted. Refresh to continue."
+        : "This channel is no longer available.",
+    });
+  }
+  async function run(replace: boolean) {
+    if (disposed) return;
+    if (controller) {
+      if (replace) again = true;
+      return;
+    }
+    if (!canAccess()) {
+      purge();
+      return;
+    }
+    if (!replace && (!snapshot.canLoadMore || snapshot.limited)) return;
+    const owned = new AbortController();
+    controller = owned;
+    const active = () =>
+      !disposed && !owned.signal.aborted && controller === owned;
+    const targetPages = replace ? Math.max(1, pages) : 1;
+    let nextCursor = replace ? undefined : cursor;
+    let nextPages = replace ? 0 : pages;
+    let fetched: readonly RelayEvent[] = [];
+    publish({ status: "loading", error: undefined });
+    try {
+      if (!rootId) {
+        const selected = await reader.read(
+          [{ ids: [messageId], "#h": [channelId], limit: 1 }],
+          { signal: owned.signal },
+        );
+        if (!active()) return;
+        const event = selected.find(
+          (event) =>
+            event.id === messageId &&
+            contentKind(event) &&
+            inChannel(event, channelId),
+        );
+        if (!event) throw new Error("The selected message is unavailable.");
+        rootId = threadReference(event)?.rootId ?? event.id;
+      }
+      let more = false;
+      for (let page = 0; page < targetPages; page++) {
+        const events = await reader.read(
+          [
+            { ids: [rootId], "#h": [channelId], limit: 1 },
+            {
+              kinds: [9, 40002],
+              "#h": [channelId],
+              "#e": [rootId],
+              depth_limit: 100,
+              limit: PAGE_SIZE,
+              include_aux: true,
+              ...(nextCursor
+                ? {
+                    thread_cursor: nextCursor.created_at,
+                    thread_cursor_id: nextCursor.id,
+                  }
+                : {}),
+            },
+          ],
+          { signal: owned.signal },
+        );
+        if (!active()) return;
+        if (
+          !events.some(
+            (event) =>
+              event.id === rootId &&
+              contentKind(event) &&
+              inChannel(event, channelId) &&
+              !threadReference(event),
+          )
+        ) {
+          // Hide unavailable history without throwing away known tombstones.
+          rootUnavailable = true;
+          cursor = undefined;
+          pages = 0;
+          publish({ canLoadMore: false });
+          throw new Error("The original thread message is unavailable.");
+        }
+        // Count traversal rows before presentation filtering. The bridge may return
+        // other content kinds, and appended auxiliaries do not consume its page limit.
+        const replies = events
+          .filter(
+            (event) =>
+              !AUX.has(event.kind) &&
+              event.id !== rootId &&
+              inChannel(event, channelId) &&
+              threadReference(event)?.rootId === rootId,
+          )
+          .sort(compare);
+        if (
+          replies.some((event) => nextCursor && compare(event, nextCursor) <= 0)
+        )
+          throw new Error(
+            "Thread pagination did not advance. Refresh to try again.",
+          );
+        nextCursor = replies.at(-1) ?? nextCursor;
+        nextPages++;
+        fetched = union(fetched, related(events));
+        if (fetched.length > MAX_EVENTS || byteSize(fetched) > MAX_BYTES) {
+          retain(fetched);
+          return;
+        }
+        // Even a short page can be filtered after LIMIT. Continue until an empty
+        // response; label that as no more returned, never proven total history.
+        more = replies.length > 0;
+        if (!more) break;
+      }
+      if (!active()) return;
+      // A bounded response cannot retract observed evidence. Retain known edits,
+      // tombstones and live rows even when a later finite read omits them.
+      if (!retain(union(remote, fetched))) return;
+      rootUnavailable = false;
+      cursor = nextCursor;
+      pages = nextPages;
+      publish({
+        status: "ready",
+        error: undefined,
+        canLoadMore: more && pages < MAX_PAGES,
+        limited: more && pages >= MAX_PAGES,
+      });
+    } catch (error) {
+      if (active()) publish({ status: "error", error: String(error) });
+    } finally {
+      if (controller === owned) {
+        controller = undefined;
+        if (again && !disposed) {
+          again = false;
+          void run(true);
+        }
+      }
+    }
+  }
+  return {
+    channelId,
+    event: (id: string) => remote.find((event) => event.id === id),
+    receive,
+    purge,
+    changed: () => publish(),
+    view: {
+      snapshot: () => snapshot,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      refresh: () => run(true),
+      loadMore: () => run(false),
+      dispose() {
+        listeners.clear();
+        purge(true);
+        disposed = true;
+      },
+    } satisfies ThreadView,
+  };
+}

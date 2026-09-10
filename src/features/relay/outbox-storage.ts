@@ -1,0 +1,106 @@
+import type { OutboxStorage, OutgoingEvent } from "./outbox";
+
+/** Incremental asynchronous journal, atomically partitioned by relay and viewer. */
+export function browserOutboxStorage(scope: string): OutboxStorage {
+  let database: Promise<IDBDatabase> | undefined;
+  let persisted = new Map<string, OutgoingEvent>();
+  const open = () =>
+    (database ??= new Promise((resolve, reject) => {
+      const request = indexedDB.open("buzz-outbox-v2", 2);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains("partitions"))
+          db.createObjectStore("partitions");
+        if (!db.objectStoreNames.contains("events"))
+          db.createObjectStore("events", {
+            keyPath: ["scope", "id"],
+          }).createIndex("scope", "scope");
+      };
+      request.onsuccess = () => {
+        request.result.onversionchange = () => request.result.close();
+        resolve(request.result);
+      };
+      request.onerror = () => reject(request.error);
+      request.onblocked = () =>
+        reject(new Error("Close other Buzz windows to upgrade the outbox"));
+    }));
+  return {
+    async load() {
+      const db = await open();
+      let migrated = false;
+      const records = await new Promise<readonly OutgoingEvent[]>(
+        (resolve, reject) => {
+          const tx = db.transaction(["events", "partitions"]);
+          const entries = tx
+            .objectStore("events")
+            .index("scope")
+            .getAll(IDBKeyRange.only(scope));
+          const legacy = tx.objectStore("partitions").get(scope);
+          tx.oncomplete = () => {
+            try {
+              migrated = legacy.result === true;
+              const values = entries.result.map(
+                (entry: { operation: OutgoingEvent }) => entry.operation,
+              );
+              // The marker distinguishes a migrated empty journal from an un-migrated one.
+              resolve(
+                values.length || legacy.result === true
+                  ? values
+                  : (legacy.result ??
+                      JSON.parse(
+                        localStorage.getItem(`buzz-outbox-v1:${scope}`) ?? "[]",
+                      )),
+              );
+            } catch (error) {
+              reject(error);
+            }
+          };
+          tx.onabort = () => reject(tx.error);
+          tx.onerror = () => reject(tx.error);
+        },
+      );
+      // A first save migrates legacy records into the per-event store.
+      persisted = migrated
+        ? new Map(records.map((item) => [item.event.id, item]))
+        : new Map();
+      return records;
+    },
+    async save(operations) {
+      const db = await open();
+      const next = new Map(operations.map((item) => [item.event.id, item]));
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction(["events", "partitions"], "readwrite", {
+          durability: "strict",
+        });
+        const events = tx.objectStore("events");
+        for (const [id, operation] of next) {
+          const old = persisted.get(id);
+          if (
+            old &&
+            old.delivery === operation.delivery &&
+            old.error === operation.error &&
+            old.signed?.id === operation.signed?.id
+          )
+            continue;
+          events.put({ scope, id, operation });
+        }
+        for (const id of persisted.keys())
+          if (!next.has(id)) events.delete([scope, id]);
+        tx.objectStore("partitions").put(true, scope);
+        tx.oncomplete = () => {
+          persisted = next;
+          resolve();
+        };
+        tx.onabort = () =>
+          reject(tx.error ?? new Error("Outbox transaction aborted"));
+        tx.onerror = () => reject(tx.error);
+      });
+    },
+    close() {
+      void database?.then(
+        (db) => db.close(),
+        () => {},
+      );
+    },
+  };
+}

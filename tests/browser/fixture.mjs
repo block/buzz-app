@@ -118,6 +118,7 @@ export const test = base.extend({
         build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; no native or real relay`,
       },
       queries: [],
+      publications: [],
       sessions: [],
       streamConnections: [],
       errors: [],
@@ -389,6 +390,12 @@ export const test = base.extend({
             userKey,
             target.created_at + 1,
           );
+          report.publications.push({
+            id: event.id,
+            target: target.id,
+            kind: event.kind,
+            frameBytes: Buffer.byteLength(`data: ${JSON.stringify(event)}\n\n`),
+          });
           if (relay) relay.publish(community, event);
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);

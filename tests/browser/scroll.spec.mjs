@@ -1,4 +1,5 @@
 import { test, expect, historySize } from "./fixture.mjs";
+import { streamEvidence } from "./stream-evidence.mjs";
 
 import {
   settle,
@@ -13,6 +14,9 @@ import {
 // Keep non-paging reading gestures outside the unchanged near-top read zone,
 // even with a 20-row head. The cursor journey below keeps ordinary-height rows.
 const readingTest = test.extend({ tallMessages: true });
+const editTest = readingTest.extend({
+  streamEvidence: [streamEvidence, { auto: true }],
+});
 
 const rowSelector = "[data-message-id]";
 const history = (page) =>
@@ -338,7 +342,7 @@ test("cursor paging preserves visible anchors and keeps a large history virtuali
   });
 });
 
-readingTest(
+editTest(
   "live edits follow the bottom without stealing a reader's message anchor",
   async ({ page, app }) => {
     await open(page, app);

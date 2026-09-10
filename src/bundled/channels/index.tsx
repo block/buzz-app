@@ -1,7 +1,8 @@
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
-export const inject = ["pages", "relay", "panels"];
+export const inject = ["pages", "relay", "panels", "conversation"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  const extensions = ctx.conversation;
   const relay = ctx.relay;
   const panels = ctx.panels;
   ctx.pages.register({
@@ -10,7 +11,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     layout: "workspace",
     companion: true,
     component: ({ companion }) => (
-      <ChannelsPage relay={relay} panels={panels} companion={companion} />
+      <ChannelsPage
+        extensions={extensions}
+        relay={relay}
+        panels={panels}
+        companion={companion}
+      />
     ),
   });
 };

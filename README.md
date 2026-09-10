@@ -87,7 +87,10 @@ Run `pnpm buzzodz --help` from this repository, or install the standalone execut
 ```sh
 cargo install --locked --path crates/plugin-manager --bin buzzodz
 buzzodz plugin init /tmp/my-page example.page "My page"
-pnpm --dir /tmp/my-page install
+# Generate and pack the host-matched type-only preview once:
+pnpm author:build
+(cd dist-author && pnpm pack --pack-destination ..)
+pnpm --dir /tmp/my-page add -D "$PWD/buzz-author-0.0.0-preview.1.tgz"
 buzzodz plugin build /tmp/my-page
 buzzodz plugin install /tmp/my-page/dist
 buzzodz plugin enable example.page
@@ -119,6 +122,13 @@ updates retain their enabled state and may run immediately. Repositories must
 include built `manifest.json` + `plugin.js` artifacts—Buzz never runs project builds
 or install scripts. See [import behavior and limits](docs/plugin-architecture.md#loading-from-folders-and-repositories).
 Browser installation is not supported; the browser shows a desktop-only explanation.
+
+## Emoji and reusable conversation UI
+
+Emoji is independently toggleable in Settings. Its picker and custom rendering
+plug into shared conversation surfaces; catalog, event tags and delivery stay
+session-owned. The independent Composer Lab example reuses those surfaces and
+contributes a timestamp tool.
 
 ## Plugin contract
 

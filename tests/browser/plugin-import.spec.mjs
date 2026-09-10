@@ -209,7 +209,7 @@ test("checked-in local examples activate and work independently", async ({
   const samples = await Promise.all(
     ["counter", "notes"].map(async (name) => {
       const folder = new URL(
-        `../../examples/try-plugins/${name}/`,
+        `../../examples/plugins/${name}/`,
         import.meta.url,
       );
       return {

@@ -1,3 +1,4 @@
+import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   useCallback,
   useEffect,
@@ -38,10 +39,12 @@ import { sidebarSections } from "./sidebar-sections";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
+  extensions,
   relay,
   panels,
   companion,
 }: {
+  extensions?: ConversationExtensions | undefined;
   relay: RelayData;
   panels: Panels;
   companion?: ReactNode;
@@ -80,6 +83,7 @@ export function ChannelsPage({
         </PanelFrame>
       ) : (
         <ChannelWorkspace
+          extensions={extensions}
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
           queries={session.session}
@@ -92,11 +96,13 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
+  extensions,
   queries,
   panels,
   scope,
   companion,
 }: {
+  extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
   scope: string;
   queries: RelaySession;
@@ -342,6 +348,7 @@ function ChannelWorkspace({
         />
         {current ? (
           <ChannelBody
+            extensions={extensions}
             key={current.id}
             queries={queries}
             scope={scope}
@@ -357,6 +364,7 @@ function ChannelWorkspace({
         )}
         {current && (
           <MessageComposer
+            extensions={extensions}
             key={`composer:${current.id}`}
             session={queries}
             scope={scope}
@@ -370,6 +378,7 @@ function ChannelWorkspace({
         <div className={styles.panelStack}>
           {showingThread && (
             <ThreadPanel
+              extensions={extensions}
               key={`${showingThread.channelId}:${showingThread.messageId}`}
               session={queries}
               scope={scope}
@@ -402,6 +411,7 @@ function ChannelWorkspace({
 }
 
 function ChannelBody({
+  extensions,
   scope,
   queries,
   channelId,
@@ -409,6 +419,7 @@ function ChannelBody({
   revealMessageId,
   onOpenThread,
 }: {
+  extensions?: ConversationExtensions | undefined;
   scope: string;
   queries: RelaySession;
   channelId: string;
@@ -437,6 +448,7 @@ function ChannelBody({
     );
   return (
     <ChannelTimeline
+      extensions={extensions}
       scope={scope}
       channelId={channelId}
       queries={queries}

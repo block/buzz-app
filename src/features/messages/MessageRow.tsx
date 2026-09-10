@@ -1,25 +1,14 @@
 import { memo } from "react";
-import {
-  messageParts,
-  emojiMatches,
-  type CustomEmoji as Emoji,
-} from "../relay/emoji";
-import { CustomEmoji } from "./CustomEmoji";
+import { messageParts } from "../relay/emoji";
+import { InlineText } from "../conversation/InlineText";
+import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
 import styles from "./Messages.module.css";
 
-export const MessageRow = memo(function MessageRow({
-  row,
-  profile,
-  media,
-  onOpenLink,
-  day,
-  retry,
-  onOpenThread,
-  participantProfiles,
-}: {
+export type MessageRowProps = {
   row: ChannelMessage;
+  extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
   participantProfiles?: ReadonlyMap<string, Profile>;
   media(url: string): string | undefined;
@@ -27,7 +16,19 @@ export const MessageRow = memo(function MessageRow({
   day: boolean;
   retry: ((id: string) => void) | undefined;
   onOpenThread?: ((messageId: string) => void) | undefined;
-}) {
+};
+
+export const MessageRow = memo(function MessageRow({
+  row,
+  extensions,
+  profile,
+  media,
+  onOpenLink,
+  day,
+  retry,
+  onOpenThread,
+  participantProfiles,
+}: MessageRowProps) {
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
   return (
@@ -63,8 +64,8 @@ export const MessageRow = memo(function MessageRow({
           </div>
           <p className={styles.text}>
             <MessageText
-              content={row.content}
-              emoji={row.emoji ?? []}
+              row={row}
+              extensions={extensions}
               media={media}
               onOpenLink={onOpenLink}
             />
@@ -85,8 +86,16 @@ export const MessageRow = memo(function MessageRow({
             <div className={styles.reactions}>
               {row.reactions.map((reaction) => (
                 <span key={JSON.stringify(reaction)}>
-                  {reaction.emoji ? (
-                    <CustomEmoji emoji={reaction.emoji} media={media} />
+                  {extensions ? (
+                    <InlineText
+                      registry={extensions.inline}
+                      content={{
+                        text: reaction.content,
+                        message: row,
+                        reaction,
+                      }}
+                      media={media}
+                    />
                   ) : (
                     reaction.content
                   )}
@@ -151,30 +160,27 @@ export const MessageRow = memo(function MessageRow({
   );
 });
 function MessageText({
-  content,
-  emoji,
+  row,
+  extensions,
   media,
   onOpenLink,
-}: {
-  content: string;
-  emoji: readonly Emoji[];
-  media(url: string): string | undefined;
-  onOpenLink(url: string): boolean;
-}) {
-  return messageParts(content).map((part, index) => {
+}: Pick<MessageRowProps, "row" | "extensions" | "media" | "onOpenLink">) {
+  return messageParts(row.content).map((part, index) => {
     const key = `${index}:${part.slice(0, 20)}`;
     if (!part.startsWith("https://")) {
-      const parts = [];
-      let offset = 0;
-      for (const match of emojiMatches(part, emoji)) {
-        parts.push(part.slice(offset, match.start));
-        parts.push(
-          <CustomEmoji key={match.start} emoji={match.emoji} media={media} />,
-        );
-        offset = match.end;
-      }
-      parts.push(part.slice(offset));
-      return <span key={key}>{parts}</span>;
+      return (
+        <span key={key}>
+          {extensions ? (
+            <InlineText
+              registry={extensions.inline}
+              content={{ text: part, message: row }}
+              media={media}
+            />
+          ) : (
+            part
+          )}
+        </span>
+      );
     }
     const url = part.replace(/[.,;:!?)\]}]+$/, "");
     return (

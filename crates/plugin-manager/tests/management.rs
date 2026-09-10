@@ -210,7 +210,14 @@ fn concurrent_changes_do_not_lose_installs() {
         }
     });
     let catalog = manager.catalog().unwrap();
-    assert!(!catalog.plugins[0].enabled);
+    assert!(
+        !catalog
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "buzz.channels")
+            .unwrap()
+            .enabled
+    );
     assert!(
         catalog
             .plugins
@@ -264,7 +271,7 @@ fn bundled_plugins_have_independent_flags_and_all_ids_are_reserved() {
             .unwrap()
             .enabled
     );
-    for id in ["buzz.bestie", "buzz.projects", "buzz.agents"] {
+    for id in ["buzz.bestie", "buzz.projects", "buzz.agents", "buzz.emoji"] {
         assert!(
             manager
                 .catalog()

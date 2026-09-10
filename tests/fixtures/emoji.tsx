@@ -1,4 +1,9 @@
 // No broker, credentials or remote writes: real UI/session, ephemeral signed fixture events.
+import { Context } from "@deepseek-ai/cordis";
+import { createPluginManager } from "../../src/plugins/manager";
+import { ConversationService } from "../../src/features/conversation/service";
+import * as emojiPlugin from "../../src/bundled/emoji";
+import emojiManifest from "../../src/bundled/emoji/manifest.json";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
@@ -11,6 +16,17 @@ import type { RelayEvent } from "../../src/features/relay/events";
 import type { LiveCallbacks } from "../../src/features/relay/live";
 import "../../src/shared/styles/globals.css";
 
+const ctx = new Context();
+const manager = createPluginManager(ctx, {
+  bundled: [
+    { manifest: { ...emojiManifest, apiVersion: 1 }, module: emojiPlugin },
+  ],
+});
+const extensions = new ConversationService(ctx);
+window.addEventListener("pagehide", () => {
+  void manager.dispose();
+  void ctx.fiber.dispose();
+});
 const viewer = keypair(),
   relay = keypair(),
   member = keypair();
@@ -151,6 +167,7 @@ function Fixture() {
       <h1>Community {item.community}</h1>
       {item.rows.map((row) => (
         <MessageRow
+          extensions={extensions}
           key={row.id}
           row={row}
           profile={{ name: "Fixture Reader" }}
@@ -161,6 +178,7 @@ function Fixture() {
         />
       ))}
       <MessageComposer
+        extensions={extensions}
         session={item.session}
         scope={item.community}
         channelId="c"

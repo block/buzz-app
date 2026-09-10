@@ -67,7 +67,7 @@ export function MentionPicker({
   return (
     <fieldset
       disabled={disabled}
-      className={styles.emojiPicker}
+      className={styles.pickerControls}
       aria-label="Mention controls"
       onKeyDown={(event) => {
         if (event.key === "Escape" && open) {

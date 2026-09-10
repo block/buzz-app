@@ -35,11 +35,36 @@ async function project(run) {
     const initialized = cli("plugin", "init", source, "test.page", "Test page");
     assert.equal(initialized.status, 0, initialized.stderr);
     assert.match(initialized.stdout, /Created test.page/);
-    // Install the generated project's own dependencies; pnpm reuses its package cache.
-    const installed = spawnSync("pnpm", ["install", "--ignore-scripts"], {
-      cwd: source,
+    // A scaffold consumes the same packed declarations as independent plugins.
+    const author = path.join(directory, "author");
+    const generated = spawnSync("pnpm", ["author:build", author], {
+      cwd: root,
       encoding: "utf8",
     });
+    assert.equal(generated.status, 0, generated.stdout + generated.stderr);
+    const packed = spawnSync(
+      "pnpm",
+      ["pack", "--pack-destination", directory],
+      { cwd: author, encoding: "utf8" },
+    );
+    assert.equal(packed.status, 0, packed.stdout + packed.stderr);
+    await rm(author, { recursive: true });
+    const scaffold = await readFile(path.join(source, "src/index.tsx"), "utf8");
+    assert.match(scaffold, /import type.*@buzz\/author/);
+    assert.doesNotMatch(scaffold, /declare module|interface Context/);
+    const installed = spawnSync(
+      "pnpm",
+      [
+        "add",
+        "-D",
+        "--ignore-scripts",
+        path.join(directory, "buzz-author-0.0.0-preview.1.tgz"),
+      ],
+      {
+        cwd: source,
+        encoding: "utf8",
+      },
+    );
     assert.equal(installed.status, 0, installed.stdout + installed.stderr);
     await run(directory, source);
   } finally {
@@ -105,6 +130,7 @@ test("failed source builds preserve the installed revision", async () => {
     const before = await readFile(registryPath, "utf8");
     for (const invalid of [
       "export const wrong = 1;",
+      'import { Context } from "@buzz/author"; export function apply() { new Context(); }',
       "this is not javascript!",
       'import { Context } from "@deepseek-ai/cordis"; export function apply() { new Context(); }',
       'import * as React from "react"; export function apply(_ctx) { _ctx.pages.register({id: "main", title: "Main", component: () => React.createElement("h1")}); }',

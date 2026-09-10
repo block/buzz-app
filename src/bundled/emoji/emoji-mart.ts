@@ -2,7 +2,7 @@
 import data from "@emoji-mart/data";
 import { Data, Picker, SearchIndex } from "emoji-mart";
 import { parseColorMode } from "../../shared/theme/service";
-import type { CustomEmoji } from "../relay/emoji";
+import type { CustomEmoji } from "../../features/relay/emoji";
 
 const prefix = "buzz-custom/";
 let active: (() => void) | undefined;

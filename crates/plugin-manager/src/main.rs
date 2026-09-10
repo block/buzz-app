@@ -58,7 +58,7 @@ fn run() -> Result<()> {
     match (action.as_str(), rest) {
         ("init", [directory, id, name]) => {
             init(Path::new(directory), id, name)?;
-            println!("Created {id} in {directory}\nNext: run pnpm install in that directory, then buzzodz plugin build DIRECTORY.");
+            println!("Created {id} in {directory}\nNext: add the host-matched @buzz/author preview archive with pnpm add -D /absolute/path/buzz-author-VERSION.tgz, then buzzodz plugin build DIRECTORY.");
             return Ok(());
         }
         ("build", [directory]) => {
@@ -149,21 +149,13 @@ fn init(directory: &Path, id: &str, name: &str) -> Result<()> {
     // Never overwrite an existing source directory.
     std::fs::create_dir(directory).map_err(|e| e.to_string())?;
     std::fs::create_dir(directory.join("src")).map_err(|e| e.to_string())?;
-    let package = json!({"name": id, "private": true, "type": "module", "scripts": {"build": "tsc && vite build"}, "devDependencies": {"vite": "8.2.2", "typescript": "7.0.2", "@types/react": "19.2.18", "@deepseek-ai/cordis": "4.0.2"}, "engines": {"node": ">=24"}});
+    let package = json!({"name": id, "private": true, "type": "module", "scripts": {"build": "tsc && vite build"}, "devDependencies": {"vite": "8.2.2", "typescript": "7.0.2", "@types/react": "19.2.18"}, "engines": {"node": ">=24"}});
     for (file, text) in [
         ("manifest.json", serde_json::to_string_pretty(&manifest).unwrap()),
         ("package.json", serde_json::to_string_pretty(&package).unwrap()),
         (".gitignore", "node_modules/\ndist/\n".into()),
         ("tsconfig.json", r#"{"compilerOptions":{"target":"ES2022","module":"ESNext","moduleResolution":"Bundler","jsx":"react","strict":true,"noEmit":true},"include":["src"]}"#.into()),
-        ("src/index.tsx", r#"import type { Context } from '@deepseek-ai/cordis';
-import type * as ReactTypes from 'react';
-
-declare module '@deepseek-ai/cordis' {
-  interface Context {
-    react: typeof ReactTypes;
-    pages: { register: (page: { id: string; title: string; component: ReactTypes.ComponentType }) => void };
-  }
-}
+        ("src/index.tsx", r#"import type { Context } from '@buzz/author';
 
 export const inject = ['react', 'pages'];
 
@@ -195,8 +187,8 @@ export default defineConfig({
     name: 'page-contract',
     enforce: 'pre',
     resolveId(id) {
-      if (/^react(?:-dom)?(?:\/|$)/.test(id) || id === '@deepseek-ai/cordis' || id.startsWith('@deepseek-ai/cordis/')) {
-        throw new Error('React and Cordis are supplied by Buzz; use type-only imports');
+      if (/^react(?:-dom)?(?:\/|$)/.test(id) || id === '@buzz/author' || id === '@deepseek-ai/cordis' || id.startsWith('@deepseek-ai/cordis/')) {
+        throw new Error('Host capabilities are supplied by Buzz; use type-only imports');
       }
     },
     generateBundle(_options, bundle) {

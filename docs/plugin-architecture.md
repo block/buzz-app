@@ -11,9 +11,9 @@ Plugins are the unit of contribution and installation. They can contain substant
 **A page (target authoring experience).** A builder creates a plugin that registers
 a page, reads shared channel views, and builds a new interface. They should be able
 to reuse timeline/message components or build their own, owning the complete page
-implementation and its behavior and appearance. Bundled source demonstrates this
-composition today; supported external imports/component reuse remain an
-[author-contract gate](status.md#open-acceptance-and-product-gates).
+implementation and its behavior and appearance. Bundled source demonstrates this composition. The conversation preview
+now supplies host Composer/Message through a generated type-only author entry;
+broader supported external reuse remains an [author-contract gate](status.md#open-acceptance-and-product-gates).
 
 **Rich conversation content.** An integration plugin recognizes a link to a GitHub pull request or a native Buzz object and supplies a panel showing that object. The Channels page decides where the panel appears. Another page can display the same content in a different arrangement.
 
@@ -60,8 +60,8 @@ message rows, thread panel, composer, delivery presentation and reading geometry
 Other source plugins can compose those components through ordinary props, with
 internal session/destination isolation rather than caller-dependent remount keys.
 Import shared capabilities through the existing relay and panel contracts; do not
-create a second connection, cache or outbox inside a page. No component registry was
-added. Source imports are not yet a versioned external SDK; see
+create a second connection, cache or outbox inside a page. The conversation preview exposes only Composer/Message in a stable component bag;
+source imports are not a versioned external SDK. See
 [conversation component ownership](channels.md#reusing-conversation-ui).
 
 ## Starting contracts
@@ -77,14 +77,14 @@ contribution, the target string, and a close callback. The first active matcher
 wins; a throwing matcher is skipped. Panels receive `{ target, close }`, without
 channel-specific props. A plugin that needs shared data declares `relay` in its
 injection list and passes those capabilities to its components using a closure,
-just as the bundled Channels page does. No component registry or UI SDK is needed.
+just as the bundled Channels page does. The conversation preview adds only the two demonstrated component surfaces.
 
 Channels owns its selected channel and docked target. The panel view isolates
 render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub and Bestie. Projects
+The initial distribution contains Channels, Projects, Agents, GitHub, Bestie and Emoji. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
@@ -206,3 +206,11 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
+
+## Conversation contributions
+
+The conversation preview exposes top-level `registerTool` / `registerInline`
+methods and stable `conversation.ui.Composer` / `.Message` components. Generated
+type-only `@buzz/author` declarations support the independent Composer Lab example.
+This remains a host-matched preview, not a stable cross-version SDK. Shared session
+ownership and trusted-plugin authority do not change.

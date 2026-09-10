@@ -8,6 +8,7 @@ import type { ChannelMessage } from "../relay/contracts";
 import type { InlineRenderer } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import * as emoji from "../../bundled/emoji";
+import * as mentions from "../../bundled/mentions";
 
 const Component = () => null;
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -151,4 +152,16 @@ it("validates ranges, skips failures, and deterministically resolves overlap", (
     [1, 3],
     [3, 4],
   ]);
+});
+
+it("bundled Mentions registers only a chooser and removal leaves the host UI available", async () => {
+  const h = harness(mentions);
+  const composer = h.service.ui.Composer;
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() => expect(h.service.tools.snapshot()).toHaveLength(1));
+  expect(h.service.tools.snapshot()[0]?.title).toBe("Mentions");
+  expect(h.service.inline.snapshot()).toHaveLength(0);
+  h.runtime.reconcile([]);
+  await vi.waitFor(() => expect(h.service.tools.snapshot()).toHaveLength(0));
+  expect(h.service.ui.Composer).toBe(composer);
 });

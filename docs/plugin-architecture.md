@@ -84,7 +84,7 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie and Emoji. Projects
+The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji and Mentions. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
@@ -214,3 +214,46 @@ methods and stable `conversation.ui.Composer` / `.Message` components. Generated
 type-only `@buzz/author` declarations support the independent Composer Lab example.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
+
+### Composer ownership and mention tools
+
+The standard composer is reusable host UI in `features/messages`, not a mandatory
+Composer plugin. Page plugins may compose it through `conversation.ui.Composer`
+(or source props), or build their own editor against the shared session. Optional
+chooser UI belongs in tool plugins: `bundled/emoji` and `bundled/mentions` use the
+same `registerTool` contract. No page imports their implementations. Optional numeric
+`order` (default zero, lower first; ties by contribution key) keeps visual and
+keyboard order stable across asynchronous activation and re-enable. Mentions uses
+`-10` to retain its position before default-order tools such as Emoji.
+
+Tools receive `insertText`, `insertMention({ pubkey, name })` and `focus` commands.
+Mention insertion atomically records visible text and exact notification intent;
+`true` means the edit was accepted, **not** that membership or delivery succeeded.
+The host serializes successive commands using the latest draft and selection,
+enforces text/recipient limits, and revokes commands on tool removal/replacement,
+editor destination/session change, disabled/read-only state and unmount. Names are
+presentation, never recipient resolution. Editing/pasting over an identity span
+removes its intent under the existing draft rules.
+
+**User intent outlives the tool that created it.** Disabling Mentions removes its
+chooser, not selected recipients, their visible disclosure/removal controls, scoped
+drafts or pending messages. The session still owns roster/profile data, membership
+checks, signing and publication/retry. Plugins remain trusted same-process code;
+revocable editor commands do not sandbox the session capabilities they receive.
+
+This preview is host-matched: a tool using `insertMention` needs a host providing
+that command. The generated type-only `@buzz/author` package and `apiVersion: 1`
+are not runtime capability negotiation or cross-version compatibility promises.
+
+Typed-@ autocomplete is a future entry point into the same Mentions plugin. It
+needs draft/caret observation and a query-range replacement command guarded by
+current draft/selection evidence; otherwise selecting a result could insert after
+the partial query or overwrite newer text. The host should arbitrate keyboard,
+IME, selection and edit acceptance; the plugin owns matching and suggestions.
+Choosing a suggestion records exact identity; typing/pasting a name alone does not.
+Inline mention pills are also outside this toolbar extraction.
+
+Formatting needs selection transforms. Attachments and voice need shared media
+capabilities, destination-bound asynchronous work and cancellation; accepted
+material belongs to the draft, not the optional tool. Add these contracts against
+real workflows rather than declaring the toolbar a universal editor API.

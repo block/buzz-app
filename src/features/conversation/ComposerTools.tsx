@@ -18,7 +18,14 @@ export function ComposerTools({
     registry.snapshot,
     registry.snapshot,
   );
-  return tools.map((tool) => (
+  // Activation/re-enable order must not shuffle the visual or keyboard order.
+  const order = (tool: ComposerTool) =>
+    Number.isFinite(tool.order) ? (tool.order ?? 0) : 0;
+  const sorted = [...tools].sort(
+    (a, b) =>
+      order(a) - order(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+  );
+  return sorted.map((tool) => (
     <ContributionBoundary
       key={contributionKey(tool)}
       fallback={<span role="status">{tool.title} unavailable</span>}
@@ -40,7 +47,9 @@ function OwnedTool({
     current.current = props;
   });
   const [commands, setCommands] =
-    useState<Pick<ComposerToolProps, "insertText" | "focus">>();
+    useState<
+      Pick<ComposerToolProps, "insertText" | "insertMention" | "focus">
+    >();
   useLayoutEffect(() => {
     let live = true;
     const active = () =>
@@ -48,6 +57,8 @@ function OwnedTool({
     setCommands({
       insertText: (text) =>
         active() ? current.current.insertText(text) : false,
+      insertMention: (recipient) =>
+        active() ? current.current.insertMention(recipient) : false,
       focus: () => {
         if (active()) current.current.focus();
       },

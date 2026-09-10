@@ -31,15 +31,24 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     await settle();
     assert.equal(services.pages.snapshot().length, 3);
     await vi.waitFor(() =>
-      assert.equal(services.conversation.tools.snapshot().length, 1),
+      assert.equal(services.conversation.tools.snapshot().length, 2),
     );
     assert.equal(services.conversation.inline.snapshot().length, 1);
     await services.plugins.change("disable", "buzz.emoji");
-    assert.equal(services.conversation.tools.snapshot().length, 0);
+    assert.deepEqual(
+      services.conversation.tools.snapshot().map((tool) => tool.pluginId),
+      ["buzz.mentions"],
+    );
     assert.equal(services.conversation.inline.snapshot().length, 0);
-    await services.plugins.change("enable", "buzz.emoji");
+    await services.plugins.change("disable", "buzz.mentions");
+    assert.equal(services.conversation.tools.snapshot().length, 0);
+    await services.plugins.change("enable", "buzz.mentions");
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 1),
+    );
+    await services.plugins.change("enable", "buzz.emoji");
+    await vi.waitFor(() =>
+      assert.equal(services.conversation.tools.snapshot().length, 2),
     );
 
     const firstBestie = services.panels

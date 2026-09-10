@@ -1,12 +1,21 @@
-# Try plugin loading
+# Example plugins
 
-These two **ready-to-install**, readable API v1 modules need no build tools or
-runtime dependencies. They use the host's React instance and page service. Neither
+All example plugins live here with `manifest.json` and prebuilt `plugin.js` files:
+
+- `composer-lab`: shared composer/message UI and timestamp tool. Requires the
+  matching host conversation capability; sending posts to the selected channel.
+- `counter` and `notes`: offline playgrounds.
+- `broken-page`: intentionally fails when its page renders to exercise error handling.
+
+## Try the offline playgrounds
+
+Counter and Notes are **ready-to-install**, readable API v1 modules that need no
+build tools or runtime dependencies. They use the host's React instance and page service. Neither
 makes network requests, writes files, nor reads your account. Plugins generally are
 trusted unsandboxed code; these examples do not change that trust model.
 
 1. Open the desktop app → Settings → Plugins → **Load from folder**.
-2. Choose this `examples/try-plugins` folder to see both subfolders, or choose
+2. Choose this `examples/plugins` folder to see the examples, or choose
    `counter` / `notes` directly for a single result.
 3. Choose **Counter playground**, then **Install plugin**. It starts disabled.
 4. Enable it in the plugin list, then open its navigation tab and click the counter.
@@ -21,6 +30,6 @@ immediately. **Roll back** restores the previous installed revision. Source file
 are copied into the installation snapshot, not watched.
 
 To try Git import after these files are pushed, enter this repository's supported
-HTTPS/SSH URL and its branch/tag, then select `examples/try-plugins/counter` or
-`examples/try-plugins/notes`. Private HTTPS authentication is not provided by this
+HTTPS/SSH URL and its branch/tag, then select `examples/plugins/counter` or
+`examples/plugins/notes`. Private HTTPS authentication is not provided by this
 slice; use authenticated SSH with an existing agent and known host when available.

@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { X } from "lucide-react";
+import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
@@ -16,7 +17,8 @@ import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
 
-type ThreadPanelProps = {
+export type ThreadPanelProps = {
+  extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
   channelName: string;
@@ -42,6 +44,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
 }
 function OwnedThreadPanel({
   session,
+  extensions,
   scope,
   channelName,
   channelId,
@@ -103,6 +106,7 @@ function OwnedThreadPanel({
         </div>
       ) : view ? (
         <ThreadMessages
+          extensions={extensions}
           session={session}
           scope={scope}
           channelId={channelId}
@@ -120,12 +124,14 @@ function OwnedThreadPanel({
 }
 function ThreadMessages({
   session,
+  extensions,
   scope,
   channelId,
   channelName,
   view,
   onOpenLink,
 }: {
+  extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
   channelId: string;
@@ -216,6 +222,7 @@ function ThreadMessages({
       >
         {snapshot.root ? (
           <MessageRow
+            extensions={extensions}
             row={snapshot.root}
             profile={profiles.get(snapshot.root.authorId)}
             media={session.media}
@@ -236,6 +243,7 @@ function ThreadMessages({
           {snapshot.replies.map((row) => (
             <li key={row.id}>
               <MessageRow
+                extensions={extensions}
                 row={row}
                 profile={profiles.get(row.authorId)}
                 media={session.media}
@@ -265,6 +273,7 @@ function ThreadMessages({
       {snapshot.root && (
         <MessageComposer
           key={`${scope}:${channelId}:${snapshot.root.id}`}
+          extensions={extensions}
           session={session}
           scope={scope}
           channelId={channelId}

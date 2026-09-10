@@ -1,0 +1,347 @@
+import { test, expect } from "@playwright/test";
+import { createServer } from "vite";
+import react from "@vitejs/plugin-react";
+import { fileURLToPath } from "node:url";
+import { spawnSync } from "node:child_process";
+import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+const root = fileURLToPath(new URL("../../", import.meta.url));
+function run(command, args, cwd = root) {
+  const result = spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    timeout: 180000,
+  });
+  if (result.status !== 0)
+    throw new Error(
+      `${command} ${args.join(" ")}\n${result.stdout}\n${result.stderr}`,
+    );
+  return result.stdout;
+}
+test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
+  page,
+}) => {
+  test.setTimeout(240000);
+  const temp = await mkdtemp(join(tmpdir(), "buzz-conversation-proof-"));
+  let server;
+  try {
+    const author = join(temp, "author");
+    run("pnpm", ["author:build", author]);
+    run("pnpm", ["pack", "--pack-destination", temp], author);
+    const source = join(temp, "consumer");
+    await cp(join(root, "examples/plugins/composer-lab"), source, {
+      recursive: true,
+    });
+    run(
+      "pnpm",
+      ["add", "-D", join(temp, "buzz-author-0.0.0-preview.1.tgz")],
+      source,
+    );
+    run("pnpm", ["build"], source);
+    // The build must be possible after removing the unpacked producer tree.
+    await rm(author, { recursive: true });
+    run("pnpm", ["build"], source);
+    const code = await readFile(join(source, "dist/plugin.js"), "utf8");
+    expect(code).not.toMatch(/^import\s|^export.*from\s/m);
+    run("cargo", [
+      "build",
+      "--locked",
+      "-p",
+      "buzzodz-plugins",
+      "--example",
+      "fixture-bridge",
+    ]);
+    const metadata = JSON.parse(
+      run("cargo", ["metadata", "--no-deps", "--format-version=1"]),
+    );
+    const binary = join(
+      metadata.target_directory,
+      "debug/examples/fixture-bridge",
+    );
+    const home = join(temp, "home");
+    const native = (op, ...args) =>
+      JSON.parse(run(binary, [home, op, ...args]));
+    const installed = native("install", join(source, "dist"));
+    expect(
+      installed.catalog.plugins.find(
+        (p) => p.manifest.id === "example.composer-lab",
+      ).enabled,
+    ).toBe(false);
+    const id = "example.composer-lab";
+    const firstRevision = installed.catalog.plugins.find(
+      (p) => p.manifest.id === id,
+    ).revision;
+    native("change", "enable", id);
+    server = await createServer({
+      root,
+      configFile: false,
+      envFile: false,
+      cacheDir: join(temp, "vite"),
+      plugins: [
+        react(),
+        {
+          name: "isolated-native-manager-bridge",
+          configureServer(server) {
+            server.middlewares.use("/__proof", async (req, res) => {
+              try {
+                const chunks = [];
+                for await (const chunk of req) chunks.push(chunk);
+                const body = chunks.length
+                  ? JSON.parse(Buffer.concat(chunks).toString())
+                  : {};
+                let result;
+                switch (req.url) {
+                  case "/catalog":
+                    result = native("catalog");
+                    break;
+                  case "/module":
+                    result = native("module", body.id, body.revision);
+                    break;
+                  case "/change":
+                    result = native("change", body.action, body.id);
+                    break;
+                  case "/update":
+                    await writeFile(
+                      join(source, "dist/plugin.js"),
+                      code.replaceAll(
+                        "Insert timestamp",
+                        "Insert updated timestamp",
+                      ),
+                    );
+                    result = native("install", join(source, "dist"));
+                    break;
+                  default:
+                    throw new Error("Unsupported proof route");
+                }
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify(result));
+              } catch (error) {
+                res.statusCode = 500;
+                res.end(String(error));
+              }
+            });
+          },
+        },
+      ],
+      logLevel: "error",
+      server: { host: "127.0.0.1", port: 0, strictPort: false },
+    });
+    await server.listen();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(String(error)));
+    await page.route("**/proof-media/**", (route) =>
+      route.fulfill({
+        contentType: "image/svg+xml",
+        body: '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22"><circle cx="11" cy="11" r="9" fill="purple"/></svg>',
+      }),
+    );
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/conversation.html`,
+    );
+    const draft = page.getByRole("textbox", { name: /Message #General/ });
+    await expect(draft).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Insert timestamp", exact: true }),
+    ).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Insert timestamp", exact: true })
+      .click();
+    await expect(draft).toHaveValue(/T.*Z/);
+    await draft.fill("base");
+    await draft.evaluate((el) => el.setSelectionRange(1, 3));
+    await page
+      .getByRole("button", { name: "Insert twice", exact: true })
+      .click();
+    await expect(draft).toHaveValue("bONETWOe");
+    await expect(draft).toBeFocused();
+    expect(await draft.evaluate((el) => el.selectionStart)).toBe(7);
+    await page.evaluate(() => window.conversationFixture.saveEdit());
+    await page.evaluate(() => window.conversationFixture.removeProbe());
+    expect(
+      await page.evaluate(() => window.conversationFixture.removedResult()),
+    ).toBe(false);
+    await expect(draft).toHaveValue("bONETWOe");
+    await page.evaluate(() => window.conversationFixture.enableProbe());
+    await expect(
+      page.getByRole("button", { name: "Insert twice", exact: true }),
+    ).toHaveCount(1);
+    expect(
+      await page.evaluate(() => window.conversationFixture.callSaved()),
+    ).toBe(false);
+    await draft.fill("Channels draft");
+    await page
+      .getByRole("navigation", { name: "Proof pages" })
+      .getByRole("button", { name: "Composer Lab" })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Composer Lab" }),
+    ).toBeVisible();
+    await expect(draft).toHaveValue("Channels draft");
+    const textarea = await draft.elementHandle();
+    await draft.focus();
+    await draft.evaluate((el) => el.setSelectionRange(2, 5));
+    // Programmatic click avoids intentionally moving focus away from the editor.
+    await page
+      .getByRole("button", { name: "Rerender Lab 0" })
+      .evaluate((el) => el.click());
+    await expect(
+      page.getByRole("button", { name: "Rerender Lab 1" }),
+    ).toBeVisible();
+    expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
+    await expect(draft).toBeFocused();
+    expect(
+      await draft.evaluate((el) => [el.selectionStart, el.selectionEnd]),
+    ).toEqual([2, 5]);
+    await page
+      .getByRole("button", { name: "Insert emoji", exact: true })
+      .click();
+    const search = page.getByRole("searchbox", { name: "Search" });
+    await search.fill("party");
+    const picker = await page.locator("em-emoji-picker").elementHandle();
+    await page
+      .getByRole("button", { name: "Rerender Lab 1" })
+      .evaluate((el) => el.click());
+    await expect(
+      page.getByRole("button", { name: "Rerender Lab 2" }),
+    ).toBeVisible();
+    expect(await picker.evaluate((el) => el.isConnected)).toBe(true);
+    await expect(search).toHaveValue("party");
+    await expect(search).toBeFocused();
+    const historic = page.locator('img[src*="history.png"]');
+    await expect(historic).toHaveCount(1);
+    await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
+    await page.evaluate(() =>
+      window.conversationFixture.change("disable", "buzz.emoji"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Insert emoji", exact: true }),
+    ).toHaveCount(0);
+    await expect(page.locator("em-emoji-picker")).toHaveCount(0);
+    await expect(historic).toHaveCount(0);
+    await expect(
+      page.getByText("History :party:", { exact: true }),
+    ).toBeVisible();
+    expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
+    await expect(draft).toHaveValue("Channels draft");
+    // Plugin-independent recovery when the catalog is unavailable.
+    await page.evaluate(() => window.conversationFixture.fail(true));
+    await draft.fill(":party:");
+    await draft.press("Enter");
+    await expect(
+      page.getByRole("button", { name: "Retry message preparation" }),
+    ).toBeVisible();
+    await page.evaluate(() => window.conversationFixture.fail(false));
+    await page
+      .getByRole("button", { name: "Retry message preparation" })
+      .click();
+    await expect(
+      page.getByRole("button", { name: "Retry message preparation" }),
+    ).toHaveCount(0);
+    await expect(draft).toHaveValue(":party:");
+    await draft.press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.conversationFixture.report.published.length),
+      )
+      .toBe(1);
+    expect(
+      await page.evaluate(
+        () => window.conversationFixture.report.signed[0].tags,
+      ),
+    ).toContainEqual(["emoji", "party", "https://a.test/media/current.png"]);
+    await page.evaluate(() =>
+      window.conversationFixture.change("enable", "buzz.emoji"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Insert emoji", exact: true }),
+    ).toHaveCount(1);
+    await expect(historic).toHaveCount(1);
+    await draft.fill("reject :party:");
+    await draft.press("Enter");
+    // Delivery feedback intentionally waits 10 seconds; leave time for the UI timer.
+    await expect(page.getByRole("button", { name: /Retry/ })).toBeVisible({
+      timeout: 15_000,
+    });
+    await page.evaluate(() => window.conversationFixture.replace());
+    await page.getByRole("button", { name: /Retry/ }).click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.conversationFixture.report.published.length),
+      )
+      .toBe(3);
+    const report = await page.evaluate(() => window.conversationFixture.report);
+    expect(report.published[1]).toEqual(report.published[2]);
+    expect(report.signed).toHaveLength(2);
+    expect(report.published[0].tags).toContainEqual([
+      "emoji",
+      "party",
+      "https://a.test/media/current.png",
+    ]);
+    await expect(historic).toHaveAttribute("src", /a.test.*history.png/);
+    await draft.fill("A-only draft");
+    await page
+      .getByRole("button", { name: "Insert emoji", exact: true })
+      .click();
+    await search.fill("party");
+    await page.evaluate(() => window.conversationFixture.saveEdit());
+    await page.evaluate(() => window.conversationFixture.switch());
+    await expect(draft).toHaveValue("");
+    await expect(page.locator("em-emoji-picker")).toHaveCount(0);
+    await draft.fill("B draft");
+    expect(
+      await page.evaluate(() => window.conversationFixture.callSaved()),
+    ).toBe(false);
+    await expect(draft).toHaveValue("B draft");
+    await page.evaluate(() => window.conversationFixture.update());
+    await expect(
+      page.getByRole("button", {
+        name: "Insert updated timestamp",
+        exact: true,
+      }),
+    ).toHaveCount(1);
+    await expect(draft).toHaveValue("B draft");
+    const updated = native("catalog").catalog.plugins.find(
+      (p) => p.manifest.id === id,
+    );
+    expect(updated.revision).not.toBe(firstRevision);
+    expect(updated.previous).toBe(firstRevision);
+    await page.evaluate(() =>
+      window.conversationFixture.change("rollback", "example.composer-lab"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Insert timestamp", exact: true }),
+    ).toHaveCount(1);
+    await expect(
+      page.getByRole("button", {
+        name: "Insert updated timestamp",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(draft).toHaveValue("B draft");
+    await page.evaluate(() =>
+      window.conversationFixture.change("disable", "example.composer-lab"),
+    );
+    await expect(
+      page.getByRole("button", { name: "Insert timestamp", exact: true }),
+    ).toHaveCount(0);
+    await page
+      .getByRole("navigation", { name: "Proof pages" })
+      .getByRole("button", { name: "Channels" })
+      .click();
+    await expect(draft).toHaveValue("B draft");
+    expect(errors).toEqual([]);
+    await writeFile(
+      test.info().outputPath("boundary-proof.json"),
+      JSON.stringify(
+        { firstRevision, updatedRevision: updated.revision, report },
+        null,
+        2,
+      ),
+    );
+  } finally {
+    await server?.close();
+    await rm(temp, { recursive: true, force: true });
+  }
+});

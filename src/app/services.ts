@@ -1,4 +1,5 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { PanelsService } from "../features/panels/service";
@@ -16,6 +17,7 @@ export function createServices() {
   });
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
+  const conversation = new ConversationService(ctx);
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
@@ -23,6 +25,7 @@ export function createServices() {
   const relay = communities.relay;
   let disposal: Promise<void> | undefined;
   return {
+    conversation,
     pages,
     panels,
     plugins,

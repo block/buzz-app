@@ -1,0 +1,48 @@
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { spawnSync } from "node:child_process";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+const root = new URL("../", import.meta.url);
+// Tests can generate independent artifacts concurrently without racing dist-author.
+const out = process.argv[2]
+  ? pathToFileURL(`${resolve(process.argv[2])}/`)
+  : new URL("dist-author/", root);
+await rm(out, { recursive: true, force: true });
+const result = spawnSync(
+  "pnpm",
+  [
+    "exec",
+    "tsc",
+    "-p",
+    "tsconfig.author.json",
+    "--outDir",
+    new URL("types/", out).pathname,
+  ],
+  { cwd: root, stdio: "inherit" },
+);
+if (result.status !== 0) process.exit(result.status ?? 1);
+const pkg = JSON.parse(await readFile(new URL("package.json", root), "utf8"));
+await mkdir(out, { recursive: true });
+await writeFile(
+  new URL("package.json", out),
+  `${JSON.stringify(
+    {
+      name: "@buzz/author",
+      version: "0.0.0-preview.1",
+      private: true,
+      type: "module",
+      types: "types/plugins/author.d.ts",
+      exports: { ".": { types: "./types/plugins/author.d.ts" } },
+      dependencies: {
+        "@deepseek-ai/cordis": pkg.dependencies["@deepseek-ai/cordis"],
+        "@types/react": pkg.devDependencies["@types/react"],
+        "nostr-tools": pkg.dependencies["nostr-tools"],
+      },
+    },
+    null,
+    2,
+  )}\n`,
+);
+console.log(
+  `Generated type-only @buzz/author preview in ${out.pathname}; no runtime imports supported.`,
+);

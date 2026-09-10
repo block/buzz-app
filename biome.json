@@ -12,6 +12,7 @@
       "!!**/node_modules",
       "!!.hermit",
       "!!dist",
+      "!!dist-author",
       "!!src-tauri/target",
       "!!src-tauri/gen",
       "!!target",

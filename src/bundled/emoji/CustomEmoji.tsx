@@ -1,6 +1,6 @@
 import { useState } from "react";
-import type { CustomEmoji as Emoji } from "../relay/emoji";
-import styles from "./Messages.module.css";
+import type { CustomEmoji as Emoji } from "../../features/relay/emoji";
+import styles from "./Emoji.module.css";
 
 /** Event URLs never bypass the captured community's media policy. */
 export function CustomEmoji({

@@ -177,8 +177,10 @@ add setup time; normal warm hooks use the pinned tools already installed.
 ## Pull-request CI
 
 `.github/workflows/ci.yml` runs on every PR and push to `main`, without path filters
-that could omit newly added tests. It splits the `scan` coverage across cached,
-parallel jobs rather than running the entire recipe several times:
+that could omit newly added tests. It splits the CI-selected `scan` coverage
+across cached, parallel jobs rather than running the entire recipe several times.
+[Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
+the complete suite still runs with `pnpm test` / `just scan`:
 
 - **JavaScript:** Biome, one TypeScript check, frontend build, all Vitest tests.
 - **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and

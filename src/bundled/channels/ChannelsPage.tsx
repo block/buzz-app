@@ -364,7 +364,6 @@ function ChannelWorkspace({
                           session={queries}
                           channelId={channel.id}
                           dm={channel.channelType === "dm"}
-                          dmParticipantId={channel.participants?.[0]}
                         />
                       </button>
                     }

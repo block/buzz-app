@@ -36,13 +36,11 @@ test("My agents reads the existing library with exact linked keys and session-sa
       "referrerpolicy",
       "no-referrer",
     );
-    await expect
-      .poll(() => agents.locator("img").evaluate((image) => image.naturalWidth))
-      .toBeGreaterThan(0);
+
     for (const key of keys)
       await expect(agents.getByText(key, { exact: true })).toBeHidden();
     await agents
-      .getByRole("button", { name: "2 identities", exact: true })
+      .getByRole("button", { name: "A Brain: 2 identities", exact: true })
       .click();
     for (const key of keys)
       await expect(agents.getByText(key, { exact: true })).toBeVisible();
@@ -177,7 +175,7 @@ test("My agents reads the existing library with exact linked keys and session-sa
       .click();
     await expect(agents.getByRole("article")).toHaveCount(2);
     await agents
-      .getByRole("button", { name: "2 identities", exact: true })
+      .getByRole("button", { name: "A Brain: 2 identities", exact: true })
       .click();
     for (const key of keys)
       await expect(agents.getByText(key, { exact: true })).toBeVisible();

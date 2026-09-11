@@ -209,6 +209,7 @@ function AgentCard({
               title: (
                 <span className="flex items-center gap-2">
                   <IconUsers size={16} stroke={2} aria-hidden="true" />
+                  <span className="sr-only">{name}: </span>
                   {identities.length}{" "}
                   {identities.length === 1 ? "identity" : "identities"}
                 </span>

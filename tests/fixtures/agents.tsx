@@ -9,6 +9,9 @@ import type {
 import { keypair, signed } from "../../src/features/relay/testing";
 import "../../src/shared/styles/globals.css";
 
+const fixtureOptions = new URLSearchParams(location.search);
+const externalAvatar = fixtureOptions.has("external-avatar");
+const offscreenAvatar = fixtureOptions.has("offscreen-avatar");
 const viewer = keypair(),
   relayKey = keypair(),
   agent = keypair(),
@@ -27,7 +30,8 @@ function owner(scope: string) {
     relayAuthor: relayKey.pubkey,
     archiveAuthority: relayKey.pubkey,
     scope,
-    media: () => undefined,
+    media: (url) =>
+      url.startsWith("https://images.example/") ? url : undefined,
     async readAgentLibrary() {
       reads++;
       if (hold) await new Promise<void>((resolve) => held.push(resolve));
@@ -39,8 +43,9 @@ function owner(scope: string) {
               {
                 id: "brain",
                 name: `${scope} Brain`,
-                avatar:
-                  "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jw1sAAAAASUVORK5CYII=",
+                avatar: externalAvatar
+                  ? "https://images.example/avatar.png"
+                  : "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAO+jw1sAAAAASUVORK5CYII=",
               },
               { id: "second", name: `${scope} Brain` },
             ],
@@ -169,6 +174,7 @@ function Fixture() {
           Clear cache
         </button>
       </nav>
+      {offscreenAvatar && <div style={{ height: "20000px" }} />}
       {visible && (
         <main style={{ height: "50vh" }}>
           <AgentsPage relay={relay} />

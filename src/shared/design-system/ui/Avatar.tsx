@@ -21,7 +21,15 @@ export function Avatar({
       role="img"
       aria-label={alt}
     >
-      {src ? <BaseAvatar.Image src={src} alt="" /> : null}
+      {src ? (
+        <BaseAvatar.Image
+          src={src}
+          alt=""
+          loading="lazy"
+          decoding="async"
+          referrerPolicy="no-referrer"
+        />
+      ) : null}
       <BaseAvatar.Fallback delay={src ? 150 : 0} aria-hidden="true">
         {fallback.slice(0, 1).toUpperCase()}
       </BaseAvatar.Fallback>

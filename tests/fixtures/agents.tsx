@@ -170,7 +170,7 @@ function Fixture() {
         </button>
       </nav>
       {visible && (
-        <main style={{ height: "85vh" }}>
+        <main style={{ height: "50vh" }}>
           <AgentsPage relay={relay} />
         </main>
       )}

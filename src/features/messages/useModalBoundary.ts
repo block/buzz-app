@@ -1,4 +1,4 @@
-import { useEffect, type RefObject } from "react";
+import { useEffect, useRef, type RefObject } from "react";
 
 const FOCUSABLE =
   'a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])';
@@ -9,6 +9,8 @@ export function useModalBoundary(
   initialFocus: RefObject<HTMLElement | null>,
   close: () => void,
 ) {
+  const closeRef = useRef(close);
+  closeRef.current = close;
   useEffect(() => {
     const opener =
       document.activeElement instanceof HTMLElement
@@ -33,7 +35,7 @@ export function useModalBoundary(
     const keydown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        close();
+        closeRef.current();
         return;
       }
       if (event.key !== "Tab") return;
@@ -68,5 +70,5 @@ export function useModalBoundary(
       }
       if (opener?.isConnected) opener.focus();
     };
-  }, [backdrop, initialFocus, close]);
+  }, [backdrop, initialFocus]);
 }

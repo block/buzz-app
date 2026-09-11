@@ -11,7 +11,7 @@ import type {
   ReadMutationResult,
   ReadSyncSnapshot,
 } from "./read-state";
-import type { RelayReader } from "./reader";
+import type { Priority, RelayReader } from "./reader";
 import { threadReference } from "./thread-reference";
 
 export type UnreadSnapshot = Readonly<{
@@ -337,30 +337,43 @@ export function createUnread({
       purge();
     }
   });
-  async function repair() {
+  async function repair(priority: Priority = "foreground") {
     requested = true;
     if (closed) return;
     if (refresh) return refresh;
     const generation = epoch;
-    const signal = AbortSignal.any([
-      lifetime.signal,
-      AbortSignal.timeout(10000),
-    ]);
     refresh = (async () => {
       await reads.ensure();
+      if (closed || generation !== epoch) return;
       const ids = channels
         .list()
-        .channels.filter((channel) => allowed(channel.id))
+        .channels.filter((channel) => channel.members?.includes(viewer))
         .map((channel) => channel.id);
       if (!ids.length) return;
       try {
-        // ONE bounded recent observation across the roster, never one head request per row.
-        const result = await reader.read(
-          [{ kinds: [9, 40002], "#h": ids, include_aux: true, limit: 500 }],
-          { signal, priority: "background" },
-        );
-        if (closed || generation !== epoch) return;
-        accept(result);
+        // The relay caps aggregate explicit #h values at 128 per request.
+        // Keep roster scope: an unscoped read also includes unjoined open channels.
+        // Each bounded batch owns its queue-inclusive deadline after marker sync;
+        // optional profiles must not block the initial user-visible observation.
+        for (let offset = 0; offset < ids.length; offset += 128) {
+          const signal = AbortSignal.any([
+            lifetime.signal,
+            AbortSignal.timeout(10000),
+          ]);
+          const result = await reader.read(
+            [
+              {
+                kinds: [9, 40002],
+                "#h": ids.slice(offset, offset + 128),
+                include_aux: true,
+                limit: 500,
+              },
+            ],
+            { signal, priority },
+          );
+          if (closed || generation !== epoch) return;
+          if (!accept(result) || closed || generation !== epoch) return;
+        }
         freshness = "observed";
         error = undefined;
         publish();
@@ -377,7 +390,7 @@ export function createUnread({
     return refresh;
   }
   function accept(batch: readonly RelayEvent[]) {
-    if (closed) return;
+    if (closed) return false;
     const changed = new Set<string>();
     indexed = false;
     const incoming = new Map(batch.map((event) => [event.id, event]));
@@ -402,7 +415,7 @@ export function createUnread({
         error = "Unread observation capacity reached; refresh available";
         freshness = "stale";
         publish();
-        return;
+        return false;
       }
       events.set(event.id, event);
       bytes += size;
@@ -423,6 +436,7 @@ export function createUnread({
       freshness = "observed";
       publish(global ? undefined : changed);
     }
+    return true;
   }
   function requireMessage(target: ReadTarget, id: string) {
     targetKey(target);
@@ -464,9 +478,9 @@ export function createUnread({
     },
     sync: reads.snapshot,
     subscribeSync: reads.subscribe,
-    ensure: () => (requested ? Promise.resolve() : repair()),
+    ensure: () => refresh ?? (requested ? Promise.resolve() : repair()),
     refresh: async () => {
-      await reads.refresh();
+      await reads.refresh("foreground");
       await repair();
     },
     retrySync: async () => {
@@ -568,7 +582,7 @@ export function createUnread({
     accept,
     purge,
     reconnect() {
-      if (requested) void reads.refresh().then(repair);
+      if (requested) void reads.refresh().then(() => repair("background"));
     },
     stale() {
       epoch++;

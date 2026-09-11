@@ -247,3 +247,17 @@ it("invalidates subscribed and dormant selectors globally on clear and capacity 
       error: "Unread observation capacity reached; refresh available",
     });
 });
+
+it("reconnect retains background marker and evidence priority", async () => {
+  const h = await setup();
+  await h.unread.ensure();
+  h.reader.read.mockClear();
+  const refresh = vi.spyOn(h.reads, "refresh");
+  h.owner.reconnect();
+  await vi.waitFor(() => expect(h.reader.read).toHaveBeenCalledOnce());
+  expect(refresh).toHaveBeenCalledWith();
+  expect(h.reader.read).toHaveBeenCalledWith(
+    expect.any(Array),
+    expect.objectContaining({ priority: "background" }),
+  );
+});

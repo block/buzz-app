@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "./tokens.css";
 
+/* The staged system is rendered in its own document, not adopted by the host. */
+@source not "../design-system";
+@source not "../../../tests/fixtures/design-system";
+
 @custom-variant dark (
   &:where([data-color-mode="dark"], [data-color-mode="dark"] *)
 );

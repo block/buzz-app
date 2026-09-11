@@ -1,0 +1,207 @@
+@layer components {
+  .swap-workspace-tabs {
+    cursor: grab;
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 2;
+    padding: var(--space-panel-inset);
+    /* Same border box as the real Panel around standalone titles. */
+    border: 1px solid transparent;
+  }
+  .swap-workspace-tabs .buzz-tabs-tab {
+    touch-action: none;
+    cursor: grab;
+  }
+  .swap-tab-ghost {
+    position: fixed;
+    top: 0;
+    left: 0;
+    z-index: 1000;
+    pointer-events: none;
+    border-radius: var(--radius-pill);
+    padding: var(--space-1) var(--space-3);
+    background: var(--purple-3);
+    color: var(--text-primary);
+    opacity: 0.85;
+    white-space: nowrap;
+    user-select: none;
+  }
+  .swap-tab-insertion {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+    width: calc(var(--space-1) / 2);
+    margin-left: var(--space-1);
+    border-radius: var(--radius-pill);
+    background: var(--purple-7);
+  }
+
+  .swap-workspace-experiment {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-section-gap);
+  }
+  .swap-workspace-intro {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-section-gap);
+  }
+  .swap-workspace-intro p {
+    flex: 1 1 20rem;
+  }
+  .swap-workspace-backdrop {
+    padding: var(--space-workspace-inset);
+    background: var(--bg-app);
+    border-radius: var(--radius-panel);
+  }
+  .swap-workspace-stage {
+    position: relative;
+    height: min(32rem, 60svh);
+    min-height: 16rem;
+    column-gap: var(--space-panel-gap);
+    isolation: isolate;
+  }
+  .swap-workspace-placement {
+    position: absolute;
+    top: 0;
+    left: 0;
+    height: 100%;
+    width: calc((100% - var(--space-panel-gap)) / 2);
+    /* Real width/height changes reflow content immediately, like window resize. */
+    transition: transform var(--duration-settle) var(--easing-settle);
+  }
+  .swap-workspace-placement[data-frontmost] {
+    z-index: 1;
+  }
+  .swap-workspace-placement[data-dragging] {
+    transition: none;
+    will-change: transform;
+    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-panel);
+  }
+  .swap-workspace-divider {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: var(--size-resize-seam);
+    transform: translateX(-50%);
+    z-index: 1;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+  }
+  .swap-workspace-stage[data-axis="vertical"] .swap-workspace-divider {
+    right: 0;
+    bottom: auto;
+    width: 100%;
+    height: var(--size-resize-seam);
+    transform: translateY(-50%);
+    cursor: row-resize;
+  }
+
+  .swap-workspace-cue {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+    width: var(--space-6);
+    height: calc(var(--space-1) / 2);
+    border-radius: var(--radius-pill);
+    background: var(--neutral-7);
+  }
+  .swap-workspace-cue[data-active="true"] {
+    background: var(--neutral-12);
+  }
+  .swap-workspace-cue[data-edge="top"],
+  .swap-workspace-cue[data-edge="bottom"] {
+    left: 50%;
+    transform: translateX(-50%);
+  }
+  .swap-workspace-cue[data-edge="top"] {
+    top: calc(-1 * var(--space-2));
+  }
+  .swap-workspace-cue[data-edge="bottom"] {
+    bottom: calc(-1 * var(--space-2));
+  }
+  .swap-workspace-cue[data-edge="left"],
+  .swap-workspace-cue[data-edge="right"] {
+    top: 50%;
+    transform: translateY(-50%);
+    width: calc(var(--space-1) / 2);
+    height: var(--space-6);
+  }
+  .swap-workspace-cue[data-edge="left"] {
+    left: calc(-1 * var(--space-2));
+  }
+  .swap-workspace-cue[data-edge="right"] {
+    right: calc(-1 * var(--space-2));
+  }
+  /* Keep the forgiving hit area; only the small central grip is painted. */
+  .swap-workspace-divider::after {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: calc(var(--space-1) / 2);
+    height: var(--space-6);
+    transform: translate(-50%, -50%);
+    border-radius: var(--radius-pill);
+    background: transparent;
+  }
+  .swap-workspace-stage[data-axis="vertical"] .swap-workspace-divider::after {
+    width: var(--space-6);
+    height: calc(var(--space-1) / 2);
+  }
+  .swap-workspace-divider:hover::after,
+  .swap-workspace-stage[data-resizing] .swap-workspace-divider::after {
+    background: var(--neutral-12);
+  }
+  html[data-keyboard-navigation] .swap-workspace-divider:focus-visible::after {
+    background: var(--neutral-12);
+    outline: 2px solid var(--purple-8);
+    outline-offset: 2px;
+  }
+  .swap-workspace-stage[data-dragging] .swap-workspace-divider {
+    visibility: hidden;
+  }
+  .swap-workspace-stage[data-resizing] {
+    user-select: none;
+  }
+  .swap-workspace-stage[data-resizing] .swap-workspace-placement {
+    transition: none;
+  }
+
+  .swap-workspace-handle {
+    padding: var(--space-panel-inset);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+  .swap-workspace-handle .buzz-tabs-tab {
+    cursor: inherit;
+    touch-action: none;
+  }
+  .swap-workspace-stage[data-dragging] {
+    user-select: none;
+  }
+  .swap-workspace-placement[data-dragging] .swap-workspace-handle {
+    cursor: grabbing;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .swap-workspace-placement,
+    .swap-workspace-tabs {
+      transition: none;
+    }
+  }
+}
+
+/* Pointer capture routes events, but the browser can still choose a cursor from
+   the element under the pointer. Own it for the gesture, including outside the
+   stage. The attribute is removed on release, cancel, blur and unmount. */
+@layer utilities {
+  html[data-swap-dragging],
+  html[data-swap-dragging] * {
+    cursor: grabbing;
+  }
+}

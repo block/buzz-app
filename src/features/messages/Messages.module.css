@@ -665,6 +665,7 @@ button.avatar:focus-visible,
 .membership {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   padding: 8px 0 18px;
   color: var(--text-muted);

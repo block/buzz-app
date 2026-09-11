@@ -19,6 +19,18 @@ test("Channels renders grouped history and live membership without turning activ
     "Pinky added by you, along with Brain",
   );
   await expect(groups.locator("button")).toHaveCount(0);
+  const centered = await groups.first().evaluate((row) => {
+    const content = row.querySelector("p");
+    const avatars = row.querySelector('[aria-hidden="true"]');
+    const bounds = row.getBoundingClientRect();
+    return Math.abs(
+      (avatars.getBoundingClientRect().left +
+        content.getBoundingClientRect().right) /
+        2 -
+        (bounds.left + bounds.right) / 2,
+    );
+  });
+  expect(centered).toBeLessThan(2);
   expect(
     app.report.queries
       .filter(({ filter }) => filter.top_level)

@@ -133,6 +133,11 @@ export function foldMessages(
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: projected.content,
+        ...(edits.length ? { edited: true as const } : {}),
+        ...(projected.content !== content &&
+        projected.content !== content.trimEnd()
+          ? { attachmentContentRemoved: true as const }
+          : {}),
         mentions: Object.freeze([
           ...new Set(
             event.tags.flatMap(([name, value]) =>

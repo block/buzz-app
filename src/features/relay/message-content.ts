@@ -61,12 +61,6 @@ export function scanMarkdown(content: string): MarkdownScan {
   return { tree, tooDeep, definitions, images };
 }
 
-export function markdownIsSafeToRender(content: string): boolean {
-  return (
-    content.length <= MAX_MARKDOWN_LENGTH && !scanMarkdown(content).tooDeep
-  );
-}
-
 /** Project every CommonMark image from the same bounded parse policy as rendering. */
 export function projectMarkdownImages(content: string): {
   content: string;
@@ -99,5 +93,5 @@ export function projectMarkdownImages(content: string): {
   let stripped = content;
   for (const range of ranges.sort((a, b) => b.start - a.start))
     stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
-  return { content: stripped.trim(), urls: Object.freeze(urls) };
+  return { content: stripped.trimEnd(), urls: Object.freeze(urls) };
 }

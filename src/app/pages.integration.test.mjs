@@ -51,6 +51,22 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       assert.equal(services.conversation.tools.snapshot().length, 2),
     );
 
+    const { npubEncode } = await import("nostr-tools/nip19");
+    const profileTarget = `nostr:${npubEncode("ab".repeat(32))}`;
+    assert.equal(
+      services.panels.resolve(profileTarget)?.pluginId,
+      "buzz.profiles",
+    );
+    await services.plugins.change("disable", "buzz.profiles");
+    assert.equal(services.panels.resolve(profileTarget), undefined);
+    await services.plugins.change("enable", "buzz.profiles");
+    await vi.waitFor(() =>
+      assert.equal(
+        services.panels.resolve(profileTarget)?.pluginId,
+        "buzz.profiles",
+      ),
+    );
+
     const firstBestie = services.panels
       .snapshot()
       .find((panel) => panel.pluginId === "buzz.bestie");

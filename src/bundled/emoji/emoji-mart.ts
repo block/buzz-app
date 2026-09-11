@@ -233,7 +233,7 @@ export function mountEmojiMart({
       background: var(--picker-search-background);
       box-shadow: 0 0 0 1px var(--picker-search-background);
       color: var(--picker-search-foreground);
-      font-family: var(--font-sans);
+      font-family: var(--font-legacy-sans);
       font-size: calc(14px * var(--buzz-text-scale, 1));
       line-height: normal;
       transition:

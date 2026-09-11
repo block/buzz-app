@@ -1,5 +1,6 @@
 import { memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
+import { profileTarget } from "../profiles/target";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -14,7 +15,8 @@ export type MessageRowProps = {
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
-  participantProfiles?: ReadonlyMap<string, Profile>;
+  participantProfiles?: ReadonlyMap<string, Profile> | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string): string | undefined;
   onOpenLink(url: string): boolean;
   day: boolean;
@@ -29,6 +31,7 @@ export const MessageRow = memo(function MessageRow({
   profile,
   media,
   onOpenLink,
+  canOpenLink,
   day,
   retry,
   onOpenThread,
@@ -49,6 +52,9 @@ export const MessageRow = memo(function MessageRow({
           : undefined;
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
+  const target = profileTarget(row.authorId);
+  const clickable = target && canOpenLink?.(target);
+  const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
   return (
     <div data-message-id={row.id}>
@@ -64,13 +70,25 @@ export const MessageRow = memo(function MessageRow({
         </div>
       )}
       <div className={styles.message}>
-        <div className={styles.avatar}>
+        <AvatarTag
+          className={styles.avatar}
+          {...(clickable
+            ? {
+                type: "button" as const,
+                "aria-label": `View ${name} profile`,
+                onClick: (event: import("react").MouseEvent<HTMLElement>) => {
+                  event.currentTarget.focus();
+                  onOpenLink(target);
+                },
+              }
+            : {})}
+        >
           {picture ? (
             <img src={picture} alt="" loading="lazy" />
           ) : (
             name.slice(0, 2).toUpperCase()
           )}
-        </div>
+        </AvatarTag>
         <div className={styles.messageBody}>
           <div className={styles.byline}>
             <strong>{name}</strong>
@@ -86,6 +104,8 @@ export const MessageRow = memo(function MessageRow({
             extensions={extensions}
             media={media}
             onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
             largeEmoji={emojiOnly}
           />
           <DeliveryNotice row={row} retry={retry} />

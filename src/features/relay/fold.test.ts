@@ -173,6 +173,26 @@ describe("message fold", () => {
     expect(row.attachments).toEqual([]);
   });
 
+  it.each([9, 40002])(
+    "preserves code indentation when projecting images in kind %s",
+    (kind) => {
+      const content = "    @Mic\n\n![image](https://x.test/image.png)";
+      const event = signed(alice, {
+        kind,
+        content: kind === 40002 ? JSON.stringify({ content }) : content,
+        tags: [
+          ["h", channel],
+          ["p", bob.pubkey],
+        ],
+      });
+      const [row] = foldMessages(channel, relay.pubkey, [event]);
+      expect(row?.content).toBe("    @Mic");
+      expect(row?.attachments).toEqual([
+        { url: "https://x.test/image.png", video: false },
+      ]);
+    },
+  );
+
   it("unwraps agent envelopes and projects valid CommonMark images through one safe URL policy", () => {
     const agent = signed(bob, {
       kind: 40002,
@@ -254,4 +274,27 @@ describe("discovery", () => {
     ).toBe(true);
     expect(state.channels().map((channel) => channel.id)).toEqual(["zeta"]);
   });
+});
+
+it("marks same-label identity replacement as edited without changing notification recipients", () => {
+  const original = message(alice, channel, "Hello @Mic", 10, [
+    ["p", bob.pubkey],
+  ]);
+  const replacement = signed(alice, {
+    kind: 40003,
+    content: "Hello @Mic",
+    created_at: 11,
+    tags: [
+      ["h", channel],
+      ["e", original.id],
+      ["buzz:mention-snapshot", "1"],
+      ["mention", relay.pubkey, "Mic"],
+    ],
+  });
+  const [edited] = foldMessages(channel, relay.pubkey, [original, replacement]);
+  expect(edited?.edited).toBe(true);
+  expect(edited?.mentions).toEqual([bob.pubkey]);
+  expect(
+    foldMessages(channel, relay.pubkey, [original])[0]?.edited,
+  ).toBeUndefined();
 });

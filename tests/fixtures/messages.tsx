@@ -52,8 +52,8 @@ const replies = roots.flatMap((root) =>
         ? `## Markdown reply
 **Bold**, *italic*, and ~~done~~
 
-single
-break
+first
+second
 
 1. outer
    1. nested
@@ -236,7 +236,7 @@ function Fixture() {
                 authorId: viewer.pubkey,
                 createdAt: 1,
                 content:
-                  "## Channel Markdown\n\n**Virtualized channel row**\n\n1. channel outer\n   1. channel nested",
+                  "## Channel Markdown\n\n**Virtualized channel row**\n\nfirst\nsecond\n\n1. channel outer\n   1. channel nested",
                 mentions: [],
                 participants: [],
                 attachments: [],

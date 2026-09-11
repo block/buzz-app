@@ -19,6 +19,7 @@ export function foldProfiles(
         display_name?: unknown;
         name?: unknown;
         picture?: unknown;
+        about?: unknown;
       };
       const name = [body.display_name, body.name].find(
         (value): value is string =>
@@ -33,6 +34,9 @@ export function foldProfiles(
         Object.freeze({
           name: name ?? pubkey.slice(0, 10),
           ...(picture ? { picture } : {}),
+          ...(typeof body.about === "string" && body.about.trim()
+            ? { about: body.about.trim() }
+            : {}),
         }),
       );
     } catch {

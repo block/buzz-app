@@ -45,6 +45,8 @@
      Every size derives from this virtual rem, which is itself rem-relative and
      therefore rides on top of zoom automatically. At the default preference it
      equals 1rem, making --type-size-4 read as 14px.                          */
+  --font-system-mono:
+    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --type-scale: 1;
   --type-rem: calc(1rem * var(--type-scale));
 
@@ -133,8 +135,7 @@
 @theme {
   --font-sans:
     "Inter Variable", Inter, ui-sans-serif, system-ui, -apple-system, sans-serif;
-  --font-mono:
-    "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --font-mono: var(--font-system-mono);
 
   /* ---- Sans. Six roles. ----------------------------------- */
 
@@ -206,39 +207,4 @@
   --text-mono-sm--line-height: var(--type-leading-flat);
   --text-mono-sm--letter-spacing: var(--type-tracking-1);
   --text-mono-sm--font-weight: var(--type-weight-normal);
-}
-
-/* ============================================================
-   BASE
-   ============================================================ */
-
-@layer base {
-  html {
-    font-family: var(--font-sans);
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  body {
-    /* Every readable surface starts from the body role and steps away from it
-       deliberately. */
-    font-size: var(--text-body);
-    line-height: var(--text-body--line-height);
-    letter-spacing: var(--text-body--letter-spacing);
-
-    /* Never synthesise a weight Inter Variable can render properly, and never
-       let a font fall back mid-string. */
-    font-synthesis-weight: none;
-    text-rendering: optimizeLegibility;
-  }
-
-  code,
-  kbd,
-  pre,
-  samp {
-    font-family: var(--font-mono);
-    /* Mono digits and letters share one advance width, so a changing value does
-       not shift the text around it. */
-    font-variant-numeric: tabular-nums;
-  }
 }

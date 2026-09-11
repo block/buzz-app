@@ -63,8 +63,9 @@ macOS desktop runtime. This inset does not move the centered tabs. Web gets no
 inset or imitation window controls. Other
 platforms retain their native decorations. Drag regions are limited to the
 header background; controls remain clickable. The main-window capability grants
-only dragging and the internal native maximize action used by Tauri's drag
-handler. See [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
+only titlebar dragging and the internal native maximize action used by Tauri's drag
+handler, plus scoped HTTP(S) opening for [external links](channels.md#run-the-integration).
+See [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
 
 The top-right group contains enabled plugin launchers (Bestie supplies the snake),
 a page finder, and the local avatar. `ProfileButton.tsx` subscribes to the community

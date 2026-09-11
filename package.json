@@ -18,13 +18,21 @@
     "format:check": "biome format .",
     "tauri": "tauri",
     "lint": "biome lint --error-on-warnings .",
-    "check": "biome check --error-on-warnings . && pnpm typecheck",
+    "check": "biome check --error-on-warnings . && pnpm typecheck && pnpm design:typecheck && pnpm design:check",
     "buzzodz": "cargo run --quiet --manifest-path crates/plugin-manager/Cargo.toml --bin buzzodz --",
     "test": "node --test tests/integration/*.test.mjs && vitest run && cargo test -p buzzodz-plugins && pnpm test:browser",
     "test:browser": "playwright test --config tests/browser/playwright.config.mjs",
     "test:browser:ci": "playwright test --config tests/browser/playwright.ci.config.mjs",
     "test:browser:local-only": "pnpm test:browser --project webkit-measurements --grep @local-webkit --no-deps --workers=1",
-    "test:browser:install": "playwright install chromium webkit"
+    "test:browser:install": "playwright install chromium webkit",
+    "design:dev": "vite --config vite.design.config.ts",
+    "design:build": "pnpm design:typecheck && vite build --config vite.design.config.ts",
+    "design:preview": "vite preview --config vite.design.config.ts",
+    "design:typecheck": "tsc -p tsconfig.design.json",
+    "design:check": "node scripts/design-system/check-type.mjs && node scripts/design-system/check-color.mjs && node scripts/design-system/check-contrast.mjs",
+    "design:census": "node scripts/design-system/token-consumers.mjs",
+    "design:test": "vitest run --config vitest.design.config.ts",
+    "design:test:browser": "pnpm build && pnpm design:build && playwright test --config tests/fixtures/design-system/playwright.config.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.7.0",

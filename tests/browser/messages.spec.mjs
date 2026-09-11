@@ -116,12 +116,41 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(
       history.locator("code").filter({ hasText: "agent-code" }),
     ).toBeVisible();
-    await expect(
-      history
+    // A <br> count misses a second line box caused by inherited pre-wrap.
+    // Measure the actual first/second text baselines in both shared surfaces.
+    for (const surface of [feed, history]) {
+      const paragraph = surface
         .locator("p")
-        .filter({ hasText: /single\s+break/ })
-        .locator("br"),
-    ).toHaveCount(1);
+        .filter({ hasText: /^first\s+second$/ });
+      await expect(paragraph.locator("br")).toHaveCount(1);
+      const geometry = await paragraph.evaluate((element) => {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+        const tops = [];
+        for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+          for (const word of ["first", "second"]) {
+            const start = node.textContent.indexOf(word);
+            if (start < 0) continue;
+            const range = document.createRange();
+            range.setStart(node, start);
+            range.setEnd(node, start + word.length);
+            tops.push(range.getBoundingClientRect().top);
+          }
+        }
+        return {
+          tops,
+          height: element.getBoundingClientRect().height,
+          lineHeight: Number.parseFloat(getComputedStyle(element).lineHeight),
+        };
+      });
+      expect(geometry.tops).toHaveLength(2);
+      expect(
+        Math.abs(geometry.tops[1] - geometry.tops[0] - geometry.lineHeight),
+      ).toBeLessThan(1);
+      expect(Math.abs(geometry.height - 2 * geometry.lineHeight)).toBeLessThan(
+        1,
+      );
+    }
+    await expect(history.locator("pre code")).toHaveCSS("white-space", "pre");
     await expect(history.locator("table")).toContainText("wide-column-one-");
     await expect(history.locator("pre code")).toContainText("wide-content-");
     const safeLink = history.getByRole("link", { name: "Safe link" });
@@ -232,9 +261,11 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       await expect(
         panel.getByText(`${63 + index} replies shown`, { exact: true }),
       ).toBeVisible();
-      await expect(
-        history.getByText("literal deep message", { exact: false }).last(),
-      ).toBeVisible();
+      const literal = history
+        .getByText("literal deep message", { exact: false })
+        .last();
+      await expect(literal).toBeVisible();
+      await expect(literal).toHaveCSS("white-space", "pre-wrap");
     }
     expect(errors).toEqual([]);
   } finally {

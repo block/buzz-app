@@ -20,6 +20,7 @@ export function Accordion({
 }) {
   return (
     <BaseAccordion.Root
+      data-buzz-ui=""
       className="buzz-accordion"
       data-variant={variant}
       defaultValue={defaultValue}

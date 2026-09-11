@@ -4,96 +4,198 @@ import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { InlineText } from "../conversation/InlineText";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, messageParts } from "../relay/emoji";
 import {
-  markdownIsSafeToRender,
+  MAX_MARKDOWN_LENGTH,
+  scanMarkdown,
   safeMessageUrl,
 } from "../relay/message-content";
 import styles from "./Messages.module.css";
-
-// Private-use sentinels preserve recognized token boundaries through emphasis parsing.
-const EMOJI_PLACEHOLDER_START = "\u{E000}";
-const EMOJI_PLACEHOLDER_END = "\u{E001}";
+import { profileMentionParts } from "./profile-mentions";
 
 type MarkdownNode = {
   type: string;
   value?: string;
+  url?: string;
+  title?: string;
+  alt?: string;
+  identifier?: string;
+  label?: string;
   children?: MarkdownNode[];
+  position?: { start: { offset?: number }; end: { offset?: number } };
   data?: {
     hName?: string;
     hProperties?: Record<string, string>;
   };
 };
 
-function protectCustomEmoji(row: ChannelMessage): {
+type InlinePart = { text: string; target?: string | undefined };
+type ProtectedContent = {
   content: string;
-  shortcodes: string[];
-} {
-  const shortcodes: string[] = [];
-  const content = messageParts(row.content)
-    .map((part) => {
-      if (part.startsWith("https://")) return part;
-      let result = "";
-      let offset = 0;
-      for (const match of emojiMatches(part, row.emoji ?? [])) {
-        result += part.slice(offset, match.start);
-        shortcodes.push(`:${match.emoji.shortcode}:`);
-        result += `${EMOJI_PLACEHOLDER_START}${shortcodes.length - 1}${EMOJI_PLACEHOLDER_END}`;
-        offset = match.end;
-      }
-      return result + part.slice(offset);
+  prefix: string;
+  parts: InlinePart[];
+};
+const literalContext = (type: string) =>
+  [
+    "code",
+    "inlineCode",
+    "link",
+    "linkReference",
+    "image",
+    "imageReference",
+    "definition",
+    "html",
+  ].includes(type);
+
+/** Bind exact names on the FULL signed body, before Markdown decodes escapes or
+ * divides emphasis. Reference labels must also survive unchanged for resolution. */
+function protectInlineContent(
+  row: ChannelMessage,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+  tree: MarkdownNode,
+): ProtectedContent {
+  const literalRanges: { start: number; end: number }[] = [];
+  const visit = (node: MarkdownNode) => {
+    if (literalContext(node.type)) {
+      const start = node.position?.start.offset;
+      const end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined)
+        literalRanges.push({ start, end });
+    } else {
+      for (const child of node.children ?? []) visit(child);
+    }
+  };
+  visit(tree);
+  let rangeIndex = 0;
+  const isLiteral = (start: number, end: number) => {
+    while (
+      literalRanges[rangeIndex] &&
+      (literalRanges[rangeIndex]?.end ?? 0) <= start
+    )
+      rangeIndex++;
+    return (literalRanges[rangeIndex]?.start ?? Infinity) < end;
+  };
+
+  // Numeric entities can manufacture private-use characters during parsing too.
+  // Choose an unused prefix in that decoded source; never trust a fixed marker.
+  const decoded = row.content.replace(
+    /&#(x[a-f\d]{1,6}|\d{1,7});/gi,
+    (entity, number: string) => {
+      const code =
+        number[0]?.toLowerCase() === "x"
+          ? Number.parseInt(number.slice(1), 16)
+          : Number.parseInt(number, 10);
+      return code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+    },
+  );
+  const used = new Set(
+    [...decoded.matchAll(/\uE000(\d+)\uE001/g)].map((match) => match[1]),
+  );
+  let nonce = 0;
+  while (used.has(String(nonce))) nonce++;
+  const prefix = `\uE000${nonce}\uE001`;
+  const parts: InlinePart[] = [];
+  const token = (part: InlinePart) => {
+    parts.push(part);
+    return `${prefix}${parts.length - 1}\uE002`;
+  };
+  let offset = 0;
+  const content = profileMentionParts(row, profiles)
+    .map((segment) => {
+      const start = offset;
+      offset += segment.text.length;
+      if (segment.target && !isLiteral(start, offset)) return token(segment);
+      let partOffset = start;
+      return messageParts(segment.text)
+        .map((part) => {
+          const partStart = partOffset;
+          partOffset += part.length;
+          if (part.startsWith("https://")) return part;
+          let result = "";
+          let end = 0;
+          for (const match of emojiMatches(part, row.emoji ?? [])) {
+            if (isLiteral(partStart + match.start, partStart + match.end))
+              continue;
+            result += part.slice(end, match.start);
+            result += token({ text: part.slice(match.start, match.end) });
+            end = match.end;
+          }
+          return result + part.slice(end);
+        })
+        .join("");
     })
     .join("");
-  return { content, shortcodes };
+  return { content, prefix, parts };
 }
 
-const placeholderPattern = () =>
-  new RegExp(`${EMOJI_PLACEHOLDER_START}(\\d+)${EMOJI_PLACEHOLDER_END}`, "g");
-function restoreEmoji(value: string, shortcodes: readonly string[]): string {
-  return value.replace(placeholderPattern(), (_match, index: string) => {
-    return shortcodes[Number(index)] ?? "";
-  });
-}
+const placeholderPattern = (protectedContent: ProtectedContent) =>
+  new RegExp(`${protectedContent.prefix}(\\d+)\uE002`, "g");
 
-/** Offer only Markdown prose to inline plugins; links and code remain literal. */
-function remarkInlineContent(shortcodes: readonly string[] = []) {
+/** Offer only Markdown prose to profile controls and inline plugins. */
+function remarkInlineContent(protectedContent: ProtectedContent) {
+  const restore = (value: string) =>
+    value.replace(
+      placeholderPattern(protectedContent),
+      (match, index: string) =>
+        protectedContent.parts[Number(index)]?.text ?? match,
+    );
+  const restoreLiteral = (node: MarkdownNode) => {
+    for (const key of [
+      "value",
+      "url",
+      "title",
+      "alt",
+      "identifier",
+      "label",
+    ] as const) {
+      const value = node[key];
+      if (typeof value === "string") node[key] = restore(value);
+    }
+    for (const child of node.children ?? []) restoreLiteral(child);
+  };
   return (tree: MarkdownNode) => {
     const visit = (parent: MarkdownNode) => {
-      if (parent.type === "code" || parent.type === "inlineCode") {
-        if (typeof parent.value === "string")
-          parent.value = restoreEmoji(parent.value, shortcodes);
-        return;
-      }
-      if (parent.type === "link" || parent.type === "linkReference") {
-        const pending = [...(parent.children ?? [])];
-        while (pending.length) {
-          const child = pending.pop();
-          if (!child) continue;
-          if (typeof child.value === "string")
-            child.value = restoreEmoji(child.value, shortcodes);
-          pending.push(...(child.children ?? []));
-        }
+      if (literalContext(parent.type)) {
+        restoreLiteral(parent);
         return;
       }
       if (!parent.children) return;
-      for (let index = 0; index < parent.children.length; index++) {
-        const child = parent.children[index];
-        if (!child) continue;
+      parent.children = parent.children.flatMap((child) => {
         if (child.type !== "text" || typeof child.value !== "string") {
           visit(child);
-          continue;
+          return [child];
         }
-        parent.children[index] = {
+        const parts: InlinePart[] = [];
+        let plain = "";
+        let end = 0;
+        for (const match of child.value.matchAll(
+          placeholderPattern(protectedContent),
+        )) {
+          plain += child.value.slice(end, match.index);
+          const part = protectedContent.parts[Number(match[1])];
+          if (part?.target) {
+            if (plain) parts.push({ text: plain });
+            parts.push(part);
+            plain = "";
+          } else {
+            plain += part?.text ?? match[0];
+          }
+          end = match.index + match[0].length;
+        }
+        plain += child.value.slice(end);
+        if (plain) parts.push({ text: plain });
+        return parts.map((part) => ({
           type: "buzzInlineContent",
           data: {
             hName: "span",
             hProperties: {
-              "data-inline-text": restoreEmoji(child.value, shortcodes),
+              "data-inline-text": part.text,
+              ...(part.target ? { "data-profile-target": part.target } : {}),
             },
           },
-        };
-      }
+        }));
+      });
     };
     visit(tree);
   };
@@ -138,18 +240,29 @@ export function MessageMarkdown({
   extensions,
   media,
   onOpenLink,
+  canOpenLink,
+  participantProfiles,
   largeEmoji = false,
 }: {
   row: ChannelMessage;
   extensions?: ConversationExtensions | undefined;
   media(url: string): string | undefined;
   onOpenLink(url: string): boolean;
+  canOpenLink?: ((target: string) => boolean) | undefined;
+  participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
 }) {
-  if (!markdownIsSafeToRender(row.content))
+  if (row.content.length > MAX_MARKDOWN_LENGTH)
+    return <div className={styles.plainText}>{row.content}</div>;
+  const scan = scanMarkdown(row.content);
+  if (scan.tooDeep)
     return <div className={styles.plainText}>{row.content}</div>;
 
-  const protectedEmoji = protectCustomEmoji(row);
+  const protectedContent = protectInlineContent(
+    row,
+    participantProfiles,
+    scan.tree,
+  );
   const components: Components = {
     p: ({ node: _node, ...props }) => (
       <p
@@ -164,9 +277,30 @@ export function MessageMarkdown({
     img: ({ node: _node, alt }) =>
       alt ? <span className={styles.imageAlt}>{alt}</span> : null,
     span: ({ node: _node, children, ...props }) => {
-      const text = (props as typeof props & { "data-inline-text"?: unknown })[
-        "data-inline-text"
-      ];
+      const { "data-inline-text": text, "data-profile-target": target } =
+        props as typeof props & {
+          "data-inline-text"?: unknown;
+          "data-profile-target"?: unknown;
+        };
+      if (
+        typeof text === "string" &&
+        typeof target === "string" &&
+        canOpenLink?.(target)
+      ) {
+        return (
+          <button
+            type="button"
+            className={styles.mention}
+            aria-label={`View ${text.slice(1)} profile`}
+            onClick={(event) => {
+              event.currentTarget.focus();
+              onOpenLink(target);
+            }}
+          >
+            {text}
+          </button>
+        );
+      }
       return typeof text === "string" ? (
         extensions ? (
           <InlineText
@@ -188,13 +322,13 @@ export function MessageMarkdown({
       remarkPlugins={[
         remarkGfm,
         remarkBreaks,
-        [remarkInlineContent, protectedEmoji.shortcodes],
+        [remarkInlineContent, protectedContent],
       ]}
       components={components}
       skipHtml
       urlTransform={transformUrl}
     >
-      {protectedEmoji.content}
+      {protectedContent.content}
     </Markdown>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;

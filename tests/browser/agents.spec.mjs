@@ -29,6 +29,10 @@ test("My agents reads the existing library with exact linked keys and session-sa
       agents.getByRole("heading", { name: "A Brain", exact: true }),
     ).toHaveCount(2);
     const keys = await page.evaluate(() => window.agentFixture.agents);
+    await expect
+      .poll(() => agents.locator("img").evaluate((image) => image.naturalWidth))
+      .toBeGreaterThan(0);
+    await expect(agents.locator("img")).toHaveCSS("opacity", "1");
     await expect(
       agents.getByRole("img", { name: "A Brain", exact: true }),
     ).toHaveCount(2);

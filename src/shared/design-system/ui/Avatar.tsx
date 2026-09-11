@@ -16,6 +16,7 @@ function AvatarArtwork({ src, fallback }: { src: string; fallback: string }) {
     <>
       <img
         src={src}
+        data-loaded={status === "loaded" ? "true" : undefined}
         alt=""
         loading="lazy"
         decoding="async"

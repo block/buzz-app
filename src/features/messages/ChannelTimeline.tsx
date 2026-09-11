@@ -1,4 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { MembershipRow } from "./MembershipRow";
+import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -49,6 +51,7 @@ export type ChannelTimelineProps = {
   extensions?: ConversationExtensions | undefined;
   channelId: string;
   scope: string;
+  viewer?: string | undefined;
   queries: RelaySession;
   window: ChannelWindow;
   onOpenLink(url: string): boolean;
@@ -70,6 +73,7 @@ function Timeline({
   channelId,
   extensions,
   scope,
+  viewer,
   queries,
   window,
   onOpenLink,
@@ -81,12 +85,12 @@ function Timeline({
     readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
-  const rows = window.rows;
-  const profiles = useRowProfiles(queries.profiles, rows);
+  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const profiles = useRowProfiles(queries.profiles, window.rows);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
   const signature = useMemo(
-    () => geometrySignature(rows, profiles),
-    [rows, profiles],
+    () => geometrySignature(window.rows, profiles),
+    [window.rows, profiles],
   );
   const scroller = useRef<HTMLElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
@@ -180,7 +184,11 @@ function Timeline({
         ) {
           const anchor = savedPosition.current.anchor;
           const index = anchor
-            ? rows.findIndex((row) => row.id === anchor.id)
+            ? rows.findIndex(
+                (row) =>
+                  row.id === anchor.id ||
+                  row.membershipRows?.some((member) => member.id === anchor.id),
+              )
             : -1;
           if (anchor && index >= 0)
             handle.current.scrollToIndex(index, {
@@ -220,7 +228,11 @@ function Timeline({
   useLayoutEffect(() => {
     if (!width || !revealMessageId || revealed.current === revealMessageId)
       return;
-    const index = rows.findIndex((row) => row.id === revealMessageId);
+    const index = rows.findIndex(
+      (row) =>
+        row.id === revealMessageId ||
+        row.membershipRows?.some((member) => member.id === revealMessageId),
+    );
     if (index < 0) return;
     // A local send is explicit navigation intent, even when reading older messages.
     // Wait for the optimistic row and virtualizer to mount before revealing it.
@@ -334,28 +346,39 @@ function Timeline({
           startMargin={EDGE_HEIGHT}
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
-          {rows.map((row, index) => (
-            <MessageRow
-              key={row.id}
-              row={row}
-              unread={queries.unread}
-              extensions={extensions}
-              profile={profiles.get(row.authorId)}
-              participantProfiles={profiles}
-              media={queries.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              onOpenThread={onOpenThread}
-              retry={queries.outbox?.retry}
-              day={
-                index === 0 ||
-                new Date(
-                  (rows[index - 1]?.createdAt ?? 0) * 1000,
-                ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString()
-              }
-            />
-          ))}
+          {rows.map((row, index) => {
+            const day =
+              index === 0 ||
+              new Date(
+                (rows[index - 1]?.createdAt ?? 0) * 1000,
+              ).toDateString() !==
+                new Date(row.createdAt * 1000).toDateString();
+            return row.membership ? (
+              <MembershipRow
+                key={row.id}
+                row={row}
+                profiles={profiles}
+                viewer={viewer}
+                media={queries.media}
+                day={day}
+              />
+            ) : (
+              <MessageRow
+                key={row.id}
+                row={row}
+                unread={queries.unread}
+                extensions={extensions}
+                profile={profiles.get(row.authorId)}
+                participantProfiles={profiles}
+                media={queries.media}
+                onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                onOpenThread={onOpenThread}
+                retry={queries.outbox?.retry}
+                day={day}
+              />
+            );
+          })}
         </Virtualizer>
       )}
       {!rows.length && !window.hasMore && (

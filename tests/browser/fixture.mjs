@@ -33,6 +33,7 @@ export const test = base.extend({
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
+  membershipActivity: [false, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -51,6 +52,7 @@ export const test = base.extend({
       largeSidebar,
       dmLabels,
       tallMessages,
+      membershipActivity,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -61,6 +63,28 @@ export const test = base.extend({
     const relayKey = generateSecretKey();
     const userKey = generateSecretKey();
     const viewer = getPublicKey(userKey);
+    const membershipKeys = membershipActivity
+      ? [generateSecretKey(), generateSecretKey()]
+      : [];
+    const membershipEvent = (
+      type,
+      targetIndex,
+      time,
+      actorIndex = -1,
+      forged = false,
+    ) =>
+      sign(
+        40099,
+        [["h", "alpha"]],
+        JSON.stringify({
+          type,
+          actor:
+            actorIndex < 0 ? viewer : getPublicKey(membershipKeys[actorIndex]),
+          target: getPublicKey(membershipKeys[targetIndex]),
+        }),
+        forged ? userKey : relayKey,
+        time,
+      );
     const peerKey = dmLabels || readState ? generateSecretKey() : undefined;
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
@@ -147,6 +171,13 @@ export const test = base.extend({
         );
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    if (membershipActivity) {
+      const history = histories.get("primary/alpha");
+      history.push(
+        membershipEvent("member_joined", 0, 1700000740),
+        membershipEvent("member_joined", 1, 1700000741),
+      );
+    }
     if (sidebarUnread) {
       for (const id of ["dm-030", "dm-090"])
         histories.set(`primary/${id}`, [
@@ -335,6 +366,18 @@ export const test = base.extend({
       if (filter.kinds?.includes(0))
         return [
           sign(0, [], JSON.stringify({ name: "Fixture Reader" }), userKey),
+          ...membershipKeys
+            .filter((key) => filter.authors?.includes(getPublicKey(key)))
+            .map((key) =>
+              sign(
+                0,
+                [],
+                JSON.stringify({
+                  name: key === membershipKeys[0] ? "Pinky" : "Brain",
+                }),
+                key,
+              ),
+            ),
           ...(peerKey && filter.authors?.includes(getPublicKey(peerKey))
             ? [
                 sign(
@@ -382,6 +425,7 @@ export const test = base.extend({
       if (!history)
         throw new Error(`Unexpected query: ${JSON.stringify(filter)}`);
       const candidates = history
+        .filter((event) => !filter.kinds || filter.kinds.includes(event.kind))
         .filter(
           (event) =>
             filter.until === undefined ||
@@ -632,6 +676,22 @@ export const test = base.extend({
         report,
         pending,
         histories,
+        membership(type, targetIndex, actorIndex = -1, forged = false) {
+          const history = histories.get("primary/alpha");
+          const event = membershipEvent(
+            type,
+            targetIndex,
+            history.at(-1).created_at + 1,
+            actorIndex,
+            forged,
+          );
+          history.push(event);
+          if (relay) relay.publish("primary", event);
+          else
+            for (const client of streams.get("primary") ?? [])
+              client.write(`data: ${JSON.stringify(event)}\n\n`);
+          return event;
+        },
         participants,
         viewer,
         relay,

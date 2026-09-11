@@ -104,6 +104,7 @@ function setup({
   error = undefined as string | undefined,
   initial = undefined as unknown,
   mounted = [] as { id: string; y: number }[],
+  initialRows = undefined as ChannelMessage[] | undefined,
 } = {}) {
   Object.assign(hooks, {
     refs: [],
@@ -206,10 +207,12 @@ function setup({
       unread: { sync: () => ({ capability: "unsupported" }) },
       media: () => undefined,
     } as unknown as RelaySession);
-  let rows = [
-    { id: "first", authorId: "author" },
-    { id: "last", authorId: "author" },
-  ] as ChannelMessage[];
+  let rows =
+    initialRows ??
+    ([
+      { id: "first", authorId: "author" },
+      { id: "last", authorId: "author" },
+    ] as ChannelMessage[]);
   type Section = ReactElement<{
     ref: { current: unknown };
     children: unknown[];
@@ -328,6 +331,10 @@ function setup({
         row.id === "last" ? { ...row, content: "Longer edited message" } : row,
       );
       render(runFrames);
+    },
+    setRows(next: ChannelMessage[]) {
+      rows = next;
+      render();
     },
     prepend() {
       rows = [{ id: "older", authorId: "author" } as ChannelMessage, ...rows];
@@ -890,5 +897,54 @@ it("an accepted button read retires earlier blocked gesture before verification"
   expect(h.olderReads).toHaveBeenCalledTimes(1);
   h.update({ freshness: "verified" });
   expect(h.olderReads).toHaveBeenCalledTimes(1);
+  h.unmount();
+});
+
+const membershipRow = (id: string, time: number): ChannelMessage => ({
+  id,
+  channelId: "channel",
+  authorId: "relay",
+  createdAt: time,
+  content: "",
+  membership: { type: "member_joined", actor: "viewer", target: id },
+  mentions: [],
+  attachments: [],
+  reactions: [],
+  participants: [],
+  replyCount: 0,
+});
+it("restores an anchor inside a membership group after history joins across a page seam", () => {
+  const h = setup({
+    initialRows: [
+      membershipRow("older", 1),
+      membershipRow("anchor", 2),
+      membershipRow("newer", 3),
+    ],
+    initial: { offset: 80851, bottom: false, anchor: { id: "anchor", y: 42 } },
+  });
+  expect(h.handle.scrollToIndex).toHaveBeenCalledWith(0, {
+    align: "start",
+    offset: -42,
+  });
+  expect(h.handle.scrollTo).not.toHaveBeenCalled();
+  h.handle.scrollToIndex.mockClear();
+  h.setRows([
+    membershipRow("oldest", 0),
+    membershipRow("older", 1),
+    membershipRow("anchor", 2),
+    membershipRow("newer", 3),
+  ]);
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("live group growth follows the displayed group index rather than a hidden raw row", () => {
+  const first = membershipRow("first", 1),
+    second = membershipRow("second", 2);
+  const h = setup({ initialRows: [first, second] });
+  h.element.scrollTop = 3038;
+  h.scroll(false);
+  h.handle.scrollToIndex.mockClear();
+  h.setRows([first, second, membershipRow("third", 3)]);
+  expect(h.handle.scrollToIndex).toHaveBeenCalledWith(0, { align: "end" });
   h.unmount();
 });

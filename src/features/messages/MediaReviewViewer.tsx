@@ -38,6 +38,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const [active, setActive] = useState(() => ({
     attachment: props.attachment,
     initialTime: props.initialTime,
+    request: 0,
   }));
   const [view, setView] = useState<ThreadView>();
   const [threadError, setThreadError] = useState<string>();
@@ -56,8 +57,13 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
     ...props,
     attachment: active.attachment,
     initialTime: active.initialTime,
+    selectionRequest: active.request,
     selectAttachment: (attachment: Attachment, initialTime: number) =>
-      setActive({ attachment, initialTime }),
+      setActive((current) => ({
+        attachment,
+        initialTime,
+        request: current.request + 1,
+      })),
   };
   if (threadError) return <ReviewShell {...activeProps} error={threadError} />;
   if (!view) return <ReviewShell {...activeProps} loading />;
@@ -65,6 +71,7 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
 }
 
 type ActiveReviewProps = MediaReviewViewerProps & {
+  selectionRequest: number;
   selectAttachment(attachment: Attachment, initialTime: number): void;
 };
 
@@ -81,12 +88,12 @@ function ResolvedReview({
     if (snapshot.status === "ready" && snapshot.canLoadMore)
       void view.loadMore();
   }, [view, snapshot.status, snapshot.canLoadMore]);
-  if (snapshot.status === "loading" || snapshot.status === "idle")
-    return <ReviewShell {...props} loading />;
   if (snapshot.error)
     return (
       <ReviewShell {...props} error={snapshot.error} retry={view.refresh} />
     );
+  if (snapshot.status === "loading" || snapshot.status === "idle")
+    return <ReviewShell {...props} loading />;
   if (!snapshot.root)
     return (
       <ReviewShell
@@ -137,6 +144,7 @@ function ReviewShell({
   retry,
   restoreFocus,
   selectAttachment,
+  selectionRequest,
 }: ActiveReviewProps & {
   view?: ThreadView;
   rootId?: string;
@@ -154,10 +162,25 @@ function ReviewShell({
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [includeTime, setIncludeTime] = useState(true);
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  // selectionRequest intentionally re-applies a seek when the same URL/time is selected again.
   useEffect(() => {
-    setCurrentTime(initialTime);
+    void selectionRequest;
     setSelectedImageUrl(attachment.url);
-  }, [attachment.url, initialTime]);
+    const seconds = Math.max(0, initialTime);
+    const element = video.current;
+    if (!attachment.video || !element) {
+      setCurrentTime(seconds);
+      return;
+    }
+    const apply = () => {
+      if (!video.current) return;
+      video.current.currentTime = seconds;
+      setCurrentTime(video.current.currentTime);
+    };
+    if (element.readyState >= HTMLMediaElement.HAVE_METADATA) apply();
+    else element.addEventListener("loadedmetadata", apply, { once: true });
+    return () => element.removeEventListener("loadedmetadata", apply);
+  }, [attachment.url, attachment.video, initialTime, selectionRequest]);
   useModalBoundary(backdrop, closeButton, close, restoreFocus);
   const seek = (seconds: number) => {
     if (!video.current) return;

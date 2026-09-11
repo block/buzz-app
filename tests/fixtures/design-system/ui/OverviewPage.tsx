@@ -61,7 +61,7 @@ export function OverviewPage() {
 
       <Section
         title="Where this stands"
-        description="The design system Buzz is moving to. It does not style the app yet — surfaces transition onto it incrementally. Foundations and shared components are ready to inspect; layout playgrounds are still experiments. Composer, conversation, and agent feature examples are intentionally excluded."
+        description="The design system for new and migrated Buzz UI. This initial port does not restyle existing surfaces; they move onto it incrementally. Foundations and shared components are ready to inspect; layout playgrounds are still experiments. Composer, conversation, and agent feature examples are intentionally excluded."
       >
         <div className="flex flex-wrap gap-2">
           <Link

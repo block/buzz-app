@@ -2,9 +2,10 @@
 
 > **The design system going forward:** the imported system is documented in
 > [the handoff README](../src/shared/design-system/README.md) and displayed at
-> `/tests/fixtures/design-system.html`. Surfaces will transition onto it. It does
-> not yet style the app, so the host styling and appearance ownership described
-> below still govern what ships; that transition happens in later changes.
+> `/tests/fixtures/design-system.html`. New UI and existing surfaces moving off the
+> current styles should use it. This initial port does not migrate existing surfaces,
+> so the host styling described below still governs those callers until they move;
+> the host remains the single owner of appearance throughout the transition.
 
 The **host** owns appearance, including startup and recovery. A plugin must not be
 required to render the shell correctly. Pages still own their layout and behavior;

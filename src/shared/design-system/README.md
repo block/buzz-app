@@ -1,8 +1,9 @@
 # Buzz design system
 
 The design system this app is moving to, imported from `block/buzz`'s `desktop-new`
-worktree, including its in-progress layout playgrounds. Surfaces transition onto it
-incrementally; this change adds the system and its viewer without restyling the app.
+worktree, including its in-progress layout playgrounds. It is the styling source
+for new UI and for existing surfaces as they move onto the system. This initial
+port adds the system and its viewer without migrating existing app surfaces.
 
 ## Ownership and locations
 
@@ -46,14 +47,14 @@ Blank layout playgrounds and generic inline reference presentations are retained
 
 ## Compatibility boundary
 
-The host still owns its existing tokens and appearance lifecycle. Its stylesheet
-only excludes staged source from Tailwind discovery; no host role is remapped.
-The viewer has its own document and appearance-storage key. Do not import its
-global stylesheet into the host yet: its reset, root variables and utilities
-are a replacement, not an additive theme. This staging area is not a second
-permanently supported design system or an external-plugin API.
+The host still owns the appearance lifecycle. Its current stylesheet excludes the
+new system from automatic Tailwind discovery so this port does not accidentally
+restyle existing surfaces. That isolation protects the initial import; it does not
+make the design system viewer-only or forbid app code from adopting it.
 
-App adoption is separate: map current token meanings to the replacement, migrate
-consumers in reviewed batches, preserve host appearance ownership, and retire
-compatibility names after their callers move. Foundation changes need explicit
-approval. Keep app/plugin behavior out of shared UI.
+New and migrated app UI should use the shared components and tokens. Integrate the
+system's global styles deliberately through the host entry point rather than
+layering two resets, map current token meanings where compatibility requires it,
+and retire old names as their callers move. Keep the host as the one appearance
+owner, and keep app/plugin behavior out of shared UI. The viewer remains a separate
+document with its own appearance-storage key and is not an external-plugin API.

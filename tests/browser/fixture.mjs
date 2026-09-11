@@ -360,7 +360,12 @@ export const test = base.extend({
                 event.id > filter.thread_cursor_id),
           )
           .slice(0, filter.limit);
-      if (readState && filter["#h"]?.length > 1)
+      // Unread evidence is not a top-level window, even for a one-ID final batch.
+      if (
+        filter.kinds?.includes(9) &&
+        !filter.top_level &&
+        filter["#h"]?.length
+      )
         return filter["#h"]
           .flatMap((channel) => [
             ...(histories.get(`${community}/${channel}`) ?? []),

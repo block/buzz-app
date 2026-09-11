@@ -78,11 +78,16 @@ The port retains the prepared-store implementation and its behavior tests:
 - Three unpinned history windows; each caps at 2,400 rows or 8 MiB. Mounted readers
   are not evicted by speculative preparation. A budget cap is distinct from EOF.
 - Three read slots, at most one background request, with foreground promotion and
-  deduplication. Hover/focus prepares likely next channels. Discovery restores
-  authorized disk heads but does not fetch heads across the roster; network reads
-  belong to intent, selection and retained-window live catch-up. Optional profile
-  enrichment stays background. Selecting an already-queued catch-up promotes that
-  existing read without adding a request or resetting its deadline.
+  deduplication. Hover/focus prepares at most one speculative head at a time;
+  superseded hints do not form a backlog. That shared head keeps foreground
+  priority so selection cannot inherit a host-side background wait. Discovery
+  restores authorized disk heads immediately after roster authorization, without
+  waiting for optional channel names, and does not fetch heads across the roster.
+  Verified heads save before optional profile enrichment; changed profiles can
+  enrich the disk record afterward. Network reads belong to intent, selection and
+  retained-window live catch-up. Optional profile enrichment stays background.
+  Selecting an already-queued catch-up promotes that existing read without adding
+  a request or resetting its deadline.
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
   and a bounded avatar preparation cache. Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour

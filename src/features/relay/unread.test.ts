@@ -631,3 +631,43 @@ it.each(["clear", "revoke-regrant"])(
     stop();
   },
 );
+
+it.each([5, 9005])(
+  "live kind-%s multi-channel deletion updates subscribed and dormant unread projections together",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    h.grant("other");
+    await h.session.unread.ensure();
+    const rows = ["room", "other"].map((id) =>
+      message(h.alice, id, "delete together", 11),
+    );
+    h.emit(rows);
+    const other = { kind: "channel" as const, channelId: "other" };
+    const otherRow = rows[1];
+    assert(otherRow);
+    const dormant = {
+      kind: "message" as const,
+      channelId: "other",
+      messageId: otherRow.id,
+    };
+    expect(h.session.unread.snapshot(other).observedCount).toBe(1);
+    expect(h.session.unread.snapshot(dormant).observedCount).toBe(1);
+    const seen: (number | null)[][] = [];
+    h.session.unread.subscribe(h.target, () =>
+      seen.push([
+        h.session.unread.snapshot(other).observedCount,
+        h.session.unread.snapshot(dormant).observedCount,
+      ]),
+    );
+    h.session.unread.subscribe(other, () => {});
+    h.emit([
+      signed(h.alice, {
+        kind,
+        content: "",
+        tags: rows.map((row) => ["e", row.id]),
+      }),
+    ]);
+    expect(seen).toEqual([[0, 0]]);
+  },
+);

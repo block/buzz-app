@@ -1,0 +1,18 @@
+[package]
+name = "buzz-agent-controller"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.89"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+url = "2"
+secp256k1 = { version = "0.31", default-features = false, features = ["std"] }
+bech32 = "0.11"
+zeroize = "1.9"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

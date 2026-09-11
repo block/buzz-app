@@ -1,0 +1,363 @@
+//! Snapshot import, not a second writer of the old library. Chosen files are
+//! re-read before commit; key access happens only after explicit selection.
+use crate::config::{
+    agent_id, canonical_key, canonical_relay, Agent, HarnessEdit, MAX_AGENTS, MAX_BYTES,
+};
+use crate::{Credentials, Result, Secret, Store};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
+use std::fs::{self, OpenOptions};
+use std::io::Read;
+use std::path::{Path, PathBuf};
+
+#[derive(Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LegacySource {
+    Installed,
+    Development,
+}
+impl LegacySource {
+    pub fn app_directory(self) -> &'static str {
+        match self {
+            Self::Installed => "xyz.block.buzz.app",
+            Self::Development => "xyz.block.buzz.app.dev",
+        }
+    }
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportPreview {
+    pub token: String,
+    pub source_path: String,
+    pub candidates: Vec<Candidate>,
+    pub warnings: Vec<String>,
+}
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Candidate {
+    pub id: String,
+    pub pubkey: String,
+    pub relay_url: String,
+    pub name: String,
+}
+struct Pending {
+    preview: ImportPreview,
+    source: PathBuf,
+    digest: String,
+    workspace: PathBuf,
+}
+#[derive(Default)]
+pub struct Imports {
+    sequence: u64,
+    pending: Option<Pending>,
+}
+struct Source {
+    records: Vec<Value>,
+    global: Value,
+    custom: BTreeMap<String, Value>,
+    digest: String,
+}
+impl Imports {
+    /// The native adapter resolves source from a fixed enum + app-data parent,
+    /// never from a path supplied by the browser. Tests use temporary fixtures.
+    pub fn preview(&mut self, source: PathBuf, workspace: PathBuf) -> Result<ImportPreview> {
+        self.pending = None;
+        let data = read_source(&source)?;
+        let mut candidates = Vec::new();
+        let mut seen = BTreeSet::new();
+        for record in &data.records {
+            let key = string(record, "pubkey");
+            if key.is_empty() {
+                continue;
+            }
+            if !canonical_key(key) {
+                return Err("Source contains an invalid agent identity".into());
+            }
+            let relay = canonical_relay(string(record, "relay_url"))?;
+            let id = agent_id(key, &relay);
+            if !seen.insert(id.clone()) {
+                return Err("Source contains duplicate agent/community records".into());
+            }
+            candidates.push(Candidate {
+                id,
+                pubkey: key.into(),
+                relay_url: relay,
+                name: string(record, "name").into(),
+            });
+        }
+        self.sequence = self
+            .sequence
+            .checked_add(1)
+            .ok_or("Import preview exhausted")?;
+        let preview = ImportPreview {
+            token: format!("{}-{}", self.sequence, data.digest),
+            source_path: source.join("agents/managed-agents.json").display().to_string(),
+            candidates,
+            warnings: vec![
+                "Imports stay disabled. Stop old Buzz before enabling an imported identity.".into(),
+                "Provider defaults baked into the old app cannot be inferred from these files; review the imported harness before starting.".into(),
+                "This copies selected identities and resolved settings; old Buzz remains unchanged.".into(),
+            ],
+        };
+        self.pending = Some(Pending {
+            preview: preview.clone(),
+            source,
+            digest: data.digest,
+            workspace,
+        });
+        Ok(preview)
+    }
+    pub fn commit(
+        &mut self,
+        token: &str,
+        ids: &[String],
+        store: &mut Store,
+        credentials: &dyn Credentials,
+    ) -> Result<()> {
+        let pending = self
+            .pending
+            .as_ref()
+            .filter(|p| p.preview.token == token)
+            .ok_or("Import preview expired; choose the source again")?;
+        if ids.is_empty()
+            || ids.len() > MAX_AGENTS
+            || ids.iter().collect::<BTreeSet<_>>().len() != ids.len()
+        {
+            return Err("Select distinct identities to import".into());
+        }
+        let data = read_source(&pending.source)?;
+        if data.digest != pending.digest {
+            return Err("Source changed after preview; preview it again".into());
+        }
+        let existing = store.agents()?;
+        let mut agents = Vec::new();
+        for id in ids {
+            let candidate = pending
+                .preview
+                .candidates
+                .iter()
+                .find(|c| &c.id == id)
+                .ok_or("Identity was not in this preview")?;
+            if existing.iter().any(|a| a.id == *id) {
+                return Err("Selected identity is already imported".into());
+            }
+            let record = data
+                .records
+                .iter()
+                .find(|r| {
+                    string(r, "pubkey") == candidate.pubkey
+                        && canonical_relay(string(r, "relay_url")).ok().as_ref()
+                            == Some(&candidate.relay_url)
+                })
+                .ok_or("Import identity disappeared")?;
+            let agent = resolve(&data, record, &pending.workspace)?;
+            agent.validate()?;
+            agents.push((agent, string(record, "private_key_nsec").to_owned()));
+        }
+        // All config validation precedes credential writes. Retry can reuse a
+        // verified identical key saved by a partial prior attempt, never replace it.
+        for (agent, inline) in &agents {
+            let key = if inline.is_empty() {
+                credentials.read_legacy(&agent.pubkey)?
+            } else {
+                Secret::parse(inline, &agent.pubkey)?
+            };
+            if let Some(saved) = credentials.read(&agent.credential_id, &agent.pubkey)? {
+                if *saved.hex() != *key.hex() {
+                    return Err("Saved credential differs; refusing to overwrite it".into());
+                }
+            } else {
+                credentials.add(&agent.credential_id, &key)?;
+            }
+            let saved = credentials
+                .read(&agent.credential_id, &agent.pubkey)?
+                .ok_or("Credential read-back failed; import was not completed")?;
+            if *saved.hex() != *key.hex() {
+                return Err("Credential read-back differed; import was not completed".into());
+            }
+        }
+        store.insert(agents.into_iter().map(|(a, _)| a).collect())?;
+        self.pending = None;
+        Ok(())
+    }
+}
+fn string<'a>(value: &'a Value, key: &str) -> &'a str {
+    value.get(key).and_then(Value::as_str).unwrap_or("")
+}
+fn object(value: &Value) -> Result<BTreeMap<String, String>> {
+    if value.is_null() {
+        return Ok(BTreeMap::new());
+    }
+    serde_json::from_value(value.clone())
+        .map_err(|_| "Source environment must contain string values".into())
+}
+fn resolve(data: &Source, record: &Value, workspace: &Path) -> Result<Agent> {
+    let definition = if string(record, "persona_id").is_empty() {
+        record
+    } else {
+        data.records
+            .iter()
+            .find(|r| {
+                string(r, "pubkey").is_empty() && string(r, "slug") == string(record, "persona_id")
+            })
+            .ok_or("Linked agent definition is missing; source left unchanged")?
+    };
+    let fallback = |key| {
+        let selected = string(definition, key);
+        if selected.trim().is_empty() {
+            string(&data.global, key).to_owned()
+        } else {
+            selected.to_owned()
+        }
+    };
+    // Legacy spawn's actual resolver is record-first, not its outdated comment:
+    // override > record runtime > linked definition runtime > buzz-agent.
+    let runtime_id = record
+        .get("runtime")
+        .and_then(Value::as_str)
+        .or_else(|| definition.get("runtime").and_then(Value::as_str));
+    let custom = runtime_id.and_then(|id| data.custom.get(id));
+    let command = if !string(record, "agent_command_override").trim().is_empty() {
+        string(record, "agent_command_override").trim().to_owned()
+    } else {
+        match (runtime_id, custom) {
+            (_, Some(c)) => string(c, "command").to_owned(),
+            (Some("claude"), _) => "claude-agent-acp".into(),
+            (Some("codex"), _) => "codex-acp".into(),
+            (Some("goose"), _) => "goose".into(),
+            (None | Some("buzz-agent"), _) => "buzz-agent".into(),
+            _ => return Err("Source uses an unsupported harness definition; restore its custom definition before importing".into()),
+        }
+    };
+    let mut env = custom
+        .map(|c| object(&c["env"]))
+        .transpose()?
+        .unwrap_or_default();
+    env.extend(object(&data.global["env_vars"])?);
+    if !std::ptr::eq(definition, record) {
+        env.extend(object(&definition["env_vars"])?);
+    }
+    env.extend(object(&record["env_vars"])?);
+    let args: Vec<String> = match record
+        .get("agent_args")
+        .filter(|v| v.as_array().is_none_or(|a| !a.is_empty()))
+    {
+        Some(value) => {
+            serde_json::from_value(value.clone()).map_err(|_| "Invalid source harness arguments")?
+        }
+        None => match custom.and_then(|c| c.get("args")) {
+            Some(value) => serde_json::from_value(value.clone())
+                .map_err(|_| "Invalid custom harness arguments")?,
+            None if command == "goose" => vec!["acp".into()],
+            None => vec![],
+        },
+    };
+    let pubkey = string(record, "pubkey").to_owned();
+    let relay_url = canonical_relay(string(record, "relay_url"))?;
+    let id = agent_id(&pubkey, &relay_url);
+    let mut retained = record.clone();
+    if let Some(record) = retained.as_object_mut() {
+        record.remove("private_key_nsec");
+    }
+    Ok(Agent {
+        id: id.clone(),
+        pubkey,
+        relay_url,
+        name: string(record, "name").into(),
+        system_prompt: string(definition, "system_prompt").into(),
+        workspace: workspace.display().to_string(),
+        harness: HarnessEdit {
+            command,
+            args,
+            model: fallback("model"),
+            provider: fallback("provider"),
+        },
+        environment: env,
+        revision: 1,
+        enabled: false,
+        credential_id: id,
+        auth_tag: record
+            .get("auth_tag")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        imported: json!({ "record": retained, "definition": if std::ptr::eq(definition, record) { Value::Null } else { definition.clone() }, "global": data.global, "harness": custom }),
+        extra: BTreeMap::new(),
+    })
+}
+fn read_source(root: &Path) -> Result<Source> {
+    let records = read_json(&root.join("agents/managed-agents.json"), false)?;
+    let global = read_json(&root.join("agents/global-agent-config.json"), true)?;
+    let records: Vec<Value> =
+        serde_json::from_value(records).map_err(|_| "Source agent library must be an array")?;
+    if records.len() > MAX_AGENTS || records.iter().any(|r| !r.is_object()) {
+        return Err("Invalid source agent library".into());
+    }
+    if !global.is_object() {
+        return Err("Invalid source global configuration".into());
+    }
+    let mut custom = BTreeMap::new();
+    let directory = root.join("custom_harnesses");
+    match fs::read_dir(directory) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry.map_err(|_| "Could not read source harness definitions")?;
+                if entry.path().extension().is_none_or(|e| e != "json") {
+                    continue;
+                }
+                if custom.len() >= 128 {
+                    return Err("Too many source harness definitions".into());
+                }
+                let value = read_json(&entry.path(), false)?;
+                let id = string(&value, "id").to_owned();
+                if id.is_empty() || custom.insert(id, value).is_some() {
+                    return Err("Invalid or duplicate source harness definition".into());
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(_) => return Err("Could not read source harness definitions".into()),
+    }
+    let bytes = serde_json::to_vec(&(&records, &global, &custom))
+        .map_err(|_| "Could not snapshot import source")?;
+    if bytes.len() > MAX_BYTES {
+        return Err("Import source exceeds size limit".into());
+    }
+    Ok(Source {
+        records,
+        global,
+        custom,
+        digest: format!("{:x}", Sha256::digest(bytes)),
+    })
+}
+fn read_json(path: &Path, optional: bool) -> Result<Value> {
+    let meta = match fs::symlink_metadata(path) {
+        Err(e) if optional && e.kind() == std::io::ErrorKind::NotFound => return Ok(json!({})),
+        Err(_) => return Err("Could not read chosen Buzz source".into()),
+        Ok(meta) => meta,
+    };
+    if !meta.is_file() || meta.len() > MAX_BYTES as u64 {
+        return Err("Import files must be bounded regular files".into());
+    }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    let file = options
+        .open(path)
+        .map_err(|_| "Could not open import source")?;
+    let mut bytes = Vec::new();
+    file.take((MAX_BYTES + 1) as u64)
+        .read_to_end(&mut bytes)
+        .map_err(|_| "Could not read import source")?;
+    if bytes.len() > MAX_BYTES {
+        return Err("Import source exceeds size limit".into());
+    }
+    serde_json::from_slice(&bytes).map_err(|_| "Import source is malformed; left unchanged".into())
+}
+#[cfg(test)]
+mod tests;

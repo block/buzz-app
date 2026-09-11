@@ -34,7 +34,9 @@ const HISTORY_PAGE_SIZE = 500;
 export const HISTORY_EVENT_LIMIT = 2_000;
 export const GRAPH_EDGE_LIMIT = 10_000;
 const AUTHOR_BATCH_SIZE = 300;
-const CHANNEL_BATCH_SIZE = 300;
+// Buzz rejects filters with more than 128 explicit channels. Keep this bound
+// local to the activity projection rather than widening the shared reader API.
+const CHANNEL_BATCH_SIZE = 128;
 
 export function agentNodes(
   library: AgentLibrary,

@@ -150,6 +150,30 @@ it("reads activity through the shared session with exact authors and cancellatio
   );
 });
 
+it("keeps explicit channel filters within the relay's 128-channel limit", async () => {
+  const channelIds = Array.from(
+    { length: 129 },
+    (_, index) => `channel-${index}`,
+  );
+  const read = vi.fn().mockResolvedValue([]);
+
+  await readAgentActivity(
+    { read } as never,
+    [rizz.pubkey],
+    channelIds,
+    new AbortController().signal,
+  );
+
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(read.mock.calls.map((call) => call[0][0]["#h"])).toEqual([
+    channelIds.slice(0, 128),
+    channelIds.slice(128),
+  ]);
+  expect(
+    Math.max(...read.mock.calls.map((call) => call[0][0]["#h"].length)),
+  ).toBe(128);
+});
+
 it("uses eligible relay observations rather than pending outbox rows for pagination", async () => {
   const remote = Array.from({ length: 500 }, (_, index) => ({
     ...message(rizz, "current", `remote-${index}`, 1_000 - index),

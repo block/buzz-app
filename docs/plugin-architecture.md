@@ -85,7 +85,7 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji and Mentions. Projects
+The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions and Profiles. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
@@ -209,6 +209,10 @@ not generation. Reactive filtered reads use `session.observe`;
 writes use `session.outbox` or the `session.messages` convenience methods. Reads,
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
+
+The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
+Shared message UI opens exact public-key targets through ordinary page callbacks;
+no inline-renderer or panel contract extension is needed.
 
 ## Navigation targets and visits
 

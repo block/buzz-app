@@ -119,7 +119,7 @@
   margin: 4px 0 0;
   font-size: calc(15px * var(--buzz-text-scale, 1));
   line-height: 1.5;
-  white-space: pre-wrap;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 .text[data-single-emoji] {
@@ -497,8 +497,167 @@
 .mentionRecipients code {
   font-size: calc(10px * var(--buzz-text-scale, 1));
 }
-.text[data-single-emoji] > span {
-  display: flex;
-  height: calc(42px * var(--buzz-text-scale, 1));
-  align-items: center;
+.text[data-single-emoji] {
+  margin: 4px 0 0;
+}
+
+.text,
+.plainText {
+  margin: 4px 0 0;
+  font-size: calc(15px * var(--buzz-text-scale, 1));
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.plainText {
+  white-space: pre-wrap;
+}
+.text > :first-child:not([data-single-emoji]) {
+  margin-top: 0;
+}
+.text > :last-child {
+  margin-bottom: 0;
+}
+.text :where(p, ul, ol, blockquote, pre, table, hr) {
+  margin: 0.65em 0;
+}
+.text :where(h1, h2, h3, h4, h5, h6) {
+  margin: 1em 0 0.4em;
+  color: var(--text);
+  font-size: 1em;
+  line-height: 1.35;
+}
+.text h1 {
+  font-size: 1.35em;
+}
+.text h2 {
+  font-size: 1.2em;
+}
+.text h3 {
+  font-size: 1.08em;
+}
+.text :where(h1, h2, h3) {
+  font-weight: 700;
+}
+.text :where(h4, h5, h6) {
+  font-weight: 650;
+}
+.text.text :where(ul, ol) {
+  padding-left: 1.5em;
+}
+.text ol {
+  list-style: decimal;
+}
+.text ul {
+  list-style: disc;
+}
+.text li + li {
+  margin-top: 0.2em;
+}
+.text li > :where(p, ul, ol) {
+  margin-top: 0.2em;
+  margin-bottom: 0.2em;
+}
+.text blockquote {
+  padding: 0.1em 0 0.1em 0.85em;
+  border-left: 1px solid var(--border-input);
+  color: var(--text-muted);
+}
+.text code {
+  border-radius: 4px;
+  background: var(--surface-control);
+  padding: 0.12em 0.32em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+}
+.text pre {
+  max-width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-input);
+  padding: 12px 14px;
+  scrollbar-width: thin;
+}
+.text pre code {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  border-radius: 0;
+  background: transparent;
+  padding: 0;
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.text table {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  font-size: 0.92em;
+  overflow-wrap: normal;
+  scrollbar-width: thin;
+  white-space: nowrap;
+}
+.text :where(th, td) {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.text th {
+  background: var(--surface-control);
+  font-weight: 650;
+}
+.text hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+}
+.text input[type="checkbox"] {
+  width: 1em;
+  height: 1em;
+  margin: 0 0.4em 0.1em 0;
+  vertical-align: middle;
+  accent-color: var(--primary);
+}
+.text a {
+  color: var(--link);
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+.text a:hover {
+  text-decoration-thickness: 2px;
+}
+.imageAlt {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+button.avatar {
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+button.avatar:hover {
+  box-shadow: 0 0 0 2px var(--border);
+}
+.mention {
+  display: inline;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  line-height: inherit;
+  color: var(--on-selected);
+  background: var(--selected);
+  cursor: pointer;
+}
+.mention:hover {
+  text-decoration: underline;
+}
+button.avatar:focus-visible,
+.mention:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }

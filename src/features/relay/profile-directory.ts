@@ -51,7 +51,11 @@ export function createProfileDirectory(
     ]);
     for (const [id, value] of next) {
       const old = snapshot.get(id);
-      if (old?.name === value.name && old?.picture === value.picture)
+      if (
+        old?.name === value.name &&
+        old?.picture === value.picture &&
+        old?.about === value.about
+      )
         next.set(id, old);
     }
     if (

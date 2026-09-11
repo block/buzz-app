@@ -27,6 +27,7 @@ export const test = base.extend({
   productionBroker: [false, { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
+  sidebarUnread: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
@@ -42,6 +43,7 @@ export const test = base.extend({
       productionBroker,
       readState,
       threadUnread,
+      sidebarUnread,
       largeSidebar,
       dmLabels,
       tallMessages,
@@ -108,6 +110,12 @@ export const test = base.extend({
         );
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    if (sidebarUnread) {
+      for (const id of ["dm-030", "dm-090"])
+        histories.set(`primary/${id}`, [
+          sign(9, [["h", id]], `Unread in ${id}`, peerKey, 1700000900),
+        ]);
+    }
     // Opt-in upstream thread evidence: no client cache/read-state injection.
     const threadReplies = new Map();
     const threadSummaries = [];
@@ -215,6 +223,7 @@ export const test = base.extend({
         },
         largeSidebar,
         readState,
+        sidebarUnread,
         dmLabels,
         tallMessages,
         browserVersion: browser.version(),
@@ -626,14 +635,14 @@ export const test = base.extend({
           relay.publish("primary", event);
           return event;
         },
-        append(community, channel, content, deliver = true) {
+        append(community, channel, content, deliver = true, own = true) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
             9,
             [["h", channel]],
             content ?? `Live append ${history.length}`,
-            userKey,
-            history.at(-1).created_at + 1,
+            own ? userKey : peerKey,
+            (history.at(-1)?.created_at ?? 1700000900) + 1,
           );
           history.push(event);
           if (relay && deliver) relay.publish(community, event);

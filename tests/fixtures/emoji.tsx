@@ -53,6 +53,9 @@ const sessions = ["a", "b"].map((community) => {
               ...(community === "a"
                 ? [
                     ["emoji", "aonly", `${origin}/media/aonly.png`],
+                    ["emoji", "smile", `${origin}/media/smile.png`],
+                    ["emoji", "nosource", `${origin}/media/no-source.png`],
+                    ["emoji", "broken", `${origin}/media/broken.png`],
                     ["emoji", "grinning", `${origin}/media/grinning.png`],
                     ["emoji", "party-parrot", `${origin}/media/parrot.png`],
                     ["emoji", "party-parrot-wave", `${origin}/media/wave.png`],
@@ -73,11 +76,13 @@ const sessions = ["a", "b"].map((community) => {
       relayAuthor: relay.pubkey,
       scope: community,
       media: (url) =>
-        mediaUrl(
-          url,
-          (url) => `/emoji-media/${community}/${encodeURIComponent(url)}`,
-          origin,
-        ),
+        url.includes("no-source")
+          ? undefined
+          : mediaUrl(
+              url,
+              (url) => `/emoji-media/${community}/${encodeURIComponent(url)}`,
+              origin,
+            ),
       subscribe(callbacks) {
         live = callbacks;
         return { update() {}, retry() {}, dispose() {} };
@@ -156,6 +161,10 @@ Object.assign(window, {
     remove: () => sessions[0]?.replace(true),
     fail: (value: boolean) => sessions[0]?.fail(value),
     refresh: () => sessions[0]?.session.emoji.refresh(),
+    status: (community: string) =>
+      sessions
+        .find((item) => item.community === community)
+        ?.session.emoji.snapshot().status,
   },
 });
 function Fixture() {

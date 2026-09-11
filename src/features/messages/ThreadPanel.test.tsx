@@ -292,6 +292,22 @@ it("loads history automatically with error-only retry and no routine history con
   h.effects();
   expect(h.ensure).toHaveBeenCalledTimes(1); // No render-driven missing-profile loop.
 });
+it("bounds enlarged emoji presentation on sent messages", () => {
+  const message = (content: string) =>
+    elements(
+      MessageRow({
+        row: { ...row, content },
+        profile: undefined,
+        media: () => undefined,
+        onOpenLink: () => false,
+        day: false,
+        retry: undefined,
+      }),
+    ).find((element) => element.type === "p");
+  expect(message("😀 🙏 👏")?.props["data-single-emoji"]).toBe(true);
+  expect(message("😀 🙏 👏 😄")?.props["data-single-emoji"]).toBeUndefined();
+});
+
 it("the actual message reply button opens that message and retains the trigger focus target", () => {
   const open = vi.fn(),
     focus = vi.fn();

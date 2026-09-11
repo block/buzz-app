@@ -276,6 +276,11 @@ function OwnedCompletion({
                   role="option"
                   tabIndex={-1}
                   aria-selected={i === selectedIndex}
+                  aria-label={
+                    compact && item.detail
+                      ? `${item.label} ${item.detail}`
+                      : undefined
+                  }
                   id={`${id}-${i}`}
                   key={item.id}
                   onPointerDown={(event) => {
@@ -299,7 +304,11 @@ function OwnedCompletion({
                   )}
                   <span className={styles.label} data-completion-label>
                     {item.label}
-                    {item.detail && <small>{item.detail}</small>}
+                    {item.detail && (
+                      <small aria-hidden={compact || undefined}>
+                        {item.detail}
+                      </small>
+                    )}
                   </span>
                 </div>
               ))}

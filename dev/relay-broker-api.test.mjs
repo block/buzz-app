@@ -38,16 +38,18 @@ async function harness(respond) {
     identity: () => key,
     authority: async () => ({ relayAuthor: viewer }),
     upstreamFetch: async (url, init) => {
+      const upstreamUrl = String(url);
       const authorization = new Headers(init?.headers).get("Authorization");
       const auth = authorization
         ? JSON.parse(Buffer.from(authorization.slice(6), "base64").toString())
         : undefined;
+      if (upstreamUrl !== fixtureRelayUrl) expect(auth).toBeDefined();
       if (auth) {
         expect(verifyEvent(auth)).toBe(true);
         expect(auth.created_at).toBe(Math.floor(Date.now() / 1000));
       }
       const call = {
-        url: String(url),
+        url: upstreamUrl,
         body: init?.body ? JSON.parse(init.body) : undefined,
         signal: init?.signal,
         auth,
@@ -72,6 +74,9 @@ async function harness(respond) {
     base,
     event,
     calls,
+    get(route, signal) {
+      return fetch(`${base}/api/relay/${route}`, { signal });
+    },
     post(route, body, signal, priority) {
       return fetch(`${base}/api/relay/${route}`, {
         method: "POST",
@@ -94,6 +99,30 @@ const success = (call, _count, event) =>
   Response.json(
     call.url.endsWith("/events") ? { accepted: true, event_id: event.id } : [],
   );
+
+test("GIF capability discovery does not depend on join-policy availability", async () => {
+  const h = await harness((call) => {
+    if (call.url === fixtureRelayUrl)
+      return Response.json({
+        supported_extensions: ["buzz-gif"],
+        gif: { provider: "klipy", search: "/gifs/search" },
+      });
+    if (call.url === `${fixtureRelayUrl}/api/join-policy`)
+      return new Response("unavailable", { status: 503 });
+    return new Response(null, { status: 404 });
+  });
+  try {
+    const response = await h.get("gif-info");
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      supported_extensions: ["buzz-gif"],
+      gif: { provider: "klipy", search: "/gifs/search" },
+    });
+    expect(h.calls.map(({ url }) => url)).toEqual([fixtureRelayUrl]);
+  } finally {
+    await h.close();
+  }
+});
 
 test("GIF search follows the relay-advertised KLIPY path with signed, bounded input", async () => {
   const responseBody = {

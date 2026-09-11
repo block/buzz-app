@@ -1,7 +1,17 @@
 import type { CustomEmoji } from "../relay/emoji";
+const LARGE_EMOJI_LIMIT = 3;
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const emojiPresentation =
   /\p{Extended_Pictographic}|\p{Regional_Indicator}|[\d#*]\uFE0F?\u20E3/u;
+
+function renderedEmoji(value: string, entries: readonly CustomEmoji[]): string {
+  const custom = new Set(entries.map((entry) => entry.shortcode.toLowerCase()));
+  return value.replace(
+    /:([a-z0-9_-]{1,64}):/gi,
+    (literal, shortcode: string) =>
+      custom.has(shortcode.toLowerCase()) ? "😀" : literal,
+  );
+}
 
 export function isUnicodeEmojiOnly(value: string) {
   const content = value.trim();
@@ -72,12 +82,19 @@ export function leadingCustomEmojiSpans(
 export const isEmojiOnly = (
   value: string,
   entries: readonly CustomEmoji[] = [],
-) => {
-  const custom = new Set(entries.map((entry) => entry.shortcode.toLowerCase()));
-  const rendered = value.replace(
-    /:([a-z0-9_-]{1,64}):/gi,
-    (literal, shortcode: string) =>
-      custom.has(shortcode.toLowerCase()) ? "😀" : literal,
-  );
-  return isUnicodeEmojiOnly(rendered);
-};
+) => isUnicodeEmojiOnly(renderedEmoji(value, entries));
+
+export function usesLargeEmojiPresentation(
+  value: string,
+  entries: readonly CustomEmoji[] = [],
+) {
+  const content = renderedEmoji(value, entries).trim();
+  if (!isUnicodeEmojiOnly(content)) return false;
+  let count = 0;
+  for (const { segment } of graphemes.segment(content)) {
+    if (/^\s+$/u.test(segment)) continue;
+    count++;
+    if (count > LARGE_EMOJI_LIMIT) return false;
+  }
+  return count > 0;
+}

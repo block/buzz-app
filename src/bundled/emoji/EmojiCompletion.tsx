@@ -121,10 +121,16 @@ export function EmojiCompletion({
     let live = true;
     let withdraw: (() => void) | false = false;
     const custom = catalog.entries.filter((item) => !!session.media(item.url));
-    const items = (matches: readonly EmojiMatch[]) =>
-      matches.map((item) => ({
+    const items = (matches: readonly EmojiMatch[]) => {
+      const counts = new Map<string, number>();
+      for (const item of matches)
+        counts.set(item.shortcode, (counts.get(item.shortcode) ?? 0) + 1);
+      return matches.map((item) => ({
         id: item.id,
         label: `:${item.shortcode}:`,
+        ...((counts.get(item.shortcode) ?? 0) > 1
+          ? { detail: item.url ? "Community emoji" : "Unicode emoji" }
+          : {}),
         preview: item.url ? (
           <CustomEmoji
             emoji={{ shortcode: item.shortcode, url: item.url }}
@@ -135,6 +141,7 @@ export function EmojiCompletion({
         ),
         edit: { text: item.text },
       }));
+    };
     const retrySearch = () => {
       retry((value) => value + 1);
       if (catalog.status === "error") void session.emoji.refresh();

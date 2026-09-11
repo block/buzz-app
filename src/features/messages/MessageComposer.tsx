@@ -15,6 +15,7 @@ import {
   customEmojiOnlySpans,
   isUnicodeEmojiOnly,
   leadingCustomEmojiSpans,
+  usesLargeEmojiPresentation,
 } from "./emoji-size";
 import {
   mentionDraft,
@@ -111,13 +112,19 @@ function Composer({
   }));
   const showCustomEmoji =
     !!customEmojiSources.length &&
-    customEmojiSources.every(({ source }) => source !== failedCustomEmoji);
-  const showCustomEmojiOnly = showCustomEmoji && !!customEmojiOnly.length;
+    customEmojiSources.every(
+      ({ source }) => !!source && source !== failedCustomEmoji,
+    );
+  const showCustomEmojiOnly =
+    showCustomEmoji &&
+    customEmojiOnly.length > 0 &&
+    customEmojiOnly.length <= 3;
   const showLeadingCustomEmoji =
     showCustomEmoji &&
     !customEmojiOnly.length &&
     !!leadingCustomEmoji.spans.length;
   const input = useRef<HTMLTextAreaElement>(null);
+  const customEmojiMirror = useRef<HTMLSpanElement>(null);
   const inlineEmojiGroup = useRef<HTMLSpanElement>(null);
   const inlinePrefixMeasure = useRef<HTMLSpanElement>(null);
   const [inlineTextIndent, setInlineTextIndent] = useState(0);
@@ -180,6 +187,14 @@ function Composer({
     observer.observe(prefix);
     return () => observer.disconnect();
   }, [showLeadingCustomEmoji]);
+  useLayoutEffect(() => {
+    const mirror = customEmojiMirror.current;
+    if (mirror) mirror.scrollTop = input.current?.scrollTop ?? 0;
+  });
+  function syncCustomEmojiScroll(element: HTMLTextAreaElement) {
+    if (customEmojiMirror.current)
+      customEmojiMirror.current.scrollTop = element.scrollTop;
+  }
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -317,7 +332,7 @@ function Composer({
           id={inputId}
           disabled={disabled}
           value={draft}
-          data-single-emoji={isUnicodeEmojiOnly(draft) || undefined}
+          data-single-emoji={usesLargeEmojiPresentation(draft) || undefined}
           data-custom-emoji-only={showCustomEmojiOnly || undefined}
           data-leading-custom-emoji={showLeadingCustomEmoji || undefined}
           style={
@@ -333,6 +348,7 @@ function Composer({
           rows={2}
           placeholder={label}
           onFocus={() => completion.observe(true)}
+          onScroll={(event) => syncCustomEmojiScroll(event.currentTarget)}
           onBlur={() => {
             setSelection({ start: 0, end: 0 });
             completion.invalidate();
@@ -411,7 +427,11 @@ function Composer({
           </span>
         )}
         {showLeadingCustomEmoji && (
-          <span className={styles.composerCustomEmojiMirror} aria-hidden="true">
+          <span
+            ref={customEmojiMirror}
+            className={styles.composerCustomEmojiMirror}
+            aria-hidden="true"
+          >
             <span
               ref={inlineEmojiGroup}
               className={styles.composerInlineCustomEmojiGroup}

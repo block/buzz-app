@@ -387,6 +387,17 @@ export function relayBrokerPlugin({
           const route = scoped ? `/api/relay/${parts[3]}` : url.pathname;
           if (route === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
+          if (route === "/api/relay/gif-info" && req.method === "GET") {
+            const gifSearchPath = await getGifSearchPath(relay);
+            return json(res, 200, {
+              ...(gifSearchPath
+                ? {
+                    supported_extensions: ["buzz-gif"],
+                    gif: { provider: "klipy", search: gifSearchPath },
+                  }
+                : {}),
+            });
+          }
           if (route === "/api/relay/info" && req.method === "GET") {
             const response = await fetchUpstream(relay, {
               headers: { Accept: "application/nostr+json" },

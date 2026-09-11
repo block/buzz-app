@@ -7,6 +7,7 @@ import {
   isEmojiOnly,
   isUnicodeEmojiOnly,
   singleCustomEmoji,
+  usesLargeEmojiPresentation,
 } from "./emoji-size";
 import type { RelaySession } from "../relay/session";
 import type { CustomEmoji } from "../relay/emoji";
@@ -261,6 +262,8 @@ it("enlarges Unicode-only drafts and restores normal text presentation", () => {
   expect(h.input().props["data-single-emoji"]).toBeUndefined();
   h.type("😀 🙏 👏");
   expect(h.input().props["data-single-emoji"]).toBe(true);
+  h.type("😀 🙏 👏 😄");
+  expect(h.input().props["data-single-emoji"]).toBeUndefined();
   h.type("😀 🙏 hello");
   expect(h.input().props["data-single-emoji"]).toBeUndefined();
 });
@@ -272,6 +275,10 @@ it("recognizes an exact custom emoji draft without treating shortcode prose as e
   expect(singleCustomEmoji(":missing:", [party])).toBeUndefined();
   expect(isEmojiOnly(":party: 😀 :PARTY:", [party])).toBe(true);
   expect(isEmojiOnly(":party: hello", [party])).toBe(false);
+  expect(usesLargeEmojiPresentation(":party: 😀 :PARTY:", [party])).toBe(true);
+  expect(
+    usesLargeEmojiPresentation(":party: 😀 :PARTY: :party:", [party]),
+  ).toBe(false);
 });
 
 it.each([undefined, "root"])(

@@ -87,6 +87,9 @@
   opacity: 0.65;
   font-size: 11px;
 }
+.popup[data-compact] .label small {
+  display: none;
+}
 .popup p {
   flex-shrink: 0;
   margin: 5px 8px;

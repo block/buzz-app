@@ -387,6 +387,19 @@ test("current custom catalog drives typeahead and signed tags across community r
     name: "Emoji suggestions",
     exact: true,
   });
+  await input.fill(":smile");
+  const customSmile = page.getByRole("option", {
+    name: ":smile: Community emoji",
+    exact: true,
+  });
+  const unicodeSmile = page.getByRole("option", {
+    name: ":smile: Unicode emoji",
+    exact: true,
+  });
+  await expect(customSmile).toBeVisible();
+  await expect(unicodeSmile).toBeVisible();
+  await expect(customSmile.locator("small")).toBeHidden();
+  await expect(unicodeSmile.locator("small")).toBeHidden();
   await input.fill(":party");
   const partyOptions = page.getByRole("option");
   await expect.poll(() => partyOptions.count()).toBeGreaterThan(1);

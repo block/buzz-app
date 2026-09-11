@@ -281,6 +281,8 @@
   position: absolute;
   z-index: 0;
   inset: 0;
+  overflow: auto;
+  scrollbar-width: none;
   white-space: pre-wrap;
   overflow-wrap: break-word;
   color: var(--text);

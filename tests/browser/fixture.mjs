@@ -487,6 +487,8 @@ export const test = base.extend({
         if (route === "register") return send(response, {});
         if (!["primary", "secondary"].includes(community))
           throw new Error(`Unexpected community: ${request.url}`);
+        if (route === "gif-info" && request.method === "GET")
+          return send(response, {});
         if (route === "info" && request.method === "GET")
           return send(response, { policy: null });
         if (route === "session") {

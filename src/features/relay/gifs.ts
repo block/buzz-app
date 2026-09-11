@@ -174,7 +174,7 @@ export async function relaySupportsKlipy(
 ) {
   const info = await brokerRequest<RelayGifSearchInfo>(
     community,
-    "info",
+    "gif-info",
     undefined,
     signal,
   );

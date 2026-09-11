@@ -591,6 +591,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await draft().fill("A draft");
     await page.getByRole("button", { name: "Switch community" }).click();
     await expect(draft()).toHaveValue("");
+    await expect
+      .poll(() => page.evaluate(() => window.emojiFixture.status("b")))
+      .toBe("ready");
     await picker.click();
     await search.fill("aonly");
     await expect(
@@ -673,6 +676,31 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       .click();
     await search.fill("party");
     await expect(insert).toBeVisible();
+    await draft().fill(":broken: readable");
+    await expect(draft()).not.toHaveAttribute(
+      "data-leading-custom-emoji",
+      "true",
+    );
+    await draft().fill(":broken: :nosource:");
+    await expect(draft()).not.toHaveAttribute(
+      "data-leading-custom-emoji",
+      "true",
+    );
+    await expect(draft()).not.toHaveCSS("color", "rgba(0, 0, 0, 0)");
+    await draft().fill(`:party: ${"long text ".repeat(80)}`);
+    await expect(draft()).toHaveAttribute("data-leading-custom-emoji", "true");
+    await draft().evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+      element.dispatchEvent(new Event("scroll"));
+    });
+    await expect
+      .poll(() =>
+        page
+          .locator('[class*="composerCustomEmojiMirror"]')
+          .evaluate((element) => element.scrollTop),
+      )
+      .toBeGreaterThan(0);
+    await draft().fill("");
     await page.evaluate(() => window.emojiFixture.remove());
     await expect(search).toHaveValue("party");
     await expect(insert).toHaveCount(0);
@@ -702,6 +730,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await draft().fill("😀 🙏 👏");
     await expect(draft()).toHaveAttribute("data-single-emoji", "true");
     await expect(draft()).toHaveCSS("font-size", "42px");
+    await draft().fill("😀 🙏 👏 😄");
+    await expect(draft()).not.toHaveAttribute("data-single-emoji", "true");
+    await expect(draft()).toHaveCSS("font-size", "14px");
     await draft().fill("😀 🙏 👏 hello");
     await expect(draft()).not.toHaveAttribute("data-single-emoji", "true");
     await expect(draft()).toHaveCSS("font-size", "14px");

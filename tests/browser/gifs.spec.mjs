@@ -39,7 +39,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     releaseInfo = resolve;
   });
   let infoRequests = 0;
-  await page.route("**/api/relay/*/info", async (route) => {
+  await page.route("**/api/relay/*/gif-info", async (route) => {
     infoRequests += 1;
     await infoReady;
     await route.fulfill({
@@ -386,7 +386,7 @@ test("GIF discovery retries after a transient relay failure", async ({
   app,
 }) => {
   let attempts = 0;
-  await page.route("**/api/relay/*/info", async (route) => {
+  await page.route("**/api/relay/*/gif-info", async (route) => {
     attempts += 1;
     if (attempts === 1) {
       await route.fulfill({

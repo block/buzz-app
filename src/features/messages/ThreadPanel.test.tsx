@@ -308,6 +308,18 @@ it("bounds enlarged emoji presentation on sent messages", () => {
   expect(message("😀 🙏 👏 😄")?.props["data-single-emoji"]).toBeUndefined();
 });
 
+it("preserves a media timecode as compatible text when no player can seek", () => {
+  const tree = MessageRow({
+    row: { ...row, content: "⏱ 0:42 — Change the title" },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  });
+  expect(JSON.stringify(tree)).toContain("⏱ 0:42 — Change the title");
+});
+
 it("the actual message reply button opens that message and retains the trigger focus target", () => {
   const open = vi.fn(),
     focus = vi.fn();

@@ -144,7 +144,13 @@ function Timeline({
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
   }, [channelId, geometry, scope]);
+  const previousSize = useRef(size);
   useLayoutEffect(() => {
+    const resized =
+      previousSize.current.width > 0 &&
+      previousSize.current.height > 0 &&
+      previousSize.current !== size;
+    previousSize.current = size;
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
     edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
@@ -158,7 +164,8 @@ function Timeline({
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
     const scheduledIntent = intent.current;
-    const frame = requestAnimationFrame(() => {
+    let observer: ResizeObserver | undefined;
+    let frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
         if (
           !settled.current &&
@@ -176,11 +183,32 @@ function Timeline({
             });
           else handle.current.scrollTo(savedPosition.current.offset);
           follow.current = false;
-        } else handle.current.scrollToIndex(rows.length - 1, { align: "end" });
+        } else {
+          handle.current.scrollToIndex(rows.length - 1, { align: "end" });
+          // Width changes can produce row measurements after Virtua's scroll
+          // scheduler expires. Keep this restoration's bottom intent through
+          // measured list reflow, never through a new gesture or row update.
+          const list = resized ? scroller.current?.querySelector("ol") : null;
+          if (list) {
+            observer = new ResizeObserver(() => {
+              cancelAnimationFrame(frame);
+              frame = requestAnimationFrame(() => {
+                if (intent.current === scheduledIntent)
+                  handle.current?.scrollToIndex(rows.length - 1, {
+                    align: "end",
+                  });
+              });
+            });
+            observer.observe(list);
+          }
+        }
       }
       settled.current = true;
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      observer?.disconnect();
+    };
   }, [rows, size, prepend]);
   const revealed = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {

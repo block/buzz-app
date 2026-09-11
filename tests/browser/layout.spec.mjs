@@ -1,4 +1,3 @@
-import { writeFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { settle, upper, expectAnchor } from "./timeline.mjs";
 
@@ -219,7 +218,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
 test("panel resizing preserves bottom follow and the visible reading anchor", async ({
   page,
   app,
-}, testInfo) => {
+}) => {
   await open(page, app);
   await settle(page);
   await link(page, app, "https://github.com/block/buzz/pull/4");
@@ -234,83 +233,26 @@ test("panel resizing preserves bottom follow and the visible reading anchor", as
       .toBeLessThan(4);
   await settle(page);
   await expectBottom();
-  // Diagnostic reads can force layout; mutation timestamps record observer delivery.
-  // A pass with this capture alone does not prove an uninstrumented race is fixed.
-  const scrollEvents = await history.evaluateHandle((element) => {
-    const events = [];
-    const record = (type, options) => {
-      events.push({
-        type,
-        options,
-        time: performance.now(),
-        top: element.scrollTop,
-        height: element.scrollHeight,
-        viewport: element.clientHeight,
-        width: element.clientWidth,
-        listHeight: element.querySelector("ol")?.style.height,
-      });
-    };
-    const originals = new Map();
-    for (const method of ["scrollTo", "scrollBy"]) {
-      const original = element[method];
-      originals.set(method, Object.getOwnPropertyDescriptor(element, method));
-      element[method] = function (...args) {
-        record(`${method}:before`, args);
-        const result = original.apply(this, args);
-        record(`${method}:after`, args);
-        return result;
-      };
-    }
-    const list = element.querySelector("ol");
-    let listHeight = list?.style.height;
-    const observer = new MutationObserver(() => {
-      if (list?.style.height !== listHeight) {
-        listHeight = list?.style.height;
-        record("list-height");
-      }
-    });
-    if (list)
-      observer.observe(list, { attributes: true, attributeFilter: ["style"] });
-    const onScroll = () => record("scroll");
-    element.addEventListener("scroll", onScroll);
-    record("start");
-    return {
-      stop() {
-        record("stop");
-        element.removeEventListener("scroll", onScroll);
-        observer.disconnect();
-        for (const [method, descriptor] of originals) {
-          if (descriptor) Object.defineProperty(element, method, descriptor);
-          else delete element[method];
-        }
-        return events;
-      },
-    };
+  const received = app.append("primary", "alpha");
+  await expect(
+    page.locator(`[data-message-id="${received.id}"]`),
+  ).toBeInViewport();
+  await button(page, "Close channel panel").click();
+  await settle(page);
+  await expectBottom();
+  // Late layout-only reflow must not need another message or viewport resize.
+  // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
+  // row layout, not scroll methods/metrics or the production observer callback.
+  await page.waitForTimeout(250);
+  const lateLayout = await page.addStyleTag({
+    content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
   });
-  try {
-    const received = app.append("primary", "alpha");
-    await expect(
-      page.locator(`[data-message-id="${received.id}"]`),
-    ).toBeInViewport();
-    await button(page, "Close channel panel").click();
-    await settle(page);
-    await expectBottom();
-  } finally {
-    const path = testInfo.outputPath("panel-bottom-scroll.json");
-    await writeFile(
-      path,
-      JSON.stringify(
-        await scrollEvents.evaluate((capture) => capture.stop()),
-        null,
-        2,
-      ),
-    );
-    await testInfo.attach("panel-bottom-scroll", {
-      path,
-      contentType: "application/json",
-    });
-    await scrollEvents.dispose();
-  }
+  await settle(page);
+  await expectBottom();
+  await page.waitForTimeout(250);
+  await lateLayout.evaluate((element) => element.remove());
+  await settle(page);
+  await expectBottom();
   // Reopen by keyboard without browser click-to-scroll changing the saved position.
   const target = "https://github.com/block/buzz/pull/4";
   const saved = await upper(page);

@@ -1,4 +1,4 @@
-import { memo, useCallback, useSyncExternalStore } from "react";
+import { Fragment, memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
 import { profileMentionParts } from "./profile-mentions";
@@ -284,7 +284,7 @@ function MessageText({
         );
       }
       return (
-        <span key={segmentKey}>
+        <Fragment key={segmentKey}>
           {messageParts(segment.text).map((part, index) => {
             const key = `${index}:${part.slice(0, 20)}`;
             if (!part.startsWith("https://")) {
@@ -325,7 +325,7 @@ function MessageText({
               </span>
             );
           })}
-        </span>
+        </Fragment>
       );
     },
   );

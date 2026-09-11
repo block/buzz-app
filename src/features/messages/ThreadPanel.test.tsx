@@ -24,6 +24,7 @@ const hooks = vi.hoisted(() => ({
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   memo: (fn: unknown) => fn,
+  useCallback: (fn: unknown) => fn,
   useRef(initial: unknown) {
     const index = hooks.ref++;
     hooks.refs[index] ??= { current: initial };

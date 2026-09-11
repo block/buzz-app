@@ -12,6 +12,7 @@ import type {
   ReadSyncSnapshot,
 } from "./read-state";
 import type { RelayReader } from "./reader";
+import { threadReference } from "./thread-reference";
 
 export type UnreadSnapshot = Readonly<{
   target: ReadTarget;
@@ -51,10 +52,6 @@ const channelOf = (event: RelayEvent) => {
   const tags = event.tags.filter(([name]) => name === "h");
   return tags.length === 1 ? tags[0]?.[1] : undefined;
 };
-const replyTo = (event: RelayEvent) =>
-  event.tags.find(
-    ([name, , , marker]) => name === "e" && marker === "reply",
-  )?.[1];
 /** Bounded verified evidence and one projection; no sidebar counters, sockets or implicit reads. */
 export function createUnread({
   reads,
@@ -97,12 +94,9 @@ export function createUnread({
     for (let depth = 0; depth < 32; depth++) {
       if (seen.has(current.id)) return;
       seen.add(current.id);
-      const parent = replyTo(current);
-      if (!parent) return current.id;
-      const explicit = current.tags.find(
-        ([name, , , marker]) => name === "e" && marker === "root",
-      )?.[1];
-      const next = events.get(explicit ?? parent);
+      const reference = threadReference(current);
+      if (!reference) return current.id;
+      const next = events.get(reference.rootId);
       if (!next || !contentKind(next) || channelOf(next) !== channel) return;
       current = next;
     }
@@ -137,7 +131,7 @@ export function createUnread({
       const rows = byChannel.get(channel) ?? [];
       rows.push({
         event,
-        rootId: replyTo(event) ? rootId : undefined,
+        rootId: threadReference(event) ? rootId : undefined,
         mentioned: event.tags.some(
           ([name, value]) => name === "p" && value === viewer,
         ),
@@ -155,7 +149,7 @@ export function createUnread({
       (target.kind === "channel" ||
         (target.kind === "message" && target.messageId === event.id) ||
         (target.kind === "thread" &&
-          !!replyTo(event) &&
+          !!threadReference(event) &&
           root(event) === target.rootId))
     );
   }
@@ -417,7 +411,7 @@ export function createUnread({
       throw new Error("Message does not belong to the read target");
     if (
       target.kind === "channel" &&
-      replyTo(event) &&
+      threadReference(event) &&
       !event.tags.some(([name, value]) => name === "broadcast" && value === "1")
     )
       throw new Error("A thread reply cannot advance the channel frontier");
@@ -483,7 +477,7 @@ export function createUnread({
                 reads.state(),
                 targetKey(target),
                 channelId,
-                replyTo(event) ? root(event) : undefined,
+                threadReference(event) ? root(event) : undefined,
               ) ?? -1) >= event.created_at
             ) {
               observed.add(id);

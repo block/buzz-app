@@ -1,4 +1,5 @@
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
+import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   useCallback,
@@ -211,7 +212,7 @@ function ChannelWorkspace({
             onChange={(event) => setSearch(event.target.value)}
           />
         </div>
-        <nav className={styles.channelList} aria-label="Subscribed channels">
+        <SidebarUnread>
           {sidebarSections(visible, preferences.data).map((section) => (
             <details key={section.key} className={styles.channelSection} open>
               <summary>
@@ -232,6 +233,7 @@ function ChannelWorkspace({
                     key={channel.id}
                     type="button"
                     title={channel.name}
+                    data-channel-id={channel.id}
                     aria-current={
                       current?.id === channel.id ? "page" : undefined
                     }
@@ -262,7 +264,7 @@ function ChannelWorkspace({
               {search ? "No matching channels." : "No channels yet."}
             </p>
           )}
-        </nav>
+        </SidebarUnread>
         {preferences.status !== "ready" && (
           <div className={styles.preferenceNotice} role="status">
             {preferences.status === "loading"

@@ -108,6 +108,24 @@ export function policyRelay({
           acceptPublication(communityOf(url), filters);
           return Response.json({ accepted: true, event_id: filters.id });
         }
+        if (filters.length === 2 && filters[1].depth_limit) {
+          const [root, replies] = filters;
+          expect(root).toEqual({
+            ids: replies["#e"],
+            "#h": replies["#h"],
+            limit: 1,
+          });
+          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([9, 40002]);
+          for (const filter of filters)
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
         if (filters.length !== 1) {
           // The read-only sidebar projection reads the two exact coordinates.
           expect(filters).toHaveLength(2);

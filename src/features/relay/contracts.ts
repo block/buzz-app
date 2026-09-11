@@ -32,6 +32,8 @@ export type ChannelMessage = Readonly<{
   /** Event-local mappings, never the current community palette. */
   emoji?: readonly CustomEmoji[];
   reactions: readonly Readonly<{ content: string; emoji?: CustomEmoji }>[];
+  /** Canonical thread-opening target from signed reply/root tags; absent on root messages. */
+  threadRootId?: string | undefined;
   /** Relay-signed thread summary for this row; zero when the row has no replies. */
   replyCount: number;
   /** Pubkeys the relay reports as thread participants (may be empty even with replies). */

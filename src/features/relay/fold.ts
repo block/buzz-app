@@ -1,3 +1,4 @@
+import { threadReference } from "./thread-reference";
 import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { newer } from "./events";
@@ -127,6 +128,7 @@ export function foldMessages(
       Object.freeze({
         id: event.id,
         channelId,
+        threadRootId: threadReference(event)?.rootId,
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: stripAttachmentMarkdown(content),

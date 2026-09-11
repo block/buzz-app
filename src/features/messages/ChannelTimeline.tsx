@@ -304,6 +304,7 @@ function Timeline({
             <MessageRow
               key={row.id}
               row={row}
+              unread={queries.unread}
               extensions={extensions}
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}

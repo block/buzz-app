@@ -26,6 +26,8 @@ export const historySize = 640;
 export const test = base.extend({
   productionBroker: [false, { option: true }],
   readState: [false, { option: true }],
+  threadUnread: [false, { option: true }],
+  sidebarUnread: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
@@ -40,6 +42,8 @@ export const test = base.extend({
       browser,
       productionBroker,
       readState,
+      threadUnread,
+      sidebarUnread,
       largeSidebar,
       dmLabels,
       tallMessages,
@@ -106,6 +110,101 @@ export const test = base.extend({
         );
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    if (sidebarUnread) {
+      for (const id of ["dm-030", "dm-090"])
+        histories.set(`primary/${id}`, [
+          sign(9, [["h", id]], `Unread in ${id}`, peerKey, 1700000900),
+        ]);
+    }
+    // Opt-in upstream thread evidence: no client cache/read-state injection.
+    // Uppercase signed references exercise canonical thread/unread parity.
+    const threadReplies = new Map();
+    const threadSummaries = [];
+    if (threadUnread) {
+      const history = histories.get("primary/alpha");
+      for (const [index, event] of history.slice(-2).entries()) {
+        const root = sign(
+          9,
+          [["h", "alpha"]],
+          `Thread root ${index}`,
+          peerKey,
+          event.created_at,
+        );
+        history[history.length - 2 + index] = root;
+        const replies = [
+          sign(
+            9,
+            [
+              ["h", "alpha"],
+              ["e", root.id.toUpperCase(), "", "reply"],
+            ],
+            `Unread reply ${index}`,
+            peerKey,
+            root.created_at + 10,
+          ),
+        ];
+        threadReplies.set(root.id, replies);
+        threadSummaries.push(
+          sign(
+            39005,
+            [
+              ["h", "alpha"],
+              ["e", root.id],
+              ["d", root.id],
+            ],
+            JSON.stringify({
+              reply_count: 23,
+              participants: [getPublicKey(peerKey)],
+            }),
+          ),
+        );
+      }
+    }
+    if (threadUnread) {
+      const history = histories.get("primary/alpha");
+      const root = history.at(-2);
+      const broadcast = sign(
+        9,
+        [
+          ["h", "alpha"],
+          ["e", root.id.toUpperCase(), "", "reply"],
+          ["broadcast", "1"],
+        ],
+        "Broadcast reply",
+        peerKey,
+        root.created_at + 2,
+      );
+      history.push(broadcast);
+      const replies = threadReplies.get(root.id);
+      replies.push(broadcast);
+      replies.push(
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", root.id.toUpperCase(), "", "root"],
+            ["e", broadcast.id.toUpperCase(), "", "reply"],
+          ],
+          "Broadcast descendant",
+          peerKey,
+          root.created_at + 11,
+        ),
+      );
+      threadSummaries.push(
+        sign(
+          39005,
+          [
+            ["h", "alpha"],
+            ["e", broadcast.id],
+            ["d", broadcast.id],
+          ],
+          JSON.stringify({
+            reply_count: 23,
+            participants: [getPublicKey(peerKey)],
+          }),
+        ),
+      );
+    }
     const report = {
       state: {
         head: execFileSync("git", ["rev-parse", "HEAD"], {
@@ -125,6 +224,7 @@ export const test = base.extend({
         },
         largeSidebar,
         readState,
+        sidebarUnread,
         dmLabels,
         tallMessages,
         browserVersion: browser.version(),
@@ -208,9 +308,28 @@ export const test = base.extend({
               ]
             : []),
         ];
+      if (threadUnread && filter.ids)
+        return [...histories.values()]
+          .flat()
+          .filter((event) => filter.ids.includes(event.id));
+      if (threadUnread && filter.depth_limit)
+        return (threadReplies.get(filter["#e"]?.[0]) ?? [])
+          .filter(
+            (event) =>
+              filter.thread_cursor === undefined ||
+              event.created_at > filter.thread_cursor ||
+              (event.created_at === filter.thread_cursor &&
+                event.id > filter.thread_cursor_id),
+          )
+          .slice(0, filter.limit);
       if (readState && filter["#h"]?.length > 1)
         return filter["#h"]
-          .flatMap((channel) => histories.get(`${community}/${channel}`) ?? [])
+          .flatMap((channel) => [
+            ...(histories.get(`${community}/${channel}`) ?? []),
+            ...(threadUnread && community === "primary" && channel === "alpha"
+              ? [...threadReplies.values()].flat()
+              : []),
+          ])
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
@@ -239,6 +358,13 @@ export const test = base.extend({
       return filter.include_aux
         ? [
             ...events,
+            ...threadSummaries.filter((summary) =>
+              events.some((event) =>
+                summary.tags.some(
+                  ([key, value]) => key === "e" && value === event.id,
+                ),
+              ),
+            ),
             sign(
               39006,
               [
@@ -493,14 +619,31 @@ export const test = base.extend({
           }
           return event;
         },
-        append(community, channel, content, deliver = true) {
+        reply(rootId, own = false) {
+          const replies = threadReplies.get(rootId);
+          if (!replies) throw new Error("Unknown fixture thread");
+          const event = sign(
+            9,
+            [
+              ["h", "alpha"],
+              ["e", rootId, "", "reply"],
+            ],
+            own ? "My reply" : "New peer reply",
+            own ? userKey : peerKey,
+            replies.at(-1).created_at + 1,
+          );
+          replies.push(event);
+          relay.publish("primary", event);
+          return event;
+        },
+        append(community, channel, content, deliver = true, own = true) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
             9,
             [["h", channel]],
             content ?? `Live append ${history.length}`,
-            userKey,
-            history.at(-1).created_at + 1,
+            own ? userKey : peerKey,
+            (history.at(-1)?.created_at ?? 1700000900) + 1,
           );
           history.push(event);
           if (relay && deliver) relay.publish(community, event);

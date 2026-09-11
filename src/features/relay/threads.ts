@@ -1,3 +1,5 @@
+import { threadReference } from "./thread-reference";
+export { threadReference } from "./thread-reference";
 import type { ChannelMessage } from "./contracts";
 import type { EventData, RelayEvent } from "./events";
 import type { LocalEvents } from "./outbox";
@@ -15,18 +17,6 @@ const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
 const compare = (a: EventData, b: EventData) =>
   a.created_at - b.created_at || a.id.localeCompare(b.id);
-
-/** NIP-10 matches relay ingest: last valid marked root/reply wins; a lone root is not a reply. */
-export function threadReference(event: EventData) {
-  let root: string | undefined;
-  let reply: string | undefined;
-  for (const [name, value, , marker] of event.tags) {
-    if (name !== "e" || !value || !/^[0-9a-f]{64}$/i.test(value)) continue;
-    if (marker === "root") root = value.toLowerCase();
-    if (marker === "reply") reply = value.toLowerCase();
-  }
-  return reply ? { rootId: root ?? reply, parentId: reply } : undefined;
-}
 
 export type ThreadSnapshot = Readonly<{
   status: "idle" | "loading" | "ready" | "error";

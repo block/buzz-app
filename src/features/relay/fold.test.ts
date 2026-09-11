@@ -52,6 +52,13 @@ describe("message fold", () => {
       rootOnly.id,
     ]);
     expect(Object.isFrozen(rows[0])).toBe(true);
+    expect(rows.find((row) => row.id === broadcast.id)?.threadRootId).toBe(
+      a.id,
+    );
+    expect(rows.find((row) => row.id === a.id)?.threadRootId).toBeUndefined();
+    expect(
+      rows.find((row) => row.id === rootOnly.id)?.threadRootId,
+    ).toBeUndefined();
   });
   it("applies author-only deletes and latest author edit, collects reactions and signed mentions", () => {
     const a = message(alice, channel, `hello @bob`, 10, [

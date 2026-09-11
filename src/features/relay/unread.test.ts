@@ -1,5 +1,6 @@
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, assert, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
+import { foldMessages } from "./fold";
 import {
   readJournal,
   type ReadJournal,
@@ -276,6 +277,97 @@ it("late DM metadata updates an existing attention selector without expiring rea
   expect(changed).toHaveBeenCalledTimes(1);
   await reading.observe([row.id]);
   expect(h.journal()?.state.frontiers[`msg:${row.id}`]).toBe(11);
+});
+
+it.each(["lowercase", "uppercase reply", "uppercase root", "last valid"])(
+  "thread row projection and unread ancestry agree on %s references",
+  async (variant) => {
+    const h = setup();
+    h.grant("room");
+    const root = message(h.viewer, "room", "root", 11);
+    const unrelated = message(h.viewer, "room", "unrelated", 11);
+    const reference = (id: string) =>
+      variant === "lowercase" ? id : id.toUpperCase();
+    const tags = (parentId: string) => [
+      ...(variant === "last valid"
+        ? [
+            ["e", unrelated.id, "", "root"],
+            ["e", unrelated.id, "", "reply"],
+          ]
+        : []),
+      ...(variant === "uppercase root" || variant === "last valid"
+        ? [["e", reference(root.id), "", "root"]]
+        : []),
+      ["e", reference(parentId), "", "reply"],
+      ...(variant === "last valid"
+        ? [
+            ["e", "invalid", "", "root"],
+            ["e", "invalid", "", "reply"],
+          ]
+        : []),
+    ];
+    const broadcast = message(h.viewer, "room", "broadcast", 12, [
+      ...tags(root.id),
+      ["broadcast", "1"],
+    ]);
+    const reply = message(h.alice, "room", "unread", 13, tags(broadcast.id));
+    h.emit([root, unrelated, broadcast, reply]);
+    const row = foldMessages("room", h.relay.pubkey, [broadcast])[0];
+    assert(row?.threadRootId);
+    expect(row.threadRootId).toBe(root.id);
+    const target = {
+      kind: "thread" as const,
+      channelId: "room",
+      rootId: row.threadRootId,
+    };
+    expect(h.session.unread.snapshot(target)).toMatchObject({
+      observedCount: 1,
+      attentionCount: 1,
+      coverage: "observed",
+    });
+    expect(h.query).not.toHaveBeenCalled();
+    await h.session.unread.markThrough(target, reply.id);
+    expect(h.journal()?.state.frontiers).toEqual({ [`thread:${root.id}`]: 13 });
+    expect(h.session.unread.snapshot(target).observedCount).toBe(0);
+    expect(h.snapshot().observedCount).toBe(0); // Inherited thread frontier agrees too.
+    const reading = h.session.unread.reading("room");
+    await reading.observe([reply.id]);
+    reading.dispose();
+    expect(h.journal()?.state.frontiers).toEqual({ [`thread:${root.id}`]: 13 });
+  },
+);
+
+it("canonical unread ancestry still requires retained same-channel content", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("other");
+  const root = message(h.viewer, "room", "root", 11);
+  const foreign = message(h.viewer, "other", "foreign", 11, [
+    ["e", root.id.toUpperCase(), "", "reply"],
+  ]);
+  const unretained = message(h.viewer, "room", "unretained", 11, [
+    ["e", root.id.toUpperCase(), "", "reply"],
+  ]);
+  const replies = [foreign, unretained].map((parent) =>
+    message(h.alice, "room", parent.content, 12, [
+      ["e", parent.id.toUpperCase(), "", "reply"],
+    ]),
+  );
+  const rootOnly = message(h.alice, "room", "not a reply", 12, [
+    ["e", root.id.toUpperCase(), "", "root"],
+  ]);
+  h.emit([root, foreign, rootOnly, ...replies]);
+  const target = {
+    kind: "thread" as const,
+    channelId: "room",
+    rootId: root.id,
+  };
+  expect(h.session.unread.snapshot(target).observedCount).toBe(0);
+  for (const reply of replies)
+    await expect(
+      h.session.unread.markThrough(target, reply.id),
+    ).rejects.toThrow("does not belong");
+  expect(h.journal()?.state.frontiers ?? {}).toEqual({});
 });
 
 it("individual reply visibility leaves unseen siblings and the channel prefix untouched", async () => {

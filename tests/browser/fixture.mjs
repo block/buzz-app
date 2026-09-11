@@ -283,6 +283,9 @@ export const test = base.extend({
       measurements: [],
     };
     const pending = [];
+    const retiredStreams = new Set();
+    const observerFailures = [];
+    const consoleLocations = new Map();
     const send = (response, body, status = 200) => {
       response.writeHead(status, { "Content-Type": "application/json" });
       response.end(JSON.stringify(body));
@@ -562,11 +565,15 @@ export const test = base.extend({
             async configurePreviewServer(server) {
               if (relay) {
                 report.brokerRequests = [];
-                server.middlewares.use((req, _res, next) => {
+                server.middlewares.use((req, res, next) => {
                   if (req.url?.startsWith("/api/relay/"))
                     report.brokerRequests.push({
                       url: req.url,
                       at: performance.now(),
+                    });
+                  if (req.url?.endsWith("/stream"))
+                    res.once("close", () => {
+                      retiredStreams.add(res.getHeader("x-buzz-live-id"));
                     });
                   next();
                 });
@@ -606,8 +613,26 @@ export const test = base.extend({
       });
       page.on("pageerror", (error) => report.errors.push(error.message));
       page.on("console", (message) => {
-        if (message.type() === "error")
+        if (message.type() === "error") {
+          consoleLocations.set(
+            report.consoleErrors.length,
+            message.location().url,
+          );
           report.consoleErrors.push(message.text());
+        }
+      });
+      page.on("response", (response) => {
+        if (
+          response.url().endsWith("/stream-observer") &&
+          response.status() === 404
+        ) {
+          const { streamId } = response.request().postDataJSON();
+          observerFailures.push({
+            streamId,
+            url: response.url(),
+            retired: retiredStreams.has(streamId),
+          });
+        }
       });
       await page.addInitScript(
         ({ viewer }) => {
@@ -635,6 +660,26 @@ export const test = base.extend({
         participants,
         viewer,
         relay,
+        observer(raw, agentKey, community = "primary") {
+          const agent = getPublicKey(agentKey);
+          const plaintext = JSON.stringify(raw);
+          const event = sign(
+            24200,
+            [
+              ["p", viewer],
+              ["agent", agent],
+              ["frame", "telemetry"],
+            ],
+            nip44.v2.encrypt(
+              plaintext,
+              nip44.v2.utils.getConversationKey(agentKey, viewer),
+            ),
+            agentKey,
+            Math.floor(Date.now() / 1000),
+          );
+          relay.observer(community, event);
+          return { event, plaintext, agent };
+        },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
         hideChannel(id) {
@@ -708,9 +753,29 @@ export const test = base.extend({
         },
       });
       expect(report.unexpected).toEqual([]);
+      // Aborted startup streams can race an already-dispatched observer control.
+      // Permit only 404s whose exact stream was already closed by the real host;
+      // a current/unknown stream failure still fails, and all errors stay recorded.
+      report.retiredObserverControls = [...observerFailures];
+      expect(observerFailures.every((failure) => failure.retired)).toBe(true);
+      const retiredConsole = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 404/.test(
+            message,
+          )
+        )
+          return false;
+        const match = observerFailures.findIndex(
+          (failure) => failure.url === consoleLocations.get(index),
+        );
+        if (match < 0) return false;
+        observerFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
-          (message) =>
+          (message, index) =>
+            !retiredConsole(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

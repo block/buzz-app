@@ -2,7 +2,13 @@ import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi } from "vitest";
-import { getPublicKey } from "nostr-tools";
+import {
+  getPublicKey,
+  generateSecretKey,
+  finalizeEvent,
+  nip44,
+} from "nostr-tools";
+import { createRelaySession } from "../src/features/relay/session.ts";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 
@@ -32,7 +38,7 @@ async function harness(
           if (kind === "AUTH")
             queueMicrotask(() => this.receive(["OK", id.id, true]));
           if (kind !== "REQ") return;
-          requests.push({ at: performance.now(), filter, socket });
+          requests.push({ at: performance.now(), id, filter, socket });
           const refused = requests.length === refuseAt;
           queueMicrotask(() =>
             this.receive(refused ? ["CLOSED", id, reason] : ["EOSE", id]),
@@ -65,6 +71,7 @@ async function harness(
   const base = `http://127.0.0.1:${server.address().port}`;
   const controllers = [];
   return {
+    key,
     sockets,
     requests,
     base,
@@ -370,6 +377,126 @@ test("priority control cannot allocate interests or bypass owner, origin, commun
     expect((await control({ streamId, channels: ["a"] })).status).toBe(404);
     expect(h.sockets).toHaveLength(1);
   } finally {
+    await h.close();
+  }
+});
+
+test("real signed/encrypted WS → host decode → SSE → session activity; demand and clear fence without replacing chat", async () => {
+  const h = await harness();
+  const nativeFetch = globalThis.fetch;
+  let owner, release;
+  try {
+    vi.stubGlobal("fetch", (input, init) =>
+      nativeFetch(input, {
+        ...init,
+        headers: {
+          ...init?.headers,
+          ...(init?.method === "POST" ? { Origin: h.base } : {}),
+        },
+      }),
+    );
+    const transport = await connectBrokerTransport(h.base);
+    expect(transport.agentActivity).toBe(true);
+    owner = createRelaySession(transport, { prepared: true });
+    release = owner.session.agentActivity.activate();
+    await until(
+      () => owner.session.agentActivity.snapshot().status === "listening",
+    );
+    const routes = () =>
+      h.requests.filter((r) => r.filter.kinds.includes(24200));
+    const first = routes().at(-1);
+    const socketCount = h.sockets.length;
+    const globals = h.requests.filter(
+      (r) => !r.filter.kinds.includes(24200),
+    ).length;
+    const agent = generateSecretKey(),
+      sender = getPublicKey(agent),
+      viewer = getPublicKey(h.key);
+    const encrypt = (
+      raw,
+      tags = [
+        ["p", viewer],
+        ["agent", sender],
+        ["frame", "telemetry"],
+      ],
+    ) =>
+      finalizeEvent(
+        {
+          kind: 24200,
+          created_at: Math.floor(Date.now() / 1000),
+          tags,
+          content: nip44.v2.encrypt(
+            JSON.stringify(raw),
+            nip44.v2.utils.getConversationKey(agent, viewer),
+          ),
+        },
+        agent,
+      );
+    const raw = {
+      kind: "turn_started",
+      seq: 1,
+      timestamp: new Date().toISOString(),
+      channelId: null,
+      sessionId: null,
+      turnId: "synthetic-turn",
+      payload: { text: "inert <script>raw</script>" },
+    };
+    const event = encrypt(raw);
+    const view = owner.session.observe([{ kinds: [24200], limit: 1 }]);
+    await first.socket.receive(["EVENT", first.id, event]);
+    await until(
+      () => owner.session.agentActivity.snapshot().records.length === 1,
+    );
+    expect(owner.session.agentActivity.snapshot().records[0].plaintext).toBe(
+      JSON.stringify(raw),
+    );
+    expect(owner.session.agentActivity.snapshot().turns[0].state).toBe(
+      "working",
+    );
+    expect(view.snapshot().events).toEqual([]);
+    // Wrong direction is signed/encrypted but must never become telemetry.
+    await first.socket.receive([
+      "EVENT",
+      first.id,
+      encrypt(raw, [
+        ["p", viewer],
+        ["agent", sender],
+        ["frame", "control"],
+      ]),
+    ]);
+    await delay(20);
+    expect(owner.session.agentActivity.snapshot().records).toHaveLength(1);
+    await owner.clearCache();
+    expect(owner.session.agentActivity.snapshot().records).toHaveLength(0);
+    await until(() => routes().length === 2);
+    await first.socket.receive(["EVENT", first.id, event]);
+    await delay(20);
+    expect(owner.session.agentActivity.snapshot().records).toHaveLength(0);
+    const second = routes().at(-1);
+    await until(
+      () => owner.session.agentActivity.snapshot().status === "listening",
+    );
+    await second.socket.receive([
+      "EVENT",
+      second.id,
+      encrypt({ ...raw, kind: "turn_completed" }),
+    ]);
+    await until(
+      () => owner.session.agentActivity.snapshot().records.length === 1,
+    );
+    expect(owner.session.agentActivity.snapshot().turns[0].state).toBe("ended");
+    release();
+    expect(owner.session.agentActivity.snapshot().records).toHaveLength(0);
+    await delay(30);
+    expect(h.sockets).toHaveLength(socketCount);
+    expect(
+      h.requests.filter((r) => !r.filter.kinds.includes(24200)),
+    ).toHaveLength(globals);
+    view.dispose();
+  } finally {
+    release?.();
+    owner?.dispose();
+    vi.unstubAllGlobals();
     await h.close();
   }
 });

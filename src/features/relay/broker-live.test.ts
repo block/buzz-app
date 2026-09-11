@@ -38,7 +38,7 @@ function fixture() {
             live: true,
           }),
         );
-      if (url.endsWith("/stream-retry")) {
+      if (url.endsWith("/stream-retry") || url.endsWith("/stream-observer")) {
         const d = deferred<Response>();
         controls.push(d);
         signals.push(init.signal as AbortSignal);
@@ -161,3 +161,39 @@ for (const finish of ["replacement", "dispose"] as const)
         owner.dispose();
       }
     });
+
+it("late observer 404 from a retired stream cannot interrupt its replacement", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    f.accept(0);
+    await tick();
+    f.publish(0);
+    await tick();
+    required(owner.observe)(1);
+    await tick();
+    expect(f.controls).toHaveLength(1);
+    owner.update(["a"]);
+    f.accept(1);
+    await tick();
+    f.publish(1);
+    await tick();
+    expect(required(f.signals[0]).aborted).toBe(true);
+    const before = f.snapshots.length;
+    required(f.controls[0]).resolve(new Response(null, { status: 404 }));
+    await tick();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.snapshots).toHaveLength(before);
+    expect(f.headers).toHaveLength(2);
+    required(owner.observe)(2);
+    await tick();
+    expect(f.controls).toHaveLength(2);
+    expect(required(f.signals[1]).aborted).toBe(false);
+    required(f.controls[1]).resolve(new Response(null, { status: 200 }));
+    await tick();
+  } finally {
+    owner.dispose();
+  }
+});

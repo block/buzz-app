@@ -5,6 +5,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 
 export type MessageRowProps = {
@@ -85,17 +86,20 @@ export const MessageRow = memo(function MessageRow({
             onOpenLink={onOpenLink}
           />
           <DeliveryNotice row={row} retry={retry} />
-          {row.attachments.map((attachment) => (
-            <a
-              className={styles.attachment}
-              key={attachment.url}
-              href={attachment.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {attachment.video ? "Video attachment" : "Image attachment"} ↗
-            </a>
-          ))}
+          {row.attachments.map((attachment) => {
+            const url = safeMessageUrl(attachment.url);
+            return url ? (
+              <a
+                className={styles.attachment}
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {attachment.video ? "Video attachment" : "Image attachment"} ↗
+              </a>
+            ) : null;
+          })}
           {row.reactions.length > 0 && (
             <div className={styles.reactions}>
               {row.reactions.map((reaction) => (

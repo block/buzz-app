@@ -24,6 +24,13 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await page.goto(
       `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
     );
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    await expect(
+      feed.getByRole("heading", { name: "Channel Markdown", level: 2 }),
+    ).toBeVisible();
+    await expect(
+      feed.getByText("Virtualized channel row", { exact: true }),
+    ).toHaveCSS("font-weight", /^(650|700)$/);
     const panel = page.getByRole("complementary", {
       name: "Thread",
       exact: true,
@@ -54,7 +61,21 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       "font-weight",
       /^(650|700)$/,
     );
+    await expect(history.getByText("italic", { exact: true })).toHaveCSS(
+      "font-style",
+      "italic",
+    );
     await expect(history.locator("del")).toHaveText("done");
+    await expect(
+      history
+        .getByText("ordered one", { exact: true })
+        .locator("xpath=ancestor::ol[1]"),
+    ).toHaveCSS("list-style-type", "decimal");
+    await expect(
+      history
+        .getByText("unordered one", { exact: true })
+        .locator("xpath=ancestor::ul[1]"),
+    ).toHaveCSS("list-style-type", "disc");
     await expect(
       history.getByRole("heading", { name: "Agent Markdown", level: 3 }),
     ).toBeVisible();
@@ -70,28 +91,51 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
         .filter({ hasText: /single\s+break/ })
         .locator("br"),
     ).toHaveCount(1);
-    await expect(history.locator("table")).toContainText("A");
-    await expect(history.locator("pre code")).toContainText(
-      'const message = "safe";',
-    );
+    await expect(history.locator("table")).toContainText("wide-column-one-");
+    await expect(history.locator("pre code")).toContainText("wide-content-");
     const safeLink = history.getByRole("link", { name: "Safe link" });
     await expect(safeLink).toHaveAttribute("href", "https://example.com/path");
     await expect(safeLink).toHaveAttribute("rel", "noopener noreferrer");
+    const pagesBefore = page.context().pages().length;
     await safeLink.click();
     await expect
       .poll(() =>
         page.evaluate(() => window.messagesFixture.report.links.at(-1)),
       )
       .toBe("https://example.com/path");
+    expect(page.context().pages()).toHaveLength(pagesBefore);
+    const unhandled = history.getByRole("link", { name: "Unhandled link" });
+    const popup = page.waitForEvent("popup");
+    await unhandled.click();
+    const external = await popup;
+    await external.waitForLoadState("domcontentloaded");
+    expect(external.url()).toBe("https://example.com/unhandled");
+    await external.close();
+    await safeLink.click({ modifiers: ["ControlOrMeta"] });
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.links.length),
+      )
+      .toBe(2);
+    const modified = page
+      .context()
+      .pages()
+      .find((candidate) => candidate !== page);
+    await modified?.close();
     await history.evaluate((element) => {
       for (const selector of ["pre", "table"]) {
         const item = element.querySelector(selector);
+        if (!(item instanceof HTMLElement))
+          throw new Error(`Missing ${selector}`);
         if (
-          item &&
           item.getBoundingClientRect().right >
-            element.getBoundingClientRect().right + 1
+          element.getBoundingClientRect().right + 1
         )
           throw new Error(`${selector} overflows the thread`);
+        if (item.scrollWidth <= item.clientWidth)
+          throw new Error(
+            `${selector} does not provide local horizontal scrolling`,
+          );
       }
     });
     await history.evaluate((el) => {

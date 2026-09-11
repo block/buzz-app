@@ -8,6 +8,7 @@ import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
 import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
+import { ChannelTimeline } from "../../src/features/messages/ChannelTimeline";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { threadReference } from "../../src/features/relay/threads";
@@ -49,20 +50,26 @@ const replies = roots.flatMap((root) =>
       channelOf(root),
       i === 59 && root === roots[0]
         ? `## Markdown reply
-**Bold** and ~~done~~
+**Bold**, *italic*, and ~~done~~
 
 single
 break
 
-| A | B |
-| - | - |
-| 1 | 2 |
+1. ordered one
+2. ordered two
+
+- unordered one
+- unordered two
+
+| ${"wide-column-one-".repeat(10)} | ${"wide-column-two-".repeat(10)} | ${"wide-column-three-".repeat(10)} |
+| --- | --- | --- |
+| one | two | three |
 
 \`\`\`ts
-const message = "safe";
+const message = "${"wide-content-".repeat(35)}";
 \`\`\`
 
-[Safe link](https://example.com/path)`
+[Safe link](https://example.com/path) [Unhandled link](https://example.com/unhandled)`
         : `${root.content} reply ${i}`,
       10 + i,
       [["e", root.id, "", "reply"]],
@@ -174,6 +181,35 @@ function Fixture() {
   const channelId = channelOf(root);
   return (
     <>
+      <div style={{ display: "flex", width: 600, height: 240 }}>
+        <ChannelTimeline
+          channelId="markdown-feed"
+          scope={scope}
+          queries={owner.session}
+          window={{
+            channelId: "markdown-feed",
+            status: "ready",
+            rows: [
+              {
+                id: "f".repeat(64),
+                channelId: "markdown-feed",
+                authorId: viewer.pubkey,
+                createdAt: 1,
+                content: "## Channel Markdown\n\n**Virtualized channel row**",
+                mentions: [],
+                participants: [],
+                attachments: [],
+                reactions: [],
+                replyCount: 0,
+              },
+            ],
+            hasMore: false,
+            loadingOlder: false,
+            error: undefined,
+          }}
+          onOpenLink={() => false}
+        />
+      </div>
       <nav>
         {roots.map((root, i) => (
           <button key={root.id} type="button" onClick={() => select(i)}>
@@ -211,7 +247,7 @@ function Fixture() {
           close={() => select(0)}
           onOpenLink={(url) => {
             report.links.push(url);
-            return true;
+            return !url.includes("unhandled");
           }}
         />
       </div>

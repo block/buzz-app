@@ -4,14 +4,18 @@ import { objectBody } from "./body";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import type { Attachment, ChannelMessage } from "./contracts";
+import {
+  MAX_MARKDOWN_LENGTH,
+  projectMarkdownImages,
+  safeMessageUrl,
+} from "./message-content";
 
 const MESSAGE_KINDS = new Set([9, 40002]);
-const IMAGE_MARKDOWN = /!\[[^\]]*\]\((https?:\/\/[^\s)]+)\)/g;
 const HEX64 = /^[0-9a-f]{64}$/;
 
 export function parseAttachments(
   event: EventData,
-  content: string,
+  markdownImages: readonly string[],
 ): Attachment[] {
   const result: Attachment[] = [];
   const seen = new Set<string>();
@@ -23,22 +27,18 @@ export function parseAttachments(
         return [field.slice(0, split), field.slice(split + 1)];
       }),
     );
-    const url = fields.url;
-    if (!url || seen.has(url) || !/^https:\/\//.test(url)) continue;
+    const url = fields.url ? safeMessageUrl(fields.url) : undefined;
+    if (!url || seen.has(url)) continue;
     seen.add(url);
     result.push({ url, video: fields.m?.startsWith("video/") ?? false });
   }
-  for (const match of content.matchAll(IMAGE_MARKDOWN)) {
-    const url = match[1];
-    if (!url || seen.has(url)) continue;
+  for (const url of markdownImages) {
+    if (seen.has(url)) continue;
     seen.add(url);
     result.push({ url, video: /\.(mp4|webm)(?:\?|$)/i.test(url) });
   }
   return result;
 }
-/** Strip inline image markdown; attachments carry those URLs. */
-export const stripAttachmentMarkdown = (content: string) =>
-  content.replace(IMAGE_MARKDOWN, "").trim();
 
 function parseSummary(
   event: EventData | undefined,
@@ -124,6 +124,12 @@ export function foldMessages(
       const body = objectBody(content);
       if (typeof body?.content === "string") content = body.content;
     }
+    // Every CommonMark image begins with `![`; avoid a second Markdown parse for
+    // ordinary messages, while sharing the parser with every supported image form.
+    const projected =
+      content.length <= MAX_MARKDOWN_LENGTH && content.includes("![")
+        ? projectMarkdownImages(content)
+        : { content, urls: Object.freeze([] as string[]) };
     rows.push(
       Object.freeze({
         id: event.id,
@@ -131,7 +137,7 @@ export function foldMessages(
         threadRootId: threadReference(event)?.rootId,
         authorId: event.pubkey,
         createdAt: event.created_at,
-        content: stripAttachmentMarkdown(content),
+        content: projected.content,
         mentions: Object.freeze([
           ...new Set(
             event.tags.flatMap(([name, value]) =>
@@ -139,7 +145,7 @@ export function foldMessages(
             ),
           ),
         ]),
-        attachments: Object.freeze(parseAttachments(event, content)),
+        attachments: Object.freeze(parseAttachments(event, projected.urls)),
         emoji: emojiTags(
           edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,
         ),

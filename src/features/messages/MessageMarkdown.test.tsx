@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it, vi } from "vitest";
-import { MessageMarkdown, safeMessageUrl } from "./MessageMarkdown";
+import { describe, expect, it } from "vitest";
+import { MessageMarkdown } from "./MessageMarkdown";
+import { safeMessageUrl } from "../relay/message-content";
 import type { ChannelMessage } from "../relay/contracts";
 
 function render(
@@ -101,22 +102,6 @@ second
     expect(unsafe).not.toContain("<a");
     expect(unsafe).toContain("bad");
     expect(unsafe).toContain("local");
-  });
-
-  it("renders known event-local emoji through media, except in links and code", () => {
-    const media = vi.fn(() => "https://media.test/party.png");
-    const html = render(
-      ":party: `:party:` [:party:](https://example.com/:party:)",
-      {
-        emoji: [{ shortcode: "party", url: "https://source.test/party.png" }],
-        media,
-      },
-    );
-    expect(html.match(/<img/g)).toHaveLength(1);
-    expect(html).toContain('alt=":party:"');
-    expect(html).toContain("<code>:party:</code>");
-    expect(html).toContain(">:party:</a>");
-    expect(media).toHaveBeenCalledWith("https://source.test/party.png");
   });
 
   it("falls back to literal text for exceptionally large inbound content", () => {

@@ -13,7 +13,16 @@ export function PanelCard({
   closeLabel?: string;
 }) {
   return (
-    <aside className={styles.card} aria-label={panel.title}>
+    <aside
+      className={styles.card}
+      aria-label={panel.title}
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          props.close();
+        }
+      }}
+    >
       <header className={styles.heading}>
         <strong>{panel.title}</strong>
         <button

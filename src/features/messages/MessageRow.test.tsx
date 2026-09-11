@@ -1,5 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { foldMessages } from "../relay/fold";
+import { keypair, signed } from "../relay/testing";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -89,3 +91,93 @@ it("selects the opening root for a broadcast reply instead of its own row ID", (
     rootId: "original-root",
   });
 });
+
+it("renders exact identity controls only while a target can be opened", () => {
+  const author = "a".repeat(64),
+    recipient = "b".repeat(64);
+  const renderProfile = (enabled: boolean) =>
+    renderToStaticMarkup(
+      <MessageRow
+        row={{
+          ...row,
+          authorId: author,
+          content: "Hello @Mic",
+          mentions: [recipient],
+        }}
+        profile={{ name: "Author" }}
+        participantProfiles={new Map([[recipient, { name: "Mic" }]])}
+        media={() => undefined}
+        onOpenLink={() => true}
+        canOpenLink={() => enabled}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  const enabled = renderProfile(true);
+  expect(enabled).toContain('aria-label="View Author profile"');
+  expect(enabled).toContain('aria-label="View Mic profile"');
+  expect(renderProfile(false)).not.toContain('aria-label="View Mic profile"');
+  expect(renderProfile(false)).not.toContain(
+    'aria-label="View Author profile"',
+  );
+  expect(renderProfile(false)).toContain("@Mic");
+});
+
+it.each([
+  "    @Mic\n\nOutside @Mic",
+  '```js\nconst delimiter = "```";\n@Mic\n```\nOutside @Mic',
+  "~~~js\nconst delimiter = '~~~';\n@Mic\n~~~\nOutside @Mic",
+])("only exposes the prose mention through MessageRow: %s", (content) => {
+  const recipient = "b".repeat(64);
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{ ...row, content, mentions: [recipient] }}
+      profile={undefined}
+      participantProfiles={new Map([[recipient, { name: "Mic" }]])}
+      media={() => undefined}
+      onOpenLink={() => true}
+      canOpenLink={() => true}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html.match(/aria-label="View Mic profile"/g)).toHaveLength(1);
+  expect(html.indexOf('aria-label="View Mic profile"')).toBeGreaterThan(
+    html.indexOf("Outside "),
+  );
+});
+
+it.each([9, 40002])(
+  "preserves signed kind %s code indentation through fold and render",
+  (kind) => {
+    const author = keypair(),
+      recipient = keypair(),
+      relay = keypair();
+    for (const content of ["    @Mic", "\t@Mic"]) {
+      const event = signed(author, {
+        kind,
+        content: kind === 40002 ? JSON.stringify({ content }) : content,
+        tags: [
+          ["h", "channel"],
+          ["p", recipient.pubkey],
+        ],
+      });
+      const [folded] = foldMessages("channel", relay.pubkey, [event]);
+      if (!folded) throw new Error("missing message");
+      const html = renderToStaticMarkup(
+        <MessageRow
+          row={folded}
+          profile={undefined}
+          participantProfiles={new Map([[recipient.pubkey, { name: "Mic" }]])}
+          media={() => undefined}
+          onOpenLink={() => true}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      expect(html).not.toContain('aria-label="View Mic profile"');
+      expect(folded.content).toBe(content);
+    }
+  },
+);

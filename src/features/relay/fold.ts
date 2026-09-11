@@ -36,9 +36,10 @@ export function parseAttachments(
   }
   return result;
 }
-/** Strip inline image markdown; attachments carry those URLs. */
+/** Strip inline image markdown; attachments carry those URLs. Preserve leading
+ * whitespace: the message renderer needs it to distinguish code from prose. */
 export const stripAttachmentMarkdown = (content: string) =>
-  content.replace(IMAGE_MARKDOWN, "").trim();
+  content.replace(IMAGE_MARKDOWN, "").trimEnd();
 
 function parseSummary(
   event: EventData | undefined,
@@ -132,6 +133,7 @@ export function foldMessages(
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: stripAttachmentMarkdown(content),
+        ...(edits.length ? { edited: true as const } : {}),
         mentions: Object.freeze([
           ...new Set(
             event.tags.flatMap(([name, value]) =>

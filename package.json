@@ -50,7 +50,9 @@
     "@tabler/icons-react": "^3.46.0",
     "@tanstack/react-router": "^1.168.10",
     "dockview-react": "8.2.0",
-    "flexlayout-react": "0.10.8"
+    "flexlayout-react": "0.10.8",
+    "@xterm/addon-fit": "0.10.0",
+    "@xterm/xterm": "5.5.0"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.12",

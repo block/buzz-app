@@ -350,3 +350,17 @@
   color: var(--text-primary);
   outline: 1px solid currentColor;
 }
+
+.channelLaunchers {
+  display: flex;
+  margin-left: auto;
+  gap: 6px;
+}
+.channelDrawer {
+  height: 42%;
+  min-height: 180px;
+  max-height: 65%;
+  flex-shrink: 0;
+  border-top: 1px solid var(--border);
+  overflow: hidden;
+}

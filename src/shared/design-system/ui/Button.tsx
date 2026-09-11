@@ -24,6 +24,7 @@ export function Button({
     <BaseButton
       {...props}
       type={type}
+      data-buzz-ui=""
       className="buzz-button"
       data-variant={variant}
       data-size={size}

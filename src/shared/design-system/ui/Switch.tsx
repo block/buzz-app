@@ -10,7 +10,7 @@ export function Switch({
   "children" | "className" | "aria-label"
 > & { label: string }) {
   return (
-    <div className="buzz-switch text-body">
+    <div data-buzz-ui="" className="buzz-switch text-body">
       <span>{label}</span>
       <BaseSwitch.Root
         {...props}

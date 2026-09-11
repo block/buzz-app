@@ -18,7 +18,7 @@ export function SearchField({
   variant?: "default" | "navigator";
 }) {
   return (
-    <Field.Root className="search-field" data-variant={variant}>
+    <Field.Root data-buzz-ui="" className="search-field" data-variant={variant}>
       <Field.Label className="sr-only">{label}</Field.Label>
       <IconSearch size={16} stroke={1.7} aria-hidden="true" />
       <Input

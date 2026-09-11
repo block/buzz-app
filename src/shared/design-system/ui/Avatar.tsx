@@ -15,6 +15,7 @@ export function Avatar({
 }) {
   return (
     <BaseAvatar.Root
+      data-buzz-ui=""
       className="buzz-avatar"
       data-size={size}
       role="img"

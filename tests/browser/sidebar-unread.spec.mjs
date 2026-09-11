@@ -237,3 +237,28 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await page.unroute("**/api/relay/secondary/sidebar-preferences");
   }
 });
+
+test("attention badge retains its channel row color in both modes", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const channel = row(page, "dm-030");
+  const badge = channel.locator("[data-channel-unread]");
+  await expect(badge).toBeAttached();
+  // Use the actual rendered badge and its production CSS; only select the
+  // attention presentation state, independently of mention admission behavior.
+  await badge.evaluate((element) => {
+    element.dataset.attention = "true";
+  });
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    const color = await channel.evaluate(
+      (element) => getComputedStyle(element).color,
+    );
+    await expect(badge).toHaveCSS("color", color);
+    await expect(badge).toHaveCSS("outline-color", color);
+  }
+});

@@ -45,6 +45,7 @@ export function Tabs<Value extends string>({
 }) {
   return (
     <BaseTabs.Root
+      data-buzz-ui=""
       className="buzz-tabs"
       data-variant={variant}
       value={value}

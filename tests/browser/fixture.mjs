@@ -1,7 +1,13 @@
 import { fixtureRelayUrl, fixtureAliases } from "../relay-config.ts";
 import { test as base, expect } from "@playwright/test";
 import { preview } from "vite";
-import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+import {
+  finalizeEvent,
+  generateSecretKey,
+  getPublicKey,
+  nip44,
+  verifyEvent,
+} from "nostr-tools";
 import { writeFile } from "node:fs/promises";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -19,6 +25,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  readState: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
@@ -32,6 +39,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      readState,
       largeSidebar,
       dmLabels,
       tallMessages,
@@ -45,7 +53,15 @@ export const test = base.extend({
     const relayKey = generateSecretKey();
     const userKey = generateSecretKey();
     const viewer = getPublicKey(userKey);
-    const peerKey = dmLabels ? generateSecretKey() : undefined;
+    const peerKey = dmLabels || readState ? generateSecretKey() : undefined;
+    const communityIds = {
+      primary: "01234567-89ab-cdef-0123-456789abcdef",
+      secondary: "11234567-89ab-cdef-0123-456789abcdef",
+    };
+    const readEvents = new Map([
+      ["primary", new Map()],
+      ["secondary", new Map()],
+    ]);
     const sign = (
       kind,
       tags,
@@ -83,7 +99,7 @@ export const test = base.extend({
                 9,
                 [["h", channel]],
                 `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 3 : 1))}`,
-                userKey,
+                readState ? peerKey : userKey,
                 1700000100 + i,
               ),
           ),
@@ -108,6 +124,7 @@ export const test = base.extend({
           durationMs: compiledApp.durationMs,
         },
         largeSidebar,
+        readState,
         dmLabels,
         tallMessages,
         browserVersion: browser.version(),
@@ -119,6 +136,7 @@ export const test = base.extend({
       },
       queries: [],
       publications: [],
+      readPublications: [],
       sessions: [],
       streamConnections: [],
       errors: [],
@@ -151,7 +169,23 @@ export const test = base.extend({
             ...(hiddenChannels.has(id) ? [["hidden"]] : []),
           ]),
         );
-      if (filter.kinds?.includes(30078)) return [];
+      if (filter.kinds?.includes(30078)) {
+        const events = [...readEvents.get(community).values()];
+        if (readState && filter.read_state_snapshot === 1)
+          return {
+            read_state_snapshot: 1,
+            complete: true,
+            community_id: communityIds[community],
+            pubkey: viewer,
+            snapshot_id: "a".repeat(64),
+            events,
+          };
+        return events.filter(
+          (event) =>
+            filter["#t"]?.includes("read-state") ||
+            filter["#d"]?.includes(event.tags.find(([k]) => k === "d")?.[1]),
+        );
+      }
       if (filter.kinds?.includes(30030)) {
         expect(filter).toEqual({
           kinds: [30030],
@@ -174,6 +208,13 @@ export const test = base.extend({
               ]
             : []),
         ];
+      if (readState && filter["#h"]?.length > 1)
+        return filter["#h"]
+          .flatMap((channel) => histories.get(`${community}/${channel}`) ?? [])
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
       const channel = filter["#h"]?.[0];
       const history = histories.get(`${community}/${channel}`);
       if (!history)
@@ -215,7 +256,50 @@ export const test = base.extend({
         : events;
     };
     const relay = productionBroker
-      ? policyRelay({ viewer, answer, report, pending })
+      ? policyRelay({
+          viewer,
+          answer,
+          report,
+          pending,
+          ...(readState
+            ? {
+                discovery: (community) => ({
+                  self: getPublicKey(relayKey),
+                  read_state_snapshot: {
+                    version: 1,
+                    community_id: communityIds[community],
+                    max_events: 4096,
+                    max_bytes: 8388608,
+                  },
+                }),
+                acceptPublication: (community, event) => {
+                  expect(verifyEvent(event)).toBe(true);
+                  expect(event.pubkey).toBe(viewer);
+                  expect(event.kind).toBe(30078);
+                  expect(event.tags).toContainEqual(["t", "read-state"]);
+                  const blob = JSON.parse(
+                    nip44.v2.decrypt(
+                      event.content,
+                      nip44.v2.utils.getConversationKey(userKey, viewer),
+                    ),
+                  );
+                  const coordinate = event.tags.find(
+                    ([key]) => key === "d",
+                  )?.[1];
+                  expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
+                  const previous = readEvents.get(community).get(coordinate);
+                  if (
+                    !previous ||
+                    event.created_at > previous.created_at ||
+                    (event.created_at === previous.created_at &&
+                      event.id < previous.id)
+                  )
+                    readEvents.get(community).set(coordinate, event);
+                  report.readPublications.push({ community, event, blob });
+                },
+              }
+            : {}),
+        })
       : undefined;
     const middleware = async (request, response, next) => {
       if (!request.url?.startsWith("/api/relay/")) return next();
@@ -319,9 +403,13 @@ export const test = base.extend({
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
-                  authority: async () => ({
-                    relayAuthor: getPublicKey(relayKey),
-                  }),
+                  ...(readState
+                    ? {}
+                    : {
+                        authority: async () => ({
+                          relayAuthor: getPublicKey(relayKey),
+                        }),
+                      }),
                   upstreamFetch: relay.fetch,
                   socketFactory: relay.socket,
                 });
@@ -374,6 +462,7 @@ export const test = base.extend({
         pending,
         histories,
         participants,
+        viewer,
         relay,
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.

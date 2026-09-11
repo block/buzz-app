@@ -195,7 +195,9 @@ React owns only subscriptions and presentation state.
 
 Relay consumers use `session.channels` for channel views,
 `session.profiles` for shared identities, and `session.read` for
-finite filtered event reads. See [relay query ownership](relay-queries.md).
+finite filtered event reads, and `session.unread` for shared observed badges and
+cancellable reading intent. See [relay query ownership](relay-queries.md) and the
+[unread capability, durability and limitations](unread.md).
 
 Plugins subscribe to `ctx.relay` connection snapshots and bind work to the current
 ready session. `useRelayConnection(relay)` is the React adapter; remount session-owned

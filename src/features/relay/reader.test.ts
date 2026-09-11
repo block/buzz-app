@@ -12,6 +12,7 @@ function setup(options: Parameters<typeof createRelayReader>[1] = {}) {
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 const filter = (id: string) => [{ kinds: [9], "#h": [id], limit: 80 }];
 
@@ -184,4 +185,128 @@ it("fresh reads retain scheduler bounds but never join older or simultaneous equ
   h.next().respond([]);
   h.next().respond([]);
   await Promise.all([old, one, two, three]);
+});
+
+/** Real owner wiring; tests dispatch lifecycle events, never toggle a private gate. */
+function documentLife() {
+  const frames = new Map<number, FrameRequestCallback>();
+  let id = 0;
+  const page = Object.assign(new EventTarget(), {
+    requestAnimationFrame(callback: FrameRequestCallback) {
+      frames.set(++id, callback);
+      return id;
+    },
+    cancelAnimationFrame(id: number) {
+      frames.delete(id);
+    },
+  });
+  vi.stubGlobal("window", page);
+  return {
+    frames,
+    emit: (name: string) => page.dispatchEvent(new Event(name)),
+    render() {
+      const pending = [...frames.values()];
+      frames.clear();
+      for (const callback of pending) callback(0);
+    },
+  };
+}
+
+it.each(["success", "failure", "cancellation"] as const)(
+  "navigation fences %s completion, new reads and promotion until a resumed render",
+  async (outcome) => {
+    const page = documentLife();
+    const h = setup();
+    const controller = new AbortController();
+    const running = h.read(filter("running"), {
+      priority: "background",
+      signal: controller.signal,
+    });
+    const wire = h.next();
+    const queued = h.read(filter("queued"), { priority: "background" });
+    page.emit("beforeunload");
+    const completion =
+      outcome === "success"
+        ? expect(running).resolves.toEqual([])
+        : expect(running).rejects.toThrow();
+    if (outcome === "success") wire.respond([]);
+    else if (outcome === "failure") wire.fail(new Error("loader stopped"));
+    else controller.abort();
+    await completion;
+    // Consumer continuations and recovery callbacks cannot restart admission.
+    const retry = h.read(filter("retry"));
+    h.promote(() => true);
+    await flush();
+    await flush();
+    expect(h.pending).toHaveLength(0);
+    // A cancelled navigation renders the same document again, without pageshow.
+    page.render();
+    await vi.waitFor(() => expect(h.pending).toHaveLength(2));
+    h.next().respond([]);
+    h.next().respond([]);
+    await Promise.all([queued, retry]);
+  },
+);
+
+it("pagehide cancels render resumption and pageshow resumes the same reader", async () => {
+  const page = documentLife();
+  const h = setup();
+  page.emit("beforeunload");
+  expect(page.frames.size).toBe(1);
+  page.emit("pagehide");
+  expect(page.frames.size).toBe(0);
+  const reading = h.read(filter("queued"));
+  page.render();
+  await flush();
+  expect(h.pending).toHaveLength(0);
+  page.emit("pageshow");
+  h.next().respond([]);
+  await expect(reading).resolves.toEqual([]);
+});
+
+it("paused work retains deadlines and cancellation without dispatching on expiry", async () => {
+  vi.useFakeTimers();
+  const page = documentLife();
+  const h = setup({ timeoutMs: 100 });
+  const first = h.read(filter("first"));
+  const wire = h.next();
+  page.emit("beforeunload");
+  page.emit("pagehide");
+  const queued = h.read(filter("queued"));
+  const expired = Promise.all([
+    expect(first).rejects.toThrow("timed out"),
+    expect(queued).rejects.toThrow("timed out"),
+  ]);
+  await vi.advanceTimersByTimeAsync(101);
+  await expired;
+  expect(wire.signal?.aborted).toBe(true);
+  page.emit("pageshow");
+  expect(h.pending).toHaveLength(0);
+  const retry = h.read(filter("queued"));
+  h.next().respond([]);
+  await retry;
+});
+
+it("disposal settles paused work and removes lifecycle callbacks and pending renders", async () => {
+  const page = documentLife();
+  const h = setup();
+  const running = h.read(filter("running"), { priority: "background" });
+  const wire = h.next();
+  const queued = h.read(filter("queued"), { priority: "background" });
+  page.emit("beforeunload");
+  const stopped = Promise.all([
+    expect(running).rejects.toThrow(),
+    expect(queued).rejects.toThrow(),
+  ]);
+  h.dispose();
+  await stopped;
+  expect(wire.signal?.aborted).toBe(true);
+  expect(page.frames.size).toBe(0);
+  page.emit("beforeunload");
+  expect(page.frames.size).toBe(0);
+  page.emit("pageshow");
+  page.render();
+  await flush();
+  expect(h.pending).toHaveLength(0);
+  await expect(h.read(filter("retry"))).rejects.toThrow();
 });

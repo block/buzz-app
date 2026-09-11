@@ -132,3 +132,33 @@ test("older-page quota errors require deliberate retry instead of more scrolling
   app.pending.shift().release();
   await expect(history(page).getByRole("alert")).toHaveCount(0);
 });
+
+test("cancelled navigation keeps relay reads usable in the same document", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await page.evaluate(() => {
+    window.addEventListener(
+      "beforeunload",
+      (event) => {
+        event.preventDefault();
+        event.returnValue = "";
+      },
+      { once: true },
+    );
+  });
+  const sessions = app.report.sessions.length;
+  const dialog = page.waitForEvent("dialog");
+  await page.evaluate(() => {
+    setTimeout(() => window.location.reload(), 0);
+  });
+  await (await dialog).dismiss();
+  // This must be the same session, not a replacement that bypasses a stuck gate.
+  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await expect(history(page)).toContainText("primary beta message");
+  expect(app.report.sessions).toHaveLength(sessions);
+});

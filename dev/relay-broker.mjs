@@ -1,3 +1,13 @@
+import {
+  decodeReadState,
+  signReadState,
+  READ_STATE_DECODE_BYTES,
+} from "./read-state.mjs";
+import {
+  isReadSnapshotFilter,
+  readSnapshotText,
+  readSnapshotCommunity,
+} from "../src/features/relay/read-state-snapshot.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
 import {
   decodeSidebarPreferences,
@@ -167,6 +177,9 @@ async function relayAuthority(fetch, relay) {
     throw new Error("Relay did not advertise its identity");
   return {
     relayAuthor: author,
+    ...(readSnapshotCommunity(nip11.read_state_snapshot)
+      ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
+      : {}),
     // NIP-IA snapshots require the explicit relay signing identity. The NIP-11
     // contact-key fallback used by older channel reads cannot grant this authority.
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
@@ -411,9 +424,13 @@ export function relayBrokerPlugin({
             });
           }
           if (
-            route === "/api/relay/sidebar-preferences" &&
+            [
+              "/api/relay/sidebar-preferences",
+              "/api/relay/read-state-decode",
+            ].includes(route) &&
             req.method === "POST"
           ) {
+            const readStateDecode = route === "/api/relay/read-state-decode";
             if (sidebarUploads >= SIDEBAR_UPLOAD_SLOTS)
               return json(res, 429, { error: "Sidebar decoder is busy" });
             sidebarUploads++;
@@ -425,18 +442,31 @@ export function relayBrokerPlugin({
               let bytes = 0;
               for await (const part of req) {
                 bytes += Buffer.byteLength(part);
-                if (bytes > SIDEBAR_REQUEST_BYTES)
+                if (
+                  bytes >
+                  (readStateDecode
+                    ? READ_STATE_DECODE_BYTES
+                    : SIDEBAR_REQUEST_BYTES)
+                )
                   return json(res, 413, {
                     error: "Sidebar records exceed the decode budget",
                   });
                 chunks.push(part);
               }
               const events = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-              return json(res, 200, decodeSidebarPreferences(events, key));
+              return json(
+                res,
+                200,
+                readStateDecode
+                  ? decodeReadState(events, key)
+                  : decodeSidebarPreferences(events, key),
+              );
             } catch {
               if (!res.destroyed)
                 return json(res, 400, {
-                  error: "Sidebar preferences could not be decoded",
+                  error: readStateDecode
+                    ? "Read state could not be decoded"
+                    : "Sidebar preferences could not be decoded",
                 });
             } finally {
               clearTimeout(deadline);
@@ -466,6 +496,7 @@ export function relayBrokerPlugin({
               relayUrl: relay,
               writeKinds: [9],
               sidebarPreferences: true,
+              readState: true,
               agentLibrary: true,
               live: true,
             });
@@ -648,6 +679,8 @@ export function relayBrokerPlugin({
               "/api/relay/query",
               "/api/relay/sign",
               "/api/relay/publish",
+              "/api/relay/read-state-sign",
+              "/api/relay/read-state-publish",
               "/api/relay/profile",
               "/api/relay/claim",
               "/api/relay/accept-policy",
@@ -728,6 +761,39 @@ export function relayBrokerPlugin({
                 }
               : { code: filters.code, policy_receipt: filters.policy_receipt };
           }
+          const readSigning = route === "/api/relay/read-state-sign";
+          const readPublishing = route === "/api/relay/read-state-publish";
+          if (readSigning || readPublishing) {
+            try {
+              if (readSigning)
+                return json(res, 200, signReadState(filters, key));
+              // A valid own signature alone is not permission to publish arbitrary kind-30078 data.
+              decodeReadState([filters], key);
+            } catch {
+              return json(res, 400, {
+                error: "Read-state operation rejected",
+                sent: false,
+              });
+            }
+          }
+          const snapshot = isReadSnapshotFilter(filters, viewer);
+          if (
+            Array.isArray(filters) &&
+            filters.some(
+              (filter) =>
+                filter && Object.hasOwn(filter, "read_state_snapshot"),
+            ) &&
+            !snapshot
+          )
+            return json(res, 400, {
+              error: "Invalid read-state snapshot filter",
+              sent: false,
+            });
+          if (snapshot && !(await getAuthority(relay)).readStateCommunity)
+            return json(res, 400, {
+              error: "Complete read-state snapshots unsupported",
+              sent: false,
+            });
           const timings = [];
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
@@ -758,6 +824,8 @@ export function relayBrokerPlugin({
             !claim &&
             !policy &&
             !gifs &&
+            !readPublishing &&
+            !snapshot &&
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
@@ -766,7 +834,7 @@ export function relayBrokerPlugin({
             return json(res, 404, { error: "GIF search is unavailable" });
           const upstreamPath = gifs
             ? gifSearchPath
-            : profile || publishing
+            : profile || publishing || readPublishing
               ? "/events"
               : claim
                 ? "/api/invites/claim"
@@ -850,7 +918,10 @@ export function relayBrokerPlugin({
                   ? "background"
                   : "foreground",
               );
-              const text = await response.text();
+              const text =
+                snapshot && response.ok
+                  ? await readSnapshotText(response)
+                  : await response.text();
               // The relay's own service time separates server work from network time.
               const relayMs = Number(
                 response.headers.get("x-envoy-upstream-service-time"),

@@ -6,6 +6,16 @@ import {
 } from "./reader";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
+import {
+  createReadState,
+  browserReadPublisherLock,
+  type ReadPublisherLock,
+} from "./read-state";
+import {
+  browserReadStateStorage,
+  type ReadStateStorage,
+} from "./read-state-storage";
+import { createUnread } from "./unread";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
@@ -47,6 +57,8 @@ export function createRelaySession(
   transport: ReadTransport | null,
   options: ChannelStoreOptions & {
     outboxStorage?: OutboxStorage;
+    readStateStorage?: ReadStateStorage;
+    readPublisherLock?: ReadPublisherLock;
     deliveryTimeoutMs?: number;
   } = {},
 ) {
@@ -124,7 +136,10 @@ export function createRelaySession(
       // Retained thread targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
-        evidence.get(id) ?? recent.peek(id)?.event ?? retainedThreadEvent(id),
+        evidence.get(id) ??
+        recent.peek(id)?.event ??
+        retainedThreadEvent(id) ??
+        unread.event(id),
     );
   }
   const local = () => {
@@ -157,6 +172,7 @@ export function createRelaySession(
       archives.clear();
       for (const purge of views.values()) purge();
       commit();
+      unread.purge();
     } finally {
       if (--revoking === 0) {
         const pending = [...notifications];
@@ -225,6 +241,8 @@ export function createRelaySession(
       () => {
         for (const event of visible)
           recent.set(event.id, { event, revision: ++revision });
+        reads.accept(visible);
+        unread.accept(visible);
         writes?.observe(visible);
         if (epoch !== accessEpoch) return;
         profiles.accept(visible);
@@ -282,6 +300,7 @@ export function createRelaySession(
           media: (url) => transport.media(url),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
+          restored: (events) => unread.accept(events),
           demand: (channelId) => demandChannel(channelId),
           rosterChanged: () => publishLive(),
         }
@@ -295,6 +314,29 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
+  const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
+  const reads = createReadState({
+    viewer: transport?.viewer ?? "",
+    reader: requests.reader,
+    host: transport?.readState,
+    storage:
+      options.readStateStorage ??
+      browserReadStateStorage(readScope, transport?.viewer ?? ""),
+    lock: options.readPublisherLock ?? browserReadPublisherLock(readScope),
+    notify,
+    broadcastName: transport?.readState
+      ? `buzz-read-state:${readScope}`
+      : undefined,
+  });
+  const unread = createUnread({
+    reads,
+    channels: channels.queries,
+    // Repair owns evidence only, not timeline/history ingestion. The shared
+    // scheduler and verified transport stay shared; unread fences access epochs.
+    reader: requests.reader,
+    viewer: transport?.viewer ?? "",
+    notify,
+  });
   let traffic: LiveSubscription | undefined;
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
@@ -483,6 +525,7 @@ export function createRelaySession(
       );
   }
   const session = Object.freeze({
+    unread: unread.capability,
     sidebarPreferences: {
       available: !!transport?.decodeSidebarPreferences,
       async read(signal?: AbortSignal) {
@@ -848,6 +891,7 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         channels.staleHeads();
+        unread.stale();
       }
       liveSnapshot = snapshot;
       publishLive();
@@ -862,6 +906,7 @@ export function createRelaySession(
             timers.delete(timer);
             if (!closed) {
               emoji.reconnect();
+              unread.reconnect();
               for (const refresh of refreshers) void refresh();
             }
           }, 0);
@@ -902,6 +947,7 @@ export function createRelaySession(
       catchupQueue.clear();
       for (const clear of views.values()) clear(true);
       recent.clear();
+      unread.clear();
       requests.invalidate();
       profiles.clear();
       emoji.clear();
@@ -919,6 +965,7 @@ export function createRelaySession(
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();
+      unread.dispose();
       writes?.dispose();
       requests.dispose();
       channels.dispose();

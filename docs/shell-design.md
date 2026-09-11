@@ -122,7 +122,7 @@ message timestamp, unsuccessful/unconfirmed sends show a small notice. Confirmed
 messages never show a success label. Retry remains available for failed/unknown
 operations. `delivery.test.ts` covers the timing boundary and terminal states.
 
-The current query API supplies thread summaries but no complete thread reader or
-reply composer, and no unread/read-marker state. Reply counts remain informational;
-thread interaction and unread indicators await those APIs. No query-layer work is
-included in this styling pass.
+The shared conversation layer now supplies bounded thread reading/replies and
+[session-owned unread indicators](unread.md). These are separate from this styling
+pass: counts remain observed rather than exact, manual unread is local-only, and
+reading intent belongs to reusable conversation UI rather than shell navigation.

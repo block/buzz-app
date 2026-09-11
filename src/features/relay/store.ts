@@ -74,6 +74,8 @@ export function createChannelStore(
         media(url: string): string | undefined;
         revokeAccess(commit: () => void): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
+        /** Reverified, authorized disk evidence, before any restored rows become observable. */
+        restored?(events: readonly RelayEvent[]): void;
         /** Returns true when session post-subscribe catch-up owns this demand. */
         demand?(channelId: string): boolean;
         rosterChanged?(): void;
@@ -645,6 +647,10 @@ export function createChannelStore(
         // Profile subscribers can synchronously revoke/regrant or clear the
         // session. That callback is a boundary just like an awaited read.
         if (disposed || generation !== epoch) return;
+        transport.restored?.(accessibleEvents);
+        // Evidence subscribers can synchronously revoke access or clear caches too.
+        if (disposed || generation !== epoch || !authorized(record.channelId))
+          return;
         heads.set(record.channelId, head);
         const state = windows.get(record.channelId);
         if (

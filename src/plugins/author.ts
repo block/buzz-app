@@ -27,3 +27,14 @@ export type {
   KeyBinding,
   RegisteredShortcut,
 } from "../features/shortcuts/service";
+
+export type {
+  UnreadCapability,
+  UnreadSnapshot,
+  ReadingHandle,
+} from "../features/relay/unread";
+export type { ReadTarget } from "../features/relay/read-state-model";
+export type {
+  ReadMutationResult,
+  ReadSyncSnapshot,
+} from "../features/relay/read-state";

@@ -15,6 +15,7 @@ import { useRowProfiles } from "../relay/react";
 import { MessageRow } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
+import { useReading } from "./use-reading";
 import { messageViewKey } from "./view-key";
 
 export type ThreadPanelProps = {
@@ -162,6 +163,7 @@ function ThreadMessages({
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
+  useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.

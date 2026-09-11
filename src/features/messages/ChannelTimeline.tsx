@@ -9,6 +9,7 @@ import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
+import { useReading } from "./use-reading";
 import { messageViewKey } from "./view-key";
 
 const EDGE_HEIGHT = 56;
@@ -102,6 +103,7 @@ function Timeline({
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
+  useReading({ session: queries, channelId, scroller, settled });
   const prepend =
     !!edges.current.first &&
     edges.current.first !== rows[0]?.id &&

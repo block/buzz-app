@@ -1,0 +1,134 @@
+# Unread and read-state ownership
+
+`RelaySession.unread` is the shared capability. Plugins render its immutable
+selectors and submit reading intent; they do not maintain counters, sign markers,
+open sockets, or write persistence. `src/features/relay/unread.ts` owns bounded
+verified message evidence, `read-state.ts` owns durable intent and reconciliation,
+and the existing reader/live routes carry both. Disabling Channels does not erase
+accepted intent. `src/plugins/author.ts` exports the types through the existing
+host-matched author preview, not a cross-version SDK or plugin sandbox.
+
+## Consumer contract
+
+```ts
+const target = { kind: "channel", channelId } as const;
+const snapshot = session.unread.snapshot(target);
+const unsubscribe = session.unread.subscribe(target, render);
+await session.unread.ensure(); // shared bounded background observation, not per-row fetch
+
+// A custom reading UI owns one cancellable observation lease.
+const reading = session.unread.reading(channelId);
+await reading.observe(visibleVerifiedMessageIds);
+reading.dispose(); // on hide, retarget, focus loss, or unmount
+unsubscribe();
+```
+
+Targets are `{kind:"channel",channelId}`, `{kind:"thread",channelId,rootId}`,
+or `{kind:"message",channelId,messageId}`. The consumer must establish actual
+reading intent before calling `observe`: this is a trusted in-process API, not
+proof that a human read text. The engine resolves signed message identity,
+timestamps, ancestry, deletion and current access; arbitrary timestamps are not
+accepted. Cancelled leases cannot survive disposal, revocation/regrant, or a newer
+manual-unread action. Restored channel heads pass signature/access verification
+and supply evidence before their rows become observable.
+
+Reusable `ChannelTimeline` and `ThreadPanel` own the standard observation policy:
+focused active reading surface, visible document, settled positioning, fully
+visible rows, and 750 ms dwell. Scroll/content/focus changes cancel/restart dwell.
+Mounted virtualizer overscan, preload, selection, and composer focus are not
+reading. Automatic observations mark **individual messages**, never a prefix that
+could hide unseen siblings. Oversized rows that never fit fully are not auto-read.
+
+- `observedCount` is `null` when unknown or denied, never a fabricated zero.
+  Otherwise it counts the bounded evidence currently known, excluding own messages,
+  auxiliary events and authorized deletions. It is **not an exact total or lower
+  bound**: missing markers/deletions can overcount; missing history can undercount.
+- `coverage` and `freshness` describe message evidence, separately from `sync()`.
+  Evidence is capped at 4,096 events / 8 MiB; initial repair is one background
+  roster-wide read capped at 500, not a head request for every sidebar row. Repair
+  evidence does not seed channel windows, alter their cursors, or mark messages read.
+- `attentionCount` is a separate observed subset: DMs, mentions and replies to
+  participating threads. It does not trigger notifications or implement mute policy.
+- `markThrough(target, messageId)` is explicit prefix intent through verified
+  evidence. It can mark unloaded earlier messages read; do not use it for viewport
+  observation. A channel prefix requires a top-level message, not a reply.
+- `markUnreadLocal(target)` is durable **on this browser profile/device only**.
+  Automatic reading does not clear it. An explicit mark-through clears that
+  target's local mark. `syncedManualUnread` is `false`.
+- `refresh()` retries evidence/marker observation; `retrySync()` refreshes markers
+  and retries pending publication. `ReadMutationResult.durability === "saved"`
+  means the local transaction committed, not that the relay accepted it.
+
+The sidebar displays observed badges, with accessible non-exact wording and a
+separate local-manual dot. Conversation options exposes explicit actions and
+Unread status/retry. Unknown and observed-zero both omit a badge; the API preserves
+the distinction. There is no notification, feed, or exact-count service here.
+
+## Durable sync and privacy
+
+The journal is separate from disposable message caches in `buzz-read-state-v1`,
+partitioned by relay/community scope and viewer. IndexedDB strict read/write
+transactions merge concurrent local windows; Web Locks serialize the publisher.
+Without host decoding the capability is `unsupported`; without safe serialized
+sign/publish it is `read-only`. Read sync requires `frontier-sync`. Local manual
+intent can still be saved independently of remote capability.
+
+Signed kind-30078 NIP-RS blobs use self-encryption and a persisted random coordinate
+slot/client ID. The Node development broker alone owns the key, narrow codec,
+signing, same-origin checks, scoped NIP-98 and relay admission. Plugins receive no
+generic encryption or arbitrary-kind signing capability. Packaged builds do not
+include this development broker and do not gain a native read-state signer here.
+
+Accepted local intent is saved before signing; the exact signed event is saved
+before sending. Lost responses/readback retain that event identity for retry.
+`accepted` is a publish receipt, not observed coordinate state; `reconciled` also
+requires readback. A failed transaction is not acknowledged as saved. Timestamps
+are uint32 seconds; replaceable publication clocks advance monotonically with a
+bounded lead rather than running indefinitely into the future.
+
+Ordinary frontiers are **bounded recent hints, not everlasting read receipts**.
+The local state has a 96 KiB serialized-blob budget and wire publication a 40 KiB
+plaintext budget. Persisted local interaction order prioritizes newly read old
+history as well as current traffic. Only frontier-only hints can be pruned; older
+messages may look unread again. No synthetic channel prefix is introduced to fit.
+Override groups, permanent clear floors, directly associated frontiers and possible
+inherited channel/thread frontiers are protected; capacity failure is visible,
+never floor truncation. Publication of any override-bearing state is deliberately
+blocked in this release. Remote registers can be reduced/displayed, but synchronized
+manual-unread and canonical override compaction are not enabled.
+
+Marker discovery uses the relay's host-bound NIP-11 `read_state_snapshot` descriptor
+when available, independently of request parameters. The exact versioned query
+must return a complete own-author kind-30078 snapshot with matching community,
+valid signatures and unique coordinates. Ordinary capped arrays and live EOSE do
+not establish completeness. The snapshot proves one writer cut, not live freshness,
+message-history completeness, a CAS revision, or a global cryptographic community
+identity. Absent discovery permits only bounded ordinary marker observation.
+
+Resource bounds: 4,096 snapshot events / 8 MiB encoded event array; envelope stream
+is capped before parsing at 8 MiB + 4 KiB; individual recognized read-state events
+are limited to 64 KiB and blobs to 10,000 keys. Unknown/undecryptable recognized
+coordinates fail marker loading rather than masquerading as empty state. Access
+revocation denies projections before any subscriber can inspect another one;
+durable account-owned intent survives without exposing revoked context projections.
+
+## Verification
+
+- `read-state-model.test.ts`: protocol reduction and algebra.
+- `read-state-retention.test.ts`, `read-state.test.ts`: bounded growth, old-history
+  interaction order, restart, exact-event retry, durable mutation and floor safety.
+- `reader.test.ts` and history browser journeys: finite-read navigation admission,
+  preserved deadlines/cancellation, actual reload and dismissed navigation. Simulated
+  pagehide/pageshow tests establish handler behavior, not a full BFCache journey.
+  Live-stream reconnect during a delayed departing navigation is a separate
+  pre-existing host-lifecycle limitation; this is not a universal unload fence.
+- `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
+  reverified disk-restore evidence without network content.
+- `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
+- `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
+  reader envelope verification, filter rejection and streamed body limits.
+- `tests/browser/unread.spec.mjs`: production build/React/session/IndexedDB/broker,
+  observed sidebar → focused dwell → encrypted publication/readback, reload,
+  cancellation and explicit local-unread clearing with network content held.
+  Only upstream relay policy is modeled, with ephemeral identities. This does not
+  establish native GUI behavior or deployed relay compatibility.

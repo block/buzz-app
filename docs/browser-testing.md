@@ -295,3 +295,15 @@ composer. Existing emoji/mention/edit/thread journeys remain in the gate.
 
 These are Chromium/WebKit browser results, not attended live-account, screen-reader,
 software-keyboard or native-packaged acceptance. Those require separate checking.
+
+
+## Unread and durable reading
+
+`unread.spec.mjs` opts into the production broker with ephemeral viewer/peer keys
+and modeled upstream NIP-11, snapshots and publications. It keeps the built app,
+React, session, IndexedDB, Web Locks and signing/encryption real. The tests observe
+storage/results but never seed a journal or call a test-only engine API. They cover
+focused visible dwell, non-reading opening/composer focus, individual markers,
+encrypted publication/readback, reload, cancellation and local manual-unread.
+The reload control holds network content so verified disk-restore wiring is required.
+This is not a deployed-relay, native signer or cross-device integration test.

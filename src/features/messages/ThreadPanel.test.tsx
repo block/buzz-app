@@ -129,6 +129,8 @@ function setup() {
     thread,
     profiles: { ensure },
     messages: { retry: vi.fn() },
+    // Geometry fixtures are read-only; reading behavior has its own boundary tests.
+    unread: { sync: () => ({ capability: "unsupported" }) },
     media: () => undefined,
   } as unknown as RelaySession;
   const close = vi.fn();

@@ -1,6 +1,7 @@
 # Local agent controller — implementation checkpoint
 
-This crate is a **not-yet-integrated draft**, not a runnable replacement for old Buzz.
+This crate backs the [connected native editing checkpoint](../../docs/agent-control.md),
+not a runnable replacement for old Buzz.
 It owns native configuration/import and listener process lifetime without Tauri,
 React, or the old desktop manager. The `Controller` must be called by one serialized
 native host owner; dropping a page is not dropping this controller.
@@ -31,7 +32,9 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
 
 ## Known incomplete boundaries — do not claim live readiness
 
-- No Tauri commands/host loop is attached yet. The macOS credential adapter compiles,
+- Tauri commands attach one app-owned controller for snapshots/save/Stop/preview,
+  but Start/Restart and credential import are gated off in the native host.
+  The macOS credential adapter compiles,
   but its Security.framework calls have not run against any real or test Keychain.
   Permission prompts, signing/ACL behavior and packaged custody remain unverified;
   other platforms explicitly report unavailable rather than storing keys in files.

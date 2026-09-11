@@ -1,8 +1,15 @@
+mod agents;
+use agents::{
+    agent_control_action, agent_control_import_commit, agent_control_import_preview,
+    agent_control_save, agent_control_snapshot, AgentHost,
+};
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
 };
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use tauri::Manager as _;
 use tauri_plugin_dialog::DialogExt;
 
 #[derive(Clone, Default)]
@@ -25,8 +32,8 @@ async fn prepare_import(
     .map_err(|e| e.to_string())?
 }
 #[tauri::command]
-async fn plugin_import_folder(
-    app: tauri::AppHandle,
+async fn plugin_import_folder<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     imports: tauri::State<'_, Imports>,
 ) -> Result<Option<Preview>, String> {
     prepare_import(imports.inner().clone(), move || {
@@ -144,23 +151,64 @@ async fn plugin_recover(
 ) -> Result<InstallationResult, String> {
     with_manager(manager, |m| m.recover().map(|catalog| ready(&m, catalog))).await
 }
+fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Send + Sync + 'static {
+    tauri::generate_handler![
+        plugin_import_folder,
+        plugin_import_git,
+        plugin_import_install,
+        plugin_import_discard,
+        plugin_catalog,
+        plugin_change,
+        plugin_module,
+        plugin_recover,
+        agent_control_snapshot,
+        agent_control_save,
+        agent_control_action,
+        agent_control_import_preview,
+        agent_control_import_commit
+    ]
+}
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // Only app-owned storage is created. Preview uses the OS-resolved legacy
+            // parent, never a browser-supplied path or a different environment source.
+            let paths = (|| {
+                let root = app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|_| "Could not resolve local agent storage")?
+                    .join("agent-controller");
+                let root = std::env::var_os("BUZZ_AGENT_CONTROL_HOME")
+                    .map(PathBuf::from)
+                    .unwrap_or(root);
+                let legacy = app
+                    .path()
+                    .data_dir()
+                    .map_err(|_| "Could not resolve legacy library directory")?;
+                let workspace = app
+                    .path()
+                    .home_dir()
+                    .map_err(|_| "Could not resolve agent workspace")?
+                    .join(".buzz");
+                Ok((root, legacy, workspace))
+            })();
+            app.manage(AgentHost::open(paths));
+            Ok(())
+        })
         .manage(Imports::default())
         .manage(PluginManager(Manager::from_env()))
-        .invoke_handler(tauri::generate_handler![
-            plugin_import_folder,
-            plugin_import_git,
-            plugin_import_install,
-            plugin_import_discard,
-            plugin_catalog,
-            plugin_change,
-            plugin_module,
-            plugin_recover
-        ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Buzz Foundation");
+        .invoke_handler(commands())
+        .build(tauri::generate_context!())
+        .expect("failed to build Buzz Foundation")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit)
+                && app.state::<AgentHost>().shutdown().is_err()
+            {
+                eprintln!("Native agent shutdown could not be confirmed");
+            }
+        });
 }

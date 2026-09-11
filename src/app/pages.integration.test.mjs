@@ -113,6 +113,10 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       renderToStaticMarkup(createElement(agents.component)),
       /Connect to a community/,
     );
+    const agentMarkup = renderToStaticMarkup(createElement(agents.component));
+    assert.match(agentMarkup, /Local agent controls/);
+    assert.match(agentMarkup, /Local agent controls require the desktop app/);
+    const localControl = services.agentControl;
     const session = services.relay.snapshot().session;
     await services.plugins.change("disable", "buzz.agents");
     assert.equal(
@@ -120,6 +124,17 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       false,
     );
     assert.equal(services.relay.snapshot().session, session);
+    assert.equal(services.agentControl, localControl);
+    await services.plugins.change("enable", "buzz.agents");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages
+          .snapshot()
+          .some((page) => page.pluginId === "buzz.agents"),
+      ),
+    );
+    assert.equal(services.agentControl, localControl);
+    await services.plugins.change("disable", "buzz.agents");
     assert.ok(session.agentLibrary);
     await services.plugins.change("disable", "buzz.channels");
     const [projects] = services.pages.snapshot();

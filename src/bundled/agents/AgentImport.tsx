@@ -9,9 +9,11 @@ import { Button } from "../../shared/design-system/ui/Button";
 export function AgentImport({
   control,
   disabled,
+  commitAvailable = true,
 }: {
   control: AgentControl;
   disabled: boolean;
+  commitAvailable?: boolean;
 }) {
   const [source, setSource] = useState<ImportSource>("installed");
   const [preview, setPreview] = useState<AgentImportPreview | null>(null);
@@ -23,10 +25,17 @@ export function AgentImport({
         Import from old Buzz
       </summary>
       <p className="text-body-sm text-secondary">
-        Preview reads only the selected library. Import preserves exact
-        identities and leaves them disabled; it does not enroll or start agents.
-        Close old Buzz before starting imported agents here.
+        Preview reads only the selected library, without Keychain access. When
+        available, import preserves exact identities and leaves them disabled;
+        it does not enroll or start agents. Keep old Buzz running for replies
+        during this editing checkpoint.
       </p>
+      {!commitAvailable && (
+        <p role="status">
+          Import is disabled in this integration checkpoint. Preview does not
+          access Keychain; credential acceptance is still pending.
+        </p>
+      )}
       <fieldset disabled={disabled} className="space-y-3">
         <legend className="text-body font-semibold">Source library</legend>
         <div className="flex flex-wrap gap-4">
@@ -106,7 +115,7 @@ export function AgentImport({
             </label>
           ))}
           <Button
-            disabled={disabled || !selected.length}
+            disabled={disabled || !selected.length || !commitAvailable}
             onClick={() => {
               void control
                 .commitImport(preview.token, selected)

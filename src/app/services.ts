@@ -1,4 +1,5 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { provideAgentControl } from "../features/agents/control-service";
 import { provideNavigation } from "../features/navigation/service";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { ConversationService } from "../features/conversation/service";
@@ -17,6 +18,7 @@ export function createServices() {
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
+  const agentControl = provideAgentControl(ctx);
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const shortcuts = new ShortcutsService(ctx);
@@ -30,6 +32,7 @@ export function createServices() {
   const relay = communities.relay;
   let disposal: Promise<void> | undefined;
   return {
+    agentControl,
     navigation,
     navigationHost,
     shortcuts,

@@ -1,13 +1,62 @@
 # Local agent controls
 
-This slice adds an isolated editor and a TypeScript projection of the native host.
-It is **not yet wired into the existing Agents page**. The read-only compatibility
-library remains separate. Native integration, packaged runtime and wake-on-mention
-acceptance must land before this replaces old Buzz.
+The real Agents page now receives one app-owned native capability. Native IPC uses
+persistent settings and the controller, not the in-memory editor fixture. The
+read-only old library stays separately expandable. **This is an editing checkpoint,
+not a replacement runner:** Start/Restart and credential import are blocked natively
+and in the UI until OS credential acceptance, independent runtime packaging and
+cross-app ownership protection are complete. Old Buzz still owns live replies.
 
-## Try the editor without touching real agents
+## Try the connected desktop with disposable sample data
 
-From the `pinky/agent-editor` worktree:
+From the feature worktree, after an attended launch is agreed:
+
+```sh
+bin/pnpm install --frozen-lockfile
+bin/node scripts/agent-control-preview.mjs
+```
+
+This opens **Buzz Agent Editor Preview** using the real app/native IPC. It uses a
+separate app identifier/webview storage, temporary plugin/settings directories,
+and a Vite configuration with **no dotenv loading or live broker**, at loopback
+port 1445 (fails if occupied). It seeds one artificial public identity with no
+private key. Its synthetic enabled flag lets you exercise Stop, but the native
+launch gate prevents startup regardless of that flag. The directory remains
+printed and retained for inspection.
+`--prepare-only` prepares these files but does not launch an app or dev server.
+
+Open Agents, edit the sample name/prompt/harness/environment and Save. Reload the
+window to verify disk persistence; compare Saved revision. Invalid arguments or
+reserved environment keys should retain your draft and report a safe error.
+Start/Restart and Import selected identities must be disabled. No worker can wake.
+Stop only persists disabled intent in this checkpoint. Quit closes this app; do
+not close old Buzz. No GUI acceptance is implied until a person tries this.
+
+Preview selected library is keyless/read-only but reads the explicitly selected
+old library. Skip preview to keep the exercise wholly synthetic. No background
+library scan, Keychain operation, live import, relay connection or live agent
+start/stop is performed by this launch path. Never put real credentials in sample
+fields. `BUZZ_AGENT_CONTROL_HOME` is a native process-only storage override, must
+be absolute, and cannot select an import source. Normal startup uses this app's
+`app_data_dir/agent-controller`, never the old library as a destination.
+
+## Remaining runtime boundary
+
+Native host holds one serialized controller for the app lifetime; page/plugin/
+community disposal only drops observations. App exit fences queued requests and
+calls shutdown. This checkpoint deliberately does not restore enabled intent or
+attach PlatformCredentials: bundling and exclusion are not yet ready, and toggling
+a saved enabled flag cannot bypass that native gate. The connected page reports
+`runtimeAvailable: false` and `importAvailable: false`.
+
+The app's existing native identity/relay/media path remains separate work; the
+preview does not depend on or certify it. Packaging, truthful listener/work state,
+real Keychain prompts/ACLs and isolated mention → reply → sleep → Stop acceptance
+are still outstanding. Do not cut over live agents on the strength of this editor.
+
+## Older in-memory editor fixture
+
+From this feature worktree:
 
 ```sh
 bin/pnpm install --frozen-lockfile
@@ -29,8 +78,9 @@ fixture the controls simulate native responses, not agent execution.
 ## Ownership and handoff
 
 - `features/agents/control.ts`: camelCase DTOs and app-owned observable projection.
-  Construct once using `createNativeAgentControl()` at app composition, expose its
-  `AgentControl` interface to the plugin, and dispose only with the app service.
+  `control-service.ts` constructs it once at root app composition and exposes its
+  `AgentControl` interface through Cordis injection. Only the app disposes the projection;
+  the author contract exposes neither its disposal nor host construction.
 - `control-native.ts`: the five named native IPC commands. Browser returns an
   unavailable capability; no fetch fallback, local storage, signing or runner.
 - `bundled/agents/AgentControlPanel.tsx`: compose with `{ control }` independently
@@ -42,8 +92,8 @@ fixture the controls simulate native responses, not agent execution.
   duplicate ownership checks, source import validation and sanitized diagnostics.
   It must bound IPC operations and reject with deliberately user-facing strings;
   raw child/OS/parser errors must never cross into these snapshots or rejections.
-- Protected composition/plugin API/author contracts and existing AgentsPage/index
-  remain integration-owner work after human approval. No runtime code was copied
+- Composition and additive author exports were authorized in thread `935caec3`;
+  the integration owner wires AgentsPage/index. No runtime code was copied
   from the identity workstream. Packaged native identity remains a dependency.
 
 ## User contract
@@ -94,8 +144,20 @@ write-only replacement, Stop, unmount without control actions, selected import,
 browser unavailability and narrow dark layout. Mounted recovery cases start with
 running and stopped snapshots, fail status reads, then exercise explicit Stop
 through the real capability; failed durable disable retains uncertainty and drafts.
-These do not prove native IPC,
-persistence, secure custody, process teardown or a working listener.
+These browser fixtures do not prove native IPC or persistence.
+
+`src/app/agent-control.integration.test.ts` exercises real app composition, Agents
+registration, plugin management, community selection and the native adapter with
+synthetic IPC/relay transports. The same injected capability remains functional
+through disable/re-enable, two real community session switches and Personal space.
+Captured IPC contains only snapshots during those transitions; root disposal fences
+further reads without sending Stop. This is not a mounted native GUI test.
+`src/plugins/author.test.mjs` builds declarations and independently compiles a plugin
+consumer with no host source, checking Context injection and non-exported ownership.
+`src-tauri/src/agents/tests.rs` uses the actual command handler and Tauri mock runtime
+with temporary disk stores for Save/CAS/Stop, source preview, native gates and
+shutdown fencing. These checks do not establish secure custody, process teardown
+or a working listener.
 
 The integration batch still needs `just scan`, protected wiring review, native
 controller tests, bundled runtime verification and an attended packaged workflow

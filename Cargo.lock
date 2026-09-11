@@ -402,11 +402,15 @@ dependencies = [
 name = "buzz-foundation"
 version = "0.0.0"
 dependencies = [
+ "buzz-agent-controller",
  "buzzodz-plugins",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "tempfile",
 ]
 
 [[package]]

@@ -1,4 +1,11 @@
 /** Native-owned configuration and process evidence; never a relay-session capability. */
+// Keep injection reachable from the generated author contract, not host construction.
+import type {} from "@deepseek-ai/cordis";
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    agentControl: AgentControl;
+  }
+}
 export type AgentAction = "start" | "stop" | "restart";
 export type ImportSource = "installed" | "development";
 export interface AgentView {
@@ -25,6 +32,8 @@ export interface AgentView {
 export interface ControlSnapshot {
   agents: AgentView[];
   runtimeAvailable: boolean;
+  /** False while native credential/import acceptance is outstanding. */
+  importAvailable?: boolean;
   runtimeMessage?: string | null;
 }
 export interface AgentEdit {

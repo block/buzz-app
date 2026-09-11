@@ -2,6 +2,11 @@
 
 ## Scope
 
+This document describes the read-only compatibility/mention slice. The Agents
+page now also exposes a separate [native local-controls checkpoint](agent-control.md)
+for editing saved agents/harnesses. It does not yet launch agents or import credentials;
+old Buzz remains responsible for live replies.
+
 V1 **reuses the current Buzz library and mentions existing agents in channels
 and threads**. No migration to relay-only storage. Creation, editing,
 add-existing membership, Save/recovery and all runner management are out of V1.
@@ -29,7 +34,7 @@ add-existing membership, Save/recovery and all runner management are out of V1.
   projects from JSON, so private fields may transiently exist in host memory;
   there is no claim that JavaScript strings are zeroized. Browser reads time out
   at ten seconds and session disposal/cache/access/disconnect fences clear them.
-- The page uses only `session.agentLibrary` and `session.archives`. Unused relay
+- The compatibility view uses only `session.agentLibrary` and `session.archives`. Unused relay
   ownership/configuration readers and native recovery code have been removed.
 - Avatars use saved library artwork, with initials on missing/failed images.
   Optional artwork accepts HTTPS without credentials or bounded raster data URLs,

@@ -302,3 +302,67 @@ for (const previouslyStopped of [false, true]) {
     }
   });
 }
+
+test("native editing checkpoint blocks launch and credential import while retaining Stop", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
+    );
+    await page.evaluate(async () => {
+      const fixture = window.agentControlFixture;
+      fixture.data.runtimeAvailable = false;
+      fixture.data.importAvailable = false;
+      fixture.data.runtimeMessage = "Execution blocked by native host";
+      fixture.agent.status = "stopped";
+      fixture.agent.runningRevision = null;
+      fixture.agent.enabled = true;
+      await fixture.control.refresh();
+    });
+    const panel = page.getByRole("region", { name: "Local agent controls" });
+    await expect(
+      panel.getByText("Execution blocked by native host"),
+    ).toBeVisible();
+    await expect(
+      panel.getByRole("button", { name: "Start", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      panel.getByRole("button", { name: "Restart", exact: true }),
+    ).toBeDisabled();
+    await expect(
+      panel.getByRole("button", { name: "Stop", exact: true }),
+    ).toBeEnabled();
+    await panel.getByText("Import from old Buzz", { exact: true }).click();
+    await expect(
+      panel.getByText(/Import is disabled in this integration checkpoint/),
+    ).toBeVisible();
+    await panel
+      .getByRole("button", { name: "Preview selected library" })
+      .click();
+    await panel.getByRole("checkbox").check();
+    await expect(
+      panel.getByRole("button", { name: "Import selected identities" }),
+    ).toBeDisabled();
+    await panel.getByRole("button", { name: "Stop", exact: true }).click();
+    await expect(
+      panel.getByText("Disabled · mentions will not wake this agent"),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() =>
+        window.agentControlFixture.calls.filter((call) =>
+          ["start", "restart", "import"].includes(call.action),
+        ),
+      ),
+    ).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});

@@ -43,9 +43,10 @@ export function AgentControlPanel({ control }: { control: AgentControl }) {
         )}
       </header>
       <p className="text-secondary">
-        Enabled agents start with buzz-app. Their workers wake for accepted
-        mentions and sleep when idle. Keep buzz-app open; leaving this page does
-        not stop them.
+        When execution is available, enabled agents start with buzz-app. Their
+        workers wake for accepted mentions and sleep when idle. Leaving this
+        page does not stop native processes; unavailable execution stays
+        blocked.
       </p>
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
@@ -78,12 +79,13 @@ export function AgentControlPanel({ control }: { control: AgentControl }) {
           )}
           <AgentImport
             control={control}
+            commitAvailable={state.data.importAvailable !== false}
             disabled={state.busy || state.status !== "ready"}
           />
           {!state.data.agents.length && (
             <p>
-              No local agents yet. Preview a Buzz library to import exact
-              identities.
+              No local agents yet. Preview a Buzz library to inspect exact
+              identities. Import is available only after native acceptance.
             </p>
           )}
           {state.data.agents.map((agent) => (

@@ -1,3 +1,5 @@
+import type { AgentControl } from "../../features/agents/control";
+import { AgentControlPanel } from "./AgentControlPanel";
 import { RefreshCw, Users } from "lucide-react";
 import { Avatar } from "../../shared/Avatar";
 import { avatarSource } from "../../shared/avatar-source";
@@ -10,7 +12,13 @@ import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useRelayConnection } from "../../features/relay/react";
 
-export function AgentsPage({ relay }: { relay: RelayData }) {
+export function AgentsPage({
+  relay,
+  control,
+}: {
+  relay: RelayData;
+  control?: AgentControl;
+}) {
   const connection = useRelayConnection(relay);
   return (
     <section
@@ -18,25 +26,35 @@ export function AgentsPage({ relay }: { relay: RelayData }) {
       className="h-full min-h-0 overflow-auto rounded-3xl border border-line bg-surface p-5 shadow-surface sm:p-8"
     >
       <h1 className="m-0 text-3xl font-medium tracking-tight">Agents</h1>
-      {connection.status === "ready" ? (
-        <MyAgents
-          key={`${connection.scope}:${connection.generation}`}
-          session={connection.session}
-        />
-      ) : (
+      {control && (
         <div className="mt-6">
-          <p>
-            {connection.status === "connecting"
-              ? "Connecting to your community…"
-              : "Connect to a community to browse your agents."}
-          </p>
-          {connection.status === "error" && (
-            <button type="button" onClick={() => relay.retry()}>
-              Retry connection
-            </button>
-          )}
+          <AgentControlPanel control={control} />
         </div>
       )}
+      <details className="mt-6" open={!control}>
+        <summary className="cursor-pointer text-sm font-semibold">
+          Old Buzz library (read-only)
+        </summary>
+        {connection.status === "ready" ? (
+          <MyAgents
+            key={`${connection.scope}:${connection.generation}`}
+            session={connection.session}
+          />
+        ) : (
+          <div className="mt-6">
+            <p>
+              {connection.status === "connecting"
+                ? "Connecting to your community…"
+                : "Connect to a community to browse your agents."}
+            </p>
+            {connection.status === "error" && (
+              <button type="button" onClick={() => relay.retry()}>
+                Retry connection
+              </button>
+            )}
+          </div>
+        )}
+      </details>
     </section>
   );
 }

@@ -61,7 +61,9 @@ export function AgentEditor({
           </p>
           <p className="text-body-sm text-secondary">
             {agent.enabled
-              ? "Enabled · starts with buzz-app"
+              ? state.data?.runtimeAvailable
+                ? "Enabled · starts with buzz-app"
+                : "Enabled intent saved · execution unavailable"
               : "Disabled · mentions will not wake this agent"}
           </p>
         </div>

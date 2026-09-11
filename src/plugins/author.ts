@@ -52,3 +52,14 @@ export type {
   JsonValue,
 } from "../features/navigation/targets";
 export type { PageNavigation } from "../features/navigation/service";
+
+export type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+  AgentEdit,
+  AgentAction,
+  ControlSnapshot,
+  AgentImportPreview,
+  ImportSource,
+} from "../features/agents/control";

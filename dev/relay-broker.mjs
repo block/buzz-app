@@ -315,7 +315,10 @@ export function relayBrokerPlugin({
             })
               .then(async (response) => {
                 if (!response.ok) throw new Error("GIF discovery failed");
-                return relayKlipySearchPath(await response.json());
+                const path = relayKlipySearchPath(await response.json());
+                // A relay can enable GIFs while this broker is still running.
+                if (!path) gifSearchPaths.delete(relay);
+                return path;
               })
               .catch((error) => {
                 gifSearchPaths.delete(relay);
@@ -420,7 +423,9 @@ export function relayBrokerPlugin({
               });
             const info = await response.json();
             const gifSearchPath = relayKlipySearchPath(info);
-            gifSearchPaths.set(relay, Promise.resolve(gifSearchPath));
+            if (gifSearchPath)
+              gifSearchPaths.set(relay, Promise.resolve(gifSearchPath));
+            else gifSearchPaths.delete(relay);
             const policyResponse = await fetchUpstream(
               `${relay}/api/join-policy`,
               { redirect: "error", signal: AbortSignal.timeout(10000) },

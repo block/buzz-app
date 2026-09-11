@@ -322,7 +322,7 @@ export function EmojiPicker({
         setAnimateTab(false);
         setPressedTab(undefined);
         void session.emoji.ensure();
-        if (gifs === undefined && gifAvailability?.community === community)
+        if (gifs !== true && gifAvailability?.community === community)
           setGifAvailability(undefined);
         setGifDiscoveryRequested(true);
         setOpen(true);

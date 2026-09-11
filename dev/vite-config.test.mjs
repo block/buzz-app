@@ -24,7 +24,12 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
     {
       cwd: fileURLToPath(new URL("../", import.meta.url)),
       env: {
-        ...process.env,
+        // Keep local Buzz credentials out of the config subprocess.
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(
+            ([key]) => !key.startsWith("BUZZ_"),
+          ),
+        ),
         BUZZ_DEV_VIEWER: "a".repeat(64),
         BUZZ_RELAY_URL: "",
         BUZZ_COMMUNITY_ALIASES: "",

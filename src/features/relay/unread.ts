@@ -77,6 +77,7 @@ export function createUnread({
   const known = new Set<string>();
   const listeners = new Map<string, Set<() => void>>();
   const snapshots = new Map<string, UnreadSnapshot>();
+  const dirty = new Set<string>();
   const handles = new Set<() => void>();
   let bytes = 0;
   const allowed = (id: string) =>
@@ -241,28 +242,38 @@ export function createUnread({
   function snapshot(target: ReadTarget) {
     const key = keyFor(target),
       previous = snapshots.get(key);
-    if (previous) return previous;
-    const value = compute(Object.freeze({ ...target }));
-    if (snapshots.size >= 4096) {
+    if (previous && !dirty.delete(key)) return previous;
+    const value = compute(previous?.target ?? Object.freeze({ ...target }));
+    if (previous && equal(previous, value)) return previous;
+    if (!previous && snapshots.size >= 4096) {
       for (const key of snapshots.keys())
-        if (!listeners.has(key)) snapshots.delete(key);
+        if (!listeners.has(key)) {
+          snapshots.delete(key);
+          dirty.delete(key);
+        }
       if (snapshots.size >= 4096)
         throw new Error("Unread selector capacity reached");
     }
     snapshots.set(key, value);
     return value;
   }
-  function publish() {
+  function publish(channelIds?: ReadonlySet<string>) {
     if (closed) return;
     const changed: string[] = [];
     for (const [key, old] of snapshots) {
+      if (channelIds && !channelIds.has(old.target.channelId)) continue;
+      // Revisit dormant selectors lazily, retaining identity if unchanged.
+      if (!listeners.has(key)) {
+        dirty.add(key);
+        continue;
+      }
       const next = compute(old.target);
       if (!equal(old, next)) {
         snapshots.set(key, next);
         changed.push(key);
       }
     }
-    // Replace ALL projections before the first possibly reentrant callback.
+    // Replace/invalidate ALL affected projections before any reentrant callback.
     for (const key of changed)
       for (const listener of listeners.get(key) ?? []) notify(listener);
   }
@@ -299,17 +310,28 @@ export function createUnread({
     );
     publish();
   }
-  let accessKey = "";
+  // Names/previews do not affect unread. Read membership once, without a
+  // roster scan for every channel, and retain only the invalidation inputs.
+  const types = () =>
+    new Map(
+      channels
+        .list()
+        .channels.filter((channel) => channel.members?.includes(viewer))
+        .map((channel) => [channel.id, channel.channelType]),
+    );
+  let channelTypes = types();
+  let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
-    const next = channels
-      .list()
-      .channels.filter((channel) => allowed(channel.id))
-      .map((channel) => channel.id)
-      .sort()
-      .join(",");
+    const nextTypes = types();
+    const next = [...nextTypes.keys()].sort().join(",");
+    const changed = new Set(
+      [...nextTypes].flatMap(([id, type]) =>
+        channelTypes.get(id) !== type ? [id] : [],
+      ),
+    );
+    channelTypes = nextTypes;
     if (next === accessKey) {
-      // Metadata (notably DM type) changes projections, not reading/access epochs.
-      publish();
+      if (changed.size) publish(changed);
     } else {
       accessKey = next;
       purge();
@@ -386,10 +408,20 @@ export function createUnread({
       bytes += size;
       known.add(channel);
       changed.add(channel);
+      // A signed deletion may target readable messages in several channels.
+      // Invalidate every affected projection, not only its explicit/first owner.
+      if (event.kind === 5 || event.kind === 9005)
+        for (const [name, id] of event.tags) {
+          const target =
+            name === "e" && id && (incoming.get(id) ?? events.get(id));
+          const affected = target && channelOf(target);
+          if (affected) changed.add(affected);
+        }
     }
     if (changed.size) {
+      const global = freshness !== "observed";
       freshness = "observed";
-      publish();
+      publish(global ? undefined : changed);
     }
   }
   function requireMessage(target: ReadTarget, id: string) {
@@ -563,6 +595,7 @@ export function createUnread({
       stopChannels();
       listeners.clear();
       snapshots.clear();
+      dirty.clear();
       events.clear();
       reads.dispose();
     },

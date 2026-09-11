@@ -99,13 +99,18 @@ export function MultiPanelSwapExperiment({ count }: { count: 3 | 4 }) {
     if (root.current) delete root.current.dataset.dragging;
     const el = elements.current.get(active.group);
     if (el) delete el.dataset.dragging;
+    for (const pane of elements.current.values()) delete pane.dataset.frontmost;
+    const proposal = active.proposal;
+    const proposalFits =
+      proposal !== undefined &&
+      fitsLayout(proposal, geometry.current, geometry.current.gap);
     if (cancel) update(active.original, false);
-    else if (
-      active.proposal &&
-      fitsLayout(active.proposal, geometry.current, geometry.current.gap)
-    )
-      update(active.proposal);
+    else if (proposalFits) update(proposal);
     else update(state.current, false);
+    // A within-pane drag and cancellation can retain the same state object, so
+    // React has no state change to repaint. Settle the moved DOM immediately;
+    // real layout changes still paint through the layout effect.
+    if (cancel || !proposalFits) paint(false);
     hideSignals();
     if (active.handle.hasPointerCapture(active.pointer))
       active.handle.releasePointerCapture(active.pointer);

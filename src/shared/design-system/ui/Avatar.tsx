@@ -14,9 +14,14 @@ export function Avatar({
   size?: AvatarSize;
 }) {
   return (
-    <BaseAvatar.Root className="buzz-avatar" data-size={size}>
-      {src ? <BaseAvatar.Image src={src} alt={alt} /> : null}
-      <BaseAvatar.Fallback delay={src ? 150 : 0}>
+    <BaseAvatar.Root
+      className="buzz-avatar"
+      data-size={size}
+      role="img"
+      aria-label={alt}
+    >
+      {src ? <BaseAvatar.Image src={src} alt="" /> : null}
+      <BaseAvatar.Fallback delay={src ? 150 : 0} aria-hidden="true">
         {fallback.slice(0, 1).toUpperCase()}
       </BaseAvatar.Fallback>
     </BaseAvatar.Root>

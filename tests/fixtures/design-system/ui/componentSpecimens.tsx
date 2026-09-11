@@ -316,6 +316,15 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <SpecimenGroup label="Fallback, after image failure">
+        <Specimen prop="failed image">
+          <Avatar
+            src="data:image/png;base64,broken"
+            alt="Morgan Martin"
+            fallback="Morgan"
+          />
+        </Specimen>
+      </SpecimenGroup>
     </div>
   );
 }

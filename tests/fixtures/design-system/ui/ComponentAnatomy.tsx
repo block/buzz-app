@@ -135,41 +135,49 @@ function specificity(selector: string): number {
 /**
  * Every style rule on the page, as `{ selector, body }` text.
  *
- * **Parsed from the stylesheet text rather than read through `sheet.cssRules`**,
- * which is the obvious approach and does not work: Vite injects app CSS by
- * setting `textContent` on a `<style>` tag at dev time, and those rules are not
- * reachable through the CSSOM — a walk over `document.styleSheets` found 84 rules
- * and matched none of this component's, while the same CSS was plainly present in
- * a `<style>` tag. Reading the text works in dev and in a production build.
+ * Development injects CSS as stylesheet text; production extracts it into a
+ * linked stylesheet whose rules sit inside cascade layers. Read both forms and
+ * recurse through grouping rules so the published viewer reports the same token
+ * columns as development.
  *
- * Cached per call site, because parsing every rule for every property of every
- * part is otherwise quadratic on a page with a few tables.
+ * Cached per page stylesheet shape, because parsing every rule for every property
+ * of every part is otherwise quadratic on a page with a few tables.
  */
 let ruleCache: {
-  key: number;
+  key: string;
   rules: { selector: string; body: string }[];
 } | null = null;
 
+function collectCssRules(
+  source: CSSRuleList,
+  output: { selector: string; body: string }[],
+) {
+  for (const rule of source) {
+    if (rule instanceof CSSStyleRule) {
+      for (const selector of rule.selectorText.split(",")) {
+        output.push({ selector: selector.trim(), body: rule.style.cssText });
+      }
+      continue;
+    }
+    if ("cssRules" in rule) {
+      collectCssRules((rule as CSSGroupingRule).cssRules, output);
+    }
+  }
+}
+
 function styleRules(): { selector: string; body: string }[] {
-  const sheets = Array.from(document.querySelectorAll("style"));
-  const key = sheets.reduce(
-    (total, tag) => total + (tag.textContent?.length ?? 0),
-    0,
-  );
+  const sheets = Array.from(document.styleSheets);
+  const key = sheets
+    .map((sheet) => `${sheet.href ?? "inline"}:${sheet.cssRules.length}`)
+    .join("|");
   if (ruleCache?.key === key) return ruleCache.rules;
 
   const rules: { selector: string; body: string }[] = [];
-  for (const tag of sheets) {
-    const css = tag.textContent ?? "";
-    // Flat rules only: a selector, then a body with no nested braces. Enough for
-    // this stylesheet, and it skips `@media`/`@theme` bodies rather than
-    // mis-parsing them.
-    for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const selector = (match[1] ?? "").trim();
-      if (!selector || selector.startsWith("@")) continue;
-      for (const one of selector.split(",")) {
-        rules.push({ selector: one.trim(), body: match[2] ?? "" });
-      }
+  for (const sheet of sheets) {
+    try {
+      collectCssRules(sheet.cssRules, rules);
+    } catch {
+      // A future cross-origin stylesheet is not ours to document.
     }
   }
   ruleCache = { key, rules };

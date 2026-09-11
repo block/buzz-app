@@ -179,6 +179,49 @@ test("documentation retains table guidance and storage failure stays usable", as
   await expect(page.getByRole("status")).toContainText("Toggle again to retry");
 });
 
+test("built component references retain anatomy and fallback identity", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/tabs`);
+  const selectedTabRow = page
+    .locator("tbody tr")
+    .filter({ hasText: "Unselected tab" })
+    .first();
+  await expect(selectedTabRow).toContainText("text-secondary");
+  await expect(selectedTabRow.locator("td")).toHaveCount(6);
+
+  await page.goto(`${viewer}#/design/components/avatar`);
+  await expect(page.getByRole("img", { name: "Cynthia Chen" })).toHaveCount(3);
+  await expect(page.getByRole("img", { name: "Morgan Martin" })).toHaveCount(4);
+});
+
+test("a small pane drag settles on release and Escape", async ({ page }) => {
+  await page.goto(`${viewer}#/design/components/swap-workspace`);
+  const playground = page.getByRole("region", { name: "3 panels playground" });
+  const pane = playground.locator('[data-group="One"]');
+  const header = pane.locator(".multi-swap-header");
+
+  const dragWithinPane = async (cancel: boolean) => {
+    const startTransform = await pane.evaluate(
+      (element) => element.style.transform,
+    );
+    const box = await header.boundingBox();
+    if (!box) throw new Error("Missing pane header geometry");
+    await page.mouse.move(box.x + box.width - 20, box.y + box.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width, box.y + box.height / 2 + 20);
+    if (cancel) await page.keyboard.press("Escape");
+    else await page.mouse.up();
+    await expect
+      .poll(() => pane.evaluate((element) => element.style.transform))
+      .toBe(startTransform);
+    if (cancel) await page.mouse.up();
+  };
+
+  await dragWithinPane(false);
+  await dragWithinPane(true);
+});
+
 test("a stale or renamed link explains itself instead of rendering blank", async ({
   page,
 }) => {

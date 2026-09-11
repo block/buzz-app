@@ -4,11 +4,7 @@ import { objectBody } from "./body";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import type { Attachment, ChannelMessage } from "./contracts";
-import {
-  MAX_MARKDOWN_LENGTH,
-  projectMarkdownImages,
-  safeMessageUrl,
-} from "./message-content";
+import { projectMarkdownImages, safeMessageUrl } from "./message-content";
 
 const MESSAGE_KINDS = new Set([9, 40002]);
 const HEX64 = /^[0-9a-f]{64}$/;
@@ -126,10 +122,9 @@ export function foldMessages(
     }
     // Every CommonMark image begins with `![`; avoid a second Markdown parse for
     // ordinary messages, while sharing the parser with every supported image form.
-    const projected =
-      content.length <= MAX_MARKDOWN_LENGTH && content.includes("![")
-        ? projectMarkdownImages(content)
-        : { content, urls: Object.freeze([] as string[]) };
+    const projected = content.includes("![")
+      ? projectMarkdownImages(content)
+      : { content, urls: Object.freeze([] as string[]) };
     rows.push(
       Object.freeze({
         id: event.id,

@@ -24,7 +24,7 @@ import type { RelayEvent } from "../../src/features/relay/events";
 import "../../src/shared/styles/globals.css";
 
 const context = new Context();
-createPluginManager(context, {
+const plugins = createPluginManager(context, {
   bundled: bundledPlugins.filter(({ manifest }) =>
     ["buzz.emoji", "buzz.mentions"].includes(manifest.id),
   ),
@@ -55,8 +55,12 @@ const replies = roots.flatMap((root) =>
 single
 break
 
-1. ordered one
+1. outer
+   1. nested
+   2. nested two
 2. ordered two
+
+:_lead: and :trail_:
 
 - unordered one
 - unordered two
@@ -72,7 +76,15 @@ const message = "${"wide-content-".repeat(35)}";
 [Safe link](https://example.com/path) [Unhandled link](https://example.com/unhandled)`
         : `${root.content} reply ${i}`,
       10 + i,
-      [["e", root.id, "", "reply"]],
+      [
+        ["e", root.id, "", "reply"],
+        ...(i === 59 && root === roots[0]
+          ? ([
+              ["emoji", "_lead", "https://emoji.test/lead.png"],
+              ["emoji", "trail_", "https://emoji.test/trail.png"],
+            ] satisfies string[][])
+          : []),
+      ],
     ),
   ),
 );
@@ -102,7 +114,10 @@ const rejected = new Set<string>();
 const owner = createRelaySession({
   viewer: viewer.pubkey,
   relayAuthor: relay.pubkey,
-  media: () => undefined,
+  media: (url) =>
+    url.startsWith("https://emoji.test/")
+      ? `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==`
+      : undefined,
   subscribe(callbacks) {
     incoming = callbacks.receive;
     return { update() {}, retry() {}, dispose() {} };
@@ -164,6 +179,31 @@ owner.session.channels.ensureList();
 Object.assign(window, {
   messagesFixture: {
     report,
+    async activate() {
+      await plugins.retry();
+    },
+    extensionsActive() {
+      return extensions.inline.snapshot().map((entry) => entry.id);
+    },
+    deep(kind: 9 | 40002) {
+      const content = `${"> ".repeat(20_000)}literal deep message`;
+      const event =
+        kind === 40002
+          ? signed(agent, {
+              kind,
+              content: JSON.stringify({ content }),
+              created_at: 2_000,
+              tags: [
+                ["h", "one"],
+                ["e", roots[0].id, "", "reply"],
+              ],
+            })
+          : message(viewer, "one", content, 2_000, [
+              ["e", roots[0].id, "", "reply"],
+            ]);
+      events.push(event);
+      incoming([event]);
+    },
     live() {
       const event = message(viewer, "one", "Live reply", 1000, [
         ["e", roots[0].id, "", "reply"],
@@ -195,7 +235,8 @@ function Fixture() {
                 channelId: "markdown-feed",
                 authorId: viewer.pubkey,
                 createdAt: 1,
-                content: "## Channel Markdown\n\n**Virtualized channel row**",
+                content:
+                  "## Channel Markdown\n\n**Virtualized channel row**\n\n1. channel outer\n   1. channel nested",
                 mentions: [],
                 participants: [],
                 attachments: [],

@@ -1,6 +1,7 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
 
 export const MAX_MARKDOWN_LENGTH = 100_000;
+export const MAX_MARKDOWN_DEPTH = 100;
 
 export function safeMessageUrl(value: string): string | undefined {
   try {
@@ -21,23 +22,28 @@ type MarkdownNode = {
   position?: { start: { offset?: number }; end: { offset?: number } };
 };
 
-/**
- * Project CommonMark images from signed prose without maintaining a second image regex.
- * Definitions are collected before references so source order does not affect resolution.
- */
-export function projectMarkdownImages(content: string): {
-  content: string;
-  urls: readonly string[];
-} {
+type MarkdownScan = {
+  tree: MarkdownNode;
+  tooDeep: boolean;
+  definitions: Map<string, string>;
+  images: MarkdownNode[];
+};
+
+/** Parse once and bound attacker-controlled nesting before recursive render stages. */
+export function scanMarkdown(content: string): MarkdownScan {
   const tree = fromMarkdown(content) as MarkdownNode;
   const definitions = new Map<string, string>();
   const images: MarkdownNode[] = [];
-  // Markdown nesting is attacker-controlled. An explicit stack avoids exhausting
-  // the JavaScript call stack on a valid, deeply nested relay message.
-  const pending = [tree];
+  const pending = [{ node: tree, depth: 0 }];
+  let tooDeep = false;
   while (pending.length) {
-    const node = pending.pop();
-    if (!node) continue;
+    const current = pending.pop();
+    if (!current) continue;
+    const { node, depth } = current;
+    if (depth > MAX_MARKDOWN_DEPTH) {
+      tooDeep = true;
+      continue;
+    }
     if (
       node.type === "definition" &&
       typeof node.identifier === "string" &&
@@ -49,9 +55,25 @@ export function projectMarkdownImages(content: string): {
       images.push(node);
     for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) {
       const child = node.children?.[index];
-      if (child) pending.push(child);
+      if (child) pending.push({ node: child, depth: depth + 1 });
     }
   }
+  return { tree, tooDeep, definitions, images };
+}
+
+export function markdownIsSafeToRender(content: string): boolean {
+  return (
+    content.length <= MAX_MARKDOWN_LENGTH && !scanMarkdown(content).tooDeep
+  );
+}
+
+/** Project every CommonMark image from the same bounded parse policy as rendering. */
+export function projectMarkdownImages(content: string): {
+  content: string;
+  urls: readonly string[];
+} {
+  const { tooDeep, definitions, images } = scanMarkdown(content);
+  if (tooDeep) return { content, urls: Object.freeze([]) };
 
   const urls: string[] = [];
   const seen = new Set<string>();

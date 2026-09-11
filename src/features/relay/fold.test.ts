@@ -169,9 +169,8 @@ describe("message fold", () => {
     );
     const [row] = foldMessages(channel, relay.pubkey, [nested]);
     assert.exists(row);
-    expect(row.attachments).toEqual([
-      { url: "https://x.test/deep.png", video: false },
-    ]);
+    expect(row.content).toContain("![deep](https://x.test/deep.png)");
+    expect(row.attachments).toEqual([]);
   });
 
   it("unwraps agent envelopes and projects valid CommonMark images through one safe URL policy", () => {

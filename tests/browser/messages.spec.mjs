@@ -24,6 +24,12 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await page.goto(
       `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
     );
+    await page.evaluate(() => window.messagesFixture.activate());
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.extensionsActive()),
+      )
+      .toContain("custom");
     const feed = page.getByRole("region", { name: "Channel message history" });
     await expect(
       feed.getByRole("heading", { name: "Channel Markdown", level: 2 }),
@@ -31,6 +37,19 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(
       feed.getByText("Virtualized channel row", { exact: true }),
     ).toHaveCSS("font-weight", /^(650|700)$/);
+    const feedIndentation = await feed.evaluate(() => {
+      const nested = [...document.querySelectorAll("li")].find(
+        (item) => item.textContent?.trim() === "channel nested",
+      );
+      const outer = nested?.parentElement?.parentElement;
+      if (!(outer instanceof HTMLLIElement) || !nested)
+        throw new Error("Missing channel nested ordered list");
+      return {
+        outer: outer.getBoundingClientRect().left,
+        nested: nested.getBoundingClientRect().left,
+      };
+    });
+    expect(feedIndentation.nested).toBeGreaterThan(feedIndentation.outer + 8);
     const panel = page.getByRole("complementary", {
       name: "Thread",
       exact: true,
@@ -68,14 +87,26 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(history.locator("del")).toHaveText("done");
     await expect(
       history
-        .getByText("ordered one", { exact: true })
-        .locator("xpath=ancestor::ol[1]"),
-    ).toHaveCSS("list-style-type", "decimal");
-    await expect(
-      history
         .getByText("unordered one", { exact: true })
         .locator("xpath=ancestor::ul[1]"),
     ).toHaveCSS("list-style-type", "disc");
+    const indentation = await history.evaluate(() => {
+      const nested = [...document.querySelectorAll("li")].find(
+        (item) => item.textContent?.trim() === "nested",
+      );
+      const outer = nested?.parentElement?.parentElement;
+      if (!(outer instanceof HTMLLIElement) || !nested)
+        throw new Error("Missing nested ordered list");
+      if (getComputedStyle(nested.parentElement).listStyleType !== "decimal")
+        throw new Error("Nested ordered list lost its marker style");
+      return {
+        outer: outer.getBoundingClientRect().left,
+        nested: nested.getBoundingClientRect().left,
+      };
+    });
+    expect(indentation.nested).toBeGreaterThan(indentation.outer + 8);
+    await expect(history.getByAltText(":_lead:")).toBeVisible();
+    await expect(history.getByAltText(":trail_:")).toBeVisible();
     await expect(
       history.getByRole("heading", { name: "Agent Markdown", level: 3 }),
     ).toBeVisible();
@@ -138,13 +169,22 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
           );
       }
     });
+    for (const [index, kind] of [9, 40002].entries()) {
+      await page.evaluate((value) => window.messagesFixture.deep(value), kind);
+      await expect(
+        panel.getByText(`${62 + index} replies shown`, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        history.getByText("literal deep message", { exact: false }).last(),
+      ).toBeVisible();
+    }
     await history.evaluate((el) => {
       el.scrollTop = 100;
       el.dispatchEvent(new Event("scroll"));
     });
     await page.evaluate(() => window.messagesFixture.live());
     await expect(
-      panel.getByText("62 replies shown", { exact: true }),
+      panel.getByText("64 replies shown", { exact: true }),
     ).toBeVisible();
     await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(100);
     await draft.fill("keep first draft");

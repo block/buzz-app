@@ -104,6 +104,13 @@ second
     expect(unsafe).toContain("local");
   });
 
+  it("falls back to literal text before recursively rendering deeply nested inbound content", () => {
+    const html = render(`${"> ".repeat(20_000)}**literal deep message**`);
+    expect(html).toContain("**literal deep message**");
+    expect(html).not.toContain("<blockquote>");
+    expect(html).not.toContain("<strong>");
+  });
+
   it("falls back to literal text for exceptionally large inbound content", () => {
     const html = render(`${"a".repeat(100_001)} **not parsed**`);
     expect(html).toContain("**not parsed**");

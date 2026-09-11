@@ -420,7 +420,7 @@
 .text :where(h4, h5, h6) {
   font-weight: 650;
 }
-.text :where(ul, ol) {
+.text.text :where(ul, ol) {
   padding-left: 1.5em;
 }
 .text ol {

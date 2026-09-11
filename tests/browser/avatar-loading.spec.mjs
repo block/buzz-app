@@ -3,7 +3,7 @@ import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
-test("shared avatars defer offscreen artwork and omit the referrer", async ({
+test("shared avatars defer offscreen artwork, omit the referrer and recover from failure", async ({
   page,
 }) => {
   const server = await createServer({
@@ -46,6 +46,22 @@ test("shared avatars defer offscreen artwork and omit the referrer", async ({
     ).toBeInViewport();
     await expect.poll(() => requests.length).toBe(1);
     expect(requests[0].referer).toBeUndefined();
+
+    await page.route("https://images.example/avatar.png", (route) =>
+      route.abort(),
+    );
+    await page.reload();
+    await page.evaluate(() =>
+      window.scrollTo(0, document.documentElement.scrollHeight),
+    );
+    const avatar = page
+      .getByRole("article")
+      .filter({
+        has: page.getByRole("button", { name: "A Brain: 2 identities" }),
+      })
+      .getByRole("img", { name: "A Brain", exact: true });
+    await expect(avatar).toContainText("A");
+    await expect(avatar.locator("img")).toHaveCount(0);
   } finally {
     await server.close();
   }

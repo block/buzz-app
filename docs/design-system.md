@@ -84,12 +84,13 @@ the browser top layer, not ever-increasing global z-index values.
   portals and shadow hosts; third-party Shadow DOM/canvas widgets may additionally
   require an explicit mode adapter. Theme mode changes must not reset widget input.
 - `/tests/fixtures/design-system.html` now hosts the design system this app is
-  moving to, with its own components, tokens and documentation. The earlier
-  offline diagnostic at that URL — one Appearance section, some native controls,
-  profile fields and a conversation row — was replaced by it. The rules above
-  still govern the styling that ships today; verify those in the running app and
-  its browser journeys. Surfaces move onto the new system incrementally, and its
-  documentation is the reference for anything already on it.
+  moving to, with its own components, tokens and documentation. It uses no relay
+  or identity services. The earlier offline diagnostic at that URL — one
+  Appearance section, some native controls, profile fields and a conversation
+  row — was replaced by it. The rules above still govern the styling that ships
+  today; verify those in the running app and its browser journeys. Surfaces move
+  onto the new system incrementally, and its documentation is the reference for
+  anything already on it.
 
 ## Future theme contributions (design boundary, not implemented API)
 

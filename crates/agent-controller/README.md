@@ -13,6 +13,8 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
   linked prompt/model/provider, runtime and environment resolution; native-only
   opaque preservation; disabled import and create-only verified credential custody.
 - Write-only environment patch semantics and explicit public DTO projection.
+  Explicit model/provider environment overrides win over typed selectors; a blank
+  selector does not erase an override. ACP receives the same effective model.
 - Idempotent start, save-versus-running revision, explicit restart, durable disabled
   Stop, enabled restore, exit/failure state, and teardown of separate process groups
   inside the listener's isolated Unix session.

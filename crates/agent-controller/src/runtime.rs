@@ -118,7 +118,6 @@ impl RuntimeBundle {
             .env("BUZZ_ACP_AGENT_COMMAND", worker)
             .env("BUZZ_ACP_AGENT_ARGS", agent.harness.args.join(","))
             .env("BUZZ_ACP_SYSTEM_PROMPT", &agent.system_prompt)
-            .env("BUZZ_ACP_MODEL", &agent.harness.model)
             .env("BUZZ_ACP_DISPLAY_NAME", &agent.name)
             .env("BUZZ_ACP_LAZY_POOL", "true")
             .env("BUZZ_ACP_IDLE_POOL_SLEEP", "900")
@@ -132,11 +131,37 @@ impl RuntimeBundle {
             .file_name()
             .and_then(|s| s.to_str())
             .unwrap_or("");
-        match worker_name {
-            "buzz-agent" => { command.env("BUZZ_AGENT_MODEL", &agent.harness.model).env("BUZZ_AGENT_PROVIDER", &agent.harness.provider); },
-            "goose" => { command.env("GOOSE_MODEL", &agent.harness.model).env("GOOSE_PROVIDER", &agent.harness.provider); },
+        // Explicit per-agent environment overrides selectors, matching the editor's
+        // Environment overrides contract. A blank selector must not erase it.
+        let mapping = match worker_name {
+            "buzz-agent" => Some(("BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER")),
+            "goose" => Some(("GOOSE_MODEL", "GOOSE_PROVIDER")),
             _ if !agent.harness.provider.is_empty() => return Err("Set provider configuration through this external harness's environment; a provider selector mapping is not available".into()),
-            _ => {},
+            _ => None,
+        };
+        let mut model = (!agent.harness.model.is_empty()).then_some(agent.harness.model.as_str());
+        if let Some((model_key, provider_key)) = mapping {
+            model = agent
+                .environment
+                .get(model_key)
+                .map(String::as_str)
+                .or(model);
+            let provider = agent
+                .environment
+                .get(provider_key)
+                .map(String::as_str)
+                .or_else(|| {
+                    (!agent.harness.provider.is_empty()).then_some(agent.harness.provider.as_str())
+                });
+            if let Some(value) = model {
+                command.env(model_key, value);
+            }
+            if let Some(value) = provider {
+                command.env(provider_key, value);
+            }
+        }
+        if let Some(value) = model {
+            command.env("BUZZ_ACP_MODEL", value);
         }
         if respond_to == "allowlist" {
             let values = record["respond_to_allowlist"]
@@ -257,16 +282,15 @@ impl Controller {
         self.snapshot()
     }
     pub fn action(&mut self, id: &str, action: Action) -> Result<ControlSnapshot> {
-        if !self.store.agents()?.iter().any(|a| a.id == id) {
-            return Err("Agent no longer exists".into());
-        }
         let result = match action {
             Action::Stop => {
                 // Stop the process even if durable disable fails; report failure
                 // instead of claiming it will remain stopped on next launch.
-                let saved = self.store.enabled(id, false);
                 let stopped = self.stop(id);
-                stopped.and(saved)
+                let saved = self.store.enabled(id, false);
+                stopped?;
+                saved?;
+                Ok(())
             }
             Action::Start => self.store.enabled(id, true).and_then(|_| self.start(id)),
             Action::Restart => self

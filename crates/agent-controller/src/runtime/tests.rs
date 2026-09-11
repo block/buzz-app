@@ -62,11 +62,44 @@ while :; do /bin/sleep 0.1; done
     }
     RuntimeBundle::new(directory.into()).unwrap()
 }
-fn wait_for_file(path: &Path) {
+fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !path.exists() {
-        assert!(Instant::now() < deadline, "fixture never ran");
+    loop {
+        if let Some(value) = fs::read_to_string(path).ok().and_then(|text| parse(&text)) {
+            return value;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "fixture did not publish complete output"
+        );
         std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[cfg(unix)]
+fn fixture_worker(text: &str) -> Option<(i32, i32)> {
+    let (leader, worker) = text.split_once(' ')?;
+    let leader = leader.parse().ok()?;
+    let worker = worker.parse().ok()?;
+    (leader > 1 && worker > 1 && leader != worker).then_some((leader, worker))
+}
+
+// Independent of the production teardown being mutation-tested. The fixture
+// records both PIDs in its private temp directory; verify session ownership
+// before cleanup, including when an assertion unwinds.
+#[cfg(unix)]
+struct FixtureWorkerCleanup(PathBuf);
+#[cfg(unix)]
+impl Drop for FixtureWorkerCleanup {
+    fn drop(&mut self) {
+        if let Some((leader, worker)) = fs::read_to_string(&self.0)
+            .ok()
+            .and_then(|text| fixture_worker(&text))
+        {
+            if unsafe { libc::getsid(worker) } == leader {
+                unsafe { libc::kill(worker, libc::SIGKILL) };
+            }
+        }
     }
 }
 #[test]
@@ -81,8 +114,9 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     let mut controller = Controller::new(store, Arc::new(Memory), Ok(bundle(tools.path())));
     let snapshot = controller.action(&a.id, Action::Start).unwrap();
     assert!(matches!(snapshot.agents[0].status, ProcessStatus::Running));
-    wait_for_file(&dir.path().join("starts"));
-    let first = fs::read_to_string(dir.path().join("starts")).unwrap();
+    let first = wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then(|| text.to_owned())
+    });
     assert_eq!(first, "true\n900\ntest prompt\ntest-model\n--test\nwss://relay.example\nowner-only\n\n\nexplicit-value\n");
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
@@ -190,9 +224,13 @@ fn teardown_reaps_a_worker_in_a_separate_process_group() {
         .args([
             "-c",
             r#"import os, subprocess, time, signal
-worker = subprocess.Popen(['/bin/sleep', '60'], preexec_fn=os.setpgrp)
-with open('worker', 'w') as f: f.write(str(worker.pid))
 signal.signal(signal.SIGTERM, signal.SIG_IGN)
+# A stopped orphan group may receive SIGHUP when its leader dies. Ignore it so
+# killing only the leader cannot accidentally satisfy the containment assertion.
+signal.signal(signal.SIGHUP, signal.SIG_IGN)
+worker = subprocess.Popen(['/bin/sleep', '60'], preexec_fn=os.setpgrp)
+with open('worker.tmp', 'w') as f: f.write(str(os.getpid()) + ' ' + str(worker.pid))
+os.rename('worker.tmp', 'worker')
 while True: time.sleep(.1)
 "#,
         ])
@@ -202,11 +240,9 @@ while True: time.sleep(.1)
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let mut process = Process::spawn(&mut command).unwrap();
-    wait_for_file(&dir.path().join("worker"));
-    let pid: i32 = fs::read_to_string(dir.path().join("worker"))
-        .unwrap()
-        .parse()
-        .unwrap();
+    let cleanup = FixtureWorkerCleanup(dir.path().join("worker"));
+    let (leader, pid) = wait_for_contents(&cleanup.0, fixture_worker);
+    assert_eq!(unsafe { libc::getsid(pid) }, leader);
     assert_eq!(unsafe { libc::getpgid(pid) }, pid);
     process.stop().unwrap();
     assert!(!process.alive().unwrap());
@@ -233,4 +269,117 @@ fn attestation_cannot_change_owner_identity_or_conditions() {
         crate::secret::validate_attestation(&serde_json::to_string(&tag).unwrap(), PUB).is_err()
     );
     assert!(crate::secret::validate_attestation("not-a-tag", PUB).is_err());
+}
+
+#[test]
+#[cfg(unix)]
+fn start_refuses_an_attestation_for_a_different_agent() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    a.auth_tag = Some(crate::secret::test_attestation(&"ab".repeat(32)));
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(store, Arc::new(Memory), Ok(bundle(tools.path())));
+    let failed = controller.action(&a.id, Action::Start).unwrap();
+    assert!(matches!(failed.agents[0].status, ProcessStatus::Failed));
+    assert_eq!(
+        failed.agents[0].error.as_deref(),
+        Some("Owner attestation does not authorize this agent key")
+    );
+    assert_eq!(failed.agents[0].running_revision, None);
+    assert!(controller.running.is_empty());
+    assert!(!dir.path().join("starts").exists());
+}
+
+#[test]
+#[cfg(unix)]
+fn stop_reaches_owned_process_when_store_is_malformed_or_row_disappears() {
+    for contents in ["{malformed", r#"{"version":1,"agents":[]}"#] {
+        let dir = tempfile::tempdir().unwrap();
+        let tools = tempfile::tempdir().unwrap();
+        let config = dir.path().join("config");
+        let mut store = Store::open(config.clone()).unwrap();
+        let a = agent(dir.path());
+        store.insert(vec![a.clone()]).unwrap();
+        let mut controller = Controller::new(store, Arc::new(Memory), Ok(bundle(tools.path())));
+        controller.action(&a.id, Action::Start).unwrap();
+        wait_for_contents(&dir.path().join("starts"), |text| {
+            (text.lines().count() == 10).then_some(())
+        });
+        fs::write(config.join("agents.json"), contents).unwrap();
+        assert!(
+            controller.action(&a.id, Action::Stop).is_err(),
+            "must report failed durable disable"
+        );
+        assert!(
+            controller.running.is_empty(),
+            "Stop must reach owned process despite invalid storage"
+        );
+        assert_eq!(
+            fs::read_to_string(config.join("agents.json")).unwrap(),
+            contents
+        );
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    fs::copy(tools.path().join("buzz-agent"), tools.path().join("goose")).unwrap();
+    for (worker, model_key, provider_key) in [
+        ("buzz-agent", "BUZZ_AGENT_MODEL", "BUZZ_AGENT_PROVIDER"),
+        ("goose", "GOOSE_MODEL", "GOOSE_PROVIDER"),
+    ] {
+        for selectors in ["", "conflicting-selector"] {
+            let mut a = agent(dir.path());
+            if worker == "goose" {
+                a.harness.command = tools.path().join(worker).display().to_string();
+            }
+            a.harness.provider = selectors.into();
+            a.harness.model = selectors.into();
+            a.environment
+                .insert(provider_key.into(), "databricks".into());
+            a.environment
+                .insert(model_key.into(), "fixture-model".into());
+            let command = runtime
+                .command(&a, &Secret::parse(KEY, PUB).unwrap())
+                .unwrap();
+            let env: BTreeMap<_, _> = command
+                .get_envs()
+                .filter_map(|(k, v)| {
+                    v.map(|v| {
+                        (
+                            k.to_string_lossy().into_owned(),
+                            v.to_string_lossy().into_owned(),
+                        )
+                    })
+                })
+                .collect();
+            assert_eq!(env[provider_key], "databricks");
+            assert_eq!(env[model_key], "fixture-model");
+            assert_eq!(env["BUZZ_ACP_MODEL"], "fixture-model");
+        }
+    }
+}
+
+#[test]
+#[cfg(unix)]
+fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut a = agent(dir.path());
+    a.harness.provider.clear();
+    a.harness.model.clear();
+    let command = runtime
+        .command(&a, &Secret::parse(KEY, PUB).unwrap())
+        .unwrap();
+    let env: BTreeMap<_, _> = command.get_envs().collect();
+    for key in ["BUZZ_AGENT_PROVIDER", "BUZZ_AGENT_MODEL", "BUZZ_ACP_MODEL"] {
+        assert!(!env.contains_key(std::ffi::OsStr::new(key)));
+    }
 }

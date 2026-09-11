@@ -172,8 +172,10 @@ function ReviewShell({
         aria-modal="true"
         aria-label={attachment.video ? "Video review" : "Image viewer"}
       >
-        <header className={styles.mediaReviewHeading}>
-          <span>{attachment.video ? "Video review" : "Image"}</span>
+        <header className={styles.mediaReviewHeading} data-tauri-drag-region>
+          <span data-tauri-drag-region>
+            {attachment.video ? "Video review" : "Image"}
+          </span>
           <button
             ref={closeButton}
             type="button"

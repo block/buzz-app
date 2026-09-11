@@ -293,6 +293,7 @@ function MediaViewer({
         aria-modal="true"
         aria-label={title}
       >
+        <div className={styles.mediaViewerDragRegion} data-tauri-drag-region />
         <button
           ref={closeButton}
           type="button"

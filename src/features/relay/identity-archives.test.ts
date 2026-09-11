@@ -39,6 +39,7 @@ function harness(authority: string | null = relay.pubkey) {
 }
 async function read(h: ReturnType<typeof harness>, events: RelayEvent[]) {
   const pending = h.archives.refresh();
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.wire.next().respond(events);
   await pending;
 }

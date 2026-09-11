@@ -71,7 +71,7 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
               <button
                 type="submit"
                 disabled={!canSaveProfile(profile)}
-                className="border-ink bg-primary text-on-primary hover:bg-primary/90"
+                className="border-ink bg-primary text-on-primary hover:bg-primary-hover"
               >
                 Save profile
               </button>

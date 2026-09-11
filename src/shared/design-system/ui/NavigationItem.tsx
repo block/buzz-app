@@ -18,6 +18,7 @@ export function NavigationItem({
 }) {
   return (
     <BaseButton
+      data-buzz-ui=""
       className="navigation-item"
       data-selected={selected || undefined}
       data-inset={inset || undefined}

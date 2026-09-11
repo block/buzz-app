@@ -26,7 +26,7 @@ export function Panel<T extends ElementType = "section">({
 }: PanelProps<T>) {
   const Component = as ?? "section";
   return (
-    <Component {...props} className="panel">
+    <Component {...props} data-buzz-ui="" className="panel">
       {children}
     </Component>
   );

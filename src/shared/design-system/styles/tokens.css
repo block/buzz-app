@@ -154,6 +154,7 @@
   --orange-12: #582d1d;
 }
 
+:root[data-color-mode="dark"],
 .dark {
   /* gray */
 
@@ -364,6 +365,7 @@
   --ease-settle: cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
+:root[data-color-mode="dark"],
 .dark {
   /* Dark surfaces stay hand-authored rather than taking palette gray. The
      palette's dark grays start at #111 and step in even increments; these were
@@ -462,6 +464,7 @@
   --gradient-4: var(--gradient-orchid-field);
 }
 
+:root[data-color-mode="dark"],
 .dark {
   --gradient-1: var(--gradient-night-garden);
   --gradient-2: var(--gradient-signal-flare);
@@ -671,6 +674,7 @@
   --rim-shade: #ffffff1f;
 }
 
+:root[data-color-mode="dark"],
 .dark {
   --bg-panel: var(--neutral-3);
   --bg-float: var(--neutral-5);

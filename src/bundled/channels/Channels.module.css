@@ -347,7 +347,7 @@
   text-align: center;
 }
 .unreadBadge[data-attention="true"] {
-  color: var(--text-primary);
+  color: inherit;
   outline: 1px solid currentColor;
 }
 

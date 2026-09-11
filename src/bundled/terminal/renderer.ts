@@ -7,13 +7,14 @@ import { terminalAppearance } from "./appearance";
 import { createSplash } from "./splash";
 import styles from "./Terminal.module.css";
 
+export type TerminalInputSource = "user" | "reply";
 export type TerminalScreen = {
   mount(host: HTMLElement): () => void;
   output(data: Uint8Array): Promise<void>;
   dispose(): void;
 };
 export function createScreen(
-  input: (data: string) => void,
+  input: (data: string, source: TerminalInputSource) => void,
   resize: (cols: number, rows: number) => void,
 ): TerminalScreen {
   const element = document.createElement("div");
@@ -27,9 +28,31 @@ export function createScreen(
   });
   const fit = new FitAddon();
   terminal.loadAddon(fit);
+  // xterm 5.5.0's public onData drops the producer's wasUserInput flag.
+  // Its core signal fires synchronously immediately before keyboard/paste data,
+  // but not for parser replies. Keep this version-pinned seam here, never infer
+  // provenance from escape bytes or from an asynchronous write being pending.
+  const core = (
+    terminal as unknown as {
+      _core: {
+        coreService: {
+          onUserInput(listener: () => void): { dispose(): void };
+        };
+      };
+    }
+  )._core.coreService;
+  let userInput = false;
+  const inputSource = core.onUserInput(() => {
+    userInput = true;
+  });
   terminal.onData((data) => {
-    splash.dismiss();
-    input(data);
+    const source = userInput ? "user" : "reply";
+    userInput = false;
+    if (source === "user") {
+      if (!element.isConnected) return;
+      splash.dismiss();
+    }
+    input(data, source);
   });
   terminal.onResize(({ cols, rows }) => resize(cols, rows));
   // Leave the app chord to its single dispatcher even in xterm's hidden textarea.
@@ -112,6 +135,7 @@ export function createScreen(
       disposed = true;
       detach?.();
       splash.dismiss();
+      inputSource.dispose();
       terminal.dispose();
       element.remove();
       for (const resolve of pending) resolve();

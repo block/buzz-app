@@ -1,5 +1,6 @@
 import { expect, it, vi } from "vitest";
 import { createSessions } from "./sessions";
+import type { TerminalInputSource } from "./renderer";
 import type { TerminalBridge } from "./bridge";
 import type { ChannelPanelContext } from "../../features/panels/service";
 import { nip19 } from "nostr-tools";
@@ -42,7 +43,7 @@ function harness() {
     output: vi.fn(async (_: Uint8Array) => {}),
     dispose: vi.fn(),
   };
-  let input!: (data: string) => void;
+  let input!: (data: string, source: TerminalInputSource) => void;
   let resize!: (cols: number, rows: number) => void;
   const load = vi.fn(async () => (i: typeof input, r: typeof resize) => {
     input = i;
@@ -56,7 +57,8 @@ function harness() {
     screen,
     read,
     load,
-    input: (data: string) => input(data),
+    input: (data: string, source: TerminalInputSource = "user") =>
+      input(data, source),
     resize: (c: number, r: number) => resize(c, r),
     switchScope: () => {
       connection = { ...connection, scope: "other" };
@@ -196,3 +198,53 @@ it("ending during final emulator output cannot resurrect status or close twice",
   await ending;
   await h.sessions.dispose();
 });
+
+it("scope switches fence both new and queued user input, but retain PTY replies", async () => {
+  const h = harness();
+  const writing = deferred<void>();
+  h.bridge.write.mockImplementationOnce(() => writing.promise);
+  h.sessions.ensure(context);
+  await tick();
+  h.input("first");
+  await tick();
+  h.input("queued user");
+  h.input("queued reply", "reply");
+  h.switchScope();
+  h.input("stale user");
+  h.input("background reply", "reply");
+  writing.resolve();
+  await tick();
+  expect(h.bridge.write.mock.calls).toEqual([
+    ["owner", "pty", "first"],
+    ["owner", "pty", "queued reply"],
+    ["owner", "pty", "background reply"],
+  ]);
+  h.read.resolve({ data: [], exited: true });
+  await tick();
+  await h.sessions.dispose();
+});
+
+it.each(["end", "dispose"] as const)(
+  "%s revokes queued and late replies as well as user input",
+  async (operation) => {
+    const h = harness();
+    const writing = deferred<void>();
+    h.bridge.write.mockImplementationOnce(() => writing.promise);
+    h.sessions.ensure(context);
+    await tick();
+    h.input("first");
+    await tick();
+    h.input("queued user");
+    h.input("queued reply", "reply");
+    const ending =
+      operation === "end" ? h.sessions.end(context) : h.sessions.dispose();
+    h.input("late user");
+    h.input("late reply", "reply");
+    writing.resolve();
+    h.read.resolve({ data: [], exited: false });
+    await ending;
+    await tick();
+    expect(h.bridge.write.mock.calls).toEqual([["owner", "pty", "first"]]);
+    if (operation === "end") await h.sessions.dispose();
+  },
+);

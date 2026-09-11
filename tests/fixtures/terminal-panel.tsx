@@ -24,6 +24,23 @@ const context: ChannelPanelContext = {
 let serial = 0;
 let output = false;
 let failClose = false;
+let closing: Promise<void> | undefined;
+let releaseClose: (() => void) | undefined;
+let closePending = false;
+Object.assign(window, {
+  terminalPanel: {
+    holdClose() {
+      closing = new Promise<void>((resolve) => {
+        releaseClose = resolve;
+      });
+    },
+    closePending: () => closePending,
+    releaseClose() {
+      releaseClose?.();
+      closing = undefined;
+    },
+  },
+});
 const bridge: TerminalBridge = {
   available: true,
   createOwner: async () => "fixture-owner",
@@ -41,9 +58,14 @@ const bridge: TerminalBridge = {
   write: async () => {},
   resize: async () => {},
   close: async () => {
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    if (failClose)
-      throw new Error("Fixture close failed. Try End session again.");
+    closePending = true;
+    try {
+      await (closing ?? new Promise((resolve) => setTimeout(resolve, 250)));
+      if (failClose)
+        throw new Error("Fixture close failed. Try End session again.");
+    } finally {
+      closePending = false;
+    }
   },
   closeOwner: async () => {},
 };

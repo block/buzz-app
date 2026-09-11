@@ -1,6 +1,6 @@
 import type { ChannelPanelContext } from "../../features/panels/service";
 import type { TerminalBridge } from "./bridge";
-import type { TerminalScreen } from "./renderer";
+import type { TerminalInputSource, TerminalScreen } from "./renderer";
 import { nip19 } from "nostr-tools";
 
 export type TerminalSession = {
@@ -11,7 +11,7 @@ export type TerminalSession = {
   screen?: TerminalScreen;
 };
 type ScreenFactory = (
-  input: (data: string) => void,
+  input: (data: string, source: TerminalInputSource) => void,
   resize: (cols: number, rows: number) => void,
 ) => TerminalScreen;
 const sessionKey = (context: ChannelPanelContext) =>
@@ -96,12 +96,11 @@ export function createSessions(
       let dimensions: [number, number] | undefined;
       let resizing = false;
       entry.screen = factory(
-        (data) => {
-          if (
-            !live(entry) ||
-            !allowed(entry.context) ||
-            entry.status !== "running"
-          )
+        (data, source) => {
+          // User intent belongs to the selected scope; emulator replies belong
+          // to the retained PTY even while another community is selected.
+          const permitted = () => source === "reply" || allowed(entry.context);
+          if (!live(entry) || !permitted() || entry.status !== "running")
             return;
           const bytes = new TextEncoder().encode(data).length;
           if (pendingBytes + bytes > 1024 * 1024) {
@@ -115,11 +114,7 @@ export function createSessions(
           writes = writes
             .then(async () => {
               try {
-                if (
-                  live(entry) &&
-                  allowed(entry.context) &&
-                  entry.status === "running"
-                )
+                if (live(entry) && permitted() && entry.status === "running")
                   await bridge.write(token, id, data);
               } finally {
                 pendingBytes -= bytes;

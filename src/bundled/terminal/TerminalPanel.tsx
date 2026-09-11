@@ -39,6 +39,7 @@ function Content({
   );
   const entry = sessions.get(context);
   const host = useRef<HTMLDivElement>(null);
+  const hide = useRef<HTMLButtonElement>(null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const attempted = useRef(false);
@@ -136,7 +137,13 @@ function Content({
               <IconButton
                 size="toolbar"
                 disabled={busy}
-                onClick={() => void end(false)}
+                onClick={(event) => {
+                  // Move focus before End removes/disables its own control.
+                  // No post-await focus change can steal a later destination.
+                  if (document.activeElement === event.currentTarget)
+                    hide.current?.focus();
+                  void end(false);
+                }}
                 aria-label="End session"
                 title="End session"
                 icon={<IconPlayerStop size={16} aria-hidden="true" />}
@@ -144,6 +151,7 @@ function Content({
             )}
             <IconButton
               size="toolbar"
+              ref={hide}
               onClick={close}
               aria-label="Hide terminal"
               title="Hide terminal (Cmd/Ctrl+J)"

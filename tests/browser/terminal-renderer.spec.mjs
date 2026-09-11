@@ -355,8 +355,24 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await button("End session").click();
     await expect(page.getByRole("alert")).toContainText("Fixture close failed");
     await button("Toggle close failure").click();
-    await button("End session").click();
+    await button("End session").focus();
+    await page.keyboard.press("Enter");
     await expect(button("Start session")).toBeVisible();
+    await expect(hide).toBeFocused();
+    await button("Start session").click();
+    await expect(drawer.locator(".xterm-rows")).toContainText(
+      "FIXTURE_SHELL_READY",
+    );
+    await page.evaluate(() => window.terminalPanel.holdClose());
+    await button("End session").focus();
+    await page.keyboard.press("Enter");
+    await expect
+      .poll(() => page.evaluate(() => window.terminalPanel.closePending()))
+      .toBe(true);
+    await button("Toggle theme").focus(); // The user leaves while close is pending.
+    await page.evaluate(() => window.terminalPanel.releaseClose());
+    await expect(button("Start session")).toBeVisible();
+    await expect(button("Toggle theme")).toBeFocused();
     await button("Start session").click();
     await expect(drawer.locator(".xterm-rows")).toContainText(
       "FIXTURE_SHELL_READY",
@@ -381,6 +397,118 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await page.screenshot({
       path: test.info().outputPath("terminal-short-200.png"),
     });
+    expect(errors).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("real xterm replies survive scope switches while stale input and retired writes are fenced", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envDir: false,
+    plugins: [react()],
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  try {
+    await server.listen();
+    const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-session.html`;
+    const open = async () => {
+      await page.goto(url);
+      await expect
+        .poll(() => page.evaluate(() => window.terminalSession?.ready()))
+        .toBe(true);
+      await page.evaluate(() => window.terminalSession.mount());
+    };
+    const generated = () =>
+      page.evaluate(() => window.terminalSession.generated);
+    const writes = () => page.evaluate(() => window.terminalSession.writes);
+    const reply = (data) => ({ owner: "retained-owner", id: "pty-1", data });
+    const output = async (data) => {
+      await expect
+        .poll(() => page.evaluate(() => window.terminalSession.reading()))
+        .toBe(true);
+      await page.evaluate((data) => window.terminalSession.output(data), data);
+    };
+    await open();
+    await page.evaluate(() => window.terminalSession.holdWrites());
+    await page.keyboard.type("a");
+    await expect.poll(writes).toEqual([reply("a")]);
+    await page.keyboard.type("b"); // Queued user input must be rechecked at dispatch.
+    await output("\x1b[6n");
+    await expect
+      .poll(generated)
+      .toContainEqual({ data: "\x1b[1;1R", source: "reply" });
+    await page.evaluate(() => {
+      window.terminalSession.switchScope();
+      window.terminalSession.releaseWrites();
+    });
+    await expect.poll(writes).toEqual([reply("a"), reply("\x1b[1;1R")]);
+    // The old view can still receive events before React unmounts it.
+    await page.keyboard.type("x");
+    await page.evaluate(() => window.terminalSession.staleInput());
+    await expect
+      .poll(generated)
+      .toContainEqual({ data: "STALE_PASTE", source: "user" });
+    await page.evaluate(() => window.terminalSession.detach());
+    await output("\x1b[5n\x1b[6n");
+    await expect
+      .poll(writes)
+      .toEqual([
+        reply("a"),
+        reply("\x1b[1;1R"),
+        reply("\x1b[0n"),
+        reply("\x1b[1;1R"),
+      ]);
+    const before = await generated();
+    await page.evaluate(() => window.terminalSession.staleInput());
+    expect(await generated()).toEqual(before); // Detached keyboard/paste never enters the session.
+    await page.evaluate(() => window.terminalSession.dispose());
+
+    // Receipt and dispatch are distinct fences: returning to A must not revive
+    // input received in B. A real parser reply behind it proves the queue drained.
+    await open();
+    await page.evaluate(() => window.terminalSession.holdWrites());
+    await page.keyboard.type("a");
+    await expect.poll(writes).toEqual([reply("a")]);
+    await page.evaluate(() => window.terminalSession.switchScope());
+    await page.keyboard.type("x");
+    await page.evaluate(() => window.terminalSession.staleInput());
+    await expect
+      .poll(generated)
+      .toContainEqual({ data: "STALE_PASTE", source: "user" });
+    await page.evaluate(() => window.terminalSession.restoreScope());
+    await output("\x1b[5n");
+    await expect
+      .poll(generated)
+      .toContainEqual({ data: "\x1b[0n", source: "reply" });
+    await page.evaluate(() => window.terminalSession.releaseWrites());
+    await expect.poll(writes).toEqual([reply("a"), reply("\x1b[0n")]);
+    await page.evaluate(() => window.terminalSession.dispose());
+
+    for (const operation of ["end", "dispose"]) {
+      await open();
+      await page.evaluate(() => window.terminalSession.holdWrites());
+      await page.keyboard.type("a");
+      await expect.poll(writes).toEqual([reply("a")]);
+      await output("\x1b[6n");
+      await expect
+        .poll(generated)
+        .toContainEqual({ data: "\x1b[1;1R", source: "reply" });
+      await page.evaluate(async (operation) => {
+        const ending = window.terminalSession[operation]();
+        window.terminalSession.releaseWrites();
+        await ending;
+      }, operation);
+      expect(await writes()).toEqual([reply("a")]);
+      if (operation === "end")
+        await page.evaluate(() => window.terminalSession.dispose());
+    }
     expect(errors).toEqual([]);
   } finally {
     await server.close();

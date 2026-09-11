@@ -52,6 +52,7 @@ export type ChannelTimelineProps = {
   queries: RelaySession;
   window: ChannelWindow;
   onOpenLink(url: string): boolean;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread?(messageId: string): void;
 };
@@ -72,6 +73,7 @@ function Timeline({
   queries,
   window,
   onOpenLink,
+  canOpenLink,
   revealMessageId,
   onOpenThread,
 }: ChannelTimelineProps) {
@@ -342,6 +344,7 @@ function Timeline({
               participantProfiles={profiles}
               media={queries.media}
               onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
               onOpenThread={onOpenThread}
               retry={queries.outbox?.retry}
               day={

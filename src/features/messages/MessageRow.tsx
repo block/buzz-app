@@ -1,5 +1,7 @@
-import { memo, useCallback, useSyncExternalStore } from "react";
+import { Fragment, memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
+import { profileTarget } from "../profiles/target";
+import { profileMentionParts } from "./profile-mentions";
 import { messageParts } from "../relay/emoji";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -13,7 +15,8 @@ export type MessageRowProps = {
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
-  participantProfiles?: ReadonlyMap<string, Profile>;
+  participantProfiles?: ReadonlyMap<string, Profile> | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string): string | undefined;
   onOpenLink(url: string): boolean;
   day: boolean;
@@ -28,6 +31,7 @@ export const MessageRow = memo(function MessageRow({
   profile,
   media,
   onOpenLink,
+  canOpenLink,
   day,
   retry,
   onOpenThread,
@@ -48,6 +52,9 @@ export const MessageRow = memo(function MessageRow({
           : undefined;
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
+  const target = profileTarget(row.authorId);
+  const clickable = target && canOpenLink?.(target);
+  const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
   return (
     <div data-message-id={row.id}>
@@ -63,13 +70,25 @@ export const MessageRow = memo(function MessageRow({
         </div>
       )}
       <div className={styles.message}>
-        <div className={styles.avatar}>
+        <AvatarTag
+          className={styles.avatar}
+          {...(clickable
+            ? {
+                type: "button" as const,
+                "aria-label": `View ${name} profile`,
+                onClick: (event: import("react").MouseEvent<HTMLElement>) => {
+                  event.currentTarget.focus();
+                  onOpenLink(target);
+                },
+              }
+            : {})}
+        >
           {picture ? (
             <img src={picture} alt="" loading="lazy" />
           ) : (
             name.slice(0, 2).toUpperCase()
           )}
-        </div>
+        </AvatarTag>
         <div className={styles.messageBody}>
           <div className={styles.byline}>
             <strong>{name}</strong>
@@ -86,6 +105,8 @@ export const MessageRow = memo(function MessageRow({
               extensions={extensions}
               media={media}
               onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
+              participantProfiles={participantProfiles}
             />
           </p>
           <DeliveryNotice row={row} retry={retry} />
@@ -231,45 +252,81 @@ function MessageText({
   extensions,
   media,
   onOpenLink,
-}: Pick<MessageRowProps, "row" | "extensions" | "media" | "onOpenLink">) {
-  return messageParts(row.content).map((part, index) => {
-    const key = `${index}:${part.slice(0, 20)}`;
-    if (!part.startsWith("https://")) {
+  canOpenLink,
+  participantProfiles,
+}: Pick<
+  MessageRowProps,
+  | "row"
+  | "extensions"
+  | "media"
+  | "onOpenLink"
+  | "canOpenLink"
+  | "participantProfiles"
+>) {
+  return profileMentionParts(row, participantProfiles).map(
+    (segment, segmentIndex) => {
+      const segmentKey = `${segmentIndex}:${segment.target ?? segment.text}`;
+      if (segment.target && canOpenLink?.(segment.target)) {
+        const target = segment.target;
+        return (
+          <button
+            key={segmentKey}
+            type="button"
+            className={styles.mention}
+            aria-label={`View ${segment.text.slice(1)} profile`}
+            onClick={(event) => {
+              event.currentTarget.focus();
+              onOpenLink(target);
+            }}
+          >
+            {segment.text}
+          </button>
+        );
+      }
       return (
-        <span key={key}>
-          {extensions ? (
-            <InlineText
-              registry={extensions.inline}
-              content={{ text: part, message: row }}
-              media={media}
-            />
-          ) : (
-            part
-          )}
-        </span>
+        <Fragment key={segmentKey}>
+          {messageParts(segment.text).map((part, index) => {
+            const key = `${index}:${part.slice(0, 20)}`;
+            if (!part.startsWith("https://")) {
+              return (
+                <span key={key}>
+                  {extensions ? (
+                    <InlineText
+                      registry={extensions.inline}
+                      content={{ text: part, message: row }}
+                      media={media}
+                    />
+                  ) : (
+                    part
+                  )}
+                </span>
+              );
+            }
+            const url = part.replace(/[.,;:!?)\]}]+$/, "");
+            return (
+              <span key={key}>
+                <a
+                  href={url}
+                  target="_blank"
+                  rel="noreferrer"
+                  onClick={(event) => {
+                    if (
+                      !event.metaKey &&
+                      !event.ctrlKey &&
+                      !event.shiftKey &&
+                      onOpenLink(url)
+                    )
+                      event.preventDefault();
+                  }}
+                >
+                  {url}
+                </a>
+                {part.slice(url.length)}
+              </span>
+            );
+          })}
+        </Fragment>
       );
-    }
-    const url = part.replace(/[.,;:!?)\]}]+$/, "");
-    return (
-      <span key={key}>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => {
-            if (
-              !event.metaKey &&
-              !event.ctrlKey &&
-              !event.shiftKey &&
-              onOpenLink(url)
-            )
-              event.preventDefault();
-          }}
-        >
-          {url}
-        </a>
-        {part.slice(url.length)}
-      </span>
-    );
-  });
+    },
+  );
 }

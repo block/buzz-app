@@ -778,6 +778,8 @@ export function createRelaySession(
     filters.some(
       (filter) =>
         filter["#h"]?.includes(channelId) &&
+        // Unread evidence also contains this channel, but is not a timeline head.
+        filter.top_level === true &&
         filter.until === undefined &&
         filter.depth_limit === undefined &&
         filter.kinds?.includes(9),

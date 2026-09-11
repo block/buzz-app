@@ -282,6 +282,10 @@ impl Controller {
         self.snapshot()
     }
     pub fn action(&mut self, id: &str, action: Action) -> Result<ControlSnapshot> {
+        // Start/restart still require a saved identity; Stop must not depend on it.
+        if !matches!(action, Action::Stop) && !self.store.agents()?.iter().any(|a| a.id == id) {
+            return Err("Agent no longer exists".into());
+        }
         let result = match action {
             Action::Stop => {
                 // Stop the process even if durable disable fails; report failure

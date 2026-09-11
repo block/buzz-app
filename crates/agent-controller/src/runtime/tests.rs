@@ -383,3 +383,19 @@ fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
         assert!(!env.contains_key(std::ffi::OsStr::new(key)));
     }
 }
+
+#[test]
+#[cfg(unix)]
+fn start_and_restart_reject_missing_saved_identities() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut controller = Controller::new(
+        Store::open(dir.path().join("config")).unwrap(),
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+    );
+    for action in [Action::Start, Action::Restart] {
+        assert!(controller.action("missing", action).is_err());
+    }
+    assert!(controller.running.is_empty());
+}

@@ -11,6 +11,11 @@ it("searches native names, aliases and separator-insensitive shortcodes", async 
       (item) => item.shortcode === "point_up",
     ),
   ).toBe(true);
+  expect(
+    (await searchEmoji("pntup", [])).some(
+      (item) => item.shortcode === "point_up",
+    ),
+  ).toBe(true);
 });
 it("keeps current custom catalogs separate and ranks exact shortcodes first", async () => {
   const a = [
@@ -43,9 +48,26 @@ it("keeps current custom catalogs separate and ranks exact shortcodes first", as
     ])[0]?.text,
   ).toBe(":party-parrot:");
 });
-it("bounds results and treats empty queries as no intent", async () => {
-  expect((await searchEmoji("a", [], 10000)).length).toBeLessThanOrEqual(50);
+it("returns every match by default while retaining an explicit limit", async () => {
+  const custom = Array.from({ length: 75 }, (_, index) => ({
+    shortcode: `smile_${index}`,
+    url: `https://a.test/${index}.png`,
+  }));
+  expect(searchCustomEmoji("smile", custom)).toHaveLength(75);
+  expect(
+    (await searchEmoji("smile", custom)).filter((item) => item.url),
+  ).toHaveLength(75);
+  expect(searchCustomEmoji("smile", custom, 12)).toHaveLength(12);
   expect(await searchEmoji("", [])).toEqual([]);
+});
+it("keeps semantic results ahead of loose shortcode matches", async () => {
+  const results = await searchEmoji("sad", [
+    { shortcode: "sandwich", url: "https://a.test/sandwich.png" },
+  ]);
+  expect(results[0]?.id).not.toBe("custom/sandwich");
+  expect(
+    results.findIndex((item) => item.id === "custom/sandwich"),
+  ).toBeGreaterThan(0);
 });
 it("copies native primitives even when Mart previously mutated the shared dictionary", async () => {
   const { vi } = await import("vitest");

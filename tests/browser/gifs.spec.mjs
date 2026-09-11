@@ -139,6 +139,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   expect(emojiSearchSpacing.bottom).toBeCloseTo(14, 1);
   expect(emojiSearchSpacing.bottom).toBeCloseTo(emojiSearchSpacing.top, 1);
   const tabsBox = await page.getByRole("tablist").boundingBox();
+  await expect(page.getByRole("tablist")).toHaveCSS("padding", "8px");
   const tabIndicator = page.getByTestId("picker-tab-indicator");
   const initialIndicatorTransform = await tabIndicator.evaluate(
     (element) => getComputedStyle(element).transform,
@@ -230,7 +231,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveCSS("margin-left", "2px");
   await expect(search).toHaveCSS("margin-right", "2px");
   await expect(search).toHaveCSS("border-top-width", "0px");
-  await expect(search).toHaveCSS("border-radius", "16px");
+  await expect(search).toHaveCSS("border-radius", "8px");
   await expect(search).toHaveCSS("background-color", "rgb(245, 245, 246)");
   await expect(search).toHaveCSS("color", "rgb(10, 10, 10)");
   await expect(search).toHaveCSS("animation-name", "none");
@@ -241,6 +242,22 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     page.getByTestId("klipy-gif-grid").getByRole("button"),
   ).toHaveCount(2);
   const gifGridBox = await page.getByTestId("klipy-gif-grid").boundingBox();
+  const gifResultGutters = await page
+    .getByTestId("klipy-gif-grid")
+    .evaluate((grid) => {
+      const results = grid.parentElement;
+      const resultsBounds = results.getBoundingClientRect();
+      const gridBounds = grid.getBoundingClientRect();
+      return {
+        left: gridBounds.left - resultsBounds.left,
+        right: resultsBounds.left + results.clientWidth - gridBounds.right,
+      };
+    });
+  expect(gifResultGutters.left).toBeCloseTo(gifResultGutters.right, 1);
+  expect(gifResultGutters.left).toBeCloseTo(12, 1);
+  const gifScrollbar = page.getByTestId("gif-scrollbar-track");
+  await expect(gifScrollbar).toHaveCSS("right", "4px");
+  await expect(gifScrollbar).toHaveCSS("opacity", "0.6");
   expect(
     gifGridBox.y - (gifSearchPosition.y + gifSearchPosition.height),
   ).toBeCloseTo(gifSearchPosition.y - (tabsBox.y + tabsBox.height), 1);

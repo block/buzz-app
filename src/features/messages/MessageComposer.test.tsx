@@ -3,7 +3,11 @@ import { isValidElement, type ReactNode, type ReactElement } from "react";
 import { ComposerTools } from "../conversation/ComposerTools";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { MessageComposer } from "./MessageComposer";
-import { isSingleUnicodeEmoji, singleCustomEmoji } from "./emoji-size";
+import {
+  isEmojiOnly,
+  isUnicodeEmojiOnly,
+  singleCustomEmoji,
+} from "./emoji-size";
 import type { RelaySession } from "../relay/session";
 
 // Production handlers with a shallow hook harness; not DOM focus/layout evidence.
@@ -238,16 +242,20 @@ it("gives the channel and thread separate input/label identities, and gates unsu
   ).toBe(false);
 });
 
-it("marks only a single Unicode emoji for enlarged composer presentation", () => {
+it("enlarges Unicode-only drafts and restores normal text presentation", () => {
   for (const emoji of ["😀", " 👋🏽 ", "👨‍👩‍👧‍👦", "🇬🇧", "1️⃣"])
-    expect(isSingleUnicodeEmoji(emoji)).toBe(true);
-  for (const other of ["", "1", ":party:", "😀😀", "😀 hello"])
-    expect(isSingleUnicodeEmoji(other)).toBe(false);
+    expect(isUnicodeEmojiOnly(emoji)).toBe(true);
+  for (const other of ["", "1", ":party:", "😀a", "😀 hello"])
+    expect(isUnicodeEmojiOnly(other)).toBe(false);
 
   const h = mount();
   h.type("😀");
   expect(h.input().props["data-single-emoji"]).toBe(true);
   h.type("😀 hello");
+  expect(h.input().props["data-single-emoji"]).toBeUndefined();
+  h.type("😀 🙏 👏");
+  expect(h.input().props["data-single-emoji"]).toBe(true);
+  h.type("😀 🙏 hello");
   expect(h.input().props["data-single-emoji"]).toBeUndefined();
 });
 
@@ -256,6 +264,8 @@ it("recognizes an exact custom emoji draft without treating shortcode prose as e
   expect(singleCustomEmoji(":PARTY: ", [party])).toBe(party);
   expect(singleCustomEmoji("hello :party:", [party])).toBeUndefined();
   expect(singleCustomEmoji(":missing:", [party])).toBeUndefined();
+  expect(isEmojiOnly(":party: 😀 :PARTY:", [party])).toBe(true);
+  expect(isEmojiOnly(":party: hello", [party])).toBe(false);
 });
 
 it.each([undefined, "root"])(

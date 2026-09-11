@@ -133,7 +133,7 @@ export function mountEmojiMart({
     categoryIcons,
     emojiButtonSize,
     emojiSize,
-    dynamicWidth: true,
+    dynamicWidth: false,
     maxFrequentRows: 2,
     // Ten category tabs overlap in narrow thread panes; search/scroll still work.
     navPosition: perLine < 6 ? "none" : "bottom",
@@ -171,15 +171,46 @@ export function mountEmojiMart({
       --buzz-category-icon: #8d8d8d;
       --buzz-category-icon-selected: #0a0a0a;
       --buzz-category-label: #646464;
+      --buzz-scrollbar-thumb: #e8e8e8;
     }
     #root[data-theme="dark"] {
       --buzz-category-fill: #1c1c1c;
       --buzz-category-icon: #a6a6a6;
       --buzz-category-icon-selected: #f5f5f5;
       --buzz-category-label: #c1c1c1;
+      --buzz-scrollbar-thumb: #424242;
     }
     #root {
       --padding: 8px;
+      position: relative;
+      width: 100% !important;
+    }
+    .scroll {
+      padding-inline: 12px;
+      scrollbar-width: none;
+    }
+    .scroll::-webkit-scrollbar {
+      display: none;
+    }
+    .buzz-scrollbar-track {
+      position: absolute;
+      right: 4px;
+      z-index: 4;
+      width: 8px;
+      opacity: .6;
+      pointer-events: none;
+    }
+    .buzz-scrollbar-thumb {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 8px;
+      min-height: 32px;
+      border-radius: 9999rem;
+      background: var(--buzz-scrollbar-thumb);
+    }
+    .scroll > div {
+      width: 100% !important;
     }
     .category .sticky {
       color: var(--buzz-category-label);
@@ -194,7 +225,7 @@ export function mountEmojiMart({
       padding: 0 32px;
       margin-inline: 2px;
       border: 0;
-      border-radius: var(--picker-inner-radius);
+      border-radius: var(--picker-search-radius);
       background: var(--picker-search-background);
       box-shadow: 0 0 0 1px var(--picker-search-background);
       color: var(--picker-search-foreground);
@@ -257,10 +288,18 @@ export function mountEmojiMart({
     .scroll .category > :not(.sticky) > .flex {
       justify-content: space-between;
     }
+    .scroll .category button {
+      flex-shrink: 0;
+    }
     #nav button {
       position: relative;
       z-index: 1;
       color: var(--buzz-category-icon);
+    }
+    #nav {
+      box-sizing: border-box;
+      width: 100%;
+      padding-inline: var(--padding);
     }
     #nav > .flex.relative > button {
       flex: 1 1 0;
@@ -319,6 +358,7 @@ export function mountEmojiMart({
       right: 8px !important;
       bottom: 42px !important;
       left: auto !important;
+      z-index: 100 !important;
       transform-origin: 100% 100%;
     }
     @media (prefers-reduced-motion: reduce) {
@@ -329,6 +369,59 @@ export function mountEmojiMart({
   `;
   root?.appendChild(navigationStyle);
   let skinToneObserver: MutationObserver | undefined;
+  let scrollbarCleanup: (() => void) | undefined;
+  let scrollbarScroll: HTMLElement | undefined;
+  let scrollbarUpdate: (() => void) | undefined;
+  const installPersistentScrollbar = () => {
+    const scroll = root?.querySelector<HTMLElement>(".scroll");
+    const pickerRoot = root?.querySelector<HTMLElement>("#root");
+    if (!scroll || !pickerRoot) return;
+    if (scroll === scrollbarScroll) {
+      scrollbarUpdate?.();
+      return;
+    }
+    scrollbarCleanup?.();
+    pickerRoot.querySelector(".buzz-scrollbar-track")?.remove();
+    const track = host.ownerDocument.createElement("div");
+    track.className = "buzz-scrollbar-track";
+    track.setAttribute("aria-hidden", "true");
+    const thumb = host.ownerDocument.createElement("div");
+    thumb.className = "buzz-scrollbar-thumb";
+    track.appendChild(thumb);
+    pickerRoot.appendChild(track);
+    const update = () => {
+      const pickerBounds = pickerRoot.getBoundingClientRect();
+      const scrollBounds = scroll.getBoundingClientRect();
+      const trackHeight = Math.max(0, scroll.clientHeight - 16);
+      const overflow = scroll.scrollHeight - scroll.clientHeight;
+      track.hidden = overflow <= 0;
+      track.style.top = `${scrollBounds.top - pickerBounds.top + 8}px`;
+      track.style.height = `${trackHeight}px`;
+      if (overflow <= 0) return;
+      const thumbHeight = Math.max(
+        32,
+        trackHeight * (scroll.clientHeight / scroll.scrollHeight),
+      );
+      const offset =
+        (scroll.scrollTop / overflow) * Math.max(0, trackHeight - thumbHeight);
+      thumb.style.height = `${thumbHeight}px`;
+      thumb.style.transform = `translateY(${offset}px)`;
+    };
+    const resize = new ResizeObserver(update);
+    resize.observe(scroll);
+    if (scroll.firstElementChild) resize.observe(scroll.firstElementChild);
+    scroll.addEventListener("scroll", update, { passive: true });
+    scrollbarScroll = scroll;
+    scrollbarUpdate = update;
+    scrollbarCleanup = () => {
+      resize.disconnect();
+      scroll.removeEventListener("scroll", update);
+      track.remove();
+      scrollbarScroll = undefined;
+      scrollbarUpdate = undefined;
+    };
+    update();
+  };
   const placeSkinToneInNavigation = () => {
     const source = root?.querySelector<HTMLButtonElement>(".skin-tone-button");
     const navigation = root?.querySelector<HTMLElement>(
@@ -388,6 +481,7 @@ export function mountEmojiMart({
     const input = root?.querySelector<HTMLInputElement>('input[type="search"]');
     if (!root || !input || disposed) return;
     placeSkinToneInNavigation();
+    installPersistentScrollbar();
     installSearchClearIcon();
     if (input.dataset.buzzSearchReady) return;
     input.dataset.buzzSearchReady = "true";
@@ -412,6 +506,7 @@ export function mountEmojiMart({
     disposed = true;
     observer.disconnect();
     skinToneObserver?.disconnect();
+    scrollbarCleanup?.();
     themeObserver.disconnect();
     picker.remove(); // unregisters Mart's document listeners and observers
     for (const id of values.keys()) delete Data?.emojis[id];

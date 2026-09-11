@@ -5,7 +5,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
 import styles from "./Messages.module.css";
-import { isSingleEmoji } from "./emoji-size";
+import { isEmojiOnly } from "./emoji-size";
 
 export type MessageRowProps = {
   row: ChannelMessage;
@@ -32,7 +32,7 @@ export const MessageRow = memo(function MessageRow({
 }: MessageRowProps) {
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
-  const singleEmoji = isSingleEmoji(row.content, row.emoji);
+  const emojiOnly = isEmojiOnly(row.content, row.emoji);
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -64,10 +64,7 @@ export const MessageRow = memo(function MessageRow({
               })}
             </time>
           </div>
-          <p
-            className={styles.text}
-            data-single-emoji={singleEmoji || undefined}
-          >
+          <p className={styles.text} data-single-emoji={emojiOnly || undefined}>
             <MessageText
               row={row}
               extensions={extensions}

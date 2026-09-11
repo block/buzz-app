@@ -65,6 +65,12 @@ it("keeps custom emoji as one editor token and expands only for delivery", () =>
   ]);
   expect(expandCustomEmoji(draft)).toBe(":party-parrot: hello");
   expect(replaceMentionDraft(draft, 0, 1, "").emoji).toBeUndefined();
+  expect(editMentionDraft(draft, `${CUSTOM_EMOJI_TOKEN} hello!`).emoji).toEqual(
+    [{ shortcode: "party-parrot", start: 0, end: 1 }],
+  );
+  expect(
+    expandCustomEmoji(editMentionDraft(draft, `${CUSTOM_EMOJI_TOKEN} hello!`)),
+  ).toBe(":party-parrot: hello!");
 });
 
 it("captured replacement ranges never transfer identity across a matrix of same-name edits", () => {

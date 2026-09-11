@@ -18,7 +18,9 @@ import { GifPicker } from "./GifPicker";
 
 const EMOJI_SIZE = 36;
 const EMOJI_SLOT = 48;
-const PICKER_CHROME = 44;
+const PICKER_COLUMN_CHROME = 44;
+// Two balanced scrollbar lanes plus five gaps between six fixed-size slots.
+const PICKER_CHROME = 72;
 
 /** Reusable composer picker; data/signing remain owned by the community session. */
 export function EmojiPicker({
@@ -73,7 +75,9 @@ export function EmojiPicker({
           1,
           Math.min(
             6,
-            Math.floor((container.clientWidth - PICKER_CHROME) / EMOJI_SLOT),
+            Math.floor(
+              (container.clientWidth - PICKER_COLUMN_CHROME) / EMOJI_SLOT,
+            ),
           ),
         ),
       );

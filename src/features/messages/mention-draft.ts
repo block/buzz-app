@@ -137,7 +137,31 @@ export function editMentionDraft(
         text.slice(edit.start, edit.start + length),
       );
   }
-  return { text, recipients: [] };
+  // Browser autocorrection/history can omit a trustworthy target range. Keep
+  // opaque custom-emoji tokens outside the single changed span, while still
+  // dropping recipient intent because ordinary prose cannot prove identity.
+  let prefix = 0;
+  while (
+    prefix < value.text.length &&
+    prefix < text.length &&
+    value.text[prefix] === text[prefix]
+  )
+    prefix += 1;
+  let suffix = 0;
+  while (
+    suffix < value.text.length - prefix &&
+    suffix < text.length - prefix &&
+    value.text[value.text.length - suffix - 1] ===
+      text[text.length - suffix - 1]
+  )
+    suffix += 1;
+  const reconciled = replaceMentionDraft(
+    value,
+    prefix,
+    value.text.length - suffix,
+    text.slice(prefix, text.length - suffix),
+  );
+  return { ...reconciled, recipients: [] };
 }
 
 export function expandCustomEmoji(value: MentionDraft) {

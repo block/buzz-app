@@ -12,6 +12,38 @@ type Standard = EmojiMatch & { terms: readonly string[] };
 const normalize = (value: string) => value.toLowerCase().replace(/[-_\s]/g, "");
 let standard: Promise<readonly Standard[]> | undefined;
 
+type ShortcodeScore = Readonly<{ tier: number; score: number }>;
+
+function subsequenceSpan(query: string, target: string) {
+  let first = -1;
+  let last = -1;
+  let queryIndex = 0;
+  for (
+    let index = 0;
+    index < target.length && queryIndex < query.length;
+    index++
+  ) {
+    if (target[index] !== query[queryIndex]) continue;
+    if (first < 0) first = index;
+    last = index;
+    queryIndex++;
+  }
+  return queryIndex === query.length ? last - first : undefined;
+}
+
+function shortcodeScore(
+  query: string,
+  shortcode: string,
+): ShortcodeScore | undefined {
+  const target = normalize(shortcode);
+  if (query === target) return { tier: 0, score: 0 };
+  if (target.startsWith(query)) return { tier: 1, score: 0 };
+  const index = target.indexOf(query);
+  if (index >= 0) return { tier: 2, score: index };
+  const span = subsequenceSpan(query, target);
+  return span === undefined ? undefined : { tier: 3, score: span };
+}
+
 /** Data only: never initialize or query Emoji Mart's mutable picker singleton. */
 function loadStandard() {
   standard ??= import("@emoji-mart/data")
@@ -34,11 +66,13 @@ function loadStandard() {
                 name: emoji.name,
                 text: native,
                 terms: [
-                  emoji.id,
-                  ...(aliases.get(emoji.id) ?? []),
-                  emoji.name,
-                  ...emoji.keywords,
-                ],
+                  emoji.id.toLowerCase(),
+                  ...emoji.name.toLowerCase().split(/[-_\s]+/),
+                  ...emoji.keywords.map((term) => term.toLowerCase()),
+                  ...(aliases.get(emoji.id) ?? []).map((term) =>
+                    term.toLowerCase(),
+                  ),
+                ].filter(Boolean),
               },
             ]
           : [];
@@ -50,29 +84,21 @@ function loadStandard() {
     });
   return standard;
 }
-function score(query: string, terms: readonly string[]) {
-  let best = 4;
-  for (const term of terms) {
-    const value = normalize(term);
-    best = Math.min(
-      best,
-      value === query
-        ? 0
-        : value.startsWith(query)
-          ? 1
-          : value.includes(query)
-            ? 2
-            : 4,
-    );
+function semanticScore(query: string, terms: readonly string[]) {
+  let best: number | undefined;
+  for (const [index, term] of terms.entries()) {
+    if (!term.startsWith(query)) continue;
+    const score = index * 2 + (term === query ? 0 : 1);
+    best = best === undefined ? score : Math.min(best, score);
   }
   return best;
 }
 
-/** Bounded combined ranking; custom and Unicode collisions retain distinct IDs. */
+/** Production-style semantic search plus unbounded fuzzy shortcode fallbacks. */
 export async function searchEmoji(
   query: string,
   custom: readonly CustomEmoji[],
-  limit = 20,
+  limit = Number.POSITIVE_INFINITY,
 ): Promise<readonly EmojiMatch[]> {
   const native = await loadStandard();
   return rankEmoji(query, native, custom, limit);
@@ -80,7 +106,7 @@ export async function searchEmoji(
 export function searchCustomEmoji(
   query: string,
   custom: readonly CustomEmoji[],
-  limit = 20,
+  limit = Number.POSITIVE_INFINITY,
 ): readonly EmojiMatch[] {
   return rankEmoji(query, [], custom, limit);
 }
@@ -92,30 +118,52 @@ function rankEmoji(
 ): readonly EmojiMatch[] {
   const needle = normalize(query);
   if (!needle) return [];
-  const candidates: Standard[] = [
-    ...native,
-    ...custom.map(({ shortcode, url }) => ({
-      id: `custom/${shortcode}`,
-      shortcode,
-      name: `:${shortcode}:`,
-      text: `:${shortcode}:`,
-      url,
-      terms: [shortcode],
-    })),
+  const customCandidates: Standard[] = custom.map(({ shortcode, url }) => ({
+    id: `custom/${shortcode}`,
+    shortcode,
+    name: `:${shortcode}:`,
+    text: `:${shortcode}:`,
+    url,
+    terms: [shortcode],
+  }));
+  const rankShortcodes = (items: readonly Standard[]) =>
+    items
+      .flatMap((item) => {
+        const match = shortcodeScore(needle, item.shortcode);
+        return match ? [{ item, ...match }] : [];
+      })
+      .sort(
+        (a, b) =>
+          a.tier - b.tier ||
+          a.score - b.score ||
+          a.item.shortcode.length - b.item.shortcode.length ||
+          a.item.shortcode.localeCompare(b.item.shortcode),
+      );
+  const semantic = native
+    .flatMap((item) => {
+      const score = semanticScore(query.toLowerCase(), item.terms);
+      return score === undefined ? [] : [{ item, score }];
+    })
+    .sort((a, b) => a.score - b.score || a.item.id.localeCompare(b.item.id))
+    .map(({ item }) => item);
+  const semanticIds = new Set(semantic.map((item) => item.id));
+  const combined = [
+    ...semantic,
+    ...rankShortcodes(customCandidates).map(({ item }) => item),
+    ...rankShortcodes(native)
+      .map(({ item }) => item)
+      .filter((item) => !semanticIds.has(item.id)),
   ];
-  return candidates
-    .map((item) => ({
-      item,
-      rank: score(needle, item.terms),
-      codeRank: score(needle, [item.shortcode]),
-    }))
-    .filter(({ rank }) => rank < 4)
-    .sort(
-      (a, b) =>
-        a.rank - b.rank ||
-        a.codeRank - b.codeRank ||
-        a.item.id.localeCompare(b.item.id),
-    )
-    .slice(0, Math.max(0, Math.min(limit, 50)))
-    .map(({ item: { terms: _terms, ...item } }) => item);
+  const strong = rankShortcodes(combined)
+    .filter(({ tier }) => tier <= 1)
+    .map(({ item }) => item);
+  const promoted = new Set(strong.map((item) => item.id));
+  const ranked = [
+    ...strong,
+    ...combined.filter((item) => !promoted.has(item.id)),
+  ];
+  const bounded = Number.isFinite(limit)
+    ? ranked.slice(0, Math.max(0, limit))
+    : ranked;
+  return bounded.map(({ terms: _terms, ...item }) => item);
 }

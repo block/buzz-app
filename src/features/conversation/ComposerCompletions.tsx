@@ -108,6 +108,7 @@ function OwnedCompletion({
   const [result, setResult] = useState<CompletionResult>();
   const latest = useRef<CompletionResult | undefined>(undefined);
   const [selected, setSelected] = useState<string | typeof RETRY>();
+  const revealSelection = useRef(false);
   const live = useRef(false);
   const current = useRef({ editor, replace });
   useLayoutEffect(() => {
@@ -128,6 +129,7 @@ function OwnedCompletion({
       if (!owned || !active()) return false;
       const next = completionResult(incoming);
       latest.current = next;
+      revealSelection.current = true;
       setResult(next);
       setSelected((previous) =>
         next.items.some((item) => item.id === previous)
@@ -213,6 +215,7 @@ function OwnedCompletion({
         event.stopPropagation();
         const next =
           (selectedIndex + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+        revealSelection.current = true;
         setSelected(next === items.length ? RETRY : items[next]?.id);
         return true;
       }
@@ -225,9 +228,12 @@ function OwnedCompletion({
       return false;
     };
     editor.keys.current = handle;
-    list.current
-      ?.querySelector('[aria-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" });
+    if (revealSelection.current) {
+      list.current
+        ?.querySelector('[aria-selected="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+      revealSelection.current = false;
+    }
     return () => {
       if (editor.keys.current === handle) editor.keys.current = undefined;
       element.removeAttribute("aria-autocomplete");
@@ -275,6 +281,14 @@ function OwnedCompletion({
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
                   }}
+                  onPointerEnter={
+                    compact
+                      ? () => {
+                          revealSelection.current = false;
+                          setSelected(item.id);
+                        }
+                      : undefined
+                  }
                   onClick={() => accept(i)}
                   className={styles.option}
                 >
@@ -300,6 +314,14 @@ function OwnedCompletion({
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
                   }}
+                  onPointerEnter={
+                    compact
+                      ? () => {
+                          revealSelection.current = false;
+                          setSelected(RETRY);
+                        }
+                      : undefined
+                  }
                   onClick={() => accept(items.length)}
                 >
                   Retry suggestions

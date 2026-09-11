@@ -52,7 +52,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBeVisible();
     const sentSingleEmoji = page.locator("p[data-single-emoji]");
     await expect(sentSingleEmoji).toHaveCSS("font-size", "42px");
-    await expect(sentSingleEmoji).toHaveCSS("margin-top", "2px");
+    await expect(sentSingleEmoji).toHaveCSS("margin-top", "4px");
     await expect(sentSingleEmoji.locator('img[alt=":party:"]')).toHaveCSS(
       "width",
       "42px",
@@ -61,6 +61,16 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       "height",
       "42px",
     );
+    expect(
+      await sentSingleEmoji.evaluate((message) => {
+        const byline = message.previousElementSibling;
+        const emoji = message.querySelector("img");
+        return (
+          emoji.getBoundingClientRect().top -
+          byline.getBoundingClientRect().bottom
+        );
+      }),
+    ).toBeCloseTo(4, 1);
     await expect(
       page.getByRole("link", { name: "https://example.test/:party" }),
     ).toHaveAttribute("href", "https://example.test/:party");
@@ -104,11 +114,24 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(skinTone).toHaveAttribute("aria-selected", "");
     const toneMenu = page.locator("em-emoji-picker #root > .menu");
     await expect(toneMenu).toBeVisible();
+    await expect(toneMenu).toHaveCSS("z-index", "100");
     const toneMenuBox = await toneMenu.boundingBox();
     const categoryNavigationBox = await categoryNavigation.boundingBox();
     expect(toneMenuBox.y + toneMenuBox.height).toBeLessThan(
       categoryNavigationBox.y,
     );
+    expect(
+      await toneMenu.evaluate((menu) => {
+        const bounds = menu.getBoundingClientRect();
+        const top = menu
+          .getRootNode()
+          .elementFromPoint(
+            bounds.left + bounds.width / 2,
+            bounds.top + bounds.height / 2,
+          );
+        return !!top && menu.contains(top);
+      }),
+    ).toBe(true);
     await toneMenu.locator(".option").nth(1).click();
     await expect(toneMenu).toHaveCount(0);
     await expect(skinTone).toBeFocused();
@@ -134,7 +157,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(search).toHaveCSS("margin-left", "2px");
     await expect(search).toHaveCSS("margin-right", "2px");
     await expect(search).toHaveCSS("border-top-width", "0px");
-    await expect(search).toHaveCSS("border-radius", "16px");
+    await expect(search).toHaveCSS("border-radius", "8px");
     await expect(search).toHaveCSS("background-color", "rgb(245, 245, 246)");
     await expect(search).toHaveCSS("color", "rgb(10, 10, 10)");
     await expect(search).toHaveCSS("outline-style", "none");
@@ -152,9 +175,21 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(
       page.getByRole("button", { name: "Refresh emoji" }),
     ).toHaveCount(0);
-    await expect(surface).toHaveCSS("width", "332px");
+    await expect(surface).toHaveCSS("width", "360px");
     const initialRegion = await region.boundingBox();
     const initialSurface = await surface.boundingBox();
+    const searchGutters = await search.evaluate((input) => {
+      const searchBounds = input.getBoundingClientRect();
+      const rootBounds = input
+        .getRootNode()
+        .querySelector("#root")
+        .getBoundingClientRect();
+      return {
+        left: searchBounds.left - rootBounds.left,
+        right: rootBounds.right - searchBounds.right,
+      };
+    });
+    expect(searchGutters.left).toBeCloseTo(searchGutters.right, 1);
     expect(initialSurface.height).toBeCloseTo(
       Math.min(348, page.viewportSize().height * 0.4),
       1,
@@ -289,7 +324,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
       "width",
-      "332px",
+      "360px",
     );
     await search.fill("");
     const frequent = page.locator(
@@ -310,6 +345,32 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     expect(firstRow).toHaveLength(6);
     expect(firstRow.every(({ y }) => y === firstRow[0].y)).toBe(true);
     expect(firstRow[0]).toMatchObject({ height: 48, width: 48 });
+    const rowGaps = firstRow
+      .slice(1)
+      .map((item, index) => item.x - firstRow[index].x - firstRow[index].width);
+    expect(rowGaps[0]).toBeCloseTo(9.6, 1);
+    expect(rowGaps.every((gap) => Math.abs(gap - rowGaps[0]) < 0.1)).toBe(true);
+    const emojiGridGutters = await surface.evaluate((root) => {
+      const buttons = root.querySelectorAll('[data-id="frequent"] button');
+      const first = buttons[0].getBoundingClientRect();
+      const last = buttons[5].getBoundingClientRect();
+      const rootBounds = root.getBoundingClientRect();
+      return {
+        left: first.left - rootBounds.left,
+        right: rootBounds.right - last.right,
+      };
+    });
+    expect(emojiGridGutters.left).toBeCloseTo(emojiGridGutters.right, 1);
+    expect(emojiGridGutters.left).toBeCloseTo(12, 1);
+    const scrollbar = page.locator("em-emoji-picker .buzz-scrollbar-track");
+    const scrollbarThumb = scrollbar.locator(".buzz-scrollbar-thumb");
+    await expect(scrollbar).toBeVisible();
+    await expect(scrollbar).toHaveCSS("right", "4px");
+    await expect(scrollbar).toHaveCSS("opacity", "0.6");
+    await expect(scrollbarThumb).toHaveCSS(
+      "background-color",
+      "rgb(232, 232, 232)",
+    );
     for (const [index, result] of searchRowPositions.entries())
       expect(result.x).toBeCloseTo(firstRow[index].x, 1);
     const navigation = page.locator("em-emoji-picker nav");
@@ -321,8 +382,25 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       );
     expect(navigationButtonWidths).toHaveLength(11);
     expect(
-      navigationButtonWidths.every((width) => Math.abs(width - 28) < 0.1),
+      navigationButtonWidths.every(
+        (width) => Math.abs(width - navigationButtonWidths[0]) < 0.1,
+      ),
     ).toBe(true);
+    const navigationGutters = await navigation.evaluate((nav) => {
+      const rootBounds = nav
+        .getRootNode()
+        .querySelector("#root")
+        .getBoundingClientRect();
+      const buttons = nav.querySelectorAll("button");
+      const first = buttons[0].getBoundingClientRect();
+      const last = buttons[buttons.length - 1].getBoundingClientRect();
+      return {
+        left: first.left - rootBounds.left,
+        right: rootBounds.right - last.right,
+      };
+    });
+    expect(navigationGutters.left).toBeCloseTo(navigationGutters.right, 1);
+    expect(navigationGutters.left).toBeCloseTo(8, 1);
     for (const [category, icon] of Object.entries({
       "Frequently used": "clock",
       "Smileys & People": "face-slightly-smiling",
@@ -619,9 +697,26 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(draft()).toHaveAttribute("data-single-emoji", "true");
     await expect(draft()).toHaveCSS("font-size", "42px");
-    await draft().fill("😀 hello");
+    await draft().fill("😀 🙏 👏");
+    await expect(draft()).toHaveAttribute("data-single-emoji", "true");
+    await expect(draft()).toHaveCSS("font-size", "42px");
+    await draft().fill("😀 🙏 👏 hello");
     await expect(draft()).not.toHaveAttribute("data-single-emoji", "true");
     await expect(draft()).toHaveCSS("font-size", "14px");
+    const publicationCount = await page.evaluate(
+      () => window.emojiFixture.report.publications.length,
+    );
+    await draft().press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(publicationCount + 1);
+    expect(
+      await page.evaluate(
+        () => window.emojiFixture.report.publications.at(-1).event.content,
+      ),
+    ).toBe("😀 🙏 👏 hello");
     expect(errors).toEqual([]);
   } finally {
     try {

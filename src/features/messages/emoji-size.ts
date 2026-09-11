@@ -5,11 +5,14 @@ const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 const emojiPresentation =
   /\p{Extended_Pictographic}|\p{Regional_Indicator}|[\d#*]\uFE0F?\u20E3/u;
 
-export function isSingleUnicodeEmoji(value: string) {
+export function isUnicodeEmojiOnly(value: string) {
   const content = value.trim();
   if (!content || !emojiPresentation.test(content)) return false;
-  const segments = graphemes.segment(content)[Symbol.iterator]();
-  return !segments.next().done && segments.next().done;
+  for (const { segment } of graphemes.segment(content)) {
+    if (/^\s+$/u.test(segment)) continue;
+    if (!emojiPresentation.test(segment)) return false;
+  }
+  return true;
 }
 
 export function singleCustomEmoji(
@@ -35,7 +38,31 @@ export function singleCustomEmojiToken(
     : undefined;
 }
 
-export const isSingleEmoji = (
+export function leadingCustomEmojiToken(
+  value: string,
+  tokens: readonly DraftEmoji[],
+  entries: readonly CustomEmoji[],
+) {
+  const token = tokens.find(
+    (item) =>
+      item.start === 0 &&
+      item.end === CUSTOM_EMOJI_TOKEN.length &&
+      value.startsWith(CUSTOM_EMOJI_TOKEN),
+  );
+  return token
+    ? entries.find((entry) => entry.shortcode === token.shortcode)
+    : undefined;
+}
+
+export const isEmojiOnly = (
   value: string,
   entries: readonly CustomEmoji[] = [],
-) => isSingleUnicodeEmoji(value) || !!singleCustomEmoji(value, entries);
+) => {
+  const custom = new Set(entries.map((entry) => entry.shortcode.toLowerCase()));
+  const rendered = value.replace(
+    /:([a-z0-9_-]{1,64}):/gi,
+    (literal, shortcode: string) =>
+      custom.has(shortcode.toLowerCase()) ? "😀" : literal,
+  );
+  return isUnicodeEmojiOnly(rendered);
+};

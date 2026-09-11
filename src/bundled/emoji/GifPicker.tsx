@@ -31,9 +31,52 @@ export function GifPicker({
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
   const input = useRef<HTMLInputElement>(null);
+  const results = useRef<HTMLDivElement>(null);
+  const scrollbar = useRef<HTMLDivElement>(null);
+  const scrollbarThumb = useRef<HTMLDivElement>(null);
 
   useLayoutEffect(() => {
     input.current?.focus();
+  }, []);
+  useLayoutEffect(() => {
+    const scroll = results.current;
+    const track = scrollbar.current;
+    const thumb = scrollbarThumb.current;
+    if (!scroll || !track || !thumb) return;
+    const update = () => {
+      const picker = scroll.parentElement?.getBoundingClientRect();
+      const bounds = scroll.getBoundingClientRect();
+      if (!picker) return;
+      const trackHeight = Math.max(0, scroll.clientHeight - 16);
+      const overflow = scroll.scrollHeight - scroll.clientHeight;
+      track.hidden = overflow <= 0;
+      track.style.top = `${bounds.top - picker.top + 8}px`;
+      track.style.height = `${trackHeight}px`;
+      if (overflow <= 0) return;
+      const thumbHeight = Math.max(
+        32,
+        trackHeight * (scroll.clientHeight / scroll.scrollHeight),
+      );
+      const offset =
+        (scroll.scrollTop / overflow) * Math.max(0, trackHeight - thumbHeight);
+      thumb.style.height = `${thumbHeight}px`;
+      thumb.style.transform = `translateY(${offset}px)`;
+    };
+    const resize = new ResizeObserver(update);
+    resize.observe(scroll);
+    if (scroll.firstElementChild) resize.observe(scroll.firstElementChild);
+    const mutations = new MutationObserver(() => {
+      if (scroll.firstElementChild) resize.observe(scroll.firstElementChild);
+      update();
+    });
+    mutations.observe(scroll, { childList: true });
+    scroll.addEventListener("scroll", update, { passive: true });
+    update();
+    return () => {
+      resize.disconnect();
+      mutations.disconnect();
+      scroll.removeEventListener("scroll", update);
+    };
   }, []);
   useEffect(() => {
     const timeout = window.setTimeout(
@@ -91,7 +134,7 @@ export function GifPicker({
           </button>
         )}
       </label>
-      <div className={styles.gifResults}>
+      <div ref={results} className={styles.gifResults}>
         {!gifs && !error ? (
           <div
             className={styles.gifLoading}
@@ -132,6 +175,14 @@ export function GifPicker({
         ) : (
           <div className={styles.gifEmpty}>No GIFs found.</div>
         )}
+      </div>
+      <div
+        ref={scrollbar}
+        className={styles.gifScrollbarTrack}
+        data-testid="gif-scrollbar-track"
+        aria-hidden="true"
+      >
+        <div ref={scrollbarThumb} className={styles.gifScrollbarThumb} />
       </div>
       <div className={styles.gifAttribution}>Powered by KLIPY</div>
     </div>

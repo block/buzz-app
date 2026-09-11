@@ -89,8 +89,16 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("😄 ");
+  await expect(input).toHaveValue("😄");
   await expect(input).toBeFocused();
+  await input.press("Shift+ArrowLeft");
+  expect(
+    await input.evaluate((element) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]),
+  ).toEqual([0, "😄".length]);
+  await input.press("ArrowRight");
   expect(
     await page.evaluate(() => window.mentionFixture.publications.length),
   ).toBe(0);
@@ -350,7 +358,7 @@ test("selection follows IDs through reordering and rejected replacement never fa
 });
 test("current custom catalog drives typeahead and signed tags across community replacement", async ({
   page,
-}) => {
+}, testInfo) => {
   await page.route("**/emoji-media/**", (route) =>
     route.fulfill({
       contentType: "image/svg+xml",
@@ -375,16 +383,117 @@ test("current custom catalog drives typeahead and signed tags across community r
       (element) => element.scrollWidth > element.clientWidth,
     ),
   ).toBe(true);
+  const suggestions = page.getByRole("region", {
+    name: "Emoji suggestions",
+    exact: true,
+  });
+  await input.fill(":party");
+  const partyOptions = page.getByRole("option");
+  await expect.poll(() => partyOptions.count()).toBeGreaterThan(1);
+  const selectedParty = partyOptions.first();
+  const hoveredParty = partyOptions.nth(1);
+  await expect(selectedParty).toHaveAttribute("aria-selected", "true");
+  await expect(suggestions).toHaveCSS("border-radius", "24px");
+  await expect(selectedParty).toHaveCSS("border-radius", "18px");
+  const nativeEmoji = partyOptions.locator("[data-native-emoji]").first();
+  await expect(nativeEmoji).toBeVisible();
+  expect(
+    Math.abs(
+      await nativeEmoji.evaluate((element) => {
+        const matrix = new DOMMatrixReadOnly(
+          getComputedStyle(element).transform,
+        );
+        return matrix.m42;
+      }),
+    ),
+  ).toBeLessThan(1);
+  await suggestions.screenshot({
+    path: testInfo.outputPath("emoji-completion-alignment.png"),
+  });
+  const verticallyCenteredContent = await partyOptions.evaluateAll((options) =>
+    options.flatMap((option) => {
+      const optionBounds = option.getBoundingClientRect();
+      return Array.from(option.children).map((child) => {
+        const childBounds = child.getBoundingClientRect();
+        return {
+          content: childBounds.top + childBounds.height / 2,
+          option: optionBounds.top + optionBounds.height / 2,
+        };
+      });
+    }),
+  );
+  expect(
+    verticallyCenteredContent.every(
+      ({ content, option }) => Math.abs(content - option) < 1,
+    ),
+  ).toBe(true);
+  await expect(selectedParty).toHaveCSS("justify-content", "flex-start");
+  await hoveredParty.hover();
+  await expect(hoveredParty).toHaveAttribute("aria-selected", "true");
+  await expect(selectedParty).not.toHaveAttribute("aria-selected", "true");
+  await expect(hoveredParty).toHaveCSS(
+    "background-color",
+    "rgb(245, 245, 246)",
+  );
+  const partyList = page.getByRole("listbox", {
+    name: "Emoji suggestions",
+    exact: true,
+  });
+  const partiallyVisibleParty = partyOptions.last();
+  const scrollBeforeHover = await partyList.evaluate(
+    (list, option) => {
+      list.scrollTop = Math.max(
+        0,
+        option.offsetTop + option.offsetHeight / 2 - list.clientHeight,
+      );
+      return list.scrollTop;
+    },
+    await partiallyVisibleParty.elementHandle(),
+  );
+  await partiallyVisibleParty.dispatchEvent("pointerover");
+  await expect(partiallyVisibleParty).toHaveAttribute("aria-selected", "true");
+  expect(await partyList.evaluate((list) => list.scrollTop)).toBe(
+    scrollBeforeHover,
+  );
+  await input.fill(":woman_kneeling");
+  const kneelingEmoji = page
+    .getByRole("option", { name: ":woman_kneeling:", exact: true })
+    .locator("[data-native-emoji]");
+  await expect(kneelingEmoji).toBeVisible();
+  expect(
+    await kneelingEmoji.evaluate((element) => {
+      const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
+      return matrix.m42;
+    }),
+  ).toBeLessThan(-1);
+  await input.fill(":smirk");
+  const smirkEmoji = page
+    .getByRole("option", { name: ":smirk:", exact: true })
+    .locator("[data-native-emoji]");
+  await expect(smirkEmoji).toBeVisible();
+  expect(
+    Math.abs(
+      await smirkEmoji.evaluate((element) => {
+        const matrix = new DOMMatrixReadOnly(
+          getComputedStyle(element).transform,
+        );
+        return matrix.m42;
+      }),
+    ),
+  ).toBeLessThan(1);
+  await page.getByRole("option", { name: ":smirk:", exact: true }).click();
+  await expect(input).toHaveValue("😏");
+  expect(await input.evaluate((element) => element.selectionStart)).toBe(
+    "😏".length,
+  );
+  await input.pressSequentially("hello");
+  await expect(input).toHaveValue("😏hello");
   await input.fill(":party-par");
   const first = page.getByRole("option", {
     name: ":party-parrot:",
     exact: true,
   });
   await expect(first).toBeVisible();
-  const suggestions = page.getByRole("region", {
-    name: "Emoji suggestions",
-    exact: true,
-  });
   const composer = input.locator("xpath=ancestor::form");
   await expect(suggestions).not.toContainText("Community emoji");
   await expect(suggestions).not.toContainText("to navigate");
@@ -397,12 +506,34 @@ test("current custom catalog drives typeahead and signed tags across community r
   const renderedEmoji = composer.locator("img");
   await expect(renderedEmoji).toHaveCSS("width", "42px");
   await expect(renderedEmoji).toHaveCSS("height", "42px");
+  await expect(input).toHaveCSS("padding-left", "44px");
   const caret = await input.evaluate((element) => ({
     start: element.selectionStart,
     end: element.selectionEnd,
     length: element.value.length,
   }));
   expect(caret).toEqual({ start: 1, end: 1, length: 1 });
+  await input.press("Shift+ArrowLeft");
+  expect(
+    await input.evaluate((element) => [
+      element.selectionStart,
+      element.selectionEnd,
+    ]),
+  ).toEqual([0, 1]);
+  await expect(renderedEmoji).toHaveAttribute("data-selected", "true");
+  await expect(renderedEmoji).toHaveCSS("opacity", "0.65");
+  await input.press("ArrowRight");
+  await expect(renderedEmoji).not.toHaveAttribute("data-selected", "true");
+  await input.pressSequentially(" hello");
+  await expect(input).toHaveValue("\uFFFC hello");
+  await expect(input).toHaveAttribute("data-leading-custom-emoji", "true");
+  await expect(renderedEmoji).toBeVisible();
+  await expect(renderedEmoji).toHaveCSS("width", "22px");
+  await expect(renderedEmoji).toHaveCSS("height", "22px");
+  await expect(input).toHaveCSS("padding-left", "24px");
+  expect(await input.evaluate((element) => element.selectionStart)).toBe(
+    "\uFFFC hello".length,
+  );
   await input.press("Enter");
   await expect
     .poll(() =>
@@ -422,7 +553,7 @@ test("current custom catalog drives typeahead and signed tags across community r
     await page.evaluate(
       () => window.emojiFixture.report.publications[0].event.content,
     ),
-  ).toBe(":party-parrot:");
+  ).toBe(":party-parrot: hello");
   await input.fill(":party");
   await expect(
     page.getByRole("option", { name: ":party:", exact: true }),

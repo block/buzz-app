@@ -1,5 +1,5 @@
-import type { RelayEvent } from "./events";
-import type { ReadBlob } from "./read-state-model";
+import type { RelayEvent } from "./events.ts";
+import type { ReadBlob } from "./read-state-model.ts";
 
 export type ReadStateSigning = Readonly<{
   slot: string;

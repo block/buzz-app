@@ -1,0 +1,333 @@
+/* Page-owned selector trees are disjoint; no host or shared message overrides. */
+/* biome-ignore-all lint/style/noDescendingSpecificity: Selectors belong to disjoint Pulse regions. */
+.root {
+  height: 100%;
+  min-height: 0;
+}
+.canvas {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  max-width: 960px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--elevation-card);
+  color: var(--text);
+}
+.sidebar {
+  width: 220px;
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 24px 12px 12px;
+  border-right: 1px solid var(--border);
+}
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px 24px;
+  font-size: 18px;
+}
+.sidebar nav button {
+  border: 0;
+  box-shadow: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 10px;
+  background: transparent;
+  padding: 10px 12px;
+  font-size: 13px;
+  border-radius: var(--radius-control);
+}
+.sidebar nav button:hover {
+  background: var(--surface-hover);
+}
+.sidebar nav button[aria-current="page"] {
+  background: var(--selected);
+  color: var(--on-selected);
+}
+.navIcon {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  background: var(--surface-control);
+  color: var(--text);
+}
+.sidebarLabel {
+  margin: 28px 12px 12px;
+  color: var(--text-muted);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  font-weight: 600;
+}
+.channelSearch {
+  min-width: 0;
+  width: 100%;
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.channelList {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+.channelList button span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.channelList svg {
+  flex-shrink: 0;
+}
+.sidebarFoot {
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--text-muted);
+  padding: 12px;
+  margin: 0;
+}
+.sidebarError {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.main {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.feedHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 36px 32px 8px;
+  gap: 12px;
+}
+.feedHeading button {
+  border: 0;
+  background: transparent;
+  padding: 8px;
+}
+.feedHeading h1 {
+  margin: 8px 0;
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: -0.04em;
+}
+.eyebrow {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+}
+.intro {
+  padding: 0 32px 24px;
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.6;
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 32px 16px;
+  background: var(--surface-input);
+  border: 1px solid var(--border-input);
+  border-radius: var(--radius-control);
+  padding: 0 12px;
+}
+.search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+.feed {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: auto;
+}
+.card {
+  padding: 20px 16px 16px;
+  border-top: 1px solid var(--border);
+}
+.source {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: space-between;
+  width: 100%;
+  text-align: left;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 11px;
+  padding: 0 12px 8px;
+}
+.source span:last-child {
+  font-size: 10px;
+}
+.reply {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  border: 0;
+  background: var(--surface-control);
+  color: var(--text-muted);
+  font-size: 11px;
+  border-radius: 24px;
+  margin: 12px 0 0 56px;
+  padding: 7px 12px;
+}
+.empty,
+.connect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+}
+.empty h2 {
+  font-size: 18px;
+  color: var(--text);
+  font-weight: 500;
+}
+.empty p,
+.connect p {
+  max-width: 360px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.connect {
+  height: 100%;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.connect h1 {
+  font-size: 30px;
+  color: var(--text);
+  font-weight: 500;
+}
+.footer {
+  text-align: center;
+  padding: 28px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
+.notice {
+  margin: 16px;
+  padding: 16px;
+  color: var(--danger);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+.detail {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+}
+.heading button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+}
+@media (max-width: 700px) {
+  .sidebar {
+    width: 160px;
+    flex-basis: 160px;
+    padding: 16px 8px 8px;
+  }
+  .feedHeading {
+    padding: 24px 20px 8px;
+  }
+  .intro {
+    padding: 0 20px 20px;
+  }
+  .search {
+    margin: 0 20px 16px;
+  }
+}
+@media (max-width: 520px) {
+  .canvas {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: auto;
+    flex: 0 0 auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 8px;
+  }
+  .sidebar nav:first-of-type {
+    display: flex;
+  }
+  .sidebar nav:first-of-type button {
+    justify-content: center;
+    gap: 4px;
+    font-size: 12px;
+    padding: 6px;
+  }
+  .brand,
+  .sidebarLabel,
+  .sidebarFoot,
+  .channelSearch {
+    display: none;
+  }
+  .channelList {
+    display: flex;
+    max-height: 44px;
+  }
+  .channelList button {
+    flex: 0 0 auto;
+    max-width: 160px;
+  }
+  .reading .sidebar {
+    display: none;
+  }
+  .feedHeading {
+    padding-top: 20px;
+  }
+  .eyebrow {
+    font-size: 9px;
+  }
+  .card {
+    padding: 16px 8px;
+  }
+}
+
+.threadHost {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}

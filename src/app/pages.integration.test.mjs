@@ -29,7 +29,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     services = createServices();
     assert.deepEqual(services.pages.snapshot(), []);
     await settle();
-    assert.equal(services.pages.snapshot().length, 3);
+    assert.equal(services.pages.snapshot().length, 4);
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 2),
     );
@@ -85,7 +85,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
         .some((panel) => panel.pluginId === "buzz.bestie"),
       false,
     );
-    assert.equal(services.pages.snapshot().length, 3);
+    assert.equal(services.pages.snapshot().length, 4);
     await services.plugins.change("enable", "buzz.bestie");
     // Management completion is not activation completion; Cordis still owns import/disposal barriers.
     await vi.waitFor(() =>
@@ -100,6 +100,22 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .find((panel) => panel.pluginId === "buzz.bestie");
     assert.notEqual(secondBestie, firstBestie);
     assert.equal(secondBestie.revision, firstBestie.revision);
+    const pulse = services.pages
+      .snapshot()
+      .find((page) => page.pluginId === "buzz.pulse");
+    assert.equal(pulse.title, "Pulse");
+    assert.equal(pulse.companion, true);
+    assert.match(
+      renderToStaticMarkup(createElement(pulse.component)),
+      /A little closer to what matters/,
+    );
+    const pulseSession = services.relay.snapshot().session;
+    await services.plugins.change("disable", "buzz.pulse");
+    assert.equal(
+      services.pages.snapshot().some((page) => page.pluginId === "buzz.pulse"),
+      false,
+    );
+    assert.equal(services.relay.snapshot().session, pulseSession);
     const page = services.pages.snapshot()[0];
     assert.match(
       renderToStaticMarkup(createElement(page.component)),

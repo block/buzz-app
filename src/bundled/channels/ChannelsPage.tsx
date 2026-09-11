@@ -228,6 +228,7 @@ function ChannelWorkspace({
     },
     [current],
   );
+  const mediaReviewTrigger = useRef<HTMLElement | null>(null);
   const [mediaReview, setMediaReview] = useState<{
     channelId: string;
     channelName: string;
@@ -238,6 +239,10 @@ function ChannelWorkspace({
   const openMediaReview = useCallback(
     (messageId: string, attachment: Attachment, initialTime: number) => {
       if (!current) return;
+      mediaReviewTrigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
       setThread(undefined);
       setMediaReview({
         channelId: current.id,
@@ -508,6 +513,7 @@ function ChannelWorkspace({
           channelName={mediaReview.channelName}
           messageId={mediaReview.messageId}
           initialTime={mediaReview.initialTime}
+          restoreFocus={mediaReviewTrigger}
           close={() => setMediaReview(undefined)}
         />
       )}

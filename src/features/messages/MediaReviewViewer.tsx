@@ -4,6 +4,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type RefObject,
 } from "react";
 import { X } from "lucide-react";
 import { createPortal } from "react-dom";
@@ -28,6 +29,7 @@ type MediaReviewViewerProps = {
   channelName: string;
   messageId: string;
   initialTime: number;
+  restoreFocus?: RefObject<HTMLElement | null>;
   close(): void;
 };
 
@@ -110,6 +112,7 @@ function ReviewShell({
   loading = false,
   error,
   retry,
+  restoreFocus,
 }: MediaReviewViewerProps & {
   view?: ThreadView;
   rootId?: string;
@@ -126,7 +129,7 @@ function ReviewShell({
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [includeTime, setIncludeTime] = useState(true);
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
-  useModalBoundary(backdrop, closeButton, close);
+  useModalBoundary(backdrop, closeButton, close, restoreFocus);
   const seek = (seconds: number) => {
     if (!video.current) return;
     video.current.currentTime = seconds;

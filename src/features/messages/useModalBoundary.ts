@@ -8,6 +8,7 @@ export function useModalBoundary(
   backdrop: RefObject<HTMLElement | null>,
   initialFocus: RefObject<HTMLElement | null>,
   close: () => void,
+  restoreFocus?: RefObject<HTMLElement | null>,
 ) {
   const closeRef = useRef(close);
   closeRef.current = close;
@@ -68,7 +69,8 @@ export function useModalBoundary(
           state.element.removeAttribute("aria-hidden");
         else state.element.setAttribute("aria-hidden", state.ariaHidden);
       }
-      if (opener?.isConnected) opener.focus();
+      const target = restoreFocus?.current ?? opener;
+      if (target?.isConnected) requestAnimationFrame(() => target.focus());
     };
-  }, [backdrop, initialFocus]);
+  }, [backdrop, initialFocus, restoreFocus]);
 }

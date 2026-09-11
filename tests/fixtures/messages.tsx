@@ -1,6 +1,6 @@
 // A second source consumer: ordinary prop changes, no caller remount keys.
 // Real React/session/outbox; local ephemeral signed events, never a live broker.
-import { StrictMode, useState } from "react";
+import { StrictMode, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
@@ -8,6 +8,7 @@ import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
 import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
+import { MediaReviewViewer } from "../../src/features/messages/MediaReviewViewer";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { threadReference } from "../../src/features/relay/threads";
@@ -20,6 +21,7 @@ import {
   signed,
 } from "../../src/features/relay/testing";
 import type { RelayEvent } from "../../src/features/relay/events";
+import type { Attachment } from "../../src/features/relay/contracts";
 import "../../src/shared/styles/globals.css";
 
 const context = new Context();
@@ -31,8 +33,20 @@ createPluginManager(context, {
 const extensions = new ConversationService(context);
 const viewer = keypair(),
   relay = keypair();
+const media = [
+  { url: "https://fixture.test/media/one.png", video: false },
+  { url: "https://fixture.test/media/two.png", video: false },
+] as const satisfies readonly Attachment[];
 const roots = [
-  message(viewer, "one", "First root", 1),
+  signed(viewer, {
+    kind: 9,
+    content: "First root",
+    created_at: 1,
+    tags: [
+      ["h", "one"],
+      ...media.map((item) => ["imeta", `url ${item.url}`, "m image/png"]),
+    ],
+  }),
   message(viewer, "one", "Second root", 2),
   message(viewer, "two", "Other channel root", 3),
 ] as const;
@@ -59,7 +73,10 @@ const rejected = new Set<string>();
 const owner = createRelaySession({
   viewer: viewer.pubkey,
   relayAuthor: relay.pubkey,
-  media: () => undefined,
+  media: (url) =>
+    media.some((item) => item.url === url)
+      ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%23666'/%3E%3C/svg%3E"
+      : undefined,
   subscribe(callbacks) {
     incoming = callbacks.receive;
     return { update() {}, retry() {}, dispose() {} };
@@ -132,7 +149,9 @@ Object.assign(window, {
 });
 function Fixture() {
   const [selected, select] = useState(0),
-    [scope, setScope] = useState("fixture");
+    [scope, setScope] = useState("fixture"),
+    [review, setReview] = useState(false);
+  const reviewTrigger = useRef<HTMLButtonElement>(null);
   const root = roots[selected];
   if (!root) throw new Error("Missing fixture selection");
   const channelId = channelOf(root);
@@ -150,6 +169,13 @@ function Fixture() {
         >
           Switch scope
         </button>
+        <button
+          ref={reviewTrigger}
+          type="button"
+          onClick={() => setReview(true)}
+        >
+          Review image
+        </button>
       </nav>
       <div
         style={{
@@ -165,17 +191,33 @@ function Fixture() {
           channelId={channelId}
           channelName={channelId}
         />
-        <ThreadPanel
+        {!review && (
+          <ThreadPanel
+            extensions={extensions}
+            session={owner.session}
+            scope={scope}
+            channelId={channelId}
+            channelName={channelId}
+            messageId={root.id}
+            close={() => select(0)}
+            onOpenLink={() => false}
+          />
+        )}
+      </div>
+      {review && (
+        <MediaReviewViewer
+          attachment={media[0]}
           extensions={extensions}
           session={owner.session}
           scope={scope}
-          channelId={channelId}
-          channelName={channelId}
-          messageId={root.id}
-          close={() => select(0)}
-          onOpenLink={() => false}
+          channelId="one"
+          channelName="one"
+          messageId={roots[0].id}
+          initialTime={0}
+          restoreFocus={reviewTrigger}
+          close={() => setReview(false)}
         />
-      </div>
+      )}
     </>
   );
 }

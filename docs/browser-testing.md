@@ -240,3 +240,20 @@ reply, thread/channel/scope draft isolation, and a rejected reply retried with t
 same signed event and deduplicated echo. The fixture uses ephemeral keys and local
 transport only, without developer environment files, native windows or live relay.
 It is not a production-broker or long-thread newest-tail test.
+
+## Composer completion regressions
+
+`typeahead.spec.mjs` mounts the real Composer and bundled Emoji/Mentions providers
+with ephemeral signed session fixtures. It covers exact namesake recipient tags,
+channel/thread isolation, middle-of-draft replacement, IME/Escape/selection, late
+publications and query ABA, plugin/session revocation, stable-ID reorder, length
+rejection, live catalog/member changes, unrelated previews, delayed multi-word
+profiles, keyboard recovery and disabled/read-only DOM checks. The controlled
+provider fixture exercises the public publication contract without changing the
+host's acceptance machinery. `completion-layout.spec.mjs` uses the compiled app and
+actual Channels layout at 1280×832, 800×600, 480×400 and 390×844, including hit testing
+and unforced clicks. The thread case mounts the actual ThreadPanel beside another
+composer. Existing emoji/mention/edit/thread journeys remain in the gate.
+
+These are Chromium/WebKit browser results, not attended live-account, screen-reader,
+software-keyboard or native-packaged acceptance. Those require separate checking.

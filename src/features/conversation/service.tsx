@@ -9,6 +9,7 @@ import {
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
 import type {
   ComposerTool,
+  ComposerCompletion,
   InlineRenderer,
   ContributionReader,
 } from "./contracts";
@@ -16,6 +17,8 @@ import type {
 export type Conversation = {
   tools: ContributionReader<ComposerTool>;
   registerTool(tool: ComposerTool): void;
+  completions: ContributionReader<ComposerCompletion>;
+  registerCompletion(provider: ComposerCompletion): void;
   inline: ContributionReader<InlineRenderer>;
   registerInline(renderer: InlineRenderer): void;
   ui: {
@@ -28,7 +31,7 @@ declare module "@deepseek-ai/cordis" {
     conversation: Conversation;
   }
 }
-function validate(value: ComposerTool | InlineRenderer) {
+function validate(value: ComposerTool | InlineRenderer | ComposerCompletion) {
   if (
     !value ||
     !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
@@ -42,12 +45,20 @@ function validate(value: ComposerTool | InlineRenderer) {
 }
 export class ConversationService extends Service implements Conversation {
   readonly tools;
+  readonly completions;
+  private readonly completionEntries;
   readonly inline;
   private readonly toolEntries;
   private readonly inlineEntries;
   constructor(ctx: Context) {
     super(ctx, "conversation");
     const tools = createContributions<ComposerTool>(ctx);
+    const completions = createContributions<ComposerCompletion>(ctx);
+    this.completionEntries = completions;
+    this.completions = {
+      snapshot: completions.snapshot,
+      subscribe: completions.subscribe,
+    };
     const inline = createContributions<InlineRenderer>(ctx);
     this.toolEntries = tools;
     this.inlineEntries = inline;
@@ -57,6 +68,12 @@ export class ConversationService extends Service implements Conversation {
   registerTool(value: ComposerTool) {
     validate(value);
     this.toolEntries.register(this.ctx, value);
+  }
+  registerCompletion(value: ComposerCompletion) {
+    validate(value);
+    if (typeof value.match !== "function")
+      throw new Error("A completion provider needs a matcher");
+    this.completionEntries.register(this.ctx, value);
   }
   registerInline(value: InlineRenderer) {
     validate(value);

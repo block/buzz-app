@@ -49,4 +49,61 @@ export type ContributionReader<T> = Readonly<{
 export type ConversationExtensions = Readonly<{
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
+  completions?: ContributionReader<ComposerCompletion>;
+}>;
+
+/** Immutable host-issued evidence, scoped to one live editor observation. */
+export type ComposerObservation = Readonly<{
+  revision: number;
+  text: string;
+  start: number;
+  end: number;
+}>;
+export type CompletionContext = Pick<
+  ComposerToolProps,
+  "session" | "scope" | "channelId" | "threadRootId"
+>;
+export type CompletionQuery = Readonly<{
+  start: number;
+  end: number;
+  query: string;
+}>;
+export type CompletionEdit =
+  | Readonly<{ text: string; mention?: never }>
+  | Readonly<{
+      mention: Readonly<{ pubkey: string; name: string }>;
+      text?: never;
+    }>;
+export type CompletionSuggestion = Readonly<{
+  id: string;
+  label: string;
+  detail?: string;
+  /** Decorative presentation only; the host owns option semantics and interaction. */
+  preview?: import("react").ReactNode;
+  edit: CompletionEdit;
+}>;
+export type CompletionResult = Readonly<{
+  items: readonly CompletionSuggestion[];
+  status?: string;
+  /** Optional explicit recovery. A new query or disposal revokes this action. */
+  retry?: () => void;
+}>;
+export type ComposerCompletionProps = CompletionContext &
+  Readonly<{
+    observation: ComposerObservation;
+    query: CompletionQuery;
+    /** Publishes only for this query/lifetime; returns false after revocation.
+     * Cleanup of the returned disposer withdraws that exact publication. */
+    publish(result: CompletionResult): (() => void) | false;
+  }>;
+export type ComposerCompletion = Readonly<{
+  id: string;
+  title: string;
+  order?: number;
+  /** Pure syntax matcher. Host prefers the closest trigger; order/key break ties. */
+  match(
+    observation: ComposerObservation,
+    context: CompletionContext,
+  ): CompletionQuery | null;
+  component: ComponentType<ComposerCompletionProps>;
 }>;

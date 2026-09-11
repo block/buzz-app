@@ -1,3 +1,5 @@
+import mentionsManifest from "./mentions/manifest.json";
+import * as mentions from "./mentions";
 import emojiManifest from "./emoji/manifest.json";
 import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
@@ -13,6 +15,7 @@ import * as projects from "./projects";
 import type { BundledPlugin } from "../plugins/manager";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
+  { manifest: { ...mentionsManifest, apiVersion: 1 }, module: mentions },
   { manifest: { ...emojiManifest, apiVersion: 1 }, module: emoji },
   { manifest: { ...channelsManifest, apiVersion: 1 }, module: channels },
   { manifest: { ...githubManifest, apiVersion: 1 }, module: github },

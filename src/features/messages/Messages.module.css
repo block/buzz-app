@@ -26,7 +26,7 @@
   border: 0;
   background: var(--surface-control);
   padding: 7px 9px;
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .heading button[aria-pressed="true"] {
   background: var(--selected);
@@ -51,14 +51,14 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 11px;
+  font-size: calc(11px * var(--buzz-text-scale, 1));
   color: var(--text-muted);
   gap: 8px;
 }
 .edge button {
   border: 0;
   padding: 5px 10px;
-  font-size: 11px;
+  font-size: calc(11px * var(--buzz-text-scale, 1));
   color: var(--text-muted);
   background: var(--surface-control);
 }
@@ -67,7 +67,7 @@
   align-items: center;
   gap: 0;
   color: var(--text);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
   margin: 10px 0 30px;
 }
 .day::before,
@@ -91,7 +91,7 @@
   color: var(--text-muted);
   display: grid;
   place-items: center;
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
   overflow: hidden;
 }
 .avatar img {
@@ -108,16 +108,16 @@
   flex-wrap: wrap;
   align-items: baseline;
   gap: 8px;
-  font-size: 14px;
-  line-height: 20px;
+  font-size: calc(14px * var(--buzz-text-scale, 1));
+  line-height: calc(20px * var(--buzz-text-scale, 1));
 }
 .byline time {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .text {
   margin: 4px 0 0;
-  font-size: 15px;
+  font-size: calc(15px * var(--buzz-text-scale, 1));
   line-height: 1.5;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -152,7 +152,7 @@
   align-items: center;
   gap: 6px;
   margin-top: 10px;
-  font-size: 13px;
+  font-size: calc(13px * var(--buzz-text-scale, 1));
   color: var(--text);
 }
 .attachment {
@@ -162,7 +162,7 @@
   border: 1px solid var(--border);
   border-radius: 8px;
   color: var(--link);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .composer {
   border: 1px solid var(--border-input);
@@ -175,12 +175,12 @@
   flex-direction: column;
   gap: 6px;
   color: var(--text);
-  font-size: 14px;
+  font-size: calc(14px * var(--buzz-text-scale, 1));
 }
 .empty {
   padding: 30px 18px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--buzz-text-scale, 1));
   line-height: 1.6;
 }
 @media (max-width: 650px) {
@@ -220,7 +220,7 @@
 }
 .composerHint {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--buzz-text-scale, 1));
 }
 @media (max-width: 850px) {
   .composerHint {
@@ -233,7 +233,7 @@
   flex-wrap: wrap;
   gap: 8px;
   color: var(--warning);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
   margin-top: 6px;
 }
 .day span {
@@ -307,7 +307,7 @@
   border-top: 1px solid var(--border);
   padding: 12px 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .threadHistoryControls {
   flex-shrink: 0;
@@ -320,11 +320,11 @@
   padding: 6px 10px;
   background: var(--surface-accent);
   border: 0;
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .threadNote {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .threadHistoryControls .threadNote {
   width: 100%;
@@ -348,7 +348,7 @@
   border-radius: 50%;
   background: var(--surface-accent);
   color: var(--text-muted);
-  font-size: 9px;
+  font-size: calc(9px * var(--buzz-text-scale, 1));
   line-height: 1;
 }
 .threadAvatar img {
@@ -359,57 +359,12 @@
   object-fit: cover;
 }
 
-.mentionPopover {
-  position: absolute;
-  z-index: 30;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: min(380px, 75vw);
-  max-height: 360px;
-  overflow: auto;
-  padding: 12px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  box-shadow: var(--elevation-popover);
-}
-.mentionPopover label {
-  display: grid;
-  gap: 6px;
-}
-.mentionPopover p {
-  font-size: 12px;
-}
-.mentionChoices {
-  display: grid;
-  gap: 4px;
-}
-.mentionPopover button {
-  width: auto;
-  height: auto;
-  border-radius: 6px;
-}
-.mentionChoices button {
-  display: flex;
-  align-items: center;
-  justify-content: flex-start;
-  text-align: left;
-  padding: 8px;
-  gap: 10px;
-  background: transparent;
-  border: 0;
-  width: 100%;
-}
-.mentionChoices code {
-  font-size: 10px;
-  overflow-wrap: anywhere;
-}
 .mentionRecipients {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .mentionRecipients button {
   border-radius: 6px;
@@ -420,44 +375,8 @@
   border-color: var(--border);
   background: var(--action);
   color: var(--on-action);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .mentionRecipients code {
-  font-size: 10px;
-}
-
-.mentionChoices button:hover {
-  background: var(--surface-accent);
-}
-.mentionLabel {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-.mentionLabel > span {
-  font-size: 13px;
-  font-weight: 500;
-}
-.mentionLabel code {
-  display: block;
-  color: var(--text-muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-.mentionPopover p {
-  color: var(--text-muted);
-}
-.mentionPopover input {
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 7px 9px;
-}
-
-.pickerControls {
-  border: 0;
-  padding: 0;
-  margin: 0;
-  min-width: 0;
+  font-size: calc(10px * var(--buzz-text-scale, 1));
 }

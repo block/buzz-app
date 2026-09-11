@@ -7,10 +7,10 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import type { RelaySession } from "../relay/session";
-import styles from "./Messages.module.css";
+import type { RelaySession } from "../../features/relay/session";
+import styles from "./Mentions.module.css";
 
-import type { MentionRecipient } from "./mention-draft";
+import type { ComposerToolProps } from "../../features/conversation/contracts";
 
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
@@ -22,7 +22,7 @@ export function MentionPicker({
   session: RelaySession;
   channelId: string;
   disabled: boolean;
-  select(recipient: MentionRecipient): void;
+  select: ComposerToolProps["insertMention"];
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -131,8 +131,7 @@ export function MentionPicker({
                 aria-label={`${recipient.name} ${recipient.pubkey}`}
                 disabled={!!channel?.archived}
                 onClick={() => {
-                  select(recipient);
-                  setOpen(false);
+                  if (select(recipient)) setOpen(false);
                 }}
               >
                 <Avatar

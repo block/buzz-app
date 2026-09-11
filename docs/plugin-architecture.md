@@ -42,6 +42,7 @@ app/                    host, startup, navigation, Settings
 plugins/                installation, lifecycle, contribution ownership
 features/pages/         page contract and host rendering
 features/panels/        target resolution, launcher contract and reusable card/frame
+features/shortcuts/     in-app binding dispatch, focus rules and plugin ownership
 features/relay/         shared channel data, queries, profiles and durable delivery
 features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
@@ -84,7 +85,7 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie and Emoji. Projects
+The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji and Mentions. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
@@ -214,3 +215,100 @@ methods and stable `conversation.ui.Composer` / `.Message` components. Generated
 type-only `@buzz/author` declarations support the independent Composer Lab example.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
+
+### Composer ownership and mention tools
+
+The standard composer is reusable host UI in `features/messages`, not a mandatory
+Composer plugin. Page plugins may compose it through `conversation.ui.Composer`
+(or source props), or build their own editor against the shared session. Optional
+chooser UI belongs in tool plugins: `bundled/emoji` and `bundled/mentions` use the
+same `registerTool` contract. No page imports their implementations. Optional numeric
+`order` (default zero, lower first; ties by contribution key) keeps visual and
+keyboard order stable across asynchronous activation and re-enable. Mentions uses
+`-10` to retain its position before default-order tools such as Emoji.
+
+Tools receive `insertText`, `insertMention({ pubkey, name })` and `focus` commands.
+Mention insertion atomically records visible text and exact notification intent;
+`true` means the edit was accepted, **not** that membership or delivery succeeded.
+The host serializes successive commands using the latest draft and selection,
+enforces text/recipient limits, and revokes commands on tool removal/replacement,
+editor destination/session change, disabled/read-only state and unmount. Names are
+presentation, never recipient resolution. Editing/pasting over an identity span
+removes its intent under the existing draft rules.
+
+**User intent outlives the tool that created it.** Disabling Mentions removes its
+chooser, not selected recipients, their visible disclosure/removal controls, scoped
+drafts or pending messages. The session still owns roster/profile data, membership
+checks, signing and publication/retry. Plugins remain trusted same-process code;
+revocable editor commands do not sandbox the session capabilities they receive.
+
+This preview is host-matched: a tool using `insertMention` needs a host providing
+that command. The generated type-only `@buzz/author` package and `apiVersion: 1`
+are not runtime capability negotiation or cross-version compatibility promises.
+
+Typed-@ autocomplete is a future entry point into the same Mentions plugin. It
+needs draft/caret observation and a query-range replacement command guarded by
+current draft/selection evidence; otherwise selecting a result could insert after
+the partial query or overwrite newer text. The host should arbitrate keyboard,
+IME, selection and edit acceptance; the plugin owns matching and suggestions.
+Choosing a suggestion records exact identity; typing/pasting a name alone does not.
+Inline mention pills are also outside this toolbar extraction.
+
+Formatting needs selection transforms. Attachments and voice need shared media
+capabilities, destination-bound asynchronous work and cancellation; accepted
+material belongs to the draft, not the optional tool. Add these contracts against
+real workflows rather than declaring the toolbar a universal editor API.
+
+
+## In-app keyboard shortcuts
+
+The host composes one `ShortcutsService` in `app/services.ts`. Plugins declare
+`inject = ["shortcuts"]` and call `ctx.shortcuts.register(shortcut)`; their bindings
+use the same matching/dispatch rules as host-owned Settings and text sizing.
+There is no OS-wide hotkey registration, native accelerator API, or command bus.
+
+```ts
+import type { Context, Shortcut } from "@buzz/author";
+export const inject = ["shortcuts"];
+export function apply(ctx: Context) {
+  const shortcut: Shortcut = {
+    id: "show-details",
+    title: "Show details",
+    binding: { key: "k", mod: true, shift: true },
+    when: () => detailsViewIsAvailable(),
+    run: () => showDetails(),
+  };
+  ctx.shortcuts.register(shortcut);
+}
+```
+
+`binding` is one binding or a nonempty array of aliases. `key` matches the logical
+`KeyboardEvent.key` case-insensitively, not a physical `code` (Space is `" "`,
+not `"Space"`). `mod` means Command
+on Apple platforms and Control elsewhere; Shift/Alt and the other primary modifier
+match exactly. IME/AltGraph events and already-prevented events are never consumed.
+The window listener runs in the bubbling phase, after local editor handlers.
+
+By default bindings do not run in editable targets (including open Shadow DOM),
+while a dialog is open, or repeatedly on a held key. Explicit `allowInEditable`,
+`allowInModal` and `repeat` opt in; `when` checks current eligibility without
+re-registering. `run` may return a promise; throws/rejections are logged and isolated.
+Only a selected binding prevents the browser default. An eligible held binding
+still prevents the default when its repeat handler is suppressed.
+
+IDs are namespaced by installation. Only active revisions participate; disable,
+failed activation, replacement and Cordis disposal remove eligibility. Plugin ties
+are resolved by ascending namespaced ID, independent of activation order. Host
+bindings are reserved even while unavailable (Settings does not navigate behind a
+modal). `snapshot`/`subscribe` expose ready plugin registrations, not host bindings
+or a promise that every binding wins every current focus conflict. The host-only
+registration method is deliberately absent from the injected type contract; plugins
+remain trusted same-process code, not sandboxed adversaries.
+
+See [`shortcut-counter`](../examples/plugins/shortcut-counter/README.md) for a
+self-contained external plugin using the real service without a DOM listener.
+The generated type-only `@buzz/author` exports `Shortcuts`, `Shortcut`, `KeyBinding`
+and `RegisteredShortcut`. This is a host-matched preview: older hosts without the
+`shortcuts` capability cannot activate such a plugin. `apiVersion: 1` alone is not
+runtime feature negotiation. Chords, user rebinding, conflict UI and command palettes
+are outside this initial contract.

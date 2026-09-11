@@ -1,8 +1,11 @@
 import "../../src/shared/styles/globals.css";
-import { StrictMode, useState } from "react";
+import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
-import { MessageComposer } from "../../src/features/messages/MessageComposer";
+import { Context } from "@deepseek-ai/cordis";
+import { createPluginManager } from "../../src/plugins/manager";
+import { ConversationService } from "../../src/features/conversation/service";
+import { bundledPlugins } from "../../src/bundled";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
   keypair,
@@ -54,16 +57,64 @@ const owner = createRelaySession(
   { outboxStorage: { load: () => [], save: () => {} } },
 );
 owner.session.channels.ensureList();
+const context = new Context();
+const disabledCalls: {
+  inputDisabled: boolean | undefined;
+  text: boolean;
+  mention: boolean;
+}[] = [];
+const plugins = createPluginManager(context, {
+  bundled: [
+    ...bundledPlugins.filter(({ manifest }) =>
+      ["buzz.emoji", "buzz.mentions"].includes(manifest.id),
+    ),
+    {
+      manifest: {
+        id: "test.disabled-command",
+        name: "Disabled command probe",
+        apiVersion: 1,
+      },
+      module: {
+        inject: ["conversation"],
+        apply(ctx) {
+          ctx.conversation.registerTool({
+            id: "probe",
+            title: "Disabled command probe",
+            component: ({ disabled, insertText, insertMention }) => {
+              useLayoutEffect(() => {
+                if (disabled)
+                  disabledCalls.push({
+                    inputDisabled: document.querySelector("textarea")?.disabled,
+                    text: insertText("STALE"),
+                    mention: insertMention({
+                      pubkey: second.pubkey,
+                      name: "Honey",
+                    }),
+                  });
+              }, [disabled, insertText, insertMention]);
+              return null;
+            },
+          });
+        },
+      },
+    },
+  ],
+});
+const conversation = new ConversationService(context);
 Object.assign(window, {
   mentionFixture: {
     first: first.pubkey,
     second: second.pubkey,
     publications,
+    disabledCalls,
+    change: (action: "enable" | "disable", id: string) =>
+      plugins.change(action, id),
     outbox: () => owner.session.outbox?.snapshot(),
   },
 });
 function Fixture() {
   const [thread, setThread] = useState(false);
+  const [disabled, setDisabled] = useState(false);
   return (
     <main style={{ maxWidth: 700, padding: 40, marginTop: 380 }}>
       <button type="button" onClick={() => setThread(!thread)}>
@@ -79,7 +130,11 @@ function Fixture() {
       >
         Remove first Honey
       </button>
-      <MessageComposer
+      <button type="button" onClick={() => setDisabled(!disabled)}>
+        Toggle disabled
+      </button>
+      <conversation.ui.Composer
+        disabled={disabled}
         session={owner.session}
         scope="mentions-fixture"
         channelId="c"

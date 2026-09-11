@@ -12,3 +12,10 @@ export type {
   InlineRenderer,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
+
+export type {
+  Shortcuts,
+  Shortcut,
+  KeyBinding,
+  RegisteredShortcut,
+} from "../features/shortcuts/service";

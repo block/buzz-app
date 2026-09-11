@@ -1,5 +1,5 @@
 import type { ChangeEvent } from "react";
-import type { Context, ComposerToolProps, RelaySnapshot } from "@buzz/author";
+import type { Context, RelaySnapshot } from "@buzz/author";
 
 // Type-only author contract. The installed artifact has no private paths, React
 // copy, bundled Channels import, or runtime dependencies.
@@ -9,22 +9,6 @@ export function apply(ctx: Context) {
   const h = React.createElement;
   const ui = ctx.conversation;
   const relay = ctx.relay;
-  ui.registerTool({
-    id: "timestamp",
-    title: "Insert timestamp",
-    component: ({ disabled, insertText }: ComposerToolProps) =>
-      h(
-        "button",
-        {
-          type: "button",
-          disabled,
-          title: "Insert timestamp",
-          "aria-label": "Insert timestamp",
-          onClick: () => insertText(new Date().toISOString()),
-        },
-        "Time",
-      ),
-  });
   function Connected({ connection }: { connection: RelaySnapshot }) {
     const session = connection.session;
     const list = React.useSyncExternalStore(

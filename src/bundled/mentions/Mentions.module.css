@@ -1,0 +1,80 @@
+.mentionPopover {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 8px);
+  left: 0;
+  width: min(380px, 75vw);
+  max-height: 360px;
+  overflow: auto;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: var(--elevation-popover);
+}
+.mentionPopover label {
+  display: grid;
+  gap: 6px;
+}
+.mentionPopover p {
+  font-size: calc(12px * var(--buzz-text-scale, 1));
+}
+.mentionChoices {
+  display: grid;
+  gap: 4px;
+}
+.mentionPopover button {
+  width: auto;
+  height: auto;
+  border-radius: 6px;
+}
+.mentionChoices button {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  text-align: left;
+  padding: 8px;
+  gap: 10px;
+  background: transparent;
+  border: 0;
+  width: 100%;
+}
+.mentionChoices code {
+  font-size: calc(10px * var(--buzz-text-scale, 1));
+  overflow-wrap: anywhere;
+}
+.mentionChoices button:hover {
+  background: var(--surface-accent);
+}
+.mentionLabel {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+.mentionLabel > span {
+  font-size: calc(13px * var(--buzz-text-scale, 1));
+  font-weight: 500;
+}
+.mentionLabel code {
+  display: block;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.mentionPopover p {
+  color: var(--text-muted);
+}
+.mentionPopover input {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 9px;
+}
+
+.pickerControls {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}

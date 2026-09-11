@@ -3,7 +3,7 @@
   height: 100%;
   min-height: 0;
   color: var(--text);
-  font-size: 14px;
+  font-size: calc(14px * var(--buzz-text-scale, 1));
 }
 .root button {
   color: inherit;
@@ -71,7 +71,7 @@
 .channelSection > summary {
   padding: 6px 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
   font-weight: 600;
   cursor: pointer;
 }
@@ -85,7 +85,7 @@
   background: none;
   padding: 5px 8px;
   min-height: 30px;
-  line-height: 20px;
+  line-height: calc(20px * var(--buzz-text-scale, 1));
   border-radius: 10px;
   flex-shrink: 0;
 }
@@ -104,7 +104,7 @@
 .preferenceNotice {
   padding: 8px;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
   border-top: 1px solid var(--border);
 }
 .preferenceNotice button {
@@ -131,7 +131,7 @@
   border: 0;
   background: var(--surface-control);
   padding: 7px 9px;
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .heading button[aria-pressed="true"] {
   background: var(--selected);
@@ -151,7 +151,7 @@
 .empty {
   padding: 30px 18px;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: calc(13px * var(--buzz-text-scale, 1));
   line-height: 1.6;
 }
 .panelStack {
@@ -186,7 +186,7 @@
   margin-bottom: 16px;
 }
 .connect h1 {
-  font-size: 28px;
+  font-size: calc(28px * var(--buzz-text-scale, 1));
 }
 .connect p {
   max-width: 550px;
@@ -196,7 +196,7 @@
   margin: 15px 0;
 }
 .note {
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 @media (max-width: 1000px) {
   .board,
@@ -231,10 +231,10 @@
     padding: 12px;
   }
   .channelList button {
-    font-size: 12px;
+    font-size: calc(12px * var(--buzz-text-scale, 1));
   }
   .roster {
-    font-size: 10px;
+    font-size: calc(10px * var(--buzz-text-scale, 1));
   }
 }
 .channelList button span {
@@ -275,7 +275,7 @@
   border-radius: 14px;
   background: var(--surface);
   box-shadow: var(--elevation-popover);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .diagnosticsMenu summary {
   cursor: pointer;
@@ -288,7 +288,7 @@
   justify-content: space-between;
   gap: 8px;
   padding: 8px 16px;
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
   background: var(--warning-surface);
   color: var(--warning);
   border-bottom: 1px solid var(--border);

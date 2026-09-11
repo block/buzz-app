@@ -200,6 +200,12 @@ const storage: PluginStorage = {
     (await api("module", { id, revision })).code,
 };
 const ctx = new Context();
+type MentionCommand =
+  import("../../src/features/conversation/contracts").ComposerToolProps["insertMention"];
+const recipient = { pubkey: member.pubkey, name: "Member" };
+let savedMention: MentionCommand | undefined;
+let latestMention: MentionCommand | undefined;
+let removedMentionResult: boolean | undefined;
 let savedEdit: ((text: string) => boolean) | undefined;
 let latestEdit: ((text: string) => boolean) | undefined;
 let removedEditResult: boolean | undefined;
@@ -213,20 +219,34 @@ const probe = {
       ctx.conversation.registerTool({
         id: "probe",
         title: "Probe",
-        component: ({ insertText }) => {
+        component: ({ insertText, insertMention }) => {
           useLayoutEffect(() => {
             latestEdit = insertText;
-          }, [insertText]);
+            latestMention = insertMention;
+          }, [insertText, insertMention]);
           return (
-            <button
-              type="button"
-              onClick={() => {
-                insertText("ONE");
-                insertText("TWO");
-              }}
-            >
-              Insert twice
-            </button>
+            <>
+              <button
+                type="button"
+                onClick={() => {
+                  insertText("ONE");
+                  insertText("TWO");
+                }}
+              >
+                Insert twice
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  insertText("Hi ");
+                  insertMention(recipient);
+                  insertText("and ");
+                  insertMention(recipient);
+                }}
+              >
+                Insert mixed
+              </button>
+            </>
           );
         },
       });
@@ -250,15 +270,21 @@ conversation.tools.subscribe(() => {
   ) {
     attackRemoval = false;
     removedEditResult = savedEdit?.("STALE");
+    removedMentionResult = savedMention?.(recipient);
   }
 });
 ctx.provide("relay", relay);
 Object.assign(window, {
   conversationFixture: {
     report,
+    tools: () => conversation.tools.snapshot().map((tool) => tool.key),
     saveEdit() {
       savedEdit = latestEdit;
+      savedMention = latestMention;
     },
+    callSavedMention: () => savedMention?.(recipient),
+    removedMentionResult: () => removedMentionResult,
+    member: member.pubkey,
     callSaved: () => savedEdit?.("STALE"),
     removedResult: () => removedEditResult,
     async removeProbe() {

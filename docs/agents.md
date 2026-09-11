@@ -69,8 +69,10 @@ envelope/fixture validation does not certify the later compatibility adapter.
 
 The shared channel summary now exposes exact members from its existing verified
 relay-authored kind-39002 roster, without a second directory or subscription.
-`MessageComposer` offers **Mention a member** in both channels and threads. The
-picker shows keys alongside names (namesakes remain separate), reads optional
+The bundled **Mentions** plugin offers **Mention a member** in both channel and
+thread composers through the shared conversation tool contract. The host retains
+recipient intent, disclosure and removal even when the chooser plugin is disabled.
+The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Editing a selected span removes its
 notification intent. Native beforeinput ranges preserve untouched spans; missing

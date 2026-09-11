@@ -2,9 +2,11 @@
 
 All example plugins live here with `manifest.json` and prebuilt `plugin.js` files:
 
-- `composer-lab`: shared composer/message UI and timestamp tool. Requires the
+- `composer-lab`: test page for shared composer/message UI; adds no global tools. Requires the
   matching host conversation capability; sending posts to the selected channel.
 - `counter` and `notes`: offline playgrounds.
+- `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+K /
+  Control+Shift+K increments through the injected host service. Requires `shortcuts`.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.
 
 ## Try the offline playgrounds

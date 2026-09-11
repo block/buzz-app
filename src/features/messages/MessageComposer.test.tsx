@@ -1,6 +1,7 @@
 import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
 import { isValidElement, type ReactNode, type ReactElement } from "react";
-import { MentionPicker } from "./MentionPicker";
+import { ComposerTools } from "../conversation/ComposerTools";
+import type { ConversationExtensions } from "../conversation/contracts";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 
@@ -11,17 +12,30 @@ const hooks = vi.hoisted(() => ({
   refIndex: 0,
   index: 0,
   id: 0,
+  effects: [] as (() => void)[],
 }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useEffect: () => {},
-  useLayoutEffect: () => {},
+  useLayoutEffect: (effect: () => void) => hooks.effects.push(effect),
   useId: () => `composer-${++hooks.id}`,
   useRef: (initial: unknown) => {
     const i = hooks.refIndex++;
     if (!(i in hooks.refs))
       hooks.refs[i] = {
-        current: initial === null ? { focus: vi.fn() } : initial,
+        current:
+          initial === null
+            ? {
+                focus: vi.fn(),
+                isConnected: true,
+                selectionStart: 0,
+                selectionEnd: 0,
+                setSelectionRange(start: number, end: number) {
+                  this.selectionStart = start;
+                  this.selectionEnd = end;
+                },
+              }
+            : initial,
       };
     return hooks.refs[i];
   },
@@ -45,6 +59,7 @@ function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
 const storage = new Map<string, string>();
 beforeEach(() => {
   hooks.states = [];
+  hooks.effects = [];
   hooks.refs = [];
   hooks.refIndex = 0;
   hooks.index = hooks.id = 0;
@@ -58,6 +73,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 function mount(threadRootId?: string, scope = "scope", writable = true) {
   hooks.states = [];
+  hooks.effects = [];
   hooks.refs = [];
   hooks.refIndex = 0;
   const messages = {
@@ -73,17 +89,29 @@ function mount(threadRootId?: string, scope = "scope", writable = true) {
     hooks.index = hooks.refIndex = 0;
     const scoped = MessageComposer({
       session,
+      extensions: {} as ConversationExtensions,
       scope,
       channelId: "channel",
       channelName: "General",
       onSend,
       ...(threadRootId ? { threadRootId } : {}),
     });
-    return (
+    const tree = (
       scoped.type as (
         props: typeof scoped.props,
       ) => ReactElement<Record<string, unknown>>
     )(scoped.props);
+    const field = elements(tree).find((element) => element.type === "textarea");
+    if (field) {
+      const ref = field.props.ref as { current: HTMLTextAreaElement };
+      const length = (field.props.value as string).length;
+      ref.current.setSelectionRange(
+        Math.min(ref.current.selectionStart, length),
+        Math.min(ref.current.selectionEnd, length),
+      );
+    }
+    for (const effect of hooks.effects.splice(0)) effect();
+    return tree;
   };
   const input = () => {
     const field = elements(render()).find((e) => e.type === "textarea");
@@ -96,9 +124,12 @@ function mount(threadRootId?: string, scope = "scope", writable = true) {
     messages,
     onSend,
     type(text: string) {
-      (input().props.onInput as (e: unknown) => void)({
+      const field = input();
+      (field.props.onInput as (e: unknown) => void)({
         currentTarget: { value: text },
       });
+      const ref = field.props.ref as { current: HTMLTextAreaElement };
+      ref.current.setSelectionRange(text.length, text.length);
     },
     submit() {
       (render().props.onSubmit as (e: unknown) => void)({
@@ -202,9 +233,9 @@ it.each([undefined, "root"])(
     ).toEqual([]);
     h.type("Please help ");
     for (const recipient of [first, second]) {
-      const picker = elements(h.render()).find((e) => e.type === MentionPicker);
+      const picker = elements(h.render()).find((e) => e.type === ComposerTools);
       assert.exists(picker);
-      (picker.props.select as (value: unknown) => void)(recipient);
+      (picker.props.insertMention as (value: unknown) => void)(recipient);
     }
     h = mount(root);
     expect(
@@ -226,9 +257,9 @@ it.each([undefined, "root"])(
 it("deleting a mention or removing its chip removes notification intent", () => {
   const h = mount();
   const choose = () => {
-    const picker = elements(h.render()).find((e) => e.type === MentionPicker);
+    const picker = elements(h.render()).find((e) => e.type === ComposerTools);
     assert.exists(picker);
-    (picker.props.select as (v: unknown) => void)({
+    (picker.props.insertMention as (v: unknown) => void)({
       pubkey: "a".repeat(64),
       name: "Honey",
     });
@@ -250,9 +281,9 @@ it("deleting a mention or removing its chip removes notification intent", () => 
 it("ambiguous namesake deletion cannot notify the wrong remaining identity", () => {
   const h = mount();
   for (const key of ["a", "b"]) {
-    const picker = elements(h.render()).find((e) => e.type === MentionPicker);
+    const picker = elements(h.render()).find((e) => e.type === ComposerTools);
     assert.exists(picker);
-    (picker.props.select as (v: unknown) => void)({
+    (picker.props.insertMention as (v: unknown) => void)({
       pubkey: key.repeat(64),
       name: "Honey",
     });
@@ -260,4 +291,53 @@ it("ambiguous namesake deletion cannot notify the wrong remaining identity", () 
   h.type("@Honey help");
   h.submit();
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
+});
+
+it("serializes text and mention commands in one turn and rejects malformed recipients", () => {
+  const h = mount();
+  h.type("Hi ");
+  const tools = elements(h.render()).find((e) => e.type === ComposerTools);
+  assert.exists(tools);
+  const insertText = tools.props.insertText as (text: string) => boolean;
+  const insertMention = tools.props.insertMention as (
+    recipient: unknown,
+  ) => boolean;
+  expect(insertText("there ")).toBe(true);
+  expect(insertMention({ pubkey: "a".repeat(64), name: "Honey" })).toBe(true);
+  expect(insertText("and ")).toBe(true);
+  expect(insertMention({ pubkey: "b".repeat(64), name: "Honey" })).toBe(true);
+  expect(insertMention({ pubkey: "wrong", name: "Honey" })).toBe(false);
+  expect(insertMention({ pubkey: "a".repeat(64), name: "  " })).toBe(false);
+  expect(insertMention(null)).toBe(false);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "Hi there @Honey and @Honey ",
+    ["a".repeat(64), "b".repeat(64)],
+  );
+});
+
+it("rejects overlong or over-limit edits without changing the draft", () => {
+  const h = mount();
+  h.type("x".repeat(15999));
+  const tools = () => {
+    const tool = elements(h.render()).find((e) => e.type === ComposerTools);
+    assert.exists(tool);
+    return tool;
+  };
+  const recipient = { pubkey: "a".repeat(64), name: "Honey" };
+  expect(
+    (tools().props.insertMention as (r: unknown) => boolean)(recipient),
+  ).toBe(false);
+  expect(h.input().props.value).toBe("x".repeat(15999));
+  h.type("");
+  for (let i = 0; i < 32; i++)
+    expect(
+      (tools().props.insertMention as (r: unknown) => boolean)(recipient),
+    ).toBe(true);
+  const before = h.input().props.value;
+  expect(
+    (tools().props.insertMention as (r: unknown) => boolean)(recipient),
+  ).toBe(false);
+  expect(h.input().props.value).toBe(before);
 });

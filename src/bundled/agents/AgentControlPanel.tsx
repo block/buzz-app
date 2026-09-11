@@ -72,6 +72,8 @@ export function AgentControlPanel({ control }: { control: AgentControl }) {
           {state.status === "error" && (
             <p className="text-body-sm text-secondary">
               Showing the last host snapshot; process status may have changed.
+              You can still request Stop for these agents. Disabled settings and
+              process shutdown are unconfirmed until the host succeeds.
             </p>
           )}
           <AgentImport

@@ -68,14 +68,20 @@ fixture the controls simulate native responses, not agent execution.
   patches: missing key preserves; string replaces (including empty); null removes.
   Undo omits a patch again. Successful save clears entered values from UI state.
   Browser strings cannot promise zeroization. Unknown native fields stay native.
+  Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and
+  `GOOSE_MODEL`/`GOOSE_PROVIDER` (Goose) overrides win over Model/Provider
+  selectors; blank selectors do not erase them. ACP uses the same effective model.
 - Import previews only the chosen installed/development library. It exposes the
   source path and exact selected keys/destinations; nothing selects all by default.
   Only explicit commit imports, always disabled. No key minting, enrollment or
   source-store write. Native must reject changed source and duplicate ownership.
 - Operations are serialized in this projection, and old pre-write reads cannot
-  overwrite newer command evidence. Failed commands retain the last snapshot and
-  draft with an explicit unknown-result warning; a fresh host read is required
-  before retry. No automatic write retry or process recovery loop in TypeScript.
+  overwrite newer command evidence. Failed reads/commands retain the last snapshot
+  and draft with explicit uncertainty. Start/Restart/Save/import require a fresh
+  successful host read before retry. Explicit Stop is the only recovery exception:
+  it remains available for identities in the retained snapshot, even if that stale
+  snapshot says stopped/disabled. Failed durable disable remains unconfirmed;
+  Stop is never automatically retried. No process recovery loop in TypeScript.
 
 ## Checks and remaining acceptance
 
@@ -85,7 +91,10 @@ save/restart distinction, literal arguments and environment patch semantics.
 `tests/browser/agent-control.spec.mjs` drives the real editor and capability over
 the isolated fake host in Chromium/WebKit: dirty refresh, save failure, revisions,
 write-only replacement, Stop, unmount without control actions, selected import,
-browser unavailability and narrow dark layout. These do not prove native IPC,
+browser unavailability and narrow dark layout. Mounted recovery cases start with
+running and stopped snapshots, fail status reads, then exercise explicit Stop
+through the real capability; failed durable disable retains uncertainty and drafts.
+These do not prove native IPC,
 persistence, secure custody, process teardown or a working listener.
 
 The integration batch still needs `just scan`, protected wiring review, native

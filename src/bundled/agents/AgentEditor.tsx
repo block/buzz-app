@@ -1,8 +1,9 @@
 import { useState } from "react";
-import type {
-  AgentControl,
-  AgentControlState,
-  AgentView,
+import {
+  canStopAgent,
+  type AgentControl,
+  type AgentControlState,
+  type AgentView,
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
@@ -79,7 +80,7 @@ export function AgentEditor({
             </Button>
           )}
           <Button
-            disabled={blocked || (!agent.enabled && agent.status === "stopped")}
+            disabled={!canStopAgent(state, agent.id)}
             onClick={() => act("stop")}
           >
             Stop
@@ -204,6 +205,12 @@ export function AgentEditor({
                 />
               </label>
             </div>
+            <p className="text-body-sm text-secondary">
+              Saved environment overrides take precedence over Model and
+              Provider: BUZZ_AGENT_MODEL / BUZZ_AGENT_PROVIDER for buzz-agent,
+              GOOSE_MODEL / GOOSE_PROVIDER for Goose. Blank selectors do not
+              clear those overrides. ACP uses the same effective model.
+            </p>
           </fieldset>
           <AgentEnvironmentEditor
             keys={agent.harness.environmentKeys}

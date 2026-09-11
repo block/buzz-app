@@ -68,6 +68,18 @@ export interface AgentControl {
   commitImport: AgentControlHost["commitImport"];
 }
 
+/** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
+export function canStopAgent(state: AgentControlState, id: string): boolean {
+  if (state.busy) return false;
+  const agent = state.data?.agents.find((candidate) => candidate.id === id);
+  return (
+    !!agent &&
+    (state.status === "error" ||
+      (state.status === "ready" &&
+        (agent.enabled || agent.status !== "stopped")))
+  );
+}
+
 export const agentControlUnavailable =
   "Local agent controls require the desktop app. This browser cannot run or manage agent processes.";
 
@@ -123,10 +135,11 @@ export function createAgentControl(
   async function run<T>(
     operation: (host: AgentControlHost) => Promise<T>,
     apply: (result: T) => void,
+    allowRecoveryStop = false,
   ): Promise<T> {
     if (!host || disposed) throw new Error(agentControlUnavailable);
     if (state.busy) throw new Error("Another agent operation is in progress.");
-    if (state.status !== "ready")
+    if (state.status !== "ready" && !allowRecoveryStop)
       throw new Error("Refresh local agents before trying again.");
     const current = ++generation;
     // A pre-write read must not overwrite this command, even when it completes later.
@@ -143,7 +156,7 @@ export function createAgentControl(
       const detail = typeof error === "string" ? `${error} ` : "";
       update({
         status: "error",
-        error: `${detail}Could not confirm the operation. Refresh status before trying again; your edits are retained.`,
+        error: `${detail}Could not confirm the operation. Refresh status before other operations; Stop remains available for known agents. Your edits are retained.`,
       });
       throw new Error("Could not confirm the agent operation.");
     } finally {
@@ -162,7 +175,12 @@ export function createAgentControl(
     refresh,
     save: (id, revision, edit) =>
       run((native) => native.save(id, revision, edit), ready),
-    action: (id, action) => run((native) => native.action(id, action), ready),
+    action: (id, action) =>
+      run(
+        (native) => native.action(id, action),
+        ready,
+        action === "stop" && canStopAgent(state, id),
+      ),
     previewImport: (source) =>
       run(
         (native) => native.previewImport(source),

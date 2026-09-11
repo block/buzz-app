@@ -49,7 +49,7 @@ it("does not optimistically mark an action successful or admit concurrent writes
   expect(control.snapshot().data?.agents).toEqual([]);
   expect(control.snapshot().busy).toBe(false);
 });
-it("uncertain writes retain last evidence and require refresh before another operation", async () => {
+it("uncertain writes retain last evidence and allow only explicit recovery Stop", async () => {
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);
   await control.refresh();
@@ -62,9 +62,15 @@ it("uncertain writes retain last evidence and require refresh before another ope
   expect(control.snapshot().error).not.toContain("RAW OUTPUT");
   expect(control.snapshot().status).toBe("error");
   expect(control.snapshot().data?.agents[0]?.status).toBe("running");
-  await expect(control.action("fixture-agent", "stop")).rejects.toThrow(
+  await expect(control.action("fixture-agent", "start")).rejects.toThrow(
     "Refresh",
   );
+  await expect(control.action("fixture-agent", "stop")).rejects.toThrow(
+    "confirm",
+  );
+  expect(fixture.host.action).toHaveBeenCalledTimes(2);
+  expect(control.snapshot().status).toBe("error");
+  expect(control.snapshot().data?.agents[0]?.enabled).toBe(true);
   await control.refresh();
   expect(control.snapshot().status).toBe("ready");
 });
@@ -108,6 +114,66 @@ it("failed refresh exposes retry while retaining the last snapshot", async () =>
   await control.refresh();
   expect(control.snapshot().status).toBe("error");
   expect(control.snapshot().data?.agents).toHaveLength(1);
+});
+it("status failure admits only Stop for a retained identity and still serializes it", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  vi.spyOn(fixture.host, "snapshot").mockRejectedValue("unreadable store");
+  await control.refresh();
+  const before = [...fixture.calls];
+  const edit = agentEdit(agentDraft(fixture.agent));
+  for (const attempt of [
+    () => control.action("fixture-agent", "start"),
+    () => control.action("fixture-agent", "restart"),
+    () => control.action("unknown-agent", "stop"),
+    () => control.save("fixture-agent", 1, edit),
+    () => control.previewImport("installed"),
+    () => control.commitImport("fixture-preview", ["second-fixture"]),
+  ]) {
+    await expect(attempt()).rejects.toThrow("Refresh");
+  }
+  expect(fixture.calls).toEqual(before);
+  const action = deferred<typeof fixture.data>();
+  const nativeAction = vi
+    .spyOn(fixture.host, "action")
+    .mockReturnValue(action.promise);
+  const stopping = control.action("fixture-agent", "stop");
+  expect(nativeAction).toHaveBeenCalledExactlyOnceWith("fixture-agent", "stop");
+  expect(control.snapshot().busy).toBe(true);
+  await expect(control.action("fixture-agent", "stop")).rejects.toThrow(
+    "in progress",
+  );
+  action.resolve({ ...fixture.data, agents: [] });
+  await stopping;
+  expect(control.snapshot().status).toBe("ready");
+});
+it("Stop recovery requires retained evidence, an available host and a live projection", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await expect(control.action("fixture-agent", "stop")).rejects.toThrow(
+    "Refresh",
+  );
+  const read = vi
+    .spyOn(fixture.host, "snapshot")
+    .mockRejectedValue("unreadable store");
+  await control.refresh();
+  await expect(control.action("fixture-agent", "stop")).rejects.toThrow(
+    "Refresh",
+  );
+  read.mockRestore();
+  await control.refresh();
+  control.dispose();
+  await expect(control.action("fixture-agent", "stop")).rejects.toThrow(
+    "desktop app",
+  );
+  const browser = createAgentControl(null);
+  await expect(browser.action("fixture-agent", "stop")).rejects.toThrow(
+    "desktop app",
+  );
+  expect(fixture.calls.filter((call) => call.action !== "snapshot")).toEqual(
+    [],
+  );
 });
 it("import forwards exact selection and never starts imported agents", async () => {
   const fixture = controlFixture();

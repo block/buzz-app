@@ -143,6 +143,82 @@
   color: var(--text);
   font-weight: 550;
 }
+.channelRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  border-radius: 10px;
+}
+.channelRow .channelLink {
+  min-width: 0;
+  flex: 1;
+}
+.channelRow:has(.channelLink:hover),
+.channelRow:has(.channelLink[aria-current="page"]),
+.channelRow[data-menu-open="true"] {
+  background: var(--surface-hover);
+}
+.channelRow .channelLink:hover,
+.channelRow .channelLink[aria-current="page"] {
+  background: transparent;
+}
+.channelRow:has(.channelLink[aria-current="page"]) {
+  background: var(--surface-accent);
+}
+.channelRow .rowMenuButton {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  justify-content: center;
+  color: var(--text-muted);
+  opacity: 0;
+}
+.channelRow:hover .rowMenuButton,
+.channelRow:focus-within .rowMenuButton,
+.rowMenuButton[aria-expanded="true"] {
+  opacity: 1;
+}
+.rowMenu {
+  position: fixed;
+  z-index: 6;
+  width: min(190px, calc(100vw - 16px));
+  max-height: min(320px, calc(100vh - 16px));
+  overflow-y: auto;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--elevation-popover);
+}
+.rowMenu .rowMenuLabel,
+.rowMenu p {
+  margin: 0;
+  padding: 5px 8px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--buzz-text-scale, 1));
+  line-height: 16px;
+}
+.rowMenu button {
+  gap: 7px;
+  min-height: 30px;
+}
+.rowMenu button[aria-checked="true"] {
+  background: var(--surface-accent);
+  font-weight: 600;
+}
+.rowMenu button[aria-checked="true"]::after {
+  content: "✓";
+  margin-inline-start: auto;
+}
+.rowMenu button:disabled {
+  opacity: 0.55;
+}
+@media (hover: none) {
+  .channelRow .rowMenuButton {
+    opacity: 1;
+  }
+}
+
 .preferenceNotice {
   padding: 8px;
   color: var(--text-muted);

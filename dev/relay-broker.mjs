@@ -11,6 +11,8 @@ import {
 import { readAgentLibrary } from "./agent-library.mjs";
 import {
   decodeSidebarPreferences,
+  assertSidebarAssignmentIntent,
+  mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
@@ -46,6 +48,7 @@ const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
   MAX_MEDIA_BYTES = 20 * 1024 * 1024,
+  SIDEBAR_HEAD_BYTES = SIDEBAR_REQUEST_BYTES + 4096,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -279,6 +282,26 @@ export function relayBrokerPlugin({
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
+      const readSidebarHead = async (response) => {
+        if (!response.body) throw new Error("Sidebar group response missing");
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        let bytes = 0,
+          text = "";
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) return JSON.parse(text + decoder.decode());
+            bytes += value.byteLength;
+            if (bytes > SIDEBAR_HEAD_BYTES)
+              throw new Error("Sidebar group response exceeds capacity");
+            text += decoder.decode(value, { stream: true });
+          }
+        } finally {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+      };
       // Discovery is lazy and independent for each community; unavailable relays never block startup.
       const registered = new Map(Object.entries(aliases));
       const authorities = new Map();
@@ -318,6 +341,7 @@ export function relayBrokerPlugin({
       let inflight = 0;
       let sidebarUploads = 0;
       let libraryRead;
+      const sidebarMutations = new Map();
       const streams = new Map();
       const admissions = createHostAdmission();
       server.httpServer?.once("close", () => {
@@ -485,6 +509,146 @@ export function relayBrokerPlugin({
               sidebarUploads--;
             }
           }
+          if (
+            route === "/api/relay/sidebar-assignment" &&
+            req.method === "POST"
+          ) {
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 2048)
+                return json(res, 413, {
+                  error: "Sidebar assignment intent is too large",
+                });
+            }
+            let intent;
+            try {
+              intent = JSON.parse(raw);
+              assertSidebarAssignmentIntent(intent);
+            } catch {
+              return json(res, 400, {
+                error: "Invalid sidebar assignment intent",
+              });
+            }
+            const request = new AbortController();
+            const close = () => request.abort();
+            res.once("close", close);
+            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
+            const mutation = previous
+              .catch(() => {})
+              .then(async () => {
+                request.signal.throwIfAborted();
+                const filter = [
+                  {
+                    kinds: [30078],
+                    authors: [viewer],
+                    "#d": ["channel-sections"],
+                    limit: 1,
+                  },
+                ];
+                const auth = (path, body) => {
+                  const value = JSON.stringify(body);
+                  return {
+                    value,
+                    event: finalizeEvent(
+                      {
+                        kind: 27235,
+                        created_at: Math.floor(Date.now() / 1000),
+                        content: "",
+                        tags: [
+                          ["u", `${relay}${path}`],
+                          ["method", "POST"],
+                          [
+                            "payload",
+                            createHash("sha256").update(value).digest("hex"),
+                          ],
+                          ["nonce", randomBytes(16).toString("hex")],
+                        ],
+                      },
+                      key,
+                    ),
+                  };
+                };
+                const readHead = async () => {
+                  const query = auth("/query", filter);
+                  const response = await fetchUpstream(`${relay}/query`, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization:
+                        "Nostr " +
+                        Buffer.from(JSON.stringify(query.event)).toString(
+                          "base64",
+                        ),
+                    },
+                    body: query.value,
+                    redirect: "error",
+                    signal: AbortSignal.any([
+                      request.signal,
+                      AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                    ]),
+                  });
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar group query failed (${response.status})`,
+                    );
+                  return readSidebarHead(response);
+                };
+                const publishEvent = async (event) => {
+                  const publication = auth("/events", event);
+                  const response = await fetchUpstream(`${relay}/events`, {
+                    method: "POST",
+                    headers: {
+                      "Content-Type": "application/json",
+                      Authorization:
+                        "Nostr " +
+                        Buffer.from(JSON.stringify(publication.event)).toString(
+                          "base64",
+                        ),
+                    },
+                    body: publication.value,
+                    redirect: "error",
+                    signal: AbortSignal.any([
+                      request.signal,
+                      AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                    ]),
+                  });
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar group publish failed (${response.status})`,
+                    );
+                  const receipt = await response.json();
+                  if (
+                    receipt.event_id !== event.id ||
+                    receipt.accepted !== true
+                  )
+                    throw new Error(
+                      "Sidebar group publication was not accepted",
+                    );
+                };
+                return mutateSidebarAssignment(
+                  intent,
+                  key,
+                  readHead,
+                  publishEvent,
+                );
+              });
+            sidebarMutations.set(relay, mutation);
+            try {
+              return json(res, 200, await mutation);
+            } catch (error) {
+              return json(res, 502, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : "Sidebar assignment failed",
+              });
+            } finally {
+              res.off("close", close);
+              if (sidebarMutations.get(relay) === mutation)
+                sidebarMutations.delete(relay);
+            }
+          }
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
               // Share concurrent reads, never retain the local snapshot after completion.
@@ -509,6 +673,7 @@ export function relayBrokerPlugin({
               writeKinds: [9],
               sidebarPreferences: true,
               readState: true,
+              sidebarPreferenceWrites: true,
               agentLibrary: true,
               live: true,
             });

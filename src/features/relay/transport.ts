@@ -5,7 +5,12 @@ import {
   readSnapshotText,
 } from "./read-state-snapshot";
 import type { AgentLibraryReader } from "../agents/library";
-import type { SidebarDecoder, SidebarPreferences } from "./sidebar-preferences";
+import {
+  projectSidebarPreferences,
+  type SidebarAssignmentMutator,
+  type SidebarDecoder,
+  type SidebarPreferences,
+} from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
 import {
@@ -45,6 +50,8 @@ export interface ReadTransport {
     requestId: string,
     priority: "foreground" | "background",
   ): Promise<RelayEvent[]>;
+  /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
+  readonly writeSidebarAssignment?: SidebarAssignmentMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -144,6 +151,7 @@ export async function connectBrokerTransport(
     relayUrl?: string;
     live?: boolean;
     sidebarPreferences?: boolean;
+    sidebarPreferenceWrites?: boolean;
     agentLibrary?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
@@ -282,6 +290,36 @@ export async function connectBrokerTransport(
               session.readStateCommunity as string,
               signal,
             );
+          },
+        }
+      : {}),
+    ...(session.sidebarPreferenceWrites
+      ? {
+          async writeSidebarAssignment(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-assignment`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as SidebarPreferences;
+            const groups = projectSidebarPreferences(
+              {
+                version: 1,
+                sections: value.sections,
+                assignments: value.assignments,
+              },
+              undefined,
+            );
+            return {
+              sections: groups.sections,
+              assignments: groups.assignments,
+            };
           },
         }
       : {}),

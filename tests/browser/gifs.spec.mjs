@@ -130,6 +130,8 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     };
   };
   const emojiSearchStyle = await emojiSearch.evaluate(searchStyle);
+  expect(emojiSearchStyle.fontFamily).toMatch(/^Inter, /);
+  expect(emojiSearchStyle.fontFamily).not.toContain("Inter Variable");
   const emojiContentHeight = (
     await page.locator("em-emoji-picker").boundingBox()
   ).height;

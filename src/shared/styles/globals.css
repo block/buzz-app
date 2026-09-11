@@ -1,15 +1,22 @@
+/* The host owns the sole reset and appearance lifecycle. No viewer/workspace imports. */
+@layer theme, base, components, utilities;
 @import "tailwindcss";
+@import "../design-system/styles/tokens.css";
+@import "../design-system/styles/typography.css";
+@import "../design-system/styles/materials.css";
+@import "../design-system/styles/components.css";
+@import "../design-system/styles/chips.css";
 @import "./tokens.css";
 
-/* The staged system is rendered in its own document, not adopted by the host. */
-@source not "../design-system";
+@source "../design-system/ui";
 @source not "../../../tests/fixtures/design-system";
 
 @custom-variant dark (
   &:where([data-color-mode="dark"], [data-color-mode="dark"] *)
 );
 
-/* One palette, exposed to both CSS modules and Tailwind utilities. */
+/* Legacy utility compatibility. Prefix-specific primary avoids stealing the
+   system's text-primary and border-primary meanings. */
 @theme inline {
   /* Scale type, not Tailwind spacing (which is also rem-based). Plugins can
      consume these utilities or multiply custom font sizes by --buzz-text-scale. */
@@ -26,11 +33,12 @@
   --text-7xl: calc(4.5rem * var(--buzz-text-scale, 1));
   --text-8xl: calc(6rem * var(--buzz-text-scale, 1));
   --text-9xl: calc(8rem * var(--buzz-text-scale, 1));
-  --font-sans:
+  --font-mono: var(--buzz-mono-family);
+  --font-legacy-sans:
     Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
   --radius-3xl: var(--radius-card);
-  --radius-xl: var(--radius-control);
+  --radius-xl: var(--radius-legacy-control);
   --color-ink: var(--text);
   --color-muted: var(--text-muted);
   --color-line: var(--border);
@@ -39,7 +47,6 @@
   --color-surface: var(--surface);
   --color-elevated: var(--surface-elevated);
   --color-shell-edge: var(--shell-edge);
-  --color-primary: var(--primary);
   --color-on-primary: var(--on-primary);
   --color-input-line: var(--border-input);
   --color-hover: var(--surface-hover);
@@ -56,7 +63,7 @@
 
 @layer base {
   :root {
-    font-family: var(--font-sans);
+    font-family: var(--font-legacy-sans);
     color: var(--text);
     background: var(--workspace);
     font-synthesis: none;
@@ -69,47 +76,41 @@
     font-size: calc(1rem * var(--buzz-text-scale, 1));
     margin: 0;
   }
-  button {
+  button:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
     cursor: pointer;
     border: 1px solid var(--border);
-    border-radius: var(--radius-control);
+    border-radius: var(--radius-legacy-control);
     padding: 8px 14px;
     background: var(--surface);
     color: var(--accent);
     font: inherit;
     font-size: calc(14px * var(--buzz-text-scale, 1));
   }
-  input,
-  textarea,
-  select {
+  input:not(:where([data-buzz-ui], [data-buzz-ui] *)),
+  textarea:not(:where([data-buzz-ui], [data-buzz-ui] *)),
+  select:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
     color: inherit;
     accent-color: var(--primary);
   }
-  input::placeholder,
-  textarea::placeholder {
+  input:not(:where([data-buzz-ui], [data-buzz-ui] *))::placeholder,
+  textarea:not(:where([data-buzz-ui], [data-buzz-ui] *))::placeholder {
     color: var(--text-muted);
     opacity: 1;
   }
-  button:hover {
+  button:not(:where([data-buzz-ui], [data-buzz-ui] *)):hover {
     background: var(--surface-accent);
   }
-  :where(
-    button,
-    a,
-    input,
-    textarea,
-    select,
-    summary,
-    [tabindex]
+  :where(button, a, input, textarea, select, summary, [tabindex]):not(
+    :where([data-buzz-ui], [data-buzz-ui] *)
   ):focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 3px;
   }
-  button:disabled {
+  button:not(:where([data-buzz-ui], [data-buzz-ui] *)):disabled {
     opacity: 0.5;
     cursor: default;
   }
-  h1 {
+  h1:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
     font-size: clamp(
       calc(28px * var(--buzz-text-scale, 1)),
       calc(4vw * var(--buzz-text-scale, 1)),
@@ -120,17 +121,17 @@
     margin: 8px 0 24px;
     letter-spacing: -1px;
   }
-  h2 {
+  h2:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
     font-size: calc(22px * var(--buzz-text-scale, 1));
     margin: 28px 0 8px;
     font-weight: 600;
   }
-  h3 {
+  h3:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
     font-size: calc(17px * var(--buzz-text-scale, 1));
     margin: 0 0 6px;
     font-weight: 600;
   }
-  p {
+  p:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
     line-height: 1.6;
     margin: 8px 0;
     overflow-wrap: anywhere;
@@ -146,7 +147,7 @@
   }
   .ui-choice {
     border: 1px solid var(--border-input);
-    border-radius: var(--radius-control);
+    border-radius: var(--radius-legacy-control);
     background: var(--surface);
     color: var(--text);
   }
@@ -231,4 +232,68 @@
   .danger {
     @apply text-danger;
   }
+}
+
+/* Host text preference feeds the system ramp exactly once; rem geometry is unchanged.
+   Legacy palette, canvas, radii and type remain deliberately independent until migrated. */
+:root {
+  --type-scale: var(--buzz-text-scale, 1);
+  --buzz-mono-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  --default-mono-font-family: var(--buzz-mono-family);
+}
+
+@layer base {
+  body {
+    font-family: var(--font-legacy-sans);
+    line-height: 1.5;
+    letter-spacing: normal;
+  }
+}
+
+@layer base {
+  :where([data-buzz-ui]) {
+    color: var(--text-primary);
+  }
+}
+
+@layer components {
+  /* Components carry the boundary themselves, including portal roots. Product
+     compositions can opt in with the same marker without copying component CSS. */
+  [data-buzz-ui] {
+    --buzz-mono-family: var(--font-system-mono);
+    font-family: var(--font-sans);
+    font-size: var(--text-body);
+    line-height: var(--text-body--line-height);
+    letter-spacing: var(--text-body--letter-spacing);
+    font-weight: var(--text-body--font-weight);
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  .inline-chip[data-buzz-ui] {
+    font: inherit;
+  }
+
+  html:not([data-keyboard-navigation])
+    :where([data-buzz-ui], [data-buzz-ui] *):focus-visible {
+    outline: none;
+  }
+}
+
+@layer base {
+  :where([data-buzz-ui]) :where(code, kbd, pre, samp) {
+    font-family: var(--buzz-mono-family);
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* Explicit legacy utility: a primary theme key competes with text-primary
+   during utility inference. Keep the old fill without registering that key. */
+@utility bg-primary {
+  background-color: var(--primary);
+}
+@utility bg-primary-hover {
+  background-color: color-mix(in oklab, var(--primary) 90%, transparent);
 }

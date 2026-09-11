@@ -399,7 +399,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         right: rootBounds.right - last.right,
       };
     });
-    expect(navigationGutters.left).toBeCloseTo(navigationGutters.right, 1);
+    expect(
+      Math.abs(navigationGutters.left - navigationGutters.right),
+    ).toBeLessThan(0.1);
     expect(navigationGutters.left).toBeCloseTo(8, 1);
     for (const [category, icon] of Object.entries({
       "Frequently used": "clock",

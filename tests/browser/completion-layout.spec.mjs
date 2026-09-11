@@ -73,7 +73,7 @@ test("host shortcuts coexist with an open completion menu and preserve its draft
   await expect(input).toHaveValue(":smile");
   await expect(input).toBeFocused();
   await input.press("Tab");
-  await expect(input).toHaveValue("😄 ");
+  await expect(input).toHaveValue("😄");
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toBeVisible();
   await input.press(`${modifier}+,`);

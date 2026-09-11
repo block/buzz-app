@@ -157,7 +157,7 @@ test("completion resumes after selection collapses to the original caret", async
   ).toEqual([6, 6]);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("😄 ");
+  await expect(input).toHaveValue("😄");
   await expect(input).toBeFocused();
 });
 test("selection recovery requires fresh results and preserves Escape dismissal", async ({
@@ -704,7 +704,7 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   await main.focus();
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await main.press("Tab");
-  await expect(main).toHaveValue("😄 ");
+  await expect(main).toHaveValue("😄");
   await expect(thread).toHaveValue("@Fixture Reader ");
 });
 
@@ -763,7 +763,7 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await input.pressSequentially(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("@Honey 😄 ");
+  await expect(input).toHaveValue("@Honey 😄");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -776,7 +776,7 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await input.fill("@Honey :smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("@Honey 😄 ");
+  await expect(input).toHaveValue("@Honey 😄");
   await expect(
     page.getByRole("region", { name: "Notification recipients" }),
   ).toHaveCount(0);

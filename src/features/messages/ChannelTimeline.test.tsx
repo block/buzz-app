@@ -3,7 +3,7 @@ import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
 import { ChannelTimeline } from "./ChannelTimeline";
 import type { RelaySession } from "../relay/session";
-import type { ChannelMessage } from "../relay/contracts";
+import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 
 // Boundary test, not a browser renderer. Capture this production component's
 // effects/refs and invoke its returned DOM handlers. Deliberately stale Virtua
@@ -39,6 +39,13 @@ vi.mock("react", async (original) => ({
         hooks.states[index] = value;
       },
     ];
+  },
+  useCallback(value: unknown, deps: readonly unknown[]) {
+    const index = hooks.memo++;
+    const old = hooks.memos[index];
+    if (!old || deps.some((value, i) => value !== old.deps[i]))
+      hooks.memos[index] = { deps, value };
+    return hooks.memos[index]?.value;
   },
   useMemo(factory: () => unknown, deps: readonly unknown[]) {
     const index = hooks.memo++;
@@ -76,6 +83,8 @@ vi.mock("../relay/react", () => ({
 afterEach(() => vi.unstubAllGlobals());
 
 function setup({
+  freshness = "verified" as NonNullable<ChannelWindow["freshness"]>,
+  status = "ready" as ChannelWindow["status"],
   hasMore = false,
   loadingOlder = false,
   historyLimited = false,
@@ -175,6 +184,8 @@ function setup({
     onWheel: () => void;
   }>;
   let section: Section;
+  let channelId = "channel";
+  let key: string | null = null;
   const flush = () => {
     for (const [id, callback] of frames) {
       frames.delete(id);
@@ -184,12 +195,13 @@ function setup({
   function render(runFrames = true) {
     hooks.ref = hooks.state = hooks.memo = hooks.effect = 0;
     const scoped = ChannelTimeline({
-      channelId: "channel",
+      channelId,
       scope: "scope",
       queries,
       window: {
-        channelId: "channel",
-        status: "ready",
+        channelId,
+        status,
+        freshness,
         error,
         rows,
         hasMore,
@@ -198,6 +210,17 @@ function setup({
       },
       onOpenLink: () => false,
     });
+    if (key !== null && key !== scoped.key) {
+      for (const effect of hooks.effects) effect.cleanup?.();
+      Object.assign(hooks, {
+        refs: [],
+        states: [],
+        memos: [],
+        effects: [],
+        pending: [],
+      });
+    }
+    key = scoped.key;
     section = (scoped.type as (props: typeof scoped.props) => Section)(
       scoped.props,
     );
@@ -220,6 +243,29 @@ function setup({
     handle,
     loadOlder,
     flush,
+    navigate(next: string) {
+      channelId = next;
+      render();
+      render();
+    },
+    update(patch: Partial<ChannelWindow>) {
+      if (patch.freshness) freshness = patch.freshness;
+      if ("status" in patch && patch.status) status = patch.status;
+      if ("error" in patch) error = patch.error;
+      if ("loadingOlder" in patch) loadingOlder = !!patch.loadingOlder;
+      if ("hasMore" in patch) hasMore = !!patch.hasMore;
+      if ("historyLimited" in patch) historyLimited = !!patch.historyLimited;
+      render();
+    },
+    retry() {
+      const edge = section.props.children[0] as ReactElement<{
+        children: ReactElement[];
+      }>;
+      const button = edge.props.children.find(
+        (child) => child?.type === "button",
+      ) as ReactElement<{ onClick(): void }>;
+      button.props.onClick();
+    },
     resize(runFrames = true) {
       resized(element);
       render(runFrames);
@@ -548,5 +594,124 @@ it("ordinary initial bottom and append commands do not install resize-follow obs
   h.handle.scrollToIndex.mockClear();
   h.measureRows();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+});
+
+it("honors one cached top-edge gesture when the replacement head becomes verified", () => {
+  const h = setup({
+    hasMore: true,
+    freshness: "cached",
+    initial: { offset: 0, bottom: false },
+  });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.gesture();
+  h.update({ freshness: "cached" }); // A handoff is not successful revalidation.
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  h.update({ freshness: "verified" });
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
+  h.update({ freshness: "cached" });
+  h.update({ freshness: "verified" });
+  expect(h.loadOlder).toHaveBeenCalledTimes(1);
+  h.unmount();
+});
+it("verification alone never pages a restored top", () => {
+  const h = setup({
+    hasMore: true,
+    freshness: "cached",
+    initial: { offset: 0, bottom: false },
+  });
+  h.element.scrollTop = 0;
+  h.scroll(false);
+  h.update({ freshness: "verified" });
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  h.unmount();
+});
+it.each([
+  { error: "Head revalidation failed" },
+  { error: "Access denied", status: "error" as const },
+  { loadingOlder: true },
+  { hasMore: false },
+  { historyLimited: true },
+])("retires cached paging demand on %j, including later recovery", (patch) => {
+  const h = setup({ hasMore: true, freshness: "cached" });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.update(patch);
+  h.update({
+    freshness: "verified",
+    status: "ready",
+    error: undefined,
+    loadingOlder: false,
+    hasMore: true,
+    historyLimited: false,
+  });
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("rechecks current geometry before honoring the cached gesture", () => {
+  const h = setup({ hasMore: true, freshness: "cached" });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.element.scrollTop = 4000;
+  h.update({ freshness: "verified" });
+  h.element.scrollTop = 0;
+  h.update({ freshness: "verified" });
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("gestures during an older read do not queue a following page", () => {
+  const h = setup({ hasMore: true });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.update({ loadingOlder: true });
+  h.gesture();
+  h.gesture();
+  h.update({ loadingOlder: false });
+  expect(h.loadOlder).toHaveBeenCalledTimes(1);
+  h.unmount();
+});
+it("a manual retry with more history does not revive automatic paging", () => {
+  const h = setup({ hasMore: true });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.update({ loadingOlder: true });
+  h.update({ loadingOlder: false, error: "rate-limited", freshness: "cached" });
+  h.gesture();
+  h.retry();
+  h.update({ loadingOlder: true, error: undefined });
+  h.gesture();
+  h.update({ loadingOlder: false, freshness: "verified" });
+  expect(h.loadOlder).toHaveBeenCalledTimes(2);
+  h.unmount();
+});
+it("manual paging consumes pending cached intent even if its read settles before another render", () => {
+  const h = setup({ hasMore: true, freshness: "cached" });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.retry();
+  h.update({ freshness: "verified" });
+  expect(h.loadOlder).toHaveBeenCalledTimes(1);
+  h.unmount();
+});
+it("unmount drops cached intent before a late successful head", () => {
+  const h = setup({ hasMore: true, freshness: "cached" });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.unmount();
+  h.update({ freshness: "verified" }); // Probe retired refs as well as keyed remount.
+  expect(h.loadOlder).not.toHaveBeenCalled();
+});
+
+it("a switch away and back cannot inherit the first mount's cached gesture", () => {
+  const h = setup({ hasMore: true, freshness: "cached" });
+  h.element.scrollTop = 0;
+  h.gesture();
+  h.navigate("other");
+  h.navigate("channel");
+  h.update({ freshness: "verified" });
+  expect(h.loadOlder).not.toHaveBeenCalled();
+  h.gesture();
+  expect(h.loadOlder).toHaveBeenCalledExactlyOnceWith("channel");
   h.unmount();
 });

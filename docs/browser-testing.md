@@ -256,7 +256,9 @@ position without examining that state.
 The history-loading journeys retain the production broker's HTTP admission. They
 check that ordinary wheel paging begins before the top, and that a saved top
 anchor can resume paging from a boundary gesture even when the DOM cannot scroll
-farther. Restoration alone does not fetch history. A quota-failed page retains a
+farther. Restoration alone does not fetch history. One near-top gesture made on cached
+rows waits for successful revalidation, including the live catch-up handoff;
+errors, paging, moving away from the threshold, or unmounting retire that intent. A quota-failed page retains a
 manual retry without repeated wheel gestures resubmitting it. These are workflow
 controls, not latency guarantees under arbitrary scroll speed or relay load.
 

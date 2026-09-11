@@ -6,6 +6,10 @@ export default defineConfig({
       JSON.stringify(fixtureAliases),
   },
   test: {
-    include: ["src/**/*.test.{ts,tsx,mjs}", "dev/**/*.test.mjs"],
+    include: [
+      "src/**/*.test.{ts,tsx,mjs}",
+      "dev/**/*.test.mjs",
+      "tests/fixtures/design-system/**/*.test.{ts,tsx}",
+    ],
   },
 });

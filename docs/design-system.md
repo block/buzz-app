@@ -1,5 +1,11 @@
 # Design system and appearance
 
+> **The design system going forward:** the imported system is documented in
+> [the handoff README](../src/shared/design-system/README.md) and displayed at
+> `/tests/fixtures/design-system.html`. Surfaces will transition onto it. It does
+> not yet style the app, so the host styling and appearance ownership described
+> below still govern what ships; that transition happens in later changes.
+
 The **host** owns appearance, including startup and recovery. A plugin must not be
 required to render the shell correctly. Pages still own their layout and behavior;
 this is shared styling, not a second component registry or a parallel `core/` tree.
@@ -77,9 +83,13 @@ the browser top layer, not ever-increasing global z-index values.
   including loading/recovery, must inherit the mode. CSS variables inherit into
   portals and shadow hosts; third-party Shadow DOM/canvas widgets may additionally
   require an explicit mode adapter. Theme mode changes must not reset widget input.
-- The local design reference is `/tests/fixtures/design-system.html` under `just web`.
-  It uses no relay/identity services. It demonstrates the real Appearance section,
-  shared native controls, profile fields and a conversation row in either mode.
+- `/tests/fixtures/design-system.html` now hosts the design system this app is
+  moving to, with its own components, tokens and documentation. The earlier
+  offline diagnostic at that URL — one Appearance section, some native controls,
+  profile fields and a conversation row — was replaced by it. The rules above
+  still govern the styling that ships today; verify those in the running app and
+  its browser journeys. Surfaces move onto the new system incrementally, and its
+  documentation is the reference for anything already on it.
 
 ## Future theme contributions (design boundary, not implemented API)
 

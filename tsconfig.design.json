@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/shared/design-system",
+    "tests/fixtures/design-system",
+    "vite.design.config.ts",
+    "vitest.design.config.ts"
+  ]
+}

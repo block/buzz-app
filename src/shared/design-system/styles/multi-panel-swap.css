@@ -1,0 +1,141 @@
+@layer components {
+  .multi-swap-experiment {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    margin-top: var(--space-6);
+  }
+  .multi-swap-intro {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .multi-swap-backdrop {
+    background: var(--bg-app);
+    border-radius: var(--radius-panel);
+    padding: var(--space-workspace-inset);
+  }
+  .multi-swap-stage {
+    position: relative;
+    height: min(36rem, 65svh);
+    min-height: 24rem;
+    column-gap: var(--space-panel-gap);
+    isolation: isolate;
+  }
+  .multi-swap-placement {
+    position: absolute;
+    top: 0;
+    left: 0;
+    transition: transform var(--duration-settle) var(--easing-settle);
+  }
+  .multi-swap-stage[data-resizing] .multi-swap-placement {
+    transition: none;
+  }
+  .multi-swap-placement[data-frontmost="true"] {
+    z-index: 1;
+  }
+  .multi-swap-placement[data-dragging] {
+    transition: none;
+    z-index: 2;
+  }
+  .multi-swap-header {
+    padding: var(--space-panel-inset);
+    cursor: grab;
+    touch-action: none;
+    user-select: none;
+  }
+  .multi-swap-header .buzz-tabs-tab {
+    cursor: inherit;
+    touch-action: none;
+  }
+  .multi-swap-stage[data-dragging],
+  .multi-swap-stage[data-dragging] * {
+    cursor: grabbing;
+    user-select: none;
+  }
+  .multi-swap-divider {
+    position: absolute;
+    top: 0;
+    width: var(--size-resize-seam);
+    transform: translateX(-50%);
+    z-index: 3;
+    touch-action: none;
+    cursor: col-resize;
+  }
+  .multi-swap-divider[data-axis="vertical"] {
+    left: 0;
+    bottom: auto;
+    height: var(--size-resize-seam);
+    transform: translateY(-50%);
+    cursor: row-resize;
+  }
+  .multi-swap-divider::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: calc(var(--space-1) / 2);
+    height: var(--space-6);
+    transform: translate(-50%, -50%);
+    background: transparent;
+    border-radius: var(--radius-pill);
+  }
+  .multi-swap-divider[data-axis="vertical"]::after {
+    width: var(--space-6);
+    height: calc(var(--space-1) / 2);
+  }
+  .multi-swap-divider:hover::after,
+  .multi-swap-stage[data-resizing] .multi-swap-divider::after {
+    background: var(--neutral-12);
+  }
+  html[data-keyboard-navigation] .multi-swap-divider:focus-visible::after {
+    background: var(--neutral-12);
+    outline: 2px solid var(--purple-8);
+    outline-offset: 2px;
+  }
+  .multi-swap-stage[data-dragging] .multi-swap-divider {
+    visibility: hidden;
+  }
+  .multi-swap-ghost {
+    position: absolute;
+    top: 0;
+    left: 0;
+    z-index: 4;
+    pointer-events: none;
+    padding: var(--space-1) var(--space-3);
+    border-radius: var(--radius-pill);
+    background: var(--purple-3);
+    opacity: 0.85;
+    white-space: nowrap;
+  }
+  .multi-swap-insertion {
+    position: absolute;
+    z-index: 3;
+    pointer-events: none;
+    width: calc(var(--space-1) / 2);
+    background: var(--purple-7);
+    border-radius: var(--radius-pill);
+  }
+  .multi-swap-cue {
+    position: absolute;
+    z-index: 4;
+    pointer-events: none;
+    background: var(--neutral-12);
+    border-radius: var(--radius-pill);
+    width: var(--space-6);
+    height: calc(var(--space-1) / 2);
+  }
+  .multi-swap-cue {
+    transform: translate(-50%, -50%);
+  }
+  .multi-swap-cue[data-edge="left"],
+  .multi-swap-cue[data-edge="right"] {
+    height: var(--space-6);
+    width: calc(var(--space-1) / 2);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .multi-swap-placement {
+      transition: none;
+    }
+  }
+}

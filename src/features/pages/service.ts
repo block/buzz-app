@@ -6,7 +6,11 @@ import {
   type Contribution,
 } from "../../plugins/contributions.ts";
 
-export type PageProps = { companion?: ReactNode };
+export type PageProps = {
+  companion?: ReactNode;
+  navigation?: import("../navigation/service").PageNavigation | undefined;
+};
+
 export type Page = Readonly<{
   id: string;
   title: string;
@@ -14,6 +18,13 @@ export type Page = Readonly<{
   layout?: "document" | "workspace";
   // Opt in only when every page state places the supplied companion card.
   companion?: boolean;
+  /** Opt in to versioned page routes. Validation is synchronous and side-effect-free. */
+  route?: Readonly<{
+    version: number;
+    validate(params: import("../navigation/targets").JsonValue): boolean;
+  }>;
+  /** This page acknowledges its own domain reveal rather than just successful mounting. */
+  handlesNavigation?: boolean;
 }>;
 export type RegisteredPage = Contribution<Page>;
 export type PagesReader = {
@@ -52,6 +63,13 @@ export class PagesService extends Service implements Pages {
         "A page needs an id, a title, and a React component function",
       );
     }
+    if (
+      page.route &&
+      (!Number.isSafeInteger(page.route.version) ||
+        page.route.version < 1 ||
+        typeof page.route.validate !== "function")
+    )
+      throw new Error("Invalid page route contract");
     this.contributions.register(this.ctx, page);
   }
 }

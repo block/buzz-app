@@ -18,8 +18,10 @@ function CommunityIcon({ icon, name }: { icon?: string; name: string }) {
 }
 export function CommunitySwitcher({
   communities,
+  onSelect,
 }: {
   communities: Communities;
+  onSelect?: ((id: string | null) => void) | undefined;
 }) {
   const client = useSyncExternalStore(
     communities.subscribe,
@@ -36,7 +38,8 @@ export function CommunitySwitcher({
   }, [joining]);
   const current = client.memberships.find((m) => m.id === client.selected);
   const select = (id: string | null) => {
-    communities.select(id);
+    if (onSelect) onSelect(id);
+    else communities.select(id);
     dialog.current?.close();
   };
   return (

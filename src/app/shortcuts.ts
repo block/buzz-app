@@ -59,3 +59,36 @@ export function registerAppShortcuts(
     for (const dispose of remove) dispose();
   };
 }
+
+export function registerNavigationShortcuts(
+  shortcuts: ShortcutsService,
+  navigation: import("../features/navigation/controller").Navigation,
+) {
+  const remove = [
+    shortcuts.registerHost({
+      id: "navigation-back",
+      title: "Go back",
+      binding: [
+        { key: "[", mod: true },
+        { key: "ArrowLeft", alt: true },
+      ],
+      allowInEditable: true,
+      when: () => navigation.snapshot().canGoBack,
+      run: navigation.back,
+    }),
+    shortcuts.registerHost({
+      id: "navigation-forward",
+      title: "Go forward",
+      binding: [
+        { key: "]", mod: true },
+        { key: "ArrowRight", alt: true },
+      ],
+      allowInEditable: true,
+      when: () => navigation.snapshot().canGoForward,
+      run: navigation.forward,
+    }),
+  ];
+  return () => {
+    for (const dispose of remove) dispose();
+  };
+}

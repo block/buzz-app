@@ -1,4 +1,5 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { provideNavigation } from "../features/navigation/service";
 import { ShortcutsService } from "../features/shortcuts/service";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
@@ -16,6 +17,8 @@ export function createServices() {
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
+  const navigationHost = provideNavigation(ctx);
+  const navigation = navigationHost.navigation;
   const shortcuts = new ShortcutsService(ctx);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
@@ -27,6 +30,8 @@ export function createServices() {
   const relay = communities.relay;
   let disposal: Promise<void> | undefined;
   return {
+    navigation,
+    navigationHost,
     shortcuts,
     conversation,
     pages,

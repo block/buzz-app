@@ -143,7 +143,9 @@ export function policyRelay({
               at: performance.now(),
             });
           }
-          return Response.json([]);
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
         }
         const filter = filters[0],
           community = communityOf(url);

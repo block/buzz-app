@@ -1,3 +1,5 @@
+import type { PageNavigation } from "../../features/navigation/service";
+import type { Navigation } from "../../features/navigation/controller";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -37,6 +39,7 @@ import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
+import { useSidebarView } from "./useSidebarView";
 import { sidebarSections } from "./sidebar-sections";
 import styles from "./Channels.module.css";
 
@@ -45,13 +48,32 @@ export function ChannelsPage({
   relay,
   panels,
   companion,
+  navigation,
+  navigator,
 }: {
   extensions?: ConversationExtensions | undefined;
   relay: RelayData;
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
   panels: Panels;
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  useEffect(() => {
+    if (!navigation) return;
+    if (
+      navigation.target.kind === "conversation" &&
+      navigation.target.messageId
+    )
+      navigation.complete({ status: "failed", reason: "unavailable" });
+    else if (
+      session.status === "disconnected" &&
+      navigation.target.kind === "page"
+    )
+      navigation.complete({ status: "opened" });
+    else if (session.status === "error")
+      navigation.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, session.status]);
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" ? (
@@ -89,6 +111,9 @@ export function ChannelsPage({
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
           queries={session.session}
+          navigation={navigation}
+          navigator={navigator}
+          viewer={session.viewer}
           panels={panels}
           companion={companion}
         />
@@ -103,10 +128,16 @@ function ChannelWorkspace({
   panels,
   scope,
   companion,
+  navigation,
+  navigator,
+  viewer,
 }: {
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
   scope: string;
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
+  viewer?: string | undefined;
   queries: RelaySession;
   panels: Panels;
 }) {
@@ -124,6 +155,17 @@ function ChannelWorkspace({
     readView(scope, "selected-channel", undefined),
   );
   const select = (id: string) => {
+    if (navigator && viewer) {
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
+        channelId: id,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    }
     setSelected(id);
     writeView(scope, "selected-channel", id);
   };
@@ -133,10 +175,52 @@ function ChannelWorkspace({
   }>();
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const [search, setSearch] = useState("");
+  const sidebar = useSidebarView(
+    scope,
+    list.status === "ready" && preferences.status !== "loading",
+  );
+  const { search } = sidebar;
   const channels = useChannelLabels(list.channels, queries.profiles);
-  const current =
-    channels.find((channel) => channel.id === selected) ?? channels[0];
+  const requestedChannel =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.channelId
+      : undefined;
+  const current = requestedChannel
+    ? (channels.find((channel) => channel.id === requestedChannel) ??
+      (list.coverage === "partial"
+        ? { id: requestedChannel, name: "Conversation" }
+        : undefined))
+    : (channels.find((channel) => channel.id === selected) ?? channels[0]);
+  useEffect(() => {
+    if (navigation?.signal.aborted) return;
+    if (requestedChannel && list.status === "ready" && !current)
+      navigation?.complete({ status: "failed", reason: "unavailable" });
+    if (!requestedChannel && !current && list.status === "ready")
+      navigation?.complete({ status: "opened" });
+    if (!requestedChannel && current && navigation && navigator && viewer) {
+      // Resolve the page's saved default once into this visit, not an extra history hop.
+      void navigator.open(
+        {
+          version: 1,
+          kind: "conversation",
+          channelId: current.id,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        },
+        { replace: true },
+      );
+    }
+  }, [
+    requestedChannel,
+    current,
+    list.status,
+    navigation,
+    navigator,
+    viewer,
+    scope,
+  ]);
   const showingThread = thread?.channelId === current?.id ? thread : undefined;
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
@@ -209,12 +293,19 @@ function ChannelWorkspace({
             aria-label="Search channels"
             placeholder="Search"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => sidebar.setSearch(event.target.value)}
           />
         </div>
-        <SidebarUnread>
+        <SidebarUnread listRef={sidebar.list}>
           {sidebarSections(visible, preferences.data).map((section) => (
-            <details key={section.key} className={styles.channelSection} open>
+            <details
+              key={section.key}
+              className={styles.channelSection}
+              open={!sidebar.collapsed.includes(section.key)}
+              onToggle={(event) =>
+                sidebar.toggle(section.key, event.currentTarget.open)
+              }
+            >
               <summary>
                 {section.icon && (
                   <span aria-hidden="true">{section.icon} </span>
@@ -361,6 +452,7 @@ function ChannelWorkspace({
             queries={queries}
             scope={scope}
             channelId={current.id}
+            navigation={navigation}
             onOpenLink={openLink}
             onOpenThread={openThread}
             revealMessageId={
@@ -426,16 +518,28 @@ function ChannelBody({
   onOpenLink,
   revealMessageId,
   onOpenThread,
+  navigation,
 }: {
   extensions?: ConversationExtensions | undefined;
   scope: string;
   queries: RelaySession;
   channelId: string;
+  navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   revealMessageId?: string | undefined;
   onOpenThread(messageId: string): void;
 }) {
   const window = useChannelWindow(queries.channels, channelId);
+  useEffect(() => {
+    if (
+      navigation?.target.kind === "conversation" &&
+      navigation.target.messageId
+    )
+      return;
+    if (window.status === "ready") navigation?.complete({ status: "opened" });
+    else if (window.status === "error")
+      navigation?.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, window.status]);
   if (window.status === "error" && !window.rows.length)
     return (
       <div className={styles.empty} role="alert">

@@ -1,4 +1,5 @@
-import { useState, useSyncExternalStore } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { RecoveryScreen } from "./RecoveryScreen";
 import { Blocks, Settings2, UserRound, Palette } from "lucide-react";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
@@ -18,17 +19,37 @@ export function Settings({
   plugins,
   communities,
   appearance,
+  navigation,
+  onSection,
 }: {
   plugins: PluginManager;
   communities: Communities;
   appearance: Appearance;
+  navigation?: import("../features/navigation/service").PageNavigation;
+  onSection?: (section: string) => void;
 }) {
   const [selected, setSelected] =
     useState<(typeof sections)[number]["id"]>("profile");
+  const requestedSection =
+    navigation?.target.kind === "settings"
+      ? (navigation.target.section ?? "profile")
+      : undefined;
+  useEffect(() => {
+    if (
+      requestedSection &&
+      sections.some((section) => section.id === requestedSection)
+    )
+      setSelected(requestedSection as typeof selected);
+  }, [requestedSection]);
+  useEffect(() => {
+    if (requestedSection === selected)
+      navigation?.complete({ status: "opened" });
+  }, [navigation, requestedSection, selected]);
   const { configuration, activation, busy, error, refreshError } =
     useSyncExternalStore(plugins.subscribe, plugins.snapshot);
-  if (configuration.status !== "ready") return null;
-  const { catalog, externalPluginsPaused } = configuration;
+  const ready = configuration.status === "ready" ? configuration : undefined;
+  const catalog = ready?.catalog;
+  const externalPluginsPaused = ready?.externalPluginsPaused;
   return (
     <section aria-labelledby="settings-title" className="@container">
       <div className="mb-5 flex items-center gap-4">
@@ -57,7 +78,8 @@ export function Settings({
               className="flex flex-1 items-center gap-3 border-0 bg-transparent px-3 py-2.5 text-left text-muted hover:bg-surface/70 aria-[current=page]:bg-surface aria-[current=page]:text-ink aria-[current=page]:shadow-sm"
               onClick={(event) => {
                 event.currentTarget.focus();
-                setSelected(id);
+                if (onSection) onSection(id);
+                else setSelected(id);
               }}
             >
               <Icon aria-hidden="true" size={18} strokeWidth={1.6} />
@@ -80,7 +102,16 @@ export function Settings({
               >
                 Plugins
               </h2>
-              <PluginImport plugins={plugins} catalog={catalog} busy={busy} />
+              {catalog ? (
+                <PluginImport plugins={plugins} catalog={catalog} busy={busy} />
+              ) : configuration.status === "recovery" ? (
+                <RecoveryScreen plugins={plugins} />
+              ) : (
+                <p role="status">
+                  Plugin settings are unavailable. Profile and Appearance still
+                  work.
+                </p>
+              )}
               <div className="overflow-hidden rounded-3xl border border-shell-edge/80 bg-surface shadow-surface">
                 <div className="px-6 sm:px-8">
                   {externalPluginsPaused && (
@@ -113,7 +144,7 @@ export function Settings({
                   )}
                 </div>
                 <div className="divide-y divide-line">
-                  {catalog.plugins.map((plugin) => {
+                  {catalog?.plugins.map((plugin) => {
                     const id = plugin.manifest.id;
                     const running = activation[id];
                     const failure =

@@ -17,6 +17,7 @@ import {
 } from "./read-state-storage";
 import { createUnread } from "./unread";
 import { readSidebarPreferences } from "./sidebar-preferences";
+import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
@@ -524,48 +525,50 @@ export function createRelaySession(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
   }
+  const sidebarPreferences = createSidebarPreferencesStore(
+    async (signal?: AbortSignal) => {
+      const decode = transport?.decodeSidebarPreferences;
+      if (closed || !transport || !decode)
+        throw new Error(
+          "Saved sidebar preferences are unavailable in this host",
+        );
+      const combined = AbortSignal.any([
+        lifetime.signal,
+        AbortSignal.timeout(10_000),
+        ...(signal ? [signal] : []),
+      ]);
+      return readSidebarPreferences(
+        {
+          read: async (filters, settings) => {
+            const epoch = accessEpoch;
+            const cleared = cacheClearEpoch;
+            try {
+              return await verified.read(filters, settings);
+            } catch (error) {
+              if (
+                readErrorKind(error) !== "cancelled" ||
+                combined.aborted ||
+                epoch === accessEpoch ||
+                cleared !== cacheClearEpoch
+              )
+                throw error;
+              // Initial roster authority can cancel this account-owned read.
+              // Retry once under current access, sharing the original deadline.
+              return verified.read(filters, settings);
+            }
+          },
+        },
+        transport.viewer,
+        decode,
+        combined,
+      );
+    },
+    !!transport?.decodeSidebarPreferences,
+    notify,
+  );
   const session = Object.freeze({
     unread: unread.capability,
-    sidebarPreferences: {
-      available: !!transport?.decodeSidebarPreferences,
-      async read(signal?: AbortSignal) {
-        const decode = transport?.decodeSidebarPreferences;
-        if (closed || !transport || !decode)
-          throw new Error(
-            "Saved sidebar preferences are unavailable in this host",
-          );
-        const combined = AbortSignal.any([
-          lifetime.signal,
-          AbortSignal.timeout(10_000),
-          ...(signal ? [signal] : []),
-        ]);
-        return readSidebarPreferences(
-          {
-            read: async (filters, settings) => {
-              const epoch = accessEpoch;
-              const cleared = cacheClearEpoch;
-              try {
-                return await verified.read(filters, settings);
-              } catch (error) {
-                if (
-                  readErrorKind(error) !== "cancelled" ||
-                  combined.aborted ||
-                  epoch === accessEpoch ||
-                  cleared !== cacheClearEpoch
-                )
-                  throw error;
-                // Initial roster authority can cancel this account-owned read.
-                // Retry once under current access, sharing the original deadline.
-                return verified.read(filters, settings);
-              }
-            },
-          },
-          transport.viewer,
-          decode,
-          combined,
-        );
-      },
-    },
+    sidebarPreferences: sidebarPreferences.queries,
     live,
     profiling,
     messages: createMessages(
@@ -942,6 +945,7 @@ export function createRelaySession(
     async clearCache() {
       accessEpoch++;
       cacheClearEpoch++;
+      sidebarPreferences.clear();
       // New windows must not yield to or receive errors from retired owners.
       catchups.clear();
       catchupQueue.clear();
@@ -959,6 +963,7 @@ export function createRelaySession(
     dispose() {
       closed = true;
       lifetime.abort();
+      sidebarPreferences.dispose();
       stopInterests();
       traffic?.dispose();
       liveListeners.clear();

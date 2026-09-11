@@ -4,6 +4,12 @@ import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Panels } from "../../features/panels/service";
 import { ChannelsPage } from "./ChannelsPage";
 
+// This is a shallow element-boundary test, not a React render. Navigation effects
+// are exercised by the browser navigation journeys; do not execute them here.
+vi.mock("react", async (original) => ({
+  ...(await original<typeof import("react")>()),
+  useEffect: () => {},
+}));
 // Inspect the actual element returned at the workspace boundary, not a parallel
 // key helper. React uses this key to decide whether to retain the subtree.
 vi.mock("../../features/relay/react", async (original) => ({

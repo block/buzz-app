@@ -210,6 +210,44 @@ writes use `session.outbox` or the `session.messages` convenience methods. Reads
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
 
+## Navigation targets and visits
+
+The host provides `ctx.navigation` to plugins declaring `navigation` in `inject`.
+`open(target)` returns a presentation result, not merely an accepted address:
+`opened`, `failed` (with a reason), `superseded`, or `cancelled`. The host owns one
+history driver, toolbar/keyboard traversal, and a 15-second attempt deadline.
+A visit has stable identity; retrying/reclicking preserves that visit and Forward,
+while a new destination truncates the forward branch. Leaving aborts the old
+attempt, and late completion cannot acknowledge a replacement attempt.
+
+Version-1 `OpenTarget` supports Home, Settings sections, contributed pages with
+optional versioned JSON routes, and account/community-bound conversations.
+The boundary copies, freezes and bounds route data; an address is never an access
+grant. Scoped targets require the original viewer and an already joined community.
+An explicit `scope: null` restores Personal space; omitted page scope leaves the
+current community alone. Unknown providers/routes fail with the target retained
+for retry, rather than silently opening another page.
+
+Pages receive optional `navigation` in `PageProps`. Ordinary pages acknowledge a
+successful mount inside the render boundary. Pages declaring `handlesNavigation`
+acknowledge their domain presentation with `navigation.complete(...)`; Channels
+waits for its requested channel window. `route: { version, validate }` opts a page
+into versioned route parameters. These are host-matched preview types through
+`@buzz/author`, not a cross-version runtime compatibility promise.
+
+Browser `#buzz=` addresses and session history support reload and Back/Forward.
+`targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
+sender's viewer; `bindSharedTarget` pins it for an admitted recipient. **This slice
+does not install native OS deep-link or notification-click ingress, migrate legacy
+Buzz links, or locate/reveal older messages and threads.** Message-addressed
+conversation targets explicitly fail as unsupported rather than claiming success
+at the channel head. Those ingresses/reveal adapters must use the same validated
+target and completion lifecycle when implemented.
+
+Drafts, reading geometry and sidebar view intent remain domain-owned, outside
+visit history. Saved sidebar preferences live in the relay session, not in the
+mounted page; see [sidebar ownership](channels.md#ownership).
+
 ## Conversation contributions
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`

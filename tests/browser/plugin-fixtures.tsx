@@ -3,11 +3,14 @@ import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin
 import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
 import { useEffect, useState } from "react";
 import type { BundledPlugin } from "../../src/plugins/manager";
+import type { Navigation } from "../../src/features/navigation/controller";
 import type { PanelProps } from "../../src/features/panels/service";
 
 declare global {
   interface Window {
     stalePanelClose?: () => void;
+    fixtureNavigation?: Navigation;
+    fixturePageBroken?: boolean;
   }
 }
 function Notes({ close, target }: PanelProps) {
@@ -39,8 +42,36 @@ function Legacy() {
     </label>
   );
 }
+function RetryPage() {
+  const [broken, setBroken] = useState(false);
+  if (broken || window.fixturePageBroken)
+    throw new Error("Fixture page render failure");
+  return (
+    <button type="button" onClick={() => setBroken(true)}>
+      Break fixture page
+    </button>
+  );
+}
 export const fixturePlugins: readonly BundledPlugin[] = [
   { manifest: { ...shortcutManifest, apiVersion: 1 }, module: shortcutCounter },
+  {
+    manifest: {
+      id: "fixture.navigation",
+      name: "Navigation fixture",
+      apiVersion: 1,
+    },
+    module: {
+      inject: ["pages", "navigation"],
+      apply(ctx) {
+        window.fixtureNavigation = ctx.navigation;
+        ctx.pages.register({
+          id: "retry",
+          title: "Retry fixture",
+          component: RetryPage,
+        });
+      },
+    },
+  },
   {
     manifest: { id: "fixture.notes", name: "Notes fixture", apiVersion: 1 },
     module: {

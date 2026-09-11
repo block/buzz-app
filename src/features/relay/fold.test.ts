@@ -233,3 +233,26 @@ describe("discovery", () => {
     expect(state.channels().map((channel) => channel.id)).toEqual(["zeta"]);
   });
 });
+
+it("marks same-label identity replacement as edited without changing notification recipients", () => {
+  const original = message(alice, channel, "Hello @Mic", 10, [
+    ["p", bob.pubkey],
+  ]);
+  const replacement = signed(alice, {
+    kind: 40003,
+    content: "Hello @Mic",
+    created_at: 11,
+    tags: [
+      ["h", channel],
+      ["e", original.id],
+      ["buzz:mention-snapshot", "1"],
+      ["mention", relay.pubkey, "Mic"],
+    ],
+  });
+  const [edited] = foldMessages(channel, relay.pubkey, [original, replacement]);
+  expect(edited?.edited).toBe(true);
+  expect(edited?.mentions).toEqual([bob.pubkey]);
+  expect(
+    foldMessages(channel, relay.pubkey, [original])[0]?.edited,
+  ).toBeUndefined();
+});

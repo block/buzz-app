@@ -502,3 +502,31 @@
   height: calc(42px * var(--buzz-text-scale, 1));
   align-items: center;
 }
+
+button.avatar {
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+}
+button.avatar:hover {
+  box-shadow: 0 0 0 2px var(--border);
+}
+.mention {
+  display: inline;
+  padding: 0 3px;
+  border: 0;
+  border-radius: 4px;
+  font: inherit;
+  line-height: inherit;
+  color: var(--on-selected);
+  background: var(--selected);
+  cursor: pointer;
+}
+.mention:hover {
+  text-decoration: underline;
+}
+button.avatar:focus-visible,
+.mention:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}

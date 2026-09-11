@@ -22,6 +22,10 @@ export function policyRelay({
   const heldEose = new Set();
   const pendingEose = [];
   const pendingProfiles = [];
+  const pendingUnread = [];
+  const unreadHolds = [];
+  report.unreadHolds = unreadHolds;
+  let heldUnread = false;
   const profileHolds = [];
   report.profileHolds = profileHolds;
   let heldAuthors = new Set();
@@ -57,6 +61,13 @@ export function policyRelay({
     releaseProfiles() {
       heldAuthors.clear();
       for (const release of pendingProfiles.splice(0)) release();
+    },
+    holdUnread() {
+      heldUnread = true;
+    },
+    releaseUnread() {
+      heldUnread = false;
+      for (const release of pendingUnread.splice(0)) release();
     },
     holdEose(channel) {
       heldEose.add(channel);
@@ -188,6 +199,30 @@ export function policyRelay({
           emptyRoster && filter.kinds?.includes(39002)
             ? []
             : answer(community, filter);
+        if (
+          heldUnread &&
+          filter.kinds?.includes(9) &&
+          filter["#h"]?.length &&
+          filter.top_level === undefined &&
+          filter.depth_limit === undefined &&
+          filter.until === undefined
+        )
+          return new Promise((resolve, reject) => {
+            const held = { pending: true, aborted: false };
+            unreadHolds.push(held);
+            const abort = () => {
+              held.pending = false;
+              held.aborted = true;
+              reject(init.signal.reason);
+            };
+            if (init.signal.aborted) return abort();
+            init.signal.addEventListener("abort", abort, { once: true });
+            pendingUnread.push(() => {
+              held.pending = false;
+              init.signal.removeEventListener("abort", abort);
+              if (!held.aborted) resolve(Response.json(result));
+            });
+          });
         if (
           filter.kinds?.includes(0) &&
           filter.authors?.some((id) => heldAuthors.has(id))

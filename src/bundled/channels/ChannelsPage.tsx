@@ -246,11 +246,32 @@ function ChannelWorkspace({
   useEffect(() => {
     if (opened && !panel) open(undefined);
   }, [opened, panel]);
-  const close = useCallback(() => open(undefined), []);
+  const panelTrigger = useRef<HTMLElement | null>(null);
+  const close = useCallback(() => {
+    open(undefined);
+    if (panelTrigger.current?.isConnected) panelTrigger.current.focus();
+    else if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
+  }, []);
+  // Availability follows active contributions; dispatch still re-resolves at click time.
+  const canOpenLink = useCallback(
+    (target: string) =>
+      available.some((candidate) => {
+        try {
+          return candidate.matches(target);
+        } catch {
+          return false;
+        }
+      }),
+    [available],
+  );
   const openLink = useCallback(
     (url: string) => {
       const candidate = panels.resolve(url);
       if (current && candidate) {
+        panelTrigger.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
         setThread(undefined);
         open({
           channelId: current.id,
@@ -443,6 +464,7 @@ function ChannelWorkspace({
             channelId={current.id}
             navigation={navigation}
             onOpenLink={openLink}
+            canOpenLink={canOpenLink}
             onOpenThread={openThread}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
@@ -476,6 +498,7 @@ function ChannelWorkspace({
               messageId={showingThread.messageId}
               close={closeThread}
               onOpenLink={openLink}
+              canOpenLink={canOpenLink}
             />
           )}
 
@@ -505,6 +528,7 @@ function ChannelBody({
   queries,
   channelId,
   onOpenLink,
+  canOpenLink,
   revealMessageId,
   onOpenThread,
   navigation,
@@ -515,6 +539,7 @@ function ChannelBody({
   channelId: string;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread(messageId: string): void;
 }) {
@@ -557,6 +582,7 @@ function ChannelBody({
       queries={queries}
       window={window}
       onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
       onOpenThread={onOpenThread}
       revealMessageId={revealMessageId}
     />

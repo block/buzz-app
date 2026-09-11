@@ -1,7 +1,7 @@
 import { expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
-import { keypair, signed } from "../relay/testing";
+import { keypair, message, signed } from "../relay/testing";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -146,6 +146,54 @@ it.each([
     html.indexOf("Outside "),
   );
 });
+
+it.each([9, 40002])(
+  "does not manufacture profile bindings when kind %s images are removed",
+  (kind) => {
+    const author = keypair(),
+      recipient = keypair(),
+      relay = keypair();
+    for (const content of [
+      "@M![x][image]ic\n\n[image]: https://example.test/a.png",
+      "@M![x](https://example.test/a.png)ic",
+      "@M![x](http://example.test/a.png)ic",
+      "@![x](https://example.test/a.png)Mic",
+      "Hello @Mic ![x](https://example.test/a.png)",
+    ]) {
+      const event = signed(author, {
+        kind,
+        content: kind === 40002 ? JSON.stringify({ content }) : content,
+        tags: [
+          ["h", "channel"],
+          ["p", recipient.pubkey],
+        ],
+      });
+      const [folded] = foldMessages("channel", relay.pubkey, [event]);
+      if (!folded) throw new Error("missing message");
+      expect(folded.content).toContain("@Mic");
+      expect(folded.attachmentContentRemoved).toBe(true);
+      expect(folded.mentions).toEqual([recipient.pubkey]);
+      const html = renderToStaticMarkup(
+        <MessageRow
+          row={folded}
+          profile={undefined}
+          participantProfiles={new Map([[recipient.pubkey, { name: "Mic" }]])}
+          media={() => undefined}
+          onOpenLink={() => true}
+          canOpenLink={() => true}
+          day={false}
+          retry={undefined}
+        />,
+      );
+      expect(html).not.toContain('aria-label="View Mic profile"');
+      expect(html).toContain("@Mic");
+    }
+    const [unchanged] = foldMessages("channel", relay.pubkey, [
+      message(author, "channel", "@Mic  \n", 1),
+    ]);
+    expect(unchanged?.attachmentContentRemoved).toBeUndefined();
+  },
+);
 
 it.each([9, 40002])(
   "preserves signed kind %s code indentation through fold and render",

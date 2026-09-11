@@ -1,9 +1,11 @@
 import { createRoot } from "react-dom/client";
 import { useEffect, useRef, useState } from "react";
 import "../../src/shared/styles/globals.css";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { createScreen } from "../../src/bundled/terminal/renderer";
 
 function Fixture() {
+  useKeyboardFocusVisibility();
   const host = useRef<HTMLDivElement>(null);
   const [visible, show] = useState(true);
   const [input, setInput] = useState("");
@@ -76,7 +78,7 @@ function Fixture() {
       {visible && (
         <div
           ref={host}
-          style={{ width: "80vw", height: 320, background: "var(--surface)" }}
+          style={{ width: "80vw", height: 320, background: "var(--bg-panel)" }}
         />
       )}
     </>

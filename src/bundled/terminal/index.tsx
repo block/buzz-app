@@ -1,11 +1,11 @@
 import { useLayoutEffect } from "react";
-import { TerminalSquare } from "lucide-react";
+import { IconTerminal2 } from "@tabler/icons-react";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { PluginModule } from "../../plugins/api";
 import type { ChannelLauncherProps } from "../../features/panels/service";
 import { nativeBridge } from "./bridge";
 import { createSessions } from "./sessions";
 import { TerminalPanel } from "./TerminalPanel";
-import styles from "./Terminal.module.css";
 
 export const inject = ["panels", "shortcuts", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -44,9 +44,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
       };
     }, [toggle, target, available]);
     return (
-      <button
-        type="button"
-        className={styles.launcher}
+      <IconButton
+        size="toolbar"
+        variant={pressed ? "tint" : "ghost"}
+        icon={<IconTerminal2 size={16} aria-hidden="true" />}
         aria-label="Toggle channel terminal"
         title="Terminal (Cmd/Ctrl+J)"
         aria-pressed={pressed}
@@ -54,9 +55,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
           event.currentTarget.focus();
           toggle(target);
         }}
-      >
-        <TerminalSquare size={19} aria-hidden="true" />
-      </button>
+      />
     );
   }
   ctx.panels.register({

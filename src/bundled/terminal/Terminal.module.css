@@ -3,84 +3,41 @@
   min-height: 0;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  color: var(--text);
+  background: var(--bg-panel);
+  color: var(--text-primary);
 }
-.toolbar {
+.identity {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
+  min-width: 0;
+  width: 0;
+  flex: 1;
+  overflow: hidden;
+  align-items: baseline;
+  gap: var(--space-2);
+}
+.identity > h2 {
   flex-shrink: 0;
-  font-size: calc(12px * var(--buzz-text-scale, 1));
-  background: var(--surface-accent);
-  border-bottom: 1px solid var(--border);
-  overflow-x: auto;
 }
-.toolbar strong {
-  font-weight: 600;
-}
-.toolbar span {
+.identity > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
-}
-.toolbar button {
-  font: inherit;
-  color: var(--text);
-  background: var(--surface-control);
-  border: 1px solid var(--border-input);
-  border-radius: var(--radius-control);
-  padding: 4px 8px;
-  white-space: nowrap;
-  cursor: pointer;
-}
-.toolbar button:hover:not(:disabled) {
-  background: var(--surface-hover);
-}
-.toolbar button:disabled {
-  cursor: not-allowed;
-}
-.toolbar button:focus-visible,
-.launcher:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-.status {
-  margin-left: auto;
-  color: var(--text-muted);
 }
 .screen {
   min-height: 0;
   flex: 1;
   overflow: hidden;
-  padding: 8px;
+  padding: var(--space-2);
 }
 .emulator {
   height: 100%;
   position: relative;
-  font-size: calc(13px * var(--buzz-text-scale, 1));
-  font-family: "JetBrains Mono", ui-monospace, monospace;
-  background: var(--surface);
-  color: var(--text);
+  background: var(--bg-panel);
+  color: var(--text-primary);
 }
 .notice {
-  padding: 8px 12px;
+  padding: var(--space-2) var(--space-3);
   margin: 0;
-  font-size: calc(14px * var(--buzz-text-scale, 1));
-}
-.launcher {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 6px;
-  background: transparent;
-  border: 1px solid transparent;
-  border-radius: var(--radius-control);
-  cursor: pointer;
-}
-.launcher:hover,
-.launcher[aria-pressed="true"] {
-  background: var(--surface-hover);
-  border-color: var(--border);
 }
 .splash {
   /* Brand ceremony, not UI signal: a mode-aware rainbow confined to the art. */
@@ -91,7 +48,7 @@
   display: grid;
   place-items: center;
   overflow: hidden;
-  background: var(--surface);
+  background: var(--bg-panel);
   pointer-events: none;
   user-select: none;
 }
@@ -100,6 +57,10 @@
   --splash-chroma: 0.16;
 }
 .splashArt {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
   margin: 0;
   font: inherit;
   line-height: 1.2;
@@ -119,12 +80,12 @@
   color: oklch(var(--splash-lightness) 0.12 var(--splash-hue));
 }
 .splashArt [data-layer="bevel_lo"] {
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 .splashArt [data-layer="field"] {
   color: color-mix(
     in srgb,
     oklch(var(--splash-lightness) var(--splash-chroma) var(--splash-hue)) 55%,
-    var(--surface)
+    var(--bg-panel)
   );
 }

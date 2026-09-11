@@ -1,3 +1,12 @@
+import {
+  IconChevronDown,
+  IconPlayerStop,
+  IconRefresh,
+  IconTerminal2,
+} from "@tabler/icons-react";
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type {
   PanelProps,
@@ -66,58 +75,105 @@ function Content({
     }
   };
   return (
-    <div className={styles.panel} data-terminal-version={version}>
-      <header className={styles.toolbar}>
-        <strong>BuzzTerm</strong>
-        <span title={entry?.context.channelId ?? context.channelId}>
-          #{entry?.context.channelName ?? context.channelName}
-        </span>
-        {entry?.context.threadId && (
-          <span title={entry.context.threadId}>
-            Thread {entry.context.threadId.slice(0, 8)}
-          </span>
-        )}
-        <span className={styles.status}>
-          {entry?.status ?? (sessions.available ? "ended" : "desktop only")}
-        </span>
-        {sessions.available && (
-          <button type="button" disabled={busy} onClick={() => void end(true)}>
-            {entry ? "Restart" : "Start session"}
-          </button>
-        )}
-        {entry && (
-          <button type="button" disabled={busy} onClick={() => void end(false)}>
-            End session
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={close}
-          aria-label="Hide terminal"
-          title="Hide terminal (Cmd/Ctrl+J)"
-        >
-          Hide
-        </button>
-      </header>
+    <div
+      data-buzz-ui=""
+      className={styles.panel}
+      data-terminal-version={version}
+    >
+      <PanelHeader
+        variant="compact"
+        icon={
+          <IconTerminal2
+            size={16}
+            aria-hidden="true"
+            style={{ flexShrink: 0 }}
+          />
+        }
+        title={
+          <div className={styles.identity}>
+            <h2 className="text-heading text-primary">BuzzTerm</h2>
+            <span
+              className="text-body-sm text-secondary"
+              title={entry?.context.channelId ?? context.channelId}
+            >
+              #{entry?.context.channelName ?? context.channelName}
+            </span>
+            {entry?.context.threadId && (
+              <span
+                className="text-mono-sm text-secondary font-mono"
+                title={entry.context.threadId}
+              >
+                Thread {entry.context.threadId.slice(0, 8)}
+              </span>
+            )}
+            <span className="text-body-sm text-secondary">
+              {entry?.status ?? (sessions.available ? "ended" : "desktop only")}
+            </span>
+          </div>
+        }
+        actions={
+          <>
+            {sessions.available &&
+              (entry ? (
+                <IconButton
+                  size="toolbar"
+                  disabled={busy}
+                  onClick={() => void end(true)}
+                  aria-label="Restart"
+                  title="Restart terminal"
+                  icon={<IconRefresh size={16} aria-hidden="true" />}
+                />
+              ) : (
+                <Button
+                  size="compact"
+                  disabled={busy}
+                  onClick={() => void end(true)}
+                >
+                  Start session
+                </Button>
+              ))}
+            {entry && (
+              <IconButton
+                size="toolbar"
+                disabled={busy}
+                onClick={() => void end(false)}
+                aria-label="End session"
+                title="End session"
+                icon={<IconPlayerStop size={16} aria-hidden="true" />}
+              />
+            )}
+            <IconButton
+              size="toolbar"
+              onClick={close}
+              aria-label="Hide terminal"
+              title="Hide terminal (Cmd/Ctrl+J)"
+              icon={<IconChevronDown size={16} aria-hidden="true" />}
+            />
+          </>
+        }
+      />
       {!sessions.available ? (
-        <p className={styles.notice}>
+        <p className={`${styles.notice} text-body`}>
           Open Buzz Desktop to use your local shell. The browser cannot start a
           terminal on your computer.
         </p>
       ) : (
         <>
           {(error || entry?.error) && (
-            <p className={styles.notice} role="alert">
+            <p
+              className={`${styles.notice} text-body text-red-12`}
+              role="alert"
+            >
               {error ?? entry?.error}
             </p>
           )}
           {entry?.status === "starting" && (
-            <p className={styles.notice} role="status">
+            <p className={`${styles.notice} text-body`} role="status">
               Starting your login shell…
             </p>
           )}
           {!entry && (
-            <p className={styles.notice}>
+            <p className={`${styles.notice} text-body`}>
               Session ended. Start a new shell to use this channel’s current
               context.
             </p>

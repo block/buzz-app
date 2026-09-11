@@ -98,6 +98,30 @@ test("real xterm retains output across detach, handles input and resize, and rel
       }
     };
     await assertAnsiContrast();
+    const assertSystemAppearance = async () => {
+      const actual = await xterm.evaluate((viewport) => {
+        const element = viewport.closest("[data-buzz-ui]");
+        const css = getComputedStyle(element);
+        const probe = document.createElement("span");
+        probe.style.backgroundColor = "var(--bg-panel)";
+        element.append(probe);
+        const background = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return {
+          background: getComputedStyle(viewport).backgroundColor,
+          expectedBackground: background,
+          font: css.fontFamily,
+          size: css.fontSize,
+          renderedSize: getComputedStyle(document.querySelector(".xterm-rows"))
+            .fontSize,
+        };
+      });
+      expect(actual.background).toBe(actual.expectedBackground);
+      expect(actual.font).toContain("JetBrains Mono");
+      expect(actual.renderedSize).toBe(actual.size);
+      return Number.parseFloat(actual.size);
+    };
+    expect(await assertSystemAppearance()).toBe(13);
     const lightBackground = await xterm.evaluate(
       (el) => getComputedStyle(el).backgroundColor,
     );
@@ -111,6 +135,7 @@ test("real xterm retains output across detach, handles input and resize, and rel
     await expect(splash).toHaveCSS("--splash-lightness", "80%");
     await expect(splash).toHaveCSS("--splash-chroma", "0.16");
     await assertAnsiContrast();
+    expect(await assertSystemAppearance()).toBe(13);
     await page.screenshot({
       path: test.info().outputPath("buzzterm-dark.png"),
     });
@@ -144,6 +169,7 @@ test("real xterm retains output across detach, handles input and resize, and rel
           .evaluate((el) => getComputedStyle(el).fontSize),
       )
       .not.toBe(fontSize);
+    expect(await assertSystemAppearance()).toBe(19.5);
     const dimensions = await page.getByLabel("Dimensions").textContent();
     await page.setViewportSize({ width: 800, height: 600 });
     await expect(page.getByLabel("Dimensions")).not.toHaveText(dimensions);
@@ -197,6 +223,164 @@ test("real xterm retains output across detach, handles input and resize, and rel
     await button("Toggle theme").click();
     await button("Toggle mount").click();
     await expect(splash).toHaveCount(0);
+    expect(errors).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("terminal shared controls keep focus, recovery and layout in both modes", async ({
+  page,
+}) => {
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const server = await createServer({
+    root,
+    configFile: false,
+    envDir: false,
+    plugins: [react()],
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-panel.html`,
+    );
+    const button = (name) => page.getByRole("button", { name, exact: true });
+    const launcher = button("Toggle channel terminal");
+    await expect(launcher).toHaveAttribute("data-buzz-ui", "");
+    await expect(launcher).toHaveCSS("padding-left", "0px");
+    await expect(launcher).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await launcher.hover();
+    await expect(launcher).toHaveCSS("background-color", "rgb(232, 232, 232)");
+    await launcher.click();
+    const drawer = page.getByRole("region", { name: "Terminal drawer" });
+    await expect(drawer.locator(".xterm-rows")).toContainText(
+      "FIXTURE_SHELL_READY",
+    );
+    await page.evaluate(() => {
+      window.retainedTerminal = document.querySelector(".xterm");
+    });
+    await expect(launcher).toHaveAttribute("aria-pressed", "true");
+    await expect(launcher).toHaveAttribute("data-icon-variant", "tint");
+    await page.mouse.move(0, 0);
+    const expectToken = async (node, property, token) => {
+      const value = await node.evaluate(
+        (el, { property, token }) => {
+          const probe = document.createElement("span");
+          probe.style.setProperty(property, `var(${token})`);
+          el.append(probe);
+          const value = getComputedStyle(probe).getPropertyValue(property);
+          probe.remove();
+          return value;
+        },
+        { property, token },
+      );
+      await expect(node).toHaveCSS(property, value);
+    };
+    await expectToken(launcher, "color", "--purple-12");
+    await expectToken(launcher, "background-color", "--purple-3");
+    const restart = button("Restart");
+    await expect(restart).toHaveClass("buzz-button");
+    await expect(restart).toHaveCSS("border-top-width", "0px");
+    const hide = button("Hide terminal");
+    // Pointer focus is quiet; keyboard navigation paints the actual control.
+    await button("Enlarge text").click();
+    await expect(restart).toHaveCSS("font-size", "21px");
+    await restart.click();
+    await expect(restart).toBeDisabled();
+    await expectToken(restart, "color", "--text-disabled");
+    await expect(restart).toHaveCSS("outline-style", "none");
+    await expect(drawer.locator(".xterm-rows")).toContainText(
+      "FIXTURE_SHELL_READY",
+    );
+    await button("End session").focus();
+    await page.keyboard.press("Tab");
+    await expect(hide).toBeFocused();
+    await expect(hide).toHaveCSS("outline-style", "solid");
+    await expect(hide).toHaveCSS("outline-width", "2px");
+    for (const mode of ["light", "dark"]) {
+      if (mode === "dark") await button("Toggle theme").click();
+      for (const width of [1280, 800, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await expect(hide).toBeInViewport();
+        await expectToken(
+          drawer.locator("[data-terminal-version]"),
+          "background-color",
+          "--bg-panel",
+        );
+        if (width === 1280) {
+          const splash = drawer.locator("[data-terminal-splash]");
+          await restart.click();
+          await expect(splash.locator('[data-layer="head"]')).toHaveCount(151);
+          const bounds = await splash.evaluate((el) => {
+            const frame = el.getBoundingClientRect();
+            const art = el.querySelector("pre").getBoundingClientRect();
+            return (
+              art.top >= frame.top - 1 &&
+              art.bottom <= frame.bottom + 1 &&
+              art.left >= frame.left - 1 &&
+              art.right <= frame.right + 1
+            );
+          });
+          expect(bounds).toBe(true);
+        }
+        await expect(restart).toBeInViewport();
+        expect(
+          await drawer.evaluate((el) => el.scrollWidth),
+        ).toBeLessThanOrEqual(width);
+        const header = drawer.locator(".panel-header");
+        expect(
+          await header.evaluate((el) => el.scrollWidth),
+        ).toBeLessThanOrEqual(width);
+        await page.screenshot({
+          path: test.info().outputPath(`terminal-panel-${mode}-${width}.png`),
+        });
+      }
+    }
+    await page.evaluate(() => {
+      window.retainedTerminal = document.querySelector(".xterm");
+    });
+    await hide.click();
+    await expect(drawer).toHaveCount(0);
+    await expect(launcher).toHaveAttribute("aria-pressed", "false");
+    await launcher.click();
+    expect(
+      await page.evaluate(
+        () => window.retainedTerminal === document.querySelector(".xterm"),
+      ),
+    ).toBe(true);
+    await button("Toggle close failure").click();
+    await button("End session").click();
+    await expect(page.getByRole("alert")).toContainText("Fixture close failed");
+    await button("Toggle close failure").click();
+    await button("End session").click();
+    await expect(button("Start session")).toBeVisible();
+    await button("Start session").click();
+    await expect(drawer.locator(".xterm-rows")).toContainText(
+      "FIXTURE_SHELL_READY",
+    );
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-panel.html?short`,
+    );
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "2"),
+    );
+    await launcher.click();
+    await expect(drawer.locator(".xterm-rows")).toContainText("FIXTURE");
+    await expect(hide).toBeInViewport();
+    await expect(restart).toBeInViewport();
+    await expect(button("End session")).toBeInViewport();
+    expect(
+      await drawer.locator(".xterm-viewport").evaluate((el) => el.clientHeight),
+    ).toBeGreaterThanOrEqual(78); // two 26px mono lines at 1.5 leading
+    expect(
+      await drawer.locator(".panel-header").evaluate((el) => el.scrollWidth),
+    ).toBeLessThanOrEqual(390);
+    await page.screenshot({
+      path: test.info().outputPath("terminal-short-200.png"),
+    });
     expect(errors).toEqual([]);
   } finally {
     await server.close();

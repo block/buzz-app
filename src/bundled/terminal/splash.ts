@@ -13,15 +13,26 @@ export function createSplash(element: HTMLElement) {
     overlay?.remove();
     overlay = undefined;
   };
-  const layout = (columns: number, rows: number) => {
+  const layout = () => {
     if (!overlay) return;
-    const banner = buildTerminalBanner(
-      Math.min(columns, 160),
-      Math.min(rows, 48),
-      2,
-    );
     const art = document.createElement("pre");
     art.className = styles.splashArt ?? "";
+    // The art has its own fixed glyph grid, not xterm's preference-scaled
+    // line boxes. Measure that grid before deciding whether the wordmark fits.
+    art.style.width = "1ch";
+    art.style.height = "1.2em";
+    overlay.replaceChildren(art);
+    const cell = art.getBoundingClientRect();
+    art.style.removeProperty("width");
+    art.style.removeProperty("height");
+    const columns = Math.min(Math.floor(element.clientWidth / cell.width), 160);
+    // Keep enough decorative rows for the frame and honeycomb. In a shallow
+    // drawer scale the artwork as a whole, rather than discarding the wordmark.
+    const rows = Math.min(
+      Math.max(Math.floor(element.clientHeight / cell.height), 24),
+      48,
+    );
+    const banner = buildTerminalBanner(columns, rows, cell.height / cell.width);
     if (!banner) {
       const mark = document.createElement("span");
       mark.dataset.layer = "head";
@@ -34,6 +45,7 @@ export function createSplash(element: HTMLElement) {
       art.classList.add(styles.splashGrid ?? "");
       art.style.gridTemplateColumns = `repeat(${banner.cells[0]?.length ?? 1}, 1ch)`;
       art.style.gridTemplateRows = `repeat(${banner.cells.length}, 1.2em)`;
+      art.style.transform = `translate(-50%, -50%) scale(${Math.min(1, element.clientHeight / (rows * cell.height))})`;
       for (const [rowIndex, row] of banner.cells.entries()) {
         for (const [column, cell] of row.entries()) {
           if (!cell.layer || cell.char === " ") continue;
@@ -57,7 +69,7 @@ export function createSplash(element: HTMLElement) {
     overlay.replaceChildren(art);
   };
   return {
-    show(columns: number, rows: number) {
+    show() {
       if (consumed || !element.isConnected || !element.clientHeight) return;
       consumed = true;
       overlay = document.createElement("div");
@@ -65,7 +77,7 @@ export function createSplash(element: HTMLElement) {
       overlay.dataset.terminalSplash = "";
       overlay.setAttribute("aria-hidden", "true");
       element.append(overlay);
-      layout(columns, rows);
+      layout();
       timer = setTimeout(dismiss, 3000);
     },
     layout,

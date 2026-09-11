@@ -17,13 +17,12 @@ export function createScreen(
   resize: (cols: number, rows: number) => void,
 ): TerminalScreen {
   const element = document.createElement("div");
-  element.className = styles.emulator ?? "";
+  element.dataset.buzzUi = "";
+  element.className = `${styles.emulator} text-mono font-mono`;
   const splash = createSplash(element);
   const terminal = new Terminal({
     cursorBlink: true,
     scrollback: 5000,
-    fontSize: 13,
-    fontFamily: '"JetBrains Mono", ui-monospace, monospace',
     minimumContrastRatio: 4.5,
   });
   const fit = new FitAddon();
@@ -65,8 +64,8 @@ export function createScreen(
         terminal.options = terminalAppearance(element);
         if (host.clientWidth && host.clientHeight) {
           fit.fit();
-          splash.layout(terminal.cols, terminal.rows);
-          if (receivedOutput) splash.show(terminal.cols, terminal.rows);
+          splash.layout();
+          if (receivedOutput) splash.show();
         }
       };
       const observer = new ResizeObserver(update);
@@ -102,7 +101,7 @@ export function createScreen(
         terminal.write(data, () => {
           if (!disposed && data.length) {
             receivedOutput = true;
-            splash.show(terminal.cols, terminal.rows);
+            splash.show();
           }
           pending.delete(resolve);
           resolve();

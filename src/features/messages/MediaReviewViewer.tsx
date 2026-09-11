@@ -95,8 +95,14 @@ function ResolvedReview({
         retry={view.refresh}
       />
     );
-  const attachmentAvailable = [snapshot.root, ...snapshot.replies].some((row) =>
+  const threadRows = [snapshot.root, ...snapshot.replies];
+  const attachmentAvailable = threadRows.some((row) =>
     row.attachments.some((item) => item.url === props.attachment.url),
+  );
+  const videoUrls = new Set(
+    threadRows.flatMap((row) =>
+      row.attachments.filter((item) => item.video).map((item) => item.url),
+    ),
   );
   if (!attachmentAvailable)
     return <ReviewShell {...props} error="Attachment unavailable." />;
@@ -107,6 +113,7 @@ function ResolvedReview({
       rootId={snapshot.root.id}
       replies={snapshot.replies}
       limited={snapshot.limited}
+      timecodesSeekable={videoUrls.size === 1}
     />
   );
 }
@@ -124,6 +131,7 @@ function ReviewShell({
   rootId,
   replies = [],
   limited = false,
+  timecodesSeekable = false,
   loading = false,
   error,
   retry,
@@ -134,6 +142,7 @@ function ReviewShell({
   rootId?: string;
   replies?: ReturnType<ThreadView["snapshot"]>["replies"];
   limited?: boolean;
+  timecodesSeekable?: boolean;
   loading?: boolean;
   error?: string;
   retry?: () => void | Promise<void>;
@@ -220,7 +229,7 @@ function ReviewShell({
                 session={session}
                 extensions={extensions}
                 selectAttachment={selectAttachment}
-                {...(attachment.video ? { seek } : {})}
+                {...(attachment.video && timecodesSeekable ? { seek } : {})}
               />
               {attachment.video && (
                 <div className={styles.mediaReviewTimeOption}>

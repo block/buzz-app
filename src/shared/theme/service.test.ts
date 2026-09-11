@@ -1,12 +1,21 @@
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { expect, it, vi } from "vitest";
-import { APPEARANCE_KEY, createAppearance, parseColorMode } from "./service";
+import {
+  APPEARANCE_KEY,
+  FONT_SCALE_KEY,
+  createAppearance,
+  parseColorMode,
+  parseFontScale,
+} from "./service";
 
 function browser(stored: string | null = null) {
   const values = new Map(stored === null ? [] : [[APPEARANCE_KEY, stored]]);
   const listeners = new Set<(event: StorageEvent) => void>();
-  const root = { dataset: {} as Record<string, string> };
+  const root = {
+    dataset: {} as Record<string, string>,
+    style: { setProperty: vi.fn() },
+  };
   const meta = { setAttribute: vi.fn() };
   const storage = {
     getItem: vi.fn((key: string) => values.get(key) ?? null),
@@ -53,6 +62,8 @@ it.each([null, "", "system", "LIGHT", '{"mode":"dark"}', "light", "dark"])(
     expect(app.snapshot()).toEqual({
       mode: parseColorMode(value),
       error: null,
+      fontScale: 1,
+      fontError: null,
     });
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
     expect(b.meta.setAttribute).toHaveBeenLastCalledWith(
@@ -137,4 +148,65 @@ it("rejects an invalid runtime write without saving it", () => {
   expect(app.snapshot().mode).toBe("dark");
   expect(b.storage.setItem).not.toHaveBeenCalled();
   app.dispose();
+});
+
+it.each([
+  null,
+  "",
+  "garbage",
+  "0",
+  "Infinity",
+  "0.7",
+  "2.1",
+  "1.3",
+  "2",
+  "0.8",
+])("bootstrap and font preference agree for %j", (value) => {
+  const b = browser("dark");
+  if (value !== null) b.values.set(FONT_SCALE_KEY, value);
+  runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
+    localStorage: b.storage,
+    document: b.host.document,
+  });
+  expect(b.root.style.setProperty).toHaveBeenLastCalledWith(
+    "--buzz-text-scale",
+    String(parseFontScale(value)),
+  );
+  const app = createAppearance(b.host);
+  expect(app.snapshot().fontScale).toBe(parseFontScale(value));
+  expect(app.snapshot().mode).toBe("dark");
+  app.dispose();
+});
+it("font writes clamp, round, recover from failure, sync and preserve color storage", () => {
+  const b = browser("dark");
+  const app = createAppearance(b.host);
+  app.setFontScale(1.1 + 0.1);
+  expect(b.values.get(FONT_SCALE_KEY)).toBe("1.2");
+  expect(b.values.get(APPEARANCE_KEY)).toBe("dark");
+  app.setFontScale(100);
+  expect(app.snapshot().fontScale).toBe(2);
+  app.setFontScale(0);
+  expect(app.snapshot().fontScale).toBe(0.8);
+  app.setFontScale(NaN);
+  expect(app.snapshot().fontScale).toBe(0.8);
+  b.storage.setItem.mockImplementationOnce(() => {
+    throw new Error("full");
+  });
+  app.setFontScale(1.4);
+  expect(app.snapshot().fontError).toContain("could not be saved");
+  expect(b.root.style.setProperty).toHaveBeenLastCalledWith(
+    "--buzz-text-scale",
+    "1.4",
+  );
+  app.setFontScale(1.4);
+  expect(app.snapshot().fontError).toBeNull();
+  b.values.set(FONT_SCALE_KEY, "1.6");
+  b.change(FONT_SCALE_KEY);
+  expect(app.snapshot().fontScale).toBe(1.6);
+  b.values.delete(FONT_SCALE_KEY);
+  b.change(null);
+  expect(app.snapshot().fontScale).toBe(1);
+  app.dispose();
+  app.setFontScale(2);
+  expect(app.snapshot().fontScale).toBe(1);
 });

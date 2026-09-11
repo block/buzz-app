@@ -135,7 +135,7 @@ export function Settings({
                             />
                           </span>
                           <div className="min-w-0">
-                            <h3 className="m-0 text-[15px] font-medium">
+                            <h3 className="m-0 text-[length:calc(15px*var(--buzz-text-scale,1))] font-medium">
                               {plugin.manifest.name}
                             </h3>
                             {failure && (

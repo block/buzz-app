@@ -1,4 +1,6 @@
 // Installed fixture code only; app composition, manager, contributions and UI remain production.
+import * as shortcutCounter from "../../examples/plugins/shortcut-counter/plugin.js";
+import shortcutManifest from "../../examples/plugins/shortcut-counter/manifest.json";
 import { useEffect, useState } from "react";
 import type { BundledPlugin } from "../../src/plugins/manager";
 import type { PanelProps } from "../../src/features/panels/service";
@@ -38,6 +40,7 @@ function Legacy() {
   );
 }
 export const fixturePlugins: readonly BundledPlugin[] = [
+  { manifest: { ...shortcutManifest, apiVersion: 1 }, module: shortcutCounter },
   {
     manifest: { id: "fixture.notes", name: "Notes fixture", apiVersion: 1 },
     module: {

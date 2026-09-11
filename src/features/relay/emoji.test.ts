@@ -171,6 +171,7 @@ it("plain sends are immediate and do not acquire a palette; load failure require
   await h.session.emoji.ensure();
   expect(h.wire.pending).toHaveLength(0);
   const retry = h.session.emoji.refresh();
+  await vi.waitFor(() => expect(h.wire.pending).toHaveLength(1));
   h.wire.next().respond([set()]);
   await retry;
   expect(h.session.emoji.snapshot().status).toBe("ready");

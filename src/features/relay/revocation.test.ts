@@ -78,6 +78,7 @@ it("purges existing and newly opened broad/ID views through store denial, not ju
   h.emit([secret]);
   expect(view.snapshot().events.map((e) => e.id)).toEqual([other.id]);
   const read = h.session.read([{ ids: [secret.id], limit: 1 }]);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
   h.next().respond([secret]);
   expect(await read).toEqual([]);
 });

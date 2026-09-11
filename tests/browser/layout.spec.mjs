@@ -240,6 +240,19 @@ test("panel resizing preserves bottom follow and the visible reading anchor", as
   await button(page, "Close channel panel").click();
   await settle(page);
   await expectBottom();
+  // Late layout-only reflow must not need another message or viewport resize.
+  // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
+  // row layout, not scroll methods/metrics or the production observer callback.
+  await page.waitForTimeout(250);
+  const lateLayout = await page.addStyleTag({
+    content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
+  });
+  await settle(page);
+  await expectBottom();
+  await page.waitForTimeout(250);
+  await lateLayout.evaluate((element) => element.remove());
+  await settle(page);
+  await expectBottom();
   // Reopen by keyboard without browser click-to-scroll changing the saved position.
   const target = "https://github.com/block/buzz/pull/4";
   const saved = await upper(page);
@@ -422,7 +435,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = ["Home", "Messages", "Projects"];
+  const titles = ["Home", "Messages", "Projects", "Agents"];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -455,7 +468,11 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     exact: true,
   });
   await projects.click();
-  await expect(nav.getByRole("button")).toHaveText(["Home", "Messages"]);
+  await expect(nav.getByRole("button")).toHaveText([
+    "Home",
+    "Messages",
+    "Agents",
+  ]);
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
   // Leave registration order reversed so every navigation surface must sort it.
@@ -464,13 +481,18 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     exact: true,
   });
   await channels.click();
-  await expect(nav.getByRole("button")).toHaveText(["Home", "Projects"]);
+  await expect(nav.getByRole("button")).toHaveText([
+    "Home",
+    "Projects",
+    "Agents",
+  ]);
   await channels.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page.getByRole("main").getByRole("button")).toHaveText([
     "Messages",
     "Projects",
+    "Agents",
     "Make it yoursSettings",
   ]);
   await button(page, "Find a page").click();

@@ -207,7 +207,7 @@ function AgentCard({
             {identities.map((identity) => (
               <li key={identity.pubkey}>
                 <span className="font-medium text-ink">{identity.name}</span>
-                <p className="m-0 mt-1 select-all break-all font-mono text-[10px]">
+                <p className="m-0 mt-1 select-all break-all font-mono text-[length:calc(10px*var(--buzz-text-scale,1))]">
                   {identity.pubkey}
                 </p>
               </li>

@@ -60,20 +60,23 @@ export function ProfileButton({
         title={profile.name || "Your profile"}
         className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-0 bg-surface/65 p-0 text-ink"
       >
-        {profile.picture.startsWith("https://") &&
-        failed !== profile.picture ? (
-          <img
-            src={profile.picture}
-            alt=""
-            referrerPolicy="no-referrer"
-            className="size-full object-cover"
-            onError={() => setFailed(profile.picture)}
-          />
-        ) : profile.name ? (
-          profile.name.slice(0, 1).toUpperCase()
-        ) : (
-          <UserRound aria-hidden="true" size={19} />
-        )}
+        {/* Keep mouse-origin Tab traversal rooted at the button in WebKit. */}
+        <span className="pointer-events-none flex size-full items-center justify-center">
+          {profile.picture.startsWith("https://") &&
+          failed !== profile.picture ? (
+            <img
+              src={profile.picture}
+              alt=""
+              referrerPolicy="no-referrer"
+              className="size-full object-cover"
+              onError={() => setFailed(profile.picture)}
+            />
+          ) : profile.name ? (
+            profile.name.slice(0, 1).toUpperCase()
+          ) : (
+            <UserRound aria-hidden="true" size={19} />
+          )}
+        </span>
       </button>
       <nav
         id={id}

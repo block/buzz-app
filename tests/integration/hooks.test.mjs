@@ -302,3 +302,162 @@ test("untracked nested formatter overrides fail before any source writes", (t) =
   assert.equal(f.git("write-tree"), index);
   assert.equal(f.read("nested/warning.ts"), source);
 });
+
+function pushFixture(t, changes) {
+  const f = fixture(t);
+  f.git("update-ref", "refs/remotes/origin/main", "HEAD");
+  for (const [file, content] of Object.entries(changes)) f.write(file, content);
+  f.git("add", "--", ...Object.keys(changes));
+  // Seed source commits independently of formatting: this fixture exercises push.
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "push probe");
+  f.git("init", "--bare", "-q", "remote.git");
+  // A fake Vitest executable records the production hook's selected arguments.
+  // It lives only in this disposable repository, never the source node_modules.
+  rmSync(path.join(f.dir, "node_modules"));
+  mkdirSync(path.join(f.dir, "node_modules"));
+  symlinkSync(
+    path.join(root, "node_modules/typescript"),
+    path.join(f.dir, "node_modules/typescript"),
+    "dir",
+  );
+  f.write(
+    "tsconfig.json",
+    JSON.stringify({
+      compilerOptions: { types: [], skipLibCheck: true },
+      include: ["src", "untouched.ts", "vitest.config.ts"],
+    }),
+  );
+  f.write(
+    "node_modules/vitest/vitest.mjs",
+    `import { existsSync, readFileSync, writeFileSync } from "node:fs";
+writeFileSync("push-args.json", JSON.stringify(process.argv.slice(2)));
+process.exit(existsSync("push-exit") ? Number(readFileSync("push-exit", "utf8")) : 0);
+`,
+  );
+  const push = (ref = "HEAD:refs/heads/probe") =>
+    f.run("git", ["push", "./remote.git", ref]);
+  const args = () => JSON.parse(f.read("push-args.json"));
+  return { ...f, push, args };
+}
+
+test("installed pre-push forwards stdin and runs related tests with literal paths", (t) => {
+  const name = "src/space [name]\nname.ts";
+  const f = pushFixture(t, { [name]: "export const value = 1;\n" });
+  const result = f.push();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.deepEqual(f.args(), [
+    "related",
+    "--run",
+    "--passWithNoTests",
+    path.join(f.git("rev-parse", "--show-toplevel").trim(), name),
+    path.join(
+      f.git("rev-parse", "--show-toplevel").trim(),
+      "src/app/pages.integration.test.mjs",
+    ),
+  ]);
+  assert.equal(f.git("stash", "list"), "");
+});
+
+test("documentation-only push does not start a test runner", (t) => {
+  const f = pushFixture(t, { "notes.md": "# notes\n" });
+  const result = f.push();
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout + result.stderr, /No JS unit-test inputs changed/);
+  assert.throws(() => f.args(), /ENOENT/);
+});
+
+test("shared config and unknown base conservatively run all JS unit tests", (t) => {
+  const f = pushFixture(t, { "vitest.config.ts": "export default {};\n" });
+  assert.equal(f.push().status, 0);
+  assert.deepEqual(f.args(), ["run"]);
+  f.git("update-ref", "-d", "refs/remotes/origin/main");
+  assert.equal(f.push("HEAD:refs/heads/without-base").status, 0);
+  assert.deepEqual(f.args(), ["run"]);
+});
+
+test("source deletion runs all JS tests instead of losing dependency coverage", (t) => {
+  const f = pushFixture(t, { "src/deleted.ts": "export const value = 1;\n" });
+  f.git("update-ref", "refs/remotes/origin/main", "HEAD");
+  f.git("rm", "src/deleted.ts");
+  f.git("-c", "core.hooksPath=/dev/null", "commit", "-qm", "delete source");
+  assert.equal(f.push().status, 0);
+  assert.deepEqual(f.args(), ["run"]);
+});
+
+test("a type error blocks the actual Git push before unit tests", (t) => {
+  const f = pushFixture(t, {
+    "src/type-error.ts": 'export const value: number = "wrong";\n',
+  });
+  const result = f.push();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /TS2322/);
+  assert.throws(() => f.args(), /ENOENT/);
+  assert.notEqual(
+    f.run("git", ["--git-dir=remote.git", "rev-parse", "refs/heads/probe"])
+      .status,
+    0,
+  );
+});
+
+test("failing related tests block the actual Git push", (t) => {
+  const f = pushFixture(t, { "src/failing.ts": "export const value = 1;\n" });
+  f.write("push-exit", "1");
+  assert.notEqual(f.push().status, 0);
+  assert.notEqual(
+    f.run("git", ["--git-dir=remote.git", "rev-parse", "refs/heads/probe"])
+      .status,
+    0,
+  );
+  assert.equal(f.args()[0], "related");
+});
+
+test("non-HEAD and deletion pushes do not pretend to test another commit", (t) => {
+  const f = pushFixture(t, { "src/value.ts": "export const value = 1;\n" });
+  const other = f.push("HEAD^:refs/heads/old");
+  assert.equal(other.status, 0, other.stdout + other.stderr);
+  assert.match(other.stdout + other.stderr, /Non-HEAD refs rely on PR CI/);
+  assert.throws(() => f.args(), /ENOENT/);
+  assert.equal(f.push(":refs/heads/old").status, 0);
+  assert.throws(() => f.args(), /ENOENT/);
+});
+
+for (const [input, testFile] of [
+  ["src/shared/styles/tokens.css", "src/shared/theme/tokens.test.ts"],
+  ["public/appearance-init.js", "src/shared/theme/service.test.ts"],
+]) {
+  test(`pre-push selects the unit test that reads ${input} directly`, (t) => {
+    const f = pushFixture(t, { [input]: "/* changed */\n" });
+    assert.equal(f.push().status, 0);
+    assert.equal(f.args()[0], "related");
+    assert.ok(
+      f
+        .args()
+        .includes(
+          path.join(f.git("rev-parse", "--show-toplevel").trim(), testFile),
+        ),
+    );
+  });
+}
+
+test("missing Vitest fails closed without installing dependencies", (t) => {
+  const f = pushFixture(t, { "src/value.ts": "export const value = 1;\n" });
+  rmSync(path.join(f.dir, "node_modules/vitest"), { recursive: true });
+  const result = f.push();
+  assert.notEqual(result.status, 0);
+  assert.match(result.stdout + result.stderr, /MODULE_NOT_FOUND/);
+});
+
+test("a subdirectory push with multiple refs still tests HEAD", (t) => {
+  const f = pushFixture(t, { "src/value.ts": "export const value = 1;\n" });
+  const result = f.run("git", [
+    "-C",
+    "src",
+    "push",
+    path.join(f.dir, "remote.git"),
+    "HEAD^:refs/heads/old",
+    "HEAD:refs/heads/current",
+  ]);
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  assert.match(result.stdout + result.stderr, /Non-HEAD refs rely on PR CI/);
+  assert.equal(f.args()[0], "related");
+});

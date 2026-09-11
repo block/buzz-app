@@ -12,6 +12,7 @@ import {
   metadata,
   roster,
   profile,
+  message,
 } from "../../src/features/relay/testing";
 import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
@@ -23,17 +24,34 @@ const viewer = keypair(),
 let members = [viewer.pubkey, first.pubkey, second.pubkey];
 let time = 1700000000;
 const publications: RelayEvent[] = [];
+let incoming = (_events: readonly RelayEvent[]) => {};
+let releaseProfiles = () => {};
+const delayed = new URLSearchParams(location.search).has("delayed-profiles");
+const profileGate = delayed
+  ? new Promise<void>((resolve) => {
+      releaseProfiles = resolve;
+    })
+  : Promise.resolve();
 const owner = createRelaySession(
   {
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     media: (url) => url,
+    subscribe(callbacks) {
+      incoming = callbacks.receive;
+      callbacks.state({ status: "connected", routes: [] });
+      return { update() {}, retry() {}, dispose() {} };
+    },
     async query(filters) {
+      if (filters.some((filter) => filter.kinds?.includes(0)))
+        await profileGate;
       const events = [
         roster(relay, "c", members, time),
         metadata(relay, "c", "General"),
+        roster(relay, "other", [viewer.pubkey], time),
+        metadata(relay, "other", "Other"),
         profile(viewer, { name: "Viewer" }),
-        profile(first, { name: "Honey" }),
+        profile(first, { name: delayed ? "Mary Jane" : "Honey" }),
         profile(second, { name: "Honey" }),
         ...publications,
       ];
@@ -110,6 +128,17 @@ Object.assign(window, {
     change: (action: "enable" | "disable", id: string) =>
       plugins.change(action, id),
     outbox: () => owner.session.outbox?.snapshot(),
+    refresh: () => owner.session.channels.refreshList?.(),
+    removeFirst() {
+      members = [viewer.pubkey, second.pubkey];
+      time++;
+      owner.session.channels.refreshList?.();
+    },
+    releaseProfiles: () => releaseProfiles(),
+    list: () => owner.session.channels.list(),
+    otherMessage() {
+      incoming([message(viewer, "other", "Unrelated preview", ++time)]);
+    },
   },
 });
 function Fixture() {

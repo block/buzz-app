@@ -40,6 +40,19 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(account).toBeHidden();
     await avatar.click();
     await tab(true);
+    await expect(button(page, "Find a page")).toBeFocused();
+    await expect(account).toBeHidden();
+    // Also leave from a keyboard-established starting point, not only a click.
+    await tab();
+    await expect(avatar).toBeFocused();
+    await page.keyboard.press("Enter");
+    await tab();
+    await expect(settings).toBeFocused();
+    await tab(true);
+    await expect(avatar).toBeFocused();
+    await expect(account).toBeVisible();
+    await tab(true);
+    await expect(button(page, "Find a page")).toBeFocused();
     await expect(account).toBeHidden();
   }
   await avatar.focus();

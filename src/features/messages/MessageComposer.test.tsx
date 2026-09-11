@@ -17,6 +17,7 @@ const hooks = vi.hoisted(() => ({
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useEffect: () => {},
+  useCallback: (callback: unknown) => callback,
   useLayoutEffect: (effect: () => void) => hooks.effects.push(effect),
   useId: () => `composer-${++hooks.id}`,
   useRef: (initial: unknown) => {
@@ -27,6 +28,13 @@ vi.mock("react", async (original) => ({
           initial === null
             ? {
                 focus: vi.fn(),
+                addEventListener: vi.fn(),
+                removeEventListener: vi.fn(),
+                ownerDocument: {
+                  addEventListener: vi.fn(),
+                  removeEventListener: vi.fn(),
+                  activeElement: null,
+                },
                 isConnected: true,
                 selectionStart: 0,
                 selectionEnd: 0,

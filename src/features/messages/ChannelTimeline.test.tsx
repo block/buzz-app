@@ -102,23 +102,34 @@ function setup({
     return frameId;
   });
   vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
-  let resized = () => {};
+  const observers = new Map<() => void, Set<unknown>>();
   vi.stubGlobal(
     "ResizeObserver",
     class {
+      targets = new Set<unknown>();
       constructor(callback: () => void) {
-        resized = callback;
+        observers.set(callback, this.targets);
       }
-      observe() {}
-      disconnect() {}
+      observe(target: unknown) {
+        this.targets.add(target);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
     },
   );
+  const resized = (target: unknown) => {
+    for (const [callback, targets] of observers)
+      if (targets.has(target)) callback();
+  };
+  const list = {};
   const element = {
     clientWidth: 1124,
     clientHeight: 668,
     scrollHeight: 3706,
     scrollTop: 2388,
     getBoundingClientRect: () => ({ top: 0 }),
+    querySelector: () => list,
     querySelectorAll: () =>
       mounted.map(({ id, y }) => ({
         dataset: { messageId: id },
@@ -199,14 +210,18 @@ function setup({
     loadOlder,
     flush,
     resize(runFrames = true) {
-      resized();
+      resized(element);
       render(runFrames);
+    },
+    measureRows(runFrames = true) {
+      resized(list);
+      if (runFrames) flush();
     },
     gesture() {
       section.props.onWheel();
     },
     scroll(user = true) {
-      resized();
+      resized(element);
       render();
       if (user) section.props.onWheel();
       section.props.onScroll({ currentTarget: element });
@@ -450,5 +465,77 @@ it.each([
   h.element.scrollTop = 0;
   h.gesture();
   expect(h.loadOlder).not.toHaveBeenCalled();
+  h.unmount();
+});
+
+it("keeps bottom restoration through repeated late list measurements without another viewport resize", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  h.handle.scrollToIndex.mockClear();
+  // The viewport and rows are unchanged; only Virtua's measured list reflows.
+  h.measureRows();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledTimes(2);
+  expect(h.handle.scrollToIndex).toHaveBeenLastCalledWith(1, { align: "end" });
+  h.unmount();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+});
+it.each([false, true])(
+  "a new gesture cancels late bottom reflow, including queued=%s",
+  (queued) => {
+    const h = setup();
+    h.element.scrollTop = 3038;
+    h.scroll();
+    h.element.clientWidth = 650;
+    h.resize();
+    h.handle.scrollToIndex.mockClear();
+    if (queued) h.measureRows(false);
+    h.gesture();
+    if (queued) h.flush();
+    else h.measureRows();
+    expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+    h.unmount();
+  },
+);
+it("late measurements do not convert reading-anchor restoration to bottom follow", () => {
+  const h = setup({ mounted: [{ id: "last", y: 42 }] });
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+});
+it("prepending retires the preceding bottom-reflow observer and its queued frame", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows(false);
+  h.prepend();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+});
+
+it("ordinary initial bottom and append commands do not install resize-follow observation", () => {
+  const h = setup();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.append();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
   h.unmount();
 });

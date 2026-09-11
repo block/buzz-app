@@ -1,24 +1,45 @@
 /** Host-owned, device-local appearance. Never depends on plugin/relay readiness. */
 export type ColorMode = "light" | "dark";
 export const APPEARANCE_KEY = "buzz-appearance.v1";
+export const FONT_SCALE_KEY = "buzz-font-scale.v1";
+export const MIN_FONT_SCALE = 0.8;
+export const MAX_FONT_SCALE = 2;
+export function parseFontScale(value: unknown): number {
+  const number =
+    typeof value === "string" && value.trim() ? Number(value) : value;
+  return typeof number === "number" &&
+    Number.isFinite(number) &&
+    number >= MIN_FONT_SCALE &&
+    number <= MAX_FONT_SCALE
+    ? Math.round(number * 10) / 10
+    : 1;
+}
 export const parseColorMode = (value: unknown): ColorMode =>
   value === "dark" ? "dark" : "light";
 
 export interface AppearanceSnapshot {
   readonly mode: ColorMode;
+  readonly fontScale: number;
+  readonly fontError: string | null;
   readonly error: string | null;
 }
 
 export function createAppearance(
   host: Window | undefined = typeof window === "undefined" ? undefined : window,
 ) {
-  let state: AppearanceSnapshot = { mode: "light", error: null };
+  let state: AppearanceSnapshot = {
+    mode: "light",
+    error: null,
+    fontScale: 1,
+    fontError: null,
+  };
   let disposed = false;
   const listeners = new Set<() => void>();
   const apply = () => {
     if (!host) return;
     const root = host.document.documentElement;
     root.dataset.colorMode = state.mode;
+    root.style.setProperty("--buzz-text-scale", String(state.fontScale));
     // CSS owns the palette; browser chrome derives from the same canvas token.
     host.document
       .querySelector('meta[name="theme-color"]')
@@ -34,6 +55,7 @@ export function createAppearance(
   const restore = () => {
     try {
       state = {
+        ...state,
         mode: parseColorMode(host?.localStorage.getItem(APPEARANCE_KEY)),
         error: null,
       };
@@ -46,17 +68,41 @@ export function createAppearance(
     }
     notify();
   };
+  const restoreFont = () => {
+    try {
+      state = {
+        ...state,
+        fontScale: parseFontScale(host?.localStorage.getItem(FONT_SCALE_KEY)),
+        fontError: null,
+      };
+    } catch {
+      state = {
+        ...state,
+        fontError:
+          "Text size could not be restored. Choose a size to try saving it again.",
+      };
+    }
+    notify();
+  };
   const onStorage = (event: StorageEvent) => {
-    if (event.key !== APPEARANCE_KEY && event.key !== null) return;
+    if (
+      event.key !== APPEARANCE_KEY &&
+      event.key !== FONT_SCALE_KEY &&
+      event.key !== null
+    )
+      return;
     // Re-read the current value: an older queued event must not undo a newer save.
     try {
       if (event.storageArea !== host?.localStorage) return;
-      restore();
+      if (event.key !== FONT_SCALE_KEY) restore();
+      if (event.key !== APPEARANCE_KEY) restoreFont();
     } catch {
-      restore();
+      if (event.key !== FONT_SCALE_KEY) restore();
+      if (event.key !== APPEARANCE_KEY) restoreFont();
     }
   };
   restore();
+  restoreFont();
   host?.addEventListener("storage", onStorage);
   return {
     snapshot: () => state,
@@ -77,7 +123,23 @@ export function createAppearance(
         error =
           "This appearance is active, but could not be saved on this device. Try again.";
       }
-      state = { mode, error };
+      state = { ...state, mode, error };
+      notify();
+    },
+    setFontScale(value: number) {
+      if (disposed || !Number.isFinite(value)) return;
+      const fontScale = parseFontScale(
+        Math.min(MAX_FONT_SCALE, Math.max(MIN_FONT_SCALE, value)),
+      );
+      let fontError: string | null = null;
+      try {
+        if (!host) throw new Error("No browser storage");
+        host.localStorage.setItem(FONT_SCALE_KEY, String(fontScale));
+      } catch {
+        fontError =
+          "This text size is active, but could not be saved on this device. Try again.";
+      }
+      state = { ...state, fontScale, fontError };
       notify();
     },
     dispose() {

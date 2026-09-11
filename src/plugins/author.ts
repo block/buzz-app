@@ -5,6 +5,14 @@ export type { Page, Pages } from "../features/pages/service";
 export type { Panel, Panels } from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
 export type {
+  ComposerObservation,
+  CompletionContext,
+  CompletionQuery,
+  CompletionEdit,
+  CompletionSuggestion,
+  CompletionResult,
+  ComposerCompletionProps,
+  ComposerCompletion,
   ComposerToolProps,
   ComposerTool,
   InlineContent,
@@ -12,3 +20,10 @@ export type {
   InlineRenderer,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
+
+export type {
+  Shortcuts,
+  Shortcut,
+  KeyBinding,
+  RegisteredShortcut,
+} from "../features/shortcuts/service";

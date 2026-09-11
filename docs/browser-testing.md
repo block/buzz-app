@@ -2,8 +2,10 @@
 
 `pnpm test` and therefore `just scan` now run the checked-in Chromium and WebKit
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
-There is no repository-hosted CI configuration yet: this is an executable local
-and CI-ready gate, not a claim that the relay runs it on every push.
+[GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
+pushes: an isolated serial measurement job gates two functional shards. Both
+engines remain mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
+failures and skipped dependencies keep CI red.
 Owner-specific tests are colocated in `src/` and `dev/`; separate manual diagnostic
 pages live in `tests/fixtures/`. See [test organization and fixture URLs](contributing.md#test-organization).
 
@@ -69,6 +71,42 @@ measurements. Failure screenshots and traces are retained too. The next invocati
 replaces that output; copy artifacts before a rerun if you need to compare them.
 A dirty-status listing is not a content hash; tie release claims to a separately
 verified clean commit or source manifest.
+
+## CI coverage and local-only WebKit checks
+
+CI stays on `ubuntu-24.04`. `pnpm test:browser:ci` inherits the ordinary config and
+excludes only tests tagged `@local-webkit` from `webkit-measurements`. Their Chromium
+instances and every untagged WebKit case remain required. Both engines, serial
+measurement order, two functional shards, zero retries, all existing assertions
+and budgets, and the strict `CI required` aggregate are unchanged.
+
+The following **three WebKit cases are local-only**, not passing CI coverage:
+
+| Case | Reason and coverage gap |
+| --- | --- |
+| `channel-opening.spec.mjs`: cold opening / warm switching | Hosted Linux WebKit recorded 104ms against the unchanged <100ms warm budget. The whole case is local-only, including its cold opening under held DM labels and no-new-head-read assertions. This is runner-sensitive evidence, not proof of an app or engine cause. Chromium retains the full case in CI. |
+| `scroll.spec.mjs`: cursor paging / large-history virtualization | Linux WebKit repeatedly stops short of the requested wheel edge. The cause remains unresolved between engine/input handling and the harness. Its 31 unique cursor requests, 640-message traversal, 4px anchors and DOM ceilings remain local-only on WebKit; Chromium retains them in CI. |
+| `scroll.spec.mjs`: live edits / reading anchor | Linux WebKit's fetch reader can leave part of an edit undelivered while the SSE stream is open. WebKit growth/shrinkage and reading-anchor checks are local-only; Chromium retains the case in CI. The delivery defect is not fixed by this selection change. |
+
+Evidence: [Linux run at `d25ed65`](https://github.com/block/buzz-app/actions/runs/34538518724)
+and its measurement artifacts. Local Apple Silicon passes do not establish Linux
+correctness or hosted repeatability. WebKit's other scrolling/append/reload case
+and all functional journeys still run in Linux CI; unit/native tests do not
+replace the three excluded WebKit cases.
+
+```sh
+bin/pnpm test:browser:ci          # same selection as Linux CI
+bin/pnpm test:browser:local-only  # exactly the three WebKit cases, serially
+bin/pnpm test:browser            # complete original suite, including those cases
+```
+
+The full suite remains part of `pnpm test` and `just scan` on every local platform;
+these cases are not silently skipped on Linux. The local-only command may still
+fail there. No macOS CI runner is configured. To restore a case to CI, remove its
+tag only after unchanged Linux assertions and budgets pass repeatedly. Live-edit
+closure also needs complete delivery on the open stream without a later write,
+heartbeat or close rescuing it. Do not move ordinary app/test failures out of CI
+or grow this exception list merely to get a green run.
 
 ## What fails the gate
 
@@ -164,7 +202,7 @@ traffic. The existing channel-opening journey keeps optional names behind readin
 These tests model roster removal and explicitly refresh: they do **not** establish
 which event or reconnect triggers deployed deletion catch-up, or require the
 separate proposed relay notification patch. They run in both engines under the
-normal `pnpm test` / `just scan` gate, which is local/CI-ready but not relay-enforced.
+normal `pnpm test` / `just scan` gate, which also runs in GitHub Actions (not relay-enforced).
 
 ## Measurements, not timing guarantees
 
@@ -240,3 +278,20 @@ reply, thread/channel/scope draft isolation, and a rejected reply retried with t
 same signed event and deduplicated echo. The fixture uses ephemeral keys and local
 transport only, without developer environment files, native windows or live relay.
 It is not a production-broker or long-thread newest-tail test.
+
+## Composer completion regressions
+
+`typeahead.spec.mjs` mounts the real Composer and bundled Emoji/Mentions providers
+with ephemeral signed session fixtures. It covers exact namesake recipient tags,
+channel/thread isolation, middle-of-draft replacement, IME/Escape/selection, late
+publications and query ABA, plugin/session revocation, stable-ID reorder, length
+rejection, live catalog/member changes, unrelated previews, delayed multi-word
+profiles, keyboard recovery and disabled/read-only DOM checks. The controlled
+provider fixture exercises the public publication contract without changing the
+host's acceptance machinery. `completion-layout.spec.mjs` uses the compiled app and
+actual Channels layout at 1280×832, 800×600, 480×400 and 390×844, including hit testing
+and unforced clicks. The thread case mounts the actual ThreadPanel beside another
+composer. Existing emoji/mention/edit/thread journeys remain in the gate.
+
+These are Chromium/WebKit browser results, not attended live-account, screen-reader,
+software-keyboard or native-packaged acceptance. Those require separate checking.

@@ -59,7 +59,7 @@ slice: native radios, buttons, fields and the existing dialogs supply the behavi
 
 Typography uses the shared Inter/system sans stack with Tailwind's existing type
 scale: `text-sm` controls, `text-base` body/labels, `text-lg` section headings and
-`text-3xl` page headings. Existing conversation type sizes remain unchanged. Spacing
+`text-3xl` page headings. Existing conversation type sizes remain unchanged at 100%. Spacing
 uses Tailwind's 4px rhythm; preserve established responsive card gutters. Avoid
 creating new scales for the same values. Motion is optional and respects reduced
 motion; theme changes must not fade through the old mode's foreground/background.
@@ -130,3 +130,32 @@ Native Rust test targets compile but contain zero tests. Human light/dark visual
 approval and independent source review do not replace attended packaged-app
 chrome/relaunch acceptance. Browser evidence also does not cover third-party plugins
 that hard-code their own colors.
+
+
+## Text size and shortcuts
+
+The host owns a separate device-local `buzz-font-scale.v1` preference (80–200%,
+10% steps; default/reset 100%). Color-mode storage is unchanged. Settings →
+Appearance supplies visible decrease/increase/reset controls and save-failure retry.
+The bootstrap and appearance service apply `--buzz-text-scale`; invalid persisted
+values fall back to 100%, and same-origin storage events re-read the latest choice.
+
+Command+, opens Settings on Apple platforms. Command+= / Command++ increase text,
+Command+- decreases and Command+0 resets. Other platforms use Control. Zoom works
+while typing and in dialogs without changing browser/WebView zoom; Settings does
+not navigate behind an open modal. The [shortcut service](plugin-architecture.md#in-app-keyboard-shortcuts)
+also serves plugins and owns event dispatch/lifetime rules.
+
+Only typography scales: root rem size, layout spacing, icons and native window
+geometry stay unchanged. Shared Tailwind type utilities and built-in fixed-size
+CSS typography consume the scale. Plugin text can inherit host typography or use
+`font-size: calc(15px * var(--buzz-text-scale, 1))`; avoid multiplying inherited
+font size by the scale again. Use unitless or scaled line-height so enlarged text
+does not overlap. Independent plugins that hard-code sizes and third-party shadow
+widgets need their own adapter; this is not a forced CSS rewrite of arbitrary code.
+
+`tests/browser/shortcuts.spec.mjs` covers real key dispatch to Settings and actual
+message/composer text, draft/node preservation, reset/limits/reload, modal/editor/
+Shadow DOM guards, and the independent example's disable/re-enable path. These
+Chromium/WebKit checks use a fixture broker, not native menu accelerators. An
+attended desktop shortcut try remains necessary for native acceptance.

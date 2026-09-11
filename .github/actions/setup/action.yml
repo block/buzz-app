@@ -1,0 +1,38 @@
+name: Setup pinned tools and dependencies
+description: Hermit and frozen pnpm install; optionally provision pinned browsers.
+inputs:
+  browsers:
+    description: Install Chromium and WebKit plus Linux system libraries
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - name: Cache Hermit packages
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/hermit/pkg
+        key: hermit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/**') }}
+    - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
+    - name: Resolve pnpm store
+      id: pnpm
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+    - name: Cache pnpm store
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ${{ steps.pnpm.outputs.path }}
+        key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml', 'bin/.pnpm-*.pkg') }}
+        restore-keys: pnpm-${{ runner.os }}-${{ runner.arch }}-
+    - name: Install locked dependencies
+      shell: bash
+      run: pnpm install --frozen-lockfile
+    - name: Cache Playwright engines
+      if: inputs.browsers == 'true'
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
+    - name: Install pinned browser engines and libraries
+      if: inputs.browsers == 'true'
+      shell: bash
+      run: pnpm exec playwright install --with-deps chromium webkit

@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import type { ReadFilter } from "./events";
 import {
@@ -79,7 +79,7 @@ it("shares profile ownership between a standalone feature and the channel timeli
   expect(pending).toHaveLength(0);
 });
 it("does not turn missing or failed profile reads into permanently cached placeholder profiles", async () => {
-  const { queries, next } = setup();
+  const { queries, next, pending } = setup();
   const missing = queries.profiles.ensure([alice.pubkey]);
   next().respond([]);
   await missing;
@@ -88,6 +88,7 @@ it("does not turn missing or failed profile reads into permanently cached placeh
   next().fail(new Error("offline"));
   await expect(failed).rejects.toThrow("offline");
   const retry = queries.profiles.ensure([alice.pubkey]);
+  await vi.waitFor(() => expect(pending).toHaveLength(1));
   next().respond([profile(alice, { name: "Available now" })]);
   await retry;
   expect(queries.profiles.snapshot().get(alice.pubkey)?.name).toBe(

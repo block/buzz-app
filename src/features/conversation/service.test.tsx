@@ -165,3 +165,63 @@ it("bundled Mentions registers only a chooser and removal leaves the host UI ava
   await vi.waitFor(() => expect(h.service.tools.snapshot()).toHaveLength(0));
   expect(h.service.ui.Composer).toBe(composer);
 });
+
+it("owns completion registration through disable, replacement and failed activation", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerCompletion({
+        id: "completion",
+        title: "Completion",
+        match: () => null,
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.completions.snapshot()).toHaveLength(1),
+  );
+  const first = h.service.completions.snapshot()[0];
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.completions.snapshot()).toHaveLength(0),
+  );
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.completions.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.completions.snapshot()[0]).not.toBe(first);
+  const broken = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerCompletion({
+        id: "completion",
+        title: "Completion",
+        match: () => null,
+        component: Component,
+      });
+      throw new Error("failure after registration");
+    },
+  });
+  broken.runtime.reconcile([broken.plugin]);
+  await vi.waitFor(() =>
+    expect(broken.runtime.snapshot()[broken.plugin.manifest.id]?.status).toBe(
+      "failed",
+    ),
+  );
+  expect(broken.service.completions.snapshot()).toHaveLength(0);
+});
+it.each([emoji, mentions])(
+  "bundled plugin registers its own completion provider",
+  async (module) => {
+    const h = harness(module);
+    h.runtime.reconcile([h.plugin]);
+    await vi.waitFor(() =>
+      expect(h.service.completions.snapshot()).toHaveLength(1),
+    );
+    expect(h.service.completions.snapshot()[0]?.pluginId).toBe(
+      h.plugin.manifest.id,
+    );
+  },
+);

@@ -37,4 +37,6 @@ if (config("core.worktree") || config("core.bare") === "true")
 execFileSync(resolve("bin/lefthook"), ["validate"], { stdio: "inherit" });
 git("config", "--local", "extensions.worktreeConfig", "true");
 git("config", "--worktree", "core.hooksPath", ".githooks");
-console.log("Installed Lefthook pre-commit for this worktree only.");
+console.log(
+  "Installed Lefthook pre-commit and pre-push for this worktree only.",
+);

@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CI: "true"
+  BUZZ_LIVE: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  javascript:
+    name: JavaScript
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Lint and types
+        run: pnpm check
+      # check already ran TypeScript; do not repeat pnpm build's typecheck.
+      - name: Frontend build
+        run: pnpm exec vite build
+      - name: All Vitest tests
+        run: pnpm exec vitest run
+
+  native:
+    name: Rust and tool integration
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Tauri system libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libayatana-appindicator3-dev patchelf
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: native
+          save-if: ${{ github.event_name == 'push' }}
+      - name: Rust formatting
+        run: cargo fmt --all --check
+      - name: Rust lint
+        run: cargo clippy --workspace --locked --all-targets -- -D warnings
+      # --workspace includes Tauri, unlike the default Cargo member selection.
+      - name: All Rust tests and doctests
+        run: cargo test --workspace --locked
+      - name: All Node integration tests
+        run: node --test tests/integration/*.test.mjs
+
+  measurements:
+    name: Browser measurements
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          browsers: "true"
+      # Preserve Chromium -> WebKit measurement dependencies; never shard or
+      # overlap the two measurement projects on this runner.
+      - name: Serial Chromium and WebKit measurements
+        run: pnpm test:browser:ci --project '*-measurements' --workers=1
+      - name: Measurement evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-measurements
+          path: test-results/browser
+          retention-days: 7
+
+  browser:
+    name: Browser journeys (${{ matrix.shard }}/2)
+    needs: measurements
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          browsers: "true"
+      # Measurement success is enforced by needs above. --no-deps avoids
+      # repeating measurements on every shard; both functional engines remain.
+      - name: Chromium and WebKit functional journeys
+        run: pnpm test:browser:ci --project chromium --project webkit --no-deps --shard=${{ matrix.shard }}/2
+      - name: Browser evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: browser-journeys-${{ matrix.shard }}
+          path: test-results/browser
+          retention-days: 7
+
+  required:
+    name: CI required
+    if: always()
+    needs: [javascript, native, measurements, browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every lane and every shard
+        env:
+          JAVASCRIPT: ${{ needs.javascript.result }}
+          NATIVE: ${{ needs.native.result }}
+          MEASUREMENTS: ${{ needs.measurements.result }}
+          BROWSER: ${{ needs.browser.result }}
+        run: |
+          for result in "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$BROWSER"; do
+            test "$result" = success || exit 1
+          done

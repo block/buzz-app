@@ -118,6 +118,7 @@ export const test = base.extend({
         build: `${developmentReact ? "Vite production build with development React" : "production frontend"}; ${productionBroker ? "production broker; modeled upstream WS/HTTP policy" : "fixture broker HTTP"}; no native or real relay`,
       },
       queries: [],
+      publications: [],
       sessions: [],
       streamConnections: [],
       errors: [],
@@ -240,10 +241,15 @@ export const test = base.extend({
           });
         }
         if (route === "stream") {
+          // Match the production broker: WebKit can buffer trailing HTTP chunks.
+          // Close-delimited SSE must deliver each append without a later write.
+          response.useChunkedEncodingByDefault = false;
           response.writeHead(200, {
             "Content-Type": "text/event-stream",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-store",
+            Connection: "close",
           });
+          response.flushHeaders();
           response.write(
             `event: state\ndata: ${JSON.stringify({ status: "connected", routes: body.channels.map((channelId) => ({ id: `channel:${channelId}`, channelId, status: "live", replay: "unknown" })) })}\n\n`,
           );
@@ -251,7 +257,16 @@ export const test = base.extend({
           streams.set(community, clients);
           clients.add(response);
           report.streamConnections.push({ community, channels: body.channels });
-          response.on("close", () => clients.delete(response));
+          // The real broker pulses every 15s; the production reader expires
+          // streams after 45s without bytes, even while history HTTP is active.
+          const heartbeat = setInterval(
+            () => response.write(": keepalive\n\n"),
+            15000,
+          );
+          response.on("close", () => {
+            clearInterval(heartbeat);
+            clients.delete(response);
+          });
           return;
         }
         if (route !== "query" || request.method !== "POST")
@@ -375,6 +390,12 @@ export const test = base.extend({
             userKey,
             target.created_at + 1,
           );
+          report.publications.push({
+            id: event.id,
+            target: target.id,
+            kind: event.kind,
+            frameBytes: Buffer.byteLength(`data: ${JSON.stringify(event)}\n\n`),
+          });
           if (relay) relay.publish(community, event);
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);

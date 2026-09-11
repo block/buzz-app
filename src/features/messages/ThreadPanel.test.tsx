@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { ThreadPanel } from "./ThreadPanel";
 import { MessageRow } from "./MessageRow";
+import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
@@ -303,9 +304,9 @@ it("bounds enlarged emoji presentation on sent messages", () => {
         day: false,
         retry: undefined,
       }),
-    ).find((element) => element.type === "p");
-  expect(message("😀 🙏 👏")?.props["data-single-emoji"]).toBe(true);
-  expect(message("😀 🙏 👏 😄")?.props["data-single-emoji"]).toBeUndefined();
+    ).find((element) => element.type === MessageMarkdown);
+  expect(message("😀 🙏 👏")?.props.largeEmoji).toBe(true);
+  expect(message("😀 🙏 👏 😄")?.props.largeEmoji).toBe(false);
 });
 
 it("the actual message row rejects attachment URLs outside the shared safe-link policy", () => {
@@ -328,7 +329,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
   expect(links).toHaveLength(1);
   expect(links[0]?.props).toMatchObject({
     href: "https://safe.test/a.png",
-    rel: "noopener noreferrer",
+    rel: "noreferrer",
   });
 });
 

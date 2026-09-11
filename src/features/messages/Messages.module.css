@@ -497,10 +497,8 @@
 .mentionRecipients code {
   font-size: calc(10px * var(--buzz-text-scale, 1));
 }
-.text[data-single-emoji] > span {
-  display: flex;
-  height: calc(42px * var(--buzz-text-scale, 1));
-  align-items: center;
+.text[data-single-emoji] {
+  margin: 4px 0 0;
 }
 
 .text,
@@ -513,7 +511,7 @@
 .plainText {
   white-space: pre-wrap;
 }
-.text > :first-child {
+.text > :first-child:not([data-single-emoji]) {
   margin-top: 0;
 }
 .text > :last-child {

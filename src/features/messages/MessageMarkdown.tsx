@@ -138,17 +138,26 @@ export function MessageMarkdown({
   extensions,
   media,
   onOpenLink,
+  largeEmoji = false,
 }: {
   row: ChannelMessage;
   extensions?: ConversationExtensions | undefined;
   media(url: string): string | undefined;
   onOpenLink(url: string): boolean;
+  largeEmoji?: boolean | undefined;
 }) {
   if (!markdownIsSafeToRender(row.content))
     return <div className={styles.plainText}>{row.content}</div>;
 
   const protectedEmoji = protectCustomEmoji(row);
   const components: Components = {
+    p: ({ node: _node, ...props }) => (
+      <p
+        {...props}
+        className={largeEmoji ? styles.text : undefined}
+        data-single-emoji={largeEmoji || undefined}
+      />
+    ),
     a: ({ node: _node, ...props }) => (
       <MessageLink {...props} onOpenLink={onOpenLink} />
     ),
@@ -174,20 +183,19 @@ export function MessageMarkdown({
     },
   };
 
-  return (
-    <div className={styles.text}>
-      <Markdown
-        remarkPlugins={[
-          remarkGfm,
-          remarkBreaks,
-          [remarkInlineContent, protectedEmoji.shortcodes],
-        ]}
-        components={components}
-        skipHtml
-        urlTransform={transformUrl}
-      >
-        {protectedEmoji.content}
-      </Markdown>
-    </div>
+  const markdown = (
+    <Markdown
+      remarkPlugins={[
+        remarkGfm,
+        remarkBreaks,
+        [remarkInlineContent, protectedEmoji.shortcodes],
+      ]}
+      components={components}
+      skipHtml
+      urlTransform={transformUrl}
+    >
+      {protectedEmoji.content}
+    </Markdown>
   );
+  return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }

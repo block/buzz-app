@@ -161,11 +161,15 @@ export function policyRelay({
               );
           });
         const channel = filter["#h"]?.[0];
+        // Head catch-up is an exact top-level channel window, not a batched
+        // sidebar preview that happens to contain that channel.
         const quota = filter.kinds?.includes(39002)
           ? "roster"
           : filter.kinds?.includes(9)
             ? filter.until === undefined
-              ? channel
+              ? filter["#h"]?.length === 1 && filter.top_level === true
+                ? channel
+                : undefined
               : `older:${channel}`
             : undefined;
         if (quotas.has(quota)) {

@@ -28,10 +28,23 @@ export function useSidebarView(scope: string, ready: boolean) {
   const list = useRef<HTMLElement>(null);
   const pending = useRef(true);
 
+  // Once the viewport moves, the user owns it even if they return to the top.
+  useLayoutEffect(() => {
+    const viewport = list.current;
+    if (!viewport) return;
+    const scrolled = () => {
+      pending.current = false;
+    };
+    viewport.addEventListener("scroll", scrolled, { passive: true });
+    return () => viewport.removeEventListener("scroll", scrolled);
+  }, []);
+
   // Wait for roster/group layout, not optional profile enrichment or messages.
   useLayoutEffect(() => {
     if (!ready || !pending.current || !list.current) return;
-    list.current.scrollTop = intent.current.scrollTop;
+    // Compositor scrolling may update the position before its scroll event.
+    if (list.current.scrollTop === 0)
+      list.current.scrollTop = intent.current.scrollTop;
     pending.current = false;
   }, [ready]);
   useLayoutEffect(() => {

@@ -12,13 +12,19 @@ use std::fs::{self, OpenOptions};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum LegacySource {
     Installed,
     Development,
 }
 impl LegacySource {
+    pub fn keyring_service(self) -> &'static str {
+        match self {
+            Self::Installed => "buzz-desktop",
+            Self::Development => "buzz-desktop-dev",
+        }
+    }
     pub fn app_directory(self) -> &'static str {
         match self {
             Self::Installed => "xyz.block.buzz.app",
@@ -45,6 +51,7 @@ pub struct Candidate {
 struct Pending {
     preview: ImportPreview,
     source: PathBuf,
+    source_kind: LegacySource,
     digest: String,
     workspace: PathBuf,
 }
@@ -60,10 +67,16 @@ struct Source {
     digest: String,
 }
 impl Imports {
-    /// The native adapter resolves source from a fixed enum + app-data parent,
-    /// never from a path supplied by the browser. Tests use temporary fixtures.
-    pub fn preview(&mut self, source: PathBuf, workspace: PathBuf) -> Result<ImportPreview> {
+    /// Native resolves the app-data parent, never from a browser-supplied path.
+    /// Bind config directory and credential service to the same explicit choice.
+    pub fn preview(
+        &mut self,
+        source_kind: LegacySource,
+        app_data_parent: PathBuf,
+        workspace: PathBuf,
+    ) -> Result<ImportPreview> {
         self.pending = None;
+        let source = app_data_parent.join(source_kind.app_directory());
         let data = read_source(&source)?;
         let mut candidates = Vec::new();
         let mut seen = BTreeSet::new();
@@ -104,6 +117,7 @@ impl Imports {
         self.pending = Some(Pending {
             preview: preview.clone(),
             source,
+            source_kind,
             digest: data.digest,
             workspace,
         });
@@ -160,7 +174,7 @@ impl Imports {
         // verified identical key saved by a partial prior attempt, never replace it.
         for (agent, inline) in &agents {
             let key = if inline.is_empty() {
-                credentials.read_legacy(&agent.pubkey)?
+                credentials.read_legacy(pending.source_kind, &agent.pubkey)?
             } else {
                 Secret::parse(inline, &agent.pubkey)?
             };

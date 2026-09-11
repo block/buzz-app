@@ -10,6 +10,8 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
 - Bounded, versioned, profile-locked settings with atomic replacement, previous
   revision backup, stale-save refusal, immutable exact agent/community IDs.
 - Explicit chosen-source import preview; source drift and malformed config refusal;
+  the source enum binds the library directory and selected credential service
+  (`buzz-desktop` installed / `buzz-desktop-dev` development), with no fallback;
   linked prompt/model/provider, runtime and environment resolution; native-only
   opaque preservation; disabled import and create-only verified credential custody.
 - Write-only environment patch semantics and explicit public DTO projection.

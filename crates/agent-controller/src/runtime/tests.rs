@@ -8,7 +8,7 @@ const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000
 const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
 struct Memory;
 impl Credentials for Memory {
-    fn read_legacy(&self, _: &str) -> Result<Secret> {
+    fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
         panic!("Runtime must never import")
     }
     fn read(&self, _: &str, key: &str) -> Result<Option<Secret>> {

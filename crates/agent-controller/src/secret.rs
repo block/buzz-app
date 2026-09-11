@@ -62,7 +62,8 @@ impl Secret {
 /// Native OS adapter; tests inject isolated memory credentials. No silent fallback
 /// to plaintext private-key files and no overwrite of existing or legacy entries.
 pub trait Credentials: Send + Sync {
-    fn read_legacy(&self, pubkey: &str) -> Result<Secret>;
+    /// Read only this selected source; absence/denial must not search another service.
+    fn read_legacy(&self, source: crate::LegacySource, pubkey: &str) -> Result<Secret>;
     fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>>;
     fn add(&self, id: &str, key: &Secret) -> Result<()>;
 }

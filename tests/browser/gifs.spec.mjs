@@ -91,11 +91,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   );
   releaseInfo();
   await expect(emojiTrigger).not.toHaveAttribute("aria-busy", "true");
-  await expect(page.getByRole("tab", { name: "GIF", exact: true })).toHaveCount(
-    0,
-  );
-  await emojiTrigger.click();
-  await emojiTrigger.click();
+  await expect(
+    page.getByRole("tab", { name: "GIF", exact: true }),
+  ).toBeVisible();
   await expect(picker).toBeVisible();
   await expect(picker).toHaveCSS("border-radius", "24px");
   await expect(picker).toHaveCSS("border-top-width", "1px");
@@ -424,9 +422,5 @@ test("GIF discovery retries after a transient relay failure", async ({
   await trigger.click();
   await expect.poll(() => attempts).toBe(2);
   await expect(trigger).not.toHaveAttribute("aria-busy", "true");
-  if ((await gifTab.count()) === 0) {
-    await trigger.click();
-    await trigger.click();
-  }
   await expect(gifTab).toBeVisible();
 });

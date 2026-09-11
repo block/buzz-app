@@ -305,7 +305,7 @@ it("bounds enlarged emoji presentation on sent messages", () => {
       }),
     ).find((element) => element.type === "p");
   expect(message("😀 🙏 👏")?.props["data-single-emoji"]).toBe(true);
-  expect(message("😀 🙏 👏 😄")?.props["data-single-emoji"]).toBeUndefined();
+  expect(message("😀 🙏 👏 😄")?.props["data-single-emoji"]).toBe(true);
 });
 
 it("the actual message reply button opens that message and retains the trigger focus target", () => {

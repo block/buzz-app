@@ -226,6 +226,8 @@ function ThreadMessages({
           <MessageRow
             extensions={extensions}
             row={snapshot.root}
+            session={session}
+            scope={scope}
             profile={profiles.get(snapshot.root.authorId)}
             media={session.media}
             onOpenLink={onOpenLink}
@@ -247,6 +249,8 @@ function ThreadMessages({
               <MessageRow
                 extensions={extensions}
                 row={row}
+                session={session}
+                scope={scope}
                 profile={profiles.get(row.authorId)}
                 media={session.media}
                 onOpenLink={onOpenLink}

@@ -189,7 +189,7 @@ async function relayAuthority(fetch, relay) {
 export function validMessageTemplate(event) {
   return (
     event &&
-    event.kind === 9 &&
+    [7, 9].includes(event.kind) &&
     typeof event.content === "string" &&
     event.content.trim().length > 0 &&
     Buffer.byteLength(event.content) <= 32000 &&
@@ -205,6 +205,13 @@ export function validMessageTemplate(event) {
     ).length === 1 &&
     (() => {
       const references = event.tags.filter((tag) => tag[0] === "e");
+      if (event.kind === 7)
+        return (
+          [...event.content.trim()].length <= 64 &&
+          references.length === 1 &&
+          references[0].length === 2 &&
+          /^[0-9a-f]{64}$/.test(references[0][1])
+        );
       if (!references.length) return true;
       const [reply] = references;
       // This write surface supports direct-to-root replies, not arbitrary references.
@@ -506,7 +513,7 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
-              writeKinds: [9],
+              writeKinds: [7, 9],
               sidebarPreferences: true,
               readState: true,
               agentLibrary: true,
@@ -816,7 +823,7 @@ export function relayBrokerPlugin({
               const started = performance.now();
               const event = finalizeEvent(
                 {
-                  kind: 9,
+                  kind: filters.kind,
                   content: filters.content,
                   created_at: filters.created_at,
                   tags: filters.tags,

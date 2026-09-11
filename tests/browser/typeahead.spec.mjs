@@ -351,18 +351,58 @@ test("selection follows IDs through reordering and rejected replacement never fa
 test("current custom catalog drives typeahead and signed tags across community replacement", async ({
   page,
 }) => {
+  await page.route("**/emoji-media/**", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="42" height="42"><circle cx="21" cy="21" r="20" fill="purple"/></svg>',
+    }),
+  );
   await page.goto(
     `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html`,
   );
   const input = page.getByRole("textbox", { name: "Message #general" });
+  await input.fill(":very-long");
+  const longOption = page.getByRole("option", {
+    name: ":very-long-community-emoji-name-that-does-not-fit:",
+    exact: true,
+  });
+  await expect(longOption).toBeVisible();
+  const longLabel = longOption.locator("[data-completion-label]");
+  await expect(longLabel).toHaveCSS("text-overflow", "ellipsis");
+  await expect(longLabel).toHaveCSS("white-space", "nowrap");
+  expect(
+    await longLabel.evaluate(
+      (element) => element.scrollWidth > element.clientWidth,
+    ),
+  ).toBe(true);
   await input.fill(":party-par");
   const first = page.getByRole("option", {
-    name: ":party-parrot: Community emoji",
+    name: ":party-parrot:",
     exact: true,
   });
   await expect(first).toBeVisible();
+  const suggestions = page.getByRole("region", {
+    name: "Emoji suggestions",
+    exact: true,
+  });
+  const composer = input.locator("xpath=ancestor::form");
+  await expect(suggestions).not.toContainText("Community emoji");
+  await expect(suggestions).not.toContainText("to navigate");
+  const suggestionBox = await suggestions.boundingBox();
+  const composerBox = await composer.boundingBox();
+  expect(suggestionBox.width).toBeCloseTo(composerBox.width * 0.375, 1);
   await first.click();
-  await expect(input).toHaveValue(":party-parrot: ");
+  await expect(input).toHaveValue("\uFFFC");
+  await expect(input).toHaveAttribute("data-custom-emoji-only", "true");
+  const renderedEmoji = composer.locator("img");
+  await expect(renderedEmoji).toHaveCSS("width", "42px");
+  await expect(renderedEmoji).toHaveCSS("height", "42px");
+  const caret = await input.evaluate((element) => ({
+    start: element.selectionStart,
+    end: element.selectionEnd,
+    length: element.value.length,
+  }));
+  expect(caret).toEqual({ start: 1, end: 1, length: 1 });
   await input.press("Enter");
   await expect
     .poll(() =>
@@ -378,20 +418,24 @@ test("current custom catalog drives typeahead and signed tags across community r
     "party-parrot",
     "https://a.test/media/parrot.png",
   ]);
+  expect(
+    await page.evaluate(
+      () => window.emojiFixture.report.publications[0].event.content,
+    ),
+  ).toBe(":party-parrot:");
   await input.fill(":party");
   await expect(
-    page.getByRole("option", { name: ":party: Community emoji", exact: true }),
+    page.getByRole("option", { name: ":party:", exact: true }),
   ).toBeVisible();
   await page.evaluate(() => window.emojiFixture.remove());
   await expect(
-    page.getByRole("option", { name: ":party: Community emoji", exact: true }),
+    page.getByRole("option", { name: ":party:", exact: true }),
   ).toHaveCount(0);
   await input.press("Escape");
   await page.getByRole("button", { name: "Switch community" }).click();
   await input.fill(":party");
-  await page
-    .getByRole("option", { name: ":party: Community emoji", exact: true })
-    .click();
+  await page.getByRole("option", { name: ":party:", exact: true }).click();
+  await expect(input).toHaveValue("\uFFFC");
   await input.press("Enter");
   await expect
     .poll(() =>

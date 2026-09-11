@@ -3,6 +3,7 @@ import { isValidElement, type ReactNode, type ReactElement } from "react";
 import { ComposerTools } from "../conversation/ComposerTools";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { MessageComposer } from "./MessageComposer";
+import { isSingleUnicodeEmoji, singleCustomEmoji } from "./emoji-size";
 import type { RelaySession } from "../relay/session";
 
 // Production handlers with a shallow hook harness; not DOM focus/layout evidence.
@@ -47,6 +48,8 @@ vi.mock("react", async (original) => ({
       };
     return hooks.refs[i];
   },
+  useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
+    snapshot(),
   useState(initial: unknown) {
     const i = hooks.index++;
     if (!(i in hooks.states))
@@ -91,6 +94,13 @@ function mount(threadRootId?: string, scope = "scope", writable = true) {
   const onSend = vi.fn();
   const session = {
     messages,
+    emoji: {
+      snapshot: () => ({ status: "ready", entries: [] }),
+      subscribe: () => () => {},
+      ensure: () => Promise.resolve(),
+      refresh: () => Promise.resolve(),
+    },
+    media: (url: string) => url,
     outbox: { supports: () => writable },
   } as unknown as RelaySession;
   const render = () => {
@@ -226,6 +236,26 @@ it("gives the channel and thread separate input/label identities, and gates unsu
       (e) => e.type === "textarea",
     ),
   ).toBe(false);
+});
+
+it("marks only a single Unicode emoji for enlarged composer presentation", () => {
+  for (const emoji of ["😀", " 👋🏽 ", "👨‍👩‍👧‍👦", "🇬🇧", "1️⃣"])
+    expect(isSingleUnicodeEmoji(emoji)).toBe(true);
+  for (const other of ["", "1", ":party:", "😀😀", "😀 hello"])
+    expect(isSingleUnicodeEmoji(other)).toBe(false);
+
+  const h = mount();
+  h.type("😀");
+  expect(h.input().props["data-single-emoji"]).toBe(true);
+  h.type("😀 hello");
+  expect(h.input().props["data-single-emoji"]).toBeUndefined();
+});
+
+it("recognizes an exact custom emoji draft without treating shortcode prose as emoji", () => {
+  const party = { shortcode: "party", url: "https://example.test/party.png" };
+  expect(singleCustomEmoji(":PARTY: ", [party])).toBe(party);
+  expect(singleCustomEmoji("hello :party:", [party])).toBeUndefined();
+  expect(singleCustomEmoji(":missing:", [party])).toBeUndefined();
 });
 
 it.each([undefined, "root"])(

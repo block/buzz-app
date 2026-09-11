@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 import {
+  CUSTOM_EMOJI_TOKEN,
   editMentionDraft,
+  expandCustomEmoji,
   mentionDraft,
   replaceMentionDraft,
 } from "./mention-draft";
@@ -50,6 +52,19 @@ it("legacy prose and malformed persisted metadata never infer recipients", () =>
 it("pasting a namesake while extending the chosen token cannot transfer notification intent", () => {
   const draft = mentionDraft({ text: "@Honey ", recipients: [first] });
   expect(editMentionDraft(draft, "@Honeybee @Honey ").recipients).toEqual([]);
+});
+
+it("keeps custom emoji as one editor token and expands only for delivery", () => {
+  const draft = mentionDraft({
+    text: `${CUSTOM_EMOJI_TOKEN} hello`,
+    recipients: [],
+    emoji: [{ shortcode: "party-parrot", start: 0, end: 1 }],
+  });
+  expect(draft.emoji).toEqual([
+    { shortcode: "party-parrot", start: 0, end: 1 },
+  ]);
+  expect(expandCustomEmoji(draft)).toBe(":party-parrot: hello");
+  expect(replaceMentionDraft(draft, 0, 1, "").emoji).toBeUndefined();
 });
 
 it("captured replacement ranges never transfer identity across a matrix of same-name edits", () => {

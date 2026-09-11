@@ -5,6 +5,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
 import styles from "./Messages.module.css";
+import { isSingleEmoji } from "./emoji-size";
 
 export type MessageRowProps = {
   row: ChannelMessage;
@@ -31,6 +32,7 @@ export const MessageRow = memo(function MessageRow({
 }: MessageRowProps) {
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
+  const singleEmoji = isSingleEmoji(row.content, row.emoji);
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -62,7 +64,10 @@ export const MessageRow = memo(function MessageRow({
               })}
             </time>
           </div>
-          <p className={styles.text}>
+          <p
+            className={styles.text}
+            data-single-emoji={singleEmoji || undefined}
+          >
             <MessageText
               row={row}
               extensions={extensions}
@@ -71,17 +76,40 @@ export const MessageRow = memo(function MessageRow({
             />
           </p>
           <DeliveryNotice row={row} retry={retry} />
-          {row.attachments.map((attachment) => (
-            <a
-              className={styles.attachment}
-              key={attachment.url}
-              href={attachment.url}
-              target="_blank"
-              rel="noreferrer"
-            >
-              {attachment.video ? "Video attachment" : "Image attachment"} ↗
-            </a>
-          ))}
+          {row.attachments.map((attachment) => {
+            const source = media(attachment.url);
+            return attachment.video || !source ? (
+              <a
+                className={styles.attachment}
+                key={attachment.url}
+                href={attachment.url}
+                target="_blank"
+                rel="noreferrer"
+              >
+                {attachment.video ? "Video attachment" : "Image attachment"} ↗
+              </a>
+            ) : (
+              <a
+                className={styles.attachmentImage}
+                key={attachment.url}
+                href={attachment.url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open image attachment"
+                onClick={(event) => {
+                  if (
+                    !event.metaKey &&
+                    !event.ctrlKey &&
+                    !event.shiftKey &&
+                    onOpenLink(attachment.url)
+                  )
+                    event.preventDefault();
+                }}
+              >
+                <img src={source} alt="" loading="lazy" />
+              </a>
+            );
+          })}
           {row.reactions.length > 0 && (
             <div className={styles.reactions}>
               {row.reactions.map((reaction) => (

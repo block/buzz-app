@@ -6,6 +6,7 @@ import {
   SIDEBAR_UPLOAD_SLOTS,
 } from "./sidebar-preferences.mjs";
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
+import { relayKlipySearchPath } from "../src/features/relay/gifs.ts";
 // Dev-only relay broker. Holds the local Buzz identity in this Node process and signs NIP-98 reads
 // for the browser, so no key ever reaches page JavaScript. Opt-in via BUZZ_LIVE=1; tests never load it.
 // Scoped writes support basic messages, profile setup and invite admission; signing remains here.
@@ -267,6 +268,7 @@ export function relayBrokerPlugin({
       // Discovery is lazy and independent for each community; unavailable relays never block startup.
       const registered = new Map(Object.entries(aliases));
       const authorities = new Map();
+      const gifSearchPaths = new Map();
       const getAuthority = (relay) => {
         if (!authorities.has(relay))
           authorities.set(
@@ -277,6 +279,26 @@ export function relayBrokerPlugin({
             }),
           );
         return authorities.get(relay);
+      };
+      const getGifSearchPath = (relay) => {
+        if (!gifSearchPaths.has(relay))
+          gifSearchPaths.set(
+            relay,
+            fetchUpstream(relay, {
+              headers: { Accept: "application/nostr+json" },
+              redirect: "error",
+              signal: AbortSignal.timeout(10000),
+            })
+              .then(async (response) => {
+                if (!response.ok) throw new Error("GIF discovery failed");
+                return relayKlipySearchPath(await response.json());
+              })
+              .catch((error) => {
+                gifSearchPaths.delete(relay);
+                throw error;
+              }),
+          );
+        return gifSearchPaths.get(relay);
       };
       const stats = { queries: 0, errors: 0, media: 0, connects: 0 };
       let inflight = 0;
@@ -362,6 +384,8 @@ export function relayBrokerPlugin({
                 error: "Community discovery failed",
               });
             const info = await response.json();
+            const gifSearchPath = relayKlipySearchPath(info);
+            gifSearchPaths.set(relay, Promise.resolve(gifSearchPath));
             const policyResponse = await fetchUpstream(
               `${relay}/api/join-policy`,
               { redirect: "error", signal: AbortSignal.timeout(10000) },
@@ -378,6 +402,12 @@ export function relayBrokerPlugin({
               name: info.name,
               icon: info.icon,
               policy: policy ?? null,
+              ...(gifSearchPath
+                ? {
+                    supported_extensions: ["buzz-gif"],
+                    gif: { provider: "klipy", search: gifSearchPath },
+                  }
+                : {}),
             });
           }
           if (
@@ -621,6 +651,7 @@ export function relayBrokerPlugin({
               "/api/relay/profile",
               "/api/relay/claim",
               "/api/relay/accept-policy",
+              "/api/relay/gifs",
             ].includes(route) ||
             req.method !== "POST"
           )
@@ -640,6 +671,18 @@ export function relayBrokerPlugin({
           const profile = route === "/api/relay/profile";
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
+          const gifs = route === "/api/relay/gifs";
+          if (gifs) {
+            if (
+              typeof filters?.query !== "string" ||
+              filters.query.length > 100 ||
+              typeof filters?.customer_id !== "string" ||
+              !/^[a-zA-Z0-9:_-]{1,128}$/.test(filters.customer_id) ||
+              typeof filters?.locale !== "string" ||
+              !/^[a-zA-Z0-9-]{2,35}$/.test(filters.locale)
+            )
+              return json(res, 400, { error: "Invalid GIF search" });
+          }
           if (profile) {
             if (
               typeof filters?.name !== "string" ||
@@ -710,10 +753,20 @@ export function relayBrokerPlugin({
             }
             if (filters.pubkey !== viewer || !verifyEvent(filters))
               return json(res, 400, { error: "Invalid outgoing signature" });
-          } else if (!profile && !claim && !policy && !validFilters(filters))
+          } else if (
+            !profile &&
+            !claim &&
+            !policy &&
+            !gifs &&
+            !validFilters(filters)
+          )
             return json(res, 400, { error: "Read filter rejected" });
-          const upstreamPath =
-            profile || publishing
+          const gifSearchPath = gifs ? await getGifSearchPath(relay) : null;
+          if (gifs && !gifSearchPath)
+            return json(res, 404, { error: "GIF search is unavailable" });
+          const upstreamPath = gifs
+            ? gifSearchPath
+            : profile || publishing
               ? "/events"
               : claim
                 ? "/api/invites/claim"

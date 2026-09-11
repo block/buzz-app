@@ -69,7 +69,11 @@ export type CompletionQuery = Readonly<{
   query: string;
 }>;
 export type CompletionEdit =
-  | Readonly<{ text: string; mention?: never }>
+  | Readonly<{
+      text: string;
+      mention?: never;
+      customEmoji?: Readonly<{ shortcode: string }>;
+    }>
   | Readonly<{
       mention: Readonly<{ pubkey: string; name: string }>;
       text?: never;

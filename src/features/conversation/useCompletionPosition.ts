@@ -4,6 +4,7 @@ import { useLayoutEffect, useRef, type RefObject } from "react";
  * visual viewport bounds the menu even inside clipped/narrow conversation panels. */
 export function useCompletionPosition(
   input: RefObject<HTMLTextAreaElement | null>,
+  widthRatio = 1,
 ) {
   const popup = useRef<HTMLElement>(null);
   useLayoutEffect(() => {
@@ -28,7 +29,10 @@ export function useCompletionPosition(
       const above = Math.max(0, top - y - gap);
       const below = Math.max(0, y + height - bottom - gap);
       const up = above >= below;
-      const size = Math.max(0, Math.min(rect.width, width - gap * 2));
+      const size = Math.max(
+        0,
+        Math.min(rect.width * widthRatio, width - gap * 2),
+      );
       Object.assign(menu.style, {
         left: `${Math.max(x + gap, Math.min(rect.left, x + width - size - gap))}px`,
         top: `${up ? top : bottom}px`,

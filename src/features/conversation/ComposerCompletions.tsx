@@ -102,7 +102,8 @@ function OwnedCompletion({
   ): boolean;
 }) {
   const id = useId();
-  const popup = useCompletionPosition(input);
+  const compact = provider.pluginId === "buzz.emoji";
+  const popup = useCompletionPosition(input, compact ? 0.375 : 1);
   const list = useRef<HTMLDivElement>(null);
   const [result, setResult] = useState<CompletionResult>();
   const latest = useRef<CompletionResult | undefined>(undefined);
@@ -155,6 +156,13 @@ function OwnedCompletion({
       ? items.length
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
+  const status =
+    result?.status ??
+    (!result
+      ? "Loading suggestions…"
+      : !items.length && !result.retry
+        ? "No matches"
+        : undefined);
   function accept(index: number) {
     if (!active() || latest.current !== result) return false;
     if (index === items.length && result?.retry) {
@@ -246,6 +254,7 @@ function OwnedCompletion({
             ref={popup}
             className={styles.popup}
             aria-label={`${provider.title} suggestions`}
+            data-compact={compact || undefined}
           >
             <div
               id={id}
@@ -274,7 +283,7 @@ function OwnedCompletion({
                       {item.preview}
                     </span>
                   )}
-                  <span className={styles.label}>
+                  <span className={styles.label} data-completion-label>
                     {item.label}
                     {item.detail && <small>{item.detail}</small>}
                   </span>
@@ -297,16 +306,7 @@ function OwnedCompletion({
                 </div>
               )}
             </div>
-            <p role="status">
-              {result?.status ??
-                (!result
-                  ? "Loading suggestions…"
-                  : !items.length && !result.retry
-                    ? "No matches"
-                    : "")}
-              {count > 0 &&
-                " ↑ ↓ to navigate · Enter or Tab to select · Esc to dismiss"}
-            </p>
+            {status && <p role="status">{status}</p>}
           </section>,
           input.current.ownerDocument.body,
         )}

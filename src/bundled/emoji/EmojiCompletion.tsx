@@ -30,7 +30,6 @@ export function EmojiCompletion({
       matches.map((item) => ({
         id: item.id,
         label: `:${item.shortcode}:`,
-        detail: item.url ? "Community emoji" : item.name,
         preview: item.url ? (
           <CustomEmoji
             emoji={{ shortcode: item.shortcode, url: item.url }}
@@ -39,7 +38,10 @@ export function EmojiCompletion({
         ) : (
           item.text
         ),
-        edit: { text: item.text },
+        edit: {
+          text: item.text,
+          ...(item.url ? { customEmoji: { shortcode: item.shortcode } } : {}),
+        },
       }));
     const retrySearch = () => {
       retry((value) => value + 1);

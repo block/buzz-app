@@ -1,13 +1,24 @@
 import {
   useEffect,
   useId,
+  useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
-import { Smile } from "lucide-react";
+import { Search, Smile } from "lucide-react";
 import type { RelaySession } from "../../features/relay/session";
+import {
+  communityFromScope,
+  gifMarkdown,
+  relaySupportsKlipy,
+} from "../../features/relay/gifs";
 import styles from "./Emoji.module.css";
+import { GifPicker } from "./GifPicker";
+
+const EMOJI_SIZE = 36;
+const EMOJI_SLOT = 48;
+const PICKER_CHROME = 44;
 
 /** Reusable composer picker; data/signing remain owned by the community session. */
 export function EmojiPicker({
@@ -22,6 +33,14 @@ export function EmojiPicker({
   insert(value: string): void;
 }) {
   const [open, setOpen] = useState(false);
+  const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
+  const [animateTab, setAnimateTab] = useState(false);
+  const [pressedTab, setPressedTab] = useState<"emoji" | "gifs">();
+  const [gifAvailability, setGifAvailability] = useState<{
+    community: string;
+    supported: boolean;
+  }>();
+  const [openWhenReady, setOpenWhenReady] = useState(false);
   const [perLine, setPerLine] = useState(0);
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
@@ -32,6 +51,12 @@ export function EmojiPicker({
   const onInsert = useRef(insert);
   onInsert.current = insert;
   const id = useId();
+  const community = communityFromScope(scope);
+  const gifs = community
+    ? gifAvailability?.community === community
+      ? gifAvailability.supported
+      : undefined
+    : false;
   const catalog = useSyncExternalStore(
     session.emoji.subscribe,
     session.emoji.snapshot,
@@ -44,16 +69,53 @@ export function EmojiPicker({
     if (!open || disabled || !(container instanceof HTMLElement)) return;
     const resize = () =>
       setPerLine(
-        Math.max(1, Math.min(8, Math.floor((container.clientWidth - 28) / 36))),
+        Math.max(
+          1,
+          Math.min(
+            6,
+            Math.floor((container.clientWidth - PICKER_CHROME) / EMOJI_SLOT),
+          ),
+        ),
       );
     resize();
     const observer = new ResizeObserver(resize);
     observer.observe(container);
     return () => observer.disconnect();
   }, [open, disabled]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
   useEffect(() => {
-    if (!open || disabled || !host.current || !perLine) return;
+    if (!community) return;
+    const controller = new AbortController();
+    void relaySupportsKlipy(community, controller.signal).then(
+      (supported) => {
+        if (!controller.signal.aborted) {
+          setGifAvailability({ community, supported });
+          if (!supported) {
+            setAnimateTab(false);
+            setPressedTab(undefined);
+            setTab("emoji");
+          }
+        }
+      },
+      () => {
+        if (!controller.signal.aborted) {
+          setGifAvailability({ community, supported: false });
+          setAnimateTab(false);
+          setPressedTab(undefined);
+          setTab("emoji");
+        }
+      },
+    );
+    return () => controller.abort();
+  }, [community]);
+  useEffect(() => {
+    if (!openWhenReady || gifs === undefined || disabled) return;
+    setOpenWhenReady(false);
+    setOpen(true);
+  }, [openWhenReady, gifs, disabled]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
+  useLayoutEffect(() => {
+    if (!open || disabled || tab !== "emoji" || !host.current || !perLine)
+      return;
     const container = host.current;
     let cancelled = false;
     let dispose: (() => void) | undefined;
@@ -66,7 +128,12 @@ export function EmojiPicker({
           host: container,
           scope,
           perLine,
+          emojiSize: EMOJI_SIZE,
+          emojiButtonSize: EMOJI_SLOT,
           search: search.current,
+          searchChange: (value) => {
+            search.current = value;
+          },
           entries: catalog.status === "ready" ? catalog.entries : [],
           media: session.media,
           select: (value) => {
@@ -98,7 +165,17 @@ export function EmojiPicker({
       dispose?.();
       document.removeEventListener("pointerdown", outside);
     };
-  }, [open, disabled, session, scope, catalog, attempt, perLine]);
+  }, [
+    open,
+    disabled,
+    session,
+    scope,
+    catalog,
+    attempt,
+    perLine,
+    tab,
+    animateTab,
+  ]);
   return (
     <fieldset
       ref={controls}
@@ -121,11 +198,23 @@ export function EmojiPicker({
         aria-label="Insert emoji"
         title="Insert emoji"
         aria-expanded={open && !disabled}
+        aria-busy={openWhenReady || undefined}
         aria-controls={id}
         disabled={disabled}
         onClick={() => {
-          setOpen(!open);
-          if (!open) void session.emoji.ensure();
+          if (open) {
+            setOpen(false);
+            return;
+          }
+          if (openWhenReady) {
+            setOpenWhenReady(false);
+            return;
+          }
+          setAnimateTab(false);
+          setPressedTab(undefined);
+          void session.emoji.ensure();
+          if (gifs === undefined) setOpenWhenReady(true);
+          else setOpen(true);
         }}
       >
         <Smile size={20} aria-hidden="true" />
@@ -135,10 +224,98 @@ export function EmojiPicker({
           id={id}
           className={styles.emojiPopover}
           aria-label="Emoji picker"
-          style={{ width: perLine * 36 + 28 }}
+          data-has-tabs={gifs || undefined}
+          style={{ width: perLine * EMOJI_SLOT + PICKER_CHROME + 2 }}
         >
-          <div ref={host} className={styles.emojiMart} />
-          {error && (
+          <Search
+            className={styles.sharedSearchIcon}
+            size={16}
+            aria-hidden="true"
+          />
+          {gifs && (
+            <div
+              className={styles.pickerTabs}
+              role="tablist"
+              data-active-tab={tab}
+              data-animate={animateTab || undefined}
+              data-press-target={pressedTab}
+            >
+              <span
+                className={styles.tabIndicator}
+                data-testid="picker-tab-indicator"
+                aria-hidden="true"
+              />
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "emoji"}
+                className={
+                  tab === "emoji" ? styles.activeTab : styles.inactiveTab
+                }
+                onPointerDown={(event) => {
+                  if (event.button === 0 && tab !== "emoji") {
+                    event.preventDefault();
+                    setPressedTab("emoji");
+                  }
+                }}
+                onPointerCancel={() => setPressedTab(undefined)}
+                onPointerLeave={() => setPressedTab(undefined)}
+                onClick={(event) => {
+                  if (tab === "emoji") return;
+                  setPressedTab(undefined);
+                  setAnimateTab(event.detail !== 0);
+                  setTab("emoji");
+                }}
+              >
+                Emoji
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={tab === "gifs"}
+                className={
+                  tab === "gifs" ? styles.activeTab : styles.inactiveTab
+                }
+                onPointerDown={(event) => {
+                  if (event.button === 0 && tab !== "gifs") {
+                    event.preventDefault();
+                    setPressedTab("gifs");
+                  }
+                }}
+                onPointerCancel={() => setPressedTab(undefined)}
+                onPointerLeave={() => setPressedTab(undefined)}
+                onClick={(event) => {
+                  if (tab === "gifs") return;
+                  setPressedTab(undefined);
+                  setAnimateTab(event.detail !== 0);
+                  setTab("gifs");
+                }}
+              >
+                GIF
+              </button>
+            </div>
+          )}
+          {tab === "emoji" ? (
+            <div ref={host} className={styles.emojiMart} />
+          ) : (
+            community && (
+              <GifPicker
+                community={community}
+                initialQuery={search.current}
+                onQueryChange={(value) => {
+                  search.current = value;
+                }}
+                select={(gif) => {
+                  onInsert.current(gifMarkdown(gif));
+                  setOpen(false);
+                  setAnimateTab(false);
+                  setPressedTab(undefined);
+                  setTab("emoji");
+                }}
+              />
+            )
+          )}
+          {tab === "emoji" && error && (
             <div role="alert" className={styles.emojiStatus}>
               Could not load emoji picker: {error}
               <button type="button" onClick={() => retry(attempt + 1)}>
@@ -146,7 +323,7 @@ export function EmojiPicker({
               </button>
             </div>
           )}
-          {catalog.error && (
+          {tab === "emoji" && catalog.error && (
             <div className={styles.emojiStatus}>
               <p role="alert">{catalog.error}</p>
               <button

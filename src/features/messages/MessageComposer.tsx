@@ -1,12 +1,22 @@
 import { ArrowUp, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
+import { isSingleUnicodeEmoji, singleCustomEmojiToken } from "./emoji-size";
 import {
+  CUSTOM_EMOJI_TOKEN,
   mentionDraft,
   editMentionDraft,
+  expandCustomEmoji,
   replaceMentionDraft,
   type MentionDraft,
   type MentionEdit,
@@ -76,7 +86,23 @@ function Composer({
   const setDraft = (text: string) =>
     saveDraft(editMentionDraft(valueRef.current, text));
   const [error, setError] = useState<string>();
+  const [failedCustomEmoji, setFailedCustomEmoji] = useState<string>();
   const outbox = session.outbox;
+  const emojiCatalog = useSyncExternalStore(
+    session.emoji.subscribe,
+    session.emoji.snapshot,
+    session.emoji.snapshot,
+  );
+  const customEmoji = singleCustomEmojiToken(
+    draft,
+    value.emoji ?? [],
+    emojiCatalog.entries,
+  );
+  const customEmojiSource = customEmoji
+    ? session.media(customEmoji.url)
+    : undefined;
+  const showCustomEmoji =
+    !!customEmojiSource && customEmojiSource !== failedCustomEmoji;
   const input = useRef<HTMLTextAreaElement>(null);
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
@@ -112,6 +138,7 @@ function Composer({
     text: string,
     recipient?: MentionRecipient,
     range?: CompletionQuery,
+    customEmoji?: string,
   ) {
     if (
       disabled ||
@@ -136,15 +163,24 @@ function Composer({
       setError("Choose at most 32 recipients");
       return false;
     }
-    const next = recipient
+    let next = recipient
       ? mentionDraft({
           text: edited.text,
           recipients: [
             ...edited.recipients,
             { ...recipient, start, end: start + text.length - 1 },
           ],
+          emoji: edited.emoji,
         })
       : edited;
+    if (customEmoji)
+      next = mentionDraft({
+        ...next,
+        emoji: [
+          ...(next.emoji ?? []),
+          { shortcode: customEmoji, start, end: start + text.length },
+        ],
+      });
     completion.invalidate();
     caret.current = start + text.length;
     saveDraft(next);
@@ -174,23 +210,31 @@ function Composer({
       return false;
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
+    if ("customEmoji" in edit && edit.customEmoji)
+      return insert(
+        CUSTOM_EMOJI_TOKEN,
+        undefined,
+        query,
+        edit.customEmoji.shortcode,
+      );
     return (
       typeof edit.text === "string" && insert(`${edit.text} `, undefined, query)
     );
   }
   function send() {
     if (disabled || !draft.trim() || !outbox) return;
+    const content = expandCustomEmoji(value);
     try {
       const id = threadRootId
         ? session.messages.reply(
             channelId,
             threadRootId,
-            draft,
+            content,
             value.recipients.map((item) => item.pubkey),
           )
         : session.messages.send(
             channelId,
-            draft,
+            content,
             value.recipients.map((item) => item.pubkey),
           );
       onSend?.(id);
@@ -234,59 +278,72 @@ function Composer({
           replace={replaceCompletion}
         />
       )}
-      <textarea
-        ref={input}
-        id={inputId}
-        disabled={disabled}
-        value={draft}
-        maxLength={16000}
-        rows={2}
-        placeholder={label}
-        onFocus={() => completion.observe(true)}
-        onBlur={() => completion.invalidate()}
-        onSelect={() => completion.observe()}
-        onCompositionStart={() => {
-          completion.composing.current = true;
-          completion.invalidate();
-        }}
-        onCompositionEnd={() => {
-          completion.composing.current = false;
-          completion.observe(true);
-        }}
-        // onInput also observes same-text replacements, which onChange omits.
-        onChange={() => {}}
-        onInput={(event) => {
-          const range = edit.current;
-          edit.current = undefined;
-          saveDraft(
-            editMentionDraft(
-              valueRef.current,
-              event.currentTarget.value,
-              range,
-            ),
-          );
-          completion.observe(true);
-        }}
-        onKeyDown={(event) => {
-          if (
-            event.nativeEvent.isComposing ||
-            event.nativeEvent.keyCode === 229 ||
-            completion.composing.current
-          )
-            return;
-          if (completion.keys.current?.(event)) return;
-          if (
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            !event.altKey &&
-            !event.ctrlKey &&
-            !event.metaKey
-          ) {
-            event.preventDefault();
-            send();
-          }
-        }}
-      />
+      <div className={styles.composerInput}>
+        <textarea
+          ref={input}
+          id={inputId}
+          disabled={disabled}
+          value={draft}
+          data-single-emoji={isSingleUnicodeEmoji(draft) || undefined}
+          data-custom-emoji-only={showCustomEmoji || undefined}
+          maxLength={16000}
+          rows={2}
+          placeholder={label}
+          onFocus={() => completion.observe(true)}
+          onBlur={() => completion.invalidate()}
+          onSelect={() => completion.observe()}
+          onCompositionStart={() => {
+            completion.composing.current = true;
+            completion.invalidate();
+          }}
+          onCompositionEnd={() => {
+            completion.composing.current = false;
+            completion.observe(true);
+          }}
+          // onInput also observes same-text replacements, which onChange omits.
+          onChange={() => {}}
+          onInput={(event) => {
+            const range = edit.current;
+            edit.current = undefined;
+            saveDraft(
+              editMentionDraft(
+                valueRef.current,
+                event.currentTarget.value,
+                range,
+              ),
+            );
+            completion.observe(true);
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229 ||
+              completion.composing.current
+            )
+              return;
+            if (completion.keys.current?.(event)) return;
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.altKey &&
+              !event.ctrlKey &&
+              !event.metaKey
+            ) {
+              event.preventDefault();
+              send();
+            }
+          }}
+        />
+        {showCustomEmoji && (
+          <img
+            className={styles.composerCustomEmoji}
+            src={customEmojiSource}
+            alt=""
+            aria-hidden="true"
+            onError={() => setFailedCustomEmoji(customEmojiSource)}
+          />
+        )}
+      </div>
       {!!value.recipients.length && (
         <section
           className={styles.mentionRecipients}

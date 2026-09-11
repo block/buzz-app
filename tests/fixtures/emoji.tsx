@@ -56,6 +56,11 @@ const sessions = ["a", "b"].map((community) => {
                     ["emoji", "grinning", `${origin}/media/grinning.png`],
                     ["emoji", "party-parrot", `${origin}/media/parrot.png`],
                     ["emoji", "party-parrot-wave", `${origin}/media/wave.png`],
+                    [
+                      "emoji",
+                      "very-long-community-emoji-name-that-does-not-fit",
+                      `${origin}/media/long.png`,
+                    ],
                   ]
                 : []),
             ]),
@@ -120,11 +125,20 @@ const sessions = ["a", "b"].map((community) => {
   const unloaded = message(viewer, "c", "Unloadable :broken:", 3, [
     ["emoji", "broken", `${origin}/media/broken.png`],
   ]);
+  const single = message(viewer, "c", ":party:", 4, [
+    ["emoji", "party", `${origin}/media/1.png`],
+  ]);
   return {
     ...owner,
     community,
     root,
-    rows: foldMessages("c", relay.pubkey, [root, reaction, broken, unloaded]),
+    rows: foldMessages("c", relay.pubkey, [
+      root,
+      reaction,
+      broken,
+      unloaded,
+      single,
+    ]),
     replace(empty = false) {
       time++;
       catalog = makeSet(empty);

@@ -16,7 +16,14 @@ export type ChannelSummary = Readonly<{
   participants?: readonly string[];
 }>;
 export type Profile = Readonly<{ name: string; picture?: string }>;
-export type Attachment = Readonly<{ url: string; video: boolean }>;
+export type Attachment = Readonly<{
+  url: string;
+  video: boolean;
+  /** Signed NIP-92 dimensions, when supplied by the sender. */
+  dimensions?: Readonly<{ width: number; height: number }>;
+  /** Signed video poster or media thumbnail URL. */
+  previewUrl?: string;
+}>;
 export type ChannelMessage = Readonly<{
   id: string;
   channelId: string;

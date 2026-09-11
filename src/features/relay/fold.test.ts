@@ -170,7 +170,13 @@ describe("message fold", () => {
       created_at: 10,
       tags: [
         ["h", channel],
-        ["imeta", "url https://x.test/c.jpg", "m image/jpeg"],
+        [
+          "imeta",
+          "url https://x.test/c.jpg",
+          "m image/jpeg",
+          "dim 1280x720",
+          "image https://x.test/c-poster.jpg",
+        ],
         ["imeta", "url http://insecure.test/d.jpg"],
       ],
     });
@@ -178,7 +184,12 @@ describe("message fold", () => {
     assert.exists(row);
     expect(row.content).toBe("See  and");
     expect(row.attachments).toEqual([
-      { url: "https://x.test/c.jpg", video: false },
+      {
+        url: "https://x.test/c.jpg",
+        video: false,
+        dimensions: { width: 1280, height: 720 },
+        previewUrl: "https://x.test/c-poster.jpg",
+      },
       { url: "https://x.test/a.png", video: false },
       { url: "https://x.test/b.mp4", video: true },
     ]);

@@ -26,7 +26,17 @@ export function parseAttachments(
     const url = fields.url;
     if (!url || seen.has(url) || !/^https:\/\//.test(url)) continue;
     seen.add(url);
-    result.push({ url, video: fields.m?.startsWith("video/") ?? false });
+    const dimensions = fields.dim?.match(/^(\d+)x(\d+)$/);
+    const width = Number(dimensions?.[1]);
+    const height = Number(dimensions?.[2]);
+    result.push({
+      url,
+      video: fields.m?.startsWith("video/") ?? false,
+      ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),
+      ...(fields.image || fields.thumb
+        ? { previewUrl: fields.image ?? fields.thumb }
+        : {}),
+    });
   }
   for (const match of content.matchAll(IMAGE_MARKDOWN)) {
     const url = match[1];

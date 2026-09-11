@@ -4,7 +4,7 @@ import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
-import type { ChannelWindow } from "../relay/contracts";
+import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
@@ -54,6 +54,11 @@ export type ChannelTimelineProps = {
   onOpenLink(url: string): boolean;
   revealMessageId?: string | undefined;
   onOpenThread?(messageId: string): void;
+  onOpenMediaReview?(
+    messageId: string,
+    attachment: Attachment,
+    seconds: number,
+  ): void;
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
@@ -74,6 +79,7 @@ function Timeline({
   onOpenLink,
   revealMessageId,
   onOpenThread,
+  onOpenMediaReview,
 }: ChannelTimelineProps) {
   const [initialPosition] = useState(() =>
     readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
@@ -343,6 +349,14 @@ function Timeline({
               media={queries.media}
               onOpenLink={onOpenLink}
               onOpenThread={onOpenThread}
+              {...(onOpenMediaReview
+                ? {
+                    onOpenMediaReview: (
+                      attachment: Attachment,
+                      seconds: number,
+                    ) => onOpenMediaReview(row.id, attachment, seconds),
+                  }
+                : {})}
               retry={queries.outbox?.retry}
               day={
                 index === 0 ||

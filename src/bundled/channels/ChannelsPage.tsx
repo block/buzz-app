@@ -36,6 +36,8 @@ import { LiveStatus } from "./LiveStatus";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
+import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
@@ -223,6 +225,26 @@ function ChannelWorkspace({
           : null;
       setThread({ channelId: current.id, messageId });
       open(undefined);
+    },
+    [current],
+  );
+  const [mediaReview, setMediaReview] = useState<{
+    channelId: string;
+    channelName: string;
+    messageId: string;
+    attachment: Attachment;
+    initialTime: number;
+  }>();
+  const openMediaReview = useCallback(
+    (messageId: string, attachment: Attachment, initialTime: number) => {
+      if (!current) return;
+      setMediaReview({
+        channelId: current.id,
+        channelName: current.name,
+        messageId,
+        attachment,
+        initialTime,
+      });
     },
     [current],
   );
@@ -444,6 +466,7 @@ function ChannelWorkspace({
             navigation={navigation}
             onOpenLink={openLink}
             onOpenThread={openThread}
+            onOpenMediaReview={openMediaReview}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -463,6 +486,19 @@ function ChannelWorkspace({
           />
         )}
       </article>
+      {mediaReview && (
+        <MediaReviewViewer
+          extensions={extensions}
+          attachment={mediaReview.attachment}
+          session={queries}
+          scope={scope}
+          channelId={mediaReview.channelId}
+          channelName={mediaReview.channelName}
+          messageId={mediaReview.messageId}
+          initialTime={mediaReview.initialTime}
+          close={() => setMediaReview(undefined)}
+        />
+      )}
       {(panel || showingThread || companion) && (
         <div className={styles.panelStack}>
           {showingThread && (
@@ -476,6 +512,7 @@ function ChannelWorkspace({
               messageId={showingThread.messageId}
               close={closeThread}
               onOpenLink={openLink}
+              onOpenMediaReview={openMediaReview}
             />
           )}
 
@@ -507,6 +544,7 @@ function ChannelBody({
   onOpenLink,
   revealMessageId,
   onOpenThread,
+  onOpenMediaReview,
   navigation,
 }: {
   extensions?: ConversationExtensions | undefined;
@@ -517,6 +555,11 @@ function ChannelBody({
   onOpenLink(url: string): boolean;
   revealMessageId?: string | undefined;
   onOpenThread(messageId: string): void;
+  onOpenMediaReview(
+    messageId: string,
+    attachment: Attachment,
+    seconds: number,
+  ): void;
 }) {
   const window = useChannelWindow(queries.channels, channelId);
   useEffect(() => {
@@ -558,6 +601,7 @@ function ChannelBody({
       window={window}
       onOpenLink={onOpenLink}
       onOpenThread={onOpenThread}
+      onOpenMediaReview={onOpenMediaReview}
       revealMessageId={revealMessageId}
     />
   );

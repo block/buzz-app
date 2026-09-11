@@ -1,5 +1,7 @@
 import { memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
+import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
+import { parseMediaTimeReply } from "./media-timecode";
 import { messageParts } from "../relay/emoji";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -19,6 +21,15 @@ export type MessageRowProps = {
   day: boolean;
   retry: ((id: string) => void) | undefined;
   onOpenThread?: ((messageId: string) => void) | undefined;
+  mediaMode?: "inline" | "thread";
+  mediaSeekTo?: number;
+  mediaSeekRequest?: number;
+  onMediaPlayback?: (playback: MediaPlayback) => void;
+  onMediaTime?: (seconds: number) => void;
+  onOpenMediaReview?: (
+    attachment: ChannelMessage["attachments"][number],
+    seconds: number,
+  ) => void;
 };
 
 export const MessageRow = memo(function MessageRow({
@@ -32,6 +43,12 @@ export const MessageRow = memo(function MessageRow({
   retry,
   onOpenThread,
   participantProfiles,
+  mediaMode = "inline",
+  mediaSeekTo,
+  mediaSeekRequest,
+  onMediaPlayback,
+  onMediaTime,
+  onOpenMediaReview,
 }: MessageRowProps) {
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
@@ -48,7 +65,10 @@ export const MessageRow = memo(function MessageRow({
           : undefined;
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
-  const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
+  const timeReply = parseMediaTimeReply(row.content);
+  const replaceTime = !!timeReply && !!onMediaTime;
+  const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
+  const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -81,48 +101,47 @@ export const MessageRow = memo(function MessageRow({
             </time>
           </div>
           <p className={styles.text} data-single-emoji={emojiOnly || undefined}>
+            {timeReply && onMediaTime && (
+              <button
+                type="button"
+                className={styles.mediaTimeLink}
+                onClick={() => onMediaTime(timeReply.anchor.seconds)}
+              >
+                {timeReply.label}
+              </button>
+            )}
             <MessageText
-              row={row}
+              row={displayRow}
               extensions={extensions}
               media={media}
               onOpenLink={onOpenLink}
             />
           </p>
           <DeliveryNotice row={row} retry={retry} />
-          {row.attachments.map((attachment) => {
-            const source = media(attachment.url);
-            return attachment.video || !source ? (
-              <a
-                className={styles.attachment}
-                key={attachment.url}
-                href={attachment.url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {attachment.video ? "Video attachment" : "Image attachment"} ↗
-              </a>
-            ) : (
-              <a
-                className={styles.attachmentImage}
-                key={attachment.url}
-                href={attachment.url}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open image attachment"
-                onClick={(event) => {
-                  if (
-                    !event.metaKey &&
-                    !event.ctrlKey &&
-                    !event.shiftKey &&
-                    onOpenLink(attachment.url)
-                  )
-                    event.preventDefault();
-                }}
-              >
-                <img src={source} alt="" loading="lazy" />
-              </a>
-            );
-          })}
+          {row.attachments.length > 0 && (
+            <div className={styles.mediaAttachments}>
+              {row.attachments.map((attachment) => (
+                <MediaAttachment
+                  key={attachment.url}
+                  attachment={attachment}
+                  media={media}
+                  mode={mediaMode}
+                  {...(attachment.video && mediaSeekTo !== undefined
+                    ? {
+                        seekTo: mediaSeekTo,
+                        ...(mediaSeekRequest !== undefined
+                          ? { seekRequest: mediaSeekRequest }
+                          : {}),
+                      }
+                    : {})}
+                  {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
+                  {...(onOpenMediaReview
+                    ? { onOpenReview: onOpenMediaReview }
+                    : {})}
+                />
+              ))}
+            </div>
+          )}
           {row.reactions.length > 0 && (
             <div className={styles.reactions}>
               {row.reactions.map((reaction) => (

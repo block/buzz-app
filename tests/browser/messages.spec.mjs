@@ -76,6 +76,12 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(
       panel.getByText("reject second reply", { exact: true }),
     ).toHaveCount(1);
+    // Retry removes its control while queued; wait for the actual second publish.
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.publications.length),
+      )
+      .toBe(2);
     const delivery = await page.evaluate(() => window.messagesFixture.report);
     expect(delivery.signings).toHaveLength(1);
     expect(delivery.publications).toHaveLength(2);

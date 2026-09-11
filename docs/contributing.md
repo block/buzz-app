@@ -122,7 +122,9 @@ still require explicit human guidance. Defer expensive validation during ordinar
 product iteration, not safety or the final quality gate. Do not turn `iterate`
 into an ever-growing full test suite.
 
-## Pre-commit checks
+## Git hooks
+
+### Pre-commit checks
 
 Install once **per worktree** after `pnpm install --frozen-lockfile`:
 
@@ -130,7 +132,8 @@ Install once **per worktree** after `pnpm install --frozen-lockfile`:
 bin/pnpm hooks:install
 ```
 
-The installer uses Git's worktree-local `core.hooksPath`, leaves sibling worktrees
+The installer enables pre-commit and pre-push using Git's worktree-local
+`core.hooksPath`, leaves sibling worktrees
 alone, and refuses existing custom hooks rather than overwriting them. Repeat
 installation is safe. Do not run `lefthook install`: the tracked Git hook calls a
 custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
@@ -151,6 +154,54 @@ safe fixes visible for review but does not update the index. Unrelated changes a
 existing stashes are left alone. Do not edit/stage concurrently with a commit.
 This is a developer guardrail, not a security boundary or a substitute for the full
 scan; changes to tool/config dependencies still require broad validation.
+
+### Fast pre-push feedback
+
+Pre-push runs the project TypeScript check (`tsc --noEmit`), then Vitest tests
+related to the branch's changed JS/TS inputs, using the locally available merge
+base with `origin/main`. Documentation-only
+and native-only pushes skip this runner. Shared JS configuration/dependency
+changes, source deletions, or a missing base run the full Vitest suite instead.
+The selector explicitly includes theme tests for their directly read CSS/bootstrap
+inputs, and the app composition test for source edits that its Vite loader hides
+from the import graph.
+It never fetches, installs dependencies, formats, builds Rust, or starts browsers.
+Install dependencies when switching branches, not during a push.
+
+This is advisory coverage of the current working tree, not a replacement for CI:
+uncommitted edits can affect results, dynamic dependencies may not be selected,
+and non-HEAD refs are explicitly left to CI. Type errors and test failures block
+the push. TypeScript uses the root `tsconfig.json`; it does not typecheck plain
+JavaScript browser tests or prove runtime service provisioning.
+Do not edit files concurrently with hooks. First-use Hermit tool downloads can
+add setup time; normal warm hooks use the pinned tools already installed.
+
+## Pull-request CI
+
+`.github/workflows/ci.yml` runs on every PR and push to `main`, without path filters
+that could omit newly added tests. It splits the CI-selected `scan` coverage
+across cached, parallel jobs rather than running the entire recipe several times.
+[Three documented WebKit cases remain local-only](browser-testing.md#ci-coverage-and-local-only-webkit-checks);
+the complete suite still runs with `pnpm test` / `just scan`:
+
+- **JavaScript:** Biome, one TypeScript check, frontend build, all Vitest tests.
+- **Rust and tool integration:** workspace formatting, Clippy, all Rust tests and
+  doctests (including Tauri), and every Node integration test. The CLI integration
+  tests build Rust and install scaffold dependencies; they are intentionally CI-only
+  rather than part of pre-push.
+- **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
+- **Browser journeys:** two functional shards, both engines, after measurements
+  succeed. No measurement is repeated on shards, and no retry hides a failure.
+- **CI required:** fails unless every lane and every browser shard succeeds,
+  including cancellation or an unexpectedly skipped lane. Configure this status
+  as a required repository check; the workflow does not change branch protection.
+
+Actions and tool versions are pinned, installs use the frozen lockfile, and
+Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
+Superseded PR runs are cancelled. CI uses disposable Ubuntu runners and no live
+Buzz identity or signing credentials. It is not native GUI acceptance, a signed
+package, or a cross-platform release gate. `just scan` remains available locally;
+CI does not add full scans to commit/push or ordinary interactive feedback rounds.
 
 ## Test organization
 

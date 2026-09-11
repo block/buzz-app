@@ -1,4 +1,4 @@
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { threadReference } from "./threads";
 import type { LiveCallbacks } from "./live";
@@ -292,6 +292,7 @@ it("offers retry on failures and rejects a non-advancing cursor without erasing 
     root: { id: root.id },
   });
   const retry = h.view.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
   const one = reply("one", 10);
   h.next().respond([root, one]);
   await retry;

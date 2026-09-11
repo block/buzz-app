@@ -1,3 +1,4 @@
+import { yieldToHost } from "./yield";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { ReadTransport } from "./transport";
@@ -60,6 +61,21 @@ export function createRelayReader(
   let sequence = 0;
   const jobs = new Map<string, Job>();
   let closed = false;
+  let recovering = false;
+  function failed(job: Job, error: unknown) {
+    if (jobs.get(job.key) !== job) return;
+    // A browser can reject fetches while its document loader is stopping.
+    // Settle immediately, but do not start another read in that callback stack
+    // (including through consumer cancellation/retry). A microtask is too early.
+    if (!recovering) {
+      recovering = true;
+      void yieldToHost().then(() => {
+        recovering = false;
+        pump();
+      });
+    }
+    finish(job, undefined, error);
+  }
   function finish(job: Job, events?: readonly RelayEvent[], error?: unknown) {
     if (jobs.get(job.key) !== job) return;
     job.queued(error ? "error" : "ok");
@@ -75,8 +91,8 @@ export function createRelayReader(
     pump();
   }
   function pump() {
-    if (closed || !transport) return;
-    while (true) {
+    if (closed || recovering || !transport) return;
+    while (!recovering) {
       const active = [...jobs.values()].filter((job) => job.running);
       if (active.length >= 3) return;
       const background = active.some((job) => job.priority === "background");
@@ -105,10 +121,10 @@ export function createRelayReader(
                 );
               else finish(job, Object.freeze([...events]));
             },
-            (error) => finish(job, undefined, error),
+            (error) => failed(job, error),
           );
       } catch (error) {
-        finish(job, undefined, error);
+        failed(job, error);
       }
     }
   }

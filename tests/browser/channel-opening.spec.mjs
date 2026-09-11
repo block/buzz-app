@@ -10,10 +10,9 @@ const heads = (app, channel) =>
       filter.until === undefined,
   );
 
-test("cold opening bypasses held DM labels; warm switching paints within 100ms without a head read", async ({
-  page,
-  app,
-}) => {
+test("cold opening bypasses held DM labels; warm switching paints within 100ms without a head read", {
+  tag: "@local-webkit",
+}, async ({ page, app }) => {
   const submittedHeads = [];
   page.on("request", (request) => {
     if (!new URL(request.url()).pathname.endsWith("/query")) return;

@@ -75,32 +75,45 @@ test("short channel with tall messages opens at the actual bottom", async ({
   await bottom(page, app, "warm tall Beta");
 });
 
-test("deliberate reading anchor survives a session reload", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await bottom(page, app, "initial bottom");
-  await history(page).hover();
-  await page.mouse.wheel(0, -650);
-  await expect
-    .poll(() =>
-      history(page).evaluate(
-        (e) => e.scrollHeight - e.clientHeight - e.scrollTop,
+// This case tests reading restoration, not cancellation of held older pages.
+// Taller rows keep its gesture outside prefetch; paging has separate journeys.
+const readingTest = test.extend({ tallMessages: true });
+readingTest(
+  "deliberate reading anchor survives a session reload",
+  async ({ page, app }) => {
+    await open(page, app);
+    await bottom(page, app, "initial bottom");
+    await history(page).hover();
+    await page.mouse.wheel(0, -650);
+    await expect
+      .poll(() =>
+        history(page).evaluate(
+          (e) => e.scrollHeight - e.clientHeight - e.scrollTop,
+        ),
+      )
+      .toBeGreaterThan(400);
+    await settle(page);
+    expect(
+      await history(page).evaluate(
+        (el) => el.scrollTop - Math.max(3000, el.clientHeight * 4),
       ),
-    )
-    .toBeGreaterThan(400);
-  await settle(page);
-  const reading = await anchor(page);
-  await page.getByRole("button", { name: "Home", exact: true }).first().click();
-  await page.reload();
-  await page
-    .getByRole("button", { name: "Messages", exact: true })
-    .first()
-    .click();
-  await settle(page);
-  await expectAnchor(page, reading);
-});
+      "reading gesture stays outside older-page prefetch",
+    ).toBeGreaterThan(0);
+    expect(app.pending).toHaveLength(0);
+    const reading = await anchor(page);
+    await page
+      .getByRole("button", { name: "Home", exact: true })
+      .first()
+      .click();
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Messages", exact: true })
+      .first()
+      .click();
+    await settle(page);
+    await expectAnchor(page, reading);
+  },
+);
 
 for (const count of [1, 3, 5, 7, 9]) {
   test(`near-fit channel with ${count} mixed-height rows starts at bottom`, async ({

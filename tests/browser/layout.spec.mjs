@@ -240,6 +240,19 @@ test("panel resizing preserves bottom follow and the visible reading anchor", as
   await button(page, "Close channel panel").click();
   await settle(page);
   await expectBottom();
+  // Late layout-only reflow must not need another message or viewport resize.
+  // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
+  // row layout, not scroll methods/metrics or the production observer callback.
+  await page.waitForTimeout(250);
+  const lateLayout = await page.addStyleTag({
+    content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
+  });
+  await settle(page);
+  await expectBottom();
+  await page.waitForTimeout(250);
+  await lateLayout.evaluate((element) => element.remove());
+  await settle(page);
+  await expectBottom();
   // Reopen by keyboard without browser click-to-scroll changing the saved position.
   const target = "https://github.com/block/buzz/pull/4";
   const saved = await upper(page);

@@ -57,9 +57,24 @@ function channelOf(event: RelayEvent) {
 }
 const replies = roots.flatMap((root) =>
   Array.from({ length: 60 }, (_, i) =>
-    message(viewer, channelOf(root), `${root.content} reply ${i}`, 10 + i, [
-      ["e", root.id, "", "reply"],
-    ]),
+    i === 0 && root === roots[0]
+      ? signed(viewer, {
+          kind: 9,
+          content: "Reply with image",
+          created_at: 10,
+          tags: [
+            ["h", "one"],
+            ["e", root.id, "", "reply"],
+            [
+              "imeta",
+              "url https://fixture.test/media/reply.png",
+              "m image/png",
+            ],
+          ],
+        })
+      : message(viewer, channelOf(root), `${root.content} reply ${i}`, 10 + i, [
+          ["e", root.id, "", "reply"],
+        ]),
   ),
 );
 const events = [...roots, ...replies];
@@ -73,10 +88,11 @@ const rejected = new Set<string>();
 const owner = createRelaySession({
   viewer: viewer.pubkey,
   relayAuthor: relay.pubkey,
-  media: (url) =>
-    media.some((item) => item.url === url)
+  media: (url) => {
+    return media.some((item) => item.url === url) || url.endsWith("reply.png")
       ? "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='640' height='360'%3E%3Crect width='640' height='360' fill='%23666'/%3E%3C/svg%3E"
-      : undefined,
+      : undefined;
+  },
   subscribe(callbacks) {
     incoming = callbacks.receive;
     return { update() {}, retry() {}, dispose() {} };

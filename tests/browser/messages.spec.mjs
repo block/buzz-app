@@ -44,14 +44,6 @@ test("media review hands off the thread draft, contains focus and keeps narrow c
       exact: true,
     });
     await expect(reviewDraft).toHaveValue("Draft handoff");
-    await reviewDraft.press("Enter");
-    await expect(reviewDraft).toHaveValue("");
-    const close = dialog.getByRole("button", {
-      name: "Close fullscreen viewer",
-    });
-    await close.focus();
-    await page.keyboard.press("Shift+Tab");
-    await expect(dialog.locator(":focus")).toHaveCount(1);
     await page.setViewportSize({ width: 320, height: 720 });
     await expect(
       dialog.getByRole("button", { name: "Next image" }),
@@ -59,6 +51,26 @@ test("media review hands off the thread draft, contains focus and keeps narrow c
     await expect(
       dialog.getByRole("link", { name: "Download image" }),
     ).toBeInViewport();
+    await dialog
+      .getByRole("button", { name: "Open image fullscreen" })
+      .last()
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(
+      dialog.getByRole("region", { name: "Media comments" }),
+    ).toBeVisible();
+    const activeDraft = dialog.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await activeDraft.press("Enter");
+    await expect(activeDraft).toHaveValue("");
+    const close = dialog.getByRole("button", {
+      name: "Close fullscreen viewer",
+    });
+    await close.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(dialog.locator(":focus")).toHaveCount(1);
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
     await expect(trigger).toBeFocused();

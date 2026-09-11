@@ -35,6 +35,10 @@ type MediaReviewViewerProps = {
 
 export function MediaReviewViewer(props: MediaReviewViewerProps) {
   const { session, channelId, messageId } = props;
+  const [active, setActive] = useState(() => ({
+    attachment: props.attachment,
+    initialTime: props.initialTime,
+  }));
   const [view, setView] = useState<ThreadView>();
   const [threadError, setThreadError] = useState<string>();
   useEffect(() => {
@@ -48,15 +52,26 @@ export function MediaReviewViewer(props: MediaReviewViewerProps) {
       setThreadError(String(error));
     }
   }, [session, channelId, messageId]);
-  if (threadError) return <ReviewShell {...props} error={threadError} />;
-  if (!view) return <ReviewShell {...props} loading />;
-  return <ResolvedReview {...props} view={view} />;
+  const activeProps = {
+    ...props,
+    attachment: active.attachment,
+    initialTime: active.initialTime,
+    selectAttachment: (attachment: Attachment, initialTime: number) =>
+      setActive({ attachment, initialTime }),
+  };
+  if (threadError) return <ReviewShell {...activeProps} error={threadError} />;
+  if (!view) return <ReviewShell {...activeProps} loading />;
+  return <ResolvedReview {...activeProps} view={view} />;
 }
+
+type ActiveReviewProps = MediaReviewViewerProps & {
+  selectAttachment(attachment: Attachment, initialTime: number): void;
+};
 
 function ResolvedReview({
   view,
   ...props
-}: MediaReviewViewerProps & { view: ThreadView }) {
+}: ActiveReviewProps & { view: ThreadView }) {
   const snapshot = useSyncExternalStore(
     view.subscribe,
     view.snapshot,
@@ -113,7 +128,8 @@ function ReviewShell({
   error,
   retry,
   restoreFocus,
-}: MediaReviewViewerProps & {
+  selectAttachment,
+}: ActiveReviewProps & {
   view?: ThreadView;
   rootId?: string;
   replies?: ReturnType<ThreadView["snapshot"]>["replies"];
@@ -129,6 +145,10 @@ function ReviewShell({
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [includeTime, setIncludeTime] = useState(true);
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  useEffect(() => {
+    setCurrentTime(initialTime);
+    setSelectedImageUrl(attachment.url);
+  }, [attachment.url, initialTime]);
   useModalBoundary(backdrop, closeButton, close, restoreFocus);
   const seek = (seconds: number) => {
     if (!video.current) return;
@@ -199,6 +219,7 @@ function ReviewShell({
                 limited={limited}
                 session={session}
                 extensions={extensions}
+                selectAttachment={selectAttachment}
                 {...(attachment.video ? { seek } : {})}
               />
               {attachment.video && (
@@ -281,12 +302,14 @@ function ReviewComments({
   session,
   extensions,
   seek,
+  selectAttachment,
 }: {
   replies: ReturnType<ThreadView["snapshot"]>["replies"];
   limited: boolean;
   session: RelaySession;
   extensions?: ConversationExtensions | undefined;
   seek?: (seconds: number) => void;
+  selectAttachment(attachment: Attachment, initialTime: number): void;
 }) {
   const profiles = useRowProfiles(session.profiles, replies);
   const authors = [...new Set(replies.map((row) => row.authorId))]
@@ -314,6 +337,7 @@ function ReviewComments({
           onOpenLink={() => false}
           day={false}
           retry={session.messages.retry}
+          onOpenMediaReview={selectAttachment}
           {...(seek ? { onMediaTime: seek } : {})}
         />
       ))}

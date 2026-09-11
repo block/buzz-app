@@ -17,6 +17,7 @@ import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
+import { useModalBoundary } from "./useModalBoundary";
 
 type MediaReviewViewerProps = {
   attachment: Attachment;
@@ -30,27 +31,10 @@ type MediaReviewViewerProps = {
   close(): void;
 };
 
-export function MediaReviewViewer({
-  attachment,
-  extensions,
-  session,
-  scope,
-  channelId,
-  channelName,
-  messageId,
-  initialTime,
-  close,
-}: MediaReviewViewerProps) {
-  const source = session.media(attachment.url);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  const video = useRef<HTMLVideoElement>(null);
-  const [currentTime, setCurrentTime] = useState(initialTime);
-  const [includeTime, setIncludeTime] = useState(true);
+export function MediaReviewViewer(props: MediaReviewViewerProps) {
+  const { session, channelId, messageId } = props;
   const [view, setView] = useState<ThreadView>();
   const [threadError, setThreadError] = useState<string>();
-  const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
-
-  // Allocate owned session views in an effect so StrictMode cannot leak a reader.
   useEffect(() => {
     try {
       const owned = session.thread(channelId, messageId);
@@ -62,23 +46,94 @@ export function MediaReviewViewer({
       setThreadError(String(error));
     }
   }, [session, channelId, messageId]);
-  useEffect(() => {
-    closeButton.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [close]);
+  if (threadError) return <ReviewShell {...props} error={threadError} />;
+  if (!view) return <ReviewShell {...props} loading />;
+  return <ResolvedReview {...props} view={view} />;
+}
 
+function ResolvedReview({
+  view,
+  ...props
+}: MediaReviewViewerProps & { view: ThreadView }) {
+  const snapshot = useSyncExternalStore(
+    view.subscribe,
+    view.snapshot,
+    view.snapshot,
+  );
+  useEffect(() => {
+    if (snapshot.status === "ready" && snapshot.canLoadMore)
+      void view.loadMore();
+  }, [view, snapshot.status, snapshot.canLoadMore]);
+  if (snapshot.status === "loading" || snapshot.status === "idle")
+    return <ReviewShell {...props} loading />;
+  if (snapshot.error)
+    return (
+      <ReviewShell {...props} error={snapshot.error} retry={view.refresh} />
+    );
+  if (!snapshot.root)
+    return (
+      <ReviewShell
+        {...props}
+        error="Original message unavailable."
+        retry={view.refresh}
+      />
+    );
+  const attachmentAvailable = [snapshot.root, ...snapshot.replies].some((row) =>
+    row.attachments.some((item) => item.url === props.attachment.url),
+  );
+  if (!attachmentAvailable)
+    return <ReviewShell {...props} error="Attachment unavailable." />;
+  return (
+    <ReviewShell
+      {...props}
+      view={view}
+      rootId={snapshot.root.id}
+      replies={snapshot.replies}
+      limited={snapshot.limited}
+    />
+  );
+}
+
+function ReviewShell({
+  attachment,
+  extensions,
+  session,
+  scope,
+  channelId,
+  channelName,
+  initialTime,
+  close,
+  view,
+  rootId,
+  replies = [],
+  limited = false,
+  loading = false,
+  error,
+  retry,
+}: MediaReviewViewerProps & {
+  view?: ThreadView;
+  rootId?: string;
+  replies?: ReturnType<ThreadView["snapshot"]>["replies"];
+  limited?: boolean;
+  loading?: boolean;
+  error?: string;
+  retry?: () => void | Promise<void>;
+}) {
+  const source = session.media(attachment.url);
+  const backdrop = useRef<HTMLDivElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  const video = useRef<HTMLVideoElement>(null);
+  const [currentTime, setCurrentTime] = useState(initialTime);
+  const [includeTime, setIncludeTime] = useState(true);
+  const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  useModalBoundary(backdrop, closeButton, close);
   const seek = (seconds: number) => {
     if (!video.current) return;
     video.current.currentTime = seconds;
     void video.current.play().catch(() => {});
   };
-
   return createPortal(
-    <div className={styles.mediaReviewBackdrop}>
+    <div ref={backdrop} className={styles.mediaReviewBackdrop}>
       <section
         className={styles.mediaReviewViewer}
         role="dialog"
@@ -97,9 +152,17 @@ export function MediaReviewViewer({
           </button>
         </header>
         <div className={styles.mediaReviewStage}>
-          {!source ? (
-            <p className={styles.mediaReviewUnavailable} role="status">
-              {attachment.video ? "Video unavailable" : "Image unavailable"}
+          {!source || !rootId ? (
+            <p
+              className={styles.mediaReviewUnavailable}
+              role={error ? "alert" : "status"}
+            >
+              {error ?? (loading ? "Loading media…" : "Media unavailable")}
+              {retry && (
+                <button type="button" onClick={() => void retry()}>
+                  Retry
+                </button>
+              )}
             </p>
           ) : attachment.video ? (
             // biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL.
@@ -123,54 +186,51 @@ export function MediaReviewViewer({
               select={setSelectedImageUrl}
               media={session.media}
             />
-          ) : (
-            <img src={source} alt="Attachment preview" />
-          )}
+          ) : null}
         </div>
         <aside className={styles.mediaReviewConversation}>
-          {threadError ? (
-            <p className={styles.empty} role="alert">
-              {threadError}
-            </p>
-          ) : view ? (
-            <ReviewComments
-              view={view}
-              session={session}
-              extensions={extensions}
-              {...(attachment.video ? { seek } : {})}
-            />
+          {rootId && source ? (
+            <>
+              <ReviewComments
+                replies={replies}
+                limited={limited}
+                session={session}
+                extensions={extensions}
+                {...(attachment.video ? { seek } : {})}
+              />
+              {attachment.video && (
+                <div className={styles.mediaReviewTimeOption}>
+                  <span>{formatMediaTime(currentTime)}</span>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={includeTime}
+                      onChange={(event) =>
+                        setIncludeTime(event.currentTarget.checked)
+                      }
+                    />
+                    Comment at current frame
+                  </label>
+                </div>
+              )}
+              <MessageComposer
+                extensions={extensions}
+                session={session}
+                scope={scope}
+                channelId={channelId}
+                channelName={channelName}
+                threadRootId={rootId}
+                {...(attachment.video && includeTime
+                  ? { mediaTimeSeconds: currentTime }
+                  : {})}
+                hideMediaTimeIndicator
+              />
+            </>
           ) : (
-            <p className={styles.empty} role="status">
-              Loading comments…
+            <p className={styles.empty} role={error ? "alert" : "status"}>
+              {error ?? "Loading comments…"}
             </p>
           )}
-          {attachment.video && (
-            <div className={styles.mediaReviewTimeOption}>
-              <span>{formatMediaTime(currentTime)}</span>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={includeTime}
-                  onChange={(event) =>
-                    setIncludeTime(event.currentTarget.checked)
-                  }
-                />
-                Comment at current frame
-              </label>
-            </div>
-          )}
-          <MessageComposer
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            channelId={channelId}
-            channelName={channelName}
-            threadRootId={messageId}
-            {...(attachment.video && includeTime
-              ? { mediaTimeSeconds: currentTime }
-              : {})}
-            hideMediaTimeIndicator
-          />
         </aside>
       </section>
     </div>,
@@ -198,19 +258,13 @@ function ImageReviewGallery({
     const seen = new Set<string>();
     return [thread.root, ...thread.replies]
       .flatMap((row) => row?.attachments ?? [])
-      .filter((item) => {
-        if (item.video || seen.has(item.url)) return false;
-        seen.add(item.url);
-        return true;
-      });
+      .filter(
+        (item) => !item.video && !seen.has(item.url) && !!seen.add(item.url),
+      );
   }, [thread.root, thread.replies]);
   return (
     <ImageReviewStage
-      attachments={
-        attachments.some((item) => item.url === selectedUrl)
-          ? attachments
-          : [{ url: selectedUrl, video: false }, ...attachments]
-      }
+      attachments={attachments}
       selectedUrl={selectedUrl}
       media={media}
       select={select}
@@ -219,27 +273,20 @@ function ImageReviewGallery({
 }
 
 function ReviewComments({
-  view,
+  replies,
+  limited,
   session,
   extensions,
   seek,
 }: {
-  view: ThreadView;
+  replies: ReturnType<ThreadView["snapshot"]>["replies"];
+  limited: boolean;
   session: RelaySession;
   extensions?: ConversationExtensions | undefined;
   seek?: (seconds: number) => void;
 }) {
-  const thread = useSyncExternalStore(
-    view.subscribe,
-    view.snapshot,
-    view.snapshot,
-  );
-  const rows = useMemo(
-    () => (thread.root ? [thread.root, ...thread.replies] : thread.replies),
-    [thread.root, thread.replies],
-  );
-  const profiles = useRowProfiles(session.profiles, rows);
-  const authors = [...new Set(rows.map((row) => row.authorId))]
+  const profiles = useRowProfiles(session.profiles, replies);
+  const authors = [...new Set(replies.map((row) => row.authorId))]
     .sort()
     .join(":");
   useEffect(() => {
@@ -248,17 +295,13 @@ function ReviewComments({
         .ensure(authors.split(":"), "background")
         .catch(() => {});
   }, [session.profiles, authors]);
-  useEffect(() => {
-    if (thread.status === "ready" && thread.canLoadMore) void view.loadMore();
-  }, [view, thread.status, thread.canLoadMore]);
-
   return (
     <section className={styles.mediaReviewThread} aria-label="Media comments">
       <div className={styles.mediaReviewThreadHeading}>
         <strong>Comments</strong>
-        <span>{thread.replies.length}</span>
+        <span>{replies.length}</span>
       </div>
-      {thread.replies.map((row) => (
+      {replies.map((row) => (
         <MessageRow
           key={row.id}
           row={row}
@@ -271,13 +314,9 @@ function ReviewComments({
           {...(seek ? { onMediaTime: seek } : {})}
         />
       ))}
-      {(thread.status === "loading" ||
-        (thread.status === "ready" && thread.canLoadMore)) && (
-        <p role="status">Loading comments…</p>
-      )}
-      {thread.error && <p role="alert">{thread.error}</p>}
-      {thread.status === "ready" && thread.replies.length === 0 && (
-        <p className={styles.threadNote}>No comments yet.</p>
+      {!replies.length && <p className={styles.threadNote}>No comments yet.</p>}
+      {limited && (
+        <p className={styles.threadNote}>Thread history limit reached.</p>
       )}
     </section>
   );

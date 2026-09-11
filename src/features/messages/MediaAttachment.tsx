@@ -11,6 +11,7 @@ import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
+import { useModalBoundary } from "./useModalBoundary";
 
 export type MediaPlayback = Readonly<{
   attachmentUrl: string;
@@ -273,18 +274,13 @@ function MediaViewer({
   close(): void;
   children: ReactNode;
 }) {
+  const backdrop = useRef<HTMLDivElement>(null);
   const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    closeButton.current?.focus();
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") close();
-    };
-    document.addEventListener("keydown", closeOnEscape);
-    return () => document.removeEventListener("keydown", closeOnEscape);
-  }, [close]);
+  useModalBoundary(backdrop, closeButton, close);
   return (
     // biome-ignore lint/a11y/noStaticElementInteractions: backdrop click is a pointer-only shortcut; the dialog has an explicit close button and Escape behavior.
     <div
+      ref={backdrop}
       className={styles.mediaViewerBackdrop}
       role="presentation"
       onMouseDown={(event) => {

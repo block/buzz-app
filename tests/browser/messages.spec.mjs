@@ -40,20 +40,67 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
     await expect(
-      panel.getByText("60 replies shown", { exact: true }),
+      panel.getByText("61 replies shown", { exact: true }),
     ).toBeVisible();
     await expect(panel.getByRole("status")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Load more replies", exact: true }),
     ).toHaveCount(0);
     await expect.poll(gap).toBeLessThan(2);
+    await expect(
+      history.getByRole("heading", { name: "Markdown reply", level: 2 }),
+    ).toBeVisible();
+    await expect(history.getByText("Bold", { exact: true })).toHaveCSS(
+      "font-weight",
+      /^(650|700)$/,
+    );
+    await expect(history.locator("del")).toHaveText("done");
+    await expect(
+      history.getByRole("heading", { name: "Agent Markdown", level: 3 }),
+    ).toBeVisible();
+    await expect(
+      history.getByText("Rendered from an agent envelope", { exact: true }),
+    ).toHaveCSS("font-weight", /^(650|700)$/);
+    await expect(
+      history.locator("code").filter({ hasText: "agent-code" }),
+    ).toBeVisible();
+    await expect(
+      history
+        .locator("p")
+        .filter({ hasText: /single\s+break/ })
+        .locator("br"),
+    ).toHaveCount(1);
+    await expect(history.locator("table")).toContainText("A");
+    await expect(history.locator("pre code")).toContainText(
+      'const message = "safe";',
+    );
+    const safeLink = history.getByRole("link", { name: "Safe link" });
+    await expect(safeLink).toHaveAttribute("href", "https://example.com/path");
+    await expect(safeLink).toHaveAttribute("rel", "noopener noreferrer");
+    await safeLink.click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.links.at(-1)),
+      )
+      .toBe("https://example.com/path");
+    await history.evaluate((element) => {
+      for (const selector of ["pre", "table"]) {
+        const item = element.querySelector(selector);
+        if (
+          item &&
+          item.getBoundingClientRect().right >
+            element.getBoundingClientRect().right + 1
+        )
+          throw new Error(`${selector} overflows the thread`);
+      }
+    });
     await history.evaluate((el) => {
       el.scrollTop = 100;
       el.dispatchEvent(new Event("scroll"));
     });
     await page.evaluate(() => window.messagesFixture.live());
     await expect(
-      panel.getByText("61 replies shown", { exact: true }),
+      panel.getByText("62 replies shown", { exact: true }),
     ).toBeVisible();
     await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(100);
     await draft.fill("keep first draft");

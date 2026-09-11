@@ -30,6 +30,7 @@ createPluginManager(context, {
 });
 const extensions = new ConversationService(context);
 const viewer = keypair(),
+  agent = keypair(),
   relay = keypair();
 const roots = [
   message(viewer, "one", "First root", 1),
@@ -43,16 +44,51 @@ function channelOf(event: RelayEvent) {
 }
 const replies = roots.flatMap((root) =>
   Array.from({ length: 60 }, (_, i) =>
-    message(viewer, channelOf(root), `${root.content} reply ${i}`, 10 + i, [
-      ["e", root.id, "", "reply"],
-    ]),
+    message(
+      viewer,
+      channelOf(root),
+      i === 59 && root === roots[0]
+        ? `## Markdown reply
+**Bold** and ~~done~~
+
+single
+break
+
+| A | B |
+| - | - |
+| 1 | 2 |
+
+\`\`\`ts
+const message = "safe";
+\`\`\`
+
+[Safe link](https://example.com/path)`
+        : `${root.content} reply ${i}`,
+      10 + i,
+      [["e", root.id, "", "reply"]],
+    ),
   ),
 );
-const events = [...roots, ...replies];
+const agentReply = signed(agent, {
+  kind: 40002,
+  content: JSON.stringify({
+    content: `### Agent Markdown
+**Rendered from an agent envelope**
+
+\`agent-code\``,
+  }),
+  created_at: 70,
+  tags: [
+    ["h", "one"],
+    ["e", roots[0].id, "", "reply"],
+  ],
+});
+const events = [...roots, ...replies, agentReply];
 const report = {
   pages: [] as string[],
   signings: [] as string[],
   publications: [] as RelayEvent[],
+  links: [] as string[],
 };
 let incoming = (_events: readonly RelayEvent[]) => {};
 const rejected = new Set<string>();
@@ -173,7 +209,10 @@ function Fixture() {
           channelName={channelId}
           messageId={root.id}
           close={() => select(0)}
-          onOpenLink={() => false}
+          onOpenLink={(url) => {
+            report.links.push(url);
+            return true;
+          }}
         />
       </div>
     </>

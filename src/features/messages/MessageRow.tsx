@@ -1,10 +1,10 @@
 import { memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
-import { messageParts } from "../relay/emoji";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { MessageMarkdown } from "./MessageMarkdown";
 import styles from "./Messages.module.css";
 
 export type MessageRowProps = {
@@ -78,14 +78,12 @@ export const MessageRow = memo(function MessageRow({
               })}
             </time>
           </div>
-          <p className={styles.text}>
-            <MessageText
-              row={row}
-              extensions={extensions}
-              media={media}
-              onOpenLink={onOpenLink}
-            />
-          </p>
+          <MessageMarkdown
+            row={row}
+            extensions={extensions}
+            media={media}
+            onOpenLink={onOpenLink}
+          />
           <DeliveryNotice row={row} retry={retry} />
           {row.attachments.map((attachment) => (
             <a
@@ -200,51 +198,4 @@ function useThreadUnread(
     [unread, channelId, rootId],
   );
   return useSyncExternalStore(subscribe, get, get);
-}
-function MessageText({
-  row,
-  extensions,
-  media,
-  onOpenLink,
-}: Pick<MessageRowProps, "row" | "extensions" | "media" | "onOpenLink">) {
-  return messageParts(row.content).map((part, index) => {
-    const key = `${index}:${part.slice(0, 20)}`;
-    if (!part.startsWith("https://")) {
-      return (
-        <span key={key}>
-          {extensions ? (
-            <InlineText
-              registry={extensions.inline}
-              content={{ text: part, message: row }}
-              media={media}
-            />
-          ) : (
-            part
-          )}
-        </span>
-      );
-    }
-    const url = part.replace(/[.,;:!?)\]}]+$/, "");
-    return (
-      <span key={key}>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => {
-            if (
-              !event.metaKey &&
-              !event.ctrlKey &&
-              !event.shiftKey &&
-              onOpenLink(url)
-            )
-              event.preventDefault();
-          }}
-        >
-          {url}
-        </a>
-        {part.slice(url.length)}
-      </span>
-    );
-  });
 }

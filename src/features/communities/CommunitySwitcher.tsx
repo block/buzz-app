@@ -119,6 +119,7 @@ export function CommunitySwitcher({
         <CommunityDialog
           communities={communities}
           mode="join"
+          onJoined={select}
           close={() => setJoining(false)}
         />
       )}

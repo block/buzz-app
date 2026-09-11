@@ -1,0 +1,69 @@
+import { test, expect } from "./fixture.mjs";
+import { open } from "./timeline.mjs";
+
+const button = (page, name) => page.getByRole("button", { name, exact: true });
+const entry = (page) =>
+  page.evaluate(() => history.state.buzzNavigationV1.entry);
+
+for (const startingScope of ["Primary", "Personal space"]) {
+  test(`successful community setup navigates from ${startingScope} Messages and restores both visits`, async ({
+    page,
+    app,
+  }) => {
+    await page.route("**/api/relay/secondary/info", (route) =>
+      route.fulfill({ json: { name: "Secondary", policy: null } }),
+    );
+    await open(page, app);
+    const switcher = button(page, "Switch community");
+    if (startingScope === "Personal space") {
+      await switcher.click();
+      await button(page, "Personal space").click();
+      await expect(
+        page.getByRole("heading", { name: "Your channels, one conversation." }),
+      ).toBeVisible();
+    }
+    const before = await entry(page);
+    await switcher.click();
+    await button(page, "Add a community").click();
+    await page
+      .getByRole("textbox", { name: "Relay URL", exact: true })
+      .fill("wss://secondary.example");
+    await button(page, "Continue").click();
+    await expect(
+      page.getByRole("heading", {
+        name: "Your profile in Secondary",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await button(page, "Open community").click();
+    await expect(switcher).toHaveAttribute("title", "Secondary", {
+      timeout: 1500,
+    });
+    const secondaryMessage = page.getByText("secondary alpha message 639", {
+      exact: false,
+    });
+    await expect(secondaryMessage).toBeVisible();
+    const joined = await entry(page);
+    expect(joined.id).not.toBe(before.id);
+    expect(joined.target.scope).toEqual({
+      viewer: app.viewer,
+      communityOrigin: "https://secondary.example",
+    });
+
+    await button(page, "Go back").click();
+    await expect(switcher).toHaveAttribute("title", startingScope);
+    expect(await entry(page)).toEqual(before);
+    if (startingScope === "Primary")
+      await expect(
+        page.getByText("primary alpha message 639", { exact: false }),
+      ).toBeVisible();
+    else
+      await expect(
+        page.getByRole("heading", { name: "Your channels, one conversation." }),
+      ).toBeVisible();
+    await button(page, "Go forward").click();
+    await expect(switcher).toHaveAttribute("title", "Secondary");
+    await expect(secondaryMessage).toBeVisible();
+    expect(await entry(page)).toEqual(joined);
+  });
+}

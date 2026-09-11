@@ -186,6 +186,7 @@ function ThreadMessages({
     seconds: number;
     request: number;
   }>();
+  const rootId = snapshot.root?.id;
   const videoAttachment = snapshot.root?.attachments.find((item) => item.video);
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.
@@ -306,6 +307,12 @@ function ThreadMessages({
                           seconds,
                           request: (current?.request ?? 0) + 1,
                         })),
+                    }
+                  : {})}
+                {...(onOpenMediaReview && rootId
+                  ? {
+                      onOpenMediaReview: (attachment, seconds) =>
+                        onOpenMediaReview(rootId, attachment, seconds),
                     }
                   : {})}
               />

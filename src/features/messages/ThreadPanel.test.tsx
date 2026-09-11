@@ -1,6 +1,6 @@
 import { beforeEach, expect, it, vi } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
-import { ThreadPanel } from "./ThreadPanel";
+import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { MessageRow } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
@@ -108,7 +108,7 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 2,
 };
-function setup() {
+function setup(onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"]) {
   const snapshot: ThreadSnapshot = {
     status: "ready",
     root: row,
@@ -145,6 +145,7 @@ function setup() {
       messageId: row.id,
       close,
       onOpenLink: () => false,
+      ...(onOpenMediaReview ? { onOpenMediaReview } : {}),
     });
     return (
       scoped.type as (
@@ -341,8 +342,10 @@ it("the actual message reply button opens that message and retains the trigger f
   expect(open).toHaveBeenCalledExactlyOnceWith(row.id);
 });
 
-function messagesHarness() {
-  const h = setup();
+function messagesHarness(
+  onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"],
+) {
+  const h = setup(onOpenMediaReview);
   h.render();
   h.effects();
   const child = elements(h.render()).find((e) => typeof e.type === "function");
@@ -460,6 +463,27 @@ it("preserves reading above the bottom through live updates and refresh, then re
   h.effects();
   expect(h.element.scrollTop).toBe(4900);
 });
+it("routes media in replies through the resolved root review workspace", () => {
+  const open = vi.fn();
+  const h = messagesHarness(open);
+  const root = { ...row, id: "resolved-root" };
+  const attachment = { url: "https://safe/image.png", video: false };
+  h.snapshot.root = root;
+  h.snapshot.replies = [{ ...row, id: "reply", attachments: [attachment] }];
+  h.render();
+  h.effects();
+  const reply = elements(h.tree()).find(
+    (e) =>
+      e.type === MessageRow && (e.props.row as ChannelMessage).id === "reply",
+  );
+  const handler = reply?.props.onOpenMediaReview as
+    | ((item: typeof attachment, seconds: number) => void)
+    | undefined;
+  expect(handler).toBeDefined();
+  handler?.(attachment, 0);
+  expect(open).toHaveBeenCalledExactlyOnceWith("resolved-root", attachment, 0);
+});
+
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, id: "resolved-root" };

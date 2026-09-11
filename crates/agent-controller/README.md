@@ -22,10 +22,19 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
   inside the listener's isolated Unix session.
 - Native attestation verification before spawn (unrestricted NIP-OA only); no parent
   managed-agent identity/replay/marker/provider credential inheritance.
+- Isolated macOS credential adapter: selected legacy service's `secrets` account,
+  strict bounded map parsing and exact agent-key validation; separate destination
+  service `dev.local.buzz.foundation.agents`, account `agent:<exact-key/community-id>`.
+  Destination adds are create-only; import reads back the resulting key. Missing,
+  denied and malformed credentials are distinct fixed errors, never source fallback.
+  Unit tests use an injected backend and compile out all live Keychain calls.
 
 ## Known incomplete boundaries — do not claim live readiness
 
-- No Tauri commands/host loop or production OS credential adapter is attached yet.
+- No Tauri commands/host loop is attached yet. The macOS credential adapter compiles,
+  but its Security.framework calls have not run against any real or test Keychain.
+  Permission prompts, signing/ACL behavior and packaged custody remain unverified;
+  other platforms explicitly report unavailable rather than storing keys in files.
 - Runtime tools must come from this app's own independently packaged bundle; no
   artifact download/build/pinning pipeline or packaged launch has been verified.
 - Cross-app/cross-profile exact-key exclusion is **not implemented**. The profile

@@ -182,29 +182,58 @@ test("session changes discard the previous sidebar targets and manual unread sti
   page,
   app,
 }) => {
-  await open(page, app);
-  await expect(cue(page, "below")).toBeVisible();
-  await page
-    .getByRole("button", { name: "Switch community", exact: true })
-    .click();
-  await page
-    .getByRole("button", { name: "Switch to Secondary", exact: true })
-    .click();
-  await expect(page.getByText(/secondary alpha message/).first()).toBeVisible();
-  await expect(cue(page, "below")).toHaveCount(0);
-  await page.getByLabel("Conversation options", { exact: true }).click();
-  await page
-    .getByRole("button", { name: "Mark unread on this device", exact: true })
-    .click();
-  await page.getByLabel("Conversation options", { exact: true }).click();
-  await scroll(page, 1800);
-  await expect(cue(page, "above")).toBeVisible();
-  await cue(page, "above").click();
-  await expect.poll(() => inView(page, "alpha")).toBe(true);
-  await expect(
-    row(page, "alpha").getByRole("img", {
-      name: "Marked unread on this device only",
-      exact: true,
-    }),
-  ).toBeVisible();
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route(
+    "**/api/relay/secondary/sidebar-preferences",
+    async (route) => {
+      requested = true;
+      await held;
+      await route.continue();
+    },
+  );
+  try {
+    await open(page, app);
+    await expect(cue(page, "below")).toBeVisible();
+    await page
+      .getByRole("button", { name: "Switch community", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Switch to Secondary", exact: true })
+      .click();
+    await expect(
+      page.getByText(/secondary alpha message/).first(),
+    ).toBeVisible();
+    await expect(cue(page, "below")).toHaveCount(0);
+    await page.getByLabel("Conversation options", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Mark unread on this device", exact: true })
+      .click();
+    await page.getByLabel("Conversation options", { exact: true }).click();
+    await expect.poll(() => requested).toBe(true);
+    await scroll(page, 1800);
+    await expect(cue(page, "above")).toBeVisible();
+    // Completing delayed preferences must not replace the user's newer viewport.
+    release();
+    await expect(
+      page.getByText("Loading saved groups and stars…", { exact: true }),
+    ).toBeHidden();
+    expect(await list(page).evaluate((element) => element.scrollTop)).toBe(
+      1800,
+    );
+    await cue(page, "above").click();
+    await expect.poll(() => inView(page, "alpha")).toBe(true);
+    await expect(
+      row(page, "alpha").getByRole("img", {
+        name: "Marked unread on this device only",
+        exact: true,
+      }),
+    ).toBeVisible();
+  } finally {
+    release();
+    await page.unroute("**/api/relay/secondary/sidebar-preferences");
+  }
 });

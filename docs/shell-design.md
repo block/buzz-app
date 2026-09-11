@@ -4,7 +4,13 @@ The shell is owned by `src/app/shell`, independently of relay operations and pag
 content. `App.tsx` composes startup/recovery, built-in Home and Settings, and the
 existing contributed-page lifecycle. Home is a small scaffold landing page; it
 only links to available pages and Settings. Navigation removes disabled plugins
-and falls back to the existing page-service selection behavior.
+from page choices; a retained destination whose provider is unavailable displays
+an explicit failure with retry instead of silently selecting another page.
+Browser controls, host shortcuts and toolbar arrows traverse the same visit history.
+Settings sections are destinations. Personal-space page visits use explicit null
+scope, distinct from a plugin's unspecified community scope. Focus-only skip links
+do not add visits. Plugin recovery remains available in Settings → Plugins without
+blocking Home, Profile or Appearance.
 
 See [design system and appearance](design-system.md) for Light/Dark settings,
 semantic tokens, UI authoring rules and the local component reference.

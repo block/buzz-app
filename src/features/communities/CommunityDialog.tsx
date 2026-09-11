@@ -16,10 +16,12 @@ export function CommunityDialog({
   communities,
   mode,
   close,
+  onJoined,
 }: {
   communities: Communities;
   mode: "join" | "profile";
   close(): void;
+  onJoined?: (id: string) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const client = communities.snapshot();
@@ -134,6 +136,7 @@ export function CommunityDialog({
             },
             profile,
           );
+          onJoined?.(id);
         }
         close();
       });

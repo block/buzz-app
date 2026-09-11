@@ -1,41 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 
-/** Mounted under the community/viewer/generation key; never owns transport or sync. */
+/** The session retains groups/stars across page unmounts; React only observes. */
 export function useSidebarPreferences(
   queries: RelaySession["sidebarPreferences"],
 ) {
-  const [status, setStatus] = useState<
-    "loading" | "ready" | "error" | "unsupported"
-  >(queries.available ? "loading" : "unsupported");
-  const [data, setData] = useState<SidebarPreferences>();
-  const [error, setError] = useState<string>();
+  const snapshot = useSyncExternalStore(
+    queries.subscribe,
+    queries.snapshot,
+    queries.snapshot,
+  );
   useEffect(() => {
-    if (status !== "loading") return;
-    const controller = new AbortController();
-    void queries.read(controller.signal).then(
-      (preferences) => {
-        if (controller.signal.aborted) return;
-        setData(preferences);
-        setError(undefined);
-        setStatus("ready");
-      },
-      (reason: unknown) => {
-        if (controller.signal.aborted) return;
-        setError(reason instanceof Error ? reason.message : String(reason));
-        setStatus("error");
-      },
-    );
-    return () => controller.abort();
-  }, [queries, status]);
+    if (snapshot.status === "idle") void queries.ensure();
+  }, [queries, snapshot.status]);
   return {
-    data,
-    status,
-    error,
-    reload: () => {
-      setError(undefined);
-      setStatus("loading");
-    },
+    ...snapshot,
+    status: snapshot.status === "idle" ? ("loading" as const) : snapshot.status,
+    reload: queries.refresh,
   };
 }

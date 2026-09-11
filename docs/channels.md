@@ -55,6 +55,21 @@ The workspace React key includes community/viewer scope **and** connection
 generation. This resets session-owned component state on switching or reconnecting;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
+Saved sidebar groups, ordering, assignments and stars live in the session's
+`sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
+one initial read; `refresh()` explicitly reloads/retries while retaining the last
+good snapshot through loading/errors. Page exits neither restart nor cancel that
+read. Cache clearing and session disposal cancel it and discard decoded data;
+late completion cannot repopulate a retired snapshot. These are account-owned
+preferences, not channel access grants: sidebar sections still intersect the
+authorized roster. There is no new disk cache or automatic cross-device sync.
+
+Search, collapsed section keys and sidebar scroll remain separate, scoped view
+intent. They are saved on page exit and restored before paint when the roster and
+groups are available; navigation history does not own them. The saved-groups
+browser regression records every visible return frame and holds the redundant
+decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
+
 ## Performance and correctness carried from Astra
 
 The port retains the prepared-store implementation and its behavior tests:

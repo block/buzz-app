@@ -420,7 +420,13 @@ it("hides DM channels behind the NIP-29 hidden tag", async () => {
   ]);
   await flush();
   expect(queries.list().channels).toEqual([
-    { id: "dm", name: "DM", hidden: true },
+    {
+      id: "dm",
+      name: "DM",
+      hidden: true,
+      members: [viewer.pubkey, alice.pubkey].sort(),
+      preview: undefined,
+    },
   ]);
   store.dispose();
 });

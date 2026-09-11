@@ -101,6 +101,16 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           browsers: "true"
+      # This journey uses a real native plugin-manager bridge. Provision it
+      # before Playwright starts: a cold Rust install/build is test setup, not
+      # browser behavior, and must not consume the journey's subprocess budget.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          key: browser-fixture
+          save-if: ${{ github.event_name == 'push' }}
+      - name: Build native browser fixture
+        timeout-minutes: 8
+        run: cargo build --locked -p buzzodz-plugins --example fixture-bridge
       # Measurement success is enforced by needs above. --no-deps avoids
       # repeating measurements on every shard; both functional engines remain.
       - name: Chromium and WebKit functional journeys

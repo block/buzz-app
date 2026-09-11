@@ -136,7 +136,10 @@ export function createRelaySession(
       // Retained thread targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
-        evidence.get(id) ?? recent.peek(id)?.event ?? retainedThreadEvent(id),
+        evidence.get(id) ??
+        recent.peek(id)?.event ??
+        retainedThreadEvent(id) ??
+        unread.event(id),
     );
   }
   const local = () => {

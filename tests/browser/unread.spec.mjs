@@ -169,3 +169,52 @@ test("focus cancellation and local manual-unread survive dwell/reload until expl
     .toBe(app.histories.get("primary/alpha").at(-1).created_at);
   await expect(alpha(page).getByRole("img")).toHaveCount(0);
 });
+
+test("a surviving window publishes a closed window's durable read intent", async ({
+  page,
+  context,
+  app,
+}) => {
+  await open(page, app);
+  await composer(page).focus();
+  const survivor = await context.newPage();
+  survivor.on("pageerror", (error) => app.report.errors.push(error.message));
+  survivor.on("console", (message) => {
+    if (message.type() === "error")
+      app.report.consoleErrors.push(message.text());
+  });
+  try {
+    await open(survivor, app);
+    await composer(survivor).focus();
+    await options(survivor);
+    await survivor.getByText("Unread status", { exact: true }).click();
+    await expect(
+      survivor.getByText(/Read sync: frontier-sync · reconciled/),
+    ).toBeVisible();
+    await page.bringToFront();
+    await history(page).focus();
+    await expect
+      .poll(async () => (await journal(page)).revision)
+      .toBeGreaterThan(0);
+    const stored = await journal(page);
+    await expect(
+      survivor.getByText(/Read sync: frontier-sync · pending/),
+    ).toBeVisible();
+    expect(app.report.readPublications).toEqual([]);
+    await page.close(); // Cancel the origin publisher before its normal five-second debounce.
+    await expect
+      .poll(() => app.report.readPublications.length, { timeout: 12000 })
+      .toBe(1);
+    await expect
+      .poll(async () => (await journal(survivor)).acceptedRevision)
+      .toBe(stored.revision);
+    expect(app.report.readPublications[0].blob.contexts).toEqual(
+      stored.state.frontiers,
+    );
+    await expect(
+      survivor.getByText(/Read sync: frontier-sync · reconciled/),
+    ).toBeVisible();
+  } finally {
+    await survivor.close();
+  }
+});

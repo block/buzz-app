@@ -59,9 +59,10 @@ could hide unseen siblings. Oversized rows that never fit fully are not auto-rea
   and retries pending publication. `ReadMutationResult.durability === "saved"`
   means the local transaction committed, not that the relay accepted it.
 
-The sidebar displays observed badges, with accessible non-exact wording and a
-separate local-manual dot. Conversation options exposes explicit actions and
-Unread status/retry. Unknown and observed-zero both omit a badge; the API preserves
+The sidebar displays observed badges with accessible non-exact wording. A local
+manual-unread mark replaces the count with a dot and local-only label; the
+underlying observed count and attention styling remain available. Conversation
+options exposes explicit actions and Unread status/retry. Unknown and observed-zero both omit a badge; the API preserves
 the distinction. There is no notification, feed, or exact-count service here.
 
 ## Durable sync and privacy

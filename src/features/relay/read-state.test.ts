@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createReadState } from "./read-state";
+import { browserReadPublisherLock, createReadState } from "./read-state";
 import {
   newReadJournal,
   readJournal,
@@ -16,6 +16,7 @@ import type { ReadStateSigning } from "./read-state-host";
 const owners: ReturnType<typeof createReadState>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
+  vi.useRealTimers();
 });
 function fixture() {
   const key = keypair();
@@ -49,8 +50,10 @@ function fixture() {
     now: () => 100,
     debounceMs: 60000,
   };
-  const make = () => {
-    const owner = createReadState(options);
+  const make = (
+    overrides: Partial<Parameters<typeof createReadState>[0]> = {},
+  ) => {
+    const owner = createReadState({ ...options, ...overrides });
     owners.push(owner);
     return owner;
   };
@@ -151,6 +154,200 @@ describe("durable read-state owner", () => {
     await Promise.all([a.ready, b.ready]);
     await Promise.all([a.read("a", 2, () => true), b.read("b", 3, () => true)]);
     expect(f.journal()?.state.frontiers).toEqual({ a: 2, b: 3 });
+  });
+  it("a surviving window publishes broadcast intent and reports pending until readback", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    const options = {
+      broadcastName: `read-handoff:${crypto.randomUUID()}`,
+      debounceMs: 100,
+      lock: browserReadPublisherLock(`read-handoff:${crypto.randomUUID()}`),
+    };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.refresh(), b.refresh()]);
+    expect(b.snapshot().status).toBe("reconciled");
+    await a.read("room", 12, () => true);
+    // Real BroadcastChannel delivery, but a deterministic publisher clock.
+    await expect.poll(() => b.state().frontiers.room).toBe(12);
+    a.dispose();
+    expect(b.snapshot().status).toBe("pending");
+    expect(f.host.publish).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(100);
+    await expect.poll(() => b.snapshot().status).toBe("reconciled");
+    expect(f.host.publish).toHaveBeenCalledTimes(1);
+    expect(f.journal()).toMatchObject({ revision: 1, acceptedRevision: 1 });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.host.publish).toHaveBeenCalledTimes(1);
+  });
+  it("broadcast publishers serialize and a peer observes readback without duplicate signing", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    const options = {
+      broadcastName: `read-both:${crypto.randomUUID()}`,
+      debounceMs: 100,
+      lock: browserReadPublisherLock(`read-both:${crypto.randomUUID()}`),
+    };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.refresh(), b.refresh()]);
+    await a.read("room", 12, () => true);
+    await expect.poll(() => b.snapshot().status).toBe("pending");
+    await vi.advanceTimersByTimeAsync(100);
+    await expect
+      .poll(() => [a.snapshot().status, b.snapshot().status])
+      .toEqual(["reconciled", "reconciled"]);
+    expect(f.host.sign).toHaveBeenCalledTimes(1);
+    expect(f.host.publish).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.host.publish).toHaveBeenCalledTimes(1);
+  });
+  it("broadcast handoff retries saved bytes and no-op broadcasts preserve a failed outcome", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    const options = {
+      broadcastName: `read-retry:${crypto.randomUUID()}`,
+      debounceMs: 100,
+    };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.refresh(), b.refresh()]);
+    await a.read("room", 12, () => true);
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await a.flush();
+    const pending = f.journal()?.pending?.event;
+    expect(pending).toBeDefined();
+    await expect.poll(() => b.state().frontiers.room).toBe(12);
+    a.dispose();
+    f.host.publish.mockRejectedValueOnce(new Error("still offline"));
+    await vi.advanceTimersByTimeAsync(100);
+    await expect.poll(() => b.snapshot().status).toBe("error");
+    expect(f.host.publish.mock.calls[1]?.[0]).toEqual(pending);
+    const notify = new BroadcastChannel(options.broadcastName);
+    const updates = vi.mocked(f.storage.update).mock.calls.length;
+    notify.postMessage("changed");
+    notify.close();
+    await expect
+      .poll(() => vi.mocked(f.storage.update).mock.calls.length)
+      .toBeGreaterThan(updates);
+    expect(b.snapshot()).toMatchObject({
+      status: "error",
+      error: "still offline",
+    });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.host.publish).toHaveBeenCalledTimes(2);
+    await b.flush();
+    expect(f.host.publish.mock.calls[2]?.[0]).toEqual(pending);
+    expect(f.host.sign).toHaveBeenCalledTimes(1);
+    expect(b.snapshot().status).toBe("reconciled");
+  });
+  it.each([true, false])(
+    "drains peer intent arriving during publication after the originating window closes (broadcast: %s)",
+    async (broadcast) => {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const f = fixture();
+      const options = {
+        broadcastName: broadcast
+          ? `read-inflight:${crypto.randomUUID()}`
+          : undefined,
+        debounceMs: 100,
+      };
+      const a = f.make(options),
+        b = f.make(options);
+      await Promise.all([a.refresh(), b.refresh()]);
+      let release = () => {};
+      const held = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const publish = f.host.publish.getMockImplementation();
+      if (!publish) throw new Error("Missing publisher");
+      f.host.publish.mockImplementationOnce(async (event) => {
+        await held;
+        await publish(event);
+      });
+      await b.read("first", 11, () => true);
+      const first = b.flush();
+      await expect.poll(() => f.host.publish.mock.calls.length).toBe(1);
+      await a.read("second", 12, () => true);
+      a.dispose();
+      release();
+      await first;
+      expect(f.journal()).toMatchObject({ revision: 2, acceptedRevision: 1 });
+      await vi.advanceTimersByTimeAsync(400);
+      await expect.poll(() => f.journal()?.acceptedRevision).toBe(2);
+      expect(b.snapshot().status).toBe("reconciled");
+      expect(f.host.publish).toHaveBeenCalledTimes(2);
+    },
+  );
+  it("a failed lock attempt remains an error without automatic retry", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    const lock = vi.fn(async () => {
+      throw new Error("lock unavailable");
+    });
+    const owner = f.make({ lock, debounceMs: 100 });
+    await owner.ready;
+    await owner.read("room", 12, () => true);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(owner.snapshot()).toMatchObject({
+      status: "error",
+      error: "lock unavailable",
+    });
+    await vi.advanceTimersByTimeAsync(400);
+    expect(lock).toHaveBeenCalledTimes(1);
+    expect(f.host.publish).not.toHaveBeenCalled();
+  });
+  it("successful peer readback clears the other window's failed publication status", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    const options = {
+      broadcastName: `read-recovery:${crypto.randomUUID()}`,
+      debounceMs: 100,
+    };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.refresh(), b.refresh()]);
+    await b.read("room", 12, () => true);
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await b.flush();
+    expect(b.snapshot().status).toBe("error");
+    const pending = f.journal()?.pending?.event;
+    await a.flush();
+    expect(f.host.publish.mock.calls[1]?.[0]).toEqual(pending);
+    await expect.poll(() => b.snapshot().status).toBe("reconciled");
+    expect(b.snapshot().error).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(400);
+    expect(f.host.publish).toHaveBeenCalledTimes(2);
+  });
+  it("peer publication recovery does not clear a subsequent marker-load error", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const f = fixture();
+    const options = {
+      broadcastName: `read-load-error:${crypto.randomUUID()}`,
+      debounceMs: 100,
+    };
+    const a = f.make(options),
+      b = f.make(options);
+    await Promise.all([a.refresh(), b.refresh()]);
+    await b.read("room", 12, () => true);
+    f.host.publish.mockRejectedValueOnce(new Error("response lost"));
+    await b.flush();
+    f.reader.read.mockRejectedValueOnce(new Error("marker load failed"));
+    await b.refresh();
+    expect(b.snapshot().error).toBe("marker load failed");
+    await a.flush();
+    const updates = vi.mocked(f.storage.update).mock.calls.length;
+    const notify = new BroadcastChannel(options.broadcastName);
+    notify.postMessage("changed");
+    notify.close();
+    await expect
+      .poll(() => vi.mocked(f.storage.update).mock.calls.length)
+      .toBeGreaterThan(updates);
+    expect(b.snapshot()).toMatchObject({
+      status: "error",
+      error: "marker load failed",
+    });
+    expect(f.journal()).toMatchObject({ revision: 1, acceptedRevision: 1 });
   });
   it("preserves local-only manual intent without lowering frontiers or scheduling a publish", async () => {
     const f = fixture();

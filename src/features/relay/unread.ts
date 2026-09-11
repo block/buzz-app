@@ -313,9 +313,13 @@ export function createUnread({
       .map((channel) => channel.id)
       .sort()
       .join(",");
-    if (next === accessKey) return;
-    accessKey = next;
-    purge();
+    if (next === accessKey) {
+      // Metadata (notably DM type) changes projections, not reading/access epochs.
+      publish();
+    } else {
+      accessKey = next;
+      purge();
+    }
   });
   async function repair() {
     requested = true;
@@ -527,6 +531,14 @@ export function createUnread({
   });
   return {
     capability,
+    // Private session evidence lookup; never seeds timeline windows or grants access.
+    event(id: string) {
+      const event = events.get(id);
+      const channel = event && channelOf(event);
+      return !closed && event && channel && allowed(channel)
+        ? event
+        : undefined;
+    },
     accept,
     purge,
     reconnect() {

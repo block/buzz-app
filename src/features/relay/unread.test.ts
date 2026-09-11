@@ -184,6 +184,100 @@ it("unread repair observes history without seeding the channel window or consumi
   });
 });
 
+it.each([5, 9005])(
+  "later kind-%s deletions resolve repair-only evidence without seeding a window",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    const row = message(h.alice, "room", "repair only", 11);
+    h.query.mockImplementation(async (filters) =>
+      filters[0]?.kinds?.includes(9) ? [row] : [],
+    );
+    await h.session.unread.ensure();
+    expect(h.snapshot().observedCount).toBe(1);
+    const window = h.session.channels.window("room");
+    expect(window.rows).toHaveLength(0);
+    const deletion = (author: typeof h.alice, ids = [row.id]) =>
+      signed(author, {
+        kind,
+        content: "",
+        tags: [["h", "room"], ...ids.map((id) => ["e", id])],
+      });
+    h.emit([deletion(h.viewer)]);
+    expect(h.snapshot().observedCount).toBe(1);
+    h.emit([deletion(h.alice, [row.id, "f".repeat(64)])]);
+    expect(h.snapshot().observedCount).toBe(1); // Explicit #h cannot launder an unknown target.
+    h.emit([deletion(h.alice)]);
+    expect(h.snapshot().observedCount).toBe(0);
+    expect(h.session.channels.window("room")).toBe(window);
+  },
+);
+
+it("a deletion cannot use revoked unread evidence to delete an accessible target", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("other");
+  const hidden = message(h.alice, "room", "private", 11);
+  const visible = message(h.alice, "other", "accessible", 12);
+  h.query.mockImplementation(async (filters) =>
+    filters[0]?.kinds?.includes(9) ? [hidden, visible] : [],
+  );
+  await h.session.unread.ensure();
+  h.emit([roster(h.relay, "room", [], 20)]);
+  const deletion = signed(h.alice, {
+    kind: 5,
+    content: "",
+    tags: [
+      ["h", "other"],
+      ["e", visible.id],
+      ["e", hidden.id],
+    ],
+  });
+  h.emit([deletion]);
+  expect(h.snapshot().observedCount).toBeNull();
+  expect(
+    h.session.unread.snapshot({ kind: "channel", channelId: "other" })
+      .observedCount,
+  ).toBe(1);
+  h.grant("room", 21);
+  await h.session.unread.refresh();
+  expect(h.snapshot().observedCount).toBe(1);
+});
+
+it("late DM metadata updates an existing attention selector without expiring reading intent", async () => {
+  const h = setup();
+  h.grant("room");
+  await h.session.unread.ensure(); // Settle initialization; no later read-state activity can mask invalidation.
+  const row = message(h.alice, "room", "dm", 11);
+  h.emit([row]);
+  const before = h.snapshot();
+  expect(before).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  const changed = vi.fn();
+  h.session.unread.subscribe(h.target, changed);
+  const reading = h.session.unread.reading("room");
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      content: "",
+      created_at: 20,
+      tags: [
+        ["d", "room"],
+        ["name", "room"],
+        ["t", "dm"],
+      ],
+    }),
+  ]);
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBe("dm");
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  expect(h.snapshot()).not.toBe(before);
+  expect(changed).toHaveBeenCalledTimes(1);
+  await reading.observe([row.id]);
+  expect(h.journal()?.state.frontiers[`msg:${row.id}`]).toBe(11);
+});
+
 it("individual reply visibility leaves unseen siblings and the channel prefix untouched", async () => {
   const h = setup();
   h.grant("room");
@@ -363,11 +457,22 @@ it("reverified cache restore hands evidence to unread before exposing rows witho
   );
   expect(seen).toContain(1);
   expect(h.snapshot().observedCount).toBe(1);
+  h.emit([signed(h.viewer, { kind: 5, content: "", tags: [["e", row.id]] })]);
+  expect(h.snapshot().observedCount).toBe(1);
+  h.emit([signed(h.alice, { kind: 5, content: "", tags: [["e", row.id]] })]);
+  expect(h.snapshot().observedCount).toBe(0);
+  stop();
+});
+
+it("explicit read clears local manual unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "readable", 11);
+  h.emit([row]);
   await h.session.unread.markUnreadLocal(h.target);
   await h.session.unread.markThrough(h.target, row.id);
   expect(h.journal()?.localUnread.room).toBeUndefined();
   expect(h.journal()?.state.frontiers.room).toBe(11);
-  stop();
 });
 
 it.each(["clear", "revoke-regrant"])(

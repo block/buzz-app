@@ -102,6 +102,9 @@ export function createReadState({
   let timer: ReturnType<typeof setTimeout> | undefined;
   let refreshing: Promise<void> | undefined;
   let publishing: Promise<void> | undefined;
+  // Loading a peer revision is not attempting it. Failed attempts wait for explicit retry.
+  let attemptedRevision = -1;
+  let failedRevision: number | undefined;
   let work: Promise<unknown> = Promise.resolve();
   let epoch = 0;
   let requested = false;
@@ -127,6 +130,7 @@ export function createReadState({
     if (!closed) for (const listener of listeners) notify(listener);
   };
   const health = (patch: Partial<ReadSyncSnapshot>) => {
+    if (patch.status) failedRevision = undefined;
     const next = { ...snapshot, ...patch };
     if (!same(next, snapshot)) {
       snapshot = Object.freeze(next);
@@ -177,11 +181,32 @@ export function createReadState({
       void queue(async () => {
         try {
           await save((current) => current, false);
+          reconcileJournal();
         } catch (error) {
           health({ status: "error", error: errorText(error) });
         }
       });
     };
+  function reconcileJournal() {
+    if (closed || !journal) return;
+    if (journal.pending || journal.revision > journal.acceptedRevision) {
+      if (journal.revision > attemptedRevision) {
+        health({ status: "pending", error: undefined });
+        schedule();
+      }
+    } else if (
+      snapshot.status === "pending" ||
+      snapshot.status === "accepted" ||
+      (failedRevision !== undefined &&
+        journal.acceptedRevision >= failedRevision)
+    ) {
+      failedRevision = undefined;
+      health({
+        status: journal.lastCreatedAt > 0 ? "reconciled" : "local",
+        error: undefined,
+      });
+    }
+  }
   function schedule() {
     if (closed || capability !== "frontier-sync" || timer || publishing) return;
     timer = setTimeout(() => {
@@ -398,9 +423,11 @@ export function createReadState({
     const task = queue(async () => {
       try {
         await ready;
+        attemptedRevision = journal?.revision ?? attemptedRevision;
         await lock(signal, async () => {
           await save((current) => current, false);
           if (!journal) throw new Error("Saved read state unavailable");
+          attemptedRevision = journal.revision;
           // An unknown previous outcome must retry the exact saved signed bytes first.
           if (journal.pending) await publishPending(signal);
           if (journal.revision <= journal.acceptedRevision) return;
@@ -437,6 +464,7 @@ export function createReadState({
             Math.max(journal.lastCreatedAt, own?.event.created_at ?? 0),
           );
           const revision = journal.revision;
+          attemptedRevision = revision;
           const event = await sign(
             { slot: journal.slot, createdAt, blob: payload },
             signal,
@@ -463,11 +491,20 @@ export function createReadState({
           await publishPending(signal);
         });
       } catch (error) {
-        if (!closed) health({ status: "error", error: errorText(error) });
+        if (!closed) {
+          health({ status: "error", error: errorText(error) });
+          failedRevision =
+            journal &&
+            (journal.pending || journal.revision > journal.acceptedRevision)
+              ? journal.revision
+              : undefined;
+        }
       }
     });
     publishing = task.finally(() => {
       publishing = undefined;
+      // Peer intent may have arrived during signing/readback, ahead of its broadcast.
+      reconcileJournal();
     });
     return publishing;
   }

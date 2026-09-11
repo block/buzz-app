@@ -55,9 +55,9 @@ export function MediaAttachment({
   onPlayback,
   onOpenReview,
 }: MediaAttachmentProps) {
-  const source = media(attachment.url) ?? attachment.url;
+  const source = media(attachment.url);
   const preview = attachment.previewUrl
-    ? (media(attachment.previewUrl) ?? attachment.previewUrl)
+    ? media(attachment.previewUrl)
     : undefined;
   const video = useRef<HTMLVideoElement>(null);
   const [viewerOpen, setViewerOpen] = useState(false);
@@ -80,16 +80,18 @@ export function MediaAttachment({
   const visiblePreview = preview ?? capturedPreview;
   useVideoPosition(video, seekTo, seekRequest);
 
+  if (!source)
+    return (
+      <span className={styles.attachmentUnavailable} role="status">
+        {attachment.video ? "Video unavailable" : "Image unavailable"}
+      </span>
+    );
+
   if (failed)
     return (
-      <a
-        className={styles.attachment}
-        href={attachment.url}
-        rel="noreferrer"
-        target="_blank"
-      >
-        {attachment.video ? "Open video" : "Open image"} ↗
-      </a>
+      <span className={styles.attachmentUnavailable} role="status">
+        {attachment.video ? "Video unavailable" : "Image unavailable"}
+      </span>
     );
 
   if (!attachment.video)

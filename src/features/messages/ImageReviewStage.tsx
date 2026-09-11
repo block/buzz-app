@@ -39,7 +39,7 @@ export function ImageReviewStage({
     attachments.findIndex((item) => item.url === selectedUrl),
   );
   const selected = attachments[selectedIndex] ?? attachments[0];
-  const source = selected ? (media(selected.url) ?? selected.url) : "";
+  const source = selected ? media(selected.url) : undefined;
   const pannable = zoom > MIN_ZOOM;
 
   const panLimits = (nextZoom = zoom) => {
@@ -81,7 +81,12 @@ export function ImageReviewStage({
     return () => window.removeEventListener("resize", reset);
   });
 
-  if (!selected) return null;
+  if (!selected || !source)
+    return (
+      <p className={styles.mediaReviewUnavailable} role="status">
+        Image unavailable
+      </p>
+    );
   return (
     <div
       ref={stage}

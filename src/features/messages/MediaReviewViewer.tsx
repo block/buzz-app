@@ -41,7 +41,7 @@ export function MediaReviewViewer({
   initialTime,
   close,
 }: MediaReviewViewerProps) {
-  const source = session.media(attachment.url) ?? attachment.url;
+  const source = session.media(attachment.url);
   const closeButton = useRef<HTMLButtonElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const [currentTime, setCurrentTime] = useState(initialTime);
@@ -97,7 +97,11 @@ export function MediaReviewViewer({
           </button>
         </header>
         <div className={styles.mediaReviewStage}>
-          {attachment.video ? (
+          {!source ? (
+            <p className={styles.mediaReviewUnavailable} role="status">
+              {attachment.video ? "Video unavailable" : "Image unavailable"}
+            </p>
+          ) : attachment.video ? (
             // biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL.
             <video
               ref={video}

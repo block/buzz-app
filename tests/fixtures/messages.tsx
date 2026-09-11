@@ -8,6 +8,7 @@ import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
 import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
+import { ChannelTimeline } from "../../src/features/messages/ChannelTimeline";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { threadReference } from "../../src/features/relay/threads";
@@ -23,13 +24,14 @@ import type { RelayEvent } from "../../src/features/relay/events";
 import "../../src/shared/styles/globals.css";
 
 const context = new Context();
-createPluginManager(context, {
+const plugins = createPluginManager(context, {
   bundled: bundledPlugins.filter(({ manifest }) =>
     ["buzz.emoji", "buzz.mentions"].includes(manifest.id),
   ),
 });
 const extensions = new ConversationService(context);
 const viewer = keypair(),
+  agent = keypair(),
   relay = keypair();
 const roots = [
   message(viewer, "one", "First root", 1),
@@ -43,23 +45,79 @@ function channelOf(event: RelayEvent) {
 }
 const replies = roots.flatMap((root) =>
   Array.from({ length: 60 }, (_, i) =>
-    message(viewer, channelOf(root), `${root.content} reply ${i}`, 10 + i, [
-      ["e", root.id, "", "reply"],
-    ]),
+    message(
+      viewer,
+      channelOf(root),
+      i === 59 && root === roots[0]
+        ? `## Markdown reply
+**Bold**, *italic*, and ~~done~~
+
+first
+second
+
+1. outer
+   1. nested
+   2. nested two
+2. ordered two
+
+:_lead: and :trail_:
+
+- unordered one
+- unordered two
+
+| ${"wide-column-one-".repeat(10)} | ${"wide-column-two-".repeat(10)} | ${"wide-column-three-".repeat(10)} |
+| --- | --- | --- |
+| one | two | three |
+
+\`\`\`ts
+const message = "${"wide-content-".repeat(35)}";
+\`\`\`
+
+[Safe link](https://example.com/path) [Unhandled link](https://example.com/unhandled)`
+        : `${root.content} reply ${i}`,
+      10 + i,
+      [
+        ["e", root.id, "", "reply"],
+        ...(i === 59 && root === roots[0]
+          ? ([
+              ["emoji", "_lead", "https://emoji.test/lead.png"],
+              ["emoji", "trail_", "https://emoji.test/trail.png"],
+            ] satisfies string[][])
+          : []),
+      ],
+    ),
   ),
 );
-const events = [...roots, ...replies];
+const agentReply = signed(agent, {
+  kind: 40002,
+  content: JSON.stringify({
+    content: `### Agent Markdown
+**Rendered from an agent envelope**
+
+\`agent-code\``,
+  }),
+  created_at: 70,
+  tags: [
+    ["h", "one"],
+    ["e", roots[0].id, "", "reply"],
+  ],
+});
+const events = [...roots, ...replies, agentReply];
 const report = {
   pages: [] as string[],
   signings: [] as string[],
   publications: [] as RelayEvent[],
+  links: [] as string[],
 };
 let incoming = (_events: readonly RelayEvent[]) => {};
 const rejected = new Set<string>();
 const owner = createRelaySession({
   viewer: viewer.pubkey,
   relayAuthor: relay.pubkey,
-  media: () => undefined,
+  media: (url) =>
+    url.startsWith("https://emoji.test/")
+      ? `data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==`
+      : undefined,
   subscribe(callbacks) {
     incoming = callbacks.receive;
     return { update() {}, retry() {}, dispose() {} };
@@ -121,6 +179,31 @@ owner.session.channels.ensureList();
 Object.assign(window, {
   messagesFixture: {
     report,
+    async activate() {
+      await plugins.retry();
+    },
+    extensionsActive() {
+      return extensions.inline.snapshot().map((entry) => entry.id);
+    },
+    deep(kind: 9 | 40002) {
+      const content = `${"> ".repeat(20_000)}literal deep message`;
+      const event =
+        kind === 40002
+          ? signed(agent, {
+              kind,
+              content: JSON.stringify({ content }),
+              created_at: 2_000,
+              tags: [
+                ["h", "one"],
+                ["e", roots[0].id, "", "reply"],
+              ],
+            })
+          : message(viewer, "one", content, 2_000, [
+              ["e", roots[0].id, "", "reply"],
+            ]);
+      events.push(event);
+      incoming([event]);
+    },
     live() {
       const event = message(viewer, "one", "Live reply", 1000, [
         ["e", roots[0].id, "", "reply"],
@@ -138,6 +221,36 @@ function Fixture() {
   const channelId = channelOf(root);
   return (
     <>
+      <div style={{ display: "flex", width: 600, height: 240 }}>
+        <ChannelTimeline
+          channelId="markdown-feed"
+          scope={scope}
+          queries={owner.session}
+          window={{
+            channelId: "markdown-feed",
+            status: "ready",
+            rows: [
+              {
+                id: "f".repeat(64),
+                channelId: "markdown-feed",
+                authorId: viewer.pubkey,
+                createdAt: 1,
+                content:
+                  "## Channel Markdown\n\n**Virtualized channel row**\n\nfirst\nsecond\n\n1. channel outer\n   1. channel nested",
+                mentions: [],
+                participants: [],
+                attachments: [],
+                reactions: [],
+                replyCount: 0,
+              },
+            ],
+            hasMore: false,
+            loadingOlder: false,
+            error: undefined,
+          }}
+          onOpenLink={() => false}
+        />
+      </div>
       <nav>
         {roots.map((root, i) => (
           <button key={root.id} type="button" onClick={() => select(i)}>
@@ -173,7 +286,10 @@ function Fixture() {
           channelName={channelId}
           messageId={root.id}
           close={() => select(0)}
-          onOpenLink={() => false}
+          onOpenLink={(url) => {
+            report.links.push(url);
+            return !url.includes("unhandled");
+          }}
         />
       </div>
     </>

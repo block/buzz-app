@@ -9,7 +9,13 @@ export function profileMentionParts(
   profiles: ReadonlyMap<string, Profile> | undefined,
 ): Part[] {
   const text = row.content;
-  if (row.edited || !profiles || !row.mentions.length) return [{ text }];
+  if (
+    row.edited ||
+    row.attachmentContentRemoved ||
+    !profiles ||
+    !row.mentions.length
+  )
+    return [{ text }];
   const names = new Map<string, Set<string>>();
   for (const id of new Set(row.mentions)) {
     const name = profiles.get(id)?.name;

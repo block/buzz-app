@@ -37,6 +37,9 @@ export function useCompletionEditor(
       composing.current ||
       element.selectionStart !== element.selectionEnd
     ) {
+      // Returning from an ineligible selection needs fresh evidence, even at the
+      // same caret. Explicit dismissal keeps `last` to ignore redundant events.
+      last.current = undefined;
       if (current.current) invalidate();
       return;
     }

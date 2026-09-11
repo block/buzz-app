@@ -132,6 +132,112 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await expect(input).toHaveValue(":smile");
 });
+test("completion resumes after selection collapses to the original caret", async ({
+  page,
+}) => {
+  const input = await open(page);
+  await input.fill(":smile");
+  await expect(page.getByRole("option").first()).toContainText(":smile:");
+  await input.press("Shift+ArrowLeft");
+  expect(
+    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
+  ).toEqual([5, 6]);
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await input.press("ArrowRight");
+  expect(
+    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
+  ).toEqual([6, 6]);
+  await expect(page.getByRole("option").first()).toContainText(":smile:");
+  await input.press("Tab");
+  await expect(input).toHaveValue("😄 ");
+  await expect(input).toBeFocused();
+});
+test("selection recovery requires fresh results and preserves Escape dismissal", async ({
+  page,
+}) => {
+  await page.goto(
+    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/typeahead.html`,
+  );
+  const input = page.getByRole("textbox", { name: "Message #Test" });
+  const requests = () =>
+    page.evaluate(() => window.completionFixture.queries().length);
+  const publish = (index) =>
+    page.evaluate(
+      (index) =>
+        window.completionFixture.publish(index, {
+          items: [{ id: "choice", label: "Choice", edit: { text: "chosen" } }],
+        }),
+      index,
+    );
+  await input.fill("!selection");
+  await expect.poll(requests).toBeGreaterThan(0);
+  const before = await requests();
+  expect(await publish(before - 1)).toBe(true);
+  await expect(page.getByRole("option", { name: "Choice" })).toBeVisible();
+  await input.press("Shift+ArrowLeft");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  expect(await publish(before - 1)).toBe(false);
+  await input.press("ArrowRight");
+  await expect.poll(requests).toBeGreaterThan(before);
+  expect(await publish(before - 1)).toBe(false);
+  const after = await requests();
+  expect(await publish(after - 1)).toBe(true);
+  await expect(page.getByRole("option", { name: "Choice" })).toBeVisible();
+  await input.press("Escape");
+  // Redundant same-caret notifications must not undo deliberate dismissal.
+  await input.evaluate((el) => {
+    el.dispatchEvent(new Event("select", { bubbles: true }));
+    el.ownerDocument.dispatchEvent(new Event("selectionchange"));
+  });
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  expect(await requests()).toBe(after);
+  expect(await publish(after - 1)).toBe(false);
+  await expect(input).toHaveValue("!selection");
+  expect(
+    await page.evaluate(() => window.completionFixture.publications.length),
+  ).toBe(0);
+});
+test("textarea exposes its listbox popup relationship only while suggestions are open", async ({
+  page,
+}) => {
+  const input = await open(page);
+  const attributes = [
+    "aria-autocomplete",
+    "aria-haspopup",
+    "aria-controls",
+    "aria-activedescendant",
+  ];
+  for (const attribute of attributes)
+    await expect(input).not.toHaveAttribute(attribute);
+  for (const close of ["escape", "accept", "blur", "disable"]) {
+    await input.fill(":smile");
+    const list = page.getByRole("listbox", { name: "Emoji suggestions" });
+    await expect(list).toBeVisible();
+    await expect(input).toHaveRole("textbox");
+    expect(await input.evaluate((el) => el.tagName)).toBe("TEXTAREA");
+    await expect(input).toHaveAttribute("aria-autocomplete", "list");
+    await expect(input).toHaveAttribute("aria-haspopup", "listbox");
+    await expect(input).toHaveAttribute(
+      "aria-controls",
+      await list.getAttribute("id"),
+    );
+    await expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      await list.getByRole("option", { selected: true }).getAttribute("id"),
+    );
+    if (close === "escape") await input.press("Escape");
+    else if (close === "accept") await input.press("Tab");
+    else if (close === "blur") await input.evaluate((el) => el.blur());
+    else
+      await page.evaluate(() =>
+        window.mentionFixture.change("disable", "buzz.emoji"),
+      );
+    await expect(list).toHaveCount(0);
+    for (const attribute of attributes)
+      await expect(input).not.toHaveAttribute(attribute);
+    await expect(input).toHaveRole("textbox");
+  }
+});
 test("late publications cannot cross edits, ABA, Escape, blur, plugin replacement or destinations", async ({
   page,
 }) => {

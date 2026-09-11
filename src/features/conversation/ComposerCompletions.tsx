@@ -171,6 +171,7 @@ function OwnedCompletion({
     const element = input.current;
     if (!element || !visible) return;
     element.setAttribute("aria-autocomplete", "list");
+    element.setAttribute("aria-haspopup", "listbox");
     element.setAttribute("aria-controls", id);
     if (count)
       element.setAttribute("aria-activedescendant", `${id}-${selectedIndex}`);
@@ -222,6 +223,7 @@ function OwnedCompletion({
     return () => {
       if (editor.keys.current === handle) editor.keys.current = undefined;
       element.removeAttribute("aria-autocomplete");
+      element.removeAttribute("aria-haspopup");
       element.removeAttribute("aria-controls");
       element.removeAttribute("aria-activedescendant");
     };

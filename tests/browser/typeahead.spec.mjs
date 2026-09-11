@@ -574,6 +574,13 @@ test("current custom catalog drives typeahead and signed tags across community r
     await expect(image).toHaveCSS("width", "42px");
     await expect(image).toHaveCSS("height", "42px");
   }
+  await input.fill(":party-parrot:lakjsdlkjflakjsdf");
+  await expect(input).toHaveAttribute("data-leading-custom-emoji", "true");
+  await expect(input).not.toHaveAttribute("data-custom-emoji-only", "true");
+  await expect(renderedEmoji).toHaveCount(1);
+  await expect(renderedEmoji).toHaveCSS("width", "22px");
+  await expect(renderedEmoji).toHaveCSS("height", "22px");
+  await expect(composer).toContainText("lakjsdlkjflakjsdf");
   await input.fill("hello :party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
   await expect(input).toHaveValue("hello :party: ");

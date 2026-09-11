@@ -11,7 +11,11 @@ import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
-import { customEmojiOnlySpans, isUnicodeEmojiOnly } from "./emoji-size";
+import {
+  customEmojiOnlySpans,
+  isUnicodeEmojiOnly,
+  leadingCustomEmojiSpans,
+} from "./emoji-size";
 import {
   mentionDraft,
   editMentionDraft,
@@ -92,7 +96,13 @@ function Composer({
     session.emoji.snapshot,
     session.emoji.snapshot,
   );
-  const customEmoji = customEmojiOnlySpans(draft, emojiCatalog.entries);
+  const customEmojiOnly = customEmojiOnlySpans(draft, emojiCatalog.entries);
+  const leadingCustomEmoji = customEmojiOnly.length
+    ? { spans: [], end: 0 }
+    : leadingCustomEmojiSpans(draft, emojiCatalog.entries);
+  const customEmoji = customEmojiOnly.length
+    ? customEmojiOnly
+    : leadingCustomEmoji.spans;
   const customEmojiSources = customEmoji.map(({ emoji, start, end }) => ({
     start,
     end,
@@ -102,6 +112,11 @@ function Composer({
   const showCustomEmoji =
     !!customEmojiSources.length &&
     customEmojiSources.every(({ source }) => source !== failedCustomEmoji);
+  const showCustomEmojiOnly = showCustomEmoji && !!customEmojiOnly.length;
+  const showLeadingCustomEmoji =
+    showCustomEmoji &&
+    !customEmojiOnly.length &&
+    !!leadingCustomEmoji.spans.length;
   const input = useRef<HTMLTextAreaElement>(null);
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
@@ -271,11 +286,12 @@ function Composer({
           disabled={disabled}
           value={draft}
           data-single-emoji={isUnicodeEmojiOnly(draft) || undefined}
-          data-custom-emoji-only={showCustomEmoji || undefined}
+          data-custom-emoji-only={showCustomEmojiOnly || undefined}
+          data-leading-custom-emoji={showLeadingCustomEmoji || undefined}
           style={
-            showCustomEmoji
+            showCustomEmojiOnly
               ? {
-                  paddingLeft: `calc(${customEmoji.length * 44}px * var(--buzz-text-scale, 1))`,
+                  paddingLeft: `calc(${customEmojiOnly.length * 44}px * var(--buzz-text-scale, 1))`,
                 }
               : undefined
           }
@@ -344,7 +360,7 @@ function Composer({
             }
           }}
         />
-        {showCustomEmoji && (
+        {showCustomEmojiOnly && (
           <span className={styles.composerCustomEmojiGroup} aria-hidden="true">
             {customEmojiSources.map(({ start, end, key, source }) => (
               <img
@@ -358,6 +374,26 @@ function Composer({
                 onError={() => setFailedCustomEmoji(source)}
               />
             ))}
+          </span>
+        )}
+        {showLeadingCustomEmoji && (
+          <span className={styles.composerCustomEmojiMirror} aria-hidden="true">
+            <span className={styles.composerInlineCustomEmojiGroup}>
+              {customEmojiSources.map(({ start, end, key, source }) => (
+                <img
+                  key={key}
+                  className={styles.composerCustomEmoji}
+                  data-selected={
+                    (selection.start < end && selection.end > start) ||
+                    undefined
+                  }
+                  src={source}
+                  alt=""
+                  onError={() => setFailedCustomEmoji(source)}
+                />
+              ))}
+            </span>
+            {draft.slice(leadingCustomEmoji.end)}
           </span>
         )}
       </div>

@@ -47,6 +47,28 @@ export function customEmojiOnlySpans(
   return spans.length && /^\s*$/u.test(value.slice(cursor)) ? spans : [];
 }
 
+export function leadingCustomEmojiSpans(
+  value: string,
+  entries: readonly CustomEmoji[],
+) {
+  const byShortcode = new Map(
+    entries.map((entry) => [entry.shortcode.toLowerCase(), entry]),
+  );
+  const spans: { emoji: CustomEmoji; start: number; end: number }[] = [];
+  const pattern = /:([a-z0-9_-]{1,64}):/iy;
+  let cursor = 0;
+  while (cursor < value.length) {
+    pattern.lastIndex = cursor;
+    const match = pattern.exec(value);
+    if (!match) break;
+    const emoji = byShortcode.get(match[1]?.toLowerCase() ?? "");
+    if (!emoji) break;
+    spans.push({ emoji, start: cursor, end: cursor + match[0].length });
+    cursor += match[0].length;
+  }
+  return { spans, end: cursor };
+}
+
 export const isEmojiOnly = (
   value: string,
   entries: readonly CustomEmoji[] = [],

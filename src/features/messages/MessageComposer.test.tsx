@@ -394,6 +394,24 @@ it("keeps custom emoji shortcode text readable in the draft and sends it unchang
   );
 });
 
+it("renders a leading custom emoji inline when text follows it", () => {
+  const h = mount(undefined, "scope", true, [
+    { shortcode: "bufo", url: "https://emoji.test/bufo.png" },
+  ]);
+  h.type(":bufo:lakjsdlkjflakjsdf");
+  expect(h.input().props["data-custom-emoji-only"]).toBeUndefined();
+  expect(h.input().props["data-leading-custom-emoji"]).toBe(true);
+  expect(
+    elements(h.render()).filter((element) => element.type === "img"),
+  ).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    ":bufo:lakjsdlkjflakjsdf",
+    [],
+  );
+});
+
 it("rejects overlong or over-limit edits without changing the draft", () => {
   const h = mount();
   h.type("x".repeat(15999));

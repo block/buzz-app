@@ -12,6 +12,14 @@ The panel reads GitHub's public API on demand. Private or unavailable objects an
 API limits show an explanation with a direct GitHub link. File and branch links
 continue to open normally. No GitHub account connection is configured yet.
 
+On desktop, an ordinary click on an unhandled HTTP(S) link with
+`target="_blank"` uses the native Tauri opener to launch the default browser,
+including attachments and **Open on GitHub**. A plugin that handles the click prevents that fallback; disabling
+GitHub restores it. The main-window capability allows only HTTP(S) URLs, not
+arbitrary file paths or application commands. Web keeps ordinary browser link
+behavior. Adding the native opener requires rebuilding/restarting desktop;
+frontend hot reload alone is not enough.
+
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
 Disabling Channels removes its page while the app-owned data survives.

@@ -42,6 +42,7 @@ app/                    host, startup, navigation, Settings
 plugins/                installation, lifecycle, contribution ownership
 features/pages/         page contract and host rendering
 features/panels/        target resolution, launcher contract and reusable card/frame
+features/shortcuts/     in-app binding dispatch, focus rules and plugin ownership
 features/relay/         shared channel data, queries, profiles and durable delivery
 features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
@@ -257,3 +258,57 @@ Formatting needs selection transforms. Attachments and voice need shared media
 capabilities, destination-bound asynchronous work and cancellation; accepted
 material belongs to the draft, not the optional tool. Add these contracts against
 real workflows rather than declaring the toolbar a universal editor API.
+
+
+## In-app keyboard shortcuts
+
+The host composes one `ShortcutsService` in `app/services.ts`. Plugins declare
+`inject = ["shortcuts"]` and call `ctx.shortcuts.register(shortcut)`; their bindings
+use the same matching/dispatch rules as host-owned Settings and text sizing.
+There is no OS-wide hotkey registration, native accelerator API, or command bus.
+
+```ts
+import type { Context, Shortcut } from "@buzz/author";
+export const inject = ["shortcuts"];
+export function apply(ctx: Context) {
+  const shortcut: Shortcut = {
+    id: "show-details",
+    title: "Show details",
+    binding: { key: "k", mod: true, shift: true },
+    when: () => detailsViewIsAvailable(),
+    run: () => showDetails(),
+  };
+  ctx.shortcuts.register(shortcut);
+}
+```
+
+`binding` is one binding or a nonempty array of aliases. `key` matches the logical
+`KeyboardEvent.key` case-insensitively, not a physical `code` (Space is `" "`,
+not `"Space"`). `mod` means Command
+on Apple platforms and Control elsewhere; Shift/Alt and the other primary modifier
+match exactly. IME/AltGraph events and already-prevented events are never consumed.
+The window listener runs in the bubbling phase, after local editor handlers.
+
+By default bindings do not run in editable targets (including open Shadow DOM),
+while a dialog is open, or repeatedly on a held key. Explicit `allowInEditable`,
+`allowInModal` and `repeat` opt in; `when` checks current eligibility without
+re-registering. `run` may return a promise; throws/rejections are logged and isolated.
+Only a selected binding prevents the browser default. An eligible held binding
+still prevents the default when its repeat handler is suppressed.
+
+IDs are namespaced by installation. Only active revisions participate; disable,
+failed activation, replacement and Cordis disposal remove eligibility. Plugin ties
+are resolved by ascending namespaced ID, independent of activation order. Host
+bindings are reserved even while unavailable (Settings does not navigate behind a
+modal). `snapshot`/`subscribe` expose ready plugin registrations, not host bindings
+or a promise that every binding wins every current focus conflict. The host-only
+registration method is deliberately absent from the injected type contract; plugins
+remain trusted same-process code, not sandboxed adversaries.
+
+See [`shortcut-counter`](../examples/plugins/shortcut-counter/README.md) for a
+self-contained external plugin using the real service without a DOM listener.
+The generated type-only `@buzz/author` exports `Shortcuts`, `Shortcut`, `KeyBinding`
+and `RegisteredShortcut`. This is a host-matched preview: older hosts without the
+`shortcuts` capability cannot activate such a plugin. `apiVersion: 1` alone is not
+runtime feature negotiation. Chords, user rebinding, conflict UI and command palettes
+are outside this initial contract.

@@ -17,7 +17,7 @@
   gap: 6px;
 }
 .mentionPopover p {
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .mentionChoices {
   display: grid;
@@ -40,7 +40,7 @@
   width: 100%;
 }
 .mentionChoices code {
-  font-size: 10px;
+  font-size: calc(10px * var(--buzz-text-scale, 1));
   overflow-wrap: anywhere;
 }
 .mentionChoices button:hover {
@@ -52,7 +52,7 @@
   gap: 2px;
 }
 .mentionLabel > span {
-  font-size: 13px;
+  font-size: calc(13px * var(--buzz-text-scale, 1));
   font-weight: 500;
 }
 .mentionLabel code {

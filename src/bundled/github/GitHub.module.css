@@ -2,7 +2,7 @@
   padding: 20px;
   overflow-y: auto;
   min-height: 0;
-  font-size: 13px;
+  font-size: calc(13px * var(--buzz-text-scale, 1));
   color: var(--text);
 }
 .identity,
@@ -20,7 +20,7 @@
 .byline,
 .note {
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: calc(11px * var(--buzz-text-scale, 1));
 }
 .icon {
   display: grid;
@@ -48,7 +48,7 @@
 }
 .root h2 {
   margin: 16px 0;
-  font-size: 18px;
+  font-size: calc(18px * var(--buzz-text-scale, 1));
   line-height: 1.4;
   overflow-wrap: anywhere;
 }

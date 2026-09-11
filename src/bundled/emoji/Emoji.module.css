@@ -26,7 +26,7 @@
   border-radius: 10px;
   background: var(--surface);
   box-shadow: var(--elevation-card);
-  font-size: 12px;
+  font-size: calc(12px * var(--buzz-text-scale, 1));
 }
 .emojiStatus button {
   width: auto;

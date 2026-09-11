@@ -5,7 +5,14 @@ import { createHash } from "node:crypto";
 /** Model the relay boundaries that matter to this journey, not a replacement
  * session: AUTH, explicit channel fan-out, EOSE, CLOSED and HTTP quota reasons.
  * The production broker owns all pacing, signing, SSE and retry controls. */
-export function policyRelay({ viewer, answer, report, pending }) {
+export function policyRelay({
+  viewer,
+  answer,
+  report,
+  pending,
+  discovery,
+  acceptPublication,
+}) {
   const sockets = [];
   const requests = [];
   const rejected = [];
@@ -28,6 +35,7 @@ export function policyRelay({ viewer, answer, report, pending }) {
         : undefined);
   report.wireFrames = [];
   let emptyRoster = false;
+  let heldContent = false;
   const communityOf = (url) =>
     String(url).includes("secondary") ? "secondary" : "primary";
   const fault = (error) => {
@@ -40,6 +48,9 @@ export function policyRelay({ viewer, answer, report, pending }) {
       socket.onmessage?.({ data: JSON.stringify(frame) });
   }
   return {
+    holdContent() {
+      heldContent = true;
+    },
     holdProfiles(authors) {
       heldAuthors = new Set(authors);
     },
@@ -76,7 +87,11 @@ export function policyRelay({ viewer, answer, report, pending }) {
     },
     async fetch(url, init) {
       try {
-        expect(new URL(url).pathname).toBe("/query");
+        if (!init?.body && discovery)
+          return Response.json(discovery(communityOf(url)));
+        expect(["/query", ...(acceptPublication ? ["/events"] : [])]).toContain(
+          new URL(url).pathname,
+        );
         const auth = JSON.parse(
           Buffer.from(init.headers.Authorization.slice(6), "base64").toString(),
         );
@@ -89,6 +104,10 @@ export function policyRelay({ viewer, answer, report, pending }) {
           createHash("sha256").update(init.body).digest("hex"),
         ]);
         const filters = JSON.parse(init.body);
+        if (new URL(url).pathname === "/events") {
+          acceptPublication(communityOf(url), filters);
+          return Response.json({ accepted: true, event_id: filters.id });
+        }
         if (filters.length !== 1) {
           // The read-only sidebar projection reads the two exact coordinates.
           expect(filters).toHaveLength(2);
@@ -111,6 +130,16 @@ export function policyRelay({ viewer, answer, report, pending }) {
         const filter = filters[0],
           community = communityOf(url);
         report.queries.push({ community, filter, at: performance.now() });
+        if (heldContent && filter.kinds?.includes(9))
+          return new Promise((_resolve, reject) => {
+            if (init.signal.aborted) reject(init.signal.reason);
+            else
+              init.signal.addEventListener(
+                "abort",
+                () => reject(init.signal.reason),
+                { once: true },
+              );
+          });
         const channel = filter["#h"]?.[0];
         const quota = filter.kinds?.includes(39002)
           ? "roster"

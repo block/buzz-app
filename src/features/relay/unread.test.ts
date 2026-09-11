@@ -1,0 +1,541 @@
+import { afterEach, expect, it, vi } from "vitest";
+import { createRelaySession } from "./session";
+import {
+  readJournal,
+  type ReadJournal,
+  type ReadStateStorage,
+} from "./read-state-storage";
+import type { RelayEvent } from "./events";
+import type { ChannelStoreOptions } from "./store";
+import type { SavedHead } from "./persistence";
+import type { ReadStateSigning } from "./read-state-host";
+import {
+  keypair,
+  message,
+  metadata,
+  roster,
+  signed,
+  flush,
+  bounds,
+} from "./testing";
+// @ts-expect-error Test the production Node codec with disposable identities.
+import { decodeReadState, signReadState } from "../../../dev/read-state.mjs";
+
+const owners: ReturnType<typeof createRelaySession>[] = [];
+afterEach(() => {
+  for (const owner of owners.splice(0)) owner.dispose();
+});
+function setup(options: ChannelStoreOptions = {}) {
+  const viewer = keypair(),
+    relay = keypair(),
+    alice = keypair();
+  let journal: ReadJournal | undefined;
+  let hold: Promise<void> | undefined;
+  const storage: ReadStateStorage = {
+    async update(change) {
+      if (hold) {
+        const wait = hold;
+        hold = undefined;
+        await wait;
+      }
+      journal = readJournal(change(journal), viewer.pubkey);
+      return journal;
+    },
+    close() {},
+  };
+  let incoming: (events: readonly RelayEvent[]) => void = () => {};
+  const query = vi.fn(
+    async (_filters: readonly import("./events").ReadFilter[]) =>
+      [] as RelayEvent[],
+  );
+  const host = {
+    decode: vi.fn(async (events: readonly RelayEvent[]) =>
+      decodeReadState(events, viewer.secret),
+    ),
+    sign: vi.fn(async (intent: ReadStateSigning) =>
+      signReadState(intent, viewer.secret),
+    ),
+    publish: vi.fn(async () => {}),
+  };
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      query,
+      media: () => undefined,
+      readState: host,
+      subscribe(callbacks) {
+        incoming = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    {
+      ...options,
+      readStateStorage: storage,
+      readPublisherLock: async (_signal, work) => work(),
+    },
+  );
+  owners.push(owner);
+  const emit = (events: readonly RelayEvent[]) => incoming(events);
+  const grant = (id: string, time = 10) =>
+    emit([
+      roster(relay, id, [viewer.pubkey], time),
+      metadata(relay, id, id, time),
+    ]);
+  const target = { kind: "channel" as const, channelId: "room" };
+  return {
+    ...owner,
+    viewer,
+    relay,
+    alice,
+    host,
+    query,
+    emit,
+    grant,
+    target,
+    snapshot: () => owner.session.unread.snapshot(target),
+    journal: () => journal,
+    holdSave() {
+      let release = () => {};
+      hold = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return release;
+    },
+  };
+}
+
+it("production live evidence feeds stable snapshots; selection/prefetch do not read", async () => {
+  const h = setup();
+  h.grant("room");
+  const unread = h.session.unread;
+  expect(h.snapshot().observedCount).toBeNull();
+  const row = message(h.alice, "room", "hello", 11, [["p", h.viewer.pubkey]]);
+  h.emit([row, row, message(h.viewer, "room", "own", 12)]);
+  expect(h.snapshot()).toMatchObject({
+    observedCount: 1,
+    attentionCount: 1,
+    coverage: "observed",
+  });
+  const snapshot = h.snapshot(),
+    changed = vi.fn();
+  unread.subscribe(h.target, changed);
+  h.emit([row]);
+  expect(h.snapshot()).toBe(snapshot);
+  expect(changed).not.toHaveBeenCalled();
+  await flush();
+  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.host.sign).not.toHaveBeenCalled();
+});
+
+it("unread repair observes history without seeding the channel window or consuming its cursor", async () => {
+  const h = setup();
+  const rows = Array.from({ length: 60 }, (_, i) =>
+    message(h.alice, "room", `history ${i}`, i + 11),
+  );
+  h.query.mockImplementation(async (filters) => {
+    const filter = filters[0];
+    if (!filter?.kinds?.includes(9)) return [];
+    if (filter.limit === 500) return rows; // Roster-wide unread evidence, not a window page.
+    const older = filter.until !== undefined;
+    const cursor = rows[older ? 20 : 40];
+    if (!cursor) throw new Error("Missing fixture cursor");
+    return [
+      ...rows.slice(older ? 20 : 40, older ? 40 : 60),
+      bounds(
+        h.relay,
+        "room",
+        older ? `${filter.until}:${filter.before_id}` : "head",
+        {
+          has_more: true,
+          next_cursor: {
+            created_at: cursor.created_at,
+            id: cursor.id,
+          },
+        },
+      ),
+    ];
+  });
+  h.grant("room");
+  h.session.channels.ensure("room");
+  await vi.waitFor(() =>
+    expect(h.session.channels.window("room").rows).toHaveLength(20),
+  );
+  const head = h.session.channels.window("room");
+  await h.session.unread.ensure();
+  expect(h.snapshot().observedCount).toBe(60);
+  expect(h.session.channels.window("room")).toBe(head);
+  expect(h.journal()?.state.frontiers).toEqual({});
+  h.session.channels.loadOlder("room");
+  await vi.waitFor(() =>
+    expect(h.session.channels.window("room").rows).toHaveLength(40),
+  );
+  expect(h.session.channels.window("room").rows.map(({ id }) => id)).toEqual(
+    rows.slice(20).map(({ id }) => id),
+  );
+  const cursorReads = h.query.mock.calls.flatMap(([filters]) =>
+    filters.filter((filter) => filter.until !== undefined),
+  );
+  expect(cursorReads).toHaveLength(1);
+  expect(cursorReads[0]).toMatchObject({
+    until: rows[40]?.created_at,
+    before_id: rows[40]?.id,
+    limit: 20,
+  });
+});
+
+it.each([5, 9005])(
+  "later kind-%s deletions resolve repair-only evidence without seeding a window",
+  async (kind) => {
+    const h = setup();
+    h.grant("room");
+    const row = message(h.alice, "room", "repair only", 11);
+    h.query.mockImplementation(async (filters) =>
+      filters[0]?.kinds?.includes(9) ? [row] : [],
+    );
+    await h.session.unread.ensure();
+    expect(h.snapshot().observedCount).toBe(1);
+    const window = h.session.channels.window("room");
+    expect(window.rows).toHaveLength(0);
+    const deletion = (author: typeof h.alice, ids = [row.id]) =>
+      signed(author, {
+        kind,
+        content: "",
+        tags: [["h", "room"], ...ids.map((id) => ["e", id])],
+      });
+    h.emit([deletion(h.viewer)]);
+    expect(h.snapshot().observedCount).toBe(1);
+    h.emit([deletion(h.alice, [row.id, "f".repeat(64)])]);
+    expect(h.snapshot().observedCount).toBe(1); // Explicit #h cannot launder an unknown target.
+    h.emit([deletion(h.alice)]);
+    expect(h.snapshot().observedCount).toBe(0);
+    expect(h.session.channels.window("room")).toBe(window);
+  },
+);
+
+it("a deletion cannot use revoked unread evidence to delete an accessible target", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("other");
+  const hidden = message(h.alice, "room", "private", 11);
+  const visible = message(h.alice, "other", "accessible", 12);
+  h.query.mockImplementation(async (filters) =>
+    filters[0]?.kinds?.includes(9) ? [hidden, visible] : [],
+  );
+  await h.session.unread.ensure();
+  h.emit([roster(h.relay, "room", [], 20)]);
+  const deletion = signed(h.alice, {
+    kind: 5,
+    content: "",
+    tags: [
+      ["h", "other"],
+      ["e", visible.id],
+      ["e", hidden.id],
+    ],
+  });
+  h.emit([deletion]);
+  expect(h.snapshot().observedCount).toBeNull();
+  expect(
+    h.session.unread.snapshot({ kind: "channel", channelId: "other" })
+      .observedCount,
+  ).toBe(1);
+  h.grant("room", 21);
+  await h.session.unread.refresh();
+  expect(h.snapshot().observedCount).toBe(1);
+});
+
+it("late DM metadata updates an existing attention selector without expiring reading intent", async () => {
+  const h = setup();
+  h.grant("room");
+  await h.session.unread.ensure(); // Settle initialization; no later read-state activity can mask invalidation.
+  const row = message(h.alice, "room", "dm", 11);
+  h.emit([row]);
+  const before = h.snapshot();
+  expect(before).toMatchObject({ observedCount: 1, attentionCount: 0 });
+  const changed = vi.fn();
+  h.session.unread.subscribe(h.target, changed);
+  const reading = h.session.unread.reading("room");
+  h.emit([
+    signed(h.relay, {
+      kind: 39000,
+      content: "",
+      created_at: 20,
+      tags: [
+        ["d", "room"],
+        ["name", "room"],
+        ["t", "dm"],
+      ],
+    }),
+  ]);
+  expect(
+    h.session.channels.list().channels.find(({ id }) => id === "room")
+      ?.channelType,
+  ).toBe("dm");
+  expect(h.snapshot()).toMatchObject({ observedCount: 1, attentionCount: 1 });
+  expect(h.snapshot()).not.toBe(before);
+  expect(changed).toHaveBeenCalledTimes(1);
+  await reading.observe([row.id]);
+  expect(h.journal()?.state.frontiers[`msg:${row.id}`]).toBe(11);
+});
+
+it("individual reply visibility leaves unseen siblings and the channel prefix untouched", async () => {
+  const h = setup();
+  h.grant("room");
+  const root = message(h.alice, "room", "root", 11);
+  const reply = message(h.alice, "room", "visible", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const sibling = message(h.alice, "room", "unseen", 12, [
+    ["e", root.id, "", "reply"],
+  ]);
+  h.emit([root, reply, sibling]);
+  const handle = h.session.unread.reading("room");
+  await handle.observe([reply.id]);
+  expect(h.journal()?.state.frontiers).toEqual({ [`msg:${reply.id}`]: 12 });
+  expect(h.snapshot().observedCount).toBe(2);
+  expect(
+    h.session.unread.snapshot({
+      kind: "thread",
+      channelId: "room",
+      rootId: root.id,
+    }).observedCount,
+  ).toBe(1);
+  await expect(
+    h.session.unread.markThrough(h.target, reply.id),
+  ).rejects.toThrow("reply");
+  handle.dispose();
+});
+
+it.each([false, true])(
+  "deletions/auxiliary events neither create counts nor depend on batch order (%s)",
+  (reverse) => {
+    const h = setup();
+    h.grant("room");
+    const row = message(h.alice, "room", "deleted", 11);
+    const deletion = signed(h.alice, {
+      kind: 5,
+      content: "",
+      tags: [["e", row.id]],
+    });
+    const edit = signed(h.alice, {
+      kind: 40003,
+      content: "edited",
+      tags: [["e", row.id]],
+    });
+    h.emit(reverse ? [deletion, edit, row] : [row, edit, deletion]);
+    expect(h.snapshot().observedCount).toBe(0);
+  },
+);
+
+it("a forged-author deletion does not hide a message", () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "retained", 11);
+  h.emit([
+    row,
+    signed(h.viewer, { kind: 5, content: "", tags: [["e", row.id]] }),
+  ]);
+  expect(h.snapshot().observedCount).toBe(1);
+});
+
+it("all projections are denied before any revocation subscriber runs; durable intent survives", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "private", 11);
+  h.emit([row]);
+  await h.session.unread.markUnreadLocal(h.target);
+  const exposed: (number | null)[] = [];
+  h.session.profiles.subscribe(() => exposed.push(h.snapshot().observedCount));
+  h.session.unread.subscribe(h.target, () =>
+    exposed.push(h.snapshot().observedCount),
+  );
+  h.emit([roster(h.relay, "room", [], 20)]);
+  expect(h.snapshot()).toMatchObject({ observedCount: null, manual: "none" });
+  expect(exposed.length).toBeGreaterThan(0);
+  expect(exposed.every((value) => value === null)).toBe(true);
+  expect(h.journal()?.localUnread.room).toBeGreaterThan(0);
+  h.grant("room", 21);
+  expect(h.snapshot().observedCount).toBeNull();
+});
+
+it.each(["dispose", "revoke-regrant", "delete"])(
+  "pending reading cannot outlive %s",
+  async (action) => {
+    const h = setup();
+    h.grant("room");
+    const row = message(h.alice, "room", "visible", 11);
+    h.emit([row]);
+    await flush();
+    const handle = h.session.unread.reading("room"),
+      release = h.holdSave();
+    const reading = handle.observe([row.id]);
+    const result = reading.catch(() => {});
+    await flush();
+    if (action === "dispose") handle.dispose();
+    if (action === "revoke-regrant") {
+      h.emit([roster(h.relay, "room", [], 20)]);
+      h.grant("room", 21);
+    }
+    if (action === "delete")
+      h.emit([
+        signed(h.alice, { kind: 5, content: "", tags: [["e", row.id]] }),
+      ]);
+    release();
+    await result;
+    expect(h.journal()?.state.frontiers).toEqual({});
+  },
+);
+
+it("rejects manual unread targets whose signed message belongs to a different channel", async () => {
+  const h = setup();
+  h.grant("room");
+  h.grant("other");
+  const row = message(h.alice, "other", "other channel", 11);
+  h.emit([row]);
+  await expect(
+    h.session.unread.markUnreadLocal({
+      kind: "message",
+      channelId: "room",
+      messageId: row.id,
+    }),
+  ).rejects.toThrow();
+});
+
+it("late reading leases cannot clear a newer manual unread action", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "visible", 11);
+  h.emit([row]);
+  const handle = h.session.unread.reading("room");
+  await h.session.unread.markUnreadLocal(h.target);
+  await handle.observe([row.id]);
+  expect(h.journal()?.state.frontiers).toEqual({});
+  expect(h.snapshot().manual).toBe("local-only");
+});
+
+it("reverified cache restore hands evidence to unread before exposing rows without network content", async () => {
+  let saved: SavedHead[] = [];
+  const h = setup({
+    prepared: true,
+    persistence: {
+      read: async () => saved.slice(),
+      write: async () => {},
+      remove: async () => {},
+      retain: async () => {},
+      clear: async () => {},
+      close() {},
+    },
+  });
+  const row = message(h.alice, "room", "cached readable message", 11);
+  saved = [
+    {
+      channelId: "room",
+      savedAt: Date.now(),
+      events: [
+        row,
+        bounds(h.relay, "room", "head", { has_more: false, next_cursor: null }),
+      ],
+      profiles: [],
+    },
+  ];
+  h.query.mockImplementation(async (filters) => {
+    if (filters[0]?.kinds?.includes(39002))
+      return [roster(h.relay, "room", [h.viewer.pubkey], 10)];
+    if (filters[0]?.kinds?.includes(39000))
+      return [metadata(h.relay, "room", "room", 10)];
+    return new Promise(() => {}); // No network content can supply the missing evidence.
+  });
+  h.session.channels.ensureList();
+  h.session.channels.ensure("room");
+  const seen: (number | null)[] = [];
+  const stop = h.session.channels.subscribeWindow("room", () => {
+    if (h.session.channels.window("room").rows.length)
+      seen.push(h.snapshot().observedCount);
+  });
+  await vi.waitFor(() =>
+    expect(h.session.channels.window("room").rows).toHaveLength(1),
+  );
+  expect(seen).toContain(1);
+  expect(h.snapshot().observedCount).toBe(1);
+  h.emit([signed(h.viewer, { kind: 5, content: "", tags: [["e", row.id]] })]);
+  expect(h.snapshot().observedCount).toBe(1);
+  h.emit([signed(h.alice, { kind: 5, content: "", tags: [["e", row.id]] })]);
+  expect(h.snapshot().observedCount).toBe(0);
+  stop();
+});
+
+it("explicit read clears local manual unread", async () => {
+  const h = setup();
+  h.grant("room");
+  const row = message(h.alice, "room", "readable", 11);
+  h.emit([row]);
+  await h.session.unread.markUnreadLocal(h.target);
+  await h.session.unread.markThrough(h.target, row.id);
+  expect(h.journal()?.localUnread.room).toBeUndefined();
+  expect(h.journal()?.state.frontiers.room).toBe(11);
+});
+
+it.each(["clear", "revoke-regrant"])(
+  "reentrant cache-restore subscriber %s fences row publication",
+  async (action) => {
+    let saved: SavedHead[] = [];
+    const h = setup({
+      prepared: true,
+      persistence: {
+        read: async () => saved.slice(),
+        write: async () => {},
+        remove: async () => {},
+        retain: async () => {},
+        clear: async () => {},
+        close() {},
+      },
+    });
+    const row = message(h.alice, "room", "cached readable message", 11);
+    saved = [
+      {
+        channelId: "room",
+        savedAt: Date.now(),
+        events: [
+          row,
+          bounds(h.relay, "room", "head", {
+            has_more: false,
+            next_cursor: null,
+          }),
+        ],
+        profiles: [],
+      },
+    ];
+    h.query.mockImplementation(async (filters) => {
+      if (filters[0]?.kinds?.includes(39002))
+        return [roster(h.relay, "room", [h.viewer.pubkey], 10)];
+      if (filters[0]?.kinds?.includes(39000))
+        return [metadata(h.relay, "room", "room", 10)];
+      return new Promise(() => {}); // No network content can supply the missing evidence.
+    });
+    let triggered = false;
+    const stopUnread = h.session.unread.subscribe(h.target, () => {
+      if (triggered || h.snapshot().observedCount !== 1) return;
+      triggered = true;
+      saved = [];
+      if (action === "clear") void h.clearCache();
+      else {
+        h.emit([roster(h.relay, "room", [], 20)]);
+        h.grant("room", 21);
+      }
+    });
+    h.session.channels.ensureList();
+    h.session.channels.ensure("room");
+    const seen: (number | null)[] = [];
+    const stop = h.session.channels.subscribeWindow("room", () => {
+      if (h.session.channels.window("room").rows.length)
+        seen.push(h.snapshot().observedCount);
+    });
+    await vi.waitFor(() => expect(triggered).toBe(true));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    h.session.channels.ensure("room");
+    expect(seen).toEqual([]);
+    expect(h.session.channels.window("room").rows).toHaveLength(0);
+    stopUnread();
+    stop();
+  },
+);

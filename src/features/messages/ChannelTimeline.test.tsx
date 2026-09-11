@@ -47,6 +47,15 @@ vi.mock("react", async (original) => ({
       hooks.memos[index] = { deps, value: factory() };
     return hooks.memos[index]?.value;
   },
+  useEffect(create: () => (() => void) | undefined, deps: readonly unknown[]) {
+    const index = hooks.effect++;
+    const old = hooks.effects[index];
+    if (!old || deps.some((value, i) => value !== old.deps[i]))
+      hooks.pending.push(() => {
+        old?.cleanup?.();
+        hooks.effects[index] = { deps, cleanup: create() };
+      });
+  },
   useLayoutEffect(
     create: () => (() => void) | undefined,
     deps: readonly unknown[],
@@ -151,6 +160,8 @@ function setup({
   const queries = {
     channels: { loadOlder },
     profiles: {},
+    // Geometry fixtures are read-only; reading behavior has its own boundary tests.
+    unread: { sync: () => ({ capability: "unsupported" }) },
     media: () => undefined,
   } as unknown as RelaySession;
   let rows = [

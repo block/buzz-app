@@ -210,3 +210,14 @@ Emoji uploads and management remain in the existing community workflow.
 
 See [the shared catalog/send contract](relay-queries.md#community-emoji). The local
 `/tests/fixtures/emoji.html` diagnostic uses ephemeral identities and no live relay.
+
+
+## Unread badges and reading intent
+
+The sidebar renders the session-owned [unread capability](unread.md): observed
+counts, not exact relay totals. Selecting/preloading a channel is not reading.
+Focused, fully visible, settled timeline/thread rows receive an individual marker
+after dwell; no automatic channel-prefix advance hides unseen siblings. Conversation
+options exposes local-only manual unread, explicit mark-through and sync recovery.
+Older synchronized hints may expire under bounded retention. Synced manual-unread
+and OS notifications are not enabled by this feature.

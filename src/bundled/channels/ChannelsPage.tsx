@@ -1,3 +1,4 @@
+import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   useCallback,
@@ -110,6 +111,9 @@ function ChannelWorkspace({
 }) {
   const list = useChannelList(queries.channels);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  useEffect(() => {
+    if (list.status === "ready") void queries.unread.ensure();
+  }, [queries, list.status]);
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
@@ -239,6 +243,7 @@ function ChannelWorkspace({
                   >
                     <Icon size={17} />
                     <span>{channel.name}</span>
+                    <UnreadBadge session={queries} channelId={channel.id} />
                   </button>
                 );
               })}
@@ -291,6 +296,7 @@ function ChannelWorkspace({
               <MoreHorizontal size={19} aria-hidden="true" />
             </summary>
             <div className={styles.diagnosticsMenu}>
+              <UnreadOptions session={queries} channelId={current?.id} />
               <details>
                 <summary>Diagnostics</summary>
                 <LiveStatus

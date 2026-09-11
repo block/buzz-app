@@ -1,3 +1,9 @@
+import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
+import {
+  parseReadSnapshot,
+  readSnapshotFilter,
+  readSnapshotText,
+} from "./read-state-snapshot";
 import type { AgentLibraryReader } from "../agents/library";
 import type { SidebarDecoder, SidebarPreferences } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
@@ -32,6 +38,13 @@ export interface ReadTransport {
   readonly readAgentLibrary?: AgentLibraryReader;
   /** Host-only decoder of the viewer's two signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
+  readonly readState?: ReadStateHost;
+  /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
+  readStateSnapshot?(
+    signal: AbortSignal,
+    requestId: string,
+    priority: "foreground" | "background",
+  ): Promise<RelayEvent[]>;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -132,6 +145,8 @@ export async function connectBrokerTransport(
     live?: boolean;
     sidebarPreferences?: boolean;
     agentLibrary?: boolean;
+    readState?: boolean;
+    readStateCommunity?: string;
   };
   if (
     typeof session.viewer !== "string" ||
@@ -187,6 +202,86 @@ export async function connectBrokerTransport(
             if (!result.ok)
               throw new Error(`Local decoder failed (HTTP ${result.status})`);
             return result.json();
+          },
+        }
+      : {}),
+    ...(session.readState
+      ? {
+          readState: {
+            ...(session.readStateCommunity
+              ? { communityId: session.readStateCommunity }
+              : {}),
+            async decode(events: readonly RelayEvent[], signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/read-state-decode`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(events),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Read-state decode failed (${response.status})`,
+                );
+              return response.json();
+            },
+            async sign(intent: ReadStateSigning, signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/read-state-sign`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(intent),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Read-state signing failed (${response.status})`,
+                );
+              return eventDto(await response.json());
+            },
+            async publish(event: RelayEvent, signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/read-state-publish`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(event),
+                signal,
+              });
+              await acceptPublish(response, event.id);
+            },
+          },
+        }
+      : {}),
+    ...(session.readStateCommunity
+      ? {
+          async readStateSnapshot(
+            signal: AbortSignal,
+            requestId: string,
+            priority: "foreground" | "background",
+          ) {
+            const response = await fetch(`${endpoint}/query`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: {
+                "Content-Type": "application/json",
+                "X-Buzz-Read-Priority": priority,
+              },
+              body: JSON.stringify(
+                readSnapshotFilter(session.viewer as string),
+              ),
+              signal,
+            });
+            if (!response.ok)
+              throw new Error(
+                `Read-state snapshot failed (${response.status})`,
+              );
+            recordServerTiming(response, profiling, requestId);
+            return parseReadSnapshot(
+              JSON.parse(await readSnapshotText(response)),
+              session.viewer as string,
+              session.readStateCommunity as string,
+              signal,
+            );
           },
         }
       : {}),

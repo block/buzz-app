@@ -3,8 +3,8 @@
 ## Run the integration
 
 Configure your public `BUZZ_DEV_VIEWER` pin in `.env.local` using the
-[development setup](../README.md#relay-channels), then run `BUZZ_LIVE=1 just web`
-or `BUZZ_LIVE=1 just desktop` (one at a time) to enable the development broker.
+[development setup](../README.md#relay-channels), then run `just web` or
+`just desktop` (one at a time); the development broker starts with the dev server.
 Add a community using the top-left community switcher, open Messages and click a supported GitHub URL in a message to open its object
 in a side panel. Pull requests show title, state, author, branches, change counts,
 and description; issues, commits, and repositories show their relevant details.
@@ -19,7 +19,7 @@ Disabling Channels removes its page while the app-owned data survives.
 The broker uses the existing authorized Buzz identity in the macOS Keychain and
 signs authenticated reads and channel messages in Node. No private key reaches browser JavaScript; there is
 a bounded message-signing and publishing endpoint. The broker is restricted to loopback hosts, same-origin
-POSTs, valid Nostr kinds/event IDs, and bounded filters. Without `BUZZ_LIVE=1`, the shell and Messages empty state remain available, while the live identity/join flow explains that it needs the development broker. Packaged builds do not include the development broker.
+POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured `BUZZ_DEV_VIEWER` pin, the shell and Messages empty state remain available, while the live identity/join flow explains that it needs the development broker. Packaged builds do not include the development broker.
 The broker supports explicitly scoped typed relay origins;
 see [destination routing and trust limits](communities.md#development-broker-boundary).
 This is not a new native login.

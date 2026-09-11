@@ -34,7 +34,9 @@ Install the fast staged-file pre-commit and related-test pre-push hooks once per
 
 Live development currently requires **macOS and an existing Buzz account in the
 `buzz-desktop` / `secrets` Keychain entry**. This development broker is not native
-sign-in and is not included in packaged builds.
+sign-in and is not included in packaged builds. `just web` and `just desktop` run
+it automatically once `BUZZ_DEV_VIEWER` is configured; without that pin they start
+in the non-live shell/fixture state.
 
 1. Copy your existing Buzz account's **public key** (npub or 64-character hex).
 2. Add it to the git-ignored `.env.local` at this repository's root. The optional
@@ -51,11 +53,11 @@ sign-in and is not included in packaged builds.
    are public configuration, not secrets. With both relay settings unset, there is
    no default relay or alias map; Personal space and communities saved by canonical
    URL remain usable. Configuration does not automatically join a community.
-3. Start **one** live development target:
+3. Start **one** development target:
    ```sh
-   BUZZ_LIVE=1 just web
+   just web
    # Or, instead of web:
-   BUZZ_LIVE=1 just desktop
+   just desktop
    ```
 
 The broker reads the existing Keychain credential only after validating the

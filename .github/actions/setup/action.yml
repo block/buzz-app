@@ -11,7 +11,9 @@ runs:
       uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
       with:
         path: ~/.cache/hermit/pkg
-        key: hermit-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('bin/**') }}
+        # Cache contents depend on which tools this job actually provisions.
+        # A faster JS-only job must not freeze an incomplete cache for Rust jobs.
+        key: hermit-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('bin/**') }}
     - uses: cashapp/activate-hermit@cea9af7913204a965fd488637a8d1811bba2e616 # v1
     - name: Resolve pnpm store
       id: pnpm

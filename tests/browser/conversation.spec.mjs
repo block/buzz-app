@@ -2,24 +2,12 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
+import { run } from "./run-command.mjs";
 import { mkdtemp, cp, readFile, writeFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
-function run(command, args, cwd = root) {
-  const result = spawnSync(command, args, {
-    cwd,
-    encoding: "utf8",
-    timeout: 180000,
-  });
-  if (result.status !== 0)
-    throw new Error(
-      `${command} ${args.join(" ")}\n${result.stdout}\n${result.stderr}`,
-    );
-  return result.stdout;
-}
 test("independent packed author consumer and native-installed contribution survive removal, replacement and retarget", async ({
   page,
 }) => {

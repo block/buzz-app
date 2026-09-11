@@ -9,6 +9,7 @@ import {
   singleCustomEmoji,
 } from "./emoji-size";
 import type { RelaySession } from "../relay/session";
+import type { CustomEmoji } from "../relay/emoji";
 
 // Production handlers with a shallow hook harness; not DOM focus/layout evidence.
 const hooks = vi.hoisted(() => ({
@@ -86,7 +87,12 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.unstubAllGlobals());
-function mount(threadRootId?: string, scope = "scope", writable = true) {
+function mount(
+  threadRootId?: string,
+  scope = "scope",
+  writable = true,
+  emojiEntries: readonly CustomEmoji[] = [],
+) {
   hooks.states = [];
   hooks.effects = [];
   hooks.refs = [];
@@ -99,7 +105,7 @@ function mount(threadRootId?: string, scope = "scope", writable = true) {
   const session = {
     messages,
     emoji: {
-      snapshot: () => ({ status: "ready", entries: [] }),
+      snapshot: () => ({ status: "ready", entries: emojiEntries }),
       subscribe: () => () => {},
       ensure: () => Promise.resolve(),
       refresh: () => Promise.resolve(),
@@ -366,16 +372,24 @@ it("serializes text and mention commands in one turn and rejects malformed recip
 });
 
 it("keeps custom emoji shortcode text readable in the draft and sends it unchanged", () => {
-  const h = mount();
+  const h = mount(undefined, "scope", true, [
+    { shortcode: "party", url: "https://emoji.test/party.png" },
+  ]);
   const tools = elements(h.render()).find((e) => e.type === ComposerTools);
   assert.exists(tools);
   const insertText = tools.props.insertText as (text: string) => boolean;
   expect(insertText(":party:")).toBe(true);
   expect(h.input().props.value).toBe(":party:");
+  expect(h.input().props["data-custom-emoji-only"]).toBe(true);
+  expect(insertText(":party:")).toBe(true);
+  expect(h.input().props.value).toBe(":party::party:");
+  expect(
+    elements(h.render()).filter((element) => element.type === "img"),
+  ).toHaveLength(2);
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
-    ":party:",
+    ":party::party:",
     [],
   );
 });

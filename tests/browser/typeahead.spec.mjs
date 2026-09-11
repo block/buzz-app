@@ -536,6 +536,44 @@ test("current custom catalog drives typeahead and signed tags across community r
       () => window.emojiFixture.report.publications[0].event.content,
     ),
   ).toBe(":party-parrot: hello");
+  await input.fill(":party-parrot:");
+  await expect(input).toHaveAttribute("data-custom-emoji-only", "true");
+  const renderedEmoji = composer.locator("img");
+  await expect(renderedEmoji).toHaveCount(1);
+  await expect(renderedEmoji).toHaveCSS("width", "42px");
+  await expect(renderedEmoji).toHaveCSS("height", "42px");
+  await input.evaluate((element) => {
+    const pasted = element.value.repeat(2);
+    element.setSelectionRange(0, element.value.length);
+    element.dispatchEvent(
+      new InputEvent("beforeinput", {
+        bubbles: true,
+        cancelable: true,
+        data: pasted,
+        inputType: "insertFromPaste",
+      }),
+    );
+    element.setRangeText(
+      pasted,
+      element.selectionStart,
+      element.selectionEnd,
+      "end",
+    );
+    element.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        data: pasted,
+        inputType: "insertFromPaste",
+      }),
+    );
+  });
+  await expect(input).toHaveValue(":party-parrot::party-parrot:");
+  await expect(input).toHaveAttribute("data-custom-emoji-only", "true");
+  await expect(renderedEmoji).toHaveCount(2);
+  for (const image of await renderedEmoji.all()) {
+    await expect(image).toHaveCSS("width", "42px");
+    await expect(image).toHaveCSS("height", "42px");
+  }
   await input.fill("hello :party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
   await expect(input).toHaveValue("hello :party: ");

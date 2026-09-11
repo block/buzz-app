@@ -65,6 +65,14 @@ underlying observed count and attention styling remain available. Conversation
 options exposes explicit actions and Unread status/retry. Unknown and observed-zero both omit a badge; the API preserves
 the distinction. There is no notification, feed, or exact-count service here.
 
+Thread buttons keep the summary's total reply count and add a dot when the shared
+thread selector has observed unread replies or explicit thread-unread intent.
+Accessible names distinguish observed evidence, stale evidence and local-only
+intent; unknown/observed-zero omit the dot, not assert complete read history.
+Each mounted button subscribes to its own thread, without fetching thread history.
+Opening/hovering a button does not acknowledge replies; the existing focused
+viewport dwell in `ThreadPanel` supplies individual-message reading intent.
+
 ## Durable sync and privacy
 
 The journal is separate from disposable message caches in `buzz-read-state-v1`,
@@ -128,6 +136,9 @@ durable account-owned intent survives without exposing revoked context projectio
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
 - `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
   reader envelope verification, filter rejection and streamed body limits.
+- `MessageRow.test.tsx`, `tests/browser/thread-unread.spec.mjs`: thread selector
+  presentation, unchanged summary counts, hover/keyboard-focus treatment, independent
+  thread reading, own/peer live arrivals and reload through the production broker.
 - `tests/browser/unread.spec.mjs`: production build/React/session/IndexedDB/broker,
   observed sidebar → focused dwell → encrypted publication/readback, reload,
   cancellation and explicit local-unread clearing with network content held.

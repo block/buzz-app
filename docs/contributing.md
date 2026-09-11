@@ -191,7 +191,10 @@ the complete suite still runs with `pnpm test` / `just scan`:
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** two functional shards, both engines, after measurements
-  succeed. No measurement is repeated on shards, and no retry hides a failure.
+  succeed. Each runner builds the native plugin-manager fixture in a separately
+  logged setup step before starting Playwright. Its Rust cache is optional: a
+  cache miss still builds the fixture, outside the browser subprocess timeout.
+  No measurement is repeated on shards, and no retry hides a failure.
 - **CI required:** fails unless every lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.

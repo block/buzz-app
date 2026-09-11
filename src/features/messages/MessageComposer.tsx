@@ -220,9 +220,13 @@ function Composer({
       return false;
     return insert(`@${recipient.name} `, recipient);
   }
-  function insertCustomEmoji(shortcode: string) {
+  function insertCustomEmoji(shortcode: string, range?: CompletionQuery) {
     if (!/^[a-z0-9_-]{1,64}$/.test(shortcode)) return false;
-    return insert(CUSTOM_EMOJI_TOKEN, undefined, undefined, shortcode);
+    const start =
+      range?.start ?? caret.current ?? input.current?.selectionStart ?? 0;
+    return start === 0
+      ? insert(CUSTOM_EMOJI_TOKEN, undefined, range, shortcode)
+      : insert(`:${shortcode}:`, undefined, range);
   }
   function replaceCompletion(
     edit: CompletionEdit,
@@ -237,12 +241,7 @@ function Composer({
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
     if ("customEmoji" in edit && edit.customEmoji)
-      return insert(
-        CUSTOM_EMOJI_TOKEN,
-        undefined,
-        query,
-        edit.customEmoji.shortcode,
-      );
+      return insertCustomEmoji(edit.customEmoji.shortcode, query);
     return (
       typeof edit.text === "string" &&
       insert(

@@ -94,7 +94,7 @@ export function EmojiPicker({
   useEffect(() => {
     if (
       !community ||
-      (!gifDiscoveryRequested && !open) ||
+      !gifDiscoveryRequested ||
       gifAvailability?.community === community
     )
       return;
@@ -112,7 +112,9 @@ export function EmojiPicker({
       },
       () => {
         if (!controller.signal.aborted) {
-          setGifAvailability({ community, supported: false });
+          // A transport failure is not evidence that the relay lacks GIFs.
+          // Let the next hover/focus/open make a fresh attempt.
+          setGifDiscoveryRequested(false);
           setAnimateTab(false);
           setPressedTab(undefined);
           setTab("emoji");
@@ -120,7 +122,7 @@ export function EmojiPicker({
       },
     );
     return () => controller.abort();
-  }, [community, gifDiscoveryRequested, open, gifAvailability]);
+  }, [community, gifDiscoveryRequested, gifAvailability]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
   useLayoutEffect(() => {
     if (!open || disabled || tab !== "emoji" || !host.current || !perLine)

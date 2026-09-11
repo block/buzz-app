@@ -355,3 +355,53 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   ).toHaveCount(0);
   expect(app.report.unexpected).toEqual([]);
 });
+
+test("GIF discovery retries after a transient relay failure", async ({
+  page,
+  app,
+}) => {
+  let attempts = 0;
+  await page.route("**/api/relay/*/info", async (route) => {
+    attempts += 1;
+    if (attempts === 1) {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: "{",
+      });
+      return;
+    }
+    await route.fulfill({
+      json: {
+        policy: null,
+        supported_extensions: ["buzz-gif"],
+        gif: { provider: "klipy", search: "/gifs/search" },
+      },
+    });
+  });
+
+  await page.goto(app.origin);
+  await page
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Messages", exact: true })
+    .click();
+  const trigger = page.getByRole("button", {
+    name: "Insert emoji",
+    exact: true,
+  });
+  const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
+
+  await trigger.click();
+  await expect.poll(() => attempts).toBe(1);
+  await expect(trigger).not.toHaveAttribute("aria-busy", "true");
+  await expect(gifTab).toHaveCount(0);
+  await trigger.click();
+  await trigger.click();
+  await expect.poll(() => attempts).toBe(2);
+  await expect(trigger).not.toHaveAttribute("aria-busy", "true");
+  if ((await gifTab.count()) === 0) {
+    await trigger.click();
+    await trigger.click();
+  }
+  await expect(gifTab).toBeVisible();
+});

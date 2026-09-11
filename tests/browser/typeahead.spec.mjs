@@ -554,6 +554,9 @@ test("current custom catalog drives typeahead and signed tags across community r
       () => window.emojiFixture.report.publications[0].event.content,
     ),
   ).toBe(":party-parrot: hello");
+  await input.fill("hello :party");
+  await page.getByRole("option", { name: ":party:", exact: true }).click();
+  await expect(input).toHaveValue("hello :party:");
   await input.fill(":party");
   await expect(
     page.getByRole("option", { name: ":party:", exact: true }),

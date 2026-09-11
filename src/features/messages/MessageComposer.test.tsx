@@ -384,6 +384,23 @@ it("keeps picker custom emoji opaque in the draft and expands them when sent", (
   );
 });
 
+it("keeps picker custom emoji readable when the textarea cannot overlay them", () => {
+  const h = mount();
+  h.type("hello ");
+  const tools = elements(h.render()).find((e) => e.type === ComposerTools);
+  assert.exists(tools);
+  expect(
+    (tools.props.insertCustomEmoji as (shortcode: string) => boolean)("party"),
+  ).toBe(true);
+  expect(h.input().props.value).toBe("hello :party:");
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "hello :party:",
+    [],
+  );
+});
+
 it("rejects overlong or over-limit edits without changing the draft", () => {
   const h = mount();
   h.type("x".repeat(15999));

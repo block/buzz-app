@@ -564,7 +564,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await search.focus();
     await search.fill("party");
     await search.press("Enter");
-    await expect(draft()).toHaveValue("before \uFFFCafter");
+    await expect(draft()).toHaveValue("before :party:after");
     await expect(draft()).toBeFocused();
     await draft().press("Enter");
     await expect

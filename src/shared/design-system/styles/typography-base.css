@@ -1,0 +1,32 @@
+/* ============================================================
+   BASE
+   ============================================================ */
+
+@layer base {
+  html {
+    font-family: var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    /* Every readable surface starts from the body role and steps away from it
+       deliberately. */
+    @apply text-body;
+
+    /* Never synthesise a weight Inter Variable can render properly, and never
+       let a font fall back mid-string. */
+    font-synthesis-weight: none;
+    text-rendering: optimizeLegibility;
+  }
+
+  code,
+  kbd,
+  pre,
+  samp {
+    font-family: var(--font-mono);
+    /* Mono digits and letters share one advance width, so a changing value does
+       not shift the text around it. */
+    font-variant-numeric: tabular-nums;
+  }
+}

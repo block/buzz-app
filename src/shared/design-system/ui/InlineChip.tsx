@@ -72,6 +72,7 @@ export function InlineChip({
   if (!interactive || !face.resolved) {
     return (
       <span
+        data-buzz-ui=""
         className="inline-chip"
         data-kind={address.kind}
         data-state={state}
@@ -88,6 +89,7 @@ export function InlineChip({
       trigger={
         <button
           type="button"
+          data-buzz-ui=""
           className="inline-chip"
           data-kind={address.kind}
           data-state={state}

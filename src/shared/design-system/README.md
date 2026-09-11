@@ -47,14 +47,14 @@ Blank layout playgrounds and generic inline reference presentations are retained
 
 ## Compatibility boundary
 
-The host still owns the appearance lifecycle. Its current stylesheet excludes the
-new system from automatic Tailwind discovery so this port does not accidentally
-restyle existing surfaces. That isolation protects the initial import; it does not
-make the design system viewer-only or forbid app code from adopting it.
+The host owns the appearance lifecycle and now loads the shared palette,
+typography roles, materials and component styles through its coordinated entry.
+Existing UI keeps temporary legacy styling until deliberately migrated. Shared
+primitives mark their own styling boundary, including portal roots; new product
+compositions use those primitives and named roles, never viewer furniture.
 
-New and migrated app UI should use the shared components and tokens. Integrate the
-system's global styles deliberately through the host entry point rather than
-layering two resets, map current token meanings where compatibility requires it,
-and retire old names as their callers move. Keep the host as the one appearance
-owner, and keep app/plugin behavior out of shared UI. The viewer remains a separate
-document with its own appearance-storage key and is not an external-plugin API.
+See [the host integration contract](../../../docs/design-system.md#incremental-system-integration)
+for compatibility names, text scaling, keyboard focus and actual-app regression coverage.
+The viewer stays an independent document and preference owner. Workspace experiments
+remain excluded from host startup; BentoWorkspace still reads viewer preferences
+and needs a host adapter before product adoption.

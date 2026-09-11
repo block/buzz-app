@@ -1,0 +1,161 @@
+import { Context } from "@deepseek-ai/cordis";
+import { afterEach, expect, it, vi } from "vitest";
+import { provideNavigation, type PresentationOwner } from "./service";
+import { provideRelay } from "../relay/service";
+const target = {
+  version: 1,
+  kind: "page",
+  pluginId: "test.page",
+  pageId: "pending",
+} as const;
+const settings = {
+  version: 1,
+  kind: "settings",
+  section: "appearance",
+} as const;
+const contexts: Context[] = [];
+afterEach(async () => {
+  for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
+  vi.useRealTimers();
+});
+function setup() {
+  vi.useFakeTimers();
+  const ctx = new Context();
+  contexts.push(ctx);
+  const host = provideNavigation(ctx);
+  let live = true;
+  const listeners = new Set<() => void>();
+  const owner: PresentationOwner = {
+    valid: () => live,
+    subscribe(fn) {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
+  };
+  const promise = host.navigation.open(target);
+  const attempt = host.navigation.snapshot().attempt;
+  const presentation = host.request(attempt, owner);
+  return {
+    ctx,
+    host,
+    promise,
+    attempt,
+    presentation,
+    owner,
+    listeners,
+    change(next: boolean, notify = true) {
+      live = next;
+      if (notify) for (const fn of listeners) fn();
+    },
+  };
+}
+it.each(["complete", "resolve"] as const)(
+  "revalidates owner at %s even before subscription notification",
+  async (operation) => {
+    const t = setup();
+    t.change(false, false);
+    const request = t.presentation.request;
+    expect(
+      operation === "complete"
+        ? request.complete({ status: "opened" })
+        : request.resolve(settings),
+    ).toBe(false);
+    expect(request.signal.aborted).toBe(true);
+    t.change(true);
+    expect(request.complete({ status: "opened" })).toBe(false);
+    expect(request.resolve(settings)).toBe(false);
+    expect(t.attempt.signal.aborted).toBe(false);
+    expect(
+      t.host.request(t.attempt, t.owner).request.complete({ status: "opened" }),
+    ).toBe(true);
+    expect(await t.promise).toEqual({ status: "opened" });
+  },
+);
+it("revocation is synchronous, irreversible through ABA, and preserves the original deadline", async () => {
+  const t = setup();
+  await vi.advanceTimersByTimeAsync(10_000);
+  t.change(false);
+  expect(t.presentation.request.signal.aborted).toBe(true);
+  expect(t.listeners.size).toBe(0);
+  t.change(true);
+  const next = t.host.request(t.attempt, t.owner).request;
+  expect(next.entryId).toBe(t.presentation.request.entryId);
+  expect(next.signal.aborted).toBe(false);
+  expect(t.host.navigation.snapshot().attempt).toBe(t.attempt);
+  expect(t.presentation.request.resolve(settings)).toBe(false);
+  await vi.advanceTimersByTimeAsync(4_999);
+  expect(t.host.navigation.snapshot().status).toBe("opening");
+  await vi.advanceTimersByTimeAsync(1);
+  expect(await t.promise).toEqual({ status: "failed", reason: "timeout" });
+  expect(next.signal.aborted).toBe(true);
+  expect(next.complete({ status: "opened" })).toBe(false);
+});
+it("session replacement revokes only bound authority, not static pages or the visit", async () => {
+  const t = setup();
+  const relay = provideRelay(t.ctx);
+  const parent = t.presentation.request;
+  const old = relay.snapshot();
+  const bound = parent.forSession(relay, old);
+  expect(parent.forSession(relay, old)).toBe(bound);
+  relay.disconnect();
+  expect(bound.signal.aborted).toBe(true);
+  expect(bound.complete({ status: "opened" })).toBe(false);
+  expect(bound.resolve(settings)).toBe(false);
+  expect(parent.signal.aborted).toBe(false);
+  expect(t.attempt.signal.aborted).toBe(false);
+  const current = parent.forSession(relay, relay.snapshot());
+  expect(current.signal.aborted).toBe(false);
+  expect(current.entryId).toBe(parent.entryId);
+  expect(current.complete({ status: "opened" })).toBe(true);
+  expect(await t.promise).toEqual({ status: "opened" });
+});
+it("normalization revokes the old presentation but not its caller, and disposal removes observers", async () => {
+  const t = setup();
+  const relay = provideRelay(t.ctx);
+  const bound = t.presentation.request.forSession(relay, relay.snapshot());
+  expect(bound.resolve(settings)).toBe(true);
+  expect(bound.signal.aborted).toBe(true);
+  expect(t.presentation.request.signal.aborted).toBe(true);
+  expect(t.attempt.signal.aborted).toBe(false);
+  const next = t.host.request(t.host.navigation.snapshot().attempt, t.owner);
+  expect(next.request.complete({ status: "opened" })).toBe(true);
+  expect(await t.promise).toEqual({ status: "opened" });
+  expect(t.listeners.size).toBe(1);
+  next.dispose();
+  expect(t.listeners.size).toBe(0);
+  expect(next.request.signal.aborted).toBe(true);
+});
+
+it("returning to a retained connection mints fresh authority without reviving its old request", async () => {
+  const t = setup();
+  const source = provideRelay(t.ctx);
+  const first = source.snapshot();
+  source.disconnect();
+  const second = source.snapshot();
+  let selected = first;
+  const listeners = new Set<() => void>();
+  const relay = {
+    ...source,
+    snapshot: () => selected,
+    subscribe(fn: () => void) {
+      listeners.add(fn);
+      return () => {
+        listeners.delete(fn);
+      };
+    },
+  };
+  const parent = t.presentation.request;
+  const old = parent.forSession(relay, first);
+  selected = second;
+  for (const fn of listeners) fn();
+  expect(old.signal.aborted).toBe(true);
+  selected = first;
+  for (const fn of listeners) fn();
+  const fresh = parent.forSession(relay, first);
+  expect(fresh).not.toBe(old);
+  expect(old.complete({ status: "opened" })).toBe(false);
+  expect(fresh.complete({ status: "opened" })).toBe(true);
+  expect(await t.promise).toEqual({ status: "opened" });
+});

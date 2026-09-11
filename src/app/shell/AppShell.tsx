@@ -18,6 +18,8 @@ export function AppShell({
   tone,
   workspace,
   communities,
+  navigationControls,
+  onCommunitySelect,
   launchers,
   companion,
   children,
@@ -28,6 +30,8 @@ export function AppShell({
   tone: string;
   workspace?: boolean;
   communities: Communities;
+  navigationControls?: ReactNode;
+  onCommunitySelect?: (id: string | null) => void;
   launchers?: ReactNode;
   companion?: ReactNode;
   children: ReactNode;
@@ -37,8 +41,14 @@ export function AppShell({
       data-shell-tone={tone}
       className="shell-background flex h-dvh min-h-0 flex-col overflow-hidden bg-shell text-ink"
     >
+      {/* biome-ignore lint/a11y/useValidAnchor: A skip link navigates to a real fragment; enhance focus without replacing the app route hash. */}
       <a
         href="#main-content"
+        onClick={(event) => {
+          // Focus intent is not a navigation visit and must not replace the route hash.
+          event.preventDefault();
+          document.getElementById("main-content")?.focus();
+        }}
         className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded-lg focus:bg-surface focus:p-3"
       >
         Skip to content
@@ -48,7 +58,11 @@ export function AppShell({
         className={`shell-header ${macDesktop ? "shell-header-mac" : ""}`}
       >
         <div className="shell-communities" data-tauri-drag-region>
-          <CommunitySwitcher communities={communities} />
+          {navigationControls}
+          <CommunitySwitcher
+            communities={communities}
+            onSelect={onCommunitySelect}
+          />
         </div>
         <nav aria-label="Pages" className="shell-pages">
           <button

@@ -1,5 +1,5 @@
-import type { RelayEvent } from "./events";
-import type { RelayReader } from "./reader";
+import type { RelayEvent } from "./events.ts";
+import type { RelayReader } from "./reader.ts";
 
 export const SIDEBAR_COORDINATES = [
   "channel-sections",

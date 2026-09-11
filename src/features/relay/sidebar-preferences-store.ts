@@ -1,0 +1,98 @@
+import type { SidebarPreferences } from "./sidebar-preferences";
+
+type Snapshot = Readonly<{
+  status: "idle" | "loading" | "ready" | "error" | "unsupported";
+  data?: SidebarPreferences;
+  error?: string;
+}>;
+
+/** One bounded account-preference projection per relay session, not per page. */
+export function createSidebarPreferencesStore(
+  read: (signal?: AbortSignal) => Promise<SidebarPreferences>,
+  available: boolean,
+  notify = (listener: () => void) => listener(),
+) {
+  const listeners = new Set<() => void>();
+  const empty = (): Snapshot =>
+    Object.freeze({ status: available ? "idle" : "unsupported" });
+  let snapshot = empty();
+  let closed = false;
+  let active:
+    | { controller: AbortController; promise: Promise<void> }
+    | undefined;
+  const publish = (next: Snapshot) => {
+    snapshot = Object.freeze(next);
+    for (const listener of listeners) notify(listener);
+  };
+  function refresh(): Promise<void> {
+    if (closed || !available) return Promise.resolve();
+    if (active) return active.promise;
+    const controller = new AbortController();
+    const job = { controller, promise: Promise.resolve() };
+    active = job;
+    job.promise = Promise.resolve().then(async () => {
+      if (closed || controller.signal.aborted) return;
+      try {
+        const data = await read(controller.signal);
+        if (closed || controller.signal.aborted || active !== job) return;
+        publish({
+          status: "ready",
+          data: Object.freeze({
+            sections: Object.freeze(
+              data.sections.map((section) => Object.freeze({ ...section })),
+            ),
+            assignments: Object.freeze({ ...data.assignments }),
+            starred: Object.freeze([...data.starred]),
+          }),
+        });
+      } catch (error) {
+        if (!closed && !controller.signal.aborted && active === job)
+          publish({
+            ...snapshot,
+            status: "error",
+            error: error instanceof Error ? error.message : String(error),
+          });
+      } finally {
+        if (active === job) active = undefined;
+      }
+    });
+    publish({
+      status: "loading",
+      ...(snapshot.data ? { data: snapshot.data } : {}),
+    });
+    return job.promise;
+  }
+  return {
+    queries: Object.freeze({
+      available,
+      // Keep explicit one-shot reads compatible; views use the retained snapshot.
+      read,
+      snapshot: () => snapshot,
+      subscribe(listener: () => void) {
+        if (closed) return () => {};
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      ensure: () =>
+        snapshot.status === "idle"
+          ? refresh()
+          : (active?.promise ?? Promise.resolve()),
+      refresh,
+    }),
+    clear() {
+      if (closed) return;
+      active?.controller.abort();
+      active = undefined;
+      publish(empty());
+    },
+    dispose() {
+      closed = true;
+      active?.controller.abort();
+      active = undefined;
+      snapshot = empty();
+      listeners.clear();
+    },
+  };
+}

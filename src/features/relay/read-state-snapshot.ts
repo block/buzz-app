@@ -1,7 +1,10 @@
-import { eventDto, type RelayEvent } from "./events";
-import { READ_SNAPSHOT_BYTES, READ_SNAPSHOT_EVENTS } from "./read-state-host";
-import { record } from "./read-state-model";
-import { yieldToHost } from "./yield";
+import { eventDto, type RelayEvent } from "./events.ts";
+import {
+  READ_SNAPSHOT_BYTES,
+  READ_SNAPSHOT_EVENTS,
+} from "./read-state-host.ts";
+import { record } from "./read-state-model.ts";
+import { yieldToHost } from "./yield.ts";
 
 export function readSnapshotCommunity(value: unknown): string | undefined {
   if (

@@ -1,5 +1,11 @@
 import { ArrowDown, ArrowUp } from "lucide-react";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type RefObject,
+} from "react";
 import styles from "./Channels.module.css";
 
 type Edges = { above: HTMLButtonElement[]; below: HTMLButtonElement[] };
@@ -25,8 +31,15 @@ function unreadEdges(list: HTMLElement): Edges {
   return edges;
 }
 
-export function SidebarUnread({ children }: { children: ReactNode }) {
-  const list = useRef<HTMLElement>(null);
+export function SidebarUnread({
+  children,
+  listRef,
+}: {
+  children: ReactNode;
+  listRef?: RefObject<HTMLElement | null>;
+}) {
+  const ownList = useRef<HTMLElement>(null);
+  const list = listRef ?? ownList;
   const content = useRef<HTMLDivElement>(null);
   const [edges, setEdges] = useState<Edges>({ above: [], below: [] });
   useEffect(() => {
@@ -68,7 +81,7 @@ export function SidebarUnread({ children }: { children: ReactNode }) {
       mutations.disconnect();
       viewport.removeEventListener("scroll", schedule);
     };
-  }, []);
+  }, [list]);
   const reveal = (edge: keyof Edges) => {
     const viewport = list.current;
     if (!viewport) return;

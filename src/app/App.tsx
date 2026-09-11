@@ -1,11 +1,13 @@
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
 import { Settings } from "./Settings";
 import { RecoveryScreen } from "./RecoveryScreen";
 import { PageView } from "../features/pages/PageView";
-import { usePages } from "../features/pages/usePages";
+import { useAppNavigation } from "./navigation";
+import { NavigationControls } from "./shell/NavigationControls";
+import { registerNavigationShortcuts } from "./shortcuts";
 import { AppShell } from "./shell/AppShell";
 import { Home } from "./shell/Home";
 import { pagePresentation, shellPresentation } from "./shell/presentation";
@@ -16,32 +18,32 @@ import { PanelCard } from "../features/panels/PanelCard";
 export function App({ services }: { services: AppServices }) {
   const { plugins } = services;
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
-  const pages = usePages(services.pages);
+  const route = useAppNavigation(services);
   const launcher = usePanelLauncher(services.panels, startup === "ready");
-  const [home, setHome] = useState(true);
-  const select = (key: string) => {
-    setHome(key === "home");
-    if (key !== "home") pages.select(key);
-  };
+  const home = route.target.kind === "home";
+  const settings = route.target.kind === "settings";
+  const select = route.select;
   useEffect(
     () =>
       registerAppShortcuts(
         services.shortcuts,
         services.appearance,
         () => {
-          setHome(false);
-          pages.select("settings");
+          void services.navigation.open({ version: 1, kind: "settings" });
           document.getElementById("main-content")?.focus();
         },
-        startup === "ready",
+        true,
       ),
-    [services, pages.select, startup],
+    [services],
   );
-  const selected = home ? "home" : pages.selected;
+  useEffect(
+    () => registerNavigationShortcuts(services.shortcuts, services.navigation),
+    [services],
+  );
   const presentation = home
     ? shellPresentation.home
-    : pages.current
-      ? pagePresentation(pages.current)
+    : route.page
+      ? pagePresentation(route.page)
       : shellPresentation.settings;
   const selectedPanel = launcher.selected;
   const companion = selectedPanel && (
@@ -51,9 +53,16 @@ export function App({ services }: { services: AppServices }) {
       close={launcher.close}
     />
   );
-  const pageOwnsCompanion = !home && !!pages.current?.companion;
+  const pageOwnsCompanion = !home && !!route.page?.companion;
   return (
     <AppShell
+      navigationControls={
+        <NavigationControls navigation={services.navigation} />
+      }
+      onCommunitySelect={(id) => {
+        services.communities.select(id);
+        select("buzz.channels/channels");
+      }}
       communities={services.communities}
       launchers={
         <PanelLaunchers
@@ -63,32 +72,56 @@ export function App({ services }: { services: AppServices }) {
         />
       }
       companion={pageOwnsCompanion ? undefined : companion}
-      pages={startup === "ready" ? pages.available : []}
-      selected={selected}
+      pages={startup === "ready" ? route.pages : []}
+      selected={route.selected}
       onSelect={select}
       tone={presentation.tone}
       workspace={
-        startup === "ready" && !home && pages.current?.layout === "workspace"
+        startup === "ready" && !home && route.page?.layout === "workspace"
       }
     >
-      {startup === "recovery" ? (
-        <RecoveryScreen plugins={plugins} />
-      ) : startup === "loading" ? (
-        <p role="status">Opening Buzz…</p>
-      ) : home ? (
-        <Home pages={pages.available} onSelect={select} />
-      ) : pages.current ? (
-        <PageView
-          page={pages.current}
-          companion={pageOwnsCompanion ? companion : undefined}
-        />
-      ) : (
+      {route.failure || route.state.status === "failed" ? (
+        <div role="alert" className="notice">
+          <h1>This destination couldn’t open</h1>
+          <p>
+            {route.failure === "denied"
+              ? "This target needs its original account and an already joined community."
+              : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
+          </p>
+          <button type="button" onClick={route.retry}>
+            Retry navigation
+          </button>
+          <button type="button" onClick={() => select("home")}>
+            Go Home
+          </button>
+        </div>
+      ) : settings ? (
         <Settings
           plugins={plugins}
           communities={services.communities}
           appearance={services.appearance}
+          navigation={route.request}
+          onSection={(section) =>
+            void services.navigation.open({
+              version: 1,
+              kind: "settings",
+              section,
+            })
+          }
         />
-      )}
+      ) : home ? (
+        <Home pages={route.pages} onSelect={select} />
+      ) : startup === "recovery" ? (
+        <RecoveryScreen plugins={plugins} />
+      ) : route.waiting || startup === "loading" ? (
+        <p role="status">Opening destination…</p>
+      ) : route.page ? (
+        <PageView
+          page={route.page}
+          navigation={route.request}
+          companion={pageOwnsCompanion ? companion : undefined}
+        />
+      ) : null}
     </AppShell>
   );
 }

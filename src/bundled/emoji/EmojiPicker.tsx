@@ -87,7 +87,12 @@ export function EmojiPicker({
     return () => observer.disconnect();
   }, [open, disabled]);
   useEffect(() => {
-    if (!community) return;
+    if (
+      !community ||
+      (!openWhenReady && !open) ||
+      gifAvailability?.community === community
+    )
+      return;
     const controller = new AbortController();
     void relaySupportsKlipy(community, controller.signal).then(
       (supported) => {
@@ -110,7 +115,7 @@ export function EmojiPicker({
       },
     );
     return () => controller.abort();
-  }, [community]);
+  }, [community, openWhenReady, open, gifAvailability]);
   useEffect(() => {
     if (!openWhenReady || gifs === undefined || disabled) return;
     setOpenWhenReady(false);

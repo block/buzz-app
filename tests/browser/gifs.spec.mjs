@@ -72,12 +72,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     name: "Message #Alpha",
     exact: true,
   });
-  await expect.poll(() => infoRequests).toBeGreaterThan(0);
   const emojiTrigger = page.getByRole("button", {
     name: "Insert emoji",
     exact: true,
   });
   await emojiTrigger.click();
+  await expect.poll(() => infoRequests).toBeGreaterThan(0);
   const picker = page.getByRole("region", { name: "Emoji picker" });
   await expect(emojiTrigger).toHaveAttribute("aria-busy", "true");
   await expect(picker).toHaveCount(0);

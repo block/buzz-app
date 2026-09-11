@@ -1,0 +1,78 @@
+import { test, expect } from "./fixture.mjs";
+import { open } from "./timeline.mjs";
+
+for (const mode of ["light", "dark"]) {
+  test(`Profiles uses shared styles and host keyboard focus in ${mode} mode`, async ({
+    page,
+    app,
+    browserName,
+  }, info) => {
+    await page.addInitScript((mode) => {
+      localStorage.setItem("buzz-appearance.v1", mode);
+    }, mode);
+    await open(page, app);
+    const avatar = page
+      .getByRole("button", { name: "View Fixture Reader profile", exact: true })
+      .first();
+    await avatar.click();
+    const panel = page.getByRole("complementary", {
+      name: "Profile",
+      exact: true,
+    });
+    const region = panel.getByRole("region", { name: "Profile details" });
+    const copy = panel.getByRole("button", { name: "Copy npub", exact: true });
+    const key = panel.locator("code");
+    await expect(region).toHaveAttribute("data-buzz-ui", "");
+    await expect(region).toHaveCSS(
+      "background-color",
+      mode === "light" ? "rgb(255, 255, 255)" : "rgb(28, 28, 28)",
+    );
+    await expect(region).toHaveCSS(
+      "color",
+      mode === "light" ? "rgb(10, 10, 10)" : "rgb(245, 245, 245)",
+    );
+    await expect(region).toHaveCSS("font-size", "14px");
+    await expect(
+      panel.getByRole("heading", { name: "Fixture Reader", exact: true }),
+    ).toHaveCSS("font-size", "16px");
+    await expect(key).toHaveCSS("font-size", "13px");
+    await expect(key).toHaveCSS("font-family", /JetBrains Mono/);
+    await expect(copy).toHaveCSS("height", "30px");
+    await expect(copy).toHaveCSS("border-radius", "10px");
+    await copy.hover();
+    await expect(copy).toHaveCSS(
+      "background-color",
+      mode === "light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
+    );
+    await page.keyboard.press(
+      browserName === "webkit" && process.platform === "darwin"
+        ? "Alt+Tab"
+        : "Tab",
+    );
+    await copy.focus();
+    await expect(copy).toHaveCSS("outline-width", "2px");
+    await page.mouse.click(2, 2);
+    await copy.focus();
+    await expect(copy).toHaveCSS("outline-style", "none");
+    // The host preference scales type once, not control geometry.
+    const modifier = process.platform === "darwin" ? "Meta" : "Control";
+    await page.keyboard.press(`${modifier}+=`);
+    await expect(region).toHaveCSS("font-size", "15.4px");
+    await expect(key).toHaveCSS("font-size", "14.3px");
+    await expect(copy).toHaveCSS("height", "30px");
+    await page.keyboard.press(`${modifier}+0`);
+    for (const width of [1280, 900, 390]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(key).toBeVisible();
+      expect(
+        await region.evaluate((el) => el.scrollWidth > el.clientWidth),
+      ).toBe(false);
+      expect(await key.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
+        false,
+      );
+      await panel.screenshot({
+        path: info.outputPath(`profile-${mode}-${width}.png`),
+      });
+    }
+  });
+}

@@ -33,8 +33,10 @@ adds no ownership/running badge, editor, agent-library lookup or execution API.
 ## UI and iteration
 
 Avatar, name, about and exact copyable npub only. Shared design-system Avatar and
-Button are used with a scoped host-token compatibility stylesheet; no new theme
-owner, second global reset or shell migration. Designers own later refinement.
+Button use the host-loaded styles directly. The profile content marks its
+`data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
+owns layout, not component overrides. No new theme owner, second global reset or
+shell migration. Designers own later refinement.
 
 Use the normal `bin/just desktop` or `bin/just web` workflow in the feature worktree
 with the existing public live-mode pin; run only one dev target at a time.
@@ -47,11 +49,17 @@ transport. It covers avatar/mention keys, keyboard/focus, disable/re-enable,
 thread-only mention enrichment, failure/retry and session replacement in Chromium
 and WebKit. It also checks copy success/failure with a stubbed clipboard and
 light/dark layout at 390, 900 and 1280px widths. It does not establish an OS
-clipboard, live relay or native packaging result.
+clipboard, live relay or native packaging result. `profiles-appearance.spec.mjs`
+additionally exercises the compiled app and host appearance owner: shared type,
+color, compact-button styling, keyboard-only focus and single-scaled typography
+at narrow, intermediate and wide widths in both modes.
 
 Focused tests cover target validation, mention ambiguity/code/link boundaries,
 signed-event → fold → renderer indentation preservation, current-body edit
-marking, about-only profile updates, rendering and actual
-bundled registration. Broad scan and native build/package acceptance remain
-deferred to an agreed integration batch. No FOUNDATION contract
-or sending/signing behavior changed.
+marking, about-only profile updates, rendering and actual bundled registration.
+The CI repair also narrows channel catch-up cancellation to top-level timeline
+heads: `live-session.test.ts` forces overlapping unread reads for 1, 2 and 130
+channels; `sidebar-unread.spec.mjs` holds unread evidence through real EOSE and
+checks its badges without retries. Access-loss/disconnect cancellation is unchanged.
+Broad scan and native build/package acceptance remain deferred to an agreed
+integration batch. No sending/signing behavior changed.

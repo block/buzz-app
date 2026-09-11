@@ -80,6 +80,7 @@ function ProfileDetails({
   return (
     <section
       ref={region}
+      data-buzz-ui=""
       aria-label="Profile details"
       tabIndex={-1}
       className={styles.root}
@@ -93,12 +94,12 @@ function ProfileDetails({
           fallback={profile?.name ?? "?"}
           size="large"
         />
-        <h2>{name}</h2>
+        <h2 className="text-heading">{name}</h2>
       </div>
       {profile?.about && <p className={styles.about}>{profile.about}</p>}
       <div className={styles.publicKey}>
         <div className={styles.keyHeading}>
-          <h3>Public key</h3>
+          <h3 className="text-body">Public key</h3>
           <Button
             size="compact"
             variant="ghost"
@@ -120,7 +121,7 @@ function ProfileDetails({
             Copy
           </Button>
         </div>
-        <code>{npub}</code>
+        <code className="font-mono text-mono">{npub}</code>
         <span role="status" className={styles.feedback}>
           {copyStatus}
         </span>

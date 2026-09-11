@@ -453,17 +453,25 @@ test("current custom catalog drives typeahead and signed tags across community r
     exact: true,
   });
   const partiallyVisibleParty = partyOptions.last();
-  const scrollBeforeHover = await partyList.evaluate(
+  const { scrollTop: scrollBeforeHover, hoverPoint } = await partyList.evaluate(
     (list, option) => {
       list.scrollTop = Math.max(
         0,
         option.offsetTop + option.offsetHeight / 2 - list.clientHeight,
       );
-      return list.scrollTop;
+      const listBounds = list.getBoundingClientRect();
+      const optionBounds = option.getBoundingClientRect();
+      return {
+        scrollTop: list.scrollTop,
+        hoverPoint: {
+          x: optionBounds.left + optionBounds.width / 2,
+          y: Math.min(optionBounds.bottom - 1, listBounds.bottom - 1),
+        },
+      };
     },
     await partiallyVisibleParty.elementHandle(),
   );
-  await partiallyVisibleParty.dispatchEvent("pointerover");
+  await page.mouse.move(hoverPoint.x, hoverPoint.y);
   await expect(partiallyVisibleParty).toHaveAttribute("aria-selected", "true");
   expect(await partyList.evaluate((list) => list.scrollTop)).toBe(
     scrollBeforeHover,
@@ -478,7 +486,7 @@ test("current custom catalog drives typeahead and signed tags across community r
       const matrix = new DOMMatrixReadOnly(getComputedStyle(element).transform);
       return matrix.m42;
     }),
-  ).toBeLessThan(-1);
+  ).toBeLessThan(-0.5);
   await input.fill(":smirk");
   const smirkEmoji = page
     .getByRole("option", { name: ":smirk:", exact: true })

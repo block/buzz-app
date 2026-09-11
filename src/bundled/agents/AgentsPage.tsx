@@ -1,5 +1,6 @@
 import { RefreshCw, Users } from "lucide-react";
 import { Avatar } from "../../shared/Avatar";
+import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { avatarSource } from "../../shared/avatar-source";
 import {
   groupAgentLibrary,
@@ -13,31 +14,32 @@ import { useRelayConnection } from "../../features/relay/react";
 export function AgentsPage({ relay }: { relay: RelayData }) {
   const connection = useRelayConnection(relay);
   return (
-    <section
-      aria-label="Agents"
-      className="h-full min-h-0 overflow-auto rounded-3xl border border-line bg-surface p-5 shadow-surface sm:p-8"
-    >
-      <h1 className="m-0 text-3xl font-medium tracking-tight">Agents</h1>
-      {connection.status === "ready" ? (
-        <MyAgents
-          key={`${connection.scope}:${connection.generation}`}
-          session={connection.session}
-        />
-      ) : (
-        <div className="mt-6">
-          <p>
-            {connection.status === "connecting"
-              ? "Connecting to your community…"
-              : "Connect to a community to browse your agents."}
-          </p>
-          {connection.status === "error" && (
-            <button type="button" onClick={() => relay.retry()}>
-              Retry connection
-            </button>
+    <div className="h-full min-h-0">
+      <FullPageSurface aria-label="Agents">
+        <div className="h-full min-h-0 overflow-auto p-5 sm:p-8">
+          <h1 className="m-0 text-3xl font-medium tracking-tight">Agents</h1>
+          {connection.status === "ready" ? (
+            <MyAgents
+              key={`${connection.scope}:${connection.generation}`}
+              session={connection.session}
+            />
+          ) : (
+            <div className="mt-6">
+              <p>
+                {connection.status === "connecting"
+                  ? "Connecting to your community…"
+                  : "Connect to a community to browse your agents."}
+              </p>
+              {connection.status === "error" && (
+                <button type="button" onClick={() => relay.retry()}>
+                  Retry connection
+                </button>
+              )}
+            </div>
           )}
         </div>
-      )}
-    </section>
+      </FullPageSurface>
+    </div>
   );
 }
 function MyAgents({ session }: { session: RelaySession }) {
@@ -67,7 +69,7 @@ function MyAgents({ session }: { session: RelaySession }) {
   );
   const loading = snapshot.status === "loading";
   return (
-    <div className="mx-auto mt-2 max-w-6xl space-y-6">
+    <div className="mt-2 space-y-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 text-sm text-muted">Your agents from Buzz.</p>
         <button

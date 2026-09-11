@@ -14,7 +14,6 @@ concurrency:
 
 env:
   CI: "true"
-  BUZZ_LIVE: "0"
   CARGO_TERM_COLOR: always
 
 jobs:

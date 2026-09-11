@@ -46,7 +46,7 @@ port builtin refresh, live runtime ordering or Teams.
 
 ### Ready-to-try workflow / remaining acceptance
 
-Use the public `BUZZ_DEV_VIEWER` pin and `BUZZ_LIVE=1 just desktop` from the
+Use the public `BUZZ_DEV_VIEWER` pin and `just desktop` from the
 README; fixture/default startup cannot show the live local library. No private
 keys in environment files. Keep existing Buzz running: this app does not launch
 or supervise ACP.

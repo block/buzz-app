@@ -22,7 +22,6 @@ const credential = JSON.stringify({ identity: nip19.nsecEncode(fixture) });
 const servers: ReturnType<typeof createServer>[] = [];
 
 beforeEach(() => {
-  vi.stubEnv("BUZZ_LIVE", "1");
   vi.stubEnv("BUZZ_RELAY_URL", "");
   vi.stubEnv("BUZZ_COMMUNITY_ALIASES", "");
   vi.stubEnv("BUZZ_DEV_VIEWER", "");
@@ -34,8 +33,11 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-async function startup() {
-  const resolved = await config({ command: "serve", mode: "development" });
+async function startup(command: "serve" | "build" = "serve") {
+  const resolved = await config({
+    command,
+    mode: command === "serve" ? "development" : "production",
+  });
   const plugin = (resolved.plugins as Plugin[]).find(
     (entry) => entry.name === "buzz-relay-broker",
   );
@@ -56,16 +58,26 @@ async function startup() {
   return { resolved, plugin, start, use, info };
 }
 
-it("does not register the broker or read credentials without live opt-in", async () => {
-  vi.stubEnv("BUZZ_LIVE", "");
-  const app = await startup();
+it.each(["", "  "])(
+  "starts without the broker or credential access when no public pin is configured (%#)",
+  async (configured) => {
+    vi.stubEnv("BUZZ_DEV_VIEWER", configured);
+    const app = await startup();
+    expect(app.plugin).toBeUndefined();
+    expect(app.resolved.define?.["import.meta.env.VITE_BUZZ_LIVE"]).toBe('"0"');
+    expect(readCredential).not.toHaveBeenCalled();
+  },
+);
+
+it("never registers the broker for production builds, even with a configured pin", async () => {
+  vi.stubEnv("BUZZ_DEV_VIEWER", viewer);
+  const app = await startup("build");
   expect(app.plugin).toBeUndefined();
   expect(app.resolved.define?.["import.meta.env.VITE_BUZZ_LIVE"]).toBe('"0"');
   expect(readCredential).not.toHaveBeenCalled();
 });
 
 it.each([
-  "",
   "not-a-key",
   "ab".repeat(31),
   "npub1broken",

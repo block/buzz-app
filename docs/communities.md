@@ -10,9 +10,9 @@ each community's queries, live subscriptions, projections and durable outbox.
 
 Configure `BUZZ_DEV_VIEWER` with your existing Buzz public key in `.env.local`
 ([setup and safety notes](../README.md#relay-channels)), then run
-`BUZZ_LIVE=1 just web` and open http://localhost:1430, or use
-`BUZZ_LIVE=1 just desktop` instead. The development broker requires macOS and
-refuses a Keychain identity that does not match your explicit public pin.
+`just web` and open http://localhost:1430, or use `just desktop` instead. The
+development broker requires macOS and refuses a Keychain identity that does not
+match your explicit public pin.
 Click the avatar → **Settings → Profile** to edit and save a local default
 directly in the page, then **Switch community → Add a community** and type a **Relay URL**. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example

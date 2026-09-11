@@ -73,10 +73,9 @@ export function ChannelsPage({
                 </button>
                 <p className={styles.note}>
                   For development, set <code>BUZZ_DEV_VIEWER</code> to your Buzz
-                  public key in <code>.env.local</code>, then run{" "}
-                  <code>BUZZ_LIVE=1 just web</code> or{" "}
-                  <code>BUZZ_LIVE=1 just desktop</code>. See README.md for
-                  requirements.
+                  public key in <code>.env.local</code>, then restart{" "}
+                  <code>just web</code> or <code>just desktop</code>. See
+                  README.md for requirements.
                 </p>
               </>
             )}

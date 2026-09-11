@@ -65,9 +65,9 @@ pnpm reuses its shared package cache; no node_modules directory needs to be copi
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
 downloads and native compilation can take time. Web and desktop dev use the same
 port; run them separately or open the browser at the desktop dev server URL.
-Both start without live identity by default. For live access, configure your
-public `BUZZ_DEV_VIEWER` pin in `.env.local` and use `BUZZ_LIVE=1` with either
-recipe; see [the setup and Keychain requirements](../README.md#relay-channels).
+Both run the development broker with your identity when the public
+`BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
+identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).
 
 ## Interactive product iteration
 
@@ -230,7 +230,7 @@ from the gate.
 
 ### Manual browser fixtures
 
-With `just web` running **without `BUZZ_LIVE=1`**, these separate diagnostic pages
+With `just web` running **without a `BUZZ_DEV_VIEWER` pin**, these separate diagnostic pages
 use fixture identities/transports rather than the live broker:
 
 | URL | Purpose |

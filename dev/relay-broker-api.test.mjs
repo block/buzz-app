@@ -361,6 +361,55 @@ test("queued request mints fresh auth at dispatch after wall time advances", asy
   }
 });
 
+test("reaction sign and publish preserve kind 7 and reject malformed targets before upstream I/O", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    const template = {
+      ...h.event,
+      kind: 7,
+      content: ":party:",
+      tags: [
+        ["h", "c"],
+        ["e", "a".repeat(64)],
+        ["emoji", "party", "https://a.test/party.png"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(7);
+    expect(event.tags).toEqual(template.tags);
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.calls).toHaveLength(1);
+    expect(h.calls[0].body).toEqual(JSON.parse(JSON.stringify(event)));
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [],
+        [["e", "bad"]],
+        [["e", "a".repeat(64), "", "reply"]],
+        [
+          ["e", "a".repeat(64)],
+          ["e", "b".repeat(64)],
+        ],
+      ]) {
+        expect(
+          (await h.post(route, { ...event, tags: [["h", "c"], ...tags] }))
+            .status,
+        ).toBe(400);
+      }
+      expect(
+        (await h.post(route, { ...event, content: "x".repeat(65) })).status,
+      ).toBe(400);
+    }
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("both real sign and publish routes admit direct replies but reject arbitrary references before upstream I/O", async () => {
   const h = await harness((call) =>
     Response.json({ accepted: true, event_id: call.body.id }),

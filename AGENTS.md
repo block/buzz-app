@@ -24,6 +24,10 @@ solution, clear ownership, and no known material defects. Prefer existing patter
 and subtraction. No opportunistic refactors, speculative abstractions, or new
 features disguised as fixes. If the fix keeps growing, revisit the cause and scope.
 
+Keep files cohesive and group modules and tests by owner. Treat size as a review
+signal, not a quota. Extract stable boundaries only when they simplify the
+requested change.
+
 Minimal does not mean happy-path-only. Handle relevant boundary inputs, failures,
 recovery, and lifecycle transitions; consider concurrency, persistence, security,
 and performance where the change affects them. Do not add machinery for

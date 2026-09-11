@@ -153,6 +153,13 @@ impl Store {
         self.write(&doc)
     }
 }
+impl Drop for Store {
+    fn drop(&mut self) {
+        // fork/dup shares the lock's open-file description until exec/close.
+        // Releasing only our descriptor can leave the profile spuriously owned.
+        let _ = self._lock.unlock();
+    }
+}
 fn validate(doc: &Document) -> Result<()> {
     if doc.version != 1 || doc.agents.len() > MAX_AGENTS {
         return Err("Unsupported agent storage version or size; left unchanged".into());

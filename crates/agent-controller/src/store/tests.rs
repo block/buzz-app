@@ -171,3 +171,19 @@ fn symlink_store_and_lock_are_refused() {
     assert!(Store::open(dir.path().to_owned()).is_err());
     assert_eq!(fs::read(target).unwrap(), b"untouched");
 }
+
+#[test]
+fn closing_store_releases_lock_even_with_inherited_file_description() {
+    let dir = tempfile::tempdir().unwrap();
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    // dup/fork share the flock's open-file description. A concurrently spawning
+    // child can retain it until exec despite the parent's close-on-exec flag.
+    let inherited = store._lock.try_clone().unwrap();
+    assert!(Store::open(dir.path().to_owned()).is_err());
+    drop(store);
+    let reopened = Store::open(dir.path().to_owned()).unwrap();
+    drop(inherited);
+    assert!(Store::open(dir.path().to_owned()).is_err());
+    drop(reopened);
+    Store::open(dir.path().to_owned()).unwrap();
+}

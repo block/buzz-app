@@ -247,7 +247,9 @@ selection or Escape, and returns focus to the plus button. Failed or unconfirmed
 reaction delivery offers Retry reaction through the same outbox. Read-only
 connections and archived channels do not expose the action.
 
-The composer shows its GIF tab as soon as relay support is confirmed. Pickers
+The composer shows its GIF tab as soon as relay support is confirmed. Unsupported
+results are retried when the picker reopens; the broker caches confirmed support
+without retaining negative discovery results. Pickers
 without tabs use a search radius equal to the container radius minus the 10px
 inset; tabbed pickers keep the smaller 8px search radius.
 

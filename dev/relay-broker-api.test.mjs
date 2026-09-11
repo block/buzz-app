@@ -124,6 +124,27 @@ test("GIF capability discovery does not depend on join-policy availability", asy
   }
 });
 
+test("GIF discovery retries unsupported relays and caches confirmed support", async () => {
+  let supported = false;
+  const descriptor = {
+    supported_extensions: ["buzz-gif"],
+    gif: { provider: "klipy", search: "/gifs/search" },
+  };
+  const h = await harness(() => Response.json(supported ? descriptor : {}));
+  try {
+    expect(await (await h.get("gif-info")).json()).toEqual({});
+    supported = true;
+    expect(await (await h.get("gif-info")).json()).toEqual(descriptor);
+    expect(await (await h.get("gif-info")).json()).toEqual(descriptor);
+    expect(h.calls.map(({ url }) => url)).toEqual([
+      fixtureRelayUrl,
+      fixtureRelayUrl,
+    ]);
+  } finally {
+    await h.close();
+  }
+});
+
 test("GIF search follows the relay-advertised KLIPY path with signed, bounded input", async () => {
   const responseBody = {
     result: true,

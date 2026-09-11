@@ -1,3 +1,4 @@
+import { writeFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -38,9 +39,76 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await avatar.click();
     await page.getByRole("main").click({ position: { x: 5, y: 5 } });
     await expect(account).toBeHidden();
-    await avatar.click();
-    await tab(true);
-    await expect(account).toBeHidden();
+    const focusEvents = await page.evaluateHandle(() => {
+      const events = [];
+      const describe = (node) =>
+        node instanceof Element
+          ? {
+              tag: node.tagName,
+              label: node.getAttribute("aria-label"),
+              id: node.id,
+              text: node.matches("button")
+                ? node.textContent?.trim()
+                : undefined,
+              inAccount: !!node.closest('[aria-label="Your account"]'),
+            }
+          : null;
+      const record = (event) => {
+        const entry = {
+          time: performance.now(),
+          type: event.type,
+          key: event.key,
+          shift: event.shiftKey,
+          target: describe(event.target),
+          related: describe(event.relatedTarget),
+          active: describe(document.activeElement),
+          focused: document.hasFocus(),
+        };
+        events.push(entry);
+        // Read cancellation after dispatch, without mislabeling later focus as event-time focus.
+        setTimeout(() => {
+          entry.prevented = event.defaultPrevented;
+          entry.activeAfter = describe(document.activeElement);
+          entry.focusedAfter = document.hasFocus();
+        }, 0);
+      };
+      const types = ["focusin", "focusout", "keydown", "keyup"];
+      for (const type of types) document.addEventListener(type, record, true);
+      return {
+        async stop() {
+          for (const type of types)
+            document.removeEventListener(type, record, true);
+          await new Promise((resolve) => setTimeout(resolve, 0));
+          return {
+            events,
+            active: describe(document.activeElement),
+            focused: document.hasFocus(),
+          };
+        },
+      };
+    });
+    try {
+      await avatar.click();
+      await expect(account).toBeVisible();
+      await expect(avatar).toBeFocused();
+      await tab(true);
+      await expect(account).toBeHidden();
+    } finally {
+      const path = testInfo.outputPath(`account-backward-tab-${width}.json`);
+      await writeFile(
+        path,
+        JSON.stringify(
+          await focusEvents.evaluate((capture) => capture.stop()),
+          null,
+          2,
+        ),
+      );
+      await testInfo.attach(`account-backward-tab-${width}`, {
+        path,
+        contentType: "application/json",
+      });
+      await focusEvents.dispose();
+    }
   }
   await avatar.focus();
   await page.keyboard.press("Enter");

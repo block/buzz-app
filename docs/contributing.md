@@ -124,6 +124,8 @@ into an ever-growing full test suite.
 
 ## Git hooks
 
+### Pre-commit checks
+
 Install once **per worktree** after `pnpm install --frozen-lockfile`:
 
 ```sh

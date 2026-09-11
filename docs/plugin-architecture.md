@@ -48,6 +48,7 @@ features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
 bundled/projects/       title-only Projects page scaffold
 bundled/agents/         read-only current-Buzz agent library page
+bundled/agent-channels/ relationship-first current-community channel list
 features/agents/        shared session-owned local library view
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin companion panel and its snake launcher
@@ -92,7 +93,7 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles and Terminal. Projects
+The initial distribution contains Channels, Projects, Agents, Agent channels, GitHub, Bestie, Emoji, Mentions, Profiles and Terminal. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.

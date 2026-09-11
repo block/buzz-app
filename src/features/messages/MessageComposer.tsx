@@ -220,6 +220,10 @@ function Composer({
       return false;
     return insert(`@${recipient.name} `, recipient);
   }
+  function insertCustomEmoji(shortcode: string) {
+    if (!/^[a-z0-9_-]{1,64}$/.test(shortcode)) return false;
+    return insert(CUSTOM_EMOJI_TOKEN, undefined, undefined, shortcode);
+  }
   function replaceCompletion(
     edit: CompletionEdit,
     query: CompletionQuery,
@@ -428,6 +432,7 @@ function Composer({
               threadRootId={threadRootId}
               disabled={disabled}
               insertText={(text) => insert(text)}
+              insertCustomEmoji={insertCustomEmoji}
               insertMention={insertMention}
               focus={() => input.current?.focus()}
             />

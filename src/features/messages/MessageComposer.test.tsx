@@ -9,6 +9,7 @@ import {
   singleCustomEmoji,
 } from "./emoji-size";
 import type { RelaySession } from "../relay/session";
+import { CUSTOM_EMOJI_TOKEN } from "./mention-draft";
 
 // Production handlers with a shallow hook harness; not DOM focus/layout evidence.
 const hooks = vi.hoisted(() => ({
@@ -362,6 +363,24 @@ it("serializes text and mention commands in one turn and rejects malformed recip
     "channel",
     "Hi there @Honey and @Honey ",
     ["a".repeat(64), "b".repeat(64)],
+  );
+});
+
+it("keeps picker custom emoji opaque in the draft and expands them when sent", () => {
+  const h = mount();
+  const tools = elements(h.render()).find((e) => e.type === ComposerTools);
+  assert.exists(tools);
+  const insertCustomEmoji = tools.props.insertCustomEmoji as (
+    shortcode: string,
+  ) => boolean;
+  expect(insertCustomEmoji("party")).toBe(true);
+  expect(h.input().props.value).toBe(CUSTOM_EMOJI_TOKEN);
+  expect(insertCustomEmoji(":party:")).toBe(false);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    ":party:",
+    [],
   );
 });
 

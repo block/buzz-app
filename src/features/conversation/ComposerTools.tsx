@@ -48,7 +48,10 @@ function OwnedTool({
   });
   const [commands, setCommands] =
     useState<
-      Pick<ComposerToolProps, "insertText" | "insertMention" | "focus">
+      Pick<
+        ComposerToolProps,
+        "insertText" | "insertCustomEmoji" | "insertMention" | "focus"
+      >
     >();
   useLayoutEffect(() => {
     let live = true;
@@ -57,6 +60,8 @@ function OwnedTool({
     setCommands({
       insertText: (text) =>
         active() ? current.current.insertText(text) : false,
+      insertCustomEmoji: (shortcode) =>
+        active() ? current.current.insertCustomEmoji(shortcode) : false,
       insertMention: (recipient) =>
         active() ? current.current.insertMention(recipient) : false,
       focus: () => {

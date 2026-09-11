@@ -86,18 +86,18 @@ export function mountEmojiMart({
   searchChange(value: string): void;
   entries: readonly CustomEmoji[];
   media(url: string): string | undefined;
-  select(value: string): void;
+  select(value: string, customEmoji?: string): void;
   close(): void;
 }) {
   active?.();
   let disposed = false;
-  const values = new Map<string, string>();
+  const values = new Map<string, { literal: string; shortcode: string }>();
   const emojis = entries.flatMap(({ shortcode, url }) => {
     const src = media(url);
     if (!src) return [];
     const id = `${prefix}${encodeURIComponent(scope)}/${shortcode}`;
     const literal = `:${shortcode}:`;
-    values.set(id, literal);
+    values.set(id, { literal, shortcode });
     // Match Mart's first-hyphen query normalization as well as individual words.
     const terms = [shortcode, literal].flatMap((name) => [
       name,
@@ -145,8 +145,12 @@ export function mountEmojiMart({
     theme: parseColorMode(host.ownerDocument.documentElement.dataset.colorMode),
     onEmojiSelect: (emoji: { native?: string; id?: string }) => {
       if (disposed) return;
-      const value = emoji.native ?? values.get(emoji.id ?? "");
-      if (value) select(value);
+      if (emoji.native) {
+        select(emoji.native);
+        return;
+      }
+      const custom = values.get(emoji.id ?? "");
+      if (custom) select(custom.literal, custom.shortcode);
     },
   }) as unknown as HTMLElement;
   // The documented web-component attribute updates in place: do not recreate the

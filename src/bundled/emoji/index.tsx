@@ -32,12 +32,14 @@ export const apply: PluginModule["apply"] = (ctx) => {
       scope,
       disabled,
       insertText,
+      insertCustomEmoji,
     }: ComposerToolProps) => (
       <EmojiPicker
         session={session}
         scope={scope}
         disabled={disabled}
         insert={insertText}
+        insertCustomEmoji={insertCustomEmoji}
       />
     ),
   });

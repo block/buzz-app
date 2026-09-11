@@ -28,11 +28,13 @@ export function EmojiPicker({
   scope,
   disabled,
   insert,
+  insertCustomEmoji,
 }: {
   session: RelaySession;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
+  insertCustomEmoji(shortcode: string): void;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
@@ -51,7 +53,9 @@ export function EmojiPicker({
   const host = useRef<HTMLDivElement>(null);
   const search = useRef("");
   const onInsert = useRef(insert);
+  const onInsertCustomEmoji = useRef(insertCustomEmoji);
   onInsert.current = insert;
+  onInsertCustomEmoji.current = insertCustomEmoji;
   const id = useId();
   const community = communityFromScope(scope);
   const gifs = community
@@ -145,8 +149,9 @@ export function EmojiPicker({
           },
           entries: catalog.status === "ready" ? catalog.entries : [],
           media: session.media,
-          select: (value) => {
-            onInsert.current(value);
+          select: (value, customEmoji) => {
+            if (customEmoji) onInsertCustomEmoji.current(customEmoji);
+            else onInsert.current(value);
             setOpen(false);
           },
           close: () => setOpen(false),

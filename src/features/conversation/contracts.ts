@@ -12,6 +12,8 @@ export type ComposerToolProps = Readonly<{
   disabled: boolean;
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
+  /** Insert a catalog-backed custom emoji without exposing its shortcode as draft text. */
+  insertCustomEmoji(shortcode: string): boolean;
   /** Atomically insert display text and explicit notification intent at the caret.
    * Prose never resolves to identities. Membership is checked by session delivery.
    * Like insertText, this command is revoked with the tool/destination lifetime. */

@@ -478,7 +478,7 @@ export const test = base.extend({
         const requestedCommunity = decodeURIComponent(parts[3]);
         const community =
           requestedCommunity.match(
-            /^https:\/\/(primary|secondary)\.fixture\.invalid$/,
+            /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
           )?.[1] ?? requestedCommunity;
         let raw = "";
         for await (const part of request) raw += part;

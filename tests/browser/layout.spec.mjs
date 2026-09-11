@@ -422,7 +422,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = ["Home", "Messages", "Projects"];
+  const titles = ["Home", "Messages", "Projects", "Agent channels", "Agents"];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -455,7 +455,12 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     exact: true,
   });
   await projects.click();
-  await expect(nav.getByRole("button")).toHaveText(["Home", "Messages"]);
+  await expect(nav.getByRole("button")).toHaveText([
+    "Home",
+    "Messages",
+    "Agent channels",
+    "Agents",
+  ]);
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
   // Leave registration order reversed so every navigation surface must sort it.
@@ -464,13 +469,20 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     exact: true,
   });
   await channels.click();
-  await expect(nav.getByRole("button")).toHaveText(["Home", "Projects"]);
+  await expect(nav.getByRole("button")).toHaveText([
+    "Home",
+    "Projects",
+    "Agent channels",
+    "Agents",
+  ]);
   await channels.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Home", exact: true }).click();
   await expect(page.getByRole("main").getByRole("button")).toHaveText([
     "Messages",
     "Projects",
+    "Agent channels",
+    "Agents",
     "Make it yoursSettings",
   ]);
   await button(page, "Find a page").click();

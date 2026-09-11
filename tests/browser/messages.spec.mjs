@@ -60,9 +60,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       exact: true,
     });
     const choose = (name) =>
-      page
-        .getByRole("button", { name, exact: true })
-        .evaluate((button) => button.click());
+      page.getByRole("button", { name, exact: true }).click();
     const gap = () =>
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
@@ -171,22 +169,13 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
           );
       }
     });
-    for (const [index, kind] of [9, 40002].entries()) {
-      await page.evaluate((value) => window.messagesFixture.deep(value), kind);
-      await expect(
-        panel.getByText(`${62 + index} replies shown`, { exact: true }),
-      ).toBeVisible();
-      await expect(
-        history.getByText("literal deep message", { exact: false }).last(),
-      ).toBeVisible();
-    }
     await history.evaluate((el) => {
       el.scrollTop = 100;
       el.dispatchEvent(new Event("scroll"));
     });
     await page.evaluate(() => window.messagesFixture.live());
     await expect(
-      panel.getByText("64 replies shown", { exact: true }),
+      panel.getByText("62 replies shown", { exact: true }),
     ).toBeVisible();
     await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(100);
     await draft.fill("keep first draft");
@@ -238,6 +227,15 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(draft).toHaveValue("");
     await choose("Switch scope");
     await expect(draft).toHaveValue("keep first draft");
+    for (const [index, kind] of [9, 40002].entries()) {
+      await page.evaluate((value) => window.messagesFixture.deep(value), kind);
+      await expect(
+        panel.getByText(`${63 + index} replies shown`, { exact: true }),
+      ).toBeVisible();
+      await expect(
+        history.getByText("literal deep message", { exact: false }).last(),
+      ).toBeVisible();
+    }
     expect(errors).toEqual([]);
   } finally {
     await server.close();

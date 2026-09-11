@@ -117,6 +117,7 @@ export const test = base.extend({
         ]);
     }
     // Opt-in upstream thread evidence: no client cache/read-state injection.
+    // Uppercase signed references exercise canonical thread/unread parity.
     const threadReplies = new Map();
     const threadSummaries = [];
     if (threadUnread) {
@@ -135,7 +136,7 @@ export const test = base.extend({
             9,
             [
               ["h", "alpha"],
-              ["e", root.id, "", "reply"],
+              ["e", root.id.toUpperCase(), "", "reply"],
             ],
             `Unread reply ${index}`,
             peerKey,
@@ -166,7 +167,7 @@ export const test = base.extend({
         9,
         [
           ["h", "alpha"],
-          ["e", root.id, "", "reply"],
+          ["e", root.id.toUpperCase(), "", "reply"],
           ["broadcast", "1"],
         ],
         "Broadcast reply",
@@ -181,8 +182,8 @@ export const test = base.extend({
           9,
           [
             ["h", "alpha"],
-            ["e", root.id, "", "root"],
-            ["e", broadcast.id, "", "reply"],
+            ["e", root.id.toUpperCase(), "", "root"],
+            ["e", broadcast.id.toUpperCase(), "", "reply"],
           ],
           "Broadcast descendant",
           peerKey,

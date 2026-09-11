@@ -81,6 +81,10 @@ intent; unknown/observed-zero omit the dot, not assert complete read history.
 Each mounted button subscribes to its own thread, without fetching thread history.
 Opening/hovering a button does not acknowledge replies; the existing focused
 viewport dwell in `ThreadPanel` supplies individual-message reading intent.
+Unread ancestry uses the same canonical marked-reference parser as thread opening
+and row projection (case-insensitive hex, last valid marker wins). Resolution still
+requires bounded, retained same-channel message evidence; references alone do not
+grant access or trigger a read.
 
 ## Durable sync and privacy
 

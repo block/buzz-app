@@ -11,9 +11,31 @@ for (const mode of ["light", "dark"]) {
       localStorage.setItem("buzz-appearance.v1", mode);
     }, mode);
     await open(page, app);
-    const avatar = page
-      .getByRole("button", { name: "View Fixture Reader profile", exact: true })
-      .first();
+    // Virtua mounts overscan outside the viewport. Pin a visible row instead
+    // of letting an arbitrary first avatar trigger automation-driven scrolling.
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const messageId = await history.evaluate((element) => {
+      const bounds = element.getBoundingClientRect();
+      const avatar = Array.from(
+        element.querySelectorAll(
+          'button[aria-label="View Fixture Reader profile"]',
+        ),
+      ).find((button) => {
+        const rect = button.getBoundingClientRect();
+        return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+      });
+      if (!avatar) throw new Error("No fully visible profile avatar");
+      return avatar.closest("[data-message-id]").dataset.messageId;
+    });
+    const avatar = history
+      .locator(`[data-message-id="${messageId}"]`)
+      .getByRole("button", {
+        name: "View Fixture Reader profile",
+        exact: true,
+      });
+    await expect(avatar).toBeInViewport({ ratio: 1 });
     await avatar.click();
     const panel = page.getByRole("complementary", {
       name: "Profile",

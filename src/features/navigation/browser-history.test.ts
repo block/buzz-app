@@ -127,3 +127,25 @@ it("driver attachment is exclusive even after detachment", () => {
   expect(() => driver.attach(() => {})).toThrow("already has an owner");
   driver.dispose();
 });
+
+it("resolving a visit rewrites its address without losing identity or the forward branch", () => {
+  const b = browser();
+  const driver = createBrowserHistory(b.host);
+  const host = createNavigationController(driver);
+  void host.navigation.open(settings);
+  const forward = host.navigation.snapshot().entry;
+  host.navigation.back();
+  const current = host.navigation.snapshot().attempt;
+  expect(
+    host.resolve(current, { version: 1, kind: "settings", section: "profile" }),
+  ).toBe(true);
+  expect(host.navigation.snapshot().entry.id).toBe(current.entry.id);
+  expect(host.navigation.snapshot().canGoForward).toBe(true);
+  expect(b.length()).toBe(2);
+  expect(b.host.location.hash).toBe(
+    hash({ version: 1, kind: "settings", section: "profile" }),
+  );
+  host.navigation.forward();
+  expect(host.navigation.snapshot().entry).toEqual(forward);
+  host.dispose();
+});

@@ -91,9 +91,11 @@ export function createBrowserHistory(host: Window): NavigationHistory {
     snapshot = snapshotOf();
     controller?.();
   }
-  function write(target: OpenTarget, replace: boolean) {
+  function write(target: OpenTarget, replace: boolean, resolve = false) {
     if (disposed) return;
-    const entry = navigationEntry(target);
+    const entry = resolve
+      ? Object.freeze({ id: stamp.entry.id, target: parseOpenTarget(target) })
+      : navigationEntry(target);
     if (
       !replace &&
       !stamp.invalidAddress &&
@@ -189,6 +191,7 @@ export function createBrowserHistory(host: Window): NavigationHistory {
       };
     },
     push: (target) => write(target, false),
+    resolve: (target) => write(target, true, true),
     replace: (target) => write(target, true),
     back() {
       if (!disposed && snapshot.canGoBack) host.history.back();

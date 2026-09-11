@@ -59,21 +59,22 @@ export function ChannelsPage({
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  const sessionNavigation = navigation?.forSession(relay, session);
   useEffect(() => {
-    if (!navigation) return;
+    if (!navigation || !sessionNavigation) return;
     if (
       navigation.target.kind === "conversation" &&
       navigation.target.messageId
     )
-      navigation.complete({ status: "failed", reason: "unavailable" });
+      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
     else if (
       session.status === "disconnected" &&
       navigation.target.kind === "page"
     )
-      navigation.complete({ status: "opened" });
+      sessionNavigation.complete({ status: "opened" });
     else if (session.status === "error")
-      navigation.complete({ status: "failed", reason: "unavailable" });
-  }, [navigation, session.status]);
+      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, sessionNavigation, session.status]);
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" ? (
@@ -111,7 +112,7 @@ export function ChannelsPage({
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
           queries={session.session}
-          navigation={navigation}
+          navigation={sessionNavigation}
           navigator={navigator}
           viewer={session.viewer}
           panels={panels}
@@ -197,30 +198,19 @@ function ChannelWorkspace({
       navigation?.complete({ status: "failed", reason: "unavailable" });
     if (!requestedChannel && !current && list.status === "ready")
       navigation?.complete({ status: "opened" });
-    if (!requestedChannel && current && navigation && navigator && viewer) {
-      // Resolve the page's saved default once into this visit, not an extra history hop.
-      void navigator.open(
-        {
-          version: 1,
-          kind: "conversation",
-          channelId: current.id,
-          scope: {
-            viewer,
-            communityOrigin: scope.slice(0, -(viewer.length + 1)),
-          },
+    if (!requestedChannel && current && navigation && viewer) {
+      // Resolve the saved default within this attempt, keeping its caller and deadline.
+      navigation.resolve({
+        version: 1,
+        kind: "conversation",
+        channelId: current.id,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
         },
-        { replace: true },
-      );
+      });
     }
-  }, [
-    requestedChannel,
-    current,
-    list.status,
-    navigation,
-    navigator,
-    viewer,
-    scope,
-  ]);
+  }, [requestedChannel, current, list.status, navigation, viewer, scope]);
   const showingThread = thread?.channelId === current?.id ? thread : undefined;
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
@@ -531,8 +521,10 @@ function ChannelBody({
 }) {
   const window = useChannelWindow(queries.channels, channelId);
   useEffect(() => {
+    // Only the normalized conversation attempt can acknowledge its channel.
+    // A warm child effect runs before the parent's default resolution effect.
     if (
-      navigation?.target.kind === "conversation" &&
+      navigation?.target.kind !== "conversation" ||
       navigation.target.messageId
     )
       return;

@@ -25,7 +25,9 @@ export function Settings({
   plugins: PluginManager;
   communities: Communities;
   appearance: Appearance;
-  navigation?: import("../features/navigation/service").PageNavigation;
+  navigation?:
+    | import("../features/navigation/service").PageNavigation
+    | undefined;
   onSection?: (section: string) => void;
 }) {
   const [selected, setSelected] =

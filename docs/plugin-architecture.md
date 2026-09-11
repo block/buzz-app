@@ -231,7 +231,21 @@ for retry, rather than silently opening another page.
 Pages receive optional `navigation` in `PageProps`. Ordinary pages acknowledge a
 successful mount inside the render boundary. Pages declaring `handlesNavigation`
 acknowledge their domain presentation with `navigation.complete(...)`; Channels
-waits for its requested channel window. `route: { version, validate }` opts a page
+waits for its requested channel window. `navigation.resolve(target)` normalizes a
+pending default destination within the same visit, caller and original deadline;
+it does not start competing navigation. Normalization revokes the old request.
+
+A page request belongs to the exact active registration and mounted host
+presentation. Its signal aborts and its callbacks return false after removal,
+replacement, unmount or scoped-community invalidation, even before React cleanup.
+A reactivated provider receives a fresh request for the still-pending visit.
+Session-aware pages bind each rendered connection with
+`navigation.forSession(relay, connection)` and pass that request to their
+session-owned subtree; Channels demonstrates this boundary. Replacement revokes
+the bound request synchronously without revoking static page authority or resetting
+the caller's deadline. These are trusted-plugin lifecycle fences, not a sandbox.
+
+`route: { version, validate }` opts a page
 into versioned route parameters. These are host-matched preview types through
 `@buzz/author`, not a cross-version runtime compatibility promise.
 

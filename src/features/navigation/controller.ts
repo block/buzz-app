@@ -154,8 +154,27 @@ export function createNavigationController(
     emit();
     return promise;
   }
+  let resolving: Operation | undefined;
   const unsubscribe = history.attach(() => {
-    transaction(start);
+    transaction(() => {
+      if (resolving && active === resolving) {
+        // Domain normalization keeps the caller, visit, signal and original deadline.
+        // Rotate the immutable attempt token so an old presentation cannot complete it.
+        const state = history.snapshot();
+        active.attempt = Object.freeze({
+          ...active.attempt,
+          entry: state.current,
+        });
+        snapshot = Object.freeze({
+          ...snapshot,
+          entry: state.current,
+          attempt: active.attempt,
+          canGoBack: state.canGoBack,
+          canGoForward: state.canGoForward,
+        });
+        emit();
+      } else start();
+    });
   });
   transaction(start);
   const navigation: Navigation = Object.freeze({
@@ -214,6 +233,30 @@ export function createNavigationController(
   });
   return {
     navigation,
+    /** Normalize a pending presentation, not a new intent; never reset its deadline. */
+    resolve(attempt: OpenAttempt, input: OpenTarget) {
+      return transaction(() => {
+        if (
+          disposed ||
+          attempt !== active.attempt ||
+          attempt.signal.aborted ||
+          !active.pending
+        )
+          return false;
+        try {
+          const target = parseOpenTarget(input);
+          if (targetKey(target) === targetKey(snapshot.entry.target))
+            return true;
+          resolving = active;
+          history.resolve(target);
+          return true;
+        } catch {
+          return false;
+        } finally {
+          resolving = undefined;
+        }
+      });
+    },
     /** Acknowledge only the exact active attempt after actual presentation. */
     complete(
       attempt: OpenAttempt,

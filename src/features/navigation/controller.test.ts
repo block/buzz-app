@@ -152,3 +152,61 @@ describe("navigation attempts over one history driver", () => {
     expect(host.complete(attempt, { status: "opened" })).toBe(false);
   });
 });
+
+it("default resolution preserves visit, promise, signal and deadline while revoking the old completion token", async () => {
+  vi.useFakeTimers();
+  const { host, navigation: nav } = setup();
+  const pending = nav.open(page);
+  const old = nav.snapshot().attempt;
+  await vi.advanceTimersByTimeAsync(14_000);
+  expect(host.resolve(old, settings)).toBe(true);
+  const current = nav.snapshot().attempt;
+  expect(current.entry.id).toBe(old.entry.id);
+  expect(current.signal).toBe(old.signal);
+  expect(old.signal.aborted).toBe(false);
+  expect(current.entry.target).toEqual(settings);
+  expect(host.complete(old, { status: "opened" })).toBe(false);
+  expect(host.resolve(old, page)).toBe(false);
+  await vi.advanceTimersByTimeAsync(1_000);
+  await expect(pending).resolves.toEqual({
+    status: "failed",
+    reason: "timeout",
+  });
+  expect(host.resolve(current, page)).toBe(false);
+});
+
+it("resolved presentation settles the original caller and cannot outlive new intent or cancellation", async () => {
+  const { host, navigation: nav } = setup();
+  const first = nav.open(page);
+  host.resolve(nav.snapshot().attempt, settings);
+  host.complete(nav.snapshot().attempt, { status: "opened" });
+  await expect(first).resolves.toEqual({ status: "opened" });
+  const second = nav.open(page);
+  host.resolve(nav.snapshot().attempt, settings);
+  const retired = nav.snapshot().attempt;
+  const next = nav.open(homeTarget);
+  await expect(second).resolves.toEqual({ status: "superseded" });
+  expect(retired.signal.aborted).toBe(true);
+  expect(host.resolve(retired, page)).toBe(false);
+  expect(host.complete(retired, { status: "opened" })).toBe(false);
+  const cancelled = nav.snapshot().attempt;
+  host.cancel();
+  await expect(next).resolves.toEqual({ status: "cancelled" });
+  expect(host.resolve(cancelled, page)).toBe(false);
+});
+
+it("resolution observers may introduce real competing intent without capturing the original promise", async () => {
+  const { host, navigation: nav } = setup();
+  const first = nav.open(page);
+  let next: ReturnType<typeof nav.open> | undefined;
+  const off = nav.subscribe(() => {
+    if (nav.snapshot().entry.target.kind === "settings")
+      next = nav.open(homeTarget);
+  });
+  host.resolve(nav.snapshot().attempt, settings);
+  expect(nav.snapshot().entry.target).toEqual(homeTarget);
+  host.complete(nav.snapshot().attempt, { status: "opened" });
+  await expect(first).resolves.toEqual({ status: "superseded" });
+  await expect(next).resolves.toEqual({ status: "opened" });
+  off();
+});

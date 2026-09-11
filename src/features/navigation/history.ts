@@ -15,6 +15,8 @@ export interface NavigationHistory {
   /** Exactly one controller attachment for the lifetime of this driver. UI observes Navigation. */
   attach(controller: () => void): () => void;
   push(target: OpenTarget): void;
+  /** Normalize this visit's resolved destination without creating another visit. */
+  resolve(target: OpenTarget): void;
   replace(target: OpenTarget): void;
   back(): void;
   forward(): void;
@@ -70,6 +72,14 @@ export function createMemoryHistory(
         -capacity,
       );
       index = entries.length - 1;
+      emit();
+    },
+    resolve(target) {
+      if (disposed) return;
+      entries[index] = Object.freeze({
+        id: snapshot.current.id,
+        target: parseOpenTarget(target),
+      });
       emit();
     },
     replace(target) {

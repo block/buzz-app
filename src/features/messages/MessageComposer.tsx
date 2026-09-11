@@ -1,9 +1,22 @@
 import { ArrowUp, X } from "lucide-react";
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
+import {
+  customEmojiOnlySpans,
+  isUnicodeEmojiOnly,
+  leadingCustomEmojiSpans,
+  usesLargeEmojiPresentation,
+} from "./emoji-size";
 import {
   mentionDraft,
   editMentionDraft,
@@ -76,8 +89,45 @@ function Composer({
   const setDraft = (text: string) =>
     saveDraft(editMentionDraft(valueRef.current, text));
   const [error, setError] = useState<string>();
+  const [failedCustomEmoji, setFailedCustomEmoji] = useState<string>();
+  const [selection, setSelection] = useState({ start: 0, end: 0 });
   const outbox = session.outbox;
+  const emojiCatalog = useSyncExternalStore(
+    session.emoji.subscribe,
+    session.emoji.snapshot,
+    session.emoji.snapshot,
+  );
+  const customEmojiOnly = customEmojiOnlySpans(draft, emojiCatalog.entries);
+  const leadingCustomEmoji = customEmojiOnly.length
+    ? { spans: [], end: 0 }
+    : leadingCustomEmojiSpans(draft, emojiCatalog.entries);
+  const customEmoji = customEmojiOnly.length
+    ? customEmojiOnly
+    : leadingCustomEmoji.spans;
+  const customEmojiSources = customEmoji.map(({ emoji, start, end }) => ({
+    start,
+    end,
+    key: `${start}:${emoji.shortcode}`,
+    source: session.media(emoji.url),
+  }));
+  const showCustomEmoji =
+    !!customEmojiSources.length &&
+    customEmojiSources.every(
+      ({ source }) => !!source && source !== failedCustomEmoji,
+    );
+  const showCustomEmojiOnly =
+    showCustomEmoji &&
+    customEmojiOnly.length > 0 &&
+    customEmojiOnly.length <= 3;
+  const showLeadingCustomEmoji =
+    showCustomEmoji &&
+    !customEmojiOnly.length &&
+    !!leadingCustomEmoji.spans.length;
   const input = useRef<HTMLTextAreaElement>(null);
+  const customEmojiMirror = useRef<HTMLSpanElement>(null);
+  const inlineEmojiGroup = useRef<HTMLSpanElement>(null);
+  const inlinePrefixMeasure = useRef<HTMLSpanElement>(null);
+  const [inlineTextIndent, setInlineTextIndent] = useState(0);
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
     input,
@@ -108,6 +158,43 @@ function Composer({
     input.current?.setSelectionRange(caret.current, caret.current);
     caret.current = undefined;
   });
+  useLayoutEffect(() => {
+    if (!showLeadingCustomEmoji) {
+      setInlineTextIndent(0);
+      return;
+    }
+    const emoji = inlineEmojiGroup.current;
+    const prefix = inlinePrefixMeasure.current;
+    if (
+      !emoji ||
+      !prefix ||
+      typeof emoji.getBoundingClientRect !== "function" ||
+      typeof prefix.getBoundingClientRect !== "function"
+    )
+      return;
+    const resize = () => {
+      const next =
+        emoji.getBoundingClientRect().width -
+        prefix.getBoundingClientRect().width;
+      setInlineTextIndent((current) =>
+        Math.abs(current - next) < 0.25 ? current : next,
+      );
+    };
+    resize();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(resize);
+    observer.observe(emoji);
+    observer.observe(prefix);
+    return () => observer.disconnect();
+  }, [showLeadingCustomEmoji]);
+  useLayoutEffect(() => {
+    const mirror = customEmojiMirror.current;
+    if (mirror) mirror.scrollTop = input.current?.scrollTop ?? 0;
+  });
+  function syncCustomEmojiScroll(element: HTMLTextAreaElement) {
+    if (customEmojiMirror.current)
+      customEmojiMirror.current.scrollTop = element.scrollTop;
+  }
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -175,7 +262,12 @@ function Composer({
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
     return (
-      typeof edit.text === "string" && insert(`${edit.text} `, undefined, query)
+      typeof edit.text === "string" &&
+      insert(
+        `${edit.text}${isUnicodeEmojiOnly(edit.text) ? "" : " "}`,
+        undefined,
+        query,
+      )
     );
   }
   function send() {
@@ -234,59 +326,144 @@ function Composer({
           replace={replaceCompletion}
         />
       )}
-      <textarea
-        ref={input}
-        id={inputId}
-        disabled={disabled}
-        value={draft}
-        maxLength={16000}
-        rows={2}
-        placeholder={label}
-        onFocus={() => completion.observe(true)}
-        onBlur={() => completion.invalidate()}
-        onSelect={() => completion.observe()}
-        onCompositionStart={() => {
-          completion.composing.current = true;
-          completion.invalidate();
-        }}
-        onCompositionEnd={() => {
-          completion.composing.current = false;
-          completion.observe(true);
-        }}
-        // onInput also observes same-text replacements, which onChange omits.
-        onChange={() => {}}
-        onInput={(event) => {
-          const range = edit.current;
-          edit.current = undefined;
-          saveDraft(
-            editMentionDraft(
-              valueRef.current,
-              event.currentTarget.value,
-              range,
-            ),
-          );
-          completion.observe(true);
-        }}
-        onKeyDown={(event) => {
-          if (
-            event.nativeEvent.isComposing ||
-            event.nativeEvent.keyCode === 229 ||
-            completion.composing.current
-          )
-            return;
-          if (completion.keys.current?.(event)) return;
-          if (
-            event.key === "Enter" &&
-            !event.shiftKey &&
-            !event.altKey &&
-            !event.ctrlKey &&
-            !event.metaKey
-          ) {
-            event.preventDefault();
-            send();
+      <div className={styles.composerInput}>
+        <textarea
+          ref={input}
+          id={inputId}
+          disabled={disabled}
+          value={draft}
+          data-single-emoji={usesLargeEmojiPresentation(draft) || undefined}
+          data-custom-emoji-only={showCustomEmojiOnly || undefined}
+          data-leading-custom-emoji={showLeadingCustomEmoji || undefined}
+          style={
+            showCustomEmojiOnly
+              ? {
+                  paddingLeft: `calc(${customEmojiOnly.length * 44}px * var(--buzz-text-scale, 1))`,
+                }
+              : showLeadingCustomEmoji
+                ? { textIndent: `${inlineTextIndent}px` }
+                : undefined
           }
-        }}
-      />
+          maxLength={16000}
+          rows={2}
+          placeholder={label}
+          onFocus={() => completion.observe(true)}
+          onScroll={(event) => syncCustomEmojiScroll(event.currentTarget)}
+          onBlur={() => {
+            setSelection({ start: 0, end: 0 });
+            completion.invalidate();
+          }}
+          onSelect={(event) => {
+            setSelection({
+              start: event.currentTarget.selectionStart,
+              end: event.currentTarget.selectionEnd,
+            });
+            completion.observe();
+          }}
+          onCompositionStart={() => {
+            completion.composing.current = true;
+            completion.invalidate();
+          }}
+          onCompositionEnd={() => {
+            completion.composing.current = false;
+            completion.observe(true);
+          }}
+          // onInput also observes same-text replacements, which onChange omits.
+          onChange={() => {}}
+          onInput={(event) => {
+            const range = edit.current;
+            edit.current = undefined;
+            saveDraft(
+              editMentionDraft(
+                valueRef.current,
+                event.currentTarget.value,
+                range,
+              ),
+            );
+            setSelection({ start: 0, end: 0 });
+            completion.observe(true);
+          }}
+          onKeyDown={(event) => {
+            if (
+              event.nativeEvent.isComposing ||
+              event.nativeEvent.keyCode === 229 ||
+              completion.composing.current
+            )
+              return;
+            if (
+              event.shiftKey &&
+              ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+            ) {
+              completion.invalidate();
+              return;
+            }
+            if (completion.keys.current?.(event)) return;
+            if (
+              event.key === "Enter" &&
+              !event.shiftKey &&
+              !event.altKey &&
+              !event.ctrlKey &&
+              !event.metaKey
+            ) {
+              event.preventDefault();
+              send();
+            }
+          }}
+        />
+        {showCustomEmojiOnly && (
+          <span className={styles.composerCustomEmojiGroup} aria-hidden="true">
+            {customEmojiSources.map(({ start, end, key, source }) => (
+              <img
+                key={key}
+                className={styles.composerCustomEmoji}
+                data-selected={
+                  (selection.start < end && selection.end > start) || undefined
+                }
+                src={source}
+                alt=""
+                onError={() => setFailedCustomEmoji(source)}
+              />
+            ))}
+          </span>
+        )}
+        {showLeadingCustomEmoji && (
+          <span
+            ref={customEmojiMirror}
+            className={styles.composerCustomEmojiMirror}
+            aria-hidden="true"
+          >
+            <span
+              ref={inlineEmojiGroup}
+              className={styles.composerInlineCustomEmojiGroup}
+              data-composer-inline-emoji=""
+            >
+              {customEmojiSources.map(({ start, end, key, source }) => (
+                <img
+                  key={key}
+                  className={styles.composerCustomEmoji}
+                  data-selected={
+                    (selection.start < end && selection.end > start) ||
+                    undefined
+                  }
+                  src={source}
+                  alt=""
+                  onError={() => setFailedCustomEmoji(source)}
+                />
+              ))}
+            </span>
+            <span data-composer-inline-text="">
+              {draft.slice(leadingCustomEmoji.end)}
+            </span>
+            <span
+              ref={inlinePrefixMeasure}
+              className={styles.composerCustomEmojiPrefixMeasure}
+              data-composer-custom-emoji-prefix=""
+            >
+              {draft.slice(0, leadingCustomEmoji.end)}
+            </span>
+          </span>
+        )}
+      </div>
       {!!value.recipients.length && (
         <section
           className={styles.mentionRecipients}

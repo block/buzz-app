@@ -7,6 +7,7 @@ import { DeliveryNotice } from "./DeliveryNotice";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
+import { usesLargeEmojiPresentation } from "./emoji-size";
 
 export type MessageRowProps = {
   row: ChannelMessage;
@@ -48,6 +49,7 @@ export const MessageRow = memo(function MessageRow({
           : undefined;
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
+  const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -84,21 +86,44 @@ export const MessageRow = memo(function MessageRow({
             extensions={extensions}
             media={media}
             onOpenLink={onOpenLink}
+            largeEmoji={emojiOnly}
           />
           <DeliveryNotice row={row} retry={retry} />
           {row.attachments.map((attachment) => {
             const url = safeMessageUrl(attachment.url);
-            return url ? (
+            if (!url) return null;
+            const source = media(url);
+            return attachment.video || !source ? (
               <a
                 className={styles.attachment}
                 key={url}
                 href={url}
                 target="_blank"
-                rel="noopener noreferrer"
+                rel="noreferrer"
               >
                 {attachment.video ? "Video attachment" : "Image attachment"} ↗
               </a>
-            ) : null;
+            ) : (
+              <a
+                className={styles.attachmentImage}
+                key={url}
+                href={url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label="Open image attachment"
+                onClick={(event) => {
+                  if (
+                    !event.metaKey &&
+                    !event.ctrlKey &&
+                    !event.shiftKey &&
+                    onOpenLink(url)
+                  )
+                    event.preventDefault();
+                }}
+              >
+                <img src={source} alt="" loading="lazy" />
+              </a>
+            );
           })}
           {row.reactions.length > 0 && (
             <div className={styles.reactions}>

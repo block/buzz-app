@@ -28,6 +28,8 @@ export const test = base.extend({
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   sidebarUnread: [false, { option: true }],
+  savedSidebar: [false, { option: true }],
+  expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
@@ -44,6 +46,8 @@ export const test = base.extend({
       readState,
       threadUnread,
       sidebarUnread,
+      savedSidebar,
+      expectedPageFailure,
       largeSidebar,
       dmLabels,
       tallMessages,
@@ -89,6 +93,39 @@ export const test = base.extend({
         ? ["dm-peer"]
         : [];
     const rosterIds = [...channels, ...dmIds];
+    if (savedSidebar) {
+      const key = nip44.v2.utils.getConversationKey(userKey, viewer);
+      for (const community of ["primary", "secondary"]) {
+        const records = readEvents.get(community);
+        for (const [coordinate, value] of [
+          [
+            "channel-sections",
+            {
+              version: 1,
+              sections: [{ id: "work", name: "Work", order: 0 }],
+              assignments: { beta: "work" },
+            },
+          ],
+          [
+            "channel-stars",
+            {
+              version: 1,
+              channels: { alpha: { starred: true, updatedAt: 1 } },
+            },
+          ],
+        ]) {
+          records.set(
+            coordinate,
+            sign(
+              30078,
+              [["d", coordinate]],
+              nip44.v2.encrypt(JSON.stringify(value), key),
+              userKey,
+            ),
+          );
+        }
+      }
+    }
     const hiddenChannels = new Set();
     const streams = new Map();
     const histories = new Map();
@@ -225,6 +262,7 @@ export const test = base.extend({
         largeSidebar,
         readState,
         sidebarUnread,
+        savedSidebar,
         dmLabels,
         tallMessages,
         browserVersion: browser.version(),
@@ -322,7 +360,12 @@ export const test = base.extend({
                 event.id > filter.thread_cursor_id),
           )
           .slice(0, filter.limit);
-      if (readState && filter["#h"]?.length > 1)
+      // Unread evidence is not a top-level window, even for a one-ID final batch.
+      if (
+        filter.kinds?.includes(9) &&
+        !filter.top_level &&
+        filter["#h"]?.length
+      )
         return filter["#h"]
           .flatMap((channel) => [
             ...(histories.get(`${community}/${channel}`) ?? []),
@@ -432,7 +475,11 @@ export const test = base.extend({
       try {
         const parts = request.url.split("/");
         const route = parts.at(-1);
-        const community = parts[3];
+        const requestedCommunity = decodeURIComponent(parts[3]);
+        const community =
+          requestedCommunity.match(
+            /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
+          )?.[1] ?? requestedCommunity;
         let raw = "";
         for await (const part of request) raw += part;
         const body = raw ? JSON.parse(raw) : undefined;
@@ -440,13 +487,17 @@ export const test = base.extend({
         if (route === "register") return send(response, {});
         if (!["primary", "secondary"].includes(community))
           throw new Error(`Unexpected community: ${request.url}`);
+        if (route === "gif-info" && request.method === "GET")
+          return send(response, {});
+        if (route === "info" && request.method === "GET")
+          return send(response, { policy: null });
         if (route === "session") {
           report.sessions.push(community);
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
             writeKinds: [9],
-            relayUrl: `https://${community}.fixture.invalid`,
+            relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
         }
@@ -660,6 +711,10 @@ export const test = base.extend({
       expect(
         report.consoleErrors.filter(
           (message) =>
+            !(
+              expectedPageFailure &&
+              message.includes("Fixture page render failure")
+            ) &&
             !(
               relay?.expectedHttpErrors() &&
               /^Failed to load resource: the server responded with a status of 429/.test(

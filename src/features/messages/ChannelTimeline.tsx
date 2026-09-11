@@ -1,7 +1,7 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
 import type { ChannelWindow } from "../relay/contracts";
@@ -100,6 +100,7 @@ function Timeline({
     last?: string | undefined;
   }>({});
   const intent = useRef(0);
+  const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
@@ -133,6 +134,7 @@ function Timeline({
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => {
+      olderDemand.current = false;
       settled.current = false;
       writeView(scope, `scroll:${channelId}`, savedPosition.current);
       observer.disconnect();
@@ -229,18 +231,43 @@ function Timeline({
     });
     return () => cancelAnimationFrame(frame);
   }, [revealMessageId, rows, width]);
-  const loadNearTop = (element: HTMLElement) => {
-    if (
-      handle.current &&
-      userScrolled.current &&
-      window.hasMore &&
-      !window.historyLimited &&
-      !window.loadingOlder &&
-      !window.error &&
-      element.scrollTop < Math.max(3000, element.clientHeight * 4)
-    )
+  const loadNearTop = useCallback(
+    (element: HTMLElement, resume = false) => {
+      olderDemand.current = false;
+      if (
+        !handle.current ||
+        !userScrolled.current ||
+        window.status !== "ready" ||
+        !window.hasMore ||
+        window.historyLimited ||
+        window.loadingOlder ||
+        window.error ||
+        element.scrollTop >= Math.max(3000, element.clientHeight * 4)
+      )
+        return;
+      // Cached does not mean blocked: disconnected windows can still page over
+      // HTTP. Try ordinary demand first, retaining only a blocked cached gesture.
+      // A retained gesture waits for verification, not every cached row update.
+      if (resume && window.freshness === "cached") {
+        olderDemand.current = true;
+        return;
+      }
       queries.channels.loadOlder(channelId);
-  };
+      const after = queries.channels.window(channelId);
+      olderDemand.current =
+        window.freshness === "cached" &&
+        after.status === "ready" &&
+        after.hasMore &&
+        !after.loadingOlder &&
+        !after.historyLimited &&
+        !after.error;
+    },
+    [window, queries, channelId],
+  );
+  useLayoutEffect(() => {
+    if (olderDemand.current && scroller.current)
+      loadNearTop(scroller.current, true);
+  }, [loadNearTop]);
   const gesture = () => {
     intent.current++;
     userScrolled.current = true;
@@ -283,7 +310,12 @@ function Timeline({
           <button
             type="button"
             disabled={window.loadingOlder}
-            onClick={() => queries.channels.loadOlder(channelId)}
+            onClick={() => {
+              queries.channels.loadOlder(channelId);
+              const after = queries.channels.window(channelId);
+              if (after.loadingOlder || after.error || after.status !== "ready")
+                olderDemand.current = false;
+            }}
           >
             {window.loadingOlder ? "Loading older…" : "Load older messages"}
           </button>

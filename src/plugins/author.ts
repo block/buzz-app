@@ -38,3 +38,17 @@ export type {
   ReadMutationResult,
   ReadSyncSnapshot,
 } from "../features/relay/read-state";
+
+export type {
+  Navigation,
+  NavigationSnapshot,
+  OpenResult,
+  OpenFailure,
+} from "../features/navigation/controller";
+export type {
+  OpenTarget,
+  SharedTarget,
+  NavigationScope,
+  JsonValue,
+} from "../features/navigation/targets";
+export type { PageNavigation } from "../features/navigation/service";

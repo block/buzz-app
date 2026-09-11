@@ -11,7 +11,7 @@ import type {
   ReadMutationResult,
   ReadSyncSnapshot,
 } from "./read-state";
-import type { RelayReader } from "./reader";
+import type { Priority, RelayReader } from "./reader";
 import { threadReference } from "./thread-reference";
 
 export type UnreadSnapshot = Readonly<{
@@ -77,6 +77,7 @@ export function createUnread({
   const known = new Set<string>();
   const listeners = new Map<string, Set<() => void>>();
   const snapshots = new Map<string, UnreadSnapshot>();
+  const dirty = new Set<string>();
   const handles = new Set<() => void>();
   let bytes = 0;
   const allowed = (id: string) =>
@@ -241,28 +242,38 @@ export function createUnread({
   function snapshot(target: ReadTarget) {
     const key = keyFor(target),
       previous = snapshots.get(key);
-    if (previous) return previous;
-    const value = compute(Object.freeze({ ...target }));
-    if (snapshots.size >= 4096) {
+    if (previous && !dirty.delete(key)) return previous;
+    const value = compute(previous?.target ?? Object.freeze({ ...target }));
+    if (previous && equal(previous, value)) return previous;
+    if (!previous && snapshots.size >= 4096) {
       for (const key of snapshots.keys())
-        if (!listeners.has(key)) snapshots.delete(key);
+        if (!listeners.has(key)) {
+          snapshots.delete(key);
+          dirty.delete(key);
+        }
       if (snapshots.size >= 4096)
         throw new Error("Unread selector capacity reached");
     }
     snapshots.set(key, value);
     return value;
   }
-  function publish() {
+  function publish(channelIds?: ReadonlySet<string>) {
     if (closed) return;
     const changed: string[] = [];
     for (const [key, old] of snapshots) {
+      if (channelIds && !channelIds.has(old.target.channelId)) continue;
+      // Revisit dormant selectors lazily, retaining identity if unchanged.
+      if (!listeners.has(key)) {
+        dirty.add(key);
+        continue;
+      }
       const next = compute(old.target);
       if (!equal(old, next)) {
         snapshots.set(key, next);
         changed.push(key);
       }
     }
-    // Replace ALL projections before the first possibly reentrant callback.
+    // Replace/invalidate ALL affected projections before any reentrant callback.
     for (const key of changed)
       for (const listener of listeners.get(key) ?? []) notify(listener);
   }
@@ -299,46 +310,70 @@ export function createUnread({
     );
     publish();
   }
-  let accessKey = "";
+  // Names/previews do not affect unread. Read membership once, without a
+  // roster scan for every channel, and retain only the invalidation inputs.
+  const types = () =>
+    new Map(
+      channels
+        .list()
+        .channels.filter((channel) => channel.members?.includes(viewer))
+        .map((channel) => [channel.id, channel.channelType]),
+    );
+  let channelTypes = types();
+  let accessKey = [...channelTypes.keys()].sort().join(",");
   const stopChannels = channels.subscribeList(() => {
-    const next = channels
-      .list()
-      .channels.filter((channel) => allowed(channel.id))
-      .map((channel) => channel.id)
-      .sort()
-      .join(",");
+    const nextTypes = types();
+    const next = [...nextTypes.keys()].sort().join(",");
+    const changed = new Set(
+      [...nextTypes].flatMap(([id, type]) =>
+        channelTypes.get(id) !== type ? [id] : [],
+      ),
+    );
+    channelTypes = nextTypes;
     if (next === accessKey) {
-      // Metadata (notably DM type) changes projections, not reading/access epochs.
-      publish();
+      if (changed.size) publish(changed);
     } else {
       accessKey = next;
       purge();
     }
   });
-  async function repair() {
+  async function repair(priority: Priority = "foreground") {
     requested = true;
     if (closed) return;
     if (refresh) return refresh;
     const generation = epoch;
-    const signal = AbortSignal.any([
-      lifetime.signal,
-      AbortSignal.timeout(10000),
-    ]);
     refresh = (async () => {
       await reads.ensure();
+      if (closed || generation !== epoch) return;
       const ids = channels
         .list()
-        .channels.filter((channel) => allowed(channel.id))
+        .channels.filter((channel) => channel.members?.includes(viewer))
         .map((channel) => channel.id);
       if (!ids.length) return;
       try {
-        // ONE bounded recent observation across the roster, never one head request per row.
-        const result = await reader.read(
-          [{ kinds: [9, 40002], "#h": ids, include_aux: true, limit: 500 }],
-          { signal, priority: "background" },
-        );
-        if (closed || generation !== epoch) return;
-        accept(result);
+        // The relay caps aggregate explicit #h values at 128 per request.
+        // Keep roster scope: an unscoped read also includes unjoined open channels.
+        // Each bounded batch owns its queue-inclusive deadline after marker sync;
+        // optional profiles must not block the initial user-visible observation.
+        for (let offset = 0; offset < ids.length; offset += 128) {
+          const signal = AbortSignal.any([
+            lifetime.signal,
+            AbortSignal.timeout(10000),
+          ]);
+          const result = await reader.read(
+            [
+              {
+                kinds: [9, 40002],
+                "#h": ids.slice(offset, offset + 128),
+                include_aux: true,
+                limit: 500,
+              },
+            ],
+            { signal, priority },
+          );
+          if (closed || generation !== epoch) return;
+          if (!accept(result) || closed || generation !== epoch) return;
+        }
         freshness = "observed";
         error = undefined;
         publish();
@@ -355,7 +390,7 @@ export function createUnread({
     return refresh;
   }
   function accept(batch: readonly RelayEvent[]) {
-    if (closed) return;
+    if (closed) return false;
     const changed = new Set<string>();
     indexed = false;
     const incoming = new Map(batch.map((event) => [event.id, event]));
@@ -380,17 +415,28 @@ export function createUnread({
         error = "Unread observation capacity reached; refresh available";
         freshness = "stale";
         publish();
-        return;
+        return false;
       }
       events.set(event.id, event);
       bytes += size;
       known.add(channel);
       changed.add(channel);
+      // A signed deletion may target readable messages in several channels.
+      // Invalidate every affected projection, not only its explicit/first owner.
+      if (event.kind === 5 || event.kind === 9005)
+        for (const [name, id] of event.tags) {
+          const target =
+            name === "e" && id && (incoming.get(id) ?? events.get(id));
+          const affected = target && channelOf(target);
+          if (affected) changed.add(affected);
+        }
     }
     if (changed.size) {
+      const global = freshness !== "observed";
       freshness = "observed";
-      publish();
+      publish(global ? undefined : changed);
     }
+    return true;
   }
   function requireMessage(target: ReadTarget, id: string) {
     targetKey(target);
@@ -432,9 +478,9 @@ export function createUnread({
     },
     sync: reads.snapshot,
     subscribeSync: reads.subscribe,
-    ensure: () => (requested ? Promise.resolve() : repair()),
+    ensure: () => refresh ?? (requested ? Promise.resolve() : repair()),
     refresh: async () => {
-      await reads.refresh();
+      await reads.refresh("foreground");
       await repair();
     },
     retrySync: async () => {
@@ -536,7 +582,7 @@ export function createUnread({
     accept,
     purge,
     reconnect() {
-      if (requested) void reads.refresh().then(repair);
+      if (requested) void reads.refresh().then(() => repair("background"));
     },
     stale() {
       epoch++;
@@ -563,6 +609,7 @@ export function createUnread({
       stopChannels();
       listeners.clear();
       snapshots.clear();
+      dirty.clear();
       events.clear();
       reads.dispose();
     },

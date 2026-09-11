@@ -55,6 +55,21 @@ The workspace React key includes community/viewer scope **and** connection
 generation. This resets session-owned component state on switching or reconnecting;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
+Saved sidebar groups, ordering, assignments and stars live in the session's
+`sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
+one initial read; `refresh()` explicitly reloads/retries while retaining the last
+good snapshot through loading/errors. Page exits neither restart nor cancel that
+read. Cache clearing and session disposal cancel it and discard decoded data;
+late completion cannot repopulate a retired snapshot. These are account-owned
+preferences, not channel access grants: sidebar sections still intersect the
+authorized roster. There is no new disk cache or automatic cross-device sync.
+
+Search, collapsed section keys and sidebar scroll remain separate, scoped view
+intent. They are saved on page exit and restored before paint when the roster and
+groups are available; navigation history does not own them. The saved-groups
+browser regression records every visible return frame and holds the redundant
+decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
+
 ## Performance and correctness carried from Astra
 
 The port retains the prepared-store implementation and its behavior tests:
@@ -63,11 +78,16 @@ The port retains the prepared-store implementation and its behavior tests:
 - Three unpinned history windows; each caps at 2,400 rows or 8 MiB. Mounted readers
   are not evicted by speculative preparation. A budget cap is distinct from EOF.
 - Three read slots, at most one background request, with foreground promotion and
-  deduplication. Hover/focus prepares likely next channels. Discovery restores
-  authorized disk heads but does not fetch heads across the roster; network reads
-  belong to intent, selection and retained-window live catch-up. Optional profile
-  enrichment stays background. Selecting an already-queued catch-up promotes that
-  existing read without adding a request or resetting its deadline.
+  deduplication. Hover/focus prepares at most one speculative head at a time;
+  superseded hints do not form a backlog. That shared head keeps foreground
+  priority so selection cannot inherit a host-side background wait. Discovery
+  restores authorized disk heads immediately after roster authorization, without
+  waiting for optional channel names, and does not fetch heads across the roster.
+  Verified heads save before optional profile enrichment; changed profiles can
+  enrich the disk record afterward. Network reads belong to intent, selection and
+  retained-window live catch-up. Optional profile enrichment stays background.
+  Selecting an already-queued catch-up promotes that existing read without adding
+  a request or resetting its deadline.
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
   and a bounded avatar preparation cache. Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour

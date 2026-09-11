@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
@@ -6,6 +7,7 @@ const heads = (app, channel) =>
   app.report.queries.filter(
     ({ filter }) =>
       filter.kinds?.includes(9) &&
+      filter.top_level === true &&
       filter["#h"]?.includes(channel) &&
       filter.until === undefined,
   );
@@ -17,7 +19,11 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
   page.on("request", (request) => {
     if (!new URL(request.url()).pathname.endsWith("/query")) return;
     for (const filter of request.postDataJSON() ?? [])
-      if (filter.kinds?.includes(9) && filter.until === undefined)
+      if (
+        filter.kinds?.includes(9) &&
+        filter.top_level === true &&
+        filter.until === undefined
+      )
         submittedHeads.push(filter);
   });
   const labelReads = () =>
@@ -34,11 +40,25 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
     // The actual label hook has >1,000 missing participants. Keep its profile
     // response held through cold opening; do not bypass that production caller.
     expect(heads(app, "beta")).toHaveLength(0);
-    await page.getByRole("button", { name: "Beta", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Beta", exact: true })
+      .evaluate((button) => {
+        performance.mark("cold-beta-click");
+        button.click();
+      });
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
     await expect(page.locator("[data-message-id]").first()).toBeVisible();
+    app.report.measurements.push({
+      name: "Beta",
+      coldVisibleUpperBoundMs: await page.evaluate(
+        () =>
+          performance.now() -
+          performance.getEntriesByName("cold-beta-click").at(-1).startTime,
+      ),
+      note: "Includes Playwright visibility assertion roundtrip; warm times use browser paint clock",
+    });
     expect(heads(app, "beta").length).toBeGreaterThan(0);
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
@@ -98,6 +118,23 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
       expect(visibleMs).toBeLessThan(100);
     }
     expect(submittedHeads).toHaveLength(before);
+    const diagnostics = page
+      .locator("summary")
+      .filter({ hasText: /^Relay timings$/ });
+    await diagnostics.evaluate((element) => {
+      for (
+        let parent = element.parentElement;
+        parent;
+        parent = parent.parentElement
+      )
+        if (parent.tagName === "DETAILS") parent.open = true;
+    });
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export timings" }).click();
+    const timings = await download;
+    app.report.relayTimings = JSON.parse(
+      await readFile(await timings.path(), "utf8"),
+    );
     expect(app.report.profileHolds.some((held) => held.pending)).toBe(true);
     expect(app.report.profileHolds.some((held) => held.aborted)).toBe(false);
   } finally {

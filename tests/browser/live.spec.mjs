@@ -10,7 +10,9 @@ const heads = (app, channel) =>
   app.report.queries.filter(
     ({ filter }) =>
       filter.kinds?.includes(9) &&
-      filter["#h"]?.includes(channel) &&
+      filter["#h"]?.length === 1 &&
+      filter["#h"][0] === channel &&
+      filter.top_level === true &&
       filter.until === undefined,
   );
 async function ready(page, app) {
@@ -49,6 +51,28 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
     false,
   );
   app.relay.quotaNextHead("alpha", 2);
+  // A sidebar preview may reach the shared broker before the selected head.
+  // It must not consume the failure injected specifically for head catch-up.
+  const previewStatus = await page.evaluate(async () => {
+    const response = await fetch("/api/relay/primary/query", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Buzz-Read-Priority": "background",
+      },
+      body: JSON.stringify([
+        {
+          "#h": ["alpha", "beta"],
+          include_aux: true,
+          kinds: [40002, 9],
+          limit: 500,
+        },
+      ]),
+    });
+    return response.status;
+  });
+  expect(previewStatus).toBe(200);
+  expect(app.relay.rejected).toHaveLength(0);
   await retry(page).click();
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(

@@ -14,7 +14,7 @@ host-matched author preview, not a cross-version SDK or plugin sandbox.
 const target = { kind: "channel", channelId } as const;
 const snapshot = session.unread.snapshot(target);
 const unsubscribe = session.unread.subscribe(target, render);
-await session.unread.ensure(); // shared bounded background observation, not per-row fetch
+await session.unread.ensure(); // shared bounded observation, not per-row fetch
 
 // A custom reading UI owns one cancellable observation lease.
 const reading = session.unread.reading(channelId);
@@ -44,9 +44,22 @@ could hide unseen siblings. Oversized rows that never fit fully are not auto-rea
   auxiliary events and authorized deletions. It is **not an exact total or lower
   bound**: missing markers/deletions can overcount; missing history can undercount.
 - `coverage` and `freshness` describe message evidence, separately from `sync()`.
-  Evidence is capped at 4,096 events / 8 MiB; initial repair is one background
-  roster-wide read capped at 500, not a head request for every sidebar row. Repair
-  evidence does not seed channel windows, alter their cursors, or mark messages read.
+  Evidence is capped at 4,096 events / 8 MiB. Repair queries the membership roster
+  in sequential batches of at most 128 explicit channel IDs (the relay limit),
+  with up to 500 recent rows **per batch**, not a shared remainder or one head
+  request per sidebar row. A 278-channel roster therefore makes three reads.
+  Earlier results publish progressively and survive a later transport failure;
+  capacity overflow retains the existing visible error/clear policy and stops repair.
+  Querying every ID does not mean observing every channel: busy channels can still
+  consume their batch's sample, and missing thread roots can affect inherited markers.
+  Repair evidence does not seed channel windows, alter cursors, or mark messages read.
+- Initial marker/evidence observation and explicit evidence refresh are foreground
+  reads so optional profiles do not block them. Reconnect/periodic sync and marker
+  publication remain background. Each evidence batch gets its own queue-inclusive
+  10-second deadline **after** marker observation, rather than spending it waiting
+  for markers. Marker failure stays visible separately in `sync()` even when
+  evidence succeeds. Concurrent `ensure()` calls share active work; a failed attempt
+  needs explicit `refresh()` or reconnect, not an unlimited automatic retry loop.
 - `attentionCount` is a separate observed subset: DMs, mentions and replies to
   participating threads. It does not trigger notifications or implement mute policy.
 - `markThrough(target, messageId)` is explicit prefix intent through verified
@@ -144,6 +157,9 @@ durable account-owned intent survives without exposing revoked context projectio
   pagehide/pageshow tests establish handler behavior, not a full BFCache journey.
   Live-stream reconnect during a delayed departing navigation is a separate
   pre-existing host-lifecycle limitation; this is not a universal unload fence.
+- `unread-startup.test.ts`: production reader/session scheduling, large-roster
+  batching, progressive/partial failure, explicit/reconnect recovery and access/cache
+  fences; `read-state.test.ts` also checks both marker-discovery priority paths.
 - `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
   reverified disk-restore evidence without network content.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.

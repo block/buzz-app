@@ -1,7 +1,7 @@
 .customEmoji {
   display: inline-block;
-  width: 22px;
-  height: 22px;
+  width: var(--inline-emoji-size, 22px);
+  height: var(--inline-emoji-size, 22px);
   object-fit: contain;
   vertical-align: middle;
 }
@@ -12,17 +12,138 @@
   min-width: 0;
 }
 .emojiPopover {
+  --picker-container-radius: var(--radius-card);
+  --picker-inner-radius: calc(var(--picker-container-radius) - 8px);
+  --picker-search-radius: 8px;
+  --picker-scrollbar-space: 16px;
+  --picker-search-background: #f5f5f6;
+  --picker-search-foreground: #0a0a0a;
+  --picker-search-muted: #8d8d8d;
+  --picker-search-ring: #cecece;
+  --picker-tab-foreground: #0a0a0a;
+  --picker-tab-muted: #8d8d8d;
+  --picker-tab-selected: #f0f0f0;
+  --picker-scrollbar-thumb: #e8e8e8;
   position: absolute;
   bottom: 42px;
   left: 0;
   z-index: 5;
   max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  box-shadow: var(--elevation-card);
+}
+.sharedSearchIcon {
+  position: absolute;
+  top: 19px;
+  left: 18px;
+  z-index: 4;
+  color: var(--picker-search-muted);
+  pointer-events: none;
+}
+.emojiPopover[data-has-tabs] .sharedSearchIcon {
+  top: 67px;
+}
+[data-color-mode="dark"] .emojiPopover {
+  --picker-search-background: #161616;
+  --picker-search-foreground: #f5f5f5;
+  --picker-search-muted: #a6a6a6;
+  --picker-search-ring: #424242;
+  --picker-tab-foreground: #f5f5f5;
+  --picker-tab-muted: #a6a6a6;
+  --picker-tab-selected: #1c1c1c;
+  --picker-scrollbar-thumb: #424242;
+}
+@media (max-width: 900px) {
+  .emojiPopover {
+    --picker-container-radius: var(--radius-card-compact);
+    border-radius: var(--radius-card-compact);
+  }
+}
+.pickerTabs {
+  position: relative;
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-bottom: 1px solid var(--border);
+}
+.pickerTabs button {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  width: auto;
+  height: 30px;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-weight: 600;
+  line-height: 1;
+}
+.pickerTabs button:first-of-type {
+  border-top-left-radius: var(--picker-inner-radius);
+}
+.pickerTabs button:last-of-type {
+  border-top-right-radius: var(--picker-inner-radius);
+}
+@media (hover: hover) and (pointer: fine) {
+  .pickerTabs .inactiveTab:hover {
+    color: var(--picker-tab-foreground);
+  }
+}
+.pickerTabs .inactiveTab {
+  color: var(--picker-tab-muted);
+}
+.pickerTabs .activeTab {
+  background: transparent;
+  color: var(--picker-tab-foreground);
+}
+.tabIndicator {
+  --tab-indicator-x: 0;
+  --tab-indicator-scale: 1;
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 8px;
+  width: calc((100% - 20px) / 2);
+  border-radius: 8px;
+  background: var(--picker-tab-selected);
+  pointer-events: none;
+  transform: translateX(var(--tab-indicator-x))
+    scaleX(var(--tab-indicator-scale));
+  transform-origin: left center;
+}
+.pickerTabs[data-active-tab="emoji"] .tabIndicator {
+  border-top-left-radius: var(--picker-inner-radius);
+}
+.pickerTabs[data-active-tab="gifs"] .tabIndicator {
+  --tab-indicator-x: calc(100% + 4px);
+  border-top-right-radius: var(--picker-inner-radius);
+}
+.pickerTabs[data-animate] .tabIndicator {
+  transition: transform 160ms cubic-bezier(0.77, 0, 0.175, 1);
+}
+.pickerTabs[data-active-tab="emoji"][data-press-target="gifs"] .tabIndicator {
+  --tab-indicator-scale: 1.08;
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.pickerTabs[data-active-tab="gifs"][data-press-target="emoji"] .tabIndicator {
+  --tab-indicator-x: calc(92% + 4px);
+  --tab-indicator-scale: 1.08;
+  transition: transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .emojiMart em-emoji-picker {
-  height: min(435px, 50vh);
+  width: 100%;
+  height: min(348px, 40vh);
+  --border-radius: 0;
+  --shadow: none;
 }
 .emojiStatus {
-  padding: 8px 12px;
+  padding: 8px;
   border-radius: 10px;
   background: var(--surface);
   box-shadow: var(--elevation-card);
@@ -34,4 +155,178 @@
   padding: 4px 8px;
   border-radius: 6px;
   margin: 8px 0;
+}
+.gifPicker {
+  position: relative;
+  display: flex;
+  height: min(348px, 40vh);
+  min-height: 230px;
+  flex-direction: column;
+}
+.gifSearch {
+  position: relative;
+  display: flex;
+  height: 48px;
+  align-items: center;
+  margin: 4px 8px;
+}
+.gifSearch input {
+  width: calc(100% - 4px);
+  height: 28px;
+  padding: 0 32px;
+  margin-inline: 2px;
+  border: 0;
+  border-radius: var(--picker-search-radius);
+  background: var(--picker-search-background);
+  box-shadow: 0 0 0 1px var(--picker-search-background);
+  color: var(--picker-search-foreground);
+  font-family: var(--font-sans);
+  font-size: calc(14px * var(--buzz-text-scale, 1));
+  line-height: normal;
+  appearance: none;
+  transition:
+    opacity 100ms ease,
+    background 100ms ease,
+    box-shadow 100ms ease;
+}
+.gifSearch input::-webkit-search-decoration,
+.gifSearch input::-webkit-search-cancel-button,
+.gifSearch input::-webkit-search-results-button,
+.gifSearch input::-webkit-search-results-decoration {
+  appearance: none;
+}
+.gifSearch .gifClear {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  z-index: 1;
+  display: flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--picker-search-muted);
+  transform: translateY(-50%);
+}
+.gifSearch .gifClear:hover {
+  background: transparent;
+}
+.gifSearch .gifClear svg {
+  width: 16px;
+  height: 16px;
+}
+.gifSearch .gifClear svg circle {
+  fill: currentColor;
+  stroke: none;
+}
+.gifSearch .gifClear svg path {
+  fill: none;
+  stroke: var(--picker-search-background);
+}
+.gifSearch input::placeholder {
+  color: var(--picker-search-muted);
+}
+.gifSearch input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--picker-search-ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  .pickerTabs[data-animate] .tabIndicator {
+    transition-duration: 0ms;
+  }
+  .pickerTabs[data-press-target] .tabIndicator {
+    --tab-indicator-scale: 1;
+    transition-duration: 0ms;
+  }
+}
+.gifResults {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 12px 8px;
+  scrollbar-width: none;
+}
+.gifResults::-webkit-scrollbar {
+  display: none;
+}
+.gifScrollbarTrack {
+  position: absolute;
+  right: 4px;
+  z-index: 4;
+  width: 8px;
+  opacity: 0.6;
+  pointer-events: none;
+}
+.gifScrollbarThumb {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 8px;
+  min-height: 32px;
+  border-radius: 9999rem;
+  background: var(--picker-scrollbar-thumb);
+}
+.gifGrid {
+  columns: 2;
+  column-gap: 6px;
+}
+.gifGrid button {
+  display: block;
+  width: 100%;
+  height: auto;
+  padding: 0;
+  margin: 0 0 6px;
+  overflow: hidden;
+  break-inside: avoid;
+  border: 0;
+  border-radius: 8px;
+  background: var(--surface-hover);
+}
+.gifGrid button:hover {
+  filter: brightness(1.08);
+}
+.gifGrid img {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.gifLoading {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+.gifLoading span {
+  height: 82px;
+  border-radius: 8px;
+  background: var(--surface-hover);
+}
+.gifLoading span:nth-child(4n + 1),
+.gifLoading span:nth-child(4n) {
+  height: 112px;
+}
+.gifEmpty {
+  display: flex;
+  height: 100%;
+  min-height: 180px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.gifEmpty button {
+  width: auto;
+  height: auto;
+  padding: 5px 9px;
+}
+.gifAttribution {
+  padding: 7px 8px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: calc(11px * var(--buzz-text-scale, 1));
+  text-align: center;
 }

@@ -38,5 +38,6 @@ scan: install
     pnpm test
     cargo fmt --all --check
     pnpm build
+    pnpm design:test:browser
     cargo clippy --workspace --locked --all-targets -- -D warnings
     cargo test --manifest-path src-tauri/Cargo.toml --locked

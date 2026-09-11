@@ -3,7 +3,14 @@ import { isValidElement, type ReactNode, type ReactElement } from "react";
 import { ComposerTools } from "../conversation/ComposerTools";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { MessageComposer } from "./MessageComposer";
+import {
+  isEmojiOnly,
+  isUnicodeEmojiOnly,
+  singleCustomEmoji,
+  usesLargeEmojiPresentation,
+} from "./emoji-size";
 import type { RelaySession } from "../relay/session";
+import type { CustomEmoji } from "../relay/emoji";
 
 // Production handlers with a shallow hook harness; not DOM focus/layout evidence.
 const hooks = vi.hoisted(() => ({
@@ -47,6 +54,8 @@ vi.mock("react", async (original) => ({
       };
     return hooks.refs[i];
   },
+  useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
+    snapshot(),
   useState(initial: unknown) {
     const i = hooks.index++;
     if (!(i in hooks.states))
@@ -79,7 +88,12 @@ beforeEach(() => {
   });
 });
 afterEach(() => vi.unstubAllGlobals());
-function mount(threadRootId?: string, scope = "scope", writable = true) {
+function mount(
+  threadRootId?: string,
+  scope = "scope",
+  writable = true,
+  emojiEntries: readonly CustomEmoji[] = [],
+) {
   hooks.states = [];
   hooks.effects = [];
   hooks.refs = [];
@@ -91,6 +105,13 @@ function mount(threadRootId?: string, scope = "scope", writable = true) {
   const onSend = vi.fn();
   const session = {
     messages,
+    emoji: {
+      snapshot: () => ({ status: "ready", entries: emojiEntries }),
+      subscribe: () => () => {},
+      ensure: () => Promise.resolve(),
+      refresh: () => Promise.resolve(),
+    },
+    media: (url: string) => url,
     outbox: { supports: () => writable },
   } as unknown as RelaySession;
   const render = () => {
@@ -228,6 +249,38 @@ it("gives the channel and thread separate input/label identities, and gates unsu
   ).toBe(false);
 });
 
+it("enlarges Unicode-only drafts and restores normal text presentation", () => {
+  for (const emoji of ["😀", " 👋🏽 ", "👨‍👩‍👧‍👦", "🇬🇧", "1️⃣"])
+    expect(isUnicodeEmojiOnly(emoji)).toBe(true);
+  for (const other of ["", "1", ":party:", "😀a", "😀 hello"])
+    expect(isUnicodeEmojiOnly(other)).toBe(false);
+
+  const h = mount();
+  h.type("😀");
+  expect(h.input().props["data-single-emoji"]).toBe(true);
+  h.type("😀 hello");
+  expect(h.input().props["data-single-emoji"]).toBeUndefined();
+  h.type("😀 🙏 👏");
+  expect(h.input().props["data-single-emoji"]).toBe(true);
+  h.type("😀 🙏 👏 😄");
+  expect(h.input().props["data-single-emoji"]).toBeUndefined();
+  h.type("😀 🙏 hello");
+  expect(h.input().props["data-single-emoji"]).toBeUndefined();
+});
+
+it("recognizes an exact custom emoji draft without treating shortcode prose as emoji", () => {
+  const party = { shortcode: "party", url: "https://example.test/party.png" };
+  expect(singleCustomEmoji(":PARTY: ", [party])).toBe(party);
+  expect(singleCustomEmoji("hello :party:", [party])).toBeUndefined();
+  expect(singleCustomEmoji(":missing:", [party])).toBeUndefined();
+  expect(isEmojiOnly(":party: 😀 :PARTY:", [party])).toBe(true);
+  expect(isEmojiOnly(":party: hello", [party])).toBe(false);
+  expect(usesLargeEmojiPresentation(":party: 😀 :PARTY:", [party])).toBe(true);
+  expect(
+    usesLargeEmojiPresentation(":party: 😀 :PARTY: :party:", [party]),
+  ).toBe(false);
+});
+
 it.each([undefined, "root"])(
   "carries exact namesake selection into %s, restores it, and never resolves typed names",
   (root) => {
@@ -322,6 +375,47 @@ it("serializes text and mention commands in one turn and rejects malformed recip
     "channel",
     "Hi there @Honey and @Honey ",
     ["a".repeat(64), "b".repeat(64)],
+  );
+});
+
+it("keeps custom emoji shortcode text readable in the draft and sends it unchanged", () => {
+  const h = mount(undefined, "scope", true, [
+    { shortcode: "party", url: "https://emoji.test/party.png" },
+  ]);
+  const tools = elements(h.render()).find((e) => e.type === ComposerTools);
+  assert.exists(tools);
+  const insertText = tools.props.insertText as (text: string) => boolean;
+  expect(insertText(":party:")).toBe(true);
+  expect(h.input().props.value).toBe(":party:");
+  expect(h.input().props["data-custom-emoji-only"]).toBe(true);
+  expect(insertText(":party:")).toBe(true);
+  expect(h.input().props.value).toBe(":party::party:");
+  expect(
+    elements(h.render()).filter((element) => element.type === "img"),
+  ).toHaveLength(2);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    ":party::party:",
+    [],
+  );
+});
+
+it("renders a leading custom emoji inline when text follows it", () => {
+  const h = mount(undefined, "scope", true, [
+    { shortcode: "bufo", url: "https://emoji.test/bufo.png" },
+  ]);
+  h.type(":bufo:lakjsdlkjflakjsdf");
+  expect(h.input().props["data-custom-emoji-only"]).toBeUndefined();
+  expect(h.input().props["data-leading-custom-emoji"]).toBe(true);
+  expect(
+    elements(h.render()).filter((element) => element.type === "img"),
+  ).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    ":bufo:lakjsdlkjflakjsdf",
+    [],
   );
 });
 

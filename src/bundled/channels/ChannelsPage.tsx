@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import {
   useChannelList,
   useChannelWindow,
@@ -174,6 +175,18 @@ function ChannelWorkspace({
     messageId: string;
   }>();
   const threadTrigger = useRef<HTMLElement | null>(null);
+  const rowMenuTrigger = useRef<HTMLElement | null>(null);
+  const rowMenuPanel = useRef<HTMLDivElement | null>(null);
+  const [rowMenu, setRowMenu] = useState<{
+    channel: ChannelSummary;
+    sectionId?: string;
+    left: number;
+    top: number;
+  }>();
+  const [groupWrite, setGroupWrite] = useState<{
+    channelId: string;
+    error?: string;
+  }>();
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const sidebar = useSidebarView(
     scope,
@@ -271,6 +284,64 @@ function ChannelWorkspace({
       ),
     [channels, search],
   );
+  const closeRowMenu = useCallback((restoreFocus = false) => {
+    setRowMenu(undefined);
+    setGroupWrite(undefined);
+    if (restoreFocus) rowMenuTrigger.current?.focus();
+  }, []);
+  const openRowMenu = useCallback(
+    (
+      channel: ChannelSummary,
+      sectionId: string | undefined,
+      trigger: HTMLElement,
+      left: number,
+      top: number,
+    ) => {
+      rowMenuTrigger.current = trigger;
+      setGroupWrite(undefined);
+      setRowMenu({
+        channel,
+        ...(sectionId ? { sectionId } : {}),
+        left,
+        top,
+      });
+    },
+    [],
+  );
+  const assignGroup = async (channelId: string, sectionId?: string) => {
+    setGroupWrite({ channelId });
+    try {
+      await preferences.assign(channelId, sectionId);
+      closeRowMenu(true);
+    } catch (error) {
+      setGroupWrite({
+        channelId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  useEffect(() => {
+    if (!rowMenu) return;
+    rowMenuPanel.current
+      ?.querySelector<HTMLButtonElement>('[role^="menuitem"]')
+      ?.focus();
+    const dismiss = (event: PointerEvent) => {
+      if (
+        event.target instanceof Node &&
+        !rowMenuPanel.current?.contains(event.target) &&
+        !rowMenuTrigger.current?.contains(event.target)
+      )
+        closeRowMenu();
+    };
+    document.addEventListener("pointerdown", dismiss);
+    return () => document.removeEventListener("pointerdown", dismiss);
+  }, [rowMenu, closeRowMenu]);
+  const menuStyle = rowMenu
+    ? {
+        left: Math.max(8, Math.min(rowMenu.left, window.innerWidth - 200)),
+        top: Math.max(8, Math.min(rowMenu.top, window.innerHeight - 240)),
+      }
+    : undefined;
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
@@ -308,25 +379,158 @@ function ChannelWorkspace({
                       ? Users
                       : MessageCircle
                     : Hash;
+                const currentSectionId = section.key.startsWith("group:")
+                  ? section.key.slice("group:".length)
+                  : undefined;
+                const movable =
+                  preferences.writable &&
+                  section.key !== "starred" &&
+                  channel.channelType !== "dm" &&
+                  channel.channelType !== "forum" &&
+                  !!preferences.data?.sections.length;
+                const menuOpen =
+                  movable &&
+                  rowMenu?.channel.id === channel.id &&
+                  rowMenu.sectionId === currentSectionId;
                 return (
-                  <button
+                  <div
                     key={channel.id}
-                    type="button"
-                    title={channel.name}
-                    data-channel-id={channel.id}
-                    aria-current={
-                      current?.id === channel.id ? "page" : undefined
-                    }
-                    onPointerEnter={() =>
-                      queries.channels.prepare?.(channel.id)
-                    }
-                    onFocus={() => queries.channels.prepare?.(channel.id)}
-                    onClick={() => select(channel.id)}
+                    className={styles.channelRow}
+                    data-menu-open={menuOpen || undefined}
                   >
-                    <Icon size={17} />
-                    <span>{channel.name}</span>
-                    <UnreadBadge session={queries} channelId={channel.id} />
-                  </button>
+                    <button
+                      type="button"
+                      className={styles.channelLink}
+                      title={channel.name}
+                      data-channel-id={channel.id}
+                      aria-current={
+                        current?.id === channel.id ? "page" : undefined
+                      }
+                      onContextMenu={(event) => {
+                        if (!movable) return;
+                        event.preventDefault();
+                        const rect =
+                          event.currentTarget.getBoundingClientRect();
+                        openRowMenu(
+                          channel,
+                          currentSectionId,
+                          event.currentTarget,
+                          Math.min(event.clientX, rect.right),
+                          Math.min(event.clientY, rect.bottom),
+                        );
+                      }}
+                      onPointerEnter={() =>
+                        queries.channels.prepare?.(channel.id)
+                      }
+                      onFocus={() => queries.channels.prepare?.(channel.id)}
+                      onClick={() => select(channel.id)}
+                    >
+                      <Icon size={17} />
+                      <span>{channel.name}</span>
+                      <UnreadBadge session={queries} channelId={channel.id} />
+                    </button>
+                    {movable && (
+                      <button
+                        type="button"
+                        className={styles.rowMenuButton}
+                        aria-label={`Actions for ${channel.name}`}
+                        aria-haspopup="menu"
+                        aria-expanded={menuOpen}
+                        onClick={(event) => {
+                          if (menuOpen) closeRowMenu();
+                          else {
+                            const rect =
+                              event.currentTarget.getBoundingClientRect();
+                            openRowMenu(
+                              channel,
+                              currentSectionId,
+                              event.currentTarget,
+                              rect.right,
+                              rect.bottom + 4,
+                            );
+                          }
+                        }}
+                      >
+                        <MoreHorizontal size={16} aria-hidden="true" />
+                      </button>
+                    )}
+                    {menuOpen && (
+                      <div
+                        ref={rowMenuPanel}
+                        className={styles.rowMenu}
+                        style={menuStyle}
+                        role="menu"
+                        aria-label={`Group for ${channel.name}`}
+                        onKeyDown={(event) => {
+                          if (event.key === "Escape") {
+                            event.stopPropagation();
+                            closeRowMenu(true);
+                            return;
+                          }
+                          if (
+                            !["ArrowDown", "ArrowUp", "Home", "End"].includes(
+                              event.key,
+                            )
+                          )
+                            return;
+                          const items = Array.from(
+                            event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                              '[role^="menuitem"]:not(:disabled)',
+                            ),
+                          );
+                          if (!items.length) return;
+                          event.preventDefault();
+                          const current = items.indexOf(
+                            document.activeElement as HTMLButtonElement,
+                          );
+                          const next =
+                            event.key === "Home"
+                              ? 0
+                              : event.key === "End"
+                                ? items.length - 1
+                                : event.key === "ArrowDown"
+                                  ? (current + 1) % items.length
+                                  : (current - 1 + items.length) % items.length;
+                          items[next]?.focus();
+                        }}
+                      >
+                        <p className={styles.rowMenuLabel}>Move to group</p>
+                        {preferences.data?.sections.map((group) => (
+                          <button
+                            key={group.id}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={currentSectionId === group.id}
+                            disabled={groupWrite?.channelId === channel.id}
+                            onClick={() =>
+                              void assignGroup(channel.id, group.id)
+                            }
+                          >
+                            {group.icon && (
+                              <span aria-hidden="true">{group.icon}</span>
+                            )}
+                            <span>{group.name}</span>
+                          </button>
+                        ))}
+                        {currentSectionId && (
+                          <button
+                            type="button"
+                            role="menuitem"
+                            disabled={groupWrite?.channelId === channel.id}
+                            onClick={() => void assignGroup(channel.id)}
+                          >
+                            Remove from group
+                          </button>
+                        )}
+                        {groupWrite?.channelId === channel.id &&
+                          !groupWrite.error && <p role="status">Saving…</p>}
+                        {groupWrite?.channelId === channel.id &&
+                          groupWrite.error && (
+                            <p role="alert">{groupWrite.error}</p>
+                          )}
+                      </div>
+                    )}
+                  </div>
                 );
               })}
             </details>

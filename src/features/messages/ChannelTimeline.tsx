@@ -232,7 +232,7 @@ function Timeline({
     return () => cancelAnimationFrame(frame);
   }, [revealMessageId, rows, width]);
   const loadNearTop = useCallback(
-    (element: HTMLElement) => {
+    (element: HTMLElement, resume = false) => {
       olderDemand.current = false;
       if (
         !handle.current ||
@@ -245,18 +245,28 @@ function Timeline({
         element.scrollTop >= Math.max(3000, element.clientHeight * 4)
       )
         return;
-      // Disk rows are usable before head revalidation (which may hand off to live
-      // catch-up). Keep one real gesture, not a paging queue, until its cursor is fresh.
-      if (window.freshness === "cached") {
+      // Cached does not mean blocked: disconnected windows can still page over
+      // HTTP. Try ordinary demand first, retaining only a blocked cached gesture.
+      // A retained gesture waits for verification, not every cached row update.
+      if (resume && window.freshness === "cached") {
         olderDemand.current = true;
         return;
       }
       queries.channels.loadOlder(channelId);
+      const after = queries.channels.window(channelId);
+      olderDemand.current =
+        window.freshness === "cached" &&
+        after.status === "ready" &&
+        after.hasMore &&
+        !after.loadingOlder &&
+        !after.historyLimited &&
+        !after.error;
     },
     [window, queries, channelId],
   );
   useLayoutEffect(() => {
-    if (olderDemand.current && scroller.current) loadNearTop(scroller.current);
+    if (olderDemand.current && scroller.current)
+      loadNearTop(scroller.current, true);
   }, [loadNearTop]);
   const gesture = () => {
     intent.current++;
@@ -301,8 +311,10 @@ function Timeline({
             type="button"
             disabled={window.loadingOlder}
             onClick={() => {
-              olderDemand.current = false;
               queries.channels.loadOlder(channelId);
+              const after = queries.channels.window(channelId);
+              if (after.loadingOlder || after.error || after.status !== "ready")
+                olderDemand.current = false;
             }}
           >
             {window.loadingOlder ? "Loading older…" : "Load older messages"}

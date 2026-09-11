@@ -238,6 +238,7 @@ function ChannelWorkspace({
   const openMediaReview = useCallback(
     (messageId: string, attachment: Attachment, initialTime: number) => {
       if (!current) return;
+      setThread(undefined);
       setMediaReview({
         channelId: current.id,
         channelName: current.name,
@@ -248,6 +249,17 @@ function ChannelWorkspace({
     },
     [current],
   );
+  useEffect(() => {
+    if (
+      mediaReview &&
+      list.status === "ready" &&
+      list.coverage !== "partial" &&
+      !list.channels.some(
+        (channel) => channel.id === mediaReview.channelId && !channel.archived,
+      )
+    )
+      setMediaReview(undefined);
+  }, [mediaReview, list]);
   const closeThread = useCallback(() => {
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
@@ -486,7 +498,7 @@ function ChannelWorkspace({
           />
         )}
       </article>
-      {mediaReview && (
+      {mediaReview && !showingThread && (
         <MediaReviewViewer
           extensions={extensions}
           attachment={mediaReview.attachment}

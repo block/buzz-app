@@ -1,3 +1,5 @@
+import { EmojiCompletion } from "./EmojiCompletion";
+import { emojiQuery } from "./emoji-query";
 import type { PluginModule } from "../../plugins/api";
 import type {
   ComposerToolProps,
@@ -15,6 +17,13 @@ const entries = (content: InlineContent) =>
       : []
     : (content.message.emoji ?? []);
 export const apply: PluginModule["apply"] = (ctx) => {
+  ctx.conversation.registerCompletion({
+    id: "typeahead",
+    title: "Emoji",
+    order: 0,
+    match: (observation) => emojiQuery(observation.text, observation.start),
+    component: EmojiCompletion,
+  });
   ctx.conversation.registerTool({
     id: "picker",
     title: "Emoji",

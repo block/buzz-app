@@ -2,6 +2,10 @@
 // Real React/session/outbox; local ephemeral signed events, never a live broker.
 import { StrictMode, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { Context } from "@deepseek-ai/cordis";
+import { createPluginManager } from "../../src/plugins/manager";
+import { ConversationService } from "../../src/features/conversation/service";
+import { bundledPlugins } from "../../src/bundled";
 import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -18,6 +22,13 @@ import {
 import type { RelayEvent } from "../../src/features/relay/events";
 import "../../src/shared/styles/globals.css";
 
+const context = new Context();
+createPluginManager(context, {
+  bundled: bundledPlugins.filter(({ manifest }) =>
+    ["buzz.emoji", "buzz.mentions"].includes(manifest.id),
+  ),
+});
+const extensions = new ConversationService(context);
 const viewer = keypair(),
   relay = keypair();
 const roots = [
@@ -148,12 +159,14 @@ function Fixture() {
         }}
       >
         <MessageComposer
+          extensions={extensions}
           session={owner.session}
           scope={scope}
           channelId={channelId}
           channelName={channelId}
         />
         <ThreadPanel
+          extensions={extensions}
           session={owner.session}
           scope={scope}
           channelId={channelId}

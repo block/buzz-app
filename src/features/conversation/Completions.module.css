@@ -1,0 +1,55 @@
+.popup {
+  position: fixed;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+  box-sizing: border-box;
+  z-index: 30;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: 0 8px 30px #0002;
+}
+.list {
+  max-height: 280px;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.option {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.option[aria-selected="true"] {
+  background: var(--surface-hover);
+}
+.preview {
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+}
+.label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.label small {
+  display: block;
+  opacity: 0.65;
+  font-size: 11px;
+}
+.popup p {
+  flex-shrink: 0;
+  margin: 5px 8px;
+  opacity: 0.7;
+  font-size: 11px;
+}

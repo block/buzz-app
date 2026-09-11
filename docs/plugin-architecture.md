@@ -210,7 +210,7 @@ write service. Dispose owned views when their plugin or session scope ends.
 
 ## Conversation contributions
 
-The conversation preview exposes top-level `registerTool` / `registerInline`
+The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` components. Generated
 type-only `@buzz/author` declarations support the independent Composer Lab example.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
@@ -246,13 +246,50 @@ This preview is host-matched: a tool using `insertMention` needs a host providin
 that command. The generated type-only `@buzz/author` package and `apiVersion: 1`
 are not runtime capability negotiation or cross-version compatibility promises.
 
-Typed-@ autocomplete is a future entry point into the same Mentions plugin. It
-needs draft/caret observation and a query-range replacement command guarded by
-current draft/selection evidence; otherwise selecting a result could insert after
-the partial query or overwrite newer text. The host should arbitrate keyboard,
-IME, selection and edit acceptance; the plugin owns matching and suggestions.
-Choosing a suggestion records exact identity; typing/pasting a name alone does not.
-Inline mention pills are also outside this toolbar extraction.
+### Composer completion providers
+
+Emoji and Mentions each register a separate `registerCompletion` contribution.
+The host observes focused, enabled textarea text and collapsed UTF-16 selection,
+then chooses the valid syntax match closest to the caret (greatest range start),
+with `order` and contribution key breaking ties. This lets a later emoji trigger
+win over an earlier multi-word mention query. Matchers
+must not depend on asynchronously arriving session data: the winning component owns
+reactive roster/profile/catalog filtering. Only that component mounts. An empty
+result without status/retry hides the menu while keeping the provider subscribed.
+
+Providers receive immutable observation/range evidence and `publish(result)`—not
+DOM, focus or replacement commands. Results contain stable IDs, labels, optional
+detail/decorative previews and either text or an exact `{ pubkey, name }` mention.
+The host copies edit/query primitives and caps publications at 50 choices. A
+publication returns its own withdrawal disposer (or `false` after revocation).
+Providers must withdraw synchronously when the data supporting a displayed choice
+changes, and republish from the new snapshot; unrelated notifications must not
+leave a withdrawn result without pending work. Cleanup cancels asynchronous work.
+
+The host binds callbacks to the exact contribution, editor revision and query.
+Edits (including same-text input), selection changes, blur, composition, disabled
+state, plugin replacement, destination/session change and unmount revoke old work.
+Acceptance rechecks the actual DOM text/caret/focus and atomically replaces the
+query through the existing mention-draft path, retaining its text/recipient limits.
+Typing/pasting a name alone never creates notification authority. Accepted mention
+intent survives optional plugin removal and remains subject to session validation.
+
+One host-owned, viewport-bounded portal renders the active listbox. Focus stays on
+the textarea with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
+plain Enter/forward Tab accept, and Escape dismisses pending results. A rejected
+displayed choice must not fall through to sending. Retry is a selectable menu action
+using the same arrow/Enter/Tab path, including when there are no results. Modified
+keys, Shift+Enter/Shift+Tab and IME events retain ordinary editing behavior.
+
+Emoji lazily copies native-only records (including aliases and keywords) from the
+pinned data package; it does not use Emoji Mart's mutable global search singleton.
+Community matches come only from the current session catalog. Mentions performs
+bounded background enrichment through the shared profile directory, not per-key
+network reads or a separate identity cache. Multi-word filtering stays in the
+provider so a delayed name can appear without another editor event.
+
+This is the same host-matched preview as toolbar tools, not version negotiation or
+a sandbox. Inline mention pills remain outside this completion implementation.
 
 Formatting needs selection transforms. Attachments and voice need shared media
 capabilities, destination-bound asynchronous work and cancellation; accepted

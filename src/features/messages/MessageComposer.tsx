@@ -13,7 +13,14 @@ import {
   type MentionRecipient,
 } from "./mention-draft";
 import { ComposerTools } from "../conversation/ComposerTools";
-import type { ConversationExtensions } from "../conversation/contracts";
+import type {
+  ConversationExtensions,
+  CompletionEdit,
+  CompletionQuery,
+  ComposerObservation,
+} from "../conversation/contracts";
+import { ComposerCompletions } from "../conversation/ComposerCompletions";
+import { useCompletionEditor } from "../conversation/useCompletionEditor";
 
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
@@ -72,6 +79,10 @@ function Composer({
   const outbox = session.outbox;
   const input = useRef<HTMLTextAreaElement>(null);
   const edit = useRef<MentionEdit | undefined>(undefined);
+  const completion = useCompletionEditor(
+    input,
+    !disabled && !!outbox?.supports(9),
+  );
   useEffect(() => {
     const element = input.current;
     if (!element) return;
@@ -97,7 +108,11 @@ function Composer({
     input.current?.setSelectionRange(caret.current, caret.current);
     caret.current = undefined;
   });
-  function insert(text: string, recipient?: MentionRecipient) {
+  function insert(
+    text: string,
+    recipient?: MentionRecipient,
+    range?: CompletionQuery,
+  ) {
     if (
       disabled ||
       !outbox?.supports(9) ||
@@ -105,12 +120,13 @@ function Composer({
       // DOM props are committed before child layout effects; closures can still
       // carry the preceding render's enabled state during that interval.
       input.current.disabled ||
+      input.current.readOnly ||
       typeof text !== "string"
     )
       return false;
     const current = valueRef.current;
-    const start = caret.current ?? input.current.selectionStart;
-    const end = caret.current ?? input.current.selectionEnd;
+    const start = range?.start ?? caret.current ?? input.current.selectionStart;
+    const end = range?.end ?? caret.current ?? input.current.selectionEnd;
     const edited = replaceMentionDraft(current, start, end, text);
     if (edited.text.length > 16000) {
       setError("Message is too long to insert text");
@@ -129,6 +145,7 @@ function Composer({
           ],
         })
       : edited;
+    completion.invalidate();
     caret.current = start + text.length;
     saveDraft(next);
     setError(undefined);
@@ -144,6 +161,22 @@ function Composer({
     )
       return false;
     return insert(`@${recipient.name} `, recipient);
+  }
+  function replaceCompletion(
+    edit: CompletionEdit,
+    query: CompletionQuery,
+    observation: ComposerObservation,
+  ) {
+    if (
+      !completion.valid(observation) ||
+      valueRef.current.text !== observation.text
+    )
+      return false;
+    if ("mention" in edit && edit.mention)
+      return insert(`@${edit.mention.name} `, edit.mention, query);
+    return (
+      typeof edit.text === "string" && insert(`${edit.text} `, undefined, query)
+    );
   }
   function send() {
     if (disabled || !draft.trim() || !outbox) return;
@@ -161,6 +194,7 @@ function Composer({
             value.recipients.map((item) => item.pubkey),
           );
       onSend?.(id);
+      completion.invalidate();
       setDraft("");
       input.current?.focus();
       setError(undefined);
@@ -188,6 +222,18 @@ function Composer({
       <label className="sr-only" htmlFor={inputId}>
         {label}
       </label>
+      {extensions?.completions && (
+        <ComposerCompletions
+          registry={extensions.completions}
+          editor={completion}
+          input={input}
+          session={session}
+          scope={scope}
+          channelId={channelId}
+          threadRootId={threadRootId}
+          replace={replaceCompletion}
+        />
+      )}
       <textarea
         ref={input}
         id={inputId}
@@ -196,18 +242,45 @@ function Composer({
         maxLength={16000}
         rows={2}
         placeholder={label}
+        onFocus={() => completion.observe(true)}
+        onBlur={() => completion.invalidate()}
+        onSelect={() => completion.observe()}
+        onCompositionStart={() => {
+          completion.composing.current = true;
+          completion.invalidate();
+        }}
+        onCompositionEnd={() => {
+          completion.composing.current = false;
+          completion.observe(true);
+        }}
         // onInput also observes same-text replacements, which onChange omits.
         onChange={() => {}}
         onInput={(event) => {
           const range = edit.current;
           edit.current = undefined;
-          saveDraft(editMentionDraft(value, event.currentTarget.value, range));
+          saveDraft(
+            editMentionDraft(
+              valueRef.current,
+              event.currentTarget.value,
+              range,
+            ),
+          );
+          completion.observe(true);
         }}
         onKeyDown={(event) => {
           if (
+            event.nativeEvent.isComposing ||
+            event.nativeEvent.keyCode === 229 ||
+            completion.composing.current
+          )
+            return;
+          if (completion.keys.current?.(event)) return;
+          if (
             event.key === "Enter" &&
             !event.shiftKey &&
-            !event.nativeEvent.isComposing
+            !event.altKey &&
+            !event.ctrlKey &&
+            !event.metaKey
           ) {
             event.preventDefault();
             send();

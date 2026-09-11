@@ -236,6 +236,10 @@ function ChannelWorkspace({
     attachment: Attachment;
     initialTime: number;
   }>();
+  const showingMediaReview = mediaReviewForChannel(mediaReview, current?.id);
+  useEffect(() => {
+    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
+  }, [mediaReview, showingMediaReview]);
   const openMediaReview = useCallback(
     (messageId: string, attachment: Attachment, initialTime: number) => {
       if (!current) return;
@@ -503,16 +507,16 @@ function ChannelWorkspace({
           />
         )}
       </article>
-      {mediaReview && !showingThread && (
+      {showingMediaReview && !showingThread && (
         <MediaReviewViewer
           extensions={extensions}
-          attachment={mediaReview.attachment}
+          attachment={showingMediaReview.attachment}
           session={queries}
           scope={scope}
-          channelId={mediaReview.channelId}
-          channelName={mediaReview.channelName}
-          messageId={mediaReview.messageId}
-          initialTime={mediaReview.initialTime}
+          channelId={showingMediaReview.channelId}
+          channelName={showingMediaReview.channelName}
+          messageId={showingMediaReview.messageId}
+          initialTime={showingMediaReview.initialTime}
           restoreFocus={mediaReviewTrigger}
           close={() => setMediaReview(undefined)}
         />
@@ -552,6 +556,13 @@ function ChannelWorkspace({
       )}
     </div>
   );
+}
+
+export function mediaReviewForChannel<T extends { channelId: string }>(
+  review: T | undefined,
+  channelId: string | undefined,
+): T | undefined {
+  return review?.channelId === channelId ? review : undefined;
 }
 
 function ChannelBody({

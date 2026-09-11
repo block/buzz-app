@@ -80,9 +80,17 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect.poll(() => infoRequests).toBeGreaterThan(0);
   const picker = page.getByRole("region", { name: "Emoji picker" });
   await expect(emojiTrigger).toHaveAttribute("aria-busy", "true");
-  await expect(picker).toHaveCount(0);
+  await expect(picker).toBeVisible();
+  await expect(page.getByRole("tab", { name: "GIF", exact: true })).toHaveCount(
+    0,
+  );
   releaseInfo();
   await expect(emojiTrigger).not.toHaveAttribute("aria-busy", "true");
+  await expect(page.getByRole("tab", { name: "GIF", exact: true })).toHaveCount(
+    0,
+  );
+  await emojiTrigger.click();
+  await emojiTrigger.click();
   await expect(picker).toBeVisible();
   await expect(picker).toHaveCSS("border-radius", "24px");
   await expect(picker).toHaveCSS("border-top-width", "1px");

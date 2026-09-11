@@ -44,7 +44,8 @@ export function EmojiPicker({
     community: string;
     supported: boolean;
   }>();
-  const [openWhenReady, setOpenWhenReady] = useState(false);
+  const [gifDiscoveryRequested, setGifDiscoveryRequested] = useState(false);
+  const [showGifTab, setShowGifTab] = useState(false);
   const [perLine, setPerLine] = useState(0);
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
@@ -93,7 +94,7 @@ export function EmojiPicker({
   useEffect(() => {
     if (
       !community ||
-      (!openWhenReady && !open) ||
+      (!gifDiscoveryRequested && !open) ||
       gifAvailability?.community === community
     )
       return;
@@ -119,12 +120,7 @@ export function EmojiPicker({
       },
     );
     return () => controller.abort();
-  }, [community, openWhenReady, open, gifAvailability]);
-  useEffect(() => {
-    if (!openWhenReady || gifs === undefined || disabled) return;
-    setOpenWhenReady(false);
-    setOpen(true);
-  }, [openWhenReady, gifs, disabled]);
+  }, [community, gifDiscoveryRequested, open, gifAvailability]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
   useLayoutEffect(() => {
     if (!open || disabled || tab !== "emoji" || !host.current || !perLine)
@@ -212,23 +208,24 @@ export function EmojiPicker({
         aria-label="Insert emoji"
         title="Insert emoji"
         aria-expanded={open && !disabled}
-        aria-busy={openWhenReady || undefined}
+        aria-busy={(gifDiscoveryRequested && gifs === undefined) || undefined}
         aria-controls={id}
         disabled={disabled}
+        onPointerEnter={() => setGifDiscoveryRequested(true)}
+        onFocus={() => setGifDiscoveryRequested(true)}
         onClick={() => {
           if (open) {
             setOpen(false);
             return;
           }
-          if (openWhenReady) {
-            setOpenWhenReady(false);
-            return;
-          }
           setAnimateTab(false);
           setPressedTab(undefined);
           void session.emoji.ensure();
-          if (gifs === undefined) setOpenWhenReady(true);
-          else setOpen(true);
+          setGifDiscoveryRequested(true);
+          // Freeze optional tabs for this opening so late discovery never shifts
+          // the active picker underneath the user.
+          setShowGifTab(gifs === true);
+          setOpen(true);
         }}
       >
         <Smile size={20} aria-hidden="true" />
@@ -238,7 +235,7 @@ export function EmojiPicker({
           id={id}
           className={styles.emojiPopover}
           aria-label="Emoji picker"
-          data-has-tabs={gifs || undefined}
+          data-has-tabs={showGifTab || undefined}
           style={{ width: perLine * EMOJI_SLOT + PICKER_CHROME + 2 }}
         >
           <Search
@@ -246,7 +243,7 @@ export function EmojiPicker({
             size={16}
             aria-hidden="true"
           />
-          {gifs && (
+          {showGifTab && (
             <div
               className={styles.pickerTabs}
               role="tablist"

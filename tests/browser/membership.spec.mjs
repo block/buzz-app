@@ -51,6 +51,14 @@ test("Channels renders grouped history and live membership without turning activ
   app.membership("member_joined", 0);
   await expect(groups).toHaveCount(4);
   await expect(groups.last()).toContainText("Pinky added by you");
+  await expect(groups.last()).toBeVisible();
+  // Wait for the scheduled bottom-follow before leaving; an overscan count is
+  // not evidence that the newly appended activity has reached the viewport.
+  await expect
+    .poll(() =>
+      feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop),
+    )
+    .toBeLessThan(2);
   await page.getByRole("button", { name: "Beta", exact: true }).click();
   await page.getByRole("button", { name: "Alpha", exact: true }).click();
   await expect(groups).toHaveCount(4);

@@ -4,9 +4,10 @@ Read [the contribution workflow](docs/contributing.md) for commands and validati
 For interactive product work, default to edit → human tries the running app →
 adjust in the agreed worktree. Do not gate each feedback round on E2E, native
 builds, or full validation. `just iterate` is optional; reserve `just scan` for
-agreed integration batches or relevant native/dependency/build changes. Track
-deferred checks: **ready to try** is not **validated**. Check auth/signing,
-persistence/migrations, protocol semantics, and destructive writes before live use.
+an agreed batch before review/integration or relevant native/dependency/build
+changes. Track deferred checks: **ready to try** is not **validated**. Check
+auth/signing, persistence/migrations, protocol semantics, and destructive writes
+before live use.
 
 Files marked `FOUNDATION` require explicit human guidance before editing and
 stricter review. Escalate needed changes rather than editing without authorization.

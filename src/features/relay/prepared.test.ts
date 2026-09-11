@@ -430,3 +430,172 @@ it("hides DM channels behind the NIP-29 hidden tag", async () => {
   ]);
   store.dispose();
 });
+
+it("restores an authorized disk head while optional metadata and network head are held", async () => {
+  const disk = memoryDisk([
+    {
+      channelId: "a",
+      savedAt: Date.now(),
+      events: head("a", "cached"),
+      profiles: [],
+    },
+    {
+      channelId: "private",
+      savedAt: Date.now(),
+      events: head("private"),
+      profiles: [],
+    },
+  ]);
+  const { queries, next, store } = setup({ persistence: disk });
+  try {
+    queries.ensureList();
+    next().respond([roster(relay, "a", [viewer.pubkey])]);
+    await flush();
+    const names = next();
+    expect(names.filters[0]?.kinds).toEqual([39000]);
+    queries.ensure("a");
+    const network = next();
+    await vi.waitFor(() =>
+      expect(queries.window("a")).toMatchObject({
+        freshness: "cached",
+        rows: [{ content: "cached" }],
+      }),
+    );
+    expect(queries.window("private").rows).toEqual([]);
+    expect(network.signal?.aborted).toBe(false);
+    expect(disk.read).toHaveBeenCalledOnce();
+    names.fail(new Error("Optional metadata unavailable"));
+    await flush();
+    expect(queries.window("a").rows[0]?.content).toBe("cached");
+  } finally {
+    store.dispose();
+  }
+});
+
+it("persists a ready head before optional profiles, enriching only after they arrive", async () => {
+  const disk = memoryDisk();
+  const { queries, next, store } = setup({ persistence: disk });
+  try {
+    queries.ensureList();
+    next().respond(discovery(["a"]));
+    await flush();
+    queries.ensure("a");
+    next().respond(head("a"));
+    await flush();
+    const names = next();
+    expect(names.filters[0]?.kinds).toEqual([0]);
+    expect(queries.window("a").status).toBe("ready");
+    expect(disk.write).toHaveBeenCalledOnce();
+    expect(vi.mocked(disk.write).mock.calls[0]?.[0].profiles).toEqual([]);
+    names.respond([profile(alice, { name: "Alice" })]);
+    await vi.waitFor(() => expect(disk.write).toHaveBeenCalledTimes(2));
+    expect(vi.mocked(disk.write).mock.calls[1]?.[0].profiles).toHaveLength(1);
+  } finally {
+    store.dispose();
+  }
+});
+
+it.each(["empty", "failure"])(
+  "does not rewrite persisted heads after %s profile enrichment",
+  async (outcome) => {
+    const disk = memoryDisk();
+    const { queries, next, store } = setup({ persistence: disk });
+    try {
+      queries.ensureList();
+      next().respond(discovery(["a"]));
+      await flush();
+      queries.ensure("a");
+      next().respond(head("a"));
+      await flush();
+      expect(disk.write).toHaveBeenCalledOnce();
+      const names = next();
+      if (outcome === "empty") names.respond([]);
+      else names.fail(new Error("Names unavailable"));
+      await flush();
+      await flush();
+      expect(disk.write).toHaveBeenCalledOnce();
+    } finally {
+      store.dispose();
+    }
+  },
+);
+
+it.each(["clear", "dispose", "revoke"])(
+  "late profile enrichment cannot write a head after %s",
+  async (boundary) => {
+    const disk = memoryDisk();
+    const { queries, next, store } = setup({ persistence: disk });
+    try {
+      queries.ensureList();
+      next().respond(discovery(["a"]));
+      await flush();
+      queries.ensure("a");
+      next().respond(head("a"));
+      await flush();
+      const names = next();
+      expect(disk.write).toHaveBeenCalledOnce();
+      if (boundary === "clear") await store.clearCache();
+      else if (boundary === "dispose") store.dispose();
+      else {
+        queries.refreshList?.();
+        next().respond([roster(relay, "a", [], 1_700_000_001)]);
+        await flush();
+      }
+      names.respond([profile(alice, { name: "Late Alice" })]);
+      await flush();
+      await flush();
+      expect(disk.write).toHaveBeenCalledOnce();
+    } finally {
+      store.dispose();
+    }
+  },
+);
+
+it("bounds transient preparation to one request without delaying selected-channel dispatch", async () => {
+  const { queries, next, pending, store } = setup();
+  try {
+    queries.ensureList();
+    next().respond(discovery(["a", "b", "c", "z"]));
+    await flush();
+    queries.prepare?.("a");
+    const speculative = next();
+    queries.prepare?.("b");
+    queries.prepare?.("c");
+    expect(pending).toHaveLength(0);
+    queries.ensure("z");
+    const selected = next();
+    expect(selected.filters[0]?.["#h"]).toEqual(["z"]);
+    selected.respond(empty("z"));
+    await flush();
+    expect(queries.window("z").status).toBe("ready");
+    expect(speculative.signal?.aborted).toBe(false);
+    speculative.respond(empty("a"));
+    await flush();
+    expect(pending).toHaveLength(0); // Dropped pointer hints never become a backlog.
+    queries.prepare?.("b");
+    expect(next().filters[0]?.["#h"]).toEqual(["b"]);
+  } finally {
+    store.dispose();
+  }
+});
+
+it("selection shares the one speculative read and failure releases preparation capacity", async () => {
+  const { queries, next, pending, store } = setup();
+  try {
+    queries.ensureList();
+    next().respond(discovery(["a", "b"]));
+    await flush();
+    queries.prepare?.("a");
+    const selected = next();
+    queries.ensure("a");
+    expect(pending).toHaveLength(0);
+    selected.fail(new Error("Head unavailable"));
+    await flush();
+    await flush();
+    expect(queries.window("a").status).toBe("error");
+    queries.prepare?.("b");
+    expect(next().filters[0]?.["#h"]).toEqual(["b"]);
+  } finally {
+    store.dispose();
+  }
+});

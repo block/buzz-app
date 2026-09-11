@@ -501,39 +501,21 @@ test("current custom catalog drives typeahead and signed tags across community r
   const composerBox = await composer.boundingBox();
   expect(suggestionBox.width).toBeCloseTo(composerBox.width * 0.375, 1);
   await first.click();
-  await expect(input).toHaveValue("\uFFFC");
-  await expect(input).toHaveAttribute("data-custom-emoji-only", "true");
-  const renderedEmoji = composer.locator("img");
-  await expect(renderedEmoji).toHaveCSS("width", "42px");
-  await expect(renderedEmoji).toHaveCSS("height", "42px");
-  await expect(input).toHaveCSS("padding-left", "44px");
-  const caret = await input.evaluate((element) => ({
-    start: element.selectionStart,
-    end: element.selectionEnd,
-    length: element.value.length,
-  }));
-  expect(caret).toEqual({ start: 1, end: 1, length: 1 });
-  await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((element) => [
-      element.selectionStart,
-      element.selectionEnd,
-    ]),
-  ).toEqual([0, 1]);
-  await expect(renderedEmoji).toHaveAttribute("data-selected", "true");
-  await expect(renderedEmoji).toHaveCSS("opacity", "0.65");
-  await input.press("ArrowRight");
-  await expect(renderedEmoji).not.toHaveAttribute("data-selected", "true");
-  await input.pressSequentially(" hello");
-  await expect(input).toHaveValue("\uFFFC hello");
-  await expect(input).toHaveAttribute("data-leading-custom-emoji", "true");
-  await expect(renderedEmoji).toBeVisible();
-  await expect(renderedEmoji).toHaveCSS("width", "22px");
-  await expect(renderedEmoji).toHaveCSS("height", "22px");
-  await expect(input).toHaveCSS("padding-left", "24px");
+  await expect(input).toHaveValue(":party-parrot: ");
   expect(await input.evaluate((element) => element.selectionStart)).toBe(
-    "\uFFFC hello".length,
+    ":party-parrot: ".length,
   );
+  await page.evaluate(() => window.emojiFixture.remove());
+  await expect(input).toHaveValue(":party-parrot: ");
+  await page.evaluate(() => window.emojiFixture.replace());
+  await input.press("ArrowLeft");
+  await input.press("Backspace");
+  await expect(input).toHaveValue(":party-parrot ");
+  await input.press("ControlOrMeta+z");
+  await expect(input).toHaveValue(":party-parrot: ");
+  await input.press("End");
+  await input.pressSequentially("hello");
+  await expect(input).toHaveValue(":party-parrot: hello");
   await input.press("Enter");
   await expect
     .poll(() =>
@@ -556,7 +538,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   ).toBe(":party-parrot: hello");
   await input.fill("hello :party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
-  await expect(input).toHaveValue("hello :party:");
+  await expect(input).toHaveValue("hello :party: ");
   await input.fill(":party");
   await expect(
     page.getByRole("option", { name: ":party:", exact: true }),
@@ -569,7 +551,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await page.getByRole("button", { name: "Switch community" }).click();
   await input.fill(":party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
-  await expect(input).toHaveValue("\uFFFC");
+  await expect(input).toHaveValue(":party: ");
   await input.press("Enter");
   await expect
     .poll(() =>

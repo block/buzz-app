@@ -133,10 +133,7 @@ export function EmojiCompletion({
         ) : (
           <NativeEmojiPreview emoji={item.text} />
         ),
-        edit: {
-          text: item.text,
-          ...(item.url ? { customEmoji: { shortcode: item.shortcode } } : {}),
-        },
+        edit: { text: item.text },
       }));
     const retrySearch = () => {
       retry((value) => value + 1);

@@ -1,26 +1,13 @@
 import { ArrowUp, X } from "lucide-react";
-import {
-  useEffect,
-  useId,
-  useLayoutEffect,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
+import { isUnicodeEmojiOnly } from "./emoji-size";
 import {
-  isUnicodeEmojiOnly,
-  leadingCustomEmojiToken,
-  singleCustomEmojiToken,
-} from "./emoji-size";
-import {
-  CUSTOM_EMOJI_TOKEN,
   mentionDraft,
   editMentionDraft,
-  expandCustomEmoji,
   replaceMentionDraft,
   type MentionDraft,
   type MentionEdit,
@@ -90,30 +77,7 @@ function Composer({
   const setDraft = (text: string) =>
     saveDraft(editMentionDraft(valueRef.current, text));
   const [error, setError] = useState<string>();
-  const [failedCustomEmoji, setFailedCustomEmoji] = useState<string>();
-  const [selectedCustomEmoji, setSelectedCustomEmoji] = useState(false);
   const outbox = session.outbox;
-  const emojiCatalog = useSyncExternalStore(
-    session.emoji.subscribe,
-    session.emoji.snapshot,
-    session.emoji.snapshot,
-  );
-  const customEmoji = singleCustomEmojiToken(
-    draft,
-    value.emoji ?? [],
-    emojiCatalog.entries,
-  );
-  const leadingCustomEmoji = leadingCustomEmojiToken(
-    draft,
-    value.emoji ?? [],
-    emojiCatalog.entries,
-  );
-  const displayedCustomEmoji = customEmoji ?? leadingCustomEmoji;
-  const customEmojiSource = displayedCustomEmoji
-    ? session.media(displayedCustomEmoji.url)
-    : undefined;
-  const showCustomEmoji =
-    !!customEmojiSource && customEmojiSource !== failedCustomEmoji;
   const input = useRef<HTMLTextAreaElement>(null);
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
@@ -143,24 +107,12 @@ function Composer({
     if (caret.current === undefined) return;
     input.current?.focus();
     input.current?.setSelectionRange(caret.current, caret.current);
-    setSelectedCustomEmoji(false);
     caret.current = undefined;
   });
-  const observeSelection = () => {
-    const element = input.current;
-    const token = valueRef.current.emoji?.find(
-      (item) =>
-        item.start < (element?.selectionEnd ?? 0) &&
-        item.end > (element?.selectionStart ?? 0),
-    );
-    setSelectedCustomEmoji(!!token);
-    completion.observe();
-  };
   function insert(
     text: string,
     recipient?: MentionRecipient,
     range?: CompletionQuery,
-    customEmoji?: string,
   ) {
     if (
       disabled ||
@@ -185,24 +137,15 @@ function Composer({
       setError("Choose at most 32 recipients");
       return false;
     }
-    let next = recipient
+    const next = recipient
       ? mentionDraft({
           text: edited.text,
           recipients: [
             ...edited.recipients,
             { ...recipient, start, end: start + text.length - 1 },
           ],
-          emoji: edited.emoji,
         })
       : edited;
-    if (customEmoji)
-      next = mentionDraft({
-        ...next,
-        emoji: [
-          ...(next.emoji ?? []),
-          { shortcode: customEmoji, start, end: start + text.length },
-        ],
-      });
     completion.invalidate();
     caret.current = start + text.length;
     saveDraft(next);
@@ -220,14 +163,6 @@ function Composer({
       return false;
     return insert(`@${recipient.name} `, recipient);
   }
-  function insertCustomEmoji(shortcode: string, range?: CompletionQuery) {
-    if (!/^[a-z0-9_-]{1,64}$/.test(shortcode)) return false;
-    const start =
-      range?.start ?? caret.current ?? input.current?.selectionStart ?? 0;
-    return start === 0
-      ? insert(CUSTOM_EMOJI_TOKEN, undefined, range, shortcode)
-      : insert(`:${shortcode}:`, undefined, range);
-  }
   function replaceCompletion(
     edit: CompletionEdit,
     query: CompletionQuery,
@@ -240,8 +175,6 @@ function Composer({
       return false;
     if ("mention" in edit && edit.mention)
       return insert(`@${edit.mention.name} `, edit.mention, query);
-    if ("customEmoji" in edit && edit.customEmoji)
-      return insertCustomEmoji(edit.customEmoji.shortcode, query);
     return (
       typeof edit.text === "string" &&
       insert(
@@ -253,18 +186,17 @@ function Composer({
   }
   function send() {
     if (disabled || !draft.trim() || !outbox) return;
-    const content = expandCustomEmoji(value);
     try {
       const id = threadRootId
         ? session.messages.reply(
             channelId,
             threadRootId,
-            content,
+            draft,
             value.recipients.map((item) => item.pubkey),
           )
         : session.messages.send(
             channelId,
-            content,
+            draft,
             value.recipients.map((item) => item.pubkey),
           );
       onSend?.(id);
@@ -315,22 +247,12 @@ function Composer({
           disabled={disabled}
           value={draft}
           data-single-emoji={isUnicodeEmojiOnly(draft) || undefined}
-          data-custom-emoji-only={
-            (showCustomEmoji && !!customEmoji) || undefined
-          }
-          data-leading-custom-emoji={
-            (showCustomEmoji && !customEmoji && !!leadingCustomEmoji) ||
-            undefined
-          }
           maxLength={16000}
           rows={2}
           placeholder={label}
           onFocus={() => completion.observe(true)}
-          onBlur={() => {
-            setSelectedCustomEmoji(false);
-            completion.invalidate();
-          }}
-          onSelect={observeSelection}
+          onBlur={() => completion.invalidate()}
+          onSelect={() => completion.observe()}
           onCompositionStart={() => {
             completion.composing.current = true;
             completion.invalidate();
@@ -351,7 +273,6 @@ function Composer({
                 range,
               ),
             );
-            setSelectedCustomEmoji(false);
             completion.observe(true);
           }}
           onKeyDown={(event) => {
@@ -381,17 +302,6 @@ function Composer({
             }
           }}
         />
-        {showCustomEmoji && (
-          <img
-            className={styles.composerCustomEmoji}
-            data-inline={(!customEmoji && !!leadingCustomEmoji) || undefined}
-            data-selected={selectedCustomEmoji || undefined}
-            src={customEmojiSource}
-            alt=""
-            aria-hidden="true"
-            onError={() => setFailedCustomEmoji(customEmojiSource)}
-          />
-        )}
       </div>
       {!!value.recipients.length && (
         <section
@@ -431,7 +341,6 @@ function Composer({
               threadRootId={threadRootId}
               disabled={disabled}
               insertText={(text) => insert(text)}
-              insertCustomEmoji={insertCustomEmoji}
               insertMention={insertMention}
               focus={() => input.current?.focus()}
             />

@@ -116,6 +116,9 @@ export function GifPicker({
             setQuery(event.target.value);
             onQueryChange(event.target.value);
           }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") event.preventDefault();
+          }}
         />
         {query && (
           <button

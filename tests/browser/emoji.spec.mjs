@@ -544,7 +544,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     }
     await search.fill("aonly");
     await search.press("Enter");
-    await expect(draft()).toHaveValue("\uFFFC");
+    await expect(draft()).toHaveValue(":aonly:");
     await picker.click();
     await search.fill("");
     await expect(
@@ -557,7 +557,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       page.getByRole("button", { name: ":grinning:", exact: true }),
     ).toBeVisible();
     await page.getByRole("button", { name: "😀", exact: true }).click();
-    await expect(draft()).toHaveValue("\uFFFC😀");
+    await expect(draft()).toHaveValue(":aonly:😀");
     await draft().fill("before after");
     await draft().evaluate((el) => el.setSelectionRange(7, 7));
     await picker.press("Enter");
@@ -609,9 +609,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       /emoji-media\/b\/.*1.png/,
     );
     await insert.click();
-    await expect(draft()).toHaveValue("\uFFFC");
-    await expect(draft()).toHaveAttribute("data-custom-emoji-only", "true");
-    await expect(draft().locator("..").locator("img")).toBeVisible();
+    await expect(draft()).toHaveValue(":party:");
     await expect(draft()).toBeFocused();
     await draft().press("Enter");
     await expect
@@ -623,9 +621,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await picker.click();
     await search.fill("party");
     await insert.click();
-    await expect(draft()).toHaveValue("\uFFFC");
-    await expect(draft()).toHaveAttribute("data-custom-emoji-only", "true");
-    await expect(draft().locator("..").locator("img")).toBeVisible();
+    await expect(draft()).toHaveValue(":party:");
     await expect(draft()).toBeFocused();
     await draft().press("Enter");
     await expect

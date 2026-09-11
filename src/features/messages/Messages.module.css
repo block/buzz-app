@@ -242,41 +242,6 @@
   font-size: calc(42px * var(--buzz-text-scale, 1));
   line-height: calc(48px * var(--buzz-text-scale, 1));
 }
-.composer textarea[data-custom-emoji-only] {
-  height: calc(48px * var(--buzz-text-scale, 1));
-  min-height: calc(48px * var(--buzz-text-scale, 1));
-  padding-left: calc(44px * var(--buzz-text-scale, 1));
-  color: transparent;
-  font-size: calc(42px * var(--buzz-text-scale, 1));
-  line-height: calc(48px * var(--buzz-text-scale, 1));
-  caret-color: var(--text);
-}
-.composer textarea[data-leading-custom-emoji] {
-  min-height: calc(48px * var(--buzz-text-scale, 1));
-  padding-left: calc(24px * var(--buzz-text-scale, 1));
-}
-.composerCustomEmoji {
-  position: absolute;
-  top: 50%;
-  left: 0;
-  width: calc(42px * var(--buzz-text-scale, 1));
-  height: calc(42px * var(--buzz-text-scale, 1));
-  object-fit: contain;
-  pointer-events: none;
-  transform: translateY(-50%);
-}
-.composerCustomEmoji[data-inline] {
-  top: 0;
-  width: calc(22px * var(--buzz-text-scale, 1));
-  height: calc(22px * var(--buzz-text-scale, 1));
-  transform: none;
-}
-.composerCustomEmoji[data-selected] {
-  border-radius: 2px;
-  background: Highlight;
-  box-shadow: 0 0 0 2px Highlight;
-  opacity: 0.65;
-}
 .composerActions {
   position: relative;
   display: flex;

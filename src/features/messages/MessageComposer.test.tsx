@@ -9,7 +9,6 @@ import {
   singleCustomEmoji,
 } from "./emoji-size";
 import type { RelaySession } from "../relay/session";
-import { CUSTOM_EMOJI_TOKEN } from "./mention-draft";
 
 // Production handlers with a shallow hook harness; not DOM focus/layout evidence.
 const hooks = vi.hoisted(() => ({
@@ -366,37 +365,17 @@ it("serializes text and mention commands in one turn and rejects malformed recip
   );
 });
 
-it("keeps picker custom emoji opaque in the draft and expands them when sent", () => {
+it("keeps custom emoji shortcode text readable in the draft and sends it unchanged", () => {
   const h = mount();
   const tools = elements(h.render()).find((e) => e.type === ComposerTools);
   assert.exists(tools);
-  const insertCustomEmoji = tools.props.insertCustomEmoji as (
-    shortcode: string,
-  ) => boolean;
-  expect(insertCustomEmoji("party")).toBe(true);
-  expect(h.input().props.value).toBe(CUSTOM_EMOJI_TOKEN);
-  expect(insertCustomEmoji(":party:")).toBe(false);
+  const insertText = tools.props.insertText as (text: string) => boolean;
+  expect(insertText(":party:")).toBe(true);
+  expect(h.input().props.value).toBe(":party:");
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
     ":party:",
-    [],
-  );
-});
-
-it("keeps picker custom emoji readable when the textarea cannot overlay them", () => {
-  const h = mount();
-  h.type("hello ");
-  const tools = elements(h.render()).find((e) => e.type === ComposerTools);
-  assert.exists(tools);
-  expect(
-    (tools.props.insertCustomEmoji as (shortcode: string) => boolean)("party"),
-  ).toBe(true);
-  expect(h.input().props.value).toBe("hello :party:");
-  h.submit();
-  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
-    "channel",
-    "hello :party:",
     [],
   );
 });

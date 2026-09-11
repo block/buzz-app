@@ -29,6 +29,11 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     },
   });
   const requests = [];
+  let signRequests = 0;
+  await page.route("**/api/relay/*/sign", (route) => {
+    signRequests += 1;
+    return route.abort();
+  });
   let releaseInfo = () => {};
   const infoReady = new Promise((resolve) => {
     releaseInfo = resolve;
@@ -203,6 +208,21 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   const search = page.getByRole("searchbox", { name: "Search GIFs" });
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("hello");
+  await draft.fill("unfinished draft");
+  await search.press("Enter");
+  await page.waitForTimeout(600);
+  await expect(draft).toHaveValue("unfinished draft");
+  expect(signRequests).toBe(0);
+  await draft.evaluate((element) => {
+    element.value = "";
+    element.dispatchEvent(
+      new InputEvent("input", {
+        bubbles: true,
+        inputType: "deleteContentBackward",
+      }),
+    );
+  });
+  await expect(draft).toHaveValue("");
   const composer = draft.locator("xpath=ancestor::form");
   await expect(composer).toHaveCSS("border-top-color", "rgb(138, 148, 152)");
   await expect(composer).toHaveCSS("box-shadow", "none");
@@ -308,17 +328,22 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await gifTab.click();
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("celebrate");
+  await page.locator("main").click({ position: { x: 4, y: 4 } });
+  await expect(picker).toHaveCount(0);
+  await emojiTrigger.click();
+  await gifTab.click();
+  await expect(search).toHaveValue("celebrate");
   await expect(
     page.getByTestId("klipy-gif-grid").getByRole("button"),
   ).toHaveCount(2);
-  await expect.poll(() => requests.length).toBe(3);
-  expect(requests[2]).toMatchObject({
+  const reopenRequests = requests.length;
+  expect(requests.at(-1)).toMatchObject({
     locale: expect.any(String),
     query: "celebrate",
   });
   await search.fill("hello");
-  await expect.poll(() => requests.length).toBe(4);
-  expect(requests[3]).toMatchObject({ query: "hello" });
+  await expect.poll(() => requests.length).toBe(reopenRequests + 1);
+  expect(requests.at(-1)).toMatchObject({ query: "hello" });
   const clear = picker.getByRole("button", { name: "Clear", exact: true });
   const clearIcon = clear.locator("svg");
   await expect(clear).toHaveCSS("right", "10px");

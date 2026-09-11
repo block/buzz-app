@@ -28,13 +28,11 @@ export function EmojiPicker({
   scope,
   disabled,
   insert,
-  insertCustomEmoji,
 }: {
   session: RelaySession;
   scope: string;
   disabled: boolean;
   insert(value: string): void;
-  insertCustomEmoji(shortcode: string): void;
 }) {
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<"emoji" | "gifs">("emoji");
@@ -42,7 +40,7 @@ export function EmojiPicker({
   const [pressedTab, setPressedTab] = useState<"emoji" | "gifs">();
   const [gifAvailability, setGifAvailability] = useState<{
     community: string;
-    supported: boolean;
+    supported: boolean | undefined;
   }>();
   const [gifDiscoveryRequested, setGifDiscoveryRequested] = useState(false);
   const [showGifTab, setShowGifTab] = useState(false);
@@ -54,9 +52,7 @@ export function EmojiPicker({
   const host = useRef<HTMLDivElement>(null);
   const search = useRef("");
   const onInsert = useRef(insert);
-  const onInsertCustomEmoji = useRef(insertCustomEmoji);
   onInsert.current = insert;
-  onInsertCustomEmoji.current = insertCustomEmoji;
   const id = useId();
   const community = communityFromScope(scope);
   const gifs = community
@@ -95,7 +91,8 @@ export function EmojiPicker({
     if (
       !community ||
       !gifDiscoveryRequested ||
-      gifAvailability?.community === community
+      (gifAvailability?.community === community &&
+        gifAvailability.supported !== undefined)
     )
       return;
     const controller = new AbortController();
@@ -112,8 +109,7 @@ export function EmojiPicker({
       },
       () => {
         if (!controller.signal.aborted) {
-          // A transport failure is not evidence that the relay lacks GIFs.
-          // Let the next hover/focus/open make a fresh attempt.
+          setGifAvailability({ community, supported: undefined });
           setGifDiscoveryRequested(false);
           setAnimateTab(false);
           setPressedTab(undefined);
@@ -123,6 +119,18 @@ export function EmojiPicker({
     );
     return () => controller.abort();
   }, [community, gifDiscoveryRequested, gifAvailability]);
+  useEffect(() => {
+    if (!open || disabled) return;
+    function outside(event: PointerEvent) {
+      if (
+        event.target instanceof Node &&
+        !controls.current?.contains(event.target)
+      )
+        setOpen(false);
+    }
+    document.addEventListener("pointerdown", outside);
+    return () => document.removeEventListener("pointerdown", outside);
+  }, [open, disabled]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
   useLayoutEffect(() => {
     if (!open || disabled || tab !== "emoji" || !host.current || !perLine)
@@ -147,9 +155,8 @@ export function EmojiPicker({
           },
           entries: catalog.status === "ready" ? catalog.entries : [],
           media: session.media,
-          select: (value, customEmoji) => {
-            if (customEmoji) onInsertCustomEmoji.current(customEmoji);
-            else onInsert.current(value);
+          select: (value) => {
+            onInsert.current(value);
             setOpen(false);
           },
           close: () => setOpen(false),
@@ -159,14 +166,6 @@ export function EmojiPicker({
         if (!cancelled)
           setError(reason instanceof Error ? reason.message : String(reason));
       });
-    function outside(event: PointerEvent) {
-      if (
-        event.target instanceof Node &&
-        !controls.current?.contains(event.target)
-      )
-        setOpen(false);
-    }
-    document.addEventListener("pointerdown", outside);
     return () => {
       cancelled = true;
       search.current =
@@ -175,7 +174,6 @@ export function EmojiPicker({
           ?.shadowRoot?.querySelector<HTMLInputElement>('input[type="search"]')
           ?.value ?? search.current;
       dispose?.();
-      document.removeEventListener("pointerdown", outside);
     };
   }, [
     open,
@@ -223,6 +221,8 @@ export function EmojiPicker({
           setAnimateTab(false);
           setPressedTab(undefined);
           void session.emoji.ensure();
+          if (gifs === undefined && gifAvailability?.community === community)
+            setGifAvailability(undefined);
           setGifDiscoveryRequested(true);
           // Freeze optional tabs for this opening so late discovery never shifts
           // the active picker underneath the user.

@@ -86,13 +86,7 @@ export function completionResult(result: CompletionResult): CompletionResult {
         !edit.mention.name.trim()
       )
         continue;
-    } else if (
-      typeof edit.text !== "string" ||
-      !edit.text ||
-      (edit.customEmoji &&
-        !/^[a-z0-9_-]{1,64}$/.test(edit.customEmoji.shortcode))
-    )
-      continue;
+    } else if (typeof edit.text !== "string" || !edit.text) continue;
     ids.add(item.id);
     items.push(
       Object.freeze({
@@ -103,12 +97,7 @@ export function completionResult(result: CompletionResult): CompletionResult {
         edit: Object.freeze(
           "mention" in edit
             ? { mention: Object.freeze({ ...edit.mention }) }
-            : {
-                text: edit.text,
-                ...(edit.customEmoji
-                  ? { customEmoji: Object.freeze({ ...edit.customEmoji }) }
-                  : {}),
-              },
+            : { text: edit.text },
         ),
       }),
     );

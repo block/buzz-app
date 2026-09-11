@@ -118,6 +118,9 @@ function Composer({
     !customEmojiOnly.length &&
     !!leadingCustomEmoji.spans.length;
   const input = useRef<HTMLTextAreaElement>(null);
+  const inlineEmojiGroup = useRef<HTMLSpanElement>(null);
+  const inlinePrefixMeasure = useRef<HTMLSpanElement>(null);
+  const [inlineTextIndent, setInlineTextIndent] = useState(0);
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
     input,
@@ -148,6 +151,35 @@ function Composer({
     input.current?.setSelectionRange(caret.current, caret.current);
     caret.current = undefined;
   });
+  useLayoutEffect(() => {
+    if (!showLeadingCustomEmoji) {
+      setInlineTextIndent(0);
+      return;
+    }
+    const emoji = inlineEmojiGroup.current;
+    const prefix = inlinePrefixMeasure.current;
+    if (
+      !emoji ||
+      !prefix ||
+      typeof emoji.getBoundingClientRect !== "function" ||
+      typeof prefix.getBoundingClientRect !== "function"
+    )
+      return;
+    const resize = () => {
+      const next =
+        emoji.getBoundingClientRect().width -
+        prefix.getBoundingClientRect().width;
+      setInlineTextIndent((current) =>
+        Math.abs(current - next) < 0.25 ? current : next,
+      );
+    };
+    resize();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(resize);
+    observer.observe(emoji);
+    observer.observe(prefix);
+    return () => observer.disconnect();
+  }, [showLeadingCustomEmoji]);
   function insert(
     text: string,
     recipient?: MentionRecipient,
@@ -293,7 +325,9 @@ function Composer({
               ? {
                   paddingLeft: `calc(${customEmojiOnly.length * 44}px * var(--buzz-text-scale, 1))`,
                 }
-              : undefined
+              : showLeadingCustomEmoji
+                ? { textIndent: `${inlineTextIndent}px` }
+                : undefined
           }
           maxLength={16000}
           rows={2}
@@ -378,7 +412,11 @@ function Composer({
         )}
         {showLeadingCustomEmoji && (
           <span className={styles.composerCustomEmojiMirror} aria-hidden="true">
-            <span className={styles.composerInlineCustomEmojiGroup}>
+            <span
+              ref={inlineEmojiGroup}
+              className={styles.composerInlineCustomEmojiGroup}
+              data-composer-inline-emoji=""
+            >
               {customEmojiSources.map(({ start, end, key, source }) => (
                 <img
                   key={key}
@@ -393,7 +431,16 @@ function Composer({
                 />
               ))}
             </span>
-            {draft.slice(leadingCustomEmoji.end)}
+            <span data-composer-inline-text="">
+              {draft.slice(leadingCustomEmoji.end)}
+            </span>
+            <span
+              ref={inlinePrefixMeasure}
+              className={styles.composerCustomEmojiPrefixMeasure}
+              data-composer-custom-emoji-prefix=""
+            >
+              {draft.slice(0, leadingCustomEmoji.end)}
+            </span>
           </span>
         )}
       </div>

@@ -581,6 +581,28 @@ test("current custom catalog drives typeahead and signed tags across community r
   await expect(renderedEmoji).toHaveCSS("width", "22px");
   await expect(renderedEmoji).toHaveCSS("height", "22px");
   await expect(composer).toContainText("lakjsdlkjflakjsdf");
+  await expect
+    .poll(() =>
+      input.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).textIndent),
+      ),
+    )
+    .toBeLessThan(0);
+  const inlineAlignment = await composer.evaluate((element) => {
+    const input = element.querySelector("textarea");
+    const emoji = element.querySelector("[data-composer-inline-emoji]");
+    const prefix = element.querySelector("[data-composer-custom-emoji-prefix]");
+    if (!input || !emoji || !prefix) throw new Error("Missing inline emoji");
+    return {
+      emoji: emoji.getBoundingClientRect().width,
+      prefix: prefix.getBoundingClientRect().width,
+      indent: Number.parseFloat(getComputedStyle(input).textIndent),
+    };
+  });
+  expect(inlineAlignment.prefix + inlineAlignment.indent).toBeCloseTo(
+    inlineAlignment.emoji,
+    1,
+  );
   await input.fill("hello :party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
   await expect(input).toHaveValue("hello :party: ");

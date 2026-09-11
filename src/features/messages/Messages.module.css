@@ -295,6 +295,12 @@
   width: calc(22px * var(--buzz-text-scale, 1));
   height: calc(22px * var(--buzz-text-scale, 1));
 }
+.composerCustomEmojiPrefixMeasure {
+  position: absolute;
+  visibility: hidden;
+  white-space: pre;
+  font: inherit;
+}
 .composerActions {
   position: relative;
   display: flex;

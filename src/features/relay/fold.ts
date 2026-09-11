@@ -26,7 +26,16 @@ export function parseAttachments(
     const url = fields.url ? safeMessageUrl(fields.url) : undefined;
     if (!url || seen.has(url)) continue;
     seen.add(url);
-    result.push({ url, video: fields.m?.startsWith("video/") ?? false });
+    // Treat signed metadata as untrusted layout input. Invalid/missing dimensions
+    // use the renderer's stable fallback rather than image-load-driven geometry.
+    const dim = /^(\d{1,6})x(\d{1,6})$/.exec(fields.dim ?? "");
+    const width = Number(dim?.[1]),
+      height = Number(dim?.[2]);
+    result.push({
+      url,
+      video: fields.m?.startsWith("video/") ?? false,
+      ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),
+    });
   }
   for (const url of markdownImages) {
     if (seen.has(url)) continue;

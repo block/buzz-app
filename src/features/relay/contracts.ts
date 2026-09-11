@@ -20,7 +20,11 @@ export type Profile = Readonly<{
   picture?: string;
   about?: string;
 }>;
-export type Attachment = Readonly<{ url: string; video: boolean }>;
+export type Attachment = Readonly<{
+  url: string;
+  video: boolean;
+  dimensions?: Readonly<{ width: number; height: number }>;
+}>;
 export type ChannelMessage = Readonly<{
   id: string;
   channelId: string;

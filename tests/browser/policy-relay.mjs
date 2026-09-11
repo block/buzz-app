@@ -108,6 +108,24 @@ export function policyRelay({
           acceptPublication(communityOf(url), filters);
           return Response.json({ accepted: true, event_id: filters.id });
         }
+        if (filters.length === 2 && filters[1].depth_limit) {
+          const [root, replies] = filters;
+          expect(root).toEqual({
+            ids: replies["#e"],
+            "#h": replies["#h"],
+            limit: 1,
+          });
+          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([9, 40002]);
+          for (const filter of filters)
+            report.queries.push({
+              community: communityOf(url),
+              filter,
+              at: performance.now(),
+            });
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
         if (filters.length !== 1) {
           // The read-only sidebar projection reads the two exact coordinates.
           expect(filters).toHaveLength(2);
@@ -125,7 +143,9 @@ export function policyRelay({
               at: performance.now(),
             });
           }
-          return Response.json([]);
+          return Response.json(
+            filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
         }
         const filter = filters[0],
           community = communityOf(url);
@@ -141,11 +161,15 @@ export function policyRelay({
               );
           });
         const channel = filter["#h"]?.[0];
+        // Head catch-up is an exact top-level channel window, not a batched
+        // sidebar preview that happens to contain that channel.
         const quota = filter.kinds?.includes(39002)
           ? "roster"
           : filter.kinds?.includes(9)
             ? filter.until === undefined
-              ? channel
+              ? filter["#h"]?.length === 1 && filter.top_level === true
+                ? channel
+                : undefined
               : `older:${channel}`
             : undefined;
         if (quotas.has(quota)) {

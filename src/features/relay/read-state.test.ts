@@ -429,3 +429,42 @@ describe("durable read-state owner", () => {
 });
 const ownerStatus = (owner: ReturnType<typeof createReadState>) =>
   owner.snapshot().status;
+
+it.each([false, true])(
+  "initial marker discovery is foreground and shares active work (snapshot=%s)",
+  async (snapshot) => {
+    const f = fixture();
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const read = vi.fn(async (..._args: unknown[]) => {
+      await held;
+      return [];
+    });
+    const owner = f.make({
+      host: {
+        ...f.host,
+        ...(snapshot ? { communityId: "test-community" } : {}),
+      },
+      reader: { read, ...(snapshot ? { readStateSnapshot: read } : {}) },
+    });
+    const first = owner.ensure();
+    await vi.waitFor(() => expect(read).toHaveBeenCalledOnce());
+    let finished = false;
+    const second = owner.ensure().then(() => {
+      finished = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(finished).toBe(false);
+    expect(read.mock.calls[0]?.[snapshot ? 0 : 1]).toMatchObject({
+      priority: "foreground",
+    });
+    release();
+    await Promise.all([first, second]);
+    await owner.refresh();
+    expect(read.mock.calls[1]?.[snapshot ? 0 : 1]).toMatchObject({
+      priority: "background",
+    });
+  },
+);

@@ -31,6 +31,7 @@ export function UnreadBadge({
   return (
     <span
       className={styles.unreadBadge}
+      data-channel-unread=""
       role="img"
       aria-label={label}
       title={label}

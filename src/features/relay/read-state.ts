@@ -20,7 +20,7 @@ import {
   type ReadJournal,
   type ReadStateStorage,
 } from "./read-state-storage";
-import type { RelayReader } from "./reader";
+import type { Priority, RelayReader } from "./reader";
 
 export type ReadSyncSnapshot = Readonly<{
   capability: "unsupported" | "read-only" | "frontier-sync";
@@ -281,7 +281,7 @@ export function createReadState({
       throw new Error("Read-state coordinate capacity exceeded");
     }
   }
-  async function refresh() {
+  async function refresh(priority: Priority = "background") {
     requested = true;
     if (closed || !host) return;
     if (refreshing) return refreshing;
@@ -299,7 +299,7 @@ export function createReadState({
           complete && reader.readStateSnapshot
             ? await reader.readStateSnapshot({
                 signal,
-                priority: "background",
+                priority,
                 fresh: true,
               })
             : await reader.read(
@@ -311,7 +311,7 @@ export function createReadState({
                     limit: 500,
                   },
                 ],
-                { signal, priority: "background" },
+                { signal, priority },
               );
         await ingest(events, signal, generation);
         if (closed || generation !== epoch) return;
@@ -568,7 +568,8 @@ export function createReadState({
       };
     },
     refresh,
-    ensure: () => (requested ? Promise.resolve() : refresh()),
+    ensure: () =>
+      refreshing ?? (requested ? Promise.resolve() : refresh("foreground")),
     flush,
     read: (
       key: string,

@@ -59,3 +59,46 @@ export function registerAppShortcuts(
     for (const dispose of remove) dispose();
   };
 }
+
+export function registerNavigationShortcuts(
+  shortcuts: ShortcutsService,
+  navigation: import("../features/navigation/controller").Navigation,
+) {
+  const remove = [
+    shortcuts.registerHost({
+      id: "navigation-back",
+      title: "Go back",
+      binding: { key: "[", mod: true },
+      allowInEditable: true,
+      when: () => navigation.snapshot().canGoBack,
+      run: navigation.back,
+    }),
+    shortcuts.registerHost({
+      id: "navigation-forward",
+      title: "Go forward",
+      binding: { key: "]", mod: true },
+      allowInEditable: true,
+      when: () => navigation.snapshot().canGoForward,
+      run: navigation.forward,
+    }),
+    // Alt arrows are native word-editing chords on macOS. Keep them outside
+    // editable fields; Mod+[ / Mod+] remain explicit history shortcuts.
+    shortcuts.registerHost({
+      id: "navigation-back-arrow",
+      title: "Go back",
+      binding: { key: "ArrowLeft", alt: true },
+      when: () => navigation.snapshot().canGoBack,
+      run: navigation.back,
+    }),
+    shortcuts.registerHost({
+      id: "navigation-forward-arrow",
+      title: "Go forward",
+      binding: { key: "ArrowRight", alt: true },
+      when: () => navigation.snapshot().canGoForward,
+      run: navigation.forward,
+    }),
+  ];
+  return () => {
+    for (const dispose of remove) dispose();
+  };
+}

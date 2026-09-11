@@ -65,9 +65,9 @@ pnpm reuses its shared package cache; no node_modules directory needs to be copi
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
 downloads and native compilation can take time. Web and desktop dev use the same
 port; run them separately or open the browser at the desktop dev server URL.
-Both start without live identity by default. For live access, configure your
-public `BUZZ_DEV_VIEWER` pin in `.env.local` and use `BUZZ_LIVE=1` with either
-recipe; see [the setup and Keychain requirements](../README.md#relay-channels).
+Both run the development broker with your identity when the public
+`BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
+identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).
 
 ## Interactive product iteration
 
@@ -190,11 +190,14 @@ the complete suite still runs with `pnpm test` / `just scan`:
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
-- **Browser journeys:** two functional shards, both engines, after measurements
-  succeed. Each runner builds the native plugin-manager fixture in a separately
-  logged setup step before starting Playwright. Its Rust cache is optional: a
-  cache miss still builds the fixture, outside the browser subprocess timeout.
-  No measurement is repeated on shards, and no retry hides a failure.
+- **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
+  per engine), each with two workers. They start alongside measurements on separate
+  runners; `CI required` still requires both lanes. Each runner builds the native
+  plugin-manager fixture in a separately logged setup step before starting
+  Playwright. Its Rust cache is optional: a cache miss still builds the fixture,
+  outside the browser subprocess timeout. No measurement is repeated on shards,
+  and no retry hides a failure. Functional jobs also run when measurements fail:
+  this spends more runner minutes for faster, independent feedback.
 - **CI required:** fails unless every lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.
@@ -230,7 +233,7 @@ from the gate.
 
 ### Manual browser fixtures
 
-With `just web` running **without `BUZZ_LIVE=1`**, these separate diagnostic pages
+With `just web` running **without a `BUZZ_DEV_VIEWER` pin**, these separate diagnostic pages
 use fixture identities/transports rather than the live broker:
 
 | URL | Purpose |

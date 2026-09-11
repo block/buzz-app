@@ -32,7 +32,6 @@ afterEach(async () => {
 });
 
 async function startup(relayUrl = "", aliases = "") {
-  vi.stubEnv("BUZZ_LIVE", "1");
   vi.stubEnv("BUZZ_RELAY_URL", relayUrl);
   vi.stubEnv("BUZZ_COMMUNITY_ALIASES", aliases);
   vi.stubEnv("BUZZ_DEV_VIEWER", viewer);
@@ -142,7 +141,7 @@ it("loads ignored local deployment config and lets process env override it", asy
   const cwd = process.cwd();
   process.chdir(dir);
   try {
-    vi.stubEnv("BUZZ_LIVE", "0");
+    vi.stubEnv("BUZZ_DEV_VIEWER", "");
     vi.stubEnv("BUZZ_RELAY_URL", undefined);
     vi.stubEnv("BUZZ_COMMUNITY_ALIASES", undefined);
     writeFileSync(
@@ -175,7 +174,8 @@ it.each([
 ])(
   "validates routing even when the development broker is disabled (%#)",
   async (relayUrl, communityAliases) => {
-    vi.stubEnv("BUZZ_LIVE", "0");
+    // A configured pin does not enable the broker for production builds.
+    vi.stubEnv("BUZZ_DEV_VIEWER", viewer);
     vi.stubEnv("BUZZ_RELAY_URL", relayUrl);
     vi.stubEnv("BUZZ_COMMUNITY_ALIASES", communityAliases);
     await expect(

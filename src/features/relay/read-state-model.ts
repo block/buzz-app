@@ -1,4 +1,4 @@
-import type { RelayEvent } from "./events";
+import type { RelayEvent } from "./events.ts";
 
 /** NIP-RS timestamps/counters are uint32, not timeline event-ID cursors. */
 export const READ_STATE_MAX = 0xffff_ffff;

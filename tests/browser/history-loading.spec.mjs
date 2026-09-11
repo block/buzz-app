@@ -97,40 +97,69 @@ test("saved top resumes automatic history on an upward gesture after remount", a
   app.pending.shift().release();
 });
 
-test("older-page quota errors require deliberate retry instead of more scrolling requests", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await expect(
-    page.getByRole("button", { name: "Retry live updates", exact: true }),
-  ).toHaveCount(0);
-  app.relay.quotaNextOlder("alpha", 0);
-  const cursors = () =>
-    app.report.queries.filter(({ filter }) => filter.until !== undefined);
-  await history(page).hover();
-  await page.mouse.wheel(0, -100000);
-  await expect(history(page).getByRole("alert")).toContainText("rate-limited");
-  const count = cursors().length;
-  const brokerCount = app.report.brokerRequests.filter((r) =>
-    r.url.endsWith("/query"),
-  ).length;
-  for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -500);
-  await settle(page);
-  expect(cursors()).toHaveLength(count);
-  expect(
-    app.report.brokerRequests.filter((r) => r.url.endsWith("/query")),
-  ).toHaveLength(brokerCount);
-  await expect
-    .poll(() => performance.now())
-    .toBeGreaterThan(app.relay.rejected[0].until + 50);
-  await history(page)
-    .getByRole("button", { name: "Load older messages", exact: true })
-    .click();
-  await expect.poll(() => app.pending.length).toBe(1);
-  expect(cursors()).toHaveLength(count + 1);
-  app.pending.shift().release();
-  await expect(history(page).getByRole("alert")).toHaveCount(0);
+test.describe("quota retry without threshold-driven continuation", () => {
+  test.use({ tallMessages: true });
+  test("older-page quota errors require deliberate retry instead of more scrolling requests", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    await expect(
+      page.getByRole("button", { name: "Retry live updates", exact: true }),
+    ).toHaveCount(0);
+    const olderAlpha = (filter) =>
+      filter.until !== undefined &&
+      filter["#h"]?.includes("alpha") &&
+      filter.kinds?.some((kind) => kind === 9 || kind === 40002);
+    // Observe before broker admission: a bad retry may be rejected locally.
+    // Unrelated background reads (including unread repair) must not count.
+    const browserCursors = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === "/api/relay/primary/query"
+      ) {
+        const filters = request.postDataJSON();
+        if (filters.some(olderAlpha)) browserCursors.push(filters);
+      }
+    });
+    app.relay.quotaNextOlder("alpha", 0);
+    const cursors = () =>
+      app.report.queries.filter(({ filter }) => olderAlpha(filter));
+    await history(page).hover();
+    await page.mouse.wheel(0, -100000);
+    await expect(history(page).getByRole("alert")).toContainText(
+      "rate-limited",
+    );
+    const count = cursors().length;
+    expect(count).toBe(1);
+    expect(browserCursors).toHaveLength(1);
+    for (let i = 0; i < 3; i++) await page.mouse.wheel(0, -500);
+    await settle(page);
+    expect(cursors()).toHaveLength(count);
+    expect(browserCursors).toHaveLength(count);
+    await expect
+      .poll(() => performance.now())
+      .toBeGreaterThan(app.relay.rejected[0].until + 50);
+    await history(page)
+      .getByRole("button", { name: "Load older messages", exact: true })
+      .click();
+    await expect.poll(() => app.pending.length).toBe(1);
+    expect(cursors()).toHaveLength(count + 1);
+    expect(browserCursors).toHaveLength(count + 1);
+    app.pending.shift().release();
+    await expect(history(page).getByRole("alert")).toHaveCount(0);
+    await expect(
+      history(page).getByRole("button", {
+        name: "Load older messages",
+        exact: true,
+      }),
+    ).toBeEnabled(); // Still more history: retry success must not enqueue it.
+    await settle(page);
+    expect(cursors()).toHaveLength(count + 1);
+    expect(browserCursors).toHaveLength(count + 1);
+    expect(app.pending).toHaveLength(0);
+  });
 });
 
 test("cancelled navigation keeps relay reads usable in the same document", async ({

@@ -16,10 +16,12 @@ export function CommunityDialog({
   communities,
   mode,
   close,
+  onJoined,
 }: {
   communities: Communities;
   mode: "join" | "profile";
   close(): void;
+  onJoined?: (id: string) => void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const client = communities.snapshot();
@@ -134,6 +136,7 @@ export function CommunityDialog({
             },
             profile,
           );
+          onJoined?.(id);
         }
         close();
       });
@@ -178,7 +181,7 @@ export function CommunityDialog({
           <p>
             {client.status === "loading"
               ? "Opening your local identity…"
-              : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then run BUZZ_LIVE=1 just web or BUZZ_LIVE=1 just desktop. See README.md for requirements."}
+              : "Live identity access is unavailable. For development, set BUZZ_DEV_VIEWER to your Buzz public key in .env.local, then restart just web or just desktop. See README.md for requirements."}
           </p>
         ) : (
           <>

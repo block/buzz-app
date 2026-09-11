@@ -1,13 +1,42 @@
-import { Component, type ReactNode } from "react";
+import { Component, useEffect, type ReactNode } from "react";
 import type { PageProps, RegisteredPage } from "./service";
 
+type BoundaryProps = {
+  children: ReactNode;
+  page: RegisteredPage;
+  navigation?: PageProps["navigation"];
+};
 class PageBoundary extends Component<
-  { children: ReactNode },
-  { error: string | null }
+  BoundaryProps,
+  {
+    error: string | null;
+    page: RegisteredPage;
+    navigation: PageProps["navigation"];
+  }
 > {
-  state: { error: string | null } = { error: null };
+  state = {
+    error: null as string | null,
+    page: this.props.page,
+    navigation: this.props.navigation,
+  };
+  static getDerivedStateFromProps(
+    props: BoundaryProps,
+    state: PageBoundary["state"],
+  ) {
+    // A new attempt or registration can retry a failed subtree, even within one visit.
+    // Do not remount healthy content on a reclick: its local drafts/focus still belong to it.
+    if (props.page !== state.page || props.navigation !== state.navigation)
+      return { error: null, page: props.page, navigation: props.navigation };
+    return null;
+  }
   static getDerivedStateFromError(error: unknown) {
     return { error: String(error) };
+  }
+  componentDidCatch() {
+    this.props.navigation?.complete({
+      status: "failed",
+      reason: "unavailable",
+    });
   }
   render() {
     return this.state.error ? (
@@ -29,11 +58,31 @@ function Failure({ message }: { message: string }) {
 export function PageView({
   page,
   companion,
+  navigation,
 }: { page: RegisteredPage } & PageProps) {
-  const Page = page.component;
   return (
-    <PageBoundary key={`${page.key}:${page.revision}`}>
-      <Page companion={companion} />
+    <PageBoundary
+      page={page}
+      navigation={navigation}
+      key={`${page.key}:${page.revision}`}
+    >
+      <PresentedPage
+        page={page}
+        companion={companion}
+        navigation={navigation}
+      />
     </PageBoundary>
   );
+}
+function PresentedPage({
+  page,
+  companion,
+  navigation,
+}: { page: RegisteredPage } & PageProps) {
+  const Page = page.component;
+  useEffect(() => {
+    // This effect lives INSIDE the boundary: failed rendering never acknowledges mount.
+    if (!page.handlesNavigation) navigation?.complete({ status: "opened" });
+  }, [page, navigation]);
+  return <Page companion={companion} navigation={navigation} />;
 }

@@ -14,7 +14,7 @@ host-matched author preview, not a cross-version SDK or plugin sandbox.
 const target = { kind: "channel", channelId } as const;
 const snapshot = session.unread.snapshot(target);
 const unsubscribe = session.unread.subscribe(target, render);
-await session.unread.ensure(); // shared bounded background observation, not per-row fetch
+await session.unread.ensure(); // shared bounded observation, not per-row fetch
 
 // A custom reading UI owns one cancellable observation lease.
 const reading = session.unread.reading(channelId);
@@ -44,9 +44,22 @@ could hide unseen siblings. Oversized rows that never fit fully are not auto-rea
   auxiliary events and authorized deletions. It is **not an exact total or lower
   bound**: missing markers/deletions can overcount; missing history can undercount.
 - `coverage` and `freshness` describe message evidence, separately from `sync()`.
-  Evidence is capped at 4,096 events / 8 MiB; initial repair is one background
-  roster-wide read capped at 500, not a head request for every sidebar row. Repair
-  evidence does not seed channel windows, alter their cursors, or mark messages read.
+  Evidence is capped at 4,096 events / 8 MiB. Repair queries the membership roster
+  in sequential batches of at most 128 explicit channel IDs (the relay limit),
+  with up to 500 recent rows **per batch**, not a shared remainder or one head
+  request per sidebar row. A 278-channel roster therefore makes three reads.
+  Earlier results publish progressively and survive a later transport failure;
+  capacity overflow retains the existing visible error/clear policy and stops repair.
+  Querying every ID does not mean observing every channel: busy channels can still
+  consume their batch's sample, and missing thread roots can affect inherited markers.
+  Repair evidence does not seed channel windows, alter cursors, or mark messages read.
+- Initial marker/evidence observation and explicit evidence refresh are foreground
+  reads so optional profiles do not block them. Reconnect/periodic sync and marker
+  publication remain background. Each evidence batch gets its own queue-inclusive
+  10-second deadline **after** marker observation, rather than spending it waiting
+  for markers. Marker failure stays visible separately in `sync()` even when
+  evidence succeeds. Concurrent `ensure()` calls share active work; a failed attempt
+  needs explicit `refresh()` or reconnect, not an unlimited automatic retry loop.
 - `attentionCount` is a separate observed subset: DMs, mentions and replies to
   participating threads. It does not trigger notifications or implement mute policy.
 - `markThrough(target, messageId)` is explicit prefix intent through verified
@@ -64,6 +77,27 @@ manual-unread mark replaces the count with a dot and local-only label; the
 underlying observed count and attention styling remain available. Conversation
 options exposes explicit actions and Unread status/retry. Unknown and observed-zero both omit a badge; the API preserves
 the distinction. There is no notification, feed, or exact-count service here.
+
+When unread rows are outside the sidebar's scroll viewport, floating “Unread
+above/below” buttons reveal the nearest one in that direction. They measure the
+existing rendered badges—no extra unread subscriptions or relay reads just to
+show the pills. Search-filtered rows do not participate. Collapsed sections use
+the summary's position and expand when revealed. A partly visible row is not
+outside the fold. Activation scrolls and focuses the row, retaining its ordinary
+focus preparation; it does not select the channel or acknowledge any messages.
+The pills use presence, not a potentially misleading aggregate message total.
+
+Thread buttons keep the summary's total reply count and add a dot when the shared
+thread selector has observed unread replies or explicit thread-unread intent.
+Accessible names distinguish observed evidence, stale evidence and local-only
+intent; unknown/observed-zero omit the dot, not assert complete read history.
+Each mounted button subscribes to its own thread, without fetching thread history.
+Opening/hovering a button does not acknowledge replies; the existing focused
+viewport dwell in `ThreadPanel` supplies individual-message reading intent.
+Unread ancestry uses the same canonical marked-reference parser as thread opening
+and row projection (case-insensitive hex, last valid marker wins). Resolution still
+requires bounded, retained same-channel message evidence; references alone do not
+grant access or trigger a read.
 
 ## Durable sync and privacy
 
@@ -123,11 +157,21 @@ durable account-owned intent survives without exposing revoked context projectio
   pagehide/pageshow tests establish handler behavior, not a full BFCache journey.
   Live-stream reconnect during a delayed departing navigation is a separate
   pre-existing host-lifecycle limitation; this is not a universal unload fence.
+- `unread-startup.test.ts`: production reader/session scheduling, large-roster
+  batching, progressive/partial failure, explicit/reconnect recovery and access/cache
+  fences; `read-state.test.ts` also checks both marker-discovery priority paths.
 - `unread.test.ts`: real session lifecycle, access, deletions, reading leases and
   reverified disk-restore evidence without network content.
 - `use-reading.test.ts`, timeline/thread tests: dwell/geometry and owner wiring.
 - `dev/read-state-broker.test.mjs`: real local HTTP broker, NIP-11/NIP-98/NIP-44,
   reader envelope verification, filter rejection and streamed body limits.
+- `MessageRow.test.tsx`, `tests/browser/thread-unread.spec.mjs`: thread selector
+  presentation, unchanged summary counts, hover/keyboard-focus treatment, independent
+  thread reading, own/peer live arrivals and reload through the production broker.
+- `tests/browser/sidebar-unread.spec.mjs`: above/below geometry, no layout shift,
+  resize/search/collapse, keyboard continuation, manual intent, evidence refresh,
+  session retargeting, and no reading/selection from reveal. Focus retains existing
+  channel preparation; merely showing the indicators does not fetch channels.
 - `tests/browser/unread.spec.mjs`: production build/React/session/IndexedDB/broker,
   observed sidebar → focused dwell → encrypted publication/readback, reload,
   cancellation and explicit local-unread clearing with network content held.

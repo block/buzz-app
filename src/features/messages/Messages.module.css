@@ -153,9 +153,11 @@
   text-overflow: ellipsis;
 }
 .replies {
-  border: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
   background: transparent;
-  padding: 4px 0;
+  padding: 4px 6px;
+  margin-left: -7px;
   cursor: pointer;
   display: inline-flex;
   align-items: center;
@@ -390,7 +392,19 @@
   color: inherit;
 }
 .replies:hover {
-  text-decoration: underline;
+  border-color: var(--border-input);
+  background: var(--surface-hover);
+}
+.replies:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.threadUnread {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--link);
 }
 .threadHistory {
   flex: 1;

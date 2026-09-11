@@ -135,6 +135,7 @@ export function createChannelStore(
   let current: string | undefined;
   const mediaIntents: string[] = [];
   let hydration: Promise<void> | undefined;
+  let preparing = false;
   const notify = (listeners: Iterable<Listener> | undefined) => {
     for (const listener of listeners ?? []) notifyListener(listener);
   };
@@ -354,7 +355,7 @@ export function createChannelStore(
     freshness: head.cached ? "cached" : "verified",
     historyLimited: false,
   });
-  function save(channelId: string, head: Head) {
+  function save(channelId: string, head: Head, previousProfiles?: string) {
     if (
       !persistence ||
       !authorized(channelId) ||
@@ -369,16 +370,20 @@ export function createChannelStore(
         ...row.participants,
       ]),
     );
+    const profiles = [...authors].flatMap((id) => {
+      const event = directory.event(id);
+      return event ? [event] : [];
+    });
+    const signature = profiles.map((event) => event.id).join(":");
+    if (signature === previousProfiles) return signature;
     const record: SavedHead = {
       channelId,
       savedAt: head.savedAt,
       events: [...head.events],
-      profiles: [...authors].flatMap((id) => {
-        const event = directory.event(id);
-        return event ? [event] : [];
-      }),
+      profiles,
     };
     void persistence.write(record).catch(() => {});
+    return signature;
   }
   function denyChannel(channelId: string, error: unknown) {
     accessVersions.set(channelId, (accessVersions.get(channelId) ?? 0) + 1);
@@ -467,8 +472,11 @@ export function createChannelStore(
     }
     heads.set(channelId, head);
     setList(list);
+    // Durable message warmth must not wait behind optional name enrichment.
+    const savedProfiles =
+      generation === epoch ? save(channelId, head) : undefined;
     void fetchProfiles(head.rows).then(() => {
-      if (generation === epoch) save(channelId, head);
+      if (generation === epoch) save(channelId, head, savedProfiles);
     });
     if (intent === channelId) prepareMedia(channelId);
     return head;
@@ -673,7 +681,6 @@ export function createChannelStore(
     events: readonly RelayEvent[],
     complete?: ReadonlySet<string>,
     started?: ReadonlyMap<string, RelayEvent>,
-    prepare = true,
   ) {
     if (disposed || !transport || !discovery) return;
     started ??= discovery.rosterVersions();
@@ -718,7 +725,7 @@ export function createChannelStore(
     else commit();
     // Discovery authorizes disk reuse, not speculative reads of the roster.
     // Network heads belong to explicit demand/intent and retained live catch-up.
-    if (prepared && prepare) hydration ??= hydrate();
+    if (prepared) hydration ??= hydrate();
   }
   /** Apply roster authority as soon as it succeeds; names are a separate,
    * optional read and cannot delay revocation or overwrite newer live grants. */
@@ -786,7 +793,7 @@ export function createChannelStore(
       const complete =
         rosters.length < DISCOVERY_LIMIT ? new Set(ids) : undefined;
       if (!complete) coverage = "partial";
-      applyDiscovery(rosters, complete, started, false);
+      applyDiscovery(rosters, complete, started);
       if (disposed) return;
       generation = epoch;
       readingRoster = false;
@@ -928,8 +935,20 @@ export function createChannelStore(
       intent = channelId;
       const head = heads.get(channelId);
       if (head) prepareMedia(channelId);
-      if (!head || head.cached || now() - head.savedAt >= FRESH_FOR)
-        void requestHead(channelId, "foreground").catch(() => {});
+      if (
+        preparing ||
+        (head && !head.cached && now() - head.savedAt < FRESH_FOR)
+      )
+        return;
+      // One speculative head, no backlog from crossing sidebar rows. Keep it
+      // foreground so selecting this same request cannot inherit a host-side
+      // background wait; the other reader slots remain available for demand.
+      preparing = true;
+      void requestHead(channelId, "foreground")
+        .catch(() => {})
+        .finally(() => {
+          preparing = false;
+        });
     },
     refresh(channelId: string) {
       if (disposed || !transport || !authorized(channelId)) return;

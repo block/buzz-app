@@ -18,7 +18,8 @@ import {
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
 import { relayKlipySearchPath } from "../src/features/relay/gifs.ts";
 // Dev-only relay broker. Holds the local Buzz identity in this Node process and signs NIP-98 reads
-// for the browser, so no key ever reaches page JavaScript. Opt-in via BUZZ_LIVE=1; tests never load it.
+// for the browser, so no key ever reaches page JavaScript. The dev server loads it whenever
+// BUZZ_DEV_VIEWER is configured; production builds and tests never load it.
 // Scoped writes support basic messages, profile setup and invite admission; signing remains here.
 import {
   liveChannels,

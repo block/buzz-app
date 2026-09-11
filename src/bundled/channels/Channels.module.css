@@ -55,12 +55,54 @@
 .search:focus-within {
   outline: 2px solid var(--focus);
 }
+.channelListFrame {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+}
 .channelList {
+  height: 100%;
+  overflow-y: auto;
+}
+.channelListContent {
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
   gap: 1px;
-  flex: 1;
+}
+.sidebar .unreadEdge {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  width: max-content;
+  max-width: calc(100% - 8px);
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--primary);
+  color: var(--on-primary);
+  box-shadow: var(--elevation-card);
+  font-size: calc(12px * var(--buzz-text-scale, 1));
+  line-height: 1.3;
+  cursor: pointer;
+}
+.unreadEdge svg {
+  flex-shrink: 0;
+}
+.unreadEdge[data-edge="above"] {
+  top: 4px;
+}
+.unreadEdge[data-edge="below"] {
+  bottom: 4px;
+}
+.unreadEdge:hover {
+  border-color: var(--on-primary);
+}
+.unreadEdge:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .channelSection {
   flex-shrink: 0;

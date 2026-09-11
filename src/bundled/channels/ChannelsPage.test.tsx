@@ -4,6 +4,12 @@ import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { Panels } from "../../features/panels/service";
 import { ChannelsPage } from "./ChannelsPage";
 
+// This is a shallow element-boundary test, not a React render. Navigation effects
+// are exercised by the browser navigation journeys; do not execute them here.
+vi.mock("react", async (original) => ({
+  ...(await original<typeof import("react")>()),
+  useEffect: () => {},
+}));
 // Inspect the actual element returned at the workspace boundary, not a parallel
 // key helper. React uses this key to decide whether to retain the subtree.
 vi.mock("../../features/relay/react", async (original) => ({
@@ -34,4 +40,59 @@ it("keeps the same workspace identity for updates within a session", () => {
   expect(workspace("community-a:viewer", 1).key).toBe(
     workspace("community-a:viewer", 1).key,
   );
+});
+
+it("the actual workspace receives session-bound authority, never the page's reusable authority", async () => {
+  const { Context } = await import("@deepseek-ai/cordis");
+  const { provideNavigation } = await import(
+    "../../features/navigation/service"
+  );
+  const { provideRelay } = await import("../../features/relay/service");
+  const ctx = new Context();
+  const host = provideNavigation(ctx);
+  const source = provideRelay(ctx);
+  const relay: RelayData = {
+    ...source,
+    snapshot: () => ({ ...source.snapshot(), status: "ready" }),
+  };
+  try {
+    const pending = host.navigation.open({
+      version: 1,
+      kind: "page",
+      pluginId: "buzz.channels",
+      pageId: "channels",
+    });
+    const parent = host.request(host.navigation.snapshot().attempt, {
+      valid: () => true,
+      subscribe: () => () => {},
+    }).request;
+    const rendered = ChannelsPage({
+      relay,
+      panels: {} as Panels,
+      navigation: parent,
+    });
+    const workspace = rendered.props.children as ReactElement<{
+      navigation: typeof parent;
+    }>;
+    source.disconnect();
+    expect(workspace.props.navigation.signal.aborted).toBe(true);
+    expect(workspace.props.navigation.complete({ status: "opened" })).toBe(
+      false,
+    );
+    expect(
+      workspace.props.navigation.resolve({ version: 1, kind: "settings" }),
+    ).toBe(false);
+    expect(parent.signal.aborted).toBe(false);
+    const replacement = ChannelsPage({
+      relay,
+      panels: {} as Panels,
+      navigation: parent,
+    }).props.children as typeof workspace;
+    expect(replacement.props.navigation.complete({ status: "opened" })).toBe(
+      true,
+    );
+    expect(await pending).toEqual({ status: "opened" });
+  } finally {
+    await ctx.fiber.dispose();
+  }
 });

@@ -1,4 +1,7 @@
+import type { PageNavigation } from "../../features/navigation/service";
+import type { Navigation } from "../../features/navigation/controller";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
+import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
   useCallback,
@@ -36,6 +39,7 @@ import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
+import { useSidebarView } from "./useSidebarView";
 import { sidebarSections } from "./sidebar-sections";
 import styles from "./Channels.module.css";
 
@@ -44,13 +48,33 @@ export function ChannelsPage({
   relay,
   panels,
   companion,
+  navigation,
+  navigator,
 }: {
   extensions?: ConversationExtensions | undefined;
   relay: RelayData;
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
   panels: Panels;
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  const sessionNavigation = navigation?.forSession(relay, session);
+  useEffect(() => {
+    if (!navigation || !sessionNavigation) return;
+    if (
+      navigation.target.kind === "conversation" &&
+      navigation.target.messageId
+    )
+      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
+    else if (
+      session.status === "disconnected" &&
+      navigation.target.kind === "page"
+    )
+      sessionNavigation.complete({ status: "opened" });
+    else if (session.status === "error")
+      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, sessionNavigation, session.status]);
   return (
     <section className={styles.root} aria-label="Channels">
       {session.status !== "ready" ? (
@@ -73,10 +97,9 @@ export function ChannelsPage({
                 </button>
                 <p className={styles.note}>
                   For development, set <code>BUZZ_DEV_VIEWER</code> to your Buzz
-                  public key in <code>.env.local</code>, then run{" "}
-                  <code>BUZZ_LIVE=1 just web</code> or{" "}
-                  <code>BUZZ_LIVE=1 just desktop</code>. See README.md for
-                  requirements.
+                  public key in <code>.env.local</code>, then restart{" "}
+                  <code>just web</code> or <code>just desktop</code>. See
+                  README.md for requirements.
                 </p>
               </>
             )}
@@ -88,6 +111,9 @@ export function ChannelsPage({
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
           queries={session.session}
+          navigation={sessionNavigation}
+          navigator={navigator}
+          viewer={session.viewer}
           panels={panels}
           companion={companion}
         />
@@ -102,10 +128,16 @@ function ChannelWorkspace({
   panels,
   scope,
   companion,
+  navigation,
+  navigator,
+  viewer,
 }: {
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
   scope: string;
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
+  viewer?: string | undefined;
   queries: RelaySession;
   panels: Panels;
 }) {
@@ -123,6 +155,17 @@ function ChannelWorkspace({
     readView(scope, "selected-channel", undefined),
   );
   const select = (id: string) => {
+    if (navigator && viewer) {
+      void navigator.open({
+        version: 1,
+        kind: "conversation",
+        channelId: id,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    }
     setSelected(id);
     writeView(scope, "selected-channel", id);
   };
@@ -132,10 +175,41 @@ function ChannelWorkspace({
   }>();
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const [search, setSearch] = useState("");
+  const sidebar = useSidebarView(
+    scope,
+    list.status === "ready" && preferences.status !== "loading",
+  );
+  const { search } = sidebar;
   const channels = useChannelLabels(list.channels, queries.profiles);
-  const current =
-    channels.find((channel) => channel.id === selected) ?? channels[0];
+  const requestedChannel =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.channelId
+      : undefined;
+  const current = requestedChannel
+    ? (channels.find((channel) => channel.id === requestedChannel) ??
+      (list.coverage === "partial"
+        ? { id: requestedChannel, name: "Conversation" }
+        : undefined))
+    : (channels.find((channel) => channel.id === selected) ?? channels[0]);
+  useEffect(() => {
+    if (navigation?.signal.aborted) return;
+    if (requestedChannel && list.status === "ready" && !current)
+      navigation?.complete({ status: "failed", reason: "unavailable" });
+    if (!requestedChannel && !current && list.status === "ready")
+      navigation?.complete({ status: "opened" });
+    if (!requestedChannel && current && navigation && viewer) {
+      // Resolve the saved default within this attempt, keeping its caller and deadline.
+      navigation.resolve({
+        version: 1,
+        kind: "conversation",
+        channelId: current.id,
+        scope: {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        },
+      });
+    }
+  }, [requestedChannel, current, list.status, navigation, viewer, scope]);
   const showingThread = thread?.channelId === current?.id ? thread : undefined;
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
@@ -208,12 +282,19 @@ function ChannelWorkspace({
             aria-label="Search channels"
             placeholder="Search"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={(event) => sidebar.setSearch(event.target.value)}
           />
         </div>
-        <nav className={styles.channelList} aria-label="Subscribed channels">
+        <SidebarUnread listRef={sidebar.list}>
           {sidebarSections(visible, preferences.data).map((section) => (
-            <details key={section.key} className={styles.channelSection} open>
+            <details
+              key={section.key}
+              className={styles.channelSection}
+              open={!sidebar.collapsed.includes(section.key)}
+              onToggle={(event) =>
+                sidebar.toggle(section.key, event.currentTarget.open)
+              }
+            >
               <summary>
                 {section.icon && (
                   <span aria-hidden="true">{section.icon} </span>
@@ -232,6 +313,7 @@ function ChannelWorkspace({
                     key={channel.id}
                     type="button"
                     title={channel.name}
+                    data-channel-id={channel.id}
                     aria-current={
                       current?.id === channel.id ? "page" : undefined
                     }
@@ -262,7 +344,7 @@ function ChannelWorkspace({
               {search ? "No matching channels." : "No channels yet."}
             </p>
           )}
-        </nav>
+        </SidebarUnread>
         {preferences.status !== "ready" && (
           <div className={styles.preferenceNotice} role="status">
             {preferences.status === "loading"
@@ -359,6 +441,7 @@ function ChannelWorkspace({
             queries={queries}
             scope={scope}
             channelId={current.id}
+            navigation={navigation}
             onOpenLink={openLink}
             onOpenThread={openThread}
             revealMessageId={
@@ -424,16 +507,30 @@ function ChannelBody({
   onOpenLink,
   revealMessageId,
   onOpenThread,
+  navigation,
 }: {
   extensions?: ConversationExtensions | undefined;
   scope: string;
   queries: RelaySession;
   channelId: string;
+  navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   revealMessageId?: string | undefined;
   onOpenThread(messageId: string): void;
 }) {
   const window = useChannelWindow(queries.channels, channelId);
+  useEffect(() => {
+    // Only the normalized conversation attempt can acknowledge its channel.
+    // A warm child effect runs before the parent's default resolution effect.
+    if (
+      navigation?.target.kind !== "conversation" ||
+      navigation.target.messageId
+    )
+      return;
+    if (window.status === "ready") navigation?.complete({ status: "opened" });
+    else if (window.status === "error")
+      navigation?.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, window.status]);
   if (window.status === "error" && !window.rows.length)
     return (
       <div className={styles.empty} role="alert">

@@ -5,9 +5,12 @@ import {
   relayOrigin,
 } from "./src/features/communities/destination.ts";
 
-export default defineConfig(async ({ mode }) => {
+export default defineConfig(async ({ command, mode }) => {
   const env = loadEnv(mode, ".", "BUZZ_");
-  const live = env.BUZZ_LIVE === "1";
+  // The development broker is the dev server's default: it runs whenever the
+  // developer has pinned their public key. Production builds (`pnpm build`,
+  // `pnpm tauri build`) never load it, regardless of .env.local contents.
+  const live = command === "serve" && Boolean(env.BUZZ_DEV_VIEWER?.trim());
   const aliases = env.BUZZ_COMMUNITY_ALIASES ?? "";
   parseCommunityAliases(aliases);
   // Public routing configuration only; the viewer pin and credentials stay in Node.

@@ -8,6 +8,7 @@ import {
 } from "react";
 import { createRoot } from "react-dom/client";
 import { createPluginManager } from "../../src/plugins/manager";
+import { provideNavigation } from "../../src/features/navigation/service";
 import { PagesService } from "../../src/features/pages/service";
 import { PanelsService } from "../../src/features/panels/service";
 import { ConversationService } from "../../src/features/conversation/service";
@@ -257,6 +258,7 @@ const plugins = createPluginManager(ctx, {
   bundled: [...bundledPlugins, probe],
   storage,
 });
+provideNavigation(ctx);
 const pages = new PagesService(ctx);
 new PanelsService(ctx);
 const conversation = new ConversationService(ctx);

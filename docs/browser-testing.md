@@ -3,9 +3,10 @@
 `pnpm test` and therefore `just scan` now run the checked-in Chromium and WebKit
 journeys in `tests/browser/`. `just iterate` remains the fast, browser-free loop.
 [GitHub Actions](../.github/workflows/ci.yml) runs these gates on PRs and main
-pushes: an isolated serial measurement job gates two functional shards. Both
-engines remain mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
-failures and skipped dependencies keep CI red.
+pushes: an isolated serial measurement job runs alongside four functional jobs
+(two file-level shards per engine, two workers per runner). Both engines remain
+mandatory for the [CI-selected coverage](#ci-coverage-and-local-only-webkit-checks);
+`CI required` fails if any lane or shard fails, is cancelled, or is skipped.
 Owner-specific tests are colocated in `src/` and `dev/`; separate manual diagnostic
 pages live in `tests/fixtures/`. See [test organization and fixture URLs](contributing.md#test-organization).
 
@@ -39,7 +40,7 @@ bin/pnpm test:browser tests/browser/layout.spec.mjs --no-deps
 bin/pnpm test:browser --no-deps --workers=1
 ```
 
-The default gate runs `channel-opening.spec.mjs` and `scroll.spec.mjs` first,
+The default local gate runs `channel-opening.spec.mjs` and `scroll.spec.mjs` first,
 one browser/worker at a time, through the `chromium-measurements` →
 `webkit-measurements` dependency chain. Only then may functional journeys run
 with two workers. This preserves timing/heap samples without unrelated browser
@@ -77,8 +78,22 @@ verified clean commit or source manifest.
 CI stays on `ubuntu-24.04`. `pnpm test:browser:ci` inherits the ordinary config and
 excludes only tests tagged `@local-webkit` from `webkit-measurements`. Their Chromium
 instances and every untagged WebKit case remain required. Both engines, serial
-measurement order, two functional shards, zero retries, all existing assertions
-and budgets, and the strict `CI required` aggregate are unchanged.
+measurement order, zero retries, all existing assertions and budgets, and the
+strict `CI required` aggregate remain in place.
+
+CI shards each functional engine across two runners, without waiting for the
+separate measurement runner. Each job selects its engine with `--no-deps` and
+`--shard=N/2`; measurement success is enforced by `CI required`, not job ordering.
+This preserves measurement isolation while spending more setup/runner minutes,
+including when measurements fail. Local same-runner dependencies remain unchanged.
+Artifacts include engine and shard so parallel jobs never overwrite one another.
+
+The Node integration gate lists tests without launching browsers and checks that
+the workflow's four selections cover every discovered functional test/project
+exactly once, with no measurements included. It also exercises the required
+check's shell against failed, skipped, cancelled and missing lane results.
+These safeguards must change with the matrix; do not maintain feature allowlists
+or move existing required cases out of CI to reduce its duration.
 
 The following **three WebKit cases are local-only**, not passing CI coverage:
 
@@ -256,7 +271,9 @@ position without examining that state.
 The history-loading journeys retain the production broker's HTTP admission. They
 check that ordinary wheel paging begins before the top, and that a saved top
 anchor can resume paging from a boundary gesture even when the DOM cannot scroll
-farther. Restoration alone does not fetch history. A quota-failed page retains a
+farther. Restoration alone does not fetch history. One blocked near-top gesture made on cached
+rows waits for successful revalidation, including the live catch-up handoff;
+errors, paging, moving away from the threshold, or unmounting retire that intent. A quota-failed page retains a
 manual retry without repeated wheel gestures resubmitting it. These are workflow
 controls, not latency guarantees under arbitrary scroll speed or relay load.
 

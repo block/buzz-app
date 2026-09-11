@@ -101,7 +101,7 @@ test("storage denial is visible and retryable; another window updates a live con
   const sessions = [...app.report.sessions];
   await button(page, "Insert emoji").click();
   const emojiSearch = page.getByRole("searchbox", {
-    name: "Search",
+    name: "Search emoji",
     exact: true,
   });
   await emojiSearch.fill("grinning");

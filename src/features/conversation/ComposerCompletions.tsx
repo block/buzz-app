@@ -102,11 +102,13 @@ function OwnedCompletion({
   ): boolean;
 }) {
   const id = useId();
-  const popup = useCompletionPosition(input);
+  const compact = provider.pluginId === "buzz.emoji";
+  const popup = useCompletionPosition(input, compact ? 0.375 : 1);
   const list = useRef<HTMLDivElement>(null);
   const [result, setResult] = useState<CompletionResult>();
   const latest = useRef<CompletionResult | undefined>(undefined);
   const [selected, setSelected] = useState<string | typeof RETRY>();
+  const revealSelection = useRef(false);
   const live = useRef(false);
   const current = useRef({ editor, replace });
   useLayoutEffect(() => {
@@ -127,6 +129,7 @@ function OwnedCompletion({
       if (!owned || !active()) return false;
       const next = completionResult(incoming);
       latest.current = next;
+      revealSelection.current = true;
       setResult(next);
       setSelected((previous) =>
         next.items.some((item) => item.id === previous)
@@ -155,6 +158,13 @@ function OwnedCompletion({
       ? items.length
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
+  const status =
+    result?.status ??
+    (!result
+      ? "Loading suggestions…"
+      : !items.length && !result.retry
+        ? "No matches"
+        : undefined);
   function accept(index: number) {
     if (!active() || latest.current !== result) return false;
     if (index === items.length && result?.retry) {
@@ -205,6 +215,7 @@ function OwnedCompletion({
         event.stopPropagation();
         const next =
           (selectedIndex + (event.key === "ArrowDown" ? 1 : count - 1)) % count;
+        revealSelection.current = true;
         setSelected(next === items.length ? RETRY : items[next]?.id);
         return true;
       }
@@ -217,9 +228,12 @@ function OwnedCompletion({
       return false;
     };
     editor.keys.current = handle;
-    list.current
-      ?.querySelector('[aria-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" });
+    if (revealSelection.current) {
+      list.current
+        ?.querySelector('[aria-selected="true"]')
+        ?.scrollIntoView({ block: "nearest" });
+      revealSelection.current = false;
+    }
     return () => {
       if (editor.keys.current === handle) editor.keys.current = undefined;
       element.removeAttribute("aria-autocomplete");
@@ -246,6 +260,7 @@ function OwnedCompletion({
             ref={popup}
             className={styles.popup}
             aria-label={`${provider.title} suggestions`}
+            data-compact={compact || undefined}
           >
             <div
               id={id}
@@ -261,11 +276,24 @@ function OwnedCompletion({
                   role="option"
                   tabIndex={-1}
                   aria-selected={i === selectedIndex}
+                  aria-label={
+                    compact && item.detail
+                      ? `${item.label} ${item.detail}`
+                      : undefined
+                  }
                   id={`${id}-${i}`}
                   key={item.id}
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
                   }}
+                  onPointerEnter={
+                    compact
+                      ? () => {
+                          revealSelection.current = false;
+                          setSelected(item.id);
+                        }
+                      : undefined
+                  }
                   onClick={() => accept(i)}
                   className={styles.option}
                 >
@@ -274,9 +302,13 @@ function OwnedCompletion({
                       {item.preview}
                     </span>
                   )}
-                  <span className={styles.label}>
+                  <span className={styles.label} data-completion-label>
                     {item.label}
-                    {item.detail && <small>{item.detail}</small>}
+                    {item.detail && (
+                      <small aria-hidden={compact || undefined}>
+                        {item.detail}
+                      </small>
+                    )}
                   </span>
                 </div>
               ))}
@@ -291,22 +323,21 @@ function OwnedCompletion({
                   onPointerDown={(event) => {
                     if (event.button === 0) event.preventDefault();
                   }}
+                  onPointerEnter={
+                    compact
+                      ? () => {
+                          revealSelection.current = false;
+                          setSelected(RETRY);
+                        }
+                      : undefined
+                  }
                   onClick={() => accept(items.length)}
                 >
                   Retry suggestions
                 </div>
               )}
             </div>
-            <p role="status">
-              {result?.status ??
-                (!result
-                  ? "Loading suggestions…"
-                  : !items.length && !result.retry
-                    ? "No matches"
-                    : "")}
-              {count > 0 &&
-                " ↑ ↓ to navigate · Enter or Tab to select · Esc to dismiss"}
-            </p>
+            {status && <p role="status">{status}</p>}
           </section>,
           input.current.ownerDocument.body,
         )}

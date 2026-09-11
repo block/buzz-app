@@ -475,7 +475,11 @@ export const test = base.extend({
       try {
         const parts = request.url.split("/");
         const route = parts.at(-1);
-        const community = parts[3];
+        const requestedCommunity = decodeURIComponent(parts[3]);
+        const community =
+          requestedCommunity.match(
+            /^https:\/\/(primary|secondary)\.(?:example|fixture\.invalid)$/,
+          )?.[1] ?? requestedCommunity;
         let raw = "";
         for await (const part of request) raw += part;
         const body = raw ? JSON.parse(raw) : undefined;
@@ -483,6 +487,10 @@ export const test = base.extend({
         if (route === "register") return send(response, {});
         if (!["primary", "secondary"].includes(community))
           throw new Error(`Unexpected community: ${request.url}`);
+        if (route === "gif-info" && request.method === "GET")
+          return send(response, {});
+        if (route === "info" && request.method === "GET")
+          return send(response, { policy: null });
         if (route === "session") {
           report.sessions.push(community);
           return send(response, {

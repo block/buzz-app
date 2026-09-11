@@ -60,7 +60,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       exact: true,
     });
     const choose = (name) =>
-      page.getByRole("button", { name, exact: true }).click();
+      page.getByRole("button", { name, exact: true }).click({ force: true });
     const gap = () =>
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,

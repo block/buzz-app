@@ -1,55 +1,72 @@
 # Contributor instructions for AI agents
 
-Read `docs/contributing.md` for command scope and review conventions.
+Read [the contribution workflow](docs/contributing.md) for commands and validation.
 For interactive product work, default to edit → human tries the running app →
-adjust, in the agreed development worktree. Do not gate each feedback round on
-E2E, native builds, or full validation. `just iterate` is an optional checkpoint;
-reserve `just scan` for an agreed batch before review/integration, or relevant
-native/dependency/build changes. Track deferred checks and distinguish **ready to
-try** from **validated**. Check safety-critical changes before live use; see the
-contribution workflow for exceptions.
+adjust in the agreed worktree. Do not gate each feedback round on E2E, native
+builds, or full validation. `just iterate` is optional; reserve `just scan` for
+agreed integration batches or relevant native/dependency/build changes. Track
+deferred checks: **ready to try** is not **validated**. Check auth/signing,
+persistence/migrations, protocol semantics, and destructive writes before live use.
 
-Some files are marked with `FOUNDATION` at the top of the file. Do not edit those
-files without explicit guidance to do so. If you determine that edits are required
-and have not been explicitly requested, escalate the ask to a human before editing.
-Foundation files have stricter code review standards.
+Files marked `FOUNDATION` require explicit human guidance before editing and
+stricter review. Escalate needed changes rather than editing without authorization.
+
+## Engineering standard
+
+Before editing, state the intended outcome and non-goals. Read the owning code,
+callers, and relevant design docs; preserve documented product decisions and
+ownership boundaries. Resolve answerable questions from evidence; ask before
+deviating from agreed scope or product behavior.
+
+Target **9/10+ for minimalness, elegance, and correctness**: the smallest complete
+solution, clear ownership, and no known material defects. Prefer existing patterns
+and subtraction. No opportunistic refactors, speculative abstractions, or new
+features disguised as fixes. If the fix keeps growing, revisit the cause and scope.
+
+Minimal does not mean happy-path-only. Handle relevant boundary inputs, failures,
+recovery, and lifecycle transitions; consider concurrency, persistence, security,
+and performance where the change affects them. Do not add machinery for
+hypothetical requirements.
+
+Validate the affected user contract, not just isolated helpers. Add regression
+coverage for changed behavior and relevant failure paths; exercise real integration
+boundaries where practical. Follow the contribution workflow's iteration and batch
+gates, rather than adding full validation to every edit.
+
+Self-review before handoff; seek independent review for risky changes before
+integration. Report what changed, evidence tied to the checked snapshot, and
+remaining risks or deferred checks. Green CI is evidence, not proof of user behavior.
+
+Keep reviews convergent: consolidate actionable findings and clear exit criteria.
+Block on concrete correctness, security, or agreed-contract defects; unrelated
+hardening is follow-up. Reopen scope only when new evidence warrants it.
 
 ## Commit attribution and DCO
 
-Every PR commit requires a `Signed-off-by` trailer. Use `git commit --signoff`
-with your verified effective Git identity (`git config user.name` and
-`git config user.email`); stop if that identity is missing or incorrect.
-Preserve actual authorship. Do not substitute the requesting human's identity
-or add their sign-off merely because they requested or reviewed the work.
+Every PR commit requires `Signed-off-by`. Use `git commit --signoff` with your
+verified effective `git config user.name` / `user.email`; stop if missing or
+incorrect. Preserve actual authorship; requesting or reviewing work does not
+justify substituting the human's identity or adding their sign-off.
 
-DCO sign-off is separate from cryptographic signing and co-author credit;
-formatting hooks do not supply it. Before pushing, audit **every commit in the
-PR range against its base**, not just HEAD, including after rebases and
-cherry-picks. Preserve valid existing trailers and add only certifications you
-can make. After a repair, verify the hosted **DCO Check** at the new PR head.
+DCO, cryptographic signing, and co-author credit are separate; hooks do not supply
+DCO. Audit **every commit against the PR base**, including after rebases or
+cherry-picks. Preserve valid trailers; add only certifications you can make.
+After repairs, verify the hosted **DCO Check** at the new head.
 
 ## Before pushing
 
-- Use the agreed feature worktree and the pinned `bin/` tools. Install hooks
-  once per worktree with `bin/pnpm hooks:install` after
-  `bin/pnpm install --frozen-lockfile`; preserve custom hooks and do not bypass
-  failures. See [hook scope and setup](docs/contributing.md#pre-commit-checks).
-- Confirm the destination remote, PR base, and head branch; refresh remote refs
-  before publishing. Review `git status`, the full PR diff, and
-  `git diff --check` against the PR base. Include only intended files, with no
-  credentials, local configuration, or raw agent/session data. Audit all commit
-  identities and DCO trailers as described above.
-- Follow the [validation workflow](docs/contributing.md#interactive-product-iteration):
-  focused checks during iteration; one `bin/just scan` at the agreed batch gate
-  before review/integration. Documentation-only follow-ups need content, link,
-  and diff checks, not a repeat source build. Keep incomplete work in a draft PR
-  with deferred checks listed; do not label a draft push as validated. Hook
-  success alone does not establish types, tests, builds, or DCO success.
-- Push to the PR's actual head ref. Do not rewrite others' commits; an authorized
-  rewrite must use `--force-with-lease`, never plain force. Confirm the remote PR
-  head matches the commit whose checks you report.
-- Inspect the current hosted checks and repository rules, including externally
-  installed checks not represented in `.github/workflows`. Resolve relevant
-  failures before declaring readiness; obtain required reviewer/code-owner
-  approval. These instructions are a manual preflight, not an installed
-  pre-push hook or automatic permission to merge.
+- Use the agreed feature worktree and pinned `bin/` tools. Follow
+  [hook setup](docs/contributing.md#pre-commit-checks) once per worktree;
+  preserve custom hooks and never bypass failures.
+- Refresh remote refs; confirm destination, base, and head. Review `git status`,
+  the full PR diff, and `git diff --check` against the base. Include only intended
+  files: no credentials, local configuration, or raw agent/session data.
+- Follow the [validation workflow](docs/contributing.md#interactive-product-iteration).
+  Documentation-only changes need content, link, and diff checks, not source
+  builds. Keep incomplete work in draft with deferred checks listed; hook success
+  or a draft push does not establish validation.
+- Push the actual PR head ref. Never rewrite others' commits; authorized rewrites
+  require `--force-with-lease`. Verify the remote head matches reported checks.
+- Inspect current hosted checks and repository rules, including external checks.
+  Resolve relevant failures before declaring readiness; obtain required reviewer
+  and code-owner approval. This preflight is not automatic permission to merge.

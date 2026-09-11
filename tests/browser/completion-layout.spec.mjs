@@ -41,3 +41,51 @@ test("completion menu stays reachable in the production channel layout", async (
     await expect(input).not.toHaveValue(":sm");
   }
 });
+
+test("host shortcuts coexist with an open completion menu and preserve its draft", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const messages = page
+    .getByRole("navigation", { name: "Pages", exact: true })
+    .getByRole("button", { name: "Messages", exact: true });
+  await messages.click();
+  const input = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  const modifier = (await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform),
+  ))
+    ? "Meta"
+    : "Control";
+  await input.fill(":smile");
+  await expect(page.getByRole("option").first()).toContainText(":smile:");
+  await input.press(`${modifier}+=`);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        document.documentElement.style.getPropertyValue("--buzz-text-scale"),
+      ),
+    )
+    .toBe("1.1");
+  await expect(input).toHaveValue(":smile");
+  await expect(input).toBeFocused();
+  await input.press("Tab");
+  await expect(input).toHaveValue("😄 ");
+  await input.fill(":smile");
+  await expect(page.getByRole("option").first()).toBeVisible();
+  await input.press(`${modifier}+,`);
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await messages.click();
+  await expect(input).toHaveValue(":smile");
+  await input.focus();
+  await expect(page.getByRole("option").first()).toContainText(":smile:");
+  await input.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(input).toHaveValue(":smile");
+});

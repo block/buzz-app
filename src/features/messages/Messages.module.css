@@ -707,3 +707,11 @@ button.avatar:focus-visible,
   height: 100%;
   object-fit: cover;
 }
+
+.typing {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--buzz-text-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

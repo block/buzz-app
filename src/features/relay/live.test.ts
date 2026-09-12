@@ -625,3 +625,33 @@ it("observer route is optional, live-only at dispatch/retry, separately fenced a
   h.owner.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("admits signed typing only on its authenticated channel route, without extra subscriptions", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  const requests = h.first.requests();
+  expect(requests).toHaveLength(4);
+  const route = requests[2];
+  assert.exists(route);
+  expect(route[2].kinds).toContain(20002);
+  const event = signed(keypair(), {
+    kind: 20002,
+    content: "",
+    tags: [["h", "a"]],
+  });
+  await h.first.receive(["EVENT", requests[0]?.[1], event]);
+  await h.first.receive(["EVENT", requests[3]?.[1], event]);
+  expect(h.callbacks.receive).not.toHaveBeenCalled();
+  await h.first.receive(["EVENT", route[1], event]);
+  expect(h.callbacks.receive).toHaveBeenCalledExactlyOnceWith([event]);
+  await h.first.receive([
+    "EVENT",
+    route[1],
+    { ...event, sig: "0".repeat(128) },
+  ]);
+  expect(h.callbacks.receive).toHaveBeenCalledTimes(1);
+  h.owner.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});

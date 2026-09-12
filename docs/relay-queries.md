@@ -453,3 +453,55 @@ Exhausted attempts, unsupported pauses, other route/connection failures and
 unfinished finite roster/head failures still show a warning and recovery action.
 This presentation policy does not increase quotas or guarantee that another
 client sharing the account cannot cause a refusal.
+
+## Receive-only typing
+
+`session.typing.snapshot()` / `.subscribe()` expose immutable active entries
+`{ channelId, threadRootId?, pubkey }`. The session owns one ephemeral projection;
+shared `features/messages/TypingIndicator` renders it inside channel/thread
+composers, including read-only connections. Page plugins consume the same UI and
+session. Mounting consumers starts no reads, profile enrichment or subscriptions.
+Names reuse the shared profile snapshot, with a public-key fragment fallback.
+This reports signed typing activity (including agents), **not** inferred agent
+execution, online presence, or a promise that an answer is coming.
+
+Kind 20002 joins the existing authenticated channel route, with the same signature
+verification and socket/generation fencing. Typing must match that exact route,
+name exactly one bounded `h`, belong to the current visible roster and pass the
+existing channel access policy. Identity is the event signer, matching message
+folding; arbitrary `p`/actor tags and profile display names do not confer identity.
+A channel pulse has no `e`; a thread pulse has one marked canonical `reply`, with
+at most one marked `root` for nested replies. Thread scope uses the existing
+canonical root convention; it is not an extra target lookup or an access grant.
+Malformed/ambiguous references are dropped rather than displayed at channel level.
+
+Only live pulses can activate typing. No typing payload enters finite views,
+recent history, channel caches, unread counts, the outbox or persistent storage.
+Expiry is eight seconds from the signed timestamp. Already-expired and future
+activity is rejected (no clock-skew allowance). Duplicates/older pulses cannot
+extend expiry. Signed content messages (9/40002) suppress their signer's same
+channel/thread activity; timestamp watermarks reject older pulses and a two-second
+post-message quiet period covers late activity. Old history does not clear newer
+activity or repeatedly extend suppression. This does not reinterpret edits as
+new messages or resolve relay-proxied author envelopes beyond current host rules.
+
+At most 1,024 active/suppression records and one timeout exist per session. At
+capacity new identities/scopes are dropped until expiry; suppression evidence is
+never evicted to admit a stale pulse. Access loss clears all typing conservatively,
+before batched access notifications. Disconnect, cache clear, session disposal and
+account/community replacement clear it too. Session disposal fences late callbacks;
+plugins unloading only remove their UI subscriptions. There is no typing publisher,
+new signer, transport, polling, durable cache, or plugin-owned ephemeral owner.
+
+Protocol reference: `block/buzz`'s
+`crates/buzz-acp/src/relay.rs::build_typing_event` and
+`desktop/src/features/messages/useChannelTyping.ts` (8-second TTL and 2-second
+post-message suppression). Regression owners are `typing*.test.ts`, `live.test.ts`
+and `tests/browser/typing.spec.mjs`; browser simulations use ephemeral fixture
+keys through the production authenticated broker, never the deployed relay.
+
+**Review-sensitive:** `session.ts` (FOUNDATION admission/lifecycle and synchronous
+subscriber reentrancy), `live.ts` (existing route filter/verification boundary),
+`typing.ts` (timestamp, scope, bounds and suppression), and shared composer placement.
+An existing development broker imports live routing at startup and needs one
+coordinated restart to receive kind 20002; frontend hot reload alone is insufficient.

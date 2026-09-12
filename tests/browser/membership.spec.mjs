@@ -84,46 +84,62 @@ test("Channels renders grouped history and live membership without turning activ
   await expect(groups.last()).toBeVisible();
 });
 
-test("one keyboard scroll leaves bottom follow and live membership preserves the reader", async ({
-  page,
-  app,
-}) => {
-  await page.goto(app.origin);
-  await page
-    .getByLabel("Pages")
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
-  await page.getByRole("button", { name: "Alpha", exact: true }).click();
-  const feed = page.getByRole("region", { name: "Channel message history" });
-  const distance = () =>
-    feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
-  await expect.poll(distance).toBeLessThan(2);
-  await feed.focus();
-  await feed.evaluate((el) => {
-    window.keyboardScrolls = [];
-    el.addEventListener("scroll", () =>
-      window.keyboardScrolls.push(el.scrollTop),
+// Keep this reader-intent journey out of the older-page zone, as scroll.spec
+// does, and model the read publication produced by focusing history.
+const keyboardTest = test.extend({ tallMessages: true, readState: true });
+keyboardTest(
+  "one keyboard scroll leaves bottom follow and live membership preserves the reader",
+  async ({ page, app }) => {
+    await page.goto(app.origin);
+    await page
+      .getByLabel("Pages")
+      .getByRole("button", { name: "Messages", exact: true })
+      .click();
+    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    const feed = page.getByRole("region", { name: "Channel message history" });
+    const distance = () =>
+      feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
+    await expect(feed.locator("[data-membership-row]")).toContainText(
+      "Pinky added by you, along with Brain",
     );
-  });
-  await page.keyboard.press("PageUp");
-  await expect.poll(distance).toBeGreaterThan(200);
-  await settle(page);
-  const saved = await anchor(page);
-  expect(
-    await page.evaluate(() => new Set(window.keyboardScrolls).size),
-  ).toBeGreaterThan(1);
-  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
-  app.membership("member_left", 0);
-  const after = app.append(
-    "primary",
-    "alpha",
-    "Activity while reading above bottom",
-  );
-  await expect(feed.locator(`[data-message-id="${after.id}"]`)).toBeAttached();
-  await settle(page);
-  await expectAnchor(page, saved);
-  expect(await distance()).toBeGreaterThan(200);
-});
+    await settle(page);
+    await expect.poll(distance).toBeLessThan(2);
+    expect(
+      await feed.evaluate(
+        (el) => el.scrollTop - Math.max(3000, el.clientHeight * 4),
+      ),
+      "keyboard reading starts outside the older-page zone",
+    ).toBeGreaterThan(0);
+    await feed.focus();
+    await expect(feed).toBeFocused();
+    await feed.evaluate((el) => {
+      window.keyboardScrolls = [];
+      el.addEventListener("scroll", () =>
+        window.keyboardScrolls.push(el.scrollTop),
+      );
+    });
+    await page.keyboard.press("PageUp");
+    await expect.poll(distance).toBeGreaterThan(200);
+    await settle(page);
+    const saved = await anchor(page);
+    expect(
+      await page.evaluate(() => new Set(window.keyboardScrolls).size),
+    ).toBeGreaterThan(1);
+    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    app.membership("member_left", 0);
+    const after = app.append(
+      "primary",
+      "alpha",
+      "Activity while reading above bottom",
+    );
+    await expect(
+      feed.locator(`[data-message-id="${after.id}"]`),
+    ).toBeAttached();
+    await settle(page);
+    await expectAnchor(page, saved);
+    expect(await distance()).toBeGreaterThan(200);
+  },
+);
 
 test("a restored membership anchor follows delayed group growth through resize and revisit", async ({
   page,

@@ -39,7 +39,9 @@ export function policyRelay({
       ? "profiles"
       : filter.kinds.includes(44100)
         ? "membership"
-        : undefined);
+        : filter.kinds.includes(24200)
+          ? "observer"
+          : undefined);
   report.wireFrames = [];
   let emptyRoster = false;
   let heldContent = false;
@@ -369,6 +371,14 @@ export function policyRelay({
             }
             if (filter.kinds.includes(44100))
               expect(filter["#p"]).toEqual([viewer]);
+            if (filter.kinds.includes(24200)) {
+              expect(filter["#p"]).toEqual([viewer]);
+              expect(filter["#h"]).toBeUndefined();
+              expect(filter.limit).toBeUndefined();
+              expect(filter.since).toBeGreaterThanOrEqual(
+                Math.floor(Date.now() / 1000) - 1,
+              );
+            }
             this.routes.set(id, filter);
             const route = routeOf(filter);
             if (heldEose.has(route))
@@ -395,6 +405,22 @@ export function policyRelay({
           s.community === community &&
           [...s.routes.values()].some((f) => routeOf(f) === channel),
       );
+    },
+    observer(community, event) {
+      let deliveries = 0;
+      for (const socket of sockets) {
+        if (socket.readyState !== 1 || socket.community !== community) continue;
+        for (const [id, filter] of socket.routes) {
+          if (!filter.kinds.includes(24200) || !filter["#p"]?.includes(viewer))
+            continue;
+          emit(socket, ["EVENT", id, event]);
+          deliveries++;
+        }
+      }
+      expect(
+        deliveries,
+        "observer must traverse the production owner-only route",
+      ).toBeGreaterThan(0);
     },
     publish(community, event) {
       let deliveries = 0;

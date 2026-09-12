@@ -16,6 +16,7 @@ function fixture() {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let callbacks!: LiveCallbacks;
   const update = vi.fn();
+  const observe = vi.fn();
   const publish = vi.fn(
     async (_status: "online" | "away", _signal: AbortSignal) => {},
   );
@@ -33,12 +34,14 @@ function fixture() {
   const owner = createRelaySession(
     {
       ...wire.transport,
+      agentActivity: true,
       subscribe(value) {
         callbacks = value;
         return {
           update() {},
           retry() {},
           dispose() {},
+          observe,
           presence: { update, publish },
         };
       },
@@ -59,6 +62,7 @@ function fixture() {
     relay,
     callbacks,
     update,
+    observe,
     publish,
     mount,
     activity(next: ActivitySnapshot) {
@@ -138,4 +142,59 @@ it("session access revocation clears prior presence and rejects in-flight snapsh
   f.callbacks.receive([roster(f.relay, "a", [], 1700000001)]);
   expect(member.presence.get(f.author.pubkey)).toBe("unknown");
   f.owner.dispose();
+});
+
+it("merged session keeps observer telemetry and presence independently owned across clear and disposal", async () => {
+  const f = fixture();
+  const demand = f.mount();
+  const release = f.owner.session.agentActivity.activate();
+  const generation = f.observe.mock.lastCall?.[0];
+  expect(generation).toBeTypeOf("number");
+  f.callbacks.state({
+    status: "connected",
+    routes: [{ id: "observer", status: "live", replay: "unknown" }],
+  });
+  expect(f.owner.session.agentActivity.snapshot().status).toBe("listening");
+  await vi.advanceTimersByTimeAsync(1100);
+  f.wire.next().respond([f.snapshot()]);
+  await vi.advanceTimersByTimeAsync(0);
+  expect(f.owner.session.presence.get(f.author.pubkey)).toBe("online");
+  const frame = {
+    id: "f".repeat(64),
+    agent: f.author.pubkey,
+    createdAt: Math.floor(Date.now() / 1000),
+    plaintext: JSON.stringify({
+      kind: "turn_started",
+      turnId: "one",
+      channelId: null,
+      timestamp: new Date().toISOString(),
+    }),
+  };
+  f.callbacks.observer?.(frame, generation);
+  expect(f.owner.session.agentActivity.snapshot().turns[0]?.state).toBe(
+    "working",
+  );
+  const view = f.owner.session.observe([{ kinds: [20001, 24200], limit: 10 }]);
+  expect(view.snapshot().events).toEqual([]);
+  demand.dispose();
+  expect(f.update).toHaveBeenLastCalledWith([]);
+  expect(f.owner.session.agentActivity.snapshot().records).toHaveLength(1);
+  f.callbacks.state({ status: "retrying", routes: [] });
+  expect(f.owner.session.agentActivity.snapshot().turns[0]?.state).toBe(
+    "unknown",
+  );
+  await f.owner.clearCache();
+  f.callbacks.observer?.(frame, generation);
+  expect(f.owner.session.agentActivity.snapshot().records).toHaveLength(0);
+  release();
+  expect(f.observe).toHaveBeenLastCalledWith(null);
+  const publications = f.publish.mock.calls.length;
+  f.owner.dispose();
+  f.callbacks.observer?.({ ...frame, id: "e".repeat(64) }, generation);
+  await vi.advanceTimersByTimeAsync(180000);
+  expect(f.publish).toHaveBeenCalledTimes(publications);
+  expect(f.owner.session.agentActivity.snapshot().status).toBe("unavailable");
+  expect(f.owner.session.agentActivity.snapshot().records).toHaveLength(0);
+  expect(view.snapshot().events).toEqual([]);
+  view.dispose();
 });

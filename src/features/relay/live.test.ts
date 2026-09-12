@@ -575,3 +575,124 @@ it("requests community emoji on the existing profile route and delivers verified
   expect(h.callbacks.receive).toHaveBeenCalledWith([event]);
   h.owner.dispose();
 });
+
+it("observer route is optional, live-only at dispatch/retry, separately fenced and never ordinary replay", async () => {
+  vi.useFakeTimers();
+  vi.setSystemTime(1800000000000);
+  const h = setup([]);
+  const telemetry = vi.fn();
+  Object.assign(h.callbacks, { telemetry });
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(500);
+  const globals = h.first.requests().map((request) => request[1]);
+  h.owner.observe?.(1);
+  await vi.advanceTimersByTimeAsync(250);
+  const first = h.first.requests().at(-1);
+  assert.exists(first);
+  expect(first[2]).toEqual({
+    kinds: [24200],
+    "#p": [h.key.pubkey],
+    since: Math.floor(Date.now() / 1000),
+  });
+  const event = signed(h.key, {
+    kind: 24200,
+    content: "opaque",
+    tags: [],
+    created_at: Math.floor(Date.now() / 1000),
+  });
+  await h.first.receive(["EVENT", first[1], event]);
+  expect(telemetry).toHaveBeenCalledWith(event, 1);
+  expect(h.callbacks.receive).not.toHaveBeenCalled();
+  await h.first.receive(["EOSE", first[1]]);
+  expect(h.callbacks.established).not.toHaveBeenCalled();
+  await h.first.receive(["CLOSED", first[1], "temporary: unavailable"]);
+  await vi.advanceTimersByTimeAsync(3000);
+  h.owner.retry();
+  const retried = h.first.requests().at(-1);
+  assert.exists(retried);
+  expect(retried[2].since).toBeGreaterThan(first[2].since);
+  h.owner.observe?.(2);
+  await vi.advanceTimersByTimeAsync(250);
+  await h.first.receive(["EVENT", first[1], event]);
+  await h.first.receive(["EVENT", retried[1], event]);
+  expect(telemetry).toHaveBeenCalledTimes(1);
+  h.owner.observe?.(null);
+  expect(
+    h.first.sent
+      .filter((entry) => entry[0] === "CLOSE")
+      .some((entry) => globals.includes(entry[1] as string)),
+  ).toBe(false);
+  expect(h.sockets).toHaveLength(1);
+  h.owner.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps the combined 1024-wire ceiling during presence handover and observer toggles at full channel demand", async () => {
+  vi.useFakeTimers();
+  const ids = Array.from(
+    { length: 1024 },
+    (_, i) => `channel-${String(i).padStart(4, "0")}`,
+  );
+  const h = setup(ids);
+  const active = new Set<string>();
+  const send = h.first.send.bind(h.first);
+  vi.spyOn(h.first, "send").mockImplementation((text) => {
+    const [kind, wire] = JSON.parse(text);
+    if (kind === "REQ") active.add(wire);
+    if (kind === "CLOSE") active.delete(wire);
+    expect(active.size).toBeLessThanOrEqual(1024); // Every intermediate wire state.
+    send(text);
+  });
+  try {
+    await h.first.auth();
+    for (let i = 0; i < 1022; i++) {
+      const request = h.first.requests()[i];
+      assert.exists(request);
+      await h.first.receive(["EOSE", request[1]]);
+      await vi.advanceTimersByTimeAsync(250);
+    }
+    expect(active.size).toBe(1022); // 1020 channels + two globals.
+    const globals = h.first
+      .requests()
+      .slice(0, 2)
+      .map((r) => r[1]);
+    const presence = h.owner.presence;
+    assert.exists(presence);
+    presence.update(["a".repeat(64)]);
+    await vi.advanceTimersByTimeAsync(1000);
+    const confirmed = h.first.requests().at(-1);
+    assert.exists(confirmed);
+    expect(confirmed[2].kinds).toEqual([20001]);
+    await h.first.receive(["EOSE", confirmed[1]]);
+    presence.update(["b".repeat(64)]);
+    await vi.advanceTimersByTimeAsync(1000);
+    const candidate = h.first.requests().at(-1);
+    assert.exists(candidate);
+    expect(candidate[2].kinds).toEqual([20001]);
+    expect(candidate[1]).not.toBe(confirmed[1]);
+    expect(active.size).toBe(1024);
+
+    for (const observer of [1, null, 2]) {
+      h.owner.observe?.(observer);
+      await vi.advanceTimersByTimeAsync(250);
+      expect(active.size).toBe(1024);
+      const snapshot = h.callbacks.state.mock.lastCall?.[0];
+      assert.exists(snapshot);
+      expect(
+        snapshot.routes.filter((r) => r.channelId && r.status !== "limited"),
+      ).toHaveLength(observer === null ? 1020 : 1019);
+      expect(active.has(confirmed[1]) && active.has(candidate[1])).toBe(true);
+      expect(globals.every((wire) => active.has(wire))).toBe(true);
+    }
+    await h.first.receive(["EOSE", candidate[1]]);
+    expect(active.has(confirmed[1])).toBe(false);
+    expect(active.has(candidate[1])).toBe(true);
+    expect(active.size).toBe(1023);
+    expect(h.sockets).toHaveLength(1);
+    presence.update([]);
+    expect(active.size).toBe(1022);
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});

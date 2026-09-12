@@ -1,3 +1,8 @@
+import {
+  OBSERVER_KIND,
+  observerFrame,
+  observerGeneration,
+} from "../agents/observer";
 import { eventDto } from "./events";
 import {
   presenceAuthors,
@@ -30,6 +35,8 @@ export function subscribeBrokerTraffic(
   let presenceDue = 0;
   let publishing = false;
   let priorityPending = false;
+  let observer: number | null = null;
+  let observerPending = false;
   let controller: AbortController | undefined;
   let streamId: string | undefined;
   let controlPending = false;
@@ -52,6 +59,7 @@ export function subscribeBrokerTraffic(
     presencePending = false;
     clearTimeout(presenceTimer);
     presenceTimer = undefined;
+    observerPending = false;
     receiving = true;
     controller?.abort();
     clearTimeout(retryTimer);
@@ -71,13 +79,14 @@ export function subscribeBrokerTraffic(
     pulse();
     const startingPriority = JSON.stringify(priority);
     const startingPresence = JSON.stringify(authors);
+    const startingObserver = observer;
     void (async () => {
       try {
         const response = await fetch(`${endpoint}/stream`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channels, priority, authors }),
+          body: JSON.stringify({ channels, priority, authors, observer }),
           signal: owned.signal,
         });
         if (!valid()) return;
@@ -101,6 +110,7 @@ export function subscribeBrokerTraffic(
         streamId = identity ?? undefined;
         if (startingPriority !== JSON.stringify(priority)) sendPriority();
         if (startingPresence !== JSON.stringify(authors)) schedulePresence();
+        if (startingObserver !== observer) sendObserver();
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -131,7 +141,8 @@ export function subscribeBrokerTraffic(
               if (!valid()) return;
               if (kind === "message") {
                 const event = eventDto(data);
-                if (event.kind !== 20001) callbacks.receive([event]);
+                if (event.kind !== 20001 && event.kind !== OBSERVER_KIND)
+                  callbacks.receive([event]);
               } else if (kind === "presence") {
                 const event = eventDto(data);
                 if (event.kind === 20001 && authors.includes(event.pubkey))
@@ -141,6 +152,13 @@ export function subscribeBrokerTraffic(
                 // SSE already in transit can describe an older control's author set.
                 if (JSON.stringify(state.authors) === JSON.stringify(authors))
                   callbacks.presenceState?.(state);
+              } else if (kind === "observer") {
+                const record = data as {
+                  frame?: unknown;
+                  generation?: unknown;
+                };
+                if (observer !== null && record.generation === observer)
+                  callbacks.observer?.(observerFrame(record.frame), observer);
               } else if (kind === "state") {
                 const snapshot = liveSnapshot(data);
                 publish(snapshot);
@@ -263,6 +281,38 @@ export function subscribeBrokerTraffic(
         if (sent !== JSON.stringify(authors)) schedulePresence();
       });
   }
+  function sendObserver() {
+    if (closed || !streamId || observerPending) return;
+    const current = generation;
+    const sent = observer;
+    observerPending = true;
+    void fetch(`${endpoint}/stream-observer`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, observer: sent }),
+      signal: AbortSignal.any([
+        controller?.signal ?? new AbortController().signal,
+        AbortSignal.timeout(5000),
+      ]),
+    })
+      .then((response) => {
+        if (!response.ok)
+          throw new Error("Activity subscription control failed");
+      })
+      .catch(() => {
+        if (!closed && current === generation) {
+          // Unknown control outcome: fence this stream; normal bounded reconnect
+          // will capture the latest desired generation (never reset chat on toggle).
+          controller?.abort(new Error("Activity subscription interrupted"));
+        }
+      })
+      .finally(() => {
+        if (current !== generation) return;
+        observerPending = false;
+        if (sent !== observer) sendObserver();
+      });
+  }
   start();
   return {
     presence: {
@@ -317,6 +367,12 @@ export function subscribeBrokerTraffic(
           publishing = false;
         }
       },
+    },
+    observe(value) {
+      const next = observerGeneration(value);
+      if (closed || observer === next) return;
+      observer = next; // Fence old SSE frames synchronously, before the POST completes.
+      sendObserver();
     },
     prioritize(input) {
       liveChannels(input);
@@ -396,7 +452,8 @@ function liveSnapshot(value: unknown): LiveSnapshot {
       snapshot.status,
     ) ||
     !Array.isArray(snapshot.routes) ||
-    snapshot.routes.length > 1026 ||
+    // Keep limited channels visible alongside both globals and the optional observer.
+    snapshot.routes.length > 1027 ||
     (snapshot.error !== undefined && typeof snapshot.error !== "string")
   )
     throw new Error("Invalid live broker status");

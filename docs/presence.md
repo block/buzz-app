@@ -16,7 +16,9 @@ retention, generic event reconciliation, and the durable outbox. Its values are
 - Presence shares the existing authenticated socket. Author interests have a
   one-second minimum REQ interval, at most two overlapping presence routes, and
   share the total 1,024 subscription-slot ceiling with normal routes. Presence
-  updates do not restart the message stream and yield to foreground work.
+  updates do not restart the message stream and yield to foreground work. Two
+  presence slots remain reserved; channel capacity is 1,020, or 1,019 when the
+  independent Agent Activity observer is enabled.
 - One background snapshot owner uses the existing verified reader. Reads have a
   five-second cooldown after completion or cancellation, not enqueue time: shared
   reader/broker queue delays must not compress successive actual reads. Repeated

@@ -12,6 +12,7 @@ import {
 import { IconCopy } from "@tabler/icons-react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
+import { activityTarget } from "../../features/agents/activity-target";
 import type { PanelProps } from "../../features/panels/service";
 import { profileKey, profileTarget } from "../../features/profiles/target";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -23,6 +24,7 @@ import styles from "./Profiles.module.css";
 export function ProfilePanel({
   relay,
   target,
+  context,
 }: PanelProps & { relay: RelayData }) {
   const connection = useRelayConnection(relay);
   const pubkey = profileKey(target);
@@ -34,15 +36,18 @@ export function ProfilePanel({
       key={`${connection.scope}:${connection.generation}:${pubkey}`}
       session={connection.session}
       pubkey={pubkey}
+      context={context}
     />
   );
 }
 function ProfileDetails({
   session,
   pubkey,
+  context,
 }: {
   session: RelaySession;
   pubkey: string;
+  context: PanelProps["context"];
 }) {
   usePresenceDemand(session.presence, pubkey);
   const selection = useMemo(
@@ -82,6 +87,7 @@ function ProfileDetails({
   }, [session, pubkey, attempt]);
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
   const name = profile?.name ?? "Unknown profile";
+  const activity = activityTarget(pubkey, context?.channelId);
   return (
     <section
       ref={region}
@@ -103,6 +109,16 @@ function ProfileDetails({
         <PresenceIndicator presence={session.presence} author={pubkey} label />
       </div>
       {profile?.about && <p className={styles.about}>{profile.about}</p>}
+      {context?.canOpen(activity) && (
+        <div>
+          <Button size="compact" onClick={() => context.open(activity)}>
+            View activity
+          </Button>
+          <p className="text-body-sm text-secondary">
+            Owner-only agent telemetry in this channel, if published.
+          </p>
+        </div>
+      )}
       <div className={styles.publicKey}>
         <div className={styles.keyHeading}>
           <h3 className="text-body">Public key</h3>

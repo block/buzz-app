@@ -1,0 +1,31 @@
+.indicator {
+  display: inline-flex;
+  vertical-align: middle;
+}
+.label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: calc(12px * var(--buzz-text-scale, 1));
+}
+.dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  box-sizing: border-box;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--text-muted);
+}
+.dot[data-status="online"] {
+  color: var(--green-9);
+  background: currentColor;
+}
+.dot[data-status="away"] {
+  color: var(--amber-11);
+  background: currentColor;
+}
+.dot[data-status="unknown"] {
+  border-style: dotted;
+}

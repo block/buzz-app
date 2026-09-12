@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { usePresenceSurface } from "../presence/react";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -105,6 +106,7 @@ function Timeline({
     [rows, profiles],
   );
   const scroller = useRef<HTMLElement>(null);
+  usePresenceSurface(queries.presence, scroller);
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   const width = size.width;
@@ -358,6 +360,7 @@ function Timeline({
               key={row.id}
               row={row}
               unread={queries.unread}
+              presence={queries.presence}
               extensions={extensions}
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}

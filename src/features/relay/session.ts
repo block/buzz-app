@@ -4,6 +4,13 @@ import {
   type ReadOptions,
   type RelayReader,
 } from "./reader";
+import { createPresenceDirectory } from "../presence/directory";
+import {
+  createPresencePublisher,
+  browserPresencePublisherLock,
+  type PresencePublisherLock,
+} from "../presence/publisher";
+import type { PresenceActivity } from "../presence/activity";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -61,6 +68,8 @@ export function createRelaySession(
     readStateStorage?: ReadStateStorage;
     readPublisherLock?: ReadPublisherLock;
     deliveryTimeoutMs?: number;
+    presenceActivity?: PresenceActivity;
+    presencePublisherLock?: PresencePublisherLock;
   } = {},
 ) {
   let closed = false;
@@ -68,6 +77,37 @@ export function createRelaySession(
   const profiling =
     options.profiling ?? transport?.profiling ?? createRelayProfiler();
   const requests = createRelayReader(transport, { profiling });
+  let traffic: LiveSubscription | undefined;
+  const presence = createPresenceDirectory({
+    reader: requests.reader,
+    relayAuthor: transport?.relayAuthor ?? "",
+    supported: !!transport?.subscribe,
+    updateInterests: (authors) => traffic?.presence?.update(authors),
+    notify: (listener) => notify(listener),
+  });
+  const presencePublisher =
+    options.presenceActivity && transport
+      ? createPresencePublisher({
+          activity: options.presenceActivity,
+          publish: (status, signal) => {
+            if (!traffic?.presence)
+              return Promise.reject(
+                new Error("Presence publication unsupported"),
+              );
+            return traffic.presence.publish(status, signal);
+          },
+          lock:
+            options.presencePublisherLock ??
+            browserPresencePublisherLock(
+              `${transport.scope ?? transport.relayAuthor}:${transport.viewer}`,
+            ),
+        })
+      : undefined;
+  const presenceActivity = () =>
+    presence.visibility(options.presenceActivity?.snapshot().visible ?? true);
+  const stopPresenceActivity =
+    options.presenceActivity?.subscribe(presenceActivity);
+  presenceActivity();
   let revision = 0;
   let accessEpoch = 0;
   let cacheClearEpoch = 0;
@@ -167,6 +207,7 @@ export function createRelaySession(
       for (const id of revoked) recent.delete(id);
       channels.purgeAccess((events) => events.filter(visibility(events)));
       writes?.purgeConfirmed((event) => event.kind !== 0 && visible(event));
+      presence.clear();
       profiles.clear();
       emoji.clear();
       agentLibrary.clear();
@@ -338,7 +379,6 @@ export function createRelaySession(
     viewer: transport?.viewer ?? "",
     notify,
   });
-  let traffic: LiveSubscription | undefined;
   const liveListeners = new Set<() => void>();
   let liveSnapshot: LiveSnapshot = Object.freeze({
     status: transport?.subscribe ? "connecting" : "unavailable",
@@ -568,6 +608,7 @@ export function createRelaySession(
   );
   const session = Object.freeze({
     unread: unread.capability,
+    presence: presence.queries,
     sidebarPreferences: sidebarPreferences.queries,
     live,
     profiling,
@@ -866,8 +907,13 @@ export function createRelaySession(
     }
   }
   traffic = transport?.subscribe?.({
+    presence: (events) => presence.receive(events),
+    presenceState: (state) => presence.route(state),
     receive(events) {
       if (closed) return;
+      // Ephemeral traffic must never enter generic retention, even from a bad route.
+      presence.receive(events.filter((event) => event.kind === 20001));
+      events = events.filter((event) => event.kind !== 20001);
       // Signed membership notifications are hints, not roster authority. Schedule
       // before visibility filtering, because a newly granted channel may be denied locally.
       if (
@@ -885,6 +931,8 @@ export function createRelaySession(
     },
     state(snapshot) {
       if (closed) return;
+      presence.connection(snapshot.status === "connected");
+      presencePublisher?.connection(snapshot.status === "connected");
       if (
         snapshot.status !== "connected" &&
         liveSnapshot.status === "connected"
@@ -948,6 +996,7 @@ export function createRelaySession(
       accessEpoch++;
       cacheClearEpoch++;
       sidebarPreferences.clear();
+      presence.clear();
       // New windows must not yield to or receive errors from retired owners.
       catchups.clear();
       catchupQueue.clear();
@@ -965,6 +1014,9 @@ export function createRelaySession(
     dispose() {
       closed = true;
       lifetime.abort();
+      stopPresenceActivity?.();
+      presencePublisher?.dispose();
+      presence.dispose();
       sidebarPreferences.dispose();
       stopInterests();
       traffic?.dispose();
@@ -985,6 +1037,10 @@ export function createRelaySession(
     diagnostics: () => ({
       ...channels.diagnostics(),
       profiles: profiles.stats(),
+      presence: {
+        ...presence.diagnostics(),
+        publisher: presencePublisher?.diagnostics(),
+      },
     }),
   };
 }

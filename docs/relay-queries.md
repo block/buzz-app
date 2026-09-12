@@ -140,6 +140,23 @@ channel timeline. Failed content rows stay visible for same-event retry; failed
 auxiliary edits/reactions stop affecting the fold. Verified echo reconciliation and
 persisted signed-event retry remain the same outbox operations as channel sends.
 
+## Exact message detail
+
+`session.messageDetail(channelId, messageId)` owns an isolated folded row. Its
+snapshot has `status` (idle/loading/ready/unavailable/error), `target`, `error`,
+and `limited`; allocate, subscribe, refresh and dispose with the consuming request.
+At most three bounded reads fetch the target ID, reference overlays and deletions
+of those overlays. No root-hint lookup or thread traversal is performed.
+Reference queries omit `#h` for legacy edits/deletes but retain session visibility
+checks. Raw responses reaching 500 events fail before filtering; retained evidence
+stays below 500 events / at most 4 MiB. These are evidence bounds, not complete history.
+
+Known tombstones survive sparse refreshes and shared-cache eviction. Detail reads
+share verification, admission, access epochs and live reconciliation without
+inserting isolated rows into channel history. Explicit denial revokes the owning
+channel; access loss, cache clear and disposal purge the view. It shares the existing
+64-view limit and channel-establishment repair, with no new subscription or persistence.
+
 ## Ownership and reconciliation
 
 | Internal owner | Responsibility |

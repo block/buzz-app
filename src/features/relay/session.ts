@@ -18,6 +18,7 @@ import {
   type ReadStateStorage,
 } from "./read-state-storage";
 import { createUnread } from "./unread";
+import type { IncomingListener, IncomingMessage } from "./incoming";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -41,6 +42,11 @@ import {
 } from "./outbox";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
+import {
+  createMessageDetail,
+  DETAIL_READ_LIMIT,
+  DetailLimitError,
+} from "./message-detail";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
 import {
@@ -87,11 +93,13 @@ export function createRelaySession(
     8 * 1024 * 1024,
   );
   const observations = new Set<(events: readonly RelayEvent[]) => void>();
+  const incomingListeners = new Set<IncomingListener>();
   const timers = new Set<ReturnType<typeof setTimeout>>();
   const pendingConfirmation = new Set<string>();
   const refreshers = new Set<() => Promise<void>>();
   const views = new Map<() => void, (clear?: boolean) => void>();
   const threads = new Set<ReturnType<typeof createThreadView>>();
+  const details = new Set<ReturnType<typeof createMessageDetail>>();
   const writer = transport?.writer;
   const writes =
     transport && writer
@@ -121,7 +129,7 @@ export function createRelaySession(
       : undefined;
   const rawLocal = () => writes?.local.snapshot() ?? [];
   function retainedThreadEvent(id: string) {
-    for (const thread of threads) {
+    for (const thread of [...threads, ...details]) {
       if (!canAccess(thread.channelId)) continue;
       const event = thread.event(id);
       if (event) return event;
@@ -578,6 +586,14 @@ export function createRelaySession(
     notify,
   );
   const session = Object.freeze({
+    /** Verified new live-route messages, after reconciliation. Never history or local intent. */
+    subscribeIncoming(listener: IncomingListener) {
+      if (closed) return () => {};
+      incomingListeners.add(listener);
+      return () => {
+        incomingListeners.delete(listener);
+      };
+    },
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     live,
@@ -591,6 +607,61 @@ export function createRelaySession(
       emoji.tags,
       validateMentions,
     ),
+    /** Exact-target evidence stays separate from channel head/history ingestion. */
+    messageDetail(channelId: string, messageId: string) {
+      if (closed || views.size >= 64)
+        throw new Error("Relay view capacity unavailable");
+      if (!/^[0-9a-f]{64}$/.test(messageId))
+        throw new Error("Message detail needs a valid message ID");
+      const detail = createMessageDetail({
+        channelId,
+        messageId,
+        relayAuthor: transport?.relayAuthor ?? "",
+        reader: {
+          async read(filters, settings) {
+            const epoch = accessEpoch;
+            let events: readonly RelayEvent[];
+            try {
+              events = await requests.reader.read(filters, settings);
+            } catch (error) {
+              // This owned reader knows the channel even for reference-only aux.
+              if (
+                !closed &&
+                epoch === accessEpoch &&
+                readErrorKind(error) === "denied"
+              )
+                channels.denyChannel(channelId, error);
+              throw error;
+            }
+            if (closed || epoch !== accessEpoch)
+              throw new DOMException("Stale message detail", "AbortError");
+            settings?.signal?.throwIfAborted();
+            // Count before visibility filtering: a full raw response may have
+            // omitted an author tombstone. Never call that a complete fold.
+            if (events.length >= DETAIL_READ_LIMIT)
+              throw new DetailLimitError();
+            return accept(events, false);
+          },
+        },
+        local: localViews,
+        canAccess: () => !closed && canAccess(channelId),
+        visible: (events) => events.filter(visibility(events)),
+        notify,
+      });
+      details.add(detail);
+      detail.receive(recent.entries().map(([, item]) => item.event));
+      observations.add(detail.receive);
+      const unsubscribe = localViews?.subscribe(detail.changed);
+      const dispose = () => {
+        detail.view.dispose();
+        unsubscribe?.();
+        observations.delete(detail.receive);
+        details.delete(detail);
+        views.delete(dispose);
+      };
+      views.set(dispose, detail.purge);
+      return { ...detail.view, dispose };
+    },
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(channelId: string, messageId: string) {
       if (closed || views.size >= 64)
@@ -879,8 +950,28 @@ export function createRelaySession(
   }
   traffic = transport?.subscribe?.({
     observer: (frame, generation) => activity.receive(frame, generation),
-    receive(events) {
+    receive(events, provenance) {
       if (closed) return;
+      const candidates = new Set(
+        provenance?.phase === "live" && provenance.channelId
+          ? events
+              .filter((event) => {
+                const destinations = event.tags.filter(
+                  ([name]) => name === "h",
+                );
+                return (
+                  event.kind === 9 &&
+                  event.pubkey !== transport.viewer &&
+                  destinations.length === 1 &&
+                  destinations[0]?.[1] === provenance.channelId &&
+                  !recent.peek(event.id) &&
+                  !unread.event(event.id) &&
+                  !rawLocal().some((item) => item.event.id === event.id)
+                );
+              })
+              .map((event) => event.id)
+          : [],
+      );
       // Signed membership notifications are hints, not roster authority. Schedule
       // before visibility filtering, because a newly granted channel may be denied locally.
       if (
@@ -894,7 +985,30 @@ export function createRelaySession(
         )
       )
         refreshRoster();
-      accept(events);
+      const visible = accept(events);
+      if (closed || !candidates.size || !provenance?.channelId) return;
+      const epoch = accessEpoch;
+      const delivered = new Set<string>();
+      const incoming: readonly IncomingMessage[] = Object.freeze(
+        visible.flatMap((event) => {
+          if (!candidates.has(event.id) || delivered.has(event.id)) return [];
+          delivered.add(event.id);
+          return [
+            Object.freeze({
+              channelId: provenance.channelId as string,
+              messageId: event.id,
+              createdAt: event.created_at,
+              authorId: event.pubkey,
+              previewContent: event.content.slice(0, 4096),
+            }),
+          ];
+        }),
+      );
+      if (!incoming.length) return;
+      for (const listener of incomingListeners) {
+        if (closed || epoch !== accessEpoch) return;
+        listener(incoming);
+      }
     },
     state(snapshot) {
       if (closed) return;
@@ -934,7 +1048,7 @@ export function createRelaySession(
         return;
       }
       if (!channels.canAccess(channelId)) return;
-      for (const thread of threads)
+      for (const thread of [...threads, ...details])
         if (thread.channelId === channelId) void thread.view.refresh();
       const job = {
         generation: liveGeneration,
@@ -985,6 +1099,7 @@ export function createRelaySession(
       stopInterests();
       traffic?.dispose();
       liveListeners.clear();
+      incomingListeners.clear();
       observations.clear();
       for (const timer of timers) clearTimeout(timer);
       for (const dispose of [...views.keys()]) dispose();

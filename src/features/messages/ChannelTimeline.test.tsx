@@ -1,3 +1,4 @@
+import { useReading } from "./use-reading";
 import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
@@ -19,6 +20,9 @@ import type { ChannelMessage, ChannelWindow } from "../relay/contracts";
 // Boundary test, not a browser renderer. Capture this production component's
 // effects/refs and invoke its returned DOM handlers. Deliberately stale Virtua
 // metrics reproduce the event ordering measured separately in Chromium/WebKit.
+// Reading geometry/dwell has its own real-hook boundary suite. This fixture
+// deliberately supplies only the DOM shape needed for positioning.
+vi.mock("./use-reading", () => ({ useReading: vi.fn() }));
 const hooks = vi.hoisted(() => ({
   refs: [] as { current: unknown }[],
   states: [] as unknown[],
@@ -1029,6 +1033,17 @@ it("an accepted button read retires earlier blocked gesture before verification"
   h.update({ freshness: "verified" });
   expect(h.olderReads).toHaveBeenCalledTimes(1);
   h.unmount();
+});
+
+it("wires the shared reading hook to its owned scroller and settled position", () => {
+  vi.mocked(useReading).mockClear();
+  setup();
+  expect(useReading).toHaveBeenCalledWith({
+    session: expect.any(Object),
+    channelId: "channel",
+    scroller: expect.objectContaining({ current: expect.anything() }),
+    settled: expect.objectContaining({ current: expect.any(Boolean) }),
+  });
 });
 
 const membershipRow = (id: string, time: number): ChannelMessage => ({

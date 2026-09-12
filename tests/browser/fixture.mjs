@@ -27,6 +27,7 @@ export const test = base.extend({
   productionBroker: [false, { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
+  exactMessages: [false, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -46,6 +47,7 @@ export const test = base.extend({
       productionBroker,
       readState,
       threadUnread,
+      exactMessages,
       sidebarUnread,
       savedSidebar,
       expectedPageFailure,
@@ -85,7 +87,8 @@ export const test = base.extend({
         forged ? userKey : relayKey,
         time,
       );
-    const peerKey = dmLabels || readState ? generateSecretKey() : undefined;
+    const peerKey =
+      dmLabels || readState || exactMessages ? generateSecretKey() : undefined;
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
@@ -171,6 +174,48 @@ export const test = base.extend({
         );
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    const detailEvents = [];
+    let exact;
+    if (exactMessages) {
+      const root = histories.get("primary/alpha")[2];
+      const replies = Array.from({ length: 80 }, (_, i) =>
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", root.id, "", "reply"],
+            ["p", getPublicKey(peerKey)],
+          ],
+          `Old thread reply ${i} · Hello @Alice Fixture`,
+          userKey,
+          root.created_at + i + 1,
+        ),
+      );
+      const target = replies.at(-1);
+      const edit = sign(
+        40003,
+        [["e", target.id]],
+        "**Exact reply edited** · Hello @Alice Fixture",
+        userKey,
+        target.created_at + 1,
+      );
+      const reaction = sign(
+        7,
+        [["e", target.id]],
+        "+",
+        userKey,
+        target.created_at + 2,
+      );
+      const deletion = sign(
+        5,
+        [["e", reaction.id]],
+        "",
+        userKey,
+        target.created_at + 3,
+      );
+      detailEvents.push(...replies, edit, reaction, deletion);
+      exact = { root, target, replies, edit, reaction, deletion };
+    }
     if (membershipActivity) {
       const history = histories.get("primary/alpha");
       history.push(
@@ -392,10 +437,36 @@ export const test = base.extend({
               ]
             : []),
         ];
-      if (threadUnread && filter.ids)
-        return [...histories.values()]
-          .flat()
-          .filter((event) => filter.ids.includes(event.id));
+      if (filter.ids)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? detailEvents : [])
+          .filter(
+            (event) =>
+              filter.ids.includes(event.id) &&
+              (!filter["#h"] ||
+                event.tags.some(
+                  ([key, value]) => key === "h" && filter["#h"].includes(value),
+                )),
+          )
+          .slice(0, filter.limit);
+      if (
+        filter["#e"] &&
+        filter.kinds?.every((kind) => [5, 7, 9005, 39005, 40003].includes(kind))
+      )
+        return (community === "primary" ? detailEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([key, value]) => key === "e" && filter["#e"].includes(value),
+              ),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
       if (threadUnread && filter.depth_limit)
         return (threadReplies.get(filter["#e"]?.[0]) ?? [])
           .filter(
@@ -701,6 +772,7 @@ export const test = base.extend({
         report,
         pending,
         histories,
+        exact,
         membership(
           type,
           targetIndex,

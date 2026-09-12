@@ -37,6 +37,7 @@ import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
+import { MessageDetailPanel } from "../../features/messages/MessageDetailPanel";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
@@ -64,15 +65,7 @@ export function ChannelsPage({
   const sessionNavigation = navigation?.forSession(relay, session);
   useEffect(() => {
     if (!navigation || !sessionNavigation) return;
-    if (
-      navigation.target.kind === "conversation" &&
-      navigation.target.messageId
-    )
-      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
-    else if (
-      session.status === "disconnected" &&
-      navigation.target.kind === "page"
-    )
+    if (session.status === "disconnected" && navigation.target.kind === "page")
       sessionNavigation.complete({ status: "opened" });
     else if (session.status === "error")
       sessionNavigation.complete({ status: "failed", reason: "unavailable" });
@@ -215,7 +208,12 @@ function ChannelWorkspace({
       });
     }
   }, [requestedChannel, current, list.status, navigation, viewer, scope]);
-  const showingThread = thread?.channelId === current?.id ? thread : undefined;
+  const requestedMessage =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined;
+  const showingThread =
+    !requestedMessage && thread?.channelId === current?.id ? thread : undefined;
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
   }, [thread, showingThread]);
@@ -520,7 +518,22 @@ function ChannelWorkspace({
           channelId={current?.id}
           partialRoster={list.coverage === "partial"}
         />
-        {current ? (
+        {current && requestedMessage && navigation ? (
+          <MessageDetailPanel
+            extensions={extensions}
+            session={queries}
+            scope={scope}
+            channelId={current.id}
+            messageId={requestedMessage}
+            navigation={navigation}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
+            openChannel={() => select(current.id)}
+            retry={() => {
+              void navigator?.retry();
+            }}
+          />
+        ) : current ? (
           <ChannelBody
             viewer={viewer}
             extensions={extensions}
@@ -539,7 +552,7 @@ function ChannelWorkspace({
         ) : (
           <div className={styles.empty}>Select a channel to read it.</div>
         )}
-        {current && (
+        {current && !requestedMessage && (
           <MessageComposer
             extensions={extensions}
             key={`composer:${current.id}`}

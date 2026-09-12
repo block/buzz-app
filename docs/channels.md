@@ -177,7 +177,8 @@ The footer reuses `MessageComposer` and sends direct replies to the resolved roo
 through `session.messages.reply`. Channel and thread drafts are separate and survive
 reconnection; failed replies remain inline with the shared retry action. Read-only
 connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. There is no jump-to-specific-reply navigation yet.
+not expose a composer. Message-addressed navigation opens a separate exact detail,
+not a position inside this bounded thread panel.
 
 Replies use ascending timestamp/event-ID order, including nested replies. Retry
 appears only after a failed read; there is no routine Refresh control. Names are
@@ -286,3 +287,17 @@ upscaling. Unknown-size images may therefore have empty space in the frame. Load
 failure, or retry does not resize it or force an above-bottom reader to the newest row.
 `tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
 bottom following, reading anchors and narrow layout in Chromium and WebKit.
+
+## Opening an exact message
+
+Message-addressed conversations show **Message detail** with only the selected
+verified row. They do not fetch an optional original thread message or traverse
+surrounding history. **Open channel** returns to normal reading with its saved
+geometry and composer intact.
+
+`MessageDetailPanel` acknowledges navigation only after the target is visible and
+focused. Reclick/Back reveals again; live/profile updates do not steal focus.
+The shared row preserves Markdown, profile links and background enrichment.
+Opening never marks read directly: the ordinary focus/visibility/dwell hook applies.
+Missing/deleted targets, access loss and failed reads expose failure/retry instead
+of falling back to the channel head. See [the evidence contract](relay-queries.md#exact-message-detail).

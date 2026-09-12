@@ -1,3 +1,4 @@
+import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
@@ -249,7 +250,8 @@ function ChannelWorkspace({
   const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
-    if (panelTrigger.current?.isConnected) panelTrigger.current.focus();
+    if (panelTrigger.current?.isConnected)
+      panelTrigger.current.focus({ preventScroll: true });
     else if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   }, []);
   // Availability follows active contributions; dispatch still re-resolves at click time.
@@ -285,6 +287,24 @@ function ChannelWorkspace({
     },
     [panels, current],
   );
+  const drawerContext = useMemo(
+    () =>
+      current && viewer
+        ? {
+            scope,
+            viewer,
+            channelId: current.id,
+            channelName: current.name,
+            relayUrl: scope
+              .slice(0, -(viewer.length + 1))
+              .replace(/^https:/, "wss:")
+              .replace(/^http:/, "ws:"),
+            ...(showingThread && { threadId: showingThread.messageId }),
+          }
+        : undefined,
+    [scope, viewer, current, showingThread],
+  );
+  const drawer = useChannelPanels(panels, drawerContext);
   const visible = useMemo(
     () =>
       channels.filter((channel) =>
@@ -391,6 +411,7 @@ function ChannelWorkspace({
             )}
             <strong>{current?.name ?? "Channels"}</strong>
           </div>
+          {drawer.launchers}
           <details className={styles.diagnostics}>
             <summary
               aria-label="Conversation options"
@@ -484,6 +505,7 @@ function ChannelWorkspace({
             onSend={(id) => setSent({ channelId: current.id, id })}
           />
         )}
+        {drawer.content}
       </article>
       {(panel || showingThread || companion) && (
         <div className={styles.panelStack}>

@@ -100,17 +100,41 @@ export async function open(page, app) {
 }
 export async function upper(page) {
   await end(page);
+  const distance = () =>
+    history(page).evaluate(
+      (element) =>
+        element.scrollHeight - element.scrollTop - element.clientHeight,
+    );
   await history(page).hover();
-  await page.mouse.wheel(0, -650);
-  // Wheel dispatch is asynchronous; require actual movement before settling.
-  await expect
-    .poll(() =>
-      history(page).evaluate(
-        (element) =>
-          element.scrollHeight - element.scrollTop - element.clientHeight,
-      ),
-    )
-    .toBeGreaterThan(400);
-  await settle(page);
+  expect(
+    await history(page).evaluate((element) => element.scrollTop),
+    "history has room for an above-bottom reading position",
+  ).toBeGreaterThan(400);
+  // This establishes a reading position, not a wheel-delta measurement. A wheel
+  // request does not guarantee exact displacement (Linux WebKit stopped short).
+  // Each bounded gesture must make real progress; never assign scrollTop or
+  // repeat an assertion until an immobile timeline happens to pass.
+  for (let gesture = 0; gesture < 4; gesture++) {
+    const before = await distance();
+    if (before > 400) break;
+    await page.mouse.wheel(0, -(650 - before));
+    // expect.poll races its deadline; it does not cancel an in-flight callback.
+    // Drain the final DOM read before a caller handles the expected rejection
+    // and closes the page, otherwise its element handle can arrive after close.
+    let pendingRead;
+    try {
+      await expect
+        .poll(() => (pendingRead = distance()), {
+          message: "reading gesture moves away from bottom",
+        })
+        .toBeGreaterThan(before);
+    } finally {
+      await pendingRead;
+    }
+    await settle(page);
+  }
+  expect(await distance(), "reading position is above bottom").toBeGreaterThan(
+    400,
+  );
   return anchor(page);
 }

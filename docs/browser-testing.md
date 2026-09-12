@@ -246,9 +246,29 @@ Measured geometry stays in memory, with the unchanged three-entry / 256KiB
 signature limits in `src/features/messages/geometry.ts`.
 
 Panel opening/closing and viewport resizing preserve bottom intent or the visible
-reading anchor. A new input gesture supersedes a queued restoration. The layout
+reading anchor. Restoration-generated scrolls retain that message while its row
+intersects the viewport, even when narrower wrapping makes its paragraph too tall
+to fit wholly. A new input gesture or local-send navigation releases that preference;
+missing/offscreen rows use ordinary visible-anchor selection. A new input gesture
+also supersedes a queued restoration. The layout
 journey also checks separate cards, independent panel scrolling, window-centered
 tabs, community-dialog focus, and widths down to 390px.
+
+Closing a link panel returns focus to its still-mounted trigger without scrolling
+that link into view. The layout journey observes the native focus call's scroll
+delta as well as the final reading anchor: a transient focus jump must not be
+hidden by a successful later virtualizer correction. The test explicitly moves
+focus into the panel before closing; removing focus restoration must also fail.
+
+Resize journeys use the existing tall-message fixture and assert no older-page
+requests plus a reading position outside prefetch. The ordinary fixture holds
+cursor responses for explicit paging tests; accidentally entering that path is not
+valid resize setup. `upper()` establishes above-bottom reading with at most four
+real wheel gestures, requiring progress and settled distance >400px. It does not
+measure exact wheel displacement. Partial-input and blocked-input controls guard
+that setup; same-ID/Y <4px and bottom <4px assertions remain unchanged. No retries
+or additional WebKit exclusions are used. The underlying Linux WebKit single-wheel
+shortfall remains unattributed; this setup change does not fix or explain it.
 
 These checks do not persist measured geometry or guarantee smoothness. A live edit
 to a partly clipped, still-visible row can move the following visible messages:

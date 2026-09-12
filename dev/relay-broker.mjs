@@ -1,3 +1,5 @@
+import { decodeAgentObserver } from "./agent-observer.mjs";
+import { observerGeneration } from "../src/features/agents/observer.ts";
 import {
   decodeReadState,
   signReadState,
@@ -511,24 +513,29 @@ export function relayBrokerPlugin({
               readState: true,
               agentLibrary: true,
               live: true,
+              agentActivity: true,
             });
           if (
-            ["/api/relay/stream-retry", "/api/relay/stream-priority"].includes(
-              route,
-            ) &&
+            [
+              "/api/relay/stream-retry",
+              "/api/relay/stream-priority",
+              "/api/relay/stream-observer",
+            ].includes(route) &&
             req.method === "POST"
           ) {
             const prioritizing = route === "/api/relay/stream-priority";
+            const observing = route === "/api/relay/stream-observer";
             let raw = "";
             for await (const part of req) {
               raw += part;
               if (Buffer.byteLength(raw) > (prioritizing ? 9000 : 256))
                 return json(res, 413, { error: "Live control too large" });
             }
-            let streamId, priority;
+            let streamId, priority, observer;
             try {
               const body = JSON.parse(raw);
               streamId = body.streamId;
+              if (observing) observer = observerGeneration(body.observer);
               if (prioritizing) {
                 liveChannels(body.channels);
                 if (body.channels.length > 64)
@@ -549,6 +556,7 @@ export function relayBrokerPlugin({
                 error: "Live stream no longer available",
               });
             if (prioritizing) stream.traffic.prioritize(priority);
+            else if (observing) stream.traffic.observe(observer);
             else stream.traffic.retry();
             return json(res, 200, { accepted: true });
           }
@@ -559,10 +567,11 @@ export function relayBrokerPlugin({
               if (Buffer.byteLength(raw) > 150000)
                 return json(res, 413, { error: "Live interests too large" });
             }
-            let channels, priority;
+            let channels, priority, observer;
             try {
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
+              observer = observerGeneration(body.observer ?? null);
               liveChannels(body.priority ?? []);
               if (body.priority?.length > 64)
                 throw new Error("Priority capacity reached");
@@ -606,6 +615,17 @@ export function relayBrokerPlugin({
                 receive: (events) => {
                   for (const event of events) write("", event);
                 },
+                telemetry: (event, generation) => {
+                  if (res.destroyed) return;
+                  try {
+                    write("observer", {
+                      frame: decodeAgentObserver(event, key, viewer),
+                      generation,
+                    });
+                  } catch {
+                    // Rejected telemetry cannot break chat or leak payloads in logs.
+                  }
+                },
                 state: (state) => write("state", state),
                 established: (channelId) => write("established", { channelId }),
                 denied: (channelId, reason) =>
@@ -615,6 +635,7 @@ export function relayBrokerPlugin({
               principal.live,
             );
             principal.streams++;
+            traffic.observe(observer);
             traffic.prioritize(priority);
             traffic.update(channels);
             const keepAlive = setInterval(

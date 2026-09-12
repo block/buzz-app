@@ -1,4 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { MembershipRow } from "./MembershipRow";
+import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -64,6 +66,7 @@ export type ChannelTimelineProps = {
   extensions?: ConversationExtensions | undefined;
   channelId: string;
   scope: string;
+  viewer?: string | undefined;
   queries: RelaySession;
   window: ChannelWindow;
   onOpenLink(url: string): boolean;
@@ -85,6 +88,7 @@ function Timeline({
   channelId,
   extensions,
   scope,
+  viewer,
   queries,
   window,
   onOpenLink,
@@ -97,12 +101,12 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<string | undefined>(undefined);
-  const rows = window.rows;
-  const profiles = useRowProfiles(queries.profiles, rows);
+  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const profiles = useRowProfiles(queries.profiles, window.rows);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
   const signature = useMemo(
-    () => geometrySignature(rows, profiles),
-    [rows, profiles],
+    () => geometrySignature(window.rows, profiles),
+    [window.rows, profiles],
   );
   const scroller = useRef<HTMLElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
@@ -118,10 +122,51 @@ function Timeline({
     last?: string | undefined;
   }>({});
   const intent = useRef(0);
+  const measuredPosition = useRef<{
+    offset: number;
+    height: number;
+    width: number;
+    viewport: number;
+  } | null>(null);
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
+  const recordPosition = useCallback(
+    (element: HTMLElement) => {
+      // A delayed membership event can replace a group's rendered representative.
+      // Keep the restored event anchored through that change until reader input.
+      const anchor = restoredAnchor.current;
+      const renderedAnchor = anchor
+        ? rows.find(
+            (row) =>
+              row.id === anchor ||
+              row.membershipRows?.some((member) => member.id === anchor),
+          )?.id
+        : undefined;
+      const position = positionAt(element, renderedAnchor);
+      const previous = measuredPosition.current;
+      // List shrinkage can clamp scrollTop upward without reader movement. An
+      // upward offset beyond that clamp is input, including later events from
+      // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
+      const movedUp =
+        previous &&
+        element.clientWidth === previous.width &&
+        element.clientHeight === previous.viewport &&
+        element.scrollTop <
+          previous.offset + Math.min(0, element.scrollHeight - previous.height);
+      if (previous && follow.current && !movedUp) position.bottom = true;
+      savedPosition.current = position;
+      follow.current = position.bottom;
+      measuredPosition.current = {
+        offset: element.scrollTop,
+        height: element.scrollHeight,
+        width: element.clientWidth,
+        viewport: element.clientHeight,
+      };
+    },
+    [rows],
+  );
   useReading({ session: queries, channelId, scroller, settled });
   const prepend =
     !!edges.current.first &&
@@ -166,13 +211,7 @@ function Timeline({
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
   }, [channelId, geometry, scope]);
-  const previousSize = useRef(size);
   useLayoutEffect(() => {
-    const resized =
-      previousSize.current.width > 0 &&
-      previousSize.current.height > 0 &&
-      previousSize.current !== size;
-    previousSize.current = size;
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
     edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
@@ -186,43 +225,62 @@ function Timeline({
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
     const scheduledIntent = intent.current;
-    let observer: ResizeObserver | undefined;
+    const restore =
+      !settled.current && savedPosition.current && !savedPosition.current.bottom
+        ? savedPosition.current
+        : null;
+    let observer: MutationObserver | undefined;
     let frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
-        if (
-          !settled.current &&
-          savedPosition.current &&
-          !savedPosition.current.bottom
-        ) {
-          const anchor = savedPosition.current.anchor;
+        if (restore) {
+          const anchor = restore.anchor;
           const index = anchor
-            ? rows.findIndex((row) => row.id === anchor.id)
+            ? rows.findIndex(
+                (row) =>
+                  row.id === anchor.id ||
+                  row.membershipRows?.some((member) => member.id === anchor.id),
+              )
             : -1;
           if (anchor && index >= 0) {
-            restoredAnchor.current = anchor.id;
+            restoredAnchor.current = rows[index]?.id;
             handle.current.scrollToIndex(index, {
               align: "start",
               offset: -anchor.y,
             });
-          } else handle.current.scrollTo(savedPosition.current.offset);
+          } else handle.current.scrollTo(restore.offset);
           follow.current = false;
         } else {
+          // Input can move the DOM before its scroll event is delivered.
+          if (scroller.current && measuredPosition.current)
+            recordPosition(scroller.current);
+          if (!follow.current) {
+            settled.current = true;
+            return;
+          }
           handle.current.scrollToIndex(rows.length - 1, { align: "end" });
-          // Width changes can produce row measurements after Virtua's scroll
-          // scheduler expires. Keep this restoration's bottom intent through
-          // measured list reflow, never through a new gesture or row update.
-          const list = resized ? scroller.current?.querySelector("ol") : null;
+          // Appends and width changes can measure after Virtua's end-scroll.
+          // Keep bottom intent through list reflow, never through a new gesture.
+          const list = scroller.current?.querySelector("ol");
           if (list) {
-            observer = new ResizeObserver(() => {
+            // Virtua measures children in ResizeObserver and synchronously writes
+            // this parent height. Observing the parent box would create skipped
+            // resize notifications; watch only Virtua's committed height instead.
+            let height = list.style.height;
+            observer = new MutationObserver(() => {
+              if (list.style.height === height) return;
+              height = list.style.height;
               cancelAnimationFrame(frame);
               frame = requestAnimationFrame(() => {
-                if (intent.current === scheduledIntent)
+                if (intent.current === scheduledIntent && follow.current)
                   handle.current?.scrollToIndex(rows.length - 1, {
                     align: "end",
                   });
               });
             });
-            observer.observe(list);
+            observer.observe(list, {
+              attributes: true,
+              attributeFilter: ["style"],
+            });
           }
         }
       }
@@ -232,12 +290,16 @@ function Timeline({
       cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, [rows, size, prepend]);
+  }, [rows, size, prepend, recordPosition]);
   const revealed = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
     if (!width || !revealMessageId || revealed.current === revealMessageId)
       return;
-    const index = rows.findIndex((row) => row.id === revealMessageId);
+    const index = rows.findIndex(
+      (row) =>
+        row.id === revealMessageId ||
+        row.membershipRows?.some((member) => member.id === revealMessageId),
+    );
     if (index < 0) return;
     // A local send is explicit navigation intent, even when reading older messages.
     // Wait for the optimistic row and virtualizer to mount before revealing it.
@@ -291,6 +353,7 @@ function Timeline({
   const gesture = () => {
     restoredAnchor.current = undefined;
     intent.current++;
+    if (scroller.current) recordPosition(scroller.current);
     userScrolled.current = true;
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
@@ -317,8 +380,7 @@ function Timeline({
           element.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
-          savedPosition.current = positionAt(element, restoredAnchor.current);
-          follow.current = savedPosition.current.bottom;
+          recordPosition(element);
         }
         loadNearTop(element);
       }}
@@ -353,28 +415,39 @@ function Timeline({
           startMargin={EDGE_HEIGHT}
           {...(initialCache.current ? { cache: initialCache.current } : {})}
         >
-          {rows.map((row, index) => (
-            <MessageRow
-              key={row.id}
-              row={row}
-              unread={queries.unread}
-              extensions={extensions}
-              profile={profiles.get(row.authorId)}
-              participantProfiles={profiles}
-              media={queries.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              onOpenThread={onOpenThread}
-              retry={queries.outbox?.retry}
-              day={
-                index === 0 ||
-                new Date(
-                  (rows[index - 1]?.createdAt ?? 0) * 1000,
-                ).toDateString() !==
-                  new Date(row.createdAt * 1000).toDateString()
-              }
-            />
-          ))}
+          {rows.map((row, index) => {
+            const day =
+              index === 0 ||
+              new Date(
+                (rows[index - 1]?.createdAt ?? 0) * 1000,
+              ).toDateString() !==
+                new Date(row.createdAt * 1000).toDateString();
+            return row.membership ? (
+              <MembershipRow
+                key={row.id}
+                row={row}
+                profiles={profiles}
+                viewer={viewer}
+                media={queries.media}
+                day={day}
+              />
+            ) : (
+              <MessageRow
+                key={row.id}
+                row={row}
+                unread={queries.unread}
+                extensions={extensions}
+                profile={profiles.get(row.authorId)}
+                participantProfiles={profiles}
+                media={queries.media}
+                onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                onOpenThread={onOpenThread}
+                retry={queries.outbox?.retry}
+                day={day}
+              />
+            );
+          })}
         </Virtualizer>
       )}
       {!rows.length && !window.hasMore && (

@@ -6,7 +6,7 @@ import type { EventData } from "./events";
 import type { Attachment, ChannelMessage } from "./contracts";
 import { projectMarkdownImages, safeMessageUrl } from "./message-content";
 
-const MESSAGE_KINDS = new Set([9, 40002]);
+import { channelRowKind, membershipChange } from "./membership";
 const HEX64 = /^[0-9a-f]{64}$/;
 
 export function parseAttachments(
@@ -85,7 +85,7 @@ export function foldMessages(
   const overlays = new Map<string, EventData[]>();
   const summaries = new Map<string, EventData>();
   for (const event of events) {
-    if (MESSAGE_KINDS.has(event.kind)) continue;
+    if (channelRowKind(event.kind)) continue;
     if (event.kind === 39005) {
       const target = event.tags.find((entry) => entry[0] === "e")?.[1];
       if (target && event.pubkey === relayAuthor)
@@ -107,7 +107,7 @@ export function foldMessages(
       ) ?? false;
   const rows: ChannelMessage[] = [];
   for (const event of events) {
-    if (!MESSAGE_KINDS.has(event.kind)) continue;
+    if (!channelRowKind(event.kind)) continue;
     if (!event.tags.some((entry) => entry[0] === "h" && entry[1] === channelId))
       continue;
     if (
@@ -118,6 +118,26 @@ export function foldMessages(
       continue;
     const aux = overlays.get(event.id) ?? [];
     if (deleted(event)) continue;
+    if (event.kind === 40099) {
+      const membership = membershipChange(event, relayAuthor);
+      if (membership)
+        rows.push(
+          Object.freeze({
+            id: event.id,
+            channelId,
+            authorId: event.pubkey,
+            createdAt: event.created_at,
+            content: "",
+            membership,
+            mentions: Object.freeze([]),
+            attachments: Object.freeze([]),
+            reactions: Object.freeze([]),
+            replyCount: 0,
+            participants: Object.freeze([]),
+          }),
+        );
+      continue;
+    }
     const edits = aux
       .filter(
         (item) =>

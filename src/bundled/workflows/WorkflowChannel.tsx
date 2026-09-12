@@ -283,10 +283,16 @@ export function WorkflowChannel({
       {snapshot.data.partial && (
         <p className="text-secondary">This is a bounded, partial list.</p>
       )}
+      {!capability.availability.save && (
+        <p role="status" className="text-secondary">
+          Creating and saving workflows is unavailable from this host. You can
+          browse saved configurations, but cannot save changes here yet.
+        </p>
+      )}
       {snapshot.status === "ready" && !snapshot.data.items.length && (
         <p>
-          No saved configurations returned for this channel. Create a disabled
-          draft to start.
+          No saved configurations returned for this channel.
+          {capability.availability.save && " Create a disabled draft to start."}
         </p>
       )}
       <ul className="workflow-list">

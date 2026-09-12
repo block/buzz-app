@@ -87,6 +87,18 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
     0,
   );
   await page.reload();
+  await page.evaluate(() =>
+    window.workflowFixture.definitions.update({
+      status: "ready",
+      data: { items: [], partial: false },
+    }),
+  );
+  await expect(
+    page.getByText(/Create a disabled draft to start/),
+  ).toBeVisible();
+  await expect(
+    page.getByText(/Creating and saving workflows is unavailable/),
+  ).toHaveCount(0);
   await button("New workflow").click();
   expect(
     await page
@@ -214,6 +226,10 @@ test("real session page under StrictMode fences community changes, warns for dir
     await page.getByRole("option", { name, exact: true }).click();
   };
   await choose("First channel");
+  await expect(button("New workflow")).toBeDisabled();
+  await expect(
+    page.getByText(/Creating and saving workflows is unavailable/),
+  ).toBeVisible();
   await button("Fixture A helper").click();
   await expect(button("Save workflow")).toBeDisabled();
   await page
@@ -230,6 +246,18 @@ test("real session page under StrictMode fences community changes, warns for dir
     .getByRole("alertdialog")
     .getByRole("button", { name: "Change channel", exact: true })
     .click();
+  await expect(
+    page.getByText("No saved configurations returned for this channel.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(button("New workflow")).toBeDisabled();
+  await expect(
+    page.getByText(/Creating and saving workflows is unavailable/),
+  ).toBeVisible();
+  await expect(page.getByText(/Create a disabled draft to start/)).toHaveCount(
+    0,
+  );
   await expect(
     page.getByRole("region", { name: "Workflow editor" }),
   ).toHaveCount(0);

@@ -33,14 +33,19 @@ function session(scope: string) {
   const events = channels.flatMap((channel, index) => [
     roster(authority, channel, [viewer.pubkey]),
     metadata(authority, channel, index ? "Second channel" : "First channel"),
-    signed(viewer, {
-      kind: 30620,
-      content: fixtureYaml.replace("Message helper", `${scope} helper`),
-      tags: [
-        ["h", channel],
-        ["d", fixtureDefinition.id],
-      ],
-    }),
+    // The second channel exercises the real session's read-only empty state.
+    ...(index
+      ? []
+      : [
+          signed(viewer, {
+            kind: 30620,
+            content: fixtureYaml.replace("Message helper", `${scope} helper`),
+            tags: [
+              ["h", channel],
+              ["d", fixtureDefinition.id],
+            ],
+          }),
+        ]),
   ]);
   return createRelaySession(
     {

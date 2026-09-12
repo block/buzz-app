@@ -124,3 +124,98 @@ test("one keyboard scroll leaves bottom follow and live membership preserves the
   await expectAnchor(page, saved);
   expect(await distance()).toBeGreaterThan(200);
 });
+
+test("a restored membership anchor follows delayed group growth through resize and revisit", async ({
+  page,
+  app,
+}) => {
+  const history = app.histories.get("primary/alpha");
+  const members = history.filter((event) => event.kind === 40099);
+  // Keep a preceding message and later chats: the activity is an interior anchor.
+  history.splice(0, history.length, history[0], ...members);
+  const delayed = app.membership("member_joined", 0, -1, false, false);
+  for (let i = 0; i < 12; i++)
+    app.append(
+      "primary",
+      "alpha",
+      `Later chat ${i} ${"Long message. ".repeat(30)}`,
+      false,
+    );
+  history.splice(history.indexOf(delayed), 1);
+  await page.goto(app.origin);
+  await page
+    .getByLabel("Pages")
+    .getByRole("button", { name: "Messages", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  const feed = page.getByRole("region", { name: "Channel message history" });
+  await settle(page);
+  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  // Seed only a persisted reading preference, not relay evidence or client rows.
+  await page.evaluate((id) => {
+    const key = Object.keys(localStorage).find(
+      (key) =>
+        key.startsWith("buzz-view.v1:") &&
+        JSON.parse(key.slice("buzz-view.v1:".length))[1] === "scroll:alpha",
+    );
+    if (!key) throw new Error("Missing saved Alpha reading position");
+    localStorage.setItem(
+      key,
+      JSON.stringify({ offset: 0, bottom: false, anchor: { id, y: 90 } }),
+    );
+  }, members[0].id);
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  const group = feed.locator("[data-membership-row]");
+  const y = () =>
+    group.evaluate(
+      (row) =>
+        row.getBoundingClientRect().top -
+        row.closest("section").getBoundingClientRect().top,
+    );
+  await expect.poll(async () => Math.abs((await y()) - 90)).toBeLessThan(2);
+  await expect(group).toHaveAttribute("data-message-id", members[1].id);
+  // This competing paragraph is wholly visible, while its row is clipped.
+  // Losing the retained group identity would make positionAt choose it instead.
+  const preceding = await feed
+    .locator(`[data-message-id="${history[0].id}"]`)
+    .evaluate((row) => {
+      const top = row.closest("section").getBoundingClientRect().top;
+      return {
+        row: row.getBoundingClientRect().top - top,
+        paragraph: row.querySelector("p").getBoundingClientRect().top - top,
+      };
+    });
+  expect(preceding.row).toBeLessThan(0);
+  expect(preceding.paragraph).toBeGreaterThan(0);
+
+  await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+  history.push(delayed);
+  app.relay.publish("primary", delayed);
+  await expect(group).toHaveAttribute("data-message-id", delayed.id);
+  await settle(page);
+  // Deliver an ordinary reflow scroll, without a wheel/key/pointer gesture.
+  await feed.evaluate((el) =>
+    el.dispatchEvent(new Event("scroll", { bubbles: true })),
+  );
+  const beforeResize = await y();
+  await page.setViewportSize({ width: 1200, height: 950 });
+  await settle(page);
+  await expect
+    .poll(async () => Math.abs((await y()) - beforeResize))
+    .toBeLessThan(2);
+  await page.getByRole("button", { name: "Beta", exact: true }).click();
+  const saved = await page.evaluate(() => {
+    const key = Object.keys(localStorage).find(
+      (key) =>
+        key.startsWith("buzz-view.v1:") &&
+        JSON.parse(key.slice("buzz-view.v1:".length))[1] === "scroll:alpha",
+    );
+    return JSON.parse(localStorage.getItem(key));
+  });
+  expect(saved.anchor.id).toBe(delayed.id);
+  await page.getByRole("button", { name: "Alpha", exact: true }).click();
+  await settle(page);
+  await expect
+    .poll(async () => Math.abs((await y()) - beforeResize))
+    .toBeLessThan(2);
+});

@@ -132,28 +132,41 @@ function Timeline({
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
-  const recordPosition = useCallback((element: HTMLElement) => {
-    const position = positionAt(element, restoredAnchor.current);
-    const previous = measuredPosition.current;
-    // List shrinkage can clamp scrollTop upward without reader movement. An
-    // upward offset beyond that clamp is input, including later events from
-    // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
-    const movedUp =
-      previous &&
-      element.clientWidth === previous.width &&
-      element.clientHeight === previous.viewport &&
-      element.scrollTop <
-        previous.offset + Math.min(0, element.scrollHeight - previous.height);
-    if (previous && follow.current && !movedUp) position.bottom = true;
-    savedPosition.current = position;
-    follow.current = position.bottom;
-    measuredPosition.current = {
-      offset: element.scrollTop,
-      height: element.scrollHeight,
-      width: element.clientWidth,
-      viewport: element.clientHeight,
-    };
-  }, []);
+  const recordPosition = useCallback(
+    (element: HTMLElement) => {
+      // A delayed membership event can replace a group's rendered representative.
+      // Keep the restored event anchored through that change until reader input.
+      const anchor = restoredAnchor.current;
+      const renderedAnchor = anchor
+        ? rows.find(
+            (row) =>
+              row.id === anchor ||
+              row.membershipRows?.some((member) => member.id === anchor),
+          )?.id
+        : undefined;
+      const position = positionAt(element, renderedAnchor);
+      const previous = measuredPosition.current;
+      // List shrinkage can clamp scrollTop upward without reader movement. An
+      // upward offset beyond that clamp is input, including later events from
+      // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
+      const movedUp =
+        previous &&
+        element.clientWidth === previous.width &&
+        element.clientHeight === previous.viewport &&
+        element.scrollTop <
+          previous.offset + Math.min(0, element.scrollHeight - previous.height);
+      if (previous && follow.current && !movedUp) position.bottom = true;
+      savedPosition.current = position;
+      follow.current = position.bottom;
+      measuredPosition.current = {
+        offset: element.scrollTop,
+        height: element.scrollHeight,
+        width: element.clientWidth,
+        viewport: element.clientHeight,
+      };
+    },
+    [rows],
+  );
   useReading({ session: queries, channelId, scroller, settled });
   const prepend =
     !!edges.current.first &&

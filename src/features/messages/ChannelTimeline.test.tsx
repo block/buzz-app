@@ -1128,22 +1128,26 @@ it.each([false, true])(
 );
 
 it.each([false, true])(
-  "a resolved membership anchor retains its rendered ID until a gesture=%s",
+  "a restored membership anchor survives delayed group growth until a gesture=%s",
   (gesture) => {
     const { membership: _membership, ...preceding } = membershipRow(
       "preceding",
       0,
     );
+    const later = { ...preceding, id: "later", createdAt: 4 };
+    const rows = [
+      preceding,
+      membershipRow("anchor", 1),
+      membershipRow("representative", 2),
+      later,
+    ];
+    const mounted = [
+      { id: "preceding", y: -20 },
+      { id: "representative", y: 42 },
+    ];
     const h = setup({
-      initialRows: [
-        preceding,
-        membershipRow("anchor", 1),
-        membershipRow("representative", 2),
-      ],
-      mounted: [
-        { id: "preceding", y: -20 },
-        { id: "representative", y: 42 },
-      ],
+      initialRows: rows,
+      mounted,
       initial: {
         offset: 80851,
         bottom: false,
@@ -1155,8 +1159,18 @@ it.each([false, true])(
       offset: -42,
     });
     h.scroll(false);
+    // A delayed activity row lands inside history, not at the loaded tail.
+    // It replaces B's rendered identity with C while retaining A/B as members.
+    h.setRows([...rows.slice(0, -1), membershipRow("grown", 3), later]);
+    mounted[1] = { id: "grown", y: 42 };
+    h.dispatchScroll(); // Reflow, with no reader gesture.
+    h.handle.scrollToIndex.mockClear();
     h.element.clientWidth = 650;
     h.resize();
+    expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+      align: "start",
+      offset: -42,
+    });
     h.scroll(gesture);
     h.handle.scrollToIndex.mockClear();
     h.element.clientWidth = 1124;
@@ -1170,7 +1184,7 @@ it.each([false, true])(
     );
     h.unmount();
     expect(h.saved().anchor).toEqual(
-      gesture ? { id: "preceding", y: -20 } : { id: "representative", y: 42 },
+      gesture ? { id: "preceding", y: -20 } : { id: "grown", y: 42 },
     );
   },
 );

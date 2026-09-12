@@ -676,7 +676,13 @@ export const test = base.extend({
         report,
         pending,
         histories,
-        membership(type, targetIndex, actorIndex = -1, forged = false) {
+        membership(
+          type,
+          targetIndex,
+          actorIndex = -1,
+          forged = false,
+          deliver = true,
+        ) {
           const history = histories.get("primary/alpha");
           const event = membershipEvent(
             type,
@@ -686,6 +692,7 @@ export const test = base.extend({
             forged,
           );
           history.push(event);
+          if (!deliver) return event;
           if (relay) relay.publish("primary", event);
           else
             for (const client of streams.get("primary") ?? [])

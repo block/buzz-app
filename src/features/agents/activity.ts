@@ -5,7 +5,13 @@ export const ACTIVITY_RECORD_LIMIT = 200;
 export const ACTIVITY_BYTE_LIMIT = 2 * 1024 * 1024;
 export const ACTIVITY_TURN_LIMIT = 512;
 export const ACTIVITY_FRESH_MS = 30_000;
-type RawRecord = ObserverFrame & Readonly<{ receivedAt: number; kind: string }>;
+type RawRecord = ObserverFrame &
+  Readonly<{
+    receivedAt: number;
+    kind: string;
+    /** Recognized envelope/child channel metadata; plaintext stays unmodified. */
+    channelIds: readonly string[];
+  }>;
 export type ActivityTurn = Readonly<{
   agent: string;
   turnId: string;
@@ -218,6 +224,14 @@ export function createAgentActivity(
         ...frame,
         receivedAt: Date.now(),
         kind: text(envelope?.kind) ? envelope.kind : "unknown",
+        channelIds: Object.freeze([
+          ...new Set(
+            [raw, ...items].flatMap((value) => {
+              const channelId = object(value)?.channelId;
+              return text(channelId) ? [channelId] : [];
+            }),
+          ),
+        ]),
       });
       records = [...records, record];
       bytes += new TextEncoder().encode(frame.plaintext).length;

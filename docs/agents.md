@@ -168,8 +168,19 @@ feedback on them. Broader agent architecture proposals are outside the V1 scope.
 **Agent Activity** is an independently toggleable bundled panel with a top-bar
 launcher. It shows the exact JSON plaintext received from owner-only kind-24200
 telemetry, in keyboard-accessible code disclosures. An agent enters the selector
-after its first retained frame; exact public keys distinguish namesakes. Profile
-names are optional shared lookups, never ownership evidence.
+after its first retained frame; exact public keys distinguish namesakes. A profile
+**View activity** action can preselect an exact identity and originating channel
+before any frames arrive. Profile names are optional shared lookups, never ownership
+evidence. The action is not an agent/ownership badge and may show a waiting state
+for identities with no published owner-visible telemetry.
+
+The **Channel** selector filters both raw envelopes and working-turn counts, or
+shows all channels including unscoped records. Envelope and batch-child channel
+metadata are indexed without rewriting the raw JSON: a matching envelope is shown
+whole and may contain other contexts. Channel scope is not thread scope. No
+additional relay directory scan, activity subscription, or thread inference is used.
+Channels owns the contextual right-hand slot and closes it on channel/session or
+contribution changes; close returns focus to the original conversation control.
 
 The plugin's activation leases `session.agentActivity`; closing the panel does
 not stop capture. Disabling it releases demand and clears RAM. The shared live
@@ -207,13 +218,16 @@ active, with telemetry publication enabled on the agent, then give it work. This
 app does not start agents or turn publishing on. No records may mean publishing
 is off, no new traffic, or an interrupted feed—not that an agent is idle.
 
+For a contextual view, click the identity's avatar/mention in the channel, then
+**View activity**. It preselects that exact key and channel; **Channel → All channels**
+broadens the view. The global heartbeat launcher still opens an unscoped selector.
 Select an observed agent, expand raw frames, close/reopen the panel, and toggle
 **Your profile → Settings → Plugins → Agent Activity** off/on. Re-enable starts
 empty. The feed is live-only, best-effort telemetry: the producer coalesces/batches
 and may elide oversized content. It is not a complete ACP transcript or archive.
 The development broker supports this slice; packaged/native signed transport
-without that broker reports unavailable. No composer/profile shortcut, runtime
-controller, recording export or old transcript renderer is included.
+without that broker reports unavailable. No composer indicator, runtime controller,
+recording export or old transcript renderer is included.
 
 ### Evidence and remaining acceptance
 

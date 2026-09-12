@@ -6,9 +6,17 @@ import {
   type Contribution,
 } from "../../plugins/contributions";
 
+export type PanelContext = Readonly<{
+  /** Originating conversation, not a claim of thread-level scope or access. */
+  channelId: string;
+  canOpen(target: string): boolean;
+  /** Replace this panel through its host. False after this opening is retired. */
+  open(target: string): boolean;
+}>;
 export type PanelProps = {
   close(): void;
   target: string;
+  context?: PanelContext | undefined;
 };
 export type Panel = Readonly<{
   id: string;

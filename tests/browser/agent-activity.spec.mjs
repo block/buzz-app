@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
-import { generateSecretKey, getPublicKey } from "nostr-tools";
+import { open } from "./timeline.mjs";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({ productionBroker: true, developmentReact: true });
 
 test("activity launcher consumes real encrypted telemetry, escapes raw text, selects agents, and releases on disable", async ({
@@ -125,3 +126,104 @@ for (const mode of ["light", "dark"]) {
     }
   });
 }
+
+test("profile activity opens the exact agent and originating channel before its first frame", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
+  const agentKey = generateSecretKey();
+  const agent = getPublicKey(agentKey);
+  const message = finalizeEvent(
+    {
+      kind: 9,
+      tags: [["h", "alpha"]],
+      content: "Contextual agent entry",
+      created_at: Math.floor(Date.now() / 1000),
+    },
+    agentKey,
+  );
+  app.relay.publish("primary", message);
+  const avatar = page
+    .locator(`[data-message-id="${message.id}"]`)
+    .getByRole("button", { name: /profile/ });
+  await avatar.click();
+  const profile = page.getByRole("complementary", {
+    name: "Profile",
+    exact: true,
+  });
+  await profile
+    .getByRole("button", { name: "View activity", exact: true })
+    .click();
+  await expect(profile).toHaveCount(0);
+  const panel = page.getByRole("region", {
+    name: "Agent activity",
+    exact: true,
+  });
+  await expect(panel.locator("code").first()).toHaveText(agent);
+  await expect(
+    panel.getByRole("combobox", { name: "Channel", exact: true }),
+  ).toHaveText(/Alpha.*alpha/);
+  await expect(
+    panel.getByText(
+      /Waiting for live records for this identity in this channel/,
+    ),
+  ).toBeVisible();
+  const item = (kind, channelId, turnId) => ({
+    kind,
+    channelId,
+    turnId,
+    sessionId: null,
+    timestamp: new Date().toISOString(),
+  });
+  app.observer(item("acp_read", "alpha", "other-agent"), generateSecretKey());
+  app.observer(item("acp_write", "beta", "other-channel"), agentKey);
+  app.observer(item("session_resolved", null, "unscoped"), agentKey);
+  const expected = app.observer(
+    item("turn_liveness", "alpha", "wanted"),
+    agentKey,
+  );
+  const row = panel.getByRole("button", { name: /turn_liveness/ });
+  await expect(row).toBeVisible();
+  await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: /acp_read|acp_write|session_resolved/ }),
+  ).toHaveCount(0);
+  await row.click();
+  await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
+  await panel.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await page
+    .getByRole("option", {
+      name: "All channels (including unscoped records)",
+      exact: true,
+    })
+    .click();
+  await expect(panel.getByRole("button", { name: /acp_write/ })).toBeVisible();
+  await expect(
+    panel.getByRole("button", { name: /session_resolved/ }),
+  ).toBeVisible();
+  await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
+  await panel.press("Escape");
+  await expect(avatar).toBeFocused();
+  await avatar.click();
+  await profile
+    .getByRole("button", { name: "View activity", exact: true })
+    .click();
+  await page.locator('[data-channel-id="beta"]').click();
+  await expect(panel).toHaveCount(0);
+  // Disable removes both registration and profile affordance, not the profile itself.
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Plugins", exact: true }).click();
+  await page
+    .getByRole("switch", { name: "Enable Agent Activity", exact: true })
+    .click();
+  await page.getByRole("button", { name: "Messages", exact: true }).click();
+  await page.locator('[data-channel-id="alpha"]').click();
+  await avatar.click();
+  await expect(profile).toBeVisible();
+  await expect(
+    profile.getByRole("button", { name: "View activity", exact: true }),
+  ).toHaveCount(0);
+});

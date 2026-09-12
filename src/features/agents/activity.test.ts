@@ -195,3 +195,23 @@ it("bounds records, UTF-8 bytes, turn state and immutable snapshots; dedups IDs,
   expect(f.snapshot().turns.some((turn) => turn.turnId === "0")).toBe(false);
   f.activity.dispose();
 });
+
+it("indexes every recognized channel in a raw batch without rewriting or assigning unscoped records", () => {
+  const f = fixture();
+  const raw = f.item("batch", "last", {
+    channelId: "b",
+    payload: {
+      events: [
+        f.item("acp_read", "first"),
+        f.item("acp_read", "last", { channelId: "b" }),
+      ],
+    },
+  });
+  f.send(raw);
+  f.send(f.item("acp_read", "unscoped", { channelId: null }));
+  expect(f.snapshot().records[0]?.channelIds).toEqual(["b", "a"]);
+  expect(f.snapshot().records[0]?.plaintext).toBe(JSON.stringify(raw));
+  expect(Object.isFrozen(f.snapshot().records[0]?.channelIds)).toBe(true);
+  expect(f.snapshot().records[1]?.channelIds).toEqual([]);
+  f.activity.dispose();
+});

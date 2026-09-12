@@ -1,5 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
 import type { RelaySession } from "../../features/relay/session";
+import { activitySelection } from "../../features/agents/activity-target";
 import { ActivityPanel } from "./ActivityPanel";
 export const inject = ["panels", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
@@ -26,8 +27,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "activity",
     title: "Agent Activity",
-    matches: () => false,
+    matches: (target) => !!activitySelection(target),
     launcher: { icon: "/agent-activity.svg", target: "" },
-    component: () => <ActivityPanel relay={relay} />,
+    component: ({ target }) => <ActivityPanel relay={relay} target={target} />,
   });
 };

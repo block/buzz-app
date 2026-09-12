@@ -1,4 +1,14 @@
-import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import {
+  activitySelection,
+  type ActivitySelection,
+} from "../../features/agents/activity-target";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -7,7 +17,13 @@ import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 
-export function ActivityPanel({ relay }: { relay: RelayData }) {
+export function ActivityPanel({
+  relay,
+  target = "",
+}: {
+  relay: RelayData;
+  target?: string;
+}) {
   const connection = useRelayConnection(relay);
   if (connection.status !== "ready")
     return (
@@ -17,12 +33,19 @@ export function ActivityPanel({ relay }: { relay: RelayData }) {
     );
   return (
     <ActivityDetails
-      key={`${connection.scope}:${connection.generation}`}
+      key={`${connection.scope}:${connection.generation}:${target}`}
       session={connection.session}
+      selection={activitySelection(target)}
     />
   );
 }
-export function ActivityDetails({ session }: { session: RelaySession }) {
+export function ActivityDetails({
+  session,
+  selection,
+}: {
+  session: RelaySession;
+  selection?: ActivitySelection | undefined;
+}) {
   const activity = session.agentActivity;
   const snapshot = useSyncExternalStore(
     activity.subscribe,
@@ -33,19 +56,43 @@ export function ActivityDetails({ session }: { session: RelaySession }) {
     () => [...new Set(snapshot.records.map((row) => row.agent))],
     [snapshot.records],
   );
-  const profiles = useMemo(
-    () => selectProfiles(session.profiles, agents),
-    [session.profiles, agents],
+  const [selected, select] = useState(selection?.agent ?? "");
+  const [channelId, selectChannel] = useState(selection?.channelId ?? "");
+  const agentChoices = useMemo(
+    () => [...new Set([...agents, ...(selected ? [selected] : [])])],
+    [agents, selected],
   );
+  const profiles = useMemo(
+    () => selectProfiles(session.profiles, agentChoices),
+    [session.profiles, agentChoices],
+  );
+  // Reuse already loaded channel labels; opening activity does not scan a directory.
+  const channels = useSyncExternalStore(
+    session.channels.subscribeList,
+    session.channels.list,
+    session.channels.list,
+  ).channels;
   const identities = useSyncExternalStore(
     profiles.subscribe,
     profiles.snapshot,
     profiles.snapshot,
   );
-  const [selected, select] = useState("");
   const agent = selected || agents[0] || "";
   const [expanded, expand] = useState<string[]>([]);
-  const records = snapshot.records.filter((row) => row.agent === agent);
+  const agentRecords = snapshot.records.filter((row) => row.agent === agent);
+  const records = agentRecords.filter(
+    (row) => !channelId || row.channelIds.includes(channelId),
+  );
+  const channelChoices = [
+    ...new Set([
+      ...agentRecords.flatMap((row) => row.channelIds),
+      ...(channelId ? [channelId] : []),
+    ]),
+  ];
+  const region = useRef<HTMLElement>(null);
+  useEffect(() => {
+    region.current?.focus();
+  }, []);
   // Keep expansion intent as bounded as the underlying RAM journal.
   useEffect(() => {
     const ids = new Set(snapshot.records.map((row) => row.id));
@@ -55,11 +102,16 @@ export function ActivityDetails({ session }: { session: RelaySession }) {
         : previous.filter((id) => ids.has(id)),
     );
   }, [snapshot.records]);
-  const turns = snapshot.turns.filter((turn) => turn.agent === agent);
+  const turns = snapshot.turns.filter(
+    (turn) =>
+      turn.agent === agent && (!channelId || turn.channelId === channelId),
+  );
   const working = turns.filter((turn) => turn.state === "working").length;
   const unknown = turns.filter((turn) => turn.state === "unknown").length;
   return (
     <section
+      ref={region}
+      tabIndex={-1}
       data-buzz-ui=""
       aria-label="Agent activity"
       className="flex min-w-0 flex-col gap-4 p-4 text-body text-primary"
@@ -99,9 +151,7 @@ export function ActivityDetails({ session }: { session: RelaySession }) {
                 groups={[
                   {
                     label: "Observed agents",
-                    options: [
-                      ...new Set([...agents, ...(selected ? [selected] : [])]),
-                    ].map((key) => ({
+                    options: agentChoices.map((key) => ({
                       value: key,
                       label: `${identities.get(key)?.name ?? "Agent"} · ${key.slice(0, 12)}…`,
                     })),
@@ -113,6 +163,35 @@ export function ActivityDetails({ session }: { session: RelaySession }) {
                 }}
               />
               <code className="break-all font-mono text-mono">{agent}</code>
+              <Select
+                label="Channel"
+                value={channelId}
+                groups={[
+                  {
+                    label: "Activity scope",
+                    options: [
+                      {
+                        value: "",
+                        label: "All channels (including unscoped records)",
+                      },
+                      ...channelChoices.map((id) => ({
+                        value: id,
+                        label: `${channels.find((channel) => channel.id === id)?.name ?? "Channel"} · ${id}`,
+                      })),
+                    ],
+                  },
+                ]}
+                onValueChange={(id) => {
+                  selectChannel(id);
+                  expand([]);
+                }}
+              />
+              {channelId && (
+                <p className="text-body-sm text-secondary">
+                  Channel-wide, not thread-specific. Matching envelopes are
+                  shown intact; a batch may also contain other contexts.
+                </p>
+              )}
               <p role="status">
                 {working
                   ? `${working} observed working turn(s).`
@@ -125,7 +204,13 @@ export function ActivityDetails({ session }: { session: RelaySession }) {
                 Working evidence expires after 30 seconds without a fresh turn
                 record. Completed means ended, not necessarily succeeded.
               </p>
-              {!records.length && <p>No retained records for this agent.</p>}
+              {!records.length && (
+                <p>
+                  Waiting for live records for this identity
+                  {channelId ? " in this channel" : ""}. Only owner-visible
+                  agent telemetry appears; there is no history backfill.
+                </p>
+              )}
               <Accordion
                 value={expanded}
                 onValueChange={expand}

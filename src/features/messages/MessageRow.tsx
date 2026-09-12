@@ -9,9 +9,13 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
+import { ReactionTool } from "../conversation/ReactionTool";
+import type { RelaySession } from "../relay/session";
 
 export type MessageRowProps = {
   row: ChannelMessage;
+  session?: RelaySession | undefined;
+  scope?: string | undefined;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
@@ -26,6 +30,8 @@ export type MessageRowProps = {
 
 export const MessageRow = memo(function MessageRow({
   row,
+  session,
+  scope,
   unread,
   extensions,
   profile,
@@ -56,6 +62,15 @@ export const MessageRow = memo(function MessageRow({
   const clickable = target && canOpenLink?.(target);
   const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
+  const canReact = !!(
+    extensions &&
+    session &&
+    scope &&
+    session.outbox?.supports(7) &&
+    !session.channels
+      .list()
+      .channels.find((channel) => channel.id === row.channelId)?.archived
+  );
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -164,6 +179,18 @@ export const MessageRow = memo(function MessageRow({
                   )}
                 </span>
               ))}
+              {canReact && extensions && session && scope && (
+                <ReactionTool
+                  registry={extensions.tools}
+                  session={session}
+                  scope={scope}
+                  messageId={row.id}
+                  disabled={
+                    !!row.delivery &&
+                    !["accepted", "seen"].includes(row.delivery)
+                  }
+                />
+              )}
             </div>
           )}
           {row.replyCount > 0 && onOpenThread && (

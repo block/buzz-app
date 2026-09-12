@@ -97,7 +97,7 @@ const sessions = ["a", "b"].map((community) => {
         return [];
       },
       writer: {
-        kinds: [9],
+        kinds: [7, 9],
         async sign(template) {
           return signed(viewer, template);
         },
@@ -133,6 +133,7 @@ const sessions = ["a", "b"].map((community) => {
   const single = message(viewer, "c", ":party:", 4, [
     ["emoji", "party", `${origin}/media/1.png`],
   ]);
+  live.receive([root]);
   return {
     ...owner,
     community,
@@ -188,11 +189,14 @@ function Fixture() {
         Toggle thread
       </button>
       <h1>Community {item.community}</h1>
+
       {item.rows.map((row) => (
         <MessageRow
           extensions={extensions}
           key={row.id}
           row={row}
+          session={item.session}
+          scope={item.community}
           profile={{ name: "Fixture Reader" }}
           media={item.session.media}
           onOpenLink={() => false}

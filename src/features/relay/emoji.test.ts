@@ -152,6 +152,37 @@ it("actual session cold send is draft-safe; A/B sends, replies and signed retrie
   ]);
   expect(a.session.emoji.snapshot().entries[0]?.url).toBe("https://new.test/p");
 });
+it("reactions use the loaded target and preserve custom emoji on a failed delivery retry", async () => {
+  const h = session();
+  const root = message(member, "c", "React here", 1);
+  h.live.receive([root]);
+  const ready = h.session.emoji.ensure();
+  h.wire.next().respond([set()]);
+  await ready;
+  const id = h.session.messages.react(root.id, ":party:");
+  await flush();
+  await flush();
+  const event = h.publish.mock.calls[0]?.[0];
+  expect(event).toMatchObject({ kind: 7, content: ":party:" });
+  expect(event?.tags).toEqual(
+    expect.arrayContaining([
+      ["h", "c"],
+      ["e", root.id],
+      ["emoji", "party", url],
+    ]),
+  );
+  h.live.receive([set(member, 9, [["emoji", "party", "https://new.test/p"]])]);
+  h.session.messages.retry(id);
+  await flush();
+  await flush();
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.calls[1]?.[0]).toEqual(event);
+  expect(() => h.session.messages.react("missing", "👍")).toThrow(/Load/);
+  expect(() => h.session.messages.react(root.id, " ")).toThrow(/empty/);
+  expect(() => h.session.messages.react(root.id, "x".repeat(65))).toThrow(
+    /long/,
+  );
+});
 it("plain sends are immediate and do not acquire a palette; load failure requires explicit retry", async () => {
   const h = session();
   expect(h.session.messages.send("c", "hello")).toMatch(/^[0-9a-f]{64}$/);

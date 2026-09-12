@@ -76,6 +76,20 @@ export function createMessages(
         tags: [["h", channelId], ["e", messageId], ...emojiTags(content)],
       });
     },
+    react(messageId: string, content: string) {
+      const original = find(messageId);
+      if (!original || ![9, 40002].includes(original.kind))
+        throw new Error("Load the message before reacting to it");
+      const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
+      if (!channelId) throw new Error("Message has no channel");
+      const value = text(content);
+      if ([...value].length > 64) throw new Error("Reaction is too long");
+      return writer(7).send({
+        kind: 7,
+        content: value,
+        tags: [["h", channelId], ["e", messageId], ...emojiTags(value)],
+      });
+    },
     retry(id: string) {
       outbox?.retry(id);
     },

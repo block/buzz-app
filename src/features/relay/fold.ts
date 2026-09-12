@@ -26,7 +26,17 @@ export function parseAttachments(
     const url = fields.url ? safeMessageUrl(fields.url) : undefined;
     if (!url || seen.has(url)) continue;
     seen.add(url);
-    result.push({ url, video: fields.m?.startsWith("video/") ?? false });
+    const dimensions = fields.dim?.match(/^(\d+)x(\d+)$/);
+    const width = Number(dimensions?.[1]);
+    const height = Number(dimensions?.[2]);
+    result.push({
+      url,
+      video: fields.m?.startsWith("video/") ?? false,
+      ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),
+      ...(fields.image || fields.thumb
+        ? { previewUrl: fields.image ?? fields.thumb }
+        : {}),
+    });
   }
   for (const url of markdownImages) {
     if (seen.has(url)) continue;

@@ -37,6 +37,8 @@ import { LiveStatus } from "./LiveStatus";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
+import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
@@ -227,6 +229,47 @@ function ChannelWorkspace({
     },
     [current],
   );
+  const mediaReviewTrigger = useRef<HTMLElement | null>(null);
+  const [mediaReview, setMediaReview] = useState<{
+    channelId: string;
+    channelName: string;
+    messageId: string;
+    attachment: Attachment;
+    initialTime: number;
+  }>();
+  const showingMediaReview = mediaReviewForChannel(mediaReview, current?.id);
+  useEffect(() => {
+    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
+  }, [mediaReview, showingMediaReview]);
+  const openMediaReview = useCallback(
+    (messageId: string, attachment: Attachment, initialTime: number) => {
+      if (!current) return;
+      mediaReviewTrigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setThread(undefined);
+      setMediaReview({
+        channelId: current.id,
+        channelName: current.name,
+        messageId,
+        attachment,
+        initialTime,
+      });
+    },
+    [current],
+  );
+  useEffect(() => {
+    if (
+      mediaReview &&
+      list.status === "ready" &&
+      list.coverage !== "partial" &&
+      !list.channels.some(
+        (channel) => channel.id === mediaReview.channelId && !channel.archived,
+      )
+    )
+      setMediaReview(undefined);
+  }, [mediaReview, list]);
   const closeThread = useCallback(() => {
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
@@ -487,6 +530,7 @@ function ChannelWorkspace({
             onOpenLink={openLink}
             canOpenLink={canOpenLink}
             onOpenThread={openThread}
+            onOpenMediaReview={openMediaReview}
             revealMessageId={
               sent?.channelId === current.id ? sent.id : undefined
             }
@@ -507,6 +551,20 @@ function ChannelWorkspace({
         )}
         {drawer.content}
       </article>
+      {showingMediaReview && !showingThread && (
+        <MediaReviewViewer
+          extensions={extensions}
+          attachment={showingMediaReview.attachment}
+          session={queries}
+          scope={scope}
+          channelId={showingMediaReview.channelId}
+          channelName={showingMediaReview.channelName}
+          messageId={showingMediaReview.messageId}
+          initialTime={showingMediaReview.initialTime}
+          restoreFocus={mediaReviewTrigger}
+          close={() => setMediaReview(undefined)}
+        />
+      )}
       {(panel || showingThread || companion) && (
         <div className={styles.panelStack}>
           {showingThread && (
@@ -520,6 +578,7 @@ function ChannelWorkspace({
               messageId={showingThread.messageId}
               close={closeThread}
               onOpenLink={openLink}
+              onOpenMediaReview={openMediaReview}
               canOpenLink={canOpenLink}
             />
           )}
@@ -544,6 +603,13 @@ function ChannelWorkspace({
   );
 }
 
+export function mediaReviewForChannel<T extends { channelId: string }>(
+  review: T | undefined,
+  channelId: string | undefined,
+): T | undefined {
+  return review?.channelId === channelId ? review : undefined;
+}
+
 function ChannelBody({
   extensions,
   scope,
@@ -553,6 +619,7 @@ function ChannelBody({
   canOpenLink,
   revealMessageId,
   onOpenThread,
+  onOpenMediaReview,
   navigation,
 }: {
   extensions?: ConversationExtensions | undefined;
@@ -564,6 +631,11 @@ function ChannelBody({
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread(messageId: string): void;
+  onOpenMediaReview(
+    messageId: string,
+    attachment: Attachment,
+    seconds: number,
+  ): void;
 }) {
   const window = useChannelWindow(queries.channels, channelId);
   useEffect(() => {
@@ -606,6 +678,7 @@ function ChannelBody({
       onOpenLink={onOpenLink}
       canOpenLink={canOpenLink}
       onOpenThread={onOpenThread}
+      onOpenMediaReview={onOpenMediaReview}
       revealMessageId={revealMessageId}
     />
   );

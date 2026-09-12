@@ -34,6 +34,7 @@ import type {
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
+import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
@@ -43,6 +44,9 @@ export type MessageComposerProps = {
   channelName: string;
   onSend?: (id: string) => void;
   threadRootId?: string;
+  mediaTimeSeconds?: number;
+  clearMediaTime?(): void;
+  hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
 };
 
@@ -68,6 +72,9 @@ function Composer({
   channelName,
   onSend,
   threadRootId,
+  mediaTimeSeconds,
+  clearMediaTime,
+  hideMediaTimeIndicator = false,
   disabled = false,
 }: MessageComposerProps) {
   const inputId = useId();
@@ -273,11 +280,15 @@ function Composer({
   function send() {
     if (disabled || !draft.trim() || !outbox) return;
     try {
+      const content =
+        threadRootId && mediaTimeSeconds !== undefined
+          ? mediaTimeReply(mediaTimeSeconds, draft)
+          : draft;
       const id = threadRootId
         ? session.messages.reply(
             channelId,
             threadRootId,
-            draft,
+            content,
             value.recipients.map((item) => item.pubkey),
           )
         : session.messages.send(
@@ -287,6 +298,7 @@ function Composer({
           );
       onSend?.(id);
       completion.invalidate();
+      clearMediaTime?.();
       setDraft("");
       input.current?.focus();
       setError(undefined);
@@ -464,6 +476,20 @@ function Composer({
           </span>
         )}
       </div>
+      {threadRootId &&
+        mediaTimeSeconds !== undefined &&
+        !hideMediaTimeIndicator && (
+          <div className={styles.mediaComposerAnchor}>
+            <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
+            <button
+              type="button"
+              onClick={clearMediaTime}
+              aria-label="Remove video time"
+            >
+              <X size={13} aria-hidden="true" />
+            </button>
+          </div>
+        )}
       {!!value.recipients.length && (
         <section
           className={styles.mentionRecipients}

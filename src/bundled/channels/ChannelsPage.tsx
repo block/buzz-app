@@ -250,7 +250,8 @@ function ChannelWorkspace({
   const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
-    if (panelTrigger.current?.isConnected) panelTrigger.current.focus();
+    if (panelTrigger.current?.isConnected)
+      panelTrigger.current.focus({ preventScroll: true });
     else if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   }, []);
   // Availability follows active contributions; dispatch still re-resolves at click time.

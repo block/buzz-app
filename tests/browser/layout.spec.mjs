@@ -279,7 +279,24 @@ readingTest(
     await expect(panel(page)).toBeVisible();
     await settle(page);
     await expectAnchor(page, saved);
+    // A panel can return focus to a mounted but offscreen link. Observe the
+    // native focus call itself: eventual anchor recovery can hide a scroll jump.
+    await page
+      .getByRole("link", { name: target, exact: true })
+      .evaluate((el) => {
+        const focus = el.focus;
+        el.focus = function (options) {
+          const history = el.closest("[data-channel-timeline]");
+          const before = history.scrollTop;
+          focus.call(this, options);
+          window.panelFocusScrollDelta = history.scrollTop - before;
+        };
+      });
+    await button(page, "Close channel panel").focus();
     await button(page, "Close channel panel").click();
+    const trigger = page.getByRole("link", { name: target, exact: true });
+    await expect(trigger).toBeFocused();
+    expect(await page.evaluate(() => window.panelFocusScrollDelta)).toBe(0);
     await settle(page);
     await expectAnchor(page, saved);
     await page.setViewportSize({ width: 1200, height: 700 });

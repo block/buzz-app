@@ -254,6 +254,12 @@ also supersedes a queued restoration. The layout
 journey also checks separate cards, independent panel scrolling, window-centered
 tabs, community-dialog focus, and widths down to 390px.
 
+Closing a link panel returns focus to its still-mounted trigger without scrolling
+that link into view. The layout journey observes the native focus call's scroll
+delta as well as the final reading anchor: a transient focus jump must not be
+hidden by a successful later virtualizer correction. The test explicitly moves
+focus into the panel before closing; removing focus restoration must also fail.
+
 Resize journeys use the existing tall-message fixture and assert no older-page
 requests plus a reading position outside prefetch. The ordinary fixture holds
 cursor responses for explicit paging tests; accidentally entering that path is not

@@ -1,12 +1,12 @@
 import { parseDocument } from "yaml";
-import type { EventData } from "../relay/events";
+import type { EventData } from "../relay/events.ts";
 import type {
   WorkflowDefinition,
   WorkflowReference,
   WorkflowRunCursor,
   WorkflowRunPage,
   WorkflowApproval,
-} from "./types";
+} from "./types.ts";
 
 export const WORKFLOW_KINDS = [30620, 46020, 5] as const;
 export function isWorkflowOperation(

@@ -1,7 +1,7 @@
-import { ReadError } from "../relay/errors";
-import { readApiFailure } from "../relay/http-admission";
-import type { WorkflowHost } from "./host";
-import { approvalsPath, record, runsPath } from "./protocol";
+import { ReadError } from "../relay/errors.ts";
+import { readApiFailure } from "../relay/http-admission.ts";
+import type { WorkflowHost } from "./host.ts";
+import { approvalsPath, record, runsPath } from "./protocol.ts";
 
 export const WORKFLOW_READ_BYTES = 1024 * 1024;
 

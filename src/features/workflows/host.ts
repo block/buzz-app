@@ -1,4 +1,4 @@
-import type { WorkflowRunCursor } from "./types";
+import type { WorkflowRunCursor } from "./types.ts";
 
 /** Host-owned authenticated reads on the captured relay principal/admission lane. */
 export interface WorkflowHost {

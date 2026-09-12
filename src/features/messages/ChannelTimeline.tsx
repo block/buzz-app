@@ -216,7 +216,7 @@ function Timeline({
       !settled.current && savedPosition.current && !savedPosition.current.bottom
         ? savedPosition.current
         : null;
-    let observer: ResizeObserver | undefined;
+    let observer: MutationObserver | undefined;
     let frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
         if (restore) {
@@ -249,7 +249,13 @@ function Timeline({
           // Keep bottom intent through list reflow, never through a new gesture.
           const list = scroller.current?.querySelector("ol");
           if (list) {
-            observer = new ResizeObserver(() => {
+            // Virtua measures children in ResizeObserver and synchronously writes
+            // this parent height. Observing the parent box would create skipped
+            // resize notifications; watch only Virtua's committed height instead.
+            let height = list.style.height;
+            observer = new MutationObserver(() => {
+              if (list.style.height === height) return;
+              height = list.style.height;
               cancelAnimationFrame(frame);
               frame = requestAnimationFrame(() => {
                 if (intent.current === scheduledIntent && follow.current)
@@ -258,7 +264,10 @@ function Timeline({
                   });
               });
             });
-            observer.observe(list);
+            observer.observe(list, {
+              attributes: true,
+              attributeFilter: ["style"],
+            });
           }
         }
       }

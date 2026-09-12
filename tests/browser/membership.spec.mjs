@@ -3,6 +3,12 @@ import { anchor, expectAnchor, settle } from "./timeline.mjs";
 
 test.use({ membershipActivity: true, productionBroker: true });
 
+// Do not let the shared fixture's legacy WebKit exception mask timeline reflow
+// errors. These journeys must preserve the reader without observer-loop errors.
+test.afterEach(async ({ app }) => {
+  expect(app.report.errors).toEqual([]);
+});
+
 test("Channels renders grouped history and live membership without turning activity into messages", async ({
   page,
   app,

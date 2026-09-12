@@ -154,7 +154,30 @@ function setup({
     for (const [callback, targets] of observers)
       if (targets.has(target)) callback();
   };
-  const list = {};
+  const mutations = new Map<() => void, Map<unknown, MutationObserverInit>>();
+  vi.stubGlobal(
+    "MutationObserver",
+    class {
+      targets = new Map<unknown, MutationObserverInit>();
+      constructor(callback: () => void) {
+        mutations.set(callback, this.targets);
+      }
+      observe(target: unknown, options: MutationObserverInit) {
+        this.targets.set(target, options);
+      }
+      disconnect() {
+        this.targets.clear();
+      }
+    },
+  );
+  const list = { style: { height: "3706px", pointerEvents: "" } };
+  const styleChanged = () => {
+    for (const [callback, targets] of mutations) {
+      const options = targets.get(list);
+      if (options?.attributes && options.attributeFilter?.includes("style"))
+        callback();
+    }
+  };
   const element = {
     clientWidth: 1124,
     clientHeight: 668,
@@ -320,8 +343,14 @@ function setup({
       render(runFrames);
     },
     measureRows(runFrames = true) {
-      resized(list);
+      list.style.height = `${Number.parseFloat(list.style.height) + 100}px`;
+      styleChanged();
       if (runFrames) flush();
+    },
+    scrollStyle() {
+      list.style.pointerEvents = list.style.pointerEvents ? "" : "none";
+      styleChanged();
+      flush();
     },
     gesture() {
       section.props.onWheel();
@@ -666,6 +695,25 @@ it("keeps bottom restoration through repeated late list measurements without ano
   h.unmount();
   h.handle.scrollToIndex.mockClear();
   h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+});
+it("ignores non-height list styles and coalesces measured height changes", () => {
+  const h = setup();
+  h.handle.scrollToIndex.mockClear();
+  h.scrollStyle();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.measureRows(false);
+  h.measureRows(false);
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "end",
+  });
+  h.handle.scrollToIndex.mockClear();
+  h.scrollStyle(); // The new height has already been consumed.
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.measureRows(false);
+  h.unmount();
+  h.flush();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
 });
 it.each([false, true])(

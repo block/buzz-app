@@ -2,7 +2,42 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { settle, anchor, expectAnchor, end } from "./timeline.mjs";
+import { settle, anchor, expectAnchor } from "./timeline.mjs";
+
+// Setup only: callers hold image responses until navigation has finished, then
+// release them and assert stability without any corrective scrolling.
+async function navigate(page, direction) {
+  const feed = page.getByRole("region", { name: "Channel message history" });
+  const gap = () =>
+    feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
+  const reached = (distance) =>
+    direction < 0 ? distance > 5000 : distance < 4;
+  await feed.hover();
+  for (let gesture = 0; gesture < 8; gesture++) {
+    const before = await gap();
+    if (reached(before)) break;
+    const remaining = direction < 0 ? 6000 - before : before;
+    await page.mouse.wheel(0, direction * Math.min(2000, remaining));
+    // Drain a timed-out DOM read before the caller tears down its page.
+    let pendingRead;
+    try {
+      await expect
+        .poll(
+          () =>
+            (pendingRead = gap().then((after) => direction * (before - after))),
+          { message: "image navigation gesture makes progress" },
+        )
+        .toBeGreaterThan(0);
+    } finally {
+      await pendingRead;
+    }
+    await settle(page);
+  }
+  expect(
+    reached(await gap()),
+    "bounded image navigation reaches its setup",
+  ).toBe(true);
+}
 
 test("delayed and failed images preserve bottom and reading anchors across remounts", async ({
   page,
@@ -20,7 +55,9 @@ test("delayed and failed images preserve bottom and reading anchors across remou
   let held = true;
   async function release() {
     held = false;
-    await Promise.all([...pending].map((resume) => resume()));
+    const waiting = [...pending];
+    pending.clear();
+    await Promise.all(waiting.map((resume) => resume()));
   }
   await page.route("https://image.test/**", async (route) => {
     const url = route.request().url();
@@ -77,9 +114,7 @@ test("delayed and failed images preserve bottom and reading anchors across remou
     // Reading above bottom survives decode; this must not be a force-bottom fix.
     held = true;
     pending.clear();
-    await feed.hover();
-    await page.mouse.wheel(0, -6000);
-    await expect.poll(gap).toBeGreaterThan(5000);
+    await navigate(page, -1);
     await expect.poll(() => pending.size).toBeGreaterThan(0);
     await settle(page);
     const reading = await anchor(page);
@@ -88,17 +123,21 @@ test("delayed and failed images preserve bottom and reading anchors across remou
     await settle(page);
     await expectAnchor(page, reading);
     for (let i = 0; i < 3; i++) {
-      await end(page);
+      held = true;
+      await navigate(page, 1);
+      await release();
       await loaded();
       await settle(page);
       expect(await gap()).toBeLessThan(4);
-      await feed.hover();
-      await page.mouse.wheel(0, -6000);
-      await expect.poll(gap).toBeGreaterThan(5000);
+      held = true;
+      await navigate(page, -1);
+      await release();
       await loaded();
       await settle(page);
     }
-    await end(page);
+    held = true;
+    await navigate(page, 1);
+    await release();
     await loaded();
     await settle(page);
     expect(await gap()).toBeLessThan(4);
@@ -129,5 +168,43 @@ test("delayed and failed images preserve bottom and reading anchors across remou
     await release();
     await page.unrouteAll({ behavior: "wait" });
     await server.close();
+  }
+});
+
+// Isolate the setup helper from image loading: partial input must converge, but
+// blocked input must fail instead of turning the preservation checks into retries.
+test("image navigation handles partial gestures and rejects blocked input", async ({
+  page,
+}) => {
+  await page.setContent(`
+    <section role="region" aria-label="Channel message history"
+      style="height:700px;overflow:auto"><div style="height:14000px"></div></section>
+  `);
+  const wheel = page.mouse.wheel.bind(page.mouse);
+  let gestures = 0;
+  page.mouse.wheel = (x, y) => {
+    gestures++;
+    return wheel(x, Math.sign(y) * Math.min(1800, Math.abs(y)));
+  };
+  try {
+    await navigate(page, 1);
+    expect(gestures).toBeGreaterThan(1);
+    expect(gestures).toBeLessThanOrEqual(8);
+    gestures = 0;
+    await navigate(page, -1);
+    expect(gestures).toBeGreaterThan(1);
+    expect(gestures).toBeLessThanOrEqual(8);
+    await page.getByRole("region").evaluate((element) => {
+      element.addEventListener("wheel", (event) => event.preventDefault(), {
+        passive: false,
+      });
+    });
+    gestures = 0;
+    await expect(navigate(page, 1)).rejects.toThrow(
+      "image navigation gesture makes progress",
+    );
+    expect(gestures).toBe(1);
+  } finally {
+    page.mouse.wheel = wheel;
   }
 });

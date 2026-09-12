@@ -133,6 +133,19 @@ export const MessageRow = memo(function MessageRow({
             ) : (
               <a
                 className={styles.attachmentImage}
+                style={
+                  attachment.dimensions
+                    ? {
+                        width: Math.min(
+                          360,
+                          attachment.dimensions.width,
+                          (320 * attachment.dimensions.width) /
+                            attachment.dimensions.height,
+                        ),
+                        aspectRatio: `${attachment.dimensions.width} / ${attachment.dimensions.height}`,
+                      }
+                    : undefined
+                }
                 key={url}
                 href={url}
                 target="_blank"

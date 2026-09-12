@@ -1,4 +1,5 @@
 import { assert, describe, expect, it } from "vitest";
+import { parseAttachments } from "./fold";
 import { foldMessages } from "./fold";
 import { foldProfiles } from "./profiles";
 import { DiscoveryState } from "./discovery";
@@ -297,4 +298,39 @@ it("marks same-label identity replacement as edited without changing notificatio
   expect(
     foldMessages(channel, relay.pubkey, [original])[0]?.edited,
   ).toBeUndefined();
+});
+
+it.each([
+  ["700x900", { width: 700, height: 900 }],
+  ["1x999999", { width: 1, height: 999999 }],
+  [undefined, undefined],
+  ["0x900", undefined],
+  ["700x0", undefined],
+  ["-1x2", undefined],
+  ["1.5x2", undefined],
+  ["1x2px", undefined],
+  ["Infinityx2", undefined],
+  ["1000000x2", undefined],
+  ["1x2x3", undefined],
+])("validates attachment layout dimensions %s", (dim, dimensions) => {
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/image.png",
+      "m image/png",
+      ...(dim ? [`dim ${dim}`] : []),
+    ],
+  ]);
+  const attachments = parseAttachments(event, [
+    "https://x.test/image.png",
+    "https://x.test/legacy.png",
+  ]);
+  expect(attachments).toEqual([
+    {
+      url: "https://x.test/image.png",
+      video: false,
+      ...(dimensions ? { dimensions } : {}),
+    },
+    { url: "https://x.test/legacy.png", video: false },
+  ]);
 });

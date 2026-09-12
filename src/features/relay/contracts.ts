@@ -20,7 +20,11 @@ export type Profile = Readonly<{
   picture?: string;
   about?: string;
 }>;
-export type Attachment = Readonly<{ url: string; video: boolean }>;
+export type Attachment = Readonly<{
+  url: string;
+  video: boolean;
+  dimensions?: Readonly<{ width: number; height: number }>;
+}>;
 /** Relay-authored membership activity, not a membership grant or user message. */
 export type MembershipChange = Readonly<{
   type: "member_joined" | "member_left" | "member_removed";

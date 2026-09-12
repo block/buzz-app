@@ -62,6 +62,12 @@ locally authored event is **not proof of relay acceptance**. Signature-verified
 membership, bounds and persistence. Domain folds can consume local payloads, but
 must not let them manufacture relay-authored authority.
 
+## Presence
+
+`session.presence` exposes volatile per-author status and surface-owned demand,
+using the same authenticated socket and verified background reader without message
+retention or outbox replay. See [presence ownership, traffic budgets and limits](presence.md).
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`

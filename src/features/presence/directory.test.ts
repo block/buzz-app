@@ -118,6 +118,37 @@ it("offline snapshot then delayed heartbeat stays unknown until one rate-bounded
   expect(s.owner.queries.get(s.user.pubkey)).toBe("offline");
   s.owner.dispose();
 });
+it("queue delay cannot compress the snapshot cooldown after completion", async () => {
+  const s = setup();
+  s.mount();
+  await vi.advanceTimersByTimeAsync(100);
+  // The shared reader/broker may hold this background read behind foreground work.
+  await vi.advanceTimersByTimeAsync(7000);
+  s.reads[0]?.resolve([s.snapshot()]);
+  await vi.advanceTimersByTimeAsync(0);
+  s.owner.receive([s.live("away")]);
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(s.read).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
+  expect(s.read).toHaveBeenCalledTimes(2);
+  s.owner.dispose();
+});
+it("cancelling a delayed read preserves cooldown through demand replacement and late completion", async () => {
+  const s = setup();
+  s.mount();
+  await vi.advanceTimersByTimeAsync(7100);
+  s.demand.update([]);
+  expect(s.reads[0]?.signal?.aborted).toBe(true);
+  s.mount();
+  await vi.advanceTimersByTimeAsync(1000);
+  s.reads[0]?.resolve([s.snapshot()]);
+  await vi.advanceTimersByTimeAsync(3999);
+  expect(s.read).toHaveBeenCalledTimes(1);
+  expect(s.owner.queries.get(s.user.pubkey)).toBe("unknown");
+  await vi.advanceTimersByTimeAsync(1);
+  expect(s.read).toHaveBeenCalledTimes(2);
+  s.owner.dispose();
+});
 it("conflict during snapshot, clock skew and malicious live p tags cannot supply authority", async () => {
   const s = setup();
   s.mount();
@@ -201,7 +232,9 @@ it("continuous changed demand still flushes and never creates concurrent reads",
   expect(s.read).toHaveBeenCalledTimes(1);
   s.reads[0]?.resolve([]);
   await vi.advanceTimersByTimeAsync(0);
-  await vi.advanceTimersByTimeAsync(4100);
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(s.read).toHaveBeenCalledTimes(1);
+  await vi.advanceTimersByTimeAsync(1);
   expect(s.read).toHaveBeenCalledTimes(2);
   s.owner.dispose();
 });

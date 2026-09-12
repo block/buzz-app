@@ -88,6 +88,12 @@ vi.mock("react", async (original) => ({
     }
   },
 }));
+// These shallow geometry tests do not implement browser observer APIs.
+// Presence's real observer/render lifecycle runs in tests/browser/presence.spec.mjs.
+vi.mock("../presence/react", async (original) => ({
+  ...(await original<typeof import("../presence/react")>()),
+  usePresenceSurface: vi.fn(),
+}));
 vi.mock("../relay/react", () => ({
   useRowProfiles: () => new Map(),
 }));

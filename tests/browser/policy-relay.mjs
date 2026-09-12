@@ -12,7 +12,10 @@ export function policyRelay({
   pending,
   discovery,
   acceptPublication,
+  presenceSnapshot,
 }) {
+  const presence = new Map();
+  report.presencePublications = [];
   const sockets = [];
   const requests = [];
   const rejected = [];
@@ -52,6 +55,29 @@ export function policyRelay({
       socket.onmessage?.({ data: JSON.stringify(frame) });
   }
   return {
+    presence(community, event, updateSnapshot = true) {
+      expect(event.kind).toBe(20001);
+      expect(verifyEvent(event)).toBe(true);
+      if (updateSnapshot)
+        presence.set(`${community}:${event.pubkey}`, {
+          status: event.content,
+          expires: Date.now() + 180000,
+        });
+      let deliveries = 0;
+      for (const socket of sockets) {
+        if (socket.readyState !== 1 || socket.community !== community) continue;
+        for (const [id, filter] of socket.routes) {
+          if (
+            !filter.kinds.includes(20001) ||
+            !filter.authors?.includes(event.pubkey)
+          )
+            continue;
+          emit(socket, ["EVENT", id, event]);
+          deliveries++;
+        }
+      }
+      expect(deliveries).toBeGreaterThan(0);
+    },
     holdContent() {
       heldContent = true;
     },
@@ -161,6 +187,20 @@ export function policyRelay({
         const filter = filters[0],
           community = communityOf(url);
         report.queries.push({ community, filter, at: performance.now() });
+        if (filter.kinds?.includes(20001)) {
+          expect(filter.kinds).toEqual([20001]);
+          expect(filter.authors.length).toBeGreaterThan(0);
+          expect(filter.authors.length).toBeLessThanOrEqual(256);
+          expect(filter.limit).toBe(filter.authors.length);
+          return Response.json(
+            filter.authors.flatMap((author) => {
+              const value = presence.get(`${community}:${author}`);
+              return value && value.expires > Date.now()
+                ? [presenceSnapshot(author, value.status)]
+                : [];
+            }),
+          );
+        }
         if (heldContent && filter.kinds?.includes(9))
           return new Promise((_resolve, reject) => {
             if (init.signal.aborted) reject(init.signal.reason);
@@ -281,6 +321,25 @@ export function policyRelay({
             }
             if (kind === "CLOSE") {
               this.routes.delete(id);
+              return;
+            }
+            if (kind === "EVENT") {
+              expect(this.authenticated).toBe(true);
+              expect(verifyEvent(id)).toBe(true);
+              expect(id.pubkey).toBe(viewer);
+              expect(id.kind).toBe(20001);
+              expect(id.tags).toEqual([]);
+              expect(["online", "away"]).toContain(id.content);
+              presence.set(`${this.community}:${id.pubkey}`, {
+                status: id.content,
+                expires: Date.now() + 180000,
+              });
+              report.presencePublications.push({
+                community: this.community,
+                event: id,
+                at: performance.now(),
+              });
+              queueMicrotask(() => emit(this, ["OK", id.id, true]));
               return;
             }
             expect(kind).toBe("REQ");

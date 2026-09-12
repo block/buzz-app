@@ -49,7 +49,7 @@ export function createPresenceDirectory({
   let connected = false;
   let ready = new Set<string>();
   let generation = 0;
-  let lastRead = -Infinity;
+  let readAfter = 0;
   let retryAt = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let backstop: ReturnType<typeof setTimeout> | undefined;
@@ -74,6 +74,7 @@ export function createPresenceDirectory({
     !closed && supported && visible && connected && entries.size > 0;
   function stopRead() {
     generation++;
+    if (pending) readAfter = now() + MIN_READ_MS;
     pending?.abort();
     pending = undefined;
     clearTimeout(timer);
@@ -100,7 +101,7 @@ export function createPresenceDirectory({
         timer = undefined;
         void read();
       },
-      Math.max(100, lastRead + MIN_READ_MS - now(), retryAt - now()),
+      Math.max(100, readAfter - now(), retryAt - now()),
     );
   }
   function periodic() {
@@ -125,7 +126,6 @@ export function createPresenceDirectory({
     const current = generation;
     const owned = new AbortController();
     pending = owned;
-    lastRead = now();
     counters.reads++;
     const valid = () =>
       !closed && !owned.signal.aborted && generation === current;
@@ -188,6 +188,9 @@ export function createPresenceDirectory({
       dirty();
     } finally {
       if (pending === owned) {
+        // Start the cooldown after the whole shared reader/broker operation, not
+        // enqueue time: admission delay must not compress actual relay reads.
+        readAfter = now() + MIN_READ_MS;
         pending = undefined;
         periodic();
         schedule();

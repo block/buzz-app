@@ -427,6 +427,8 @@ export const test = base.extend({
     const relay = productionBroker
       ? policyRelay({
           viewer,
+          presenceSnapshot: (author, status) =>
+            sign(20001, [["p", author]], status),
           answer,
           report,
           pending,
@@ -635,6 +637,13 @@ export const test = base.extend({
         participants,
         viewer,
         relay,
+        presence(status, updateSnapshot = true) {
+          relay.presence(
+            "primary",
+            sign(20001, [], status, userKey, Math.floor(Date.now() / 1000)),
+            updateSnapshot,
+          );
+        },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
         hideChannel(id) {

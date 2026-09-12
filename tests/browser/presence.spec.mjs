@@ -98,3 +98,75 @@ test("presence: viewport demand, equal-status silence, conflict repair and teard
     await server.close();
   }
 });
+
+test("presence: real same-origin Web Lock and cross-window activity handoff", async ({
+  context,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  const first = await context.newPage();
+  const second = await context.newPage();
+  try {
+    const url = `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/presence-publisher.html`;
+    const time = new Date("2026-09-12T00:00:00Z");
+    await first.clock.install({ time });
+    await second.clock.install({ time });
+    await first.goto(url);
+    await expect
+      .poll(() =>
+        first.evaluate(() => window.publisherFixture.diagnostics().leader),
+      )
+      .toBe(true);
+    await first.clock.runFor(1000);
+    await second.goto(url);
+    await second.clock.runFor(1000);
+    expect(
+      await first.evaluate(() => window.publisherFixture.publications),
+    ).toEqual(["online"]);
+    expect(
+      await second.evaluate(() => window.publisherFixture.publications),
+    ).toEqual([]);
+    expect(
+      await second.evaluate(
+        () => window.publisherFixture.diagnostics().coordinated,
+      ),
+    ).toBe(true);
+    // Timer suspension is lossy, not 600 seconds of catch-up renewals.
+    await first.clock.fastForward(600000);
+    await second.clock.fastForward(600000);
+    await expect
+      .poll(() => first.evaluate(() => window.publisherFixture.state().status))
+      .toBe("away");
+    await second.getByRole("button", { name: "Activity" }).click();
+    await expect
+      .poll(() => first.evaluate(() => window.publisherFixture.state().status))
+      .toBe("online");
+    await first.clock.runFor(1000);
+    expect(
+      await first.evaluate(() => window.publisherFixture.publications.length),
+    ).toBeLessThanOrEqual(4);
+    expect(
+      await second.evaluate(() => window.publisherFixture.publications),
+    ).toEqual([]);
+    await first.evaluate(() => window.publisherFixture.dispose());
+    await expect
+      .poll(() =>
+        second.evaluate(() => window.publisherFixture.diagnostics().leader),
+      )
+      .toBe(true);
+    await second.clock.runFor(1000);
+    expect(
+      await second.evaluate(() => window.publisherFixture.publications),
+    ).toEqual(["online"]);
+  } finally {
+    await first.close();
+    await second.close();
+    await server.close();
+  }
+});

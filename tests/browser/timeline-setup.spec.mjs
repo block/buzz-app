@@ -49,3 +49,91 @@ test("reading setup rejects an immobile timeline instead of accepting a bottom a
     "reading gesture moves away from bottom",
   );
 });
+
+test("reading setup drains a timed-out DOM read before returning its rejection", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await history(page).evaluate((element) => {
+    element.addEventListener("wheel", (event) => event.preventDefault(), {
+      passive: false,
+    });
+  });
+  const wheel = page.mouse.wheel.bind(page.mouse);
+  const getByRole = page.getByRole.bind(page);
+  const poll = expect.poll;
+  const readStarted = Promise.withResolvers();
+  const releaseRead = Promise.withResolvers();
+  const pollEnded = Promise.withResolvers();
+  let holdNextRead = false;
+  let readFinished = false;
+  let returned = false;
+  page.mouse.wheel = async (x, y) => {
+    await wheel(x, y);
+    if (y < 0) holdNextRead = true;
+  };
+  page.getByRole = (...args) => {
+    const locator = getByRole(...args);
+    if (args[0] === "region" && args[1]?.name === "Channel message history") {
+      const evaluate = locator.evaluate.bind(locator);
+      locator.evaluate = async (...evaluateArgs) => {
+        if (holdNextRead) {
+          holdNextRead = false;
+          readStarted.resolve();
+          await releaseRead.promise;
+        }
+        const result = await evaluate(...evaluateArgs);
+        readFinished = true;
+        return result;
+      };
+    }
+    return locator;
+  };
+  expect.poll = (callback, options) => {
+    if (options?.message !== "reading gesture moves away from bottom") {
+      return poll(callback, options);
+    }
+    const matcher = poll(callback, { ...options, timeout: 100 });
+    return {
+      toBeGreaterThan: async (before) => {
+        try {
+          return await matcher.toBeGreaterThan(before);
+        } finally {
+          pollEnded.resolve();
+        }
+      },
+    };
+  };
+  const outcome = upper(page).then(
+    () => {
+      returned = true;
+      return undefined;
+    },
+    (error) => {
+      returned = true;
+      return error;
+    },
+  );
+  try {
+    await readStarted.promise;
+    readFinished = false;
+    await pollEnded.promise;
+    // Let rejection continuations run, with the DOM operation still held.
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(
+      returned,
+      "helper must not return while its DOM read is pending",
+    ).toBe(false);
+    releaseRead.resolve();
+    const result = await outcome;
+    expect(readFinished).toBe(true);
+    expect(result?.message).toContain("reading gesture moves away from bottom");
+  } finally {
+    releaseRead.resolve();
+    await outcome;
+    expect.poll = poll;
+    page.getByRole = getByRole;
+    page.mouse.wheel = wheel;
+  }
+});

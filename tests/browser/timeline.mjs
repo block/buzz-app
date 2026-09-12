@@ -118,9 +118,19 @@ export async function upper(page) {
     const before = await distance();
     if (before > 400) break;
     await page.mouse.wheel(0, -(650 - before));
-    await expect
-      .poll(distance, { message: "reading gesture moves away from bottom" })
-      .toBeGreaterThan(before);
+    // expect.poll races its deadline; it does not cancel an in-flight callback.
+    // Drain the final DOM read before a caller handles the expected rejection
+    // and closes the page, otherwise its element handle can arrive after close.
+    let pendingRead;
+    try {
+      await expect
+        .poll(() => (pendingRead = distance()), {
+          message: "reading gesture moves away from bottom",
+        })
+        .toBeGreaterThan(before);
+    } finally {
+      await pendingRead;
+    }
     await settle(page);
   }
   expect(await distance(), "reading position is above bottom").toBeGreaterThan(

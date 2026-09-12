@@ -3,7 +3,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
-import { MessageRow } from "./MessageRow";
+import { MessageRow, type MessagePresentation } from "./MessageRow";
 import type { ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
@@ -60,7 +60,7 @@ function positionAt(
       : {}),
   };
 }
-export type ChannelTimelineProps = {
+export type ChannelTimelineProps = MessagePresentation & {
   extensions?: ConversationExtensions | undefined;
   channelId: string;
   scope: string;
@@ -83,6 +83,8 @@ export function ChannelTimeline(props: ChannelTimelineProps) {
 }
 function Timeline({
   channelId,
+  presentation,
+  viewer,
   extensions,
   scope,
   queries,
@@ -101,8 +103,9 @@ function Timeline({
   const profiles = useRowProfiles(queries.profiles, rows);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
   const signature = useMemo(
-    () => geometrySignature(rows, profiles),
-    [rows, profiles],
+    () =>
+      `${presentation ?? "rows"}:${viewer ?? ""}:${geometrySignature(rows, profiles)}`,
+    [rows, profiles, presentation, viewer],
   );
   const scroller = useRef<HTMLElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
@@ -358,6 +361,8 @@ function Timeline({
               key={row.id}
               row={row}
               unread={queries.unread}
+              presentation={presentation}
+              viewer={viewer}
               extensions={extensions}
               profile={profiles.get(row.authorId)}
               participantProfiles={profiles}

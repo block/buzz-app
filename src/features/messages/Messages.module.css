@@ -669,3 +669,74 @@ button.avatar:focus-visible,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* Optional shared presentation. Default Messages layout is unchanged. */
+.bubbleMessage {
+  gap: 10px;
+  padding: 12px 0;
+  align-items: flex-end;
+}
+.bubbleMessage .avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 10px;
+}
+.bubbleMessage .messageBody {
+  margin-left: 38px;
+  flex: 0 1 auto;
+  max-width: 82%;
+}
+.bubbleMessage .byline {
+  padding: 0 4px;
+  margin-bottom: 6px;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 18px;
+}
+.bubbleMessage .text {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 20px;
+  background: var(--surface-control);
+}
+.bubbleAnchor {
+  position: relative;
+  width: fit-content;
+  max-width: 100%;
+}
+.bubbleAnchor .avatar {
+  position: absolute;
+  left: -38px;
+  bottom: 0;
+}
+.outgoing {
+  justify-content: flex-end;
+}
+.outgoing .messageBody {
+  margin-left: 0;
+}
+.outgoing .byline {
+  justify-content: flex-end;
+}
+.outgoing .bubbleAnchor {
+  margin-left: auto;
+}
+.outgoing .text {
+  margin-left: auto;
+  background: var(--primary);
+  color: var(--on-primary);
+}
+.outgoing .text :where(a, h1, h2, h3, h4, h5, h6, blockquote) {
+  color: inherit;
+}
+.outgoing .text :where(code, pre, table) {
+  color: var(--text);
+  background: var(--surface-control);
+}
+.bubbleThread {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}

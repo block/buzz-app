@@ -12,6 +12,22 @@ test("Pulse reads shared activity, searches, opens a conversation and retains sc
   page,
   app,
 }, testInfo) => {
+  // Match the real relay: window extensions are single-channel only.
+  await page.route("**/api/relay/**/query", async (route) => {
+    const filters = route.request().postDataJSON();
+    if (
+      Array.isArray(filters) &&
+      filters.some(
+        (filter) =>
+          filter["#h"]?.length > 1 && (filter.top_level || filter.include_aux),
+      )
+    ) {
+      await route.fulfill({
+        status: 400,
+        json: { error: "top_level requires exactly one #h channel" },
+      });
+    } else await route.continue();
+  });
   await page.goto(app.origin);
   await pulse(page).click();
   await expect(

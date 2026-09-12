@@ -33,9 +33,10 @@ export function usePulseFeed(
         {
           kinds: [9, 40002, 40003, 5, 9005, 7],
           "#h": key.split("\n"),
+          // Multi-channel activity uses ordinary filters. The relay's top_level /
+          // include_aux window extension requires exactly one channel; the shared
+          // fold selects roots and applies any retained author edits/deletes here.
           limit: 200,
-          top_level: true,
-          include_aux: true,
         },
       ]);
       setError(undefined);
@@ -59,9 +60,9 @@ export function usePulseFeed(
   const profileKey = [
     ...new Set([
       ...rows.slice(0, 200).map((row) => row.authorId),
-      ...visibleChannels(roster).flatMap(
-        (channel) => channel.participants ?? [],
-      ),
+      ...visibleChannels(roster)
+        .filter((channel) => channel.channelType === "dm")
+        .flatMap((channel) => channel.participants ?? []),
     ]),
   ]
     .sort()

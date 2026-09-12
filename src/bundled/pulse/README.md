@@ -2,7 +2,7 @@
 
 A bundled **source page plugin**, independently toggleable in Settings → Plugins.
 This is not a self-contained external API-v1 install artifact. Run this branch of
-buzz-app and choose **Pulse** in the top navigation. Messages is unchanged.
+buzz-app and choose **Pulse** in the top navigation. Messages keeps its default row presentation.
 
 ## Design reference
 
@@ -27,8 +27,10 @@ Adapted to buzz-app:
   No new socket, cache, signer, outbox, polling loop, or model-provider connection.
 - Reuses `ChannelTimeline`, `MessageRow`, `MessageComposer`, `ThreadPanel` and
   `PanelFrame`. Emoji/Mentions remain optional conversation contributions.
-  Shared message styling is retained rather than copied or overridden with
-  prototype bubble styles. Links keep ordinary external navigation in this pass;
+  An optional shared `presentation="bubbles"` prop carries the prototype's
+  directional bubbles and bottom-aligned avatars without a second message renderer.
+  Main's Markdown, safe attachments, profile-link props, and authoritative
+  timeline/thread reading hooks remain intact. Links keep ordinary external navigation in this pass;
   only the host companion dock is embedded, not a second local object dock.
 - Session-owned state remounts by scope **and** generation. Navigation and drafts
   persist under stable scope, not generation. The full roster's membership key
@@ -39,13 +41,20 @@ Adapted to buzz-app:
 **For you is not an AI briefing.** It filters recent original top-level posts to
 DMs and exact `p`-tag mentions of the viewer. It does not infer requests from prose,
 agent runtime status or unread state. No provider receives messages. buzz-app does
-not currently expose a shared summarization or read-marker capability.
+not currently expose a shared summarization capability. Pulse does not invent
+unread badges; the shared conversation readers retain main's real reading behavior.
 
 The feed requests 200 recent events across the visible joined roster and shows at
-most 30 conversations, one newest matching root each. Host retained-view limits
-still apply. Busy channels may dominate the window; search covers retained activity,
+most 30 conversations, one newest matching root each. This is an ordinary multi-channel
+query: replies and auxiliary events consume that window, and roots are selected locally
+by the shared fold. It does not use the relay's single-channel `top_level` / `include_aux`
+window extension. Edits/deletes outside retained activity may be absent from excerpts;
+open the conversation for its authoritative channel-window read. The 200-event limit
+bounds the request, not the lifetime retained view: the host bounds retained remote
+evidence to 2,000 events / 8 MiB (`features/relay/projection.ts`). Busy channels may dominate the window; search covers retained activity,
 not full history. The channel rail remains roster-ordered, not a fabricated activity
-ranking. A partial roster is labeled. Hidden non-DM and archived channels are omitted.
+ranking. It renders the authorized roster directly (not a virtualized rail); feed
+rendering is capped at 30 groups and conversation history uses shared virtualization. A partial roster is labeled. Hidden non-DM and archived channels are omitted.
 
 Author edits/deletes use the shared fold. Delivery uncertainty remains visible.
 Feed rows deliberately do not interpret relay thread summaries: the session does
@@ -59,16 +68,21 @@ selection and feed search do not become new URL routes.
 From this worktree:
 
 ```sh
-bin/just web
+bin/pnpm install --frozen-lockfile
+bin/pnpm dev --host 127.0.0.1 --port 1432 --strictPort
 ```
 
-For actual community data, use the repository's existing opt-in live setup in
-[README](../../../../README.md#relay-channels), then `BUZZ_LIVE=1 bin/just web`.
+Check that 1432 is free first; leave existing 1430/1431 servers alone. For actual
+community data, use the repository's public `BUZZ_DEV_VIEWER` pin setup in
+[README](../../../../README.md#relay-channels). Main now enables the development
+broker from that pin; `BUZZ_LIVE=1` is no longer required.
 No identity configuration is added by this plugin. Packaged login and native
 acceptance remain the host's existing limitations.
 
 ## Checks
 
+- `MessageRow.presentation.test.tsx`: both row/bubble content and actions, explicit
+  viewer direction; upstream MessageRow tests remain separate and unchanged.
 - `feed.test.ts`: visible sources, deterministic grouping, author edits/deletes,
   failed-edit rollback, exact mentions, bounded search and DM names.
 - App composition test: contribution registration, disable and shared-session lifetime.

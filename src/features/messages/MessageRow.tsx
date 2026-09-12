@@ -1,4 +1,4 @@
-import { memo, useCallback, useSyncExternalStore } from "react";
+import { memo, useCallback, useSyncExternalStore, type ReactNode } from "react";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
 import { InlineText } from "../conversation/InlineText";
@@ -10,7 +10,14 @@ import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 
-export type MessageRowProps = {
+export type MessagePresentation = {
+  presentation?: "bubbles" | undefined;
+  viewer?: string | undefined;
+};
+
+export type MessageRowProps = MessagePresentation & {
+  context?: ReactNode;
+  footer?: ReactNode;
   row: ChannelMessage;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -27,6 +34,10 @@ export type MessageRowProps = {
 export const MessageRow = memo(function MessageRow({
   row,
   unread,
+  presentation,
+  viewer,
+  context,
+  footer,
   extensions,
   profile,
   media,
@@ -56,6 +67,40 @@ export const MessageRow = memo(function MessageRow({
   const clickable = target && canOpenLink?.(target);
   const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
+  const avatar = (
+    <AvatarTag
+      className={styles.avatar}
+      {...(clickable
+        ? {
+            type: "button" as const,
+            "aria-label": `View ${name} profile`,
+            onClick: (event: import("react").MouseEvent<HTMLElement>) => {
+              event.currentTarget.focus();
+              onOpenLink(target);
+            },
+          }
+        : {})}
+    >
+      {picture ? (
+        <img src={picture} alt="" loading="lazy" />
+      ) : (
+        name.slice(0, 2).toUpperCase()
+      )}
+    </AvatarTag>
+  );
+  const text = (
+    <MessageMarkdown
+      row={row}
+      extensions={extensions}
+      media={media}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+      participantProfiles={participantProfiles}
+      largeEmoji={emojiOnly}
+    />
+  );
+  const bubbles = presentation === "bubbles";
+  const outgoing = bubbles && viewer === row.authorId;
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -69,29 +114,18 @@ export const MessageRow = memo(function MessageRow({
           </span>
         </div>
       )}
-      <div className={styles.message}>
-        <AvatarTag
-          className={styles.avatar}
-          {...(clickable
-            ? {
-                type: "button" as const,
-                "aria-label": `View ${name} profile`,
-                onClick: (event: import("react").MouseEvent<HTMLElement>) => {
-                  event.currentTarget.focus();
-                  onOpenLink(target);
-                },
-              }
-            : {})}
-        >
-          {picture ? (
-            <img src={picture} alt="" loading="lazy" />
-          ) : (
-            name.slice(0, 2).toUpperCase()
-          )}
-        </AvatarTag>
+      <div
+        className={`${styles.message} ${bubbles ? styles.bubbleMessage : ""} ${outgoing ? styles.outgoing : ""}`}
+        data-presentation={presentation}
+        data-direction={
+          bubbles ? (outgoing ? "outgoing" : "incoming") : undefined
+        }
+      >
+        {!bubbles && avatar}
         <div className={styles.messageBody}>
           <div className={styles.byline}>
             <strong>{name}</strong>
+            {context}
             <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",
@@ -99,15 +133,14 @@ export const MessageRow = memo(function MessageRow({
               })}
             </time>
           </div>
-          <MessageMarkdown
-            row={row}
-            extensions={extensions}
-            media={media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            participantProfiles={participantProfiles}
-            largeEmoji={emojiOnly}
-          />
+          {bubbles ? (
+            <div className={styles.bubbleAnchor}>
+              {text}
+              {!outgoing && avatar}
+            </div>
+          ) : (
+            text
+          )}
           <DeliveryNotice row={row} retry={retry} />
           {row.attachments.map((attachment) => {
             const url = safeMessageUrl(attachment.url);
@@ -224,6 +257,7 @@ export const MessageRow = memo(function MessageRow({
               )}
             </button>
           )}
+          {footer}
         </div>
       </div>
     </div>

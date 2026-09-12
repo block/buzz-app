@@ -21,7 +21,8 @@ Carried over:
 
 Adapted to buzz-app:
 - The host keeps its own navigation, canvas, appearance and companion launcher.
-- A page owns its React tree and CSS module; no host or `FOUNDATION` file changes.
+- A page owns its React tree and CSS module. Shared receive-only typing lives in
+  the separately reviewable foundation base, not in the Pulse plugin.
 - `relay` supplies one existing session. The page creates one bounded observed
   activity view after the roster is available, disposed on unmount/roster change.
   No new socket, cache, signer, outbox, polling loop, or model-provider connection.
@@ -70,8 +71,11 @@ roster failure, not that cold history has finished loading.
 Rail and feed source/open controls participate in the shared bounded intent
 preparation path on pointer/focus. No channel-head fan-out occurs on feed mount.
 An aggregate excerpt is not a channel window: an unprepared cold click still
-needs an authoritative head read. Typing is not implemented in this host; shared
-receive-only session integration awaits explicit FOUNDATION approval.
+needs an authoritative head read. Shared channel/thread composers now display
+receive-only typing from `session.typing`; Pulse adds no subscription or timer.
+Activity is scoped to the exact channel/thread and expires from signed timestamps,
+not inferred from pending sends or an agent label. See the separately reviewed
+[foundation contract](../../../../docs/relay-queries.md#receive-only-typing).
 
 ## Trying it
 

@@ -157,9 +157,9 @@ function PulseWorkspace({
     if (!navigation || navigation.signal.aborted) return;
     if (navigation.target.kind === "page" && !navigation.target.route) {
       navigation.resolve(destination(fallback));
-    } else if (list.status === "error") {
+    } else if (list.status === "error" && !current) {
       navigation.complete({ status: "failed", reason: "unavailable" });
-    } else if (list.status === "ready") {
+    } else if (current || list.status === "ready") {
       navigation.complete(
         route.channelId && !current
           ? { status: "failed", reason: "unavailable" }

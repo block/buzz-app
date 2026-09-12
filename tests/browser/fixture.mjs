@@ -35,6 +35,7 @@ export const test = base.extend({
   tallMessages: [false, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
+  openingProbe: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
   app: async (
     {
@@ -52,6 +53,7 @@ export const test = base.extend({
       dmLabels,
       tallMessages,
       pluginFixtures,
+      openingProbe,
       developmentReact,
       compiledApp,
     },
@@ -256,6 +258,7 @@ export const test = base.extend({
         browserName,
         developmentReact,
         pluginFixtures,
+        openingProbe,
         compiledBuild: {
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,

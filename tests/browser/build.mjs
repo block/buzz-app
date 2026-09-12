@@ -10,7 +10,10 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 
 // Playwright owns this worker-scoped build. Only compiled assets are shared;
 // each test still owns its server, identities, relay state and browser storage.
-export async function buildApp({ developmentReact, pluginFixtures }, use) {
+export async function buildApp(
+  { developmentReact, pluginFixtures, openingProbe },
+  use,
+) {
   const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
   try {
     const config = {
@@ -20,6 +23,17 @@ export async function buildApp({ developmentReact, pluginFixtures }, use) {
       logLevel: "error",
       plugins: [
         react(),
+        ...(openingProbe
+          ? [
+              {
+                name: "fixture-opening-probe",
+                transform(code, id) {
+                  if (id !== join(root, "src/bundled/index.ts")) return;
+                  return `import { openingProbe } from ${JSON.stringify(join(root, "tests/browser/opening-probe.ts"))};\n${code.replace("= [", "= [ openingProbe,")}`;
+                },
+              },
+            ]
+          : []),
         ...(pluginFixtures
           ? [
               {

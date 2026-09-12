@@ -12,13 +12,13 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
-import { MessageRow } from "./MessageRow";
+import { MessageRow, type MessagePresentation } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
 import { useReading } from "./use-reading";
 import { messageViewKey } from "./view-key";
 
-export type ThreadPanelProps = {
+export type ThreadPanelProps = MessagePresentation & {
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -46,6 +46,8 @@ export function ThreadPanel(props: ThreadPanelProps) {
 }
 function OwnedThreadPanel({
   session,
+  presentation,
+  viewer,
   extensions,
   scope,
   channelName,
@@ -77,7 +79,7 @@ function OwnedThreadPanel({
   }, [session, channelId, messageId, attempt]);
   return (
     <aside
-      className={styles.thread}
+      className={`${styles.thread} ${presentation === "bubbles" ? styles.bubbleThread : ""}`}
       aria-label="Thread"
       onKeyDown={(event) => {
         if (event.key === "Escape") {
@@ -109,6 +111,8 @@ function OwnedThreadPanel({
         </div>
       ) : view ? (
         <ThreadMessages
+          presentation={presentation}
+          viewer={viewer}
           extensions={extensions}
           session={session}
           scope={scope}
@@ -128,6 +132,8 @@ function OwnedThreadPanel({
 }
 function ThreadMessages({
   session,
+  presentation,
+  viewer,
   extensions,
   scope,
   channelId,
@@ -135,7 +141,7 @@ function ThreadMessages({
   view,
   onOpenLink,
   canOpenLink,
-}: {
+}: MessagePresentation & {
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -232,6 +238,8 @@ function ThreadMessages({
         {snapshot.root ? (
           <MessageRow
             extensions={extensions}
+            presentation={presentation}
+            viewer={viewer}
             row={snapshot.root}
             profile={profiles.get(snapshot.root.authorId)}
             participantProfiles={profiles}
@@ -255,6 +263,8 @@ function ThreadMessages({
             <li key={row.id}>
               <MessageRow
                 extensions={extensions}
+                presentation={presentation}
+                viewer={viewer}
                 row={row}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}

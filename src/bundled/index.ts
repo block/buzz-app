@@ -2,6 +2,8 @@ import terminalManifest from "./terminal/manifest.json";
 import * as terminal from "./terminal";
 import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
+import pulseManifest from "./pulse/manifest.json";
+import * as pulse from "./pulse";
 import mentionsManifest from "./mentions/manifest.json";
 import * as mentions from "./mentions";
 import emojiManifest from "./emoji/manifest.json";
@@ -28,4 +30,5 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...bestieManifest, apiVersion: 1 }, module: bestie },
   { manifest: { ...projectsManifest, apiVersion: 1 }, module: projects },
   { manifest: { ...agentsManifest, apiVersion: 1 }, module: agents },
+  { manifest: { ...pulseManifest, apiVersion: 1 }, module: pulse },
 ];

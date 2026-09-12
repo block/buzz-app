@@ -1,0 +1,111 @@
+# Pulse experiment
+
+A bundled **source page plugin**, independently toggleable in Settings → Plugins.
+This is not a self-contained external API-v1 install artifact. Run this branch of
+buzz-app and choose **Pulse** in the top navigation. Messages keeps its default row presentation.
+
+## Design reference
+
+Inspired by [`block/buzz`'s `am-pulse-proto`](https://github.com/block/buzz/tree/2d620055e574f41f466ae13b88cfb0aa77ede068/desktop/src/features/pulse),
+inspected against merge base `cec5c8fd9280d30f56effac701e1e19d5cfe6fea` with main.
+The relevant additions are `UnifiedPulseView`, `PulseConversationSplitView`,
+`PulseBriefing`, and the feature README—not the branch's unrelated mobile,
+identity, agent-recovery, or broader shell changes.
+
+Carried over:
+- A centered 960px rounded canvas, quiet separators, compact 220px conversation
+  navigation, and Search / For you / All messages destinations.
+- Author-led activity with source-conversation links and in-place thread drill-in.
+- Conversation selection independent of feed order; shared, separately scoped
+  channel/thread drafts; responsive navigation and light/dark semantic tokens.
+
+Adapted to buzz-app:
+- The host keeps its own navigation, canvas, appearance and companion launcher.
+- A page owns its React tree and CSS module. Shared receive-only typing lives in
+  the separately reviewable foundation base, not in the Pulse plugin.
+- `relay` supplies one existing session. The page creates one bounded observed
+  activity view after the roster is available, disposed on unmount/roster change.
+  No new socket, cache, signer, outbox, polling loop, or model-provider connection.
+- Reuses `ChannelTimeline`, `MessageRow`, `MessageComposer`, `ThreadPanel` and
+  `PanelFrame`. Emoji/Mentions remain optional conversation contributions.
+  An optional shared `presentation="bubbles"` prop carries the prototype's
+  directional bubbles and bottom-aligned avatars without a second message renderer.
+  Main's Markdown, safe attachments, profile-link props, and authoritative
+  timeline/thread reading hooks remain intact. Links keep ordinary external navigation in this pass;
+  only the host companion dock is embedded, not a second local object dock.
+- Session-owned state remounts by scope **and** generation. Navigation and drafts
+  persist under stable scope, not generation. The full roster's membership key
+  participates in missing DM-profile recovery; names never gate conversation reads.
+
+## Honest boundaries
+
+**For you is not an AI briefing.** It filters recent original top-level posts to
+DMs and exact `p`-tag mentions of the viewer. It does not infer requests from prose,
+agent runtime status or unread state. No provider receives messages. buzz-app does
+not currently expose a shared summarization capability. Pulse does not invent
+unread badges; the shared conversation readers retain main's real reading behavior.
+
+The feed requests 200 recent events across the visible joined roster and shows at
+most 30 conversations, one newest matching root each. This is an ordinary multi-channel
+query: replies and auxiliary events consume that window, and roots are selected locally
+by the shared fold. It does not use the relay's single-channel `top_level` / `include_aux`
+window extension. Edits/deletes outside retained activity may be absent from excerpts;
+open the conversation for its authoritative channel-window read. The 200-event limit
+bounds the request, not the lifetime retained view: the host bounds retained remote
+evidence to 2,000 events / 8 MiB (`features/relay/projection.ts`). Busy channels may dominate the window; search covers retained activity,
+not full history. The channel rail remains roster-ordered, not a fabricated activity
+ranking. It renders the authorized roster directly (not a virtualized rail); feed
+rendering is capped at 30 groups and conversation history uses shared virtualization. A partial roster is labeled. Hidden non-DM and archived channels are omitted.
+
+Author edits/deletes use the shared fold. Delivery uncertainty remains visible.
+Feed rows deliberately do not interpret relay thread summaries: the session does
+not expose the signing identity needed to validate those summaries in this page.
+Opening a thread uses the authoritative shared reader and its existing bounded,
+oldest-first history behavior. Versioned host page routes retain view, search query, channel and thread through
+Back/Forward and reload. Search keystrokes replace the current visit. A bounded
+plugin-lifetime map retains feed scroll/focus for up to 100 visits (not across app
+restart); shared channel/thread readers retain their own reading positions and
+drafts. Navigation completion acknowledges the mounted destination shell or
+roster failure, not that cold history has finished loading.
+
+Rail and feed source/open controls participate in the shared bounded intent
+preparation path on pointer/focus. No channel-head fan-out occurs on feed mount.
+An aggregate excerpt is not a channel window: an unprepared cold click still
+needs an authoritative head read. Shared channel/thread composers now display
+receive-only typing from `session.typing`; Pulse adds no subscription or timer.
+Activity is scoped to the exact channel/thread and expires from signed timestamps,
+not inferred from pending sends or an agent label. See the separately reviewed
+[foundation contract](../../../../docs/relay-queries.md#receive-only-typing).
+
+## Trying it
+
+From this worktree:
+
+```sh
+bin/pnpm install --frozen-lockfile
+bin/pnpm dev --host 127.0.0.1 --port 1432 --strictPort
+```
+
+Check that 1432 is free first; leave existing 1430/1431 servers alone. For actual
+community data, use the repository's public `BUZZ_DEV_VIEWER` pin setup in
+[README](../../../../README.md#relay-channels). Main now enables the development
+broker from that pin; `BUZZ_LIVE=1` is no longer required.
+No identity configuration is added by this plugin. Packaged login and native
+acceptance remain the host's existing limitations.
+
+## Checks
+
+- `MessageRow.presentation.test.tsx`: both row/bubble content and actions, explicit
+  viewer direction; upstream MessageRow tests remain separate and unchanged.
+- `feed.test.ts`: visible sources, deterministic grouping, author edits/deletes,
+  failed-edit rollback, exact mentions, bounded search and DM names.
+- App composition test: contribution registration, disable and shared-session lifetime.
+- Native catalog test: independent enable/disable flag and reserved bundled identity.
+- `tests/browser/pulse*.spec.mjs`: Chromium/WebKit search, conversation opening,
+  separate retained drafts, thread reader, live source edits, access revocation,
+  plugin unload/re-enable, companion placement, theme and narrow viewport.
+
+Browser fixtures use synthetic signed data; they do not publish to a real relay.
+The lifecycle fixture exercises reply draft composition, not successful publication.
+A full `just scan`, attended live use, final design approval and packaged native
+acceptance are required before calling this ready for integration.

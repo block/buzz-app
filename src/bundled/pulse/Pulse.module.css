@@ -1,0 +1,362 @@
+/* Pulse owns layout only; bubble rendering belongs to the shared MessageRow. */
+/* biome-ignore-all lint/style/noDescendingSpecificity: Selectors belong to disjoint Pulse regions. */
+.root {
+  height: 100%;
+  min-height: 0;
+  --surface: var(--bg-panel);
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --surface-control: var(--neutral-2);
+  --surface-hover: var(--neutral-4);
+  --primary: var(--neutral-11);
+  --on-primary: var(--neutral-1);
+  --pulse-line: var(--neutral-2);
+}
+.canvas {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+  max-width: 960px;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+  color: var(--text);
+}
+.sidebar {
+  width: 220px;
+  flex: 0 0 220px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 8px;
+  border-right: 1px solid var(--pulse-line);
+}
+.sidebar nav button {
+  border: 0;
+  box-shadow: none;
+  width: 100%;
+  display: flex;
+  align-items: center;
+  text-align: left;
+  gap: 12px;
+  background: transparent;
+  padding: 12px;
+  margin-bottom: 4px;
+  font-size: 14px;
+  border-radius: var(--radius-control);
+}
+.sidebar nav button:hover {
+  background: var(--surface-hover);
+}
+.sidebar nav button[aria-current="page"] {
+  background: var(--surface-control);
+  font-weight: 600;
+}
+.navIcon {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  background: var(--surface-control);
+  color: var(--text-muted);
+  font-size: 10px;
+}
+.sidebarDivider {
+  margin: 8px 0;
+  border-top: 1px solid var(--pulse-line);
+}
+.channelSearch {
+  min-width: 0;
+  width: 100%;
+  font-size: 12px;
+  margin-bottom: 8px;
+  padding: 8px 12px;
+  border: 0;
+  background: var(--surface-input);
+}
+.channelList {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+  scrollbar-width: thin;
+}
+.channelList .channelIcon {
+  background: var(--blue-3);
+  color: var(--blue-11);
+}
+.channelList button > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebarFoot,
+.sidebarError {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-muted);
+  padding: 12px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.main,
+.feedContent {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.feedContent[hidden] {
+  display: none;
+}
+.feedHeading[hidden] {
+  display: none;
+}
+.feedHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 28px;
+  gap: 12px;
+}
+.feedHeading h1 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 500;
+}
+.intro {
+  padding: 0 28px 16px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  border-bottom: 1px solid var(--pulse-line);
+}
+.search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 20px 28px 8px;
+  background: var(--surface-control);
+  border-radius: var(--radius-control);
+  padding: 0 12px;
+}
+.search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+}
+.feed {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-anchor: auto;
+  scrollbar-width: thin;
+}
+.latest {
+  position: sticky;
+  top: 8px;
+  display: block;
+  margin: 8px auto;
+  border-radius: 24px;
+  font-size: 12px;
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-card);
+  z-index: 1;
+}
+.card {
+  padding: 0 28px;
+  border-bottom: 1px solid var(--pulse-line);
+}
+.source {
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 0;
+}
+.cardActions {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  margin-top: 8px;
+}
+.reply {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  border-radius: 24px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 4px 8px;
+}
+.reply:hover,
+.source:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+.empty,
+.connect {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 24px;
+  color: var(--text-muted);
+}
+.empty h2 {
+  font-size: 16px;
+  color: var(--text);
+  font-weight: 500;
+}
+.empty p,
+.connect p {
+  max-width: 360px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.connect {
+  height: 100%;
+  border-radius: var(--radius-card);
+  background: var(--surface);
+}
+.connect h1 {
+  font-size: 24px;
+  color: var(--text);
+  font-weight: 500;
+}
+.footer {
+  text-align: center;
+  padding: 28px;
+  font-size: 11px;
+  line-height: 1.8;
+  color: var(--text-muted);
+}
+.notice {
+  margin: 16px;
+  padding: 16px;
+  color: var(--danger);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  font-size: 13px;
+}
+.detail {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+.heading {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border-bottom: 1px solid var(--pulse-line);
+}
+.heading strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  font-weight: 500;
+}
+.heading button {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+}
+.threadHost {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+}
+@media (max-width: 700px) {
+  .sidebar {
+    width: 180px;
+    flex-basis: 180px;
+  }
+  .feedHeading {
+    padding: 16px 20px 0;
+  }
+  .intro {
+    padding: 0 20px 16px;
+  }
+  .search {
+    margin: 16px 20px 8px;
+  }
+  .card {
+    padding: 0 20px;
+  }
+}
+@media (max-width: 520px) {
+  .canvas {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: auto;
+    flex: 0 0 auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--pulse-line);
+    padding: 8px;
+  }
+  .sidebar nav:first-of-type {
+    display: flex;
+  }
+  .sidebar nav:first-of-type button {
+    justify-content: center;
+    gap: 6px;
+    font-size: 12px;
+    padding: 8px 4px;
+  }
+  .sidebarDivider,
+  .sidebarFoot {
+    display: none;
+  }
+  .channelList {
+    display: flex;
+    max-height: 48px;
+  }
+  .channelList button {
+    flex: 0 0 auto;
+    max-width: 160px;
+    padding: 8px 12px;
+  }
+  .reading .sidebar {
+    display: none;
+  }
+  .card {
+    padding: 0 16px;
+  }
+}
+
+.findRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.findRow .channelSearch {
+  margin-bottom: 0;
+}
+.findRow button {
+  border: 0;
+  background: transparent;
+  padding: 6px;
+  color: var(--text-muted);
+}

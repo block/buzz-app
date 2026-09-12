@@ -60,9 +60,9 @@ measurements in the default gate. The explicit measurement command above uses
 `--no-deps` so all selected measurements repeat, with `--workers=1` to retain
 isolation and one invocation to preserve both engines' evidence.
 
-Compiled frontend assets are worker-scoped, split by `developmentReact` and
-`pluginFixtures`, and removed when that worker ends. They are never reused across
-invocations. Every test still gets a fresh preview server/port, ephemeral signing
+Compiled frontend assets are worker-scoped, split by `developmentReact`,
+`pluginFixtures` and `openingProbe`, and removed when that worker ends. They are
+never reused across invocations. Every test still gets a fresh preview server/port, ephemeral signing
 keys, signed histories, relay state and browser context/storage. Evidence records
 the worker and its build time; worker restarts rebuild rather than reuse stale assets.
 
@@ -184,6 +184,28 @@ label caller**, not just the reader's priority flag. Cached returns then require
 no new head request and less than **100ms** from a browser-clock button click to
 visible correct-channel rows across a paint opportunity. This is a controlled
 regression budget, not a universal device/relay SLA or hardware input measurement.
+
+The comparable Messages/Pulse cases establish **ready + verified** Alpha and Beta
+channel windows before capturing the warm baseline. A test-build-only read-only
+plugin observes the supported relay snapshots; it never prepares or ensures a
+window. Visible retained aggregate rows and HTTP completion alone do not prove
+that the authoritative head has been verified and applied. The held-first-Alpha
+regression paints Pulse's retained feed rows while Alpha is still loading, then
+releases that head before measuring warm returns. Browser submissions and upstream
+admissions are counted separately, including explicitly recorded startup aborts;
+no new submission or admission is allowed in the warm loop.
+
+An after-test hook captures the same profiler snapshot as **Export timings** even
+on assertion failure, before the fixture attaches `evidence.json` and closes the
+page. Comparable samples retain click-handler time, each visibility check's time,
+first observed visible rows and the following animation-frame opportunity. The
+<100ms assertion still includes that opportunity; soft assertions retain all four
+warm samples and still fail the test. Visibility-check time includes any forced
+layout and must not simply be subtracted as pure observer overhead. Frame gaps do
+not identify React CPU, actual display presentation or OS scheduling by themselves.
+Request completion/failure timing and browser time origin accompany the samples;
+no message bodies are added to timing diagnostics. A missing export is recorded
+without replacing an existing assertion failure, and fails an otherwise passing test.
 
 Run this focused journey when changing startup/sidebar scheduling:
 

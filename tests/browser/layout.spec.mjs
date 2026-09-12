@@ -1,6 +1,20 @@
 import { test, expect } from "./fixture.mjs";
 import { settle, upper, expectAnchor } from "./timeline.mjs";
 
+// Resize tests must not enter the fixture’s deliberately held paging path.
+const readingTest = test.extend({ tallMessages: true });
+async function expectNonPaging(page, app) {
+  expect(
+    await page
+      .getByRole("region", { name: "Channel message history" })
+      .evaluate((el) => el.scrollTop - Math.max(3000, el.clientHeight * 4)),
+    "resize reading position stays outside older-page prefetch",
+  ).toBeGreaterThan(0);
+  expect(
+    app.report.queries.filter(({ filter }) => filter.until !== undefined),
+  ).toHaveLength(0);
+}
+
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const box = async (locator) => {
   const bounds = await locator.boundingBox();
@@ -215,61 +229,82 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   ).toBeVisible();
 });
 
-test("panel resizing preserves bottom follow and the visible reading anchor", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await settle(page);
-  await link(page, app, "https://github.com/block/buzz/pull/4");
-  const history = page.getByRole("region", { name: "Channel message history" });
-  const expectBottom = () =>
-    expect
-      .poll(() =>
-        history.evaluate(
-          (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
-        ),
-      )
-      .toBeLessThan(4);
-  await settle(page);
-  await expectBottom();
-  const received = app.append("primary", "alpha");
-  await expect(
-    page.locator(`[data-message-id="${received.id}"]`),
-  ).toBeInViewport();
-  await button(page, "Close channel panel").click();
-  await settle(page);
-  await expectBottom();
-  // Late layout-only reflow must not need another message or viewport resize.
-  // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
-  // row layout, not scroll methods/metrics or the production observer callback.
-  await page.waitForTimeout(250);
-  const lateLayout = await page.addStyleTag({
-    content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
-  });
-  await settle(page);
-  await expectBottom();
-  await page.waitForTimeout(250);
-  await lateLayout.evaluate((element) => element.remove());
-  await settle(page);
-  await expectBottom();
-  // Reopen by keyboard without browser click-to-scroll changing the saved position.
-  const target = "https://github.com/block/buzz/pull/4";
-  const saved = await upper(page);
-  await page
-    .getByRole("link", { name: target, exact: true })
-    .evaluate((el) => el.focus({ preventScroll: true }));
-  await page.keyboard.press("Enter");
-  await expect(panel(page)).toBeVisible();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await button(page, "Close channel panel").click();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await page.setViewportSize({ width: 1200, height: 700 });
-  await settle(page);
-  await expectAnchor(page, saved);
-});
+readingTest(
+  "panel resizing preserves bottom follow and the visible reading anchor",
+  async ({ page, app }) => {
+    await open(page, app);
+    await settle(page);
+    await link(page, app, "https://github.com/block/buzz/pull/4");
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const expectBottom = () =>
+      expect
+        .poll(() =>
+          history.evaluate(
+            (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+          ),
+        )
+        .toBeLessThan(4);
+    await settle(page);
+    await expectBottom();
+    const received = app.append("primary", "alpha");
+    await expect(
+      page.locator(`[data-message-id="${received.id}"]`),
+    ).toBeInViewport();
+    await button(page, "Close channel panel").click();
+    await settle(page);
+    await expectBottom();
+    // Late layout-only reflow must not need another message or viewport resize.
+    // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
+    // row layout, not scroll methods/metrics or the production observer callback.
+    await page.waitForTimeout(250);
+    const lateLayout = await page.addStyleTag({
+      content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
+    });
+    await settle(page);
+    await expectBottom();
+    await page.waitForTimeout(250);
+    await lateLayout.evaluate((element) => element.remove());
+    await settle(page);
+    await expectBottom();
+    // Reopen by keyboard without browser click-to-scroll changing the saved position.
+    const target = "https://github.com/block/buzz/pull/4";
+    const saved = await upper(page);
+    await expectNonPaging(page, app);
+    await page
+      .getByRole("link", { name: target, exact: true })
+      .evaluate((el) => el.focus({ preventScroll: true }));
+    await page.keyboard.press("Enter");
+    await expect(panel(page)).toBeVisible();
+    await settle(page);
+    await expectAnchor(page, saved);
+    // A panel can return focus to a mounted but offscreen link. Observe the
+    // native focus call itself: eventual anchor recovery can hide a scroll jump.
+    await page
+      .getByRole("link", { name: target, exact: true })
+      .evaluate((el) => {
+        const focus = el.focus;
+        el.focus = function (options) {
+          const history = el.closest("[data-channel-timeline]");
+          const before = history.scrollTop;
+          focus.call(this, options);
+          window.panelFocusScrollDelta = history.scrollTop - before;
+        };
+      });
+    await button(page, "Close channel panel").focus();
+    await button(page, "Close channel panel").click();
+    const trigger = page.getByRole("link", { name: target, exact: true });
+    await expect(trigger).toBeFocused();
+    expect(await page.evaluate(() => window.panelFocusScrollDelta)).toBe(0);
+    await settle(page);
+    await expectAnchor(page, saved);
+    await page.setViewportSize({ width: 1200, height: 700 });
+    await settle(page);
+    await expectAnchor(page, saved);
+    await expectNonPaging(page, app);
+  },
+);
 
 test("Bestie owns the launcher and the reusable companion card across pages and disable", async ({
   page,
@@ -396,37 +431,84 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(enabled).toBeInViewport();
 });
 
-test("companion resize preserves the timeline anchor and both cards at narrow sizes", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await settle(page);
-  const saved = await upper(page);
-  await button(page, "Bestie").click();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await button(page, "Close Bestie panel").click();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await link(page, app, "https://github.com/block/buzz/pull/6");
-  await button(page, "Bestie").click();
-  for (const [width, height] of [
-    [800, 600],
-    [480, 400],
-    [390, 844],
-  ]) {
-    await page.setViewportSize({ width, height });
-    const top = await box(panel(page));
-    const bottom = await box(
-      page.getByRole("complementary", { name: "Bestie", exact: true }),
-    );
-    near(top.height, bottom.height);
-    near(bottom.y - top.y - top.height, 12);
-    await expect(button(page, "Close channel panel")).toBeInViewport();
-    await expect(button(page, "Close Bestie panel")).toBeInViewport();
-  }
-});
+readingTest(
+  "companion resize preserves the timeline anchor and both cards at narrow sizes",
+  async ({ page, app }) => {
+    await open(page, app);
+    await settle(page);
+    const saved = await upper(page);
+    await expectNonPaging(page, app);
+    await button(page, "Bestie").click();
+    await settle(page);
+    await expectAnchor(page, saved);
+    await button(page, "Close Bestie panel").click();
+    await settle(page);
+    await expectAnchor(page, saved);
+    await link(page, app, "https://github.com/block/buzz/pull/6");
+    await button(page, "Bestie").click();
+    for (const [width, height] of [
+      [800, 600],
+      [480, 400],
+      [390, 844],
+    ]) {
+      await page.setViewportSize({ width, height });
+      const top = await box(panel(page));
+      const bottom = await box(
+        page.getByRole("complementary", { name: "Bestie", exact: true }),
+      );
+      near(top.height, bottom.height);
+      near(bottom.y - top.y - top.height, 12);
+      await expect(button(page, "Close channel panel")).toBeInViewport();
+      await expect(button(page, "Close Bestie panel")).toBeInViewport();
+    }
+  },
+);
+
+readingTest(
+  "panel restoration yields to a new wheel reading position",
+  async ({ page, app }) => {
+    await open(page, app);
+    await settle(page);
+    const original = await upper(page);
+    await button(page, "Bestie").click();
+    await settle(page);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const before = await history.evaluate((el) => el.scrollTop);
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() => history.evaluate((el) => el.scrollTop))
+      .toBeLessThan(before);
+    await settle(page);
+    // A tall paragraph need not fit wholly in the narrowed viewport. Capture
+    // the visible reading row, including the production clipped-row fallback.
+    const reading = await history.evaluate((el) => {
+      const bounds = el.getBoundingClientRect();
+      const rows = Array.from(el.querySelectorAll("[data-message-id]"));
+      const row =
+        rows.find((row) => {
+          const p = row.querySelector("p").getBoundingClientRect();
+          return p.top >= bounds.top && p.bottom <= bounds.bottom;
+        }) ??
+        rows.find((row) => {
+          const rect = row.getBoundingClientRect();
+          return rect.bottom > bounds.top && rect.top < bounds.bottom;
+        });
+      if (!row) throw new Error("No visible post-gesture reading row");
+      return {
+        id: row.dataset.messageId,
+        y: row.querySelector("p").getBoundingClientRect().top - bounds.top,
+      };
+    });
+    expect(reading.id).not.toBe(original.id);
+    await button(page, "Close Bestie panel").click();
+    await settle(page);
+    await expectAnchor(page, reading);
+    await expectNonPaging(page, app);
+  },
+);
 
 test("Projects stays centered and page navigation survives plugin re-enable order", async ({
   page,

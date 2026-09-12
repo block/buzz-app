@@ -67,7 +67,10 @@ test("Home → Messages keeps saved groups, selected channel, and scroll on ever
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
     ).toBeVisible();
-    await page.waitForTimeout(300); // Measure the held interval, not eventual success.
+    await page.waitForTimeout(300); // Keep the decode path held for the full interval.
+    // Wall time does not guarantee RAF callbacks on a busy runner. Wait for
+    // samples, not correct samples: every earlier frame stays in the assertion.
+    await page.waitForFunction(() => window.sidebarFrames.length > 3);
     const frames = await page.evaluate(() => {
       window.captureSidebar = false;
       return window.sidebarFrames;

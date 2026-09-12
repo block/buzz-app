@@ -1,10 +1,12 @@
 import { memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
-import { messageParts } from "../relay/emoji";
+import { profileTarget } from "../profiles/target";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { MessageMarkdown } from "./MessageMarkdown";
+import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 
@@ -13,7 +15,8 @@ export type MessageRowProps = {
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
-  participantProfiles?: ReadonlyMap<string, Profile>;
+  participantProfiles?: ReadonlyMap<string, Profile> | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string): string | undefined;
   onOpenLink(url: string): boolean;
   day: boolean;
@@ -28,6 +31,7 @@ export const MessageRow = memo(function MessageRow({
   profile,
   media,
   onOpenLink,
+  canOpenLink,
   day,
   retry,
   onOpenThread,
@@ -48,6 +52,9 @@ export const MessageRow = memo(function MessageRow({
           : undefined;
   const name = profile?.name ?? row.authorId.slice(0, 10);
   const picture = profile?.picture ? media(profile.picture) : undefined;
+  const target = profileTarget(row.authorId);
+  const clickable = target && canOpenLink?.(target);
+  const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
   return (
     <div data-message-id={row.id}>
@@ -63,13 +70,25 @@ export const MessageRow = memo(function MessageRow({
         </div>
       )}
       <div className={styles.message}>
-        <div className={styles.avatar}>
+        <AvatarTag
+          className={styles.avatar}
+          {...(clickable
+            ? {
+                type: "button" as const,
+                "aria-label": `View ${name} profile`,
+                onClick: (event: import("react").MouseEvent<HTMLElement>) => {
+                  event.currentTarget.focus();
+                  onOpenLink(target);
+                },
+              }
+            : {})}
+        >
           {picture ? (
             <img src={picture} alt="" loading="lazy" />
           ) : (
             name.slice(0, 2).toUpperCase()
           )}
-        </div>
+        </AvatarTag>
         <div className={styles.messageBody}>
           <div className={styles.byline}>
             <strong>{name}</strong>
@@ -80,22 +99,25 @@ export const MessageRow = memo(function MessageRow({
               })}
             </time>
           </div>
-          <p className={styles.text} data-single-emoji={emojiOnly || undefined}>
-            <MessageText
-              row={row}
-              extensions={extensions}
-              media={media}
-              onOpenLink={onOpenLink}
-            />
-          </p>
+          <MessageMarkdown
+            row={row}
+            extensions={extensions}
+            media={media}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
+            largeEmoji={emojiOnly}
+          />
           <DeliveryNotice row={row} retry={retry} />
           {row.attachments.map((attachment) => {
-            const source = media(attachment.url);
+            const url = safeMessageUrl(attachment.url);
+            if (!url) return null;
+            const source = media(url);
             return attachment.video || !source ? (
               <a
                 className={styles.attachment}
-                key={attachment.url}
-                href={attachment.url}
+                key={url}
+                href={url}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -104,8 +126,8 @@ export const MessageRow = memo(function MessageRow({
             ) : (
               <a
                 className={styles.attachmentImage}
-                key={attachment.url}
-                href={attachment.url}
+                key={url}
+                href={url}
                 target="_blank"
                 rel="noreferrer"
                 aria-label="Open image attachment"
@@ -114,7 +136,7 @@ export const MessageRow = memo(function MessageRow({
                     !event.metaKey &&
                     !event.ctrlKey &&
                     !event.shiftKey &&
-                    onOpenLink(attachment.url)
+                    onOpenLink(url)
                   )
                     event.preventDefault();
                 }}
@@ -225,51 +247,4 @@ function useThreadUnread(
     [unread, channelId, rootId],
   );
   return useSyncExternalStore(subscribe, get, get);
-}
-function MessageText({
-  row,
-  extensions,
-  media,
-  onOpenLink,
-}: Pick<MessageRowProps, "row" | "extensions" | "media" | "onOpenLink">) {
-  return messageParts(row.content).map((part, index) => {
-    const key = `${index}:${part.slice(0, 20)}`;
-    if (!part.startsWith("https://")) {
-      return (
-        <span key={key}>
-          {extensions ? (
-            <InlineText
-              registry={extensions.inline}
-              content={{ text: part, message: row }}
-              media={media}
-            />
-          ) : (
-            part
-          )}
-        </span>
-      );
-    }
-    const url = part.replace(/[.,;:!?)\]}]+$/, "");
-    return (
-      <span key={key}>
-        <a
-          href={url}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => {
-            if (
-              !event.metaKey &&
-              !event.ctrlKey &&
-              !event.shiftKey &&
-              onOpenLink(url)
-            )
-              event.preventDefault();
-          }}
-        >
-          {url}
-        </a>
-        {part.slice(url.length)}
-      </span>
-    );
-  });
 }

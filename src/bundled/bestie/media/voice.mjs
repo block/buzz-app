@@ -216,7 +216,7 @@ export async function openVoice(token, ui, options = {}) {
     })();
     return stopPromise;
   }
-  async function onEvent(event) {
+  function onEvent(event) {
     lastEvent = performance.now();
     // During graceful close only method-less ACP replies can complete pending work.
     if (closed && event.method) return;
@@ -336,37 +336,59 @@ export async function openVoice(token, ui, options = {}) {
     }
   }
   async function connect() {
-    const response = await fetch(
-      `${options.eventsUrl}&thinking=${encodeURIComponent(options.thinking || "none")}`,
-      {
-        signal: eventsAbort.signal,
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
+    const url = new URL(options.eventsUrl, location.href);
+    url.searchParams.set("op", "authorize");
+    const response = await fetch(url, {
+      method: "POST",
+      signal: AbortSignal.any([eventsAbort.signal, AbortSignal.timeout(10000)]),
+      headers: { Authorization: `Bearer ${token}` },
+    });
     if (!response.ok)
       throw Error(
         response.status === 409
           ? "Another Bestie call is active. End it first."
           : "Bestie could not connect to the voice service.",
       );
-    const reader = response.body.getReader(),
-      decoder = new TextDecoder();
-    (async () => {
-      let buffer = "";
-      for (;;) {
-        const { value, done } = await reader.read();
-        if (done) throw Error("ACP disconnected");
-        buffer += decoder.decode(value, { stream: true });
-        if (buffer.length > 2 * 1024 * 1024) throw Error("ACP output limit");
-        for (;;) {
-          const index = buffer.indexOf("\n");
-          if (index < 0) break;
-          const line = buffer.slice(0, index);
-          buffer = buffer.slice(index + 1);
-          await onEvent(JSON.parse(line));
+    const { ticket } = await response.json();
+    if (closed || eventsAbort.signal.aborted)
+      throw Error("Connection cancelled");
+    url.searchParams.set("op", "events");
+    url.searchParams.set("ticket", ticket);
+    url.searchParams.set("thinking", options.thinking || "none");
+    // Native EventSource avoids WebKit's fetch byte-stream buffering regression.
+    // The URL contains a public ticket; its matching credential is HttpOnly.
+    await new Promise((resolve, reject) => {
+      const source = new EventSource(url);
+      const cancel = () => {
+        clearTimeout(deadline);
+        source.close();
+        reject(Error("Connection cancelled"));
+      };
+      const failed = () => {
+        clearTimeout(deadline);
+        source.close(); // Never let EventSource automatically restart a call.
+        const error = Error("Bestie lost its voice connection.");
+        reject(error);
+        fail(error);
+      };
+      const deadline = setTimeout(failed, 10000);
+      eventsAbort.signal.addEventListener("abort", cancel, { once: true });
+      source.onopen = () => {
+        clearTimeout(deadline);
+        resolve();
+      };
+      source.onerror = failed;
+      source.onmessage = ({ data }) => {
+        try {
+          if (data.length > 2 * 1024 * 1024) throw Error("ACP output limit");
+          onEvent(JSON.parse(data));
+        } catch (error) {
+          source.close();
+          fail(error);
         }
-      }
-    })().catch(fail);
+      };
+      if (eventsAbort.signal.aborted) cancel();
+    });
     const init = await request("initialize", {
       protocolVersion: 1,
       clientCapabilities: { _meta: { buzz: { realtimeAudio: 1 } } },

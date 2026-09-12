@@ -1,7 +1,7 @@
 // ACP presentation adapter, adapted from block/buzz@9bab300 examples/realtime-audio/server.mjs.
 // Apache-2.0. Buzz owns provider protocol, tools and permission decisions.
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { getPublicKey } from "nostr-tools";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
@@ -84,6 +84,15 @@ async function write(stream, bytes) {
   });
 }
 
+function callToken(value) {
+  return typeof value === "string" &&
+    /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(
+      value,
+    )
+    ? value.toLowerCase()
+    : undefined;
+}
+
 const requestId = (value) => Number.isSafeInteger(value) && value >= 0;
 const permissionId = (value) =>
   requestId(value) || (typeof value === "string" && value.length <= 128);
@@ -112,6 +121,7 @@ export function createBestieRealtime({
   let active;
   let closed = false;
   const retired = new Set();
+  const authorizations = new Map();
   const live = (entry) => !closed && active === entry && !entry.stopping;
 
   function stop(entry) {
@@ -351,7 +361,7 @@ export function createBestieRealtime({
           )
         : value,
     );
-    return `${wire}\n`;
+    return `data: ${wire}\n\n`;
   }
 
   function send(entry, raw) {
@@ -453,16 +463,14 @@ export function createBestieRealtime({
       child.once("exit", () => void stop(entry));
       entry.timer = setTimeout(() => void stop(entry), callTimeoutMs);
       res.writeHead(200, {
-        "Content-Type": "application/x-ndjson",
-        "Cache-Control": "no-store",
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-store, no-transform",
         "X-Content-Type-Options": "nosniff",
       });
       res.flushHeaders();
-      // Supply a body byte before waiting for initialize; otherwise WebKit's
-      // fetch can wait for body data while the client waits for fetch to resolve.
       await write(
         res,
-        `${JSON.stringify({ jsonrpc: "2.0", method: "bestie/ready" })}\n`,
+        `data: ${JSON.stringify({ jsonrpc: "2.0", method: "bestie/ready" })}\n\n`,
       );
       void (async () => {
         let buffer = "";
@@ -505,12 +513,65 @@ export function createBestieRealtime({
     const op = url.searchParams.get("op");
     if (op === "status" && req.method === "GET")
       return json(res, 200, { available: true, busy: Boolean(active) });
-    const token = req.headers.authorization
-      ?.match(
-        /^Bearer ([a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12})$/i,
-      )?.[1]
-      ?.toLowerCase();
+    let token = callToken(
+      req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1],
+    );
+    for (const [ticket, grant] of authorizations)
+      if (grant.expires <= Date.now()) authorizations.delete(ticket);
+    if (
+      op === "events" &&
+      req.method === "GET" &&
+      url.searchParams.has("ticket")
+    ) {
+      const ticket = callToken(url.searchParams.get("ticket"));
+      const grant = authorizations.get(ticket);
+      const name = `bestie-${ticket}`;
+      const cookie = req.headers.cookie
+        ?.split(/;\s*/)
+        .find((part) => part.startsWith(`${name}=`))
+        ?.slice(name.length + 1);
+      if (
+        !grant ||
+        cookie !== grant.token ||
+        grant.relay !== relay ||
+        grant.path !== url.pathname
+      )
+        return json(res, 403, {
+          error: "Call authorization expired or rejected.",
+        });
+      token = grant.token;
+      authorizations.delete(ticket);
+      res.setHeader(
+        "Set-Cookie",
+        `${name}=; Path=${url.pathname}; HttpOnly; SameSite=Strict; Max-Age=0`,
+      );
+    }
     if (!token) return json(res, 403, { error: "Call credential required." });
+    if (op === "authorize" && req.method === "POST") {
+      if (/[;,\s]/.test(url.pathname))
+        return json(res, 400, { error: "Invalid call path." });
+      if (active || retired.has(token))
+        return json(res, 409, {
+          error: "A call is active or this call has ended.",
+        });
+      if (authorizations.size >= 32)
+        return json(res, 429, {
+          error: "Too many pending calls. Try again shortly.",
+        });
+      const ticket = randomUUID();
+      authorizations.set(ticket, {
+        token,
+        relay,
+        path: url.pathname,
+        expires: Date.now() + 60000,
+      });
+      // The public ticket selects this call's cookie; it is not a credential.
+      res.setHeader(
+        "Set-Cookie",
+        `bestie-${ticket}=${token}; Path=${url.pathname}; HttpOnly; SameSite=Strict; Max-Age=60`,
+      );
+      return json(res, 200, { ticket });
+    }
     if (op === "events" && req.method === "GET") {
       const thinking = url.searchParams.get("thinking") || "none";
       const approval = url.searchParams.get("approval") || "auto";
@@ -564,6 +625,7 @@ export function createBestieRealtime({
     handle,
     async close() {
       closed = true;
+      authorizations.clear();
       identity.dispose();
       if (active) await stop(active);
     },

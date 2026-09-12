@@ -24,7 +24,8 @@ function harness(settings = {}) {
   const requests = [],
     contexts = [],
     nodes = [],
-    permissions = [];
+    permissions = [],
+    sources = [];
   const abort = new AbortController();
   let events, voice, promptId;
   class Track extends EventTarget {
@@ -82,39 +83,35 @@ function harness(settings = {}) {
       nodes.push(this);
     }
   }
-  const push = (event) =>
-    events.enqueue(
-      new TextEncoder().encode(
-        `${JSON.stringify({ jsonrpc: "2.0", ...event })}\n`,
-      ),
-    );
+  class EventStream {
+    closed = false;
+    close = vi.fn(() => {
+      this.closed = true;
+    });
+    constructor(url) {
+      this.url = String(url);
+      events = this;
+      sources.push(this);
+      if (!settings.holdOpen) queueMicrotask(() => this.onopen?.());
+    }
+  }
+  const push = (event) => {
+    if (!events.closed)
+      events.onmessage?.({
+        data: JSON.stringify({ jsonrpc: "2.0", ...event }),
+      });
+  };
   const media = (update) =>
     push({
       method: "_buzz/unstable/realtime/update",
       params: { sessionId: "test-session", streamId: "test-stream", update },
     });
   const fetch = vi.fn(async (url, init = {}) => {
-    if (String(url).includes("op=events")) {
+    if (String(url).includes("op=authorize")) {
+      if (settings.authorization) return settings.authorization.promise;
       if (settings.connectStatus)
         return new Response("", { status: settings.connectStatus });
-      return new Response(
-        new ReadableStream({
-          start(controller) {
-            events = controller;
-            init.signal.addEventListener(
-              "abort",
-              () => {
-                try {
-                  events.error(new DOMException("Cancelled", "AbortError"));
-                } catch {
-                  /* Stream already ended. */
-                }
-              },
-              { once: true },
-            );
-          },
-        }),
-      );
+      return Response.json({ ticket: "public-ticket" });
     }
     if (init.signal.aborted) throw new DOMException("Cancelled", "AbortError");
     const event = JSON.parse(init.body);
@@ -152,6 +149,8 @@ function harness(settings = {}) {
   vi.stubGlobal("AudioWorkletNode", DeviceNode);
   vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
   vi.stubGlobal("fetch", fetch);
+  vi.stubGlobal("location", { href: "http://localhost/" });
+  vi.stubGlobal("EventSource", EventStream);
   const ui = {
     evidence: vi.fn(),
     status: vi.fn(),
@@ -191,6 +190,7 @@ function harness(settings = {}) {
     stream,
     track,
     getUserMedia,
+    sources,
     fetch,
     push,
     media,
@@ -210,7 +210,7 @@ function harness(settings = {}) {
       });
     },
     endEvents() {
-      events.close();
+      events.onerror?.();
     },
   };
 }
@@ -429,4 +429,40 @@ it("buffered notifications after stop cannot restart callbacks or playback clean
       (event) => event.method === "_buzz/unstable/realtime/close",
     ),
   ).toBe(true);
+});
+
+it("cancellation during authorization never opens an event stream or microphone", async () => {
+  const authorization = deferred();
+  const h = harness({ authorization });
+  const opening = h.open();
+  const rejected = expect(opening).rejects.toThrow("Connection cancelled");
+  await vi.waitFor(() => expect(h.fetch).toHaveBeenCalledTimes(1));
+  h.abort.abort();
+  authorization.resolve(Response.json({ ticket: "public-ticket" }));
+  await rejected;
+  expect(h.sources).toHaveLength(0);
+  expect(h.getUserMedia).not.toHaveBeenCalled();
+});
+
+it("cancellation before EventSource opens rejects readiness and closes the connection", async () => {
+  const h = harness({ holdOpen: true });
+  const opening = h.open();
+  const rejected = expect(opening).rejects.toThrow("Connection cancelled");
+  await vi.waitFor(() => expect(h.sources).toHaveLength(1));
+  h.abort.abort();
+  await rejected;
+  expect(h.sources[0].closed).toBe(true);
+  expect(h.getUserMedia).not.toHaveBeenCalled();
+});
+
+it("EventSource errors close immediately and never reopen a retired call", async () => {
+  const h = harness();
+  const voice = await h.open();
+  h.endEvents();
+  expect(h.sources[0].closed).toBe(true);
+  await voice.stop(false);
+  expect(h.sources).toHaveLength(1);
+  expect(h.track.stop).toHaveBeenCalledTimes(1);
+  expect(h.sources[0].url).toContain("ticket=public-ticket");
+  expect(h.sources[0].url).not.toContain("call-token");
 });

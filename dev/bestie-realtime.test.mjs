@@ -109,10 +109,14 @@ async function harness(options = {}) {
     await new Promise((resolve) => server.close(resolve));
   });
   const status = () => fetch(`${base}?op=status`);
-  async function start(token = randomUUID(), query = "&approval=ask") {
+  async function start(
+    token = randomUUID(),
+    query = "&approval=ask",
+    headers = { Authorization: `Bearer ${token}` },
+  ) {
     const controller = new AbortController();
     const response = await fetch(`${base}?op=events${query}`, {
-      headers: { Authorization: `Bearer ${token}` },
+      headers,
       signal: controller.signal,
     });
     const reader = response.body.getReader();
@@ -123,7 +127,8 @@ async function harness(options = {}) {
         if (index >= 0) {
           const line = buffer.slice(0, index);
           buffer = buffer.slice(index + 1);
-          return JSON.parse(line);
+          if (line.startsWith("data: ")) return JSON.parse(line.slice(6));
+          continue;
         }
         const { value, done } = await reader.read();
         if (done) throw Error("Ended");
@@ -148,6 +153,19 @@ async function harness(options = {}) {
     const connected = response.ok ? await next() : undefined;
     return { token, response, controller, next, rpc, request, connected };
   }
+  async function authorize(token = randomUUID(), suffix = "") {
+    const response = await fetch(`${base}?op=authorize${suffix}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const { ticket } = await response.json();
+    return {
+      response,
+      ticket,
+      token,
+      cookie: response.headers.get("set-cookie")?.split(";")[0],
+    };
+  }
   const initialize = async (call) => {
     await call.request(1, "initialize");
     await call.request(2, "session/new", {
@@ -169,6 +187,7 @@ async function harness(options = {}) {
     spawns,
     status,
     start,
+    authorize,
     initialize,
     base,
   };
@@ -583,4 +602,103 @@ it("rejects invalid approval policy before start and never invents an allow choi
     .map(JSON.parse)
     .filter((frame) => !frame.method);
   expect(decisions).toEqual([]);
+});
+
+it("interleaved tab authorizations select their own cookie and are consumed once", async () => {
+  const h = await harness();
+  const a = await h.authorize();
+  const b = await h.authorize();
+  expect(a.ticket).not.toBe(b.ticket);
+  expect(a.ticket).not.toBe(a.token);
+  expect(a.response.headers.get("set-cookie")).toContain(
+    "Path=/api/relay/community/bestie; HttpOnly; SameSite=Strict; Max-Age=60",
+  );
+  const cookies = { Cookie: `${a.cookie}; ${b.cookie}` };
+  const call = await h.start(a.token, `&ticket=${a.ticket}`, cookies);
+  expect(call.response.status).toBe(200);
+  expect(call.response.headers.get("content-type")).toBe("text/event-stream");
+  expect(call.response.headers.get("set-cookie")).toContain(
+    `bestie-${a.ticket}=;`,
+  );
+  expect(call.response.headers.get("set-cookie")).toContain("Max-Age=0");
+  await h.initialize(call);
+  expect(
+    (await h.start(b.token, `&ticket=${b.ticket}`, cookies)).response.status,
+  ).toBe(409);
+  expect(
+    (
+      await fetch(`${h.base}?op=rpc`, {
+        method: "POST",
+        headers: cookies,
+        body: "{}",
+      })
+    ).status,
+  ).toBe(403);
+  call.controller.abort();
+  await vi.waitFor(async () =>
+    expect((await (await h.status()).json()).busy).toBe(false),
+  );
+  expect(
+    (await h.start(a.token, `&ticket=${a.ticket}`, cookies)).response.status,
+  ).toBe(403);
+  expect(
+    (await h.start(b.token, `&ticket=${b.ticket}`, cookies)).response.status,
+  ).toBe(403);
+  expect((await h.authorize(a.token)).response.status).toBe(409);
+  expect(h.children.length).toBe(1);
+});
+
+it("tickets require the matching cookie, account, community and exact endpoint path", async () => {
+  const h = await harness();
+  const a = await h.authorize();
+  const query = `&ticket=${a.ticket}`;
+  expect((await h.start(a.token, query, {})).response.status).toBe(403);
+  expect(
+    (
+      await h.start(a.token, query, {
+        Cookie: `bestie-${a.ticket}=${randomUUID()}`,
+      })
+    ).response.status,
+  ).toBe(403);
+  const headers = { Cookie: a.cookie };
+  expect(
+    (await h.start(a.token, `${query}&community=other`, headers)).response
+      .status,
+  ).toBe(403);
+  expect(
+    (await h.start(a.token, `${query}&viewer=${"f".repeat(64)}`, headers))
+      .response.status,
+  ).toBe(403);
+  expect(
+    (await fetch(`${h.base}/other?op=events${query}`, { headers })).status,
+  ).toBe(403);
+  expect(h.children.length).toBe(0);
+  const call = await h.start(a.token, query, headers);
+  expect(call.response.status).toBe(200);
+  call.controller.abort();
+});
+
+it("abandoned authorizations expire on the server and pending grants are bounded", async () => {
+  const h = await harness();
+  let first;
+  for (let i = 0; i < 32; i++) {
+    const grant = await h.authorize();
+    expect(grant.response.status).toBe(200);
+    first ??= grant;
+  }
+  expect((await h.authorize()).response.status).toBe(429);
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 60001);
+  try {
+    expect(
+      (
+        await h.start(first.token, `&ticket=${first.ticket}`, {
+          Cookie: first.cookie,
+        })
+      ).response.status,
+    ).toBe(403);
+    expect((await h.authorize()).response.status).toBe(200);
+  } finally {
+    clock.mockRestore();
+  }
+  expect(h.children.length).toBe(0);
 });

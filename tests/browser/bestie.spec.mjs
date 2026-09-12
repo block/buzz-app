@@ -175,6 +175,95 @@ async function fixture(page) {
   };
 }
 const button = (page, name) => page.getByRole("button", { name, exact: true });
+
+test("ACP streams complete sparse notifications and audio, then closes its agent", async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  try {
+    const result = await page.evaluate(async () => {
+      const url = `/api/relay/${encodeURIComponent("https://alpha.example")}/bestie`;
+      const headers = {
+        Authorization: `Bearer ${crypto.randomUUID()}`,
+        "Content-Type": "application/json",
+      };
+      const authorization = await fetch(`${url}?op=authorize`, {
+        method: "POST",
+        headers,
+      });
+      if (!authorization.ok) throw Error("Call authorization unavailable");
+      const { ticket } = await authorization.json();
+      const source = new EventSource(`${url}?op=events&ticket=${ticket}`);
+      const events = [];
+      let failure;
+      source.onmessage = ({ data }) => events.push(JSON.parse(data));
+      source.onerror = () => {
+        source.close();
+        failure = Error("Event stream disconnected");
+      };
+      async function receive(predicate) {
+        const deadline = Date.now() + 10000;
+        for (;;) {
+          if (failure) throw failure;
+          const event = events.find(predicate);
+          if (event) return event;
+          if (Date.now() > deadline) throw Error("Notification deadline");
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+      }
+      async function send(id, method, params = {}) {
+        const response = await fetch(`${url}?op=rpc`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ jsonrpc: "2.0", id, method, params }),
+        });
+        if (!response.ok)
+          throw Error(`ACP request rejected (${response.status})`);
+      }
+      try {
+        await receive((event) => event.method === "bestie/ready");
+        await send(1, "initialize");
+        await receive((event) => event.id === 1);
+        await send(2, "session/new");
+        const sessionId = (await receive((event) => event.id === 2)).result
+          .sessionId;
+        await send(3, "session/prompt", { sessionId, prompt: [] });
+        // No later request can flush a partial ready line: capture waits for it.
+        const ready = await receive(
+          (event) => event.params?.update?.type === "ready",
+        );
+        await send(4, "_buzz/unstable/realtime/append", {
+          sessionId,
+          streamId: ready.params.streamId,
+          data: btoa("\0".repeat(480)),
+        });
+        const audio = await receive(
+          (event) => event.params?.update?.type === "audio",
+        );
+        const done = await receive(
+          (event) => event.params?.update?.type === "response_done",
+        );
+        return {
+          audioBytes: atob(audio.params.update.data).length,
+          status: done.params.update.status,
+        };
+      } finally {
+        source.close();
+      }
+    });
+    expect(result).toEqual({ audioBytes: 4800, status: "completed" });
+    await expect
+      .poll(
+        () =>
+          f.children[0].exitCode !== null || f.children[0].signalCode !== null,
+      )
+      .toBe(true);
+    expect(f.errors).toEqual([]);
+  } finally {
+    await f.close();
+  }
+});
+
 async function start(page, f) {
   await button(page, "Start Bestie voice conversation").click();
   await expect(page.getByRole("status")).toContainText("Listening");

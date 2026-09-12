@@ -160,3 +160,43 @@ message/composer text, draft/node preservation, reset/limits/reload, modal/edito
 Shadow DOM guards, and the independent example's disable/re-enable path. These
 Chromium/WebKit checks use a fixture broker, not native menu accelerators. An
 attended desktop shortcut try remains necessary for native acceptance.
+
+## Incremental system integration
+
+The host entry `src/shared/styles/globals.css` now loads the shared system's
+palette, typography roles, materials and component styles with one Tailwind reset.
+It does not import the viewer's global entry, preference owner, docking vendor CSS
+or workspace experiments. Panel styling remains defined only by the shared system.
+
+Existing screens retain their palette, canvas, type sizes and native-control
+recipes. Compatibility names are temporary, not the vocabulary for new work.
+`bg-primary` retains the old action fill via an explicit compatibility utility;
+`text-primary` and `border-primary` belong to the system. The old control radius
+is explicitly named `--radius-legacy-control` to avoid overriding shared controls.
+Legacy monospace utilities and native code retain their system font stack; migrated
+boundaries select the shared mono face. No old paint role is aliased merely because it sounds similar: the current
+palettes differ, and aliasing them would silently recolor unmigrated screens.
+
+Shared primitives carry `data-buzz-ui`, including portal popup roots. Legacy
+native-element selectors exclude that boundary and its descendants (without native CSS scope); shared typography starts there.
+For new custom compositions use the same boundary and named type roles, not old
+native-element styling. Inline chips deliberately inherit their sentence's type.
+Do not nest legacy UI inside a migrated boundary without explicitly migrating it.
+This boundary does not imply a Panel, padding, scrolling or page lifecycle.
+
+The host's existing `data-color-mode` drives shared dark tokens directly, and
+`--buzz-text-scale` feeds the type ramp once. Root size and layout geometry do not
+scale. Startup bootstrap, preferences, recovery, cross-window events and theme-color
+remain owned by the existing appearance service. The viewer retains its separate
+preference and full-document typography; its settings do not change the host.
+BentoWorkspace still uses the viewer preference helper and is not ready for app
+adoption; no workspace experiment is imported by app startup.
+
+The host mounts the shared input-modality hook once, including cleanup. Shared
+keyboard focus remains visible; pointer focus does not acquire a ring.
+
+The actual-app Appearance/shortcuts journeys cover startup, preferences, focus,
+and the temporary font/color compatibility contracts. Remove compatibility checks
+as their legacy consumers disappear; no separate legacy viewer or test suite is
+needed. Browser checks do not establish native or packaged acceptance. Broad scan
+remains an agreed integration-batch gate.

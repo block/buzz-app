@@ -47,6 +47,10 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/terminal/manifest.json"))
+            .expect("terminal manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/profiles/manifest.json"))
+            .expect("valid bundled Profiles manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mentions/manifest.json"))
             .expect("mentions manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/emoji/manifest.json"))

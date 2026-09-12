@@ -21,7 +21,11 @@ export function PreviewCard({ trigger, children }: PreviewCardProps) {
       <BasePreviewCard.Trigger render={trigger} delay={250} closeDelay={150} />
       <BasePreviewCard.Portal>
         <BasePreviewCard.Positioner side="bottom" align="start" sideOffset={8}>
-          <BasePreviewCard.Popup className="buzz-preview-card" role="tooltip">
+          <BasePreviewCard.Popup
+            data-buzz-ui=""
+            className="buzz-preview-card"
+            role="tooltip"
+          >
             {children}
           </BasePreviewCard.Popup>
         </BasePreviewCard.Positioner>

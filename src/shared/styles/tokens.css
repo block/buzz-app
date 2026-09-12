@@ -42,7 +42,7 @@
     --elevation-dock: -12px 0 32px #253d4c14;
     --radius-card: 24px;
     --radius-card-compact: 18px;
-    --radius-control: 12px;
+    --radius-legacy-control: 12px;
   }
   :root[data-color-mode="dark"] {
     color-scheme: dark;

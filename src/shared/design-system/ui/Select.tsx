@@ -20,7 +20,7 @@ export function Select({
   onValueChange: (value: string) => void;
 }) {
   return (
-    <div className="buzz-select text-body">
+    <div data-buzz-ui="" className="buzz-select text-body">
       <BaseSelect.Root
         value={value}
         items={groups.flatMap((group) => group.options)}
@@ -45,7 +45,10 @@ export function Select({
             align="start"
             alignItemWithTrigger={false}
           >
-            <BaseSelect.Popup className="buzz-select-popup text-body-sm">
+            <BaseSelect.Popup
+              data-buzz-ui=""
+              className="buzz-select-popup text-body-sm"
+            >
               <BaseSelect.List>
                 {groups.map((group) => (
                   <BaseSelect.Group key={group.label}>

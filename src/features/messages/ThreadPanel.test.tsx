@@ -2,6 +2,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { ThreadPanel } from "./ThreadPanel";
 import { MessageRow } from "./MessageRow";
+import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
@@ -303,9 +304,33 @@ it("bounds enlarged emoji presentation on sent messages", () => {
         day: false,
         retry: undefined,
       }),
-    ).find((element) => element.type === "p");
-  expect(message("😀 🙏 👏")?.props["data-single-emoji"]).toBe(true);
-  expect(message("😀 🙏 👏 😄")?.props["data-single-emoji"]).toBe(true);
+    ).find((element) => element.type === MessageMarkdown);
+  expect(message("😀 🙏 👏")?.props.largeEmoji).toBe(true);
+  expect(message("😀 🙏 👏 😄")?.props.largeEmoji).toBe(true);
+});
+
+it("the actual message row rejects attachment URLs outside the shared safe-link policy", () => {
+  const tree = MessageRow({
+    row: {
+      ...row,
+      attachments: [
+        { url: "https://safe.test/a.png", video: false },
+        { url: "https://user:secret@unsafe.test/a.png", video: false },
+        { url: "http://unsafe.test/a.png", video: false },
+      ],
+    },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  });
+  const links = elements(tree).filter((element) => element.type === "a");
+  expect(links).toHaveLength(1);
+  expect(links[0]?.props).toMatchObject({
+    href: "https://safe.test/a.png",
+    rel: "noreferrer",
+  });
 });
 
 it("the actual message reply button opens that message and retains the trigger focus target", () => {

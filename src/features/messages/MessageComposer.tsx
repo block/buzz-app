@@ -1,3 +1,4 @@
+import { TypingIndicator } from "./TypingIndicator";
 import { ArrowUp, X } from "lucide-react";
 import {
   useEffect,
@@ -297,6 +298,11 @@ function Composer({
   if (!outbox?.supports(9))
     return (
       <footer className={styles.composer}>
+        <TypingIndicator
+          session={session}
+          channelId={channelId}
+          threadRootId={threadRootId}
+        />
         This relay connection supports reading only.
       </footer>
     );
@@ -311,6 +317,13 @@ function Composer({
         send();
       }}
     >
+      {!disabled && (
+        <TypingIndicator
+          session={session}
+          channelId={channelId}
+          threadRootId={threadRootId}
+        />
+      )}
       <label className="sr-only" htmlFor={inputId}>
         {label}
       </label>

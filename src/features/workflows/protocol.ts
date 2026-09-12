@@ -77,7 +77,7 @@ export function workflowYaml(text: string) {
     !record(value) ||
     typeof value.name !== "string" ||
     !value.name.trim() ||
-    typeof value.enabled !== "boolean" ||
+    (value.enabled !== undefined && typeof value.enabled !== "boolean") ||
     !record(value.trigger) ||
     typeof value.trigger.on !== "string" ||
     !Array.isArray(value.steps) ||
@@ -85,7 +85,7 @@ export function workflowYaml(text: string) {
     value.steps.length > 100
   )
     throw new Error(
-      "Workflow needs a name, explicit enabled state, trigger and 1–100 steps",
+      "Workflow needs a name, boolean enabled state if present, trigger and 1–100 steps",
     );
   const ids = new Set<string>();
   for (const step of value.steps) {
@@ -101,7 +101,8 @@ export function workflowYaml(text: string) {
   }
   return {
     webhook: value.trigger.on === "webhook",
-    enabled: value.enabled,
+    // Match legacy WorkflowDef: omission means enabled; do not rewrite YAML.
+    enabled: value.enabled !== false,
     name: value.name,
   };
 }

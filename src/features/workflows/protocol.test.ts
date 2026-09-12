@@ -74,13 +74,33 @@ it("YAML remains unchanged and malformed input/duplicate steps are rejected", ()
   expect(workflowYaml(yaml)).toMatchObject({ enabled: false });
   for (const text of [
     "[]",
-    yaml.replace("enabled: false", ""),
+    yaml.replace("enabled: false", "enabled: null"),
+    yaml.replace("enabled: false", 'enabled: "false"'),
+    yaml.replace("enabled: false", "enabled: 0"),
     yaml.replace("1_send", "my-step"),
     `${yaml}  - id: 1_send\n    action: delay\n    duration: 1s\n`,
     "x".repeat(24001),
     "name: [bad",
   ]) {
     expect(() => workflowYaml(text)).toThrow();
+  }
+});
+it("legacy omitted enabled and explicit toggles cross the real event boundary unchanged", () => {
+  for (const [line, enabled] of [
+    ["", true],
+    ["enabled: true\n", true],
+    ["enabled: false\n", false],
+  ] as const) {
+    const content = yaml.replace("enabled: false\n", line);
+    const event = { ...base, content };
+    expect(workflowYaml(content).enabled).toBe(enabled);
+    expect(
+      validateWorkflowEvent(event, owner, {
+        delete: false,
+        webhookSecrets: false,
+      }),
+    ).toEqual({ id, owner, channelId: id });
+    expect(event.content).toBe(content);
   }
 });
 it("run/approval rows require matching identities and preserve exact cursor precision", () => {

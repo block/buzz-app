@@ -104,3 +104,106 @@ it("a synchronous typing listener cannot reseed retained views after disposal", 
   expect(view.snapshot().events).toEqual([]);
   expect(owner.session.typing.snapshot()).toEqual([]);
 });
+
+for (const transition of ["cache", "dispose", "access", "reconnect"] as const) {
+  it(`fences the rest of a live callback batch after reentrant ${transition}`, async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_800_000_000_000);
+    const viewer = keypair(),
+      relay = keypair(),
+      agent = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
+    live.state({ status: "connected", routes: [] });
+    live.receive([
+      roster(relay, "a", [viewer.pubkey]),
+      roster(relay, "b", [viewer.pubkey]),
+    ]);
+    const pulse = signed(agent, {
+      kind: 20002,
+      content: "",
+      created_at: 1_800_000_000,
+      tags: [["h", "a"]],
+    });
+    live.receive([pulse]);
+    expect(owner.session.typing.snapshot()).toHaveLength(1);
+    let clearing: Promise<void> | undefined;
+    const listener = vi.fn(() => {
+      expect(owner.session.typing.snapshot()).toEqual([]);
+      if (transition === "cache") clearing = owner.clearCache();
+      else if (transition === "dispose") owner.dispose();
+      // Revoking another channel still invalidates the in-flight access epoch.
+      else if (transition === "access")
+        live.receive([roster(relay, "b", [], 1_800_000_001)]);
+      else {
+        live.state({ status: "retrying", routes: [] });
+        live.state({ status: "connected", routes: [] });
+      }
+    });
+    owner.session.typing.subscribe(listener);
+    // Supported LiveCallbacks batch boundary; WS/SSE currently deliver singletons.
+    live.receive([
+      signed(agent, {
+        kind: 9,
+        content: "fixture",
+        created_at: 1_800_000_000,
+        tags: [["h", "a"]],
+      }),
+      pulse,
+    ]);
+    await clearing;
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(owner.session.typing.snapshot()).toEqual([]);
+    owner.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+}
+
+it("refreshing a finite kind-20002 view neither retains nor activates typing", async () => {
+  const viewer = keypair(),
+    relay = keypair(),
+    agent = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let live!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  try {
+    live.state({ status: "connected", routes: [] });
+    live.receive([roster(relay, "a", [viewer.pubkey])]);
+    const filters = [{ kinds: [20002], "#h": ["a"], limit: 10 }];
+    const view = owner.session.observe(filters);
+    const pulse = signed(agent, {
+      kind: 20002,
+      content: "",
+      created_at: Math.floor(Date.now() / 1000),
+      tags: [["h", "a"]],
+    });
+    const refresh = view.refresh();
+    const read = wire.next();
+    expect(read.filters).toEqual(filters);
+    read.respond([pulse]);
+    await refresh;
+    expect(view.snapshot()).toMatchObject({ status: "ready", events: [] });
+    expect(owner.session.typing.snapshot()).toEqual([]);
+    // The same signed event is valid live, but still cannot enter finite views.
+    live.receive([pulse]);
+    expect(owner.session.typing.snapshot()).toHaveLength(1);
+    expect(view.snapshot().events).toEqual([]);
+    const later = owner.session.observe(filters);
+    expect(later.snapshot().events).toEqual([]);
+  } finally {
+    owner.dispose();
+  }
+});

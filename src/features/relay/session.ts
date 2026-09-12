@@ -978,14 +978,22 @@ export function createRelaySession(
         )
       )
         refreshRoster();
+      const epoch = accessEpoch;
+      const generation = liveGeneration;
       const visible = accept(events);
-      if (liveSnapshot.status === "connected")
+      // Completion subscribers can synchronously clear, revoke or retire this
+      // live delivery. Do not admit its remaining pulses into the new lifetime.
+      if (
+        !closed &&
+        epoch === accessEpoch &&
+        generation === liveGeneration &&
+        liveSnapshot.status === "connected"
+      )
         typing.accept(
           events.filter((event) => event.kind === 20002),
           true,
         );
-      if (closed || !candidates.size || !provenance?.channelId) return;
-      const epoch = accessEpoch;
+      if (closed || epoch !== accessEpoch || !candidates.size || !provenance?.channelId) return;
       const delivered = new Set<string>();
       const incoming: readonly IncomingMessage[] = Object.freeze(
         visible.flatMap((event) => {

@@ -238,6 +238,20 @@ route generations, no chat reconciliation, terminal retention and stale controls
 nonexecution, keyboard disclosures, agent selection, disable/re-enable and
 light/dark layouts at 1280 and 390 pixels in Chromium and WebKit. Live retry and
 plugin-launcher regression journeys also pass with the additional observer route.
-These use only ephemeral identities and synthetic upstream telemetry. Real-owner
-live use, packaged/native acceptance, channel-opening performance measurements,
-and the agreed full integration scan remain separate gates.
+These automated checks use only ephemeral identities and synthetic upstream
+telemetry. The owner reported a successful live activity try on 2026-09-12 before
+the mainline merge; this is feedback evidence, not an independently captured trace.
+
+The full `just scan` passed at `1183b2624485dc1e6a12e86cece22eaf7513591c`
+after merging main's Markdown and Terminal changes: 35 Node integration tests,
+1,054 Vitest tests, 16 plugin-manager Rust tests, 274 Chromium/WebKit browser
+checks (including measurements), 14 design-browser checks, 9 native Rust tests,
+formatting, types, builds and Clippy. Independent source review found no remaining
+merge-integration blocker. Channel-opening fixtures kept optional profiles held;
+warm click-to-visible samples were 16.8–19.2ms in Chromium and 50–67ms in WebKit,
+with no new head read, below the unchanged 100ms budget. These are local Apple
+Silicon fixture measurements, not a live-network SLA.
+
+Packaged/native activity without the development broker remains unsupported;
+attended native/package acceptance and cross-platform CI are separate from these
+local results.

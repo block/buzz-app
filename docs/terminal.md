@@ -1,0 +1,110 @@
+# Terminal plugin
+
+In a channel, click **Terminal** in the conversation header or press **Cmd+J**
+(macOS) / **Ctrl+J** (other platforms). The bottom drawer starts a login shell the
+first time it opens for that community/account/channel. **Hide** and the shortcut
+hide the drawer without stopping work; reopening reattaches the same emulator and
+shell. **End session** explicitly terminates it; **Restart** starts a fresh shell.
+An exited shell remains visible until ended/restarted and never respawns automatically.
+
+## Run locally
+
+From the agreed feature worktree, use `bin/just desktop`. Native commands require
+a rebuilt/restarted desktop process; Vite HMR alone cannot install the PTY bridge.
+Use the normal public `BUZZ_DEV_VIEWER` development setup from README for live
+channels. Do not copy private keys into `.env.local`. Coordinate startup if another
+Buzz development server already owns the port.
+
+Local PTYs are implemented for macOS/Linux. Windows native startup reports that it
+is unsupported in this slice. Browser-only Buzz hides the terminal launcher and
+does not register its shortcut; there is no HTTP shell endpoint. Automated macOS native tests and browser engines do
+not establish Linux or packaged desktop acceptance.
+
+## Appearance and welcome
+
+BuzzTerm follows the host's shared Light/Dark colors and text-size preference,
+including xterm's background, text, cursor and selection. Explicit ANSI colors retain
+xterm's distinct palette rather than collapsing CLI foreground/background pairs
+onto shared UI roles; xterm's minimum-contrast adjustment keeps ordinary text readable.
+Appearance updates the existing emulator in place, preserving shell and scrollback.
+Applications that emit true-color escape sequences still select their palette;
+xterm may adjust foreground lightness for contrast. The launcher and drawer use
+the shared design system: Base UI-backed buttons, Tabler icons, `PanelHeader`,
+named text roles and the system mono face. The drawer is a precise `data-buzz-ui`
+boundary inside the otherwise legacy channel screen, not a second rounded Panel.
+Xterm reads `bg-panel`, `text-primary` and the purple selection tint; its mono
+size, leading and tracking follow the host's type ramp without double scaling.
+The host still owns global styles, appearance and keyboard-only focus; no viewer
+preferences or second reset are imported. The original rainbow remains confined
+to the non-interactive welcome art, not terminal colors or ordinary controls.
+
+The original BuzzTerm wordmark, beveled frame and honeycomb geometry appears once
+per new shell, after its first output, for at most 3 seconds. Its rainbow lettering
+and honeycomb use brighter pastels in light mode and adjust with the host mode. It is a static,
+non-interactive overlay (also safe for reduced motion), never PTY input or
+scrollback. Typing/clicking dismisses it immediately; hide/reopen does not replay
+it. The artwork measures its own glyph grid and scales as a whole in shallow
+drawers, independently of xterm line spacing. Narrow panels fall back to a compact
+wordmark. Session actions use labeled shared icon buttons so short drawers retain
+terminal rows at enlarged text sizes.
+
+## Public shell context
+
+At **shell creation**, Buzz supplies:
+
+- `BUZZ_CHANNEL_ID`: exact channel UUID.
+- `BUZZ_CHANNEL`: safe display name, or the UUID if the name is unsuitable for a
+  shell environment (alphanumeric/space/`-_.`, 1–64 characters).
+- `BUZZ_NPUB`, `BUZZ_RELAY_URL`: public viewer and credential-free WebSocket URL.
+- `BUZZ_TERM_SESSION`, `BUZZ_TERM_VERSION`.
+- `BUZZ_THREAD_ID` when a thread is open; otherwise the variable is absent.
+
+Changing threads/channels never injects commands into an existing shell. Its toolbar
+retains the context it was created with; **Restart** captures the current displayed
+context. Different community/account/channel scopes do not reuse one another's shell.
+Navigation hides old work, while plugin disable/replacement and app shutdown terminate
+all sessions owned by that plugin lifetime.
+
+The native spawn clears inherited environment first and rebuilds a small allowlist,
+sets a standard system PATH, and runs the user's login shell so their startup files
+can add their tools. Buzz private keys, auth tags, arbitrary parent credentials and
+its Hermit build PATH are not inherited. This is **not a sandbox** against your shell
+startup files or commands you choose to execute, and it does not authenticate the
+Buzz CLI on your behalf.
+
+## Ownership and bounds
+
+Terminal UI/emulation and retained session controllers are plugin-owned. Native
+owner UUIDs fence late spawns after disposal; they are lifecycle identities, not an
+untrusted-plugin security boundary. All plugins remain trusted same-process code.
+
+The native registry caps 20 sessions and 32 owners. Reads/flushes process at most
+64 KiB per call; queued native input is capped at 1 MiB. The frontend bounds pending
+input to 1 MiB, serializes reads (including hidden sessions), waits for emulator
+parsing, and retains at most 5,000 scrollback lines. PTY dimensions are bounded at
+2–500 columns and 1–300 rows. Native `exited` requires both final-output EOF and
+child exit; final output is rendered before native cleanup.
+
+Unix cleanup targets the shell group and its current foreground job, drains during
+termination, escalates after a grace period, and reaps the leader. Explicitly detached
+processes and arbitrary background job-control groups are not a process sandbox;
+see native source for the exact termination boundary. Failed cleanup retains its
+handle for retry.
+
+## Verification and remaining acceptance
+
+Focused coverage lives in `src/bundled/terminal/sessions.test.ts`, the channel/panel
+composition tests, `src-tauri/src/terminal/tests.rs`, and the two
+`tests/browser/terminal*.spec.mjs` journeys. The separate renderer journey exercises
+real xterm input/Ctrl+C, resize, alternate-screen restoration, detach/reopen and
+app-chord release without starting a shell. The channel journey exercises actual
+browser launcher/shortcut absence, including plugin disable/re-enable. Desktop
+registration is covered by `src/bundled/terminal/index.test.ts`; the actual desktop
+header/dispatcher journey remains an attended acceptance check. Native tests exercise real PTYs,
+public-context/environment fencing, limits, final output and teardown.
+
+Before shipping, exercise the real desktop integration: open a channel terminal,
+inspect only public BUZZ variables, type a command, use Ctrl+C/full-screen tools,
+resize, hide/reopen, change channel/thread, restart/end, and disable Terminal in
+Settings. Broad CI, packaged desktop acceptance and other operating systems are
+separate from the **ready-to-try** development handoff.

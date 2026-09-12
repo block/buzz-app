@@ -221,6 +221,7 @@ function setup({
   }>;
   let section: Section;
   let channelId = "channel";
+  let revealMessageId: string | undefined;
   let key: string | null = null;
   const flush = () => {
     for (const [id, callback] of frames) {
@@ -245,6 +246,7 @@ function setup({
         historyLimited,
       },
       onOpenLink: () => false,
+      revealMessageId,
     });
     if (key !== null && key !== scoped.key) {
       for (const effect of hooks.effects) effect.cleanup?.();
@@ -283,6 +285,10 @@ function setup({
     render,
     unblock() {
       blocked = false;
+    },
+    reveal(id: string) {
+      revealMessageId = id;
+      render();
     },
     navigate(next: string) {
       channelId = next;
@@ -497,6 +503,76 @@ it("captures the mounted message at cleanup and restores that anchor after resiz
     bottom: false,
     anchor: { id: "last", y: 42 },
   });
+});
+it("resize-generated scroll retains the restored message when its paragraph no longer fits", () => {
+  const mounted = [{ id: "last", y: 42 }];
+  const h = setup({ mounted });
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  // The preferred row remains visible, but no longer wholly fits. A preceding
+  // clipped row would otherwise replace it during restoration-generated scroll.
+  h.element.clientHeight = 100;
+  mounted.unshift({ id: "first", y: -20 });
+  h.scroll(false);
+  h.handle.scrollToIndex.mockClear();
+  h.element.clientWidth = 1124;
+  h.resize();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "start",
+    offset: -42,
+  });
+  h.unmount();
+  expect(h.saved().anchor).toEqual({ id: "last", y: 42 });
+});
+it("a new gesture can replace the restored anchor", () => {
+  const mounted = [{ id: "last", y: 42 }];
+  const h = setup({ mounted });
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  mounted.unshift({ id: "first", y: 0 });
+  h.scroll();
+  h.unmount();
+  expect(h.saved().anchor).toEqual({ id: "first", y: 0 });
+});
+it("local-send navigation releases the restored anchor", () => {
+  const mounted = [{ id: "last", y: 42 }];
+  const h = setup({ mounted });
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  mounted.unshift({ id: "first", y: 0 });
+  h.reveal("first");
+  h.scroll(false);
+  h.unmount();
+  expect(h.saved().anchor).toEqual({ id: "first", y: 0 });
+});
+it.each([-200, 800])(
+  "a restored row outside the viewport (%s) is not preferred",
+  (y) => {
+    const mounted = [{ id: "last", y: 42 }];
+    const h = setup({ mounted });
+    h.scroll();
+    h.element.clientWidth = 650;
+    h.resize();
+    mounted.splice(0, 1, { id: "last", y });
+    mounted.push({ id: "first", y: 0 });
+    h.scroll(false);
+    h.unmount();
+    expect(h.saved().anchor).toEqual({ id: "first", y: 0 });
+  },
+);
+it("an unmounted restored anchor falls back to a visible message", () => {
+  const mounted = [{ id: "last", y: 42 }];
+  const h = setup({ mounted });
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.resize();
+  mounted.splice(0, 1, { id: "first", y: 0 });
+  h.scroll(false);
+  h.unmount();
+  expect(h.saved().anchor).toEqual({ id: "first", y: 0 });
 });
 it("a gesture after resize cancels queued restoration instead of fighting the reader", () => {
   const h = setup({ mounted: [{ id: "last", y: 42 }] });

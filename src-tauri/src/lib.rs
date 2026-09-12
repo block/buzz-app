@@ -1,3 +1,10 @@
+mod terminal;
+use tauri::Manager as _;
+use terminal::{
+    terminal_close, terminal_close_owner, terminal_create_owner, terminal_read, terminal_resize,
+    terminal_spawn, terminal_write, Terminals,
+};
+
 use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
@@ -150,8 +157,16 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Imports::default())
+        .manage(Terminals::default())
         .manage(PluginManager(Manager::from_env()))
         .invoke_handler(tauri::generate_handler![
+            terminal_create_owner,
+            terminal_spawn,
+            terminal_read,
+            terminal_write,
+            terminal_resize,
+            terminal_close,
+            terminal_close_owner,
             plugin_import_folder,
             plugin_import_git,
             plugin_import_install,
@@ -161,6 +176,13 @@ pub fn run() {
             plugin_module,
             plugin_recover
         ])
-        .run(tauri::generate_context!())
-        .expect("failed to run Buzz Foundation");
+        .build(tauri::generate_context!())
+        .expect("failed to build Buzz Foundation")
+        .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                if let Err(error) = app.state::<Terminals>().shutdown() {
+                    eprintln!("Terminal shutdown failed: {error}");
+                }
+            }
+        });
 }

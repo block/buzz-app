@@ -20,19 +20,34 @@ type ReadingPosition = {
   bottom: boolean;
   anchor?: { id: string; y: number };
 };
-function positionAt(element: HTMLElement): ReadingPosition {
+function positionAt(
+  element: HTMLElement,
+  restoredAnchor?: string,
+): ReadingPosition {
   const top = element.getBoundingClientRect().top;
   const mounted = Array.from(
     element.querySelectorAll<HTMLElement>("[data-message-id]"),
   );
-  // Prefer a whole visible message over a partly clipped row whose wrapping may change.
+  // A resize restoration keeps its chosen message even if wrapping makes its
+  // paragraph taller than the viewport. Only a new gesture chooses a new anchor.
+  const restored = mounted.find((row) => {
+    const rect = row.getBoundingClientRect();
+    return (
+      row.dataset.messageId === restoredAnchor &&
+      rect.bottom > top &&
+      rect.top < top + element.clientHeight
+    );
+  });
+  // Otherwise prefer a whole visible message over a partly clipped row.
   const row =
+    restored ??
     mounted.find((row) => {
       const text = row.querySelector("p")?.getBoundingClientRect();
       return (
         text && text.top >= top && text.bottom <= top + element.clientHeight
       );
-    }) ?? mounted.find((row) => row.getBoundingClientRect().bottom > top);
+    }) ??
+    mounted.find((row) => row.getBoundingClientRect().bottom > top);
   return {
     offset: element.scrollTop,
     bottom:
@@ -85,6 +100,7 @@ function Timeline({
     readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
   );
   const savedPosition = useRef(initialPosition);
+  const restoredAnchor = useRef<string | undefined>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
@@ -190,12 +206,13 @@ function Timeline({
                   row.membershipRows?.some((member) => member.id === anchor.id),
               )
             : -1;
-          if (anchor && index >= 0)
+          if (anchor && index >= 0) {
+            restoredAnchor.current = anchor.id;
             handle.current.scrollToIndex(index, {
               align: "start",
               offset: -anchor.y,
             });
-          else handle.current.scrollTo(savedPosition.current.offset);
+          } else handle.current.scrollTo(savedPosition.current.offset);
           follow.current = false;
         } else {
           handle.current.scrollToIndex(rows.length - 1, { align: "end" });
@@ -239,6 +256,7 @@ function Timeline({
     const frame = requestAnimationFrame(() => {
       if (!handle.current) return;
       follow.current = true;
+      restoredAnchor.current = undefined;
       userScrolled.current = false;
       handle.current.scrollToIndex(index, { align: "end" });
       revealed.current = revealMessageId;
@@ -283,6 +301,7 @@ function Timeline({
       loadNearTop(scroller.current, true);
   }, [loadNearTop]);
   const gesture = () => {
+    restoredAnchor.current = undefined;
     intent.current++;
     userScrolled.current = true;
     // At a restored top edge, input cannot move the DOM and emits no scroll.
@@ -310,7 +329,7 @@ function Timeline({
           element.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
-          savedPosition.current = positionAt(element);
+          savedPosition.current = positionAt(element, restoredAnchor.current);
           follow.current = savedPosition.current.bottom;
         }
         loadNearTop(element);

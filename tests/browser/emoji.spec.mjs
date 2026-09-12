@@ -115,9 +115,14 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const toneMenu = page.locator("em-emoji-picker #root > .menu");
     await expect(toneMenu).toBeVisible();
     await expect(toneMenu).toHaveCSS("z-index", "100");
+    // Mart's opening transform temporarily lifts the menu above its final edge.
+    // Measure the settled menu: its 42px bottom offset meets the 42px nav flush,
+    // which is non-overlapping but does not leave a strictly positive gap.
+    await expect(toneMenu).toHaveCSS("transform", "none");
+    await expect(toneMenu).toHaveCSS("opacity", "1");
     const toneMenuBox = await toneMenu.boundingBox();
     const categoryNavigationBox = await categoryNavigation.boundingBox();
-    expect(toneMenuBox.y + toneMenuBox.height).toBeLessThan(
+    expect(toneMenuBox.y + toneMenuBox.height).toBeLessThanOrEqual(
       categoryNavigationBox.y,
     );
     expect(
@@ -266,6 +271,8 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
           ? "rgb(66, 66, 66) 0px 0px 0px 2px"
           : "rgb(206, 206, 206) 0px 0px 0px 2px",
       );
+      await expect(search).toHaveCSS("font-family", /^Inter, /);
+      await expect(search).not.toHaveCSS("font-family", /Inter Variable/);
       await expect(search).toHaveValue("party");
       await expect(search).toBeFocused();
       expect(await searchNode.evaluate((node) => node.isConnected)).toBe(true);

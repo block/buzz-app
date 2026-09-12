@@ -2,7 +2,12 @@
 export type { PluginManifest, PluginModule } from "./api";
 export type { Context } from "@deepseek-ai/cordis";
 export type { Page, Pages } from "../features/pages/service";
-export type { Panel, Panels } from "../features/panels/service";
+export type {
+  Panel,
+  Panels,
+  ChannelPanelContext,
+  ChannelLauncherProps,
+} from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
 export type {
   ComposerObservation,

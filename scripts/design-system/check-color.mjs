@@ -138,7 +138,7 @@ const PRIVATE_TOKEN = /var\(\s*--glass-\d+\s*\)/g;
 const PRIVATE_TOKEN_ALLOWED = new Map([
   ["styles/tokens.css", "Defines the layers it references."],
   [
-    "styles/globals.css",
+    "styles/materials.css",
     "The glass materials live here; pairing each fill with its blur and rim is their job.",
   ],
   [

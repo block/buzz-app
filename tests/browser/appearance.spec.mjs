@@ -162,16 +162,23 @@ test("saved dark document paints before the application module is allowed to exe
   page,
   app,
 }) => {
-  await page.goto(app.origin);
-  await page.evaluate((key) => localStorage.setItem(key, "dark"), key);
-  let release;
-  const held = new Promise((resolve) => {
-    release = resolve;
+  const relayRequests = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/relay/"))
+      relayRequests.push(request.url());
   });
-  await page.route(/\/assets\/.*\.js$/, async (route) => {
-    await held;
-    await route.continue();
-  });
+  // Seed only persisted input before the first document. Booting a live app
+  // just to save this preference races its pending relay reads against goto.
+  await page.addInitScript((key) => localStorage.setItem(key, "dark"), key);
+  // Completing a no-op module keeps React from executing without leaving a
+  // pending script request. WebKit stalls animation frames when that pending
+  // request coexists with @font-face rules, even after styles are computed.
+  await page.route(/\/assets\/.*\.js$/, (route) =>
+    route.fulfill({
+      contentType: "application/javascript",
+      body: "/* Application execution deliberately withheld. */",
+    }),
+  );
   try {
     await page.goto(app.origin, { waitUntil: "commit" });
     await expect(page.locator("html")).toHaveAttribute(
@@ -195,9 +202,86 @@ test("saved dark document paints before the application module is allowed to exe
       "background-color",
       "rgb(17, 24, 29)",
     );
+    // Pre-paint coverage must never start (then tear down) a relay session.
+    expect(relayRequests).toEqual([]);
   } finally {
-    release();
     await page.unrouteAll({ behavior: "wait" });
   }
+  await page.reload();
+  await expect(button(page, "Your profile")).toBeVisible();
   await expectMode(page, "dark");
+});
+
+test("production startup owns keyboard modality", async ({
+  page,
+  app,
+  browserName,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Your profile").click();
+  await expect(page.locator("html")).not.toHaveAttribute(
+    "data-keyboard-navigation",
+  );
+  await page.keyboard.press(
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab",
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-keyboard-navigation",
+    "",
+  );
+  await page.mouse.click(2, 2);
+  await expect(page.locator("html")).not.toHaveAttribute(
+    "data-keyboard-navigation",
+  );
+});
+
+test("compiled host preserves compatibility utility meanings", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  // Diagnostic nodes use the production stylesheet, not fixture-generated CSS.
+  // Opposing inherited color prevents a missing text utility from passing.
+  await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.id = "style-contract";
+    probe.innerHTML = `<code id="old-code">Old code</code><span id="old-mono" class="font-mono">Old mono</span><div data-buzz-ui><code id="new-mono" class="font-mono">New mono</code><div class="text-secondary"><span id="primary-text" class="text-primary">Text</span></div><div id="primary-border" class="border border-primary">Border</div></div><button id="old-primary" class="bg-primary text-on-primary rounded-xl hover:bg-primary-hover">Old primary</button>`;
+    document.body.append(probe);
+  });
+  for (const mode of ["Light", "Dark"]) {
+    await settings(page);
+    await page.getByRole("radio", { name: mode, exact: true }).check();
+    await expect(page.locator("#primary-text")).toHaveCSS(
+      "color",
+      mode === "Light" ? "rgb(10, 10, 10)" : "rgb(245, 245, 245)",
+    );
+    await expect(page.locator("#primary-border")).toHaveCSS(
+      "border-top-color",
+      mode === "Light" ? "rgb(232, 232, 232)" : "rgb(51, 51, 51)",
+    );
+    await expect(page.locator("#old-primary")).toHaveCSS(
+      "background-color",
+      mode === "Light" ? "rgb(49, 63, 67)" : "rgb(214, 227, 235)",
+    );
+    await expect(page.locator("#old-primary")).toHaveCSS(
+      "border-radius",
+      "12px",
+    );
+    for (const id of ["old-code", "old-mono"]) {
+      await expect(page.locator(`#${id}`)).toHaveCSS(
+        "font-family",
+        /ui-monospace/,
+      );
+      await expect(page.locator(`#${id}`)).not.toHaveCSS(
+        "font-family",
+        /JetBrains/,
+      );
+    }
+    await expect(page.locator("#new-mono")).toHaveCSS(
+      "font-family",
+      /JetBrains Mono/,
+    );
+  }
 });

@@ -120,12 +120,12 @@ test("viewer does not replace host styles or appearance ownership", async ({
       ),
       mode: document.documentElement.getAttribute("data-color-mode"),
       background: getComputedStyle(document.body).backgroundColor,
-      stagedToken: getComputedStyle(document.documentElement).getPropertyValue(
+      systemToken: getComputedStyle(document.documentElement).getPropertyValue(
         "--purple-9",
       ),
     }));
   const before = await readHost();
-  expect(before.stagedToken).toBe("");
+  expect(before.systemToken.trim()).toBe("#8e4ec6");
   await page.goto("http://localhost:1445");
   await expect(
     page.getByRole("heading", { name: "Make yourself at home." }),

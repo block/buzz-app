@@ -1,3 +1,4 @@
+import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
@@ -289,11 +290,33 @@ function ChannelWorkspace({
   useEffect(() => {
     if (opened && !panel) open(undefined);
   }, [opened, panel]);
-  const close = useCallback(() => open(undefined), []);
+  const panelTrigger = useRef<HTMLElement | null>(null);
+  const close = useCallback(() => {
+    open(undefined);
+    if (panelTrigger.current?.isConnected)
+      panelTrigger.current.focus({ preventScroll: true });
+    else if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
+  }, []);
+  // Availability follows active contributions; dispatch still re-resolves at click time.
+  const canOpenLink = useCallback(
+    (target: string) =>
+      available.some((candidate) => {
+        try {
+          return candidate.matches(target);
+        } catch {
+          return false;
+        }
+      }),
+    [available],
+  );
   const openLink = useCallback(
     (url: string) => {
       const candidate = panels.resolve(url);
       if (current && candidate) {
+        panelTrigger.current =
+          document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
         setThread(undefined);
         open({
           channelId: current.id,
@@ -307,6 +330,24 @@ function ChannelWorkspace({
     },
     [panels, current],
   );
+  const drawerContext = useMemo(
+    () =>
+      current && viewer
+        ? {
+            scope,
+            viewer,
+            channelId: current.id,
+            channelName: current.name,
+            relayUrl: scope
+              .slice(0, -(viewer.length + 1))
+              .replace(/^https:/, "wss:")
+              .replace(/^http:/, "ws:"),
+            ...(showingThread && { threadId: showingThread.messageId }),
+          }
+        : undefined,
+    [scope, viewer, current, showingThread],
+  );
+  const drawer = useChannelPanels(panels, drawerContext);
   const visible = useMemo(
     () =>
       channels.filter((channel) =>
@@ -413,6 +454,7 @@ function ChannelWorkspace({
             )}
             <strong>{current?.name ?? "Channels"}</strong>
           </div>
+          {drawer.launchers}
           <details className={styles.diagnostics}>
             <summary
               aria-label="Conversation options"
@@ -486,6 +528,7 @@ function ChannelWorkspace({
             channelId={current.id}
             navigation={navigation}
             onOpenLink={openLink}
+            canOpenLink={canOpenLink}
             onOpenThread={openThread}
             onOpenMediaReview={openMediaReview}
             revealMessageId={
@@ -506,6 +549,7 @@ function ChannelWorkspace({
             onSend={(id) => setSent({ channelId: current.id, id })}
           />
         )}
+        {drawer.content}
       </article>
       {showingMediaReview && !showingThread && (
         <MediaReviewViewer
@@ -535,6 +579,7 @@ function ChannelWorkspace({
               close={closeThread}
               onOpenLink={openLink}
               onOpenMediaReview={openMediaReview}
+              canOpenLink={canOpenLink}
             />
           )}
 
@@ -571,6 +616,7 @@ function ChannelBody({
   queries,
   channelId,
   onOpenLink,
+  canOpenLink,
   revealMessageId,
   onOpenThread,
   onOpenMediaReview,
@@ -582,6 +628,7 @@ function ChannelBody({
   channelId: string;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread(messageId: string): void;
   onOpenMediaReview(
@@ -629,6 +676,7 @@ function ChannelBody({
       queries={queries}
       window={window}
       onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
       onOpenThread={onOpenThread}
       onOpenMediaReview={onOpenMediaReview}
       revealMessageId={revealMessageId}

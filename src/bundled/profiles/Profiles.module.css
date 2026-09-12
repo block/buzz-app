@@ -1,0 +1,57 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1.5rem;
+  padding: 1.25rem;
+  min-width: 0;
+  background: var(--bg-panel);
+}
+.identity {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  min-width: 0;
+}
+.identity h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.root p {
+  margin: 0;
+}
+.about {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.publicKey {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+.keyHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+.keyHeading h3 {
+  margin: 0;
+  color: var(--text-secondary);
+}
+.publicKey code {
+  display: block;
+  overflow-wrap: anywhere;
+  user-select: text;
+  padding: 0.75rem;
+  border-radius: var(--radius-control);
+  background: var(--neutral-2);
+}
+.feedback {
+  color: var(--text-secondary);
+}
+.feedback:empty {
+  display: none;
+}

@@ -2,6 +2,8 @@ import { beforeEach, expect, it, vi } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
 import { MessageRow } from "./MessageRow";
+import { MessageMarkdown } from "./MessageMarkdown";
+import { MediaAttachment } from "./MediaAttachment";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
@@ -304,9 +306,57 @@ it("bounds enlarged emoji presentation on sent messages", () => {
         day: false,
         retry: undefined,
       }),
-    ).find((element) => element.type === "p");
-  expect(message("😀 🙏 👏")?.props["data-single-emoji"]).toBe(true);
-  expect(message("😀 🙏 👏 😄")?.props["data-single-emoji"]).toBeUndefined();
+    ).find((element) => element.type === MessageMarkdown);
+  expect(message("😀 🙏 👏")?.props.largeEmoji).toBe(true);
+  expect(message("😀 🙏 👏 😄")?.props.largeEmoji).toBe(false);
+});
+
+it("the actual message row rejects attachment URLs outside the shared safe-link policy", () => {
+  const tree = MessageRow({
+    row: {
+      ...row,
+      attachments: [
+        { url: "https://safe.test/a.png", video: false },
+        { url: "https://user:secret@unsafe.test/a.png", video: false },
+        { url: "http://unsafe.test/a.png", video: false },
+      ],
+    },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  });
+  const attachments = elements(tree).filter(
+    (element) => element.type === MediaAttachment,
+  );
+  expect(attachments).toHaveLength(1);
+  expect(attachments[0]?.props.attachment).toEqual({
+    url: "https://safe.test/a.png",
+    video: false,
+  });
+});
+
+it("seeks the media timecode while passing the stripped body to Markdown", () => {
+  const seek = vi.fn();
+  const tree = MessageRow({
+    row: { ...row, content: "⏱ 0:42 — **Change** the title" },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    onMediaTime: seek,
+    day: false,
+    retry: undefined,
+  });
+  (button(tree, "0:42").props.onClick as () => void)();
+  expect(seek).toHaveBeenCalledExactlyOnceWith(42);
+  const markdown = elements(tree).find(
+    (element) => element.type === MessageMarkdown,
+  );
+  expect(markdown?.props.row).toEqual({
+    ...row,
+    content: "**Change** the title",
+  });
 });
 
 it("preserves a media timecode as compatible text when no player can seek", () => {

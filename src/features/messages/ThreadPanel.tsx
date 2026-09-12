@@ -35,6 +35,7 @@ export type ThreadPanelProps = {
     attachment: ChannelMessage["attachments"][number],
     seconds: number,
   ): void;
+  canOpenLink?: ((target: string) => boolean) | undefined;
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
@@ -61,6 +62,7 @@ function OwnedThreadPanel({
   close,
   onOpenLink,
   onOpenMediaReview,
+  canOpenLink,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -125,6 +127,7 @@ function OwnedThreadPanel({
           view={view}
           onOpenLink={onOpenLink}
           onOpenMediaReview={onOpenMediaReview}
+          canOpenLink={canOpenLink}
         />
       ) : (
         <p className={styles.empty} role="status">
@@ -144,6 +147,7 @@ function ThreadMessages({
   view,
   onOpenLink,
   onOpenMediaReview,
+  canOpenLink,
 }: {
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
@@ -154,6 +158,7 @@ function ThreadMessages({
   view: ThreadView;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
+  canOpenLink?: ((target: string) => boolean) | undefined;
 }) {
   const snapshot = useSyncExternalStore(
     view.subscribe,
@@ -165,7 +170,9 @@ function ThreadMessages({
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
-  const authors = [...new Set(rows.map((row) => row.authorId))]
+  const authors = [
+    ...new Set(rows.flatMap((row) => [row.authorId, ...row.mentions])),
+  ]
     .sort()
     .join(":");
   useEffect(() => {
@@ -251,8 +258,10 @@ function ThreadMessages({
               extensions={extensions}
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}
+              participantProfiles={profiles}
               media={session.media}
               onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
               day={false}
               retry={session.messages.retry}
               mediaMode="thread"
@@ -296,8 +305,10 @@ function ThreadMessages({
                 extensions={extensions}
                 row={row}
                 profile={profiles.get(row.authorId)}
+                participantProfiles={profiles}
                 media={session.media}
                 onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
                 day={false}
                 retry={session.messages.retry}
                 {...(videoAttachment

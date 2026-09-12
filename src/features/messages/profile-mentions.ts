@@ -1,0 +1,115 @@
+import type { ChannelMessage, Profile } from "../relay/contracts";
+import { profileTarget } from "../profiles/target";
+
+type Part = { text: string; target?: string | undefined };
+/** Display only: signed recipients bound by an unedited body's exact known names.
+ * This does not infer notification intent or resolve a name against a directory. */
+export function profileMentionParts(
+  row: ChannelMessage,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+): Part[] {
+  const text = row.content;
+  if (
+    row.edited ||
+    row.attachmentContentRemoved ||
+    !profiles ||
+    !row.mentions.length
+  )
+    return [{ text }];
+  const names = new Map<string, Set<string>>();
+  for (const id of new Set(row.mentions)) {
+    const name = profiles.get(id)?.name;
+    const target = profileTarget(id);
+    if (!name || !target || /[\r\n]/.test(name)) continue;
+    const keys = names.get(name) ?? new Set<string>();
+    keys.add(target);
+    names.set(name, keys);
+  }
+  // Ambiguous long names must still consume their span, never fall back to a prefix.
+  const candidates = [...names].sort(([a], [b]) => b.length - a.length);
+  const parts: Part[] = [];
+  let plain = 0;
+  for (let i = 0; i < text.length; ) {
+    const protectedEnd = protectedTextEnd(text, i);
+    if (protectedEnd > i) {
+      i = protectedEnd;
+      continue;
+    }
+    if (
+      text[i] !== "@" ||
+      (i > 0 && /[\p{L}\p{N}_@/\\]/u.test(text[i - 1] ?? ""))
+    ) {
+      i++;
+      continue;
+    }
+    const candidate = candidates.find(
+      ([name]) =>
+        text.startsWith(name, i + 1) &&
+        !/[\p{L}\p{N}_]/u.test(text[i + 1 + name.length] ?? ""),
+    );
+    if (!candidate) {
+      i++;
+      continue;
+    }
+    const [name, keys] = candidate;
+    const end = i + 1 + name.length;
+    // Legacy namesake qualifiers carry a different exact identity. Do not let a
+    // known shorter name claim their prefix; qualified rendering is deferred.
+    const qualifier = /^ \([a-f0-9]{64}\)/i.exec(text.slice(end))?.[0];
+    if (qualifier) {
+      i = end + qualifier.length;
+      continue;
+    }
+    if (keys.size === 1) {
+      if (i > plain) parts.push({ text: text.slice(plain, i) });
+      parts.push({ text: text.slice(i, end), target: [...keys][0] });
+      plain = end;
+    }
+    i = end;
+  }
+  if (plain < text.length) parts.push({ text: text.slice(plain) });
+  return parts.length ? parts : [{ text }];
+}
+
+// Evaluate exclusions on the full body BEFORE splitting link/emoji rendering.
+// Deliberately conservative for incomplete code/link syntax; not a Markdown parser.
+function protectedTextEnd(text: string, start: number): number {
+  const char = text[start];
+  const rest = text.slice(start);
+  if (start === 0 || text[start - 1] === "\n") {
+    const lineEnd = text.indexOf("\n", start);
+    // A tab reaches the fourth column too. Mask the whole line even when the
+    // surrounding syntax would make its indentation ambiguous in Markdown.
+    if (/^(?: {4}| {0,3}\t)/.test(rest))
+      return lineEnd < 0 ? text.length : lineEnd + 1;
+    const fence = /^ {0,3}(`{3,}|~{3,})/.exec(rest)?.[1];
+    if (fence) {
+      if (lineEnd < 0) return text.length;
+      // Fences close only on a delimiter-only line, with the same character
+      // and at least the opening length. Inline delimiter strings are code.
+      const closing = new RegExp(
+        `^ {0,3}${fence[0]}{${fence.length},}[\\t ]*\\r?$`,
+        "gm",
+      );
+      closing.lastIndex = lineEnd + 1;
+      const match = closing.exec(text);
+      return match ? match.index + match[0].length : text.length;
+    }
+  }
+  const boundary = start === 0 || /[\s<([]/.test(text[start - 1] ?? "");
+  if (char !== "`" && char !== "~" && char !== "[" && char !== "!" && !boundary)
+    return start;
+  const span = /^(?:`+|~{3,})/.exec(rest)?.[0];
+  if (span) {
+    const end = text.indexOf(span, start + span.length);
+    return end < 0 ? text.length : end + span.length;
+  }
+  if (rest.startsWith("[") || rest.startsWith("![")) {
+    const link = /^!?\[[^\]\n]*\](?:\([^\n]*?\)|\[[^\]\n]*\])/.exec(rest)?.[0];
+    if (link) return start + link.length;
+  }
+  const url = /^(?:[a-z][a-z\d+.-]*:\/\/|mailto:|nostr:)[^\s<>`]+/i.exec(
+    rest,
+  )?.[0];
+  return url ? start + url.length : start;
+}

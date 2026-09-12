@@ -15,7 +15,11 @@ export type ChannelSummary = Readonly<{
   /** Other DM members from the authorized roster; empty for a self-DM. */
   participants?: readonly string[];
 }>;
-export type Profile = Readonly<{ name: string; picture?: string }>;
+export type Profile = Readonly<{
+  name: string;
+  picture?: string;
+  about?: string;
+}>;
 export type Attachment = Readonly<{
   url: string;
   video: boolean;
@@ -33,6 +37,10 @@ export type ChannelMessage = Readonly<{
   /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
   createdAt: number;
   content: string;
+  /** Current body came from a replacement edit; original recipients do not bind its prose. */
+  edited?: true;
+  /** Attachment removal changed the signed body; new text adjacency cannot bind identities. */
+  attachmentContentRemoved?: true;
   /** Pubkeys named by signed `p` tags. Identity never comes from prose. */
   mentions: readonly string[];
   attachments: readonly Attachment[];

@@ -12,6 +12,14 @@ The panel reads GitHub's public API on demand. Private or unavailable objects an
 API limits show an explanation with a direct GitHub link. File and branch links
 continue to open normally. No GitHub account connection is configured yet.
 
+On desktop, an ordinary click on an unhandled HTTP(S) link with
+`target="_blank"` uses the native Tauri opener to launch the default browser,
+including attachments and **Open on GitHub**. A plugin that handles the click prevents that fallback; disabling
+GitHub restores it. The main-window capability allows only HTTP(S) URLs, not
+arbitrary file paths or application commands. Web keeps ordinary browser link
+behavior. Adding the native opener requires rebuilding/restarting desktop;
+frontend hot reload alone is not enough.
+
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
 Disabling Channels removes its page while the app-owned data survives.
@@ -167,10 +175,15 @@ measurements](browser-testing.md). Reading intent includes a message anchor for
 cold/oversized geometry; legacy positions or anchors outside retained history fall
 back to an offset without a same-message guarantee.
 
-Channels supports basic text sending with a shared durable outbox and bounded history.
-Authenticated live traffic reconciles through that same session. Channel creation
-is not implemented; basic text thread composition is supported. Reply counts open a bounded thread
-view; attachments are links. Routine freshness labels are not shown; Conversation options → Diagnostics
+Channels supports plain-text Markdown authoring with a shared durable outbox and bounded history.
+Channel and thread messages render CommonMark plus GFM headings, emphasis, lists, quotes,
+tables, task lists, strikethrough and code, while preserving chat-style single line breaks.
+Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
+are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji
+remain event-local and are not substituted inside links or code. Authenticated live traffic
+reconciles through the same session. Channel creation and composer preview/toolbars are not
+implemented. Reply counts open a bounded thread view; attachments are links. Routine freshness
+labels are not shown; Conversation options → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
 GitHub actions remain on GitHub. A saved-groups/stars failure keeps its specific

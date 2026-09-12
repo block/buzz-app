@@ -8,7 +8,11 @@ import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
 
 import { createPresenceLive } from "./presence-live.ts";
-import type { PresenceCapability, PresenceState } from "./presence-contract.ts";
+import {
+  PRESENCE_WORK_INTERVAL_MS,
+  type PresenceCapability,
+  type PresenceState,
+} from "./presence-contract.ts";
 
 export const LIVE_CHANNEL_CAPACITY = 1020; // Two globals + two presence slots; observer subtracts one more when enabled.
 export const LIVE_REPLAY_LIMIT = 500;
@@ -22,16 +26,41 @@ export function createLiveAdmission() {
   let cooldown = 0;
   let nextPresence = 0,
     nextPublish = 0;
+  let publishing = false;
   return {
+    idle: () =>
+      !publishing &&
+      performance.now() >= Math.max(next, nextPresence, nextPublish, cooldown),
+    /** Pins the host principal across signing, dispatch and receipt, even after cancellation. */
+    acquirePublication() {
+      if (publishing) throw new Error("Presence publication capacity reached");
+      publishing = true;
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        publishing = false;
+      };
+    },
     delay: () =>
       Math.max(0, next - performance.now(), cooldown - performance.now()),
-    presenceDelay: () => Math.max(0, nextPresence - performance.now()),
-    publishDelay: () => Math.max(0, nextPublish - performance.now()),
+    presenceDelay: () =>
+      Math.max(
+        0,
+        nextPresence - performance.now(),
+        cooldown - performance.now(),
+      ),
+    publishDelay: () =>
+      Math.max(
+        0,
+        nextPublish - performance.now(),
+        cooldown - performance.now(),
+      ),
     takePresence() {
       nextPresence = performance.now() + 1000;
     },
     takePublish() {
-      nextPublish = performance.now() + 1000;
+      nextPublish = performance.now() + PRESENCE_WORK_INTERVAL_MS;
     },
     take() {
       next = performance.now() + REQUEST_INTERVAL_MS;
@@ -277,7 +306,6 @@ export function subscribeRelayTraffic(
         (!route.channelId || priority.includes(route.channelId)),
     );
     presence.dispatch(foreground || active >= SETUP_CONCURRENCY);
-    if (presence.pending()) active++;
     const rank = (route: Route) =>
       !route.channelId
         ? -2

@@ -1,3 +1,4 @@
+import { isPresenceSnapshot } from "./presence-contract";
 import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
 import {
   parseReadSnapshot,
@@ -12,6 +13,7 @@ import {
   admittedApiRequest,
   ApiPaused,
   ApiNotSent,
+  type ApiPriority,
   readApiFailure,
 } from "./http-admission";
 import { yieldToHost } from "./yield";
@@ -428,31 +430,43 @@ export async function connectSignedTransport(
       },
     },
     async query(filters, signal, requestId = "read", priority = "foreground") {
-      const result = await signedPost(
-        signer,
-        `${httpOrigin}/query`,
-        filters,
-        signal,
-        profiling,
-        requestId,
-        principal().api,
-        priority,
-      );
-      if (!result.ok) {
-        const failure = await readApiFailure(result);
-        throw new ReadError(
-          result.status === 401 || result.status === 403
-            ? "denied"
-            : "unavailable",
-          failure.error,
-          result.status,
-          failure.retryAfterMs,
+      const lane = principal().api;
+      const purpose = isPresenceSnapshot(filters)
+        ? "presence"
+        : priority === "background"
+          ? "background"
+          : "foreground";
+      const read = async () => {
+        const result = await signedPost(
+          signer,
+          `${httpOrigin}/query`,
+          filters,
+          signal,
+          profiling,
+          requestId,
+          lane,
+          purpose,
         );
-      }
-      recordServerTiming(result, profiling, requestId);
-      return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), signal),
-      );
+        if (!result.ok) {
+          const failure = await readApiFailure(result);
+          throw new ReadError(
+            result.status === 401 || result.status === 403
+              ? "denied"
+              : "unavailable",
+            failure.error,
+            result.status,
+            failure.retryAfterMs,
+          );
+        }
+        recordServerTiming(result, profiling, requestId);
+        return profiling.measureAsync("read.verify", requestId, async () => {
+          const value = await result.json();
+          signal?.throwIfAborted();
+          return parseEvents(value, signal);
+        });
+      };
+      // Optional ownership spans unabortable auth, fetch body and verification.
+      return purpose === "presence" ? lane.prepare(read, purpose) : read();
     },
   };
 }
@@ -465,10 +479,10 @@ async function signedPost(
   profiling: RelayProfiler,
   id: string,
   admission: Parameters<typeof admittedApiRequest>[0],
-  priority: "foreground" | "background" = "foreground",
+  priority: ApiPriority = "foreground",
 ) {
   signal?.throwIfAborted();
-  return admission.prepare(async () => {
+  const request = async () => {
     const body = JSON.stringify(value);
     const payload = hex(
       await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
@@ -519,7 +533,9 @@ async function signedPost(
     } finally {
       queued();
     }
-  });
+  };
+  // Presence query retains preparation through parsing in its outer owner.
+  return priority === "presence" ? request() : admission.prepare(request);
 }
 /** A transport failure is an unknown outcome; only a definitive rejection is a failed write. */
 async function acceptPublish(response: Response, id: string) {

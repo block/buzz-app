@@ -96,8 +96,8 @@ async function harness(
     },
   };
 }
-async function until(check) {
-  for (let i = 0; i < 200; i++) {
+async function until(check, timeoutMs = 2000) {
+  for (let i = 0; i < timeoutMs / 10; i++) {
     if (check()) return;
     await delay(10);
   }
@@ -715,8 +715,14 @@ test("broker publication cancellation frees its owner and quota rejection remain
       new AbortController().signal,
     );
     const rejected = expect(second).rejects.toThrow("unconfirmed");
-    await until(() => h.frames.filter((f) => f.kind === "EVENT").length === 2);
+    await until(
+      () => h.frames.filter((f) => f.kind === "EVENT").length === 2,
+      6000,
+    );
     const frame = h.frames.filter((f) => f.kind === "EVENT")[1];
+    expect(
+      frame.at - h.frames.find((f) => f.kind === "EVENT").at,
+    ).toBeGreaterThanOrEqual(4990);
     await frame.socket.receive([
       "OK",
       frame.id.id,
@@ -732,7 +738,7 @@ test("broker publication cancellation frees its owner and quota rejection remain
     vi.unstubAllGlobals();
     await h.close();
   }
-});
+}, 10000);
 
 test("real signed/encrypted WS → host decode → SSE → session activity; demand and clear fence without replacing chat", async () => {
   const h = await harness();

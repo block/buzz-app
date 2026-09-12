@@ -1,6 +1,11 @@
 import { defineConfig } from "@playwright/test";
 
-const measurementFiles = ["channel-opening.spec.mjs", "scroll.spec.mjs"];
+const measurementFiles = [
+  "channel-opening.spec.mjs",
+  "scroll.spec.mjs",
+  "presence-contention.spec.mjs",
+  "presence-control.spec.mjs",
+];
 
 export default defineConfig({
   testDir: ".",

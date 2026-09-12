@@ -29,6 +29,46 @@ retention, generic event reconciliation, and the durable outbox. Its values are
   Conflicting evidence becomes unknown and requests one rate-bounded confirmation.
   No separate socket, per-avatar polling, heartbeat journal, or durable replay.
 
+## Foreground isolation
+
+Optional presence does not spend ordinary dispatch credit or occupy ordinary
+capacity. Limits are additive, not a claim that the old total concurrency is
+unchanged:
+
+| Boundary | Ordinary work | Optional presence |
+| --- | --- | --- |
+| Host/principal HTTP starts | 500ms minimum | 5s minimum snapshot interval |
+| Session reader | 3 active, at most 1 background; 128 distinct pending | 1 snapshot |
+| Development broker | 6 process-wide inflight | 1 process-wide snapshot |
+| Host/principal WS starts | 250ms minimum REQ interval | 1s REQ / 5s EVENT minimum |
+| Live setup per stream | 4 pending ordinary routes | 1 candidate presence route |
+
+The shared host principal is keyed by relay origin and viewer, not by stream.
+Foreground wins ready HTTP ties; presence setup/publication yields to foreground
+setup. Two presence wires (confirmed plus candidate) remain inside the existing
+1,024 subscription ceiling. Ordinary HTTP preparation and queue budgets stay 128;
+one separate optional preparation lease spans signing, fetch/body and verification.
+A cancelled consumer cannot free unresolved underlying optional work. The analogous
+WS publication lease stays owned until signing settles, fences late completion,
+and never makes ordinary signing wait behind the optional lease.
+
+Snapshot classification requires exactly one filter with only `kinds`, `authors`
+and `limit`: kind `[20001]`, 1–256 unique lowercase full 64-hex authors, and limit
+exactly their count. Priority headers do not grant optional admission, and reader
+normalization cannot upgrade malformed requests into that class.
+
+Server API cooldown remains shared by ordinary and optional HTTP work; WS cooldown
+remains shared across ordinary/presence work and streams. HTTP and WS quota families
+remain independent. Presence must not bypass a real shared quota rejection.
+
+Eight shared callers saturating the production dispatch paths in a controlled model
+stay at 132 HTTP starts/min, at most 26 combined REQ/EVENT starts per 5s, and 12
+presence EVENTs/min. This bounds the modeled client-owned traffic, not all requests
+from other devices or hosts. It is below the inspected reference defaults
+(API300/min, WS50/5s, Messages60/min), not a deployed configuration guarantee. The
+normal publisher still renews only every 60–65s, not every 5s. No local scheduler can
+promise zero CPU, signer-provider, network, SQL/Redis cost or end-user latency.
+
 ## Authority and lifecycle
 
 Live presence subjects come from the verified event author. Only a verified
@@ -77,7 +117,13 @@ zero polling, exact expiry, or distributed-device correctness.
 Owner tests live in `src/features/presence/` and relay presence tests. Browser
 journeys are `tests/browser/presence.spec.mjs` (observer lifecycle and real same-origin
 lock/activity handoff) and `presence-integration.spec.mjs` (production conversation,
-broker, snapshots, conflict repair, and route teardown). Channel-opening measurements
+broker, snapshots, conflict repair, and route teardown). The paired
+`presence-contention.spec.mjs` / `presence-control.spec.mjs` measure real composer
+send and cold-open admission with a held snapshot versus equivalent no-presence
+owners. Colocated reader, broker, live and signed-transport tests separately hold
+capacity/signing work and exercise the combined eight-caller budgets; browser
+journeys alone do not establish those bounds. `policy-quota.spec.mjs` proves that
+the numerical quota fixture rejects deliberate overload. Channel-opening measurements
 retain their existing warm-switch budget.
 
 These browser tests use isolated identities and modeled relay policy. Passing

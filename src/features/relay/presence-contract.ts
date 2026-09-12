@@ -17,6 +17,32 @@ export type PresenceCapability = {
   publish(status: PresenceStatus, signal: AbortSignal): Promise<void>;
 };
 export const PRESENCE_AUTHOR_CAPACITY = 256;
+export const PRESENCE_WORK_INTERVAL_MS = 5000;
+/** Only this finite snapshot can use optional capacity. Priority is not a bypass. */
+export function isPresenceSnapshot(input: unknown): boolean {
+  if (!Array.isArray(input) || input.length !== 1) return false;
+  const filter = input[0];
+  if (!filter || typeof filter !== "object" || Array.isArray(filter))
+    return false;
+  const { kinds, authors, limit } = filter;
+  return (
+    Object.keys(filter).length === 3 &&
+    Object.keys(filter).every((key) =>
+      ["kinds", "authors", "limit"].includes(key),
+    ) &&
+    Array.isArray(kinds) &&
+    kinds.length === 1 &&
+    kinds[0] === 20001 &&
+    Array.isArray(authors) &&
+    authors.length > 0 &&
+    authors.length <= PRESENCE_AUTHOR_CAPACITY &&
+    Array.from(authors).every(
+      (id: unknown) => typeof id === "string" && /^[0-9a-f]{64}$/.test(id),
+    ) &&
+    new Set(authors).size === authors.length &&
+    limit === authors.length
+  );
+}
 export function presenceAuthors(input: unknown): string[] {
   if (
     !Array.isArray(input) ||

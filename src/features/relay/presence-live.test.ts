@@ -515,3 +515,98 @@ it("lost WS OK is an unknown outcome, never an automatic resend or acceptance of
     h.owner.dispose();
   }
 });
+
+it("a held presence candidate leaves four ordinary setups available with untouched 250ms pacing", async () => {
+  const h = setup();
+  try {
+    await h.socket.globals();
+    h.presence.update([author(1)]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.socket.requests(true)).toHaveLength(1); // Keep EOSE held throughout.
+    await vi.advanceTimersByTimeAsync(1);
+    const started = performance.now();
+    h.owner.update(["a", "b", "c", "d", "e"]);
+    h.owner.prioritize?.(["a", "b", "c", "d", "e"]);
+    await vi.advanceTimersByTimeAsync(750);
+    const channels = h.socket.sent.flatMap((f, i) =>
+      f[0] === "REQ" && (f[2] as { "#h"?: string[] })["#h"]
+        ? [(h.socket.times[i] as number) - started]
+        : [],
+    );
+    expect(channels).toEqual([0, 250, 500, 750]);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(h.socket.requests()).toHaveLength(6); // 2 globals + 4 held channels.
+    await h.socket.receive(["EOSE", h.socket.requests()[2]?.[1]]);
+    expect(h.socket.requests()).toHaveLength(7);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("presence publication does not charge or reset the ordinary dispatch clock", async () => {
+  const h = setup();
+  try {
+    await h.socket.globals();
+    h.owner.update(["a"]);
+    await h.socket.receive(["EOSE", h.socket.requests()[2]?.[1]]);
+    const started = performance.now();
+    await vi.advanceTimersByTimeAsync(100);
+    const p = h.presence.publish("online", signal());
+    await vi.advanceTimersByTimeAsync(0);
+    const event = h.socket.events()[0];
+    assert.exists(event);
+    h.owner.update(["a", "b"]);
+    await vi.advanceTimersByTimeAsync(149);
+    expect(h.socket.requests()).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(h.socket.requests()).toHaveLength(4);
+    expect((h.socket.times.at(-1) as number) - started).toBe(250);
+    await h.socket.receive(["OK", event.id, true]);
+    await p;
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("cancelled unabortable publication signing stays capped across shared streams without blocking ordinary AUTH/setup", async () => {
+  const h = setup();
+  const other = setup(undefined, h.admission);
+  let release!: (value: VerifiedEvent) => void;
+  let template!: EventTemplate;
+  try {
+    await h.socket.globals();
+    h.sign.mockImplementation(async (event) => {
+      template = event;
+      return new Promise((resolve) => {
+        release = resolve;
+      });
+    });
+    const c = new AbortController();
+    const p = h.presence.publish("online", c.signal);
+    const failed = expect(p).rejects.toThrow();
+    c.abort();
+    await failed;
+    await other.socket.globals(); // The optional lease cannot serialize ordinary signing.
+    for (let i = 0; i < 5; i++)
+      await expect(other.presence.publish("online", signal())).rejects.toThrow(
+        "capacity",
+      );
+    expect(h.sign).toHaveBeenCalledTimes(2); // AUTH + exactly one unresolved heartbeat.
+    expect(other.sign).toHaveBeenCalledTimes(1);
+    other.owner.update(["foreground"]);
+    expect(other.socket.requests()).toHaveLength(3);
+    release(signed(h.key, template));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.socket.events()).toHaveLength(0);
+    await other.socket.receive(["EOSE", other.socket.requests()[2]?.[1]]);
+    const retry = other.presence.publish("online", signal());
+    await vi.advanceTimersByTimeAsync(0);
+    const event = other.socket.events()[0];
+    assert.exists(event);
+    await other.socket.receive(["OK", event.id, true]);
+    await retry;
+  } finally {
+    h.owner.dispose();
+    other.owner.dispose();
+  }
+});

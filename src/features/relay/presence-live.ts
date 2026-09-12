@@ -18,6 +18,7 @@ type Publication = {
   event?: VerifiedEvent;
   signing: boolean;
   sent: boolean;
+  release?: () => void;
   finish(error?: unknown): void;
 };
 const same = (a: readonly string[], b: readonly string[]) =>
@@ -100,10 +101,7 @@ export function createPresenceLive(host: {
       ? Math.max(0, due - performance.now(), host.admission.presenceDelay())
       : Infinity;
     const writeDelay = pendingWrite ? host.admission.publishDelay() : Infinity;
-    const delay = Math.max(
-      host.admission.delay(),
-      Math.min(routeDelay, writeDelay),
-    );
+    const delay = Math.min(routeDelay, writeDelay);
     if (delay > 0) {
       timer = setTimeout(host.wake, delay);
       return;
@@ -115,7 +113,6 @@ export function createPresenceLive(host: {
       };
       candidate = route;
       due = 0;
-      host.admission.take();
       host.admission.takePresence();
       route.deadline = setTimeout(() => {
         if (candidate === route)
@@ -132,6 +129,12 @@ export function createPresenceLive(host: {
     const operation = publication;
     if (!operation || operation.sent || operation.signing) return;
     if (!operation.event) {
+      try {
+        operation.release = host.admission.acquirePublication();
+      } catch (error) {
+        operation.finish(error);
+        return;
+      }
       operation.signing = true;
       const template = {
         kind: 20001,
@@ -152,13 +155,16 @@ export function createPresenceLive(host: {
         )
           throw new Error("Presence signer changed the publication");
         operation.event = event;
-        operation.signing = false;
-        host.wake(); // Recheck foreground work and cooldown learned during signing.
-      })().catch((error) => operation.finish(error));
+      })()
+        .catch((error) => operation.finish(error))
+        .finally(() => {
+          operation.signing = false;
+          if (publication !== operation) operation.release?.();
+          else host.wake(); // Recheck foreground work and cooldown learned during signing.
+        });
       return;
     }
     operation.sent = true;
-    host.admission.take();
     host.admission.takePublish();
     host.send(["EVENT", operation.event]);
   }
@@ -209,6 +215,7 @@ export function createPresenceLive(host: {
               publication = undefined;
               clearTimeout(deadline);
               signal.removeEventListener("abort", abort);
+              if (!operation.signing) operation.release?.();
               if (error === undefined) resolve();
               else reject(error);
             },
@@ -220,7 +227,6 @@ export function createPresenceLive(host: {
       },
     },
     dispatch,
-    pending: () => candidate !== undefined,
     message(data: unknown[]) {
       if (closed || !host.connected()) return;
       if (

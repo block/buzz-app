@@ -10,7 +10,10 @@ const root = fileURLToPath(new URL("../../", import.meta.url));
 
 // Playwright owns this worker-scoped build. Only compiled assets are shared;
 // each test still owns its server, identities, relay state and browser storage.
-export async function buildApp({ developmentReact, pluginFixtures }, use) {
+export async function buildApp(
+  { developmentReact, pluginFixtures, withoutPresence },
+  use,
+) {
   const directory = await mkdtemp(join(tmpdir(), "buzz-browser-build-"));
   try {
     const config = {
@@ -20,6 +23,34 @@ export async function buildApp({ developmentReact, pluginFixtures }, use) {
       logLevel: "error",
       plugins: [
         react(),
+        ...(withoutPresence
+          ? [
+              {
+                name: "fixture-no-presence-control",
+                transform(code, id) {
+                  if (id !== join(root, "src/features/relay/session.ts"))
+                    return;
+                  // Equivalent app, connection and read paths. Disable only the two
+                  // optional presence owners; no reader/transport admission substitutes.
+                  for (const text of [
+                    "supported: !!transport?.subscribe,",
+                    "options.presenceActivity && transport",
+                  ])
+                    if (code.split(text).length !== 2)
+                      throw new Error(`Missing presence control seam: ${text}`);
+                  return code
+                    .replace(
+                      "supported: !!transport?.subscribe,",
+                      "supported: false,",
+                    )
+                    .replace(
+                      "options.presenceActivity && transport",
+                      "false && options.presenceActivity && transport",
+                    );
+                },
+              },
+            ]
+          : []),
         ...(pluginFixtures
           ? [
               {

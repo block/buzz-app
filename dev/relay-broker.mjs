@@ -1,3 +1,4 @@
+import { isPresenceSnapshot } from "../src/features/relay/presence-contract.ts";
 import { decodeAgentObserver } from "./agent-observer.mjs";
 import { observerGeneration } from "../src/features/agents/observer.ts";
 import {
@@ -322,6 +323,7 @@ export function relayBrokerPlugin({
       };
       const stats = { queries: 0, errors: 0, media: 0, connects: 0 };
       let inflight = 0;
+      let presenceInflight = 0;
       let sidebarUploads = 0;
       let libraryRead;
       const streams = new Map();
@@ -928,131 +930,146 @@ export function relayBrokerPlugin({
                 : policy
                   ? "/api/invites/accept-policy"
                   : "/query";
-          if (inflight >= MAX_INFLIGHT)
+          const presenceSnapshot =
+            route === "/api/relay/query" && isPresenceSnapshot(filters);
+          if (
+            presenceSnapshot ? presenceInflight >= 1 : inflight >= MAX_INFLIGHT
+          )
             return json(res, 429, {
               error: "Query concurrency limit",
               sent: false,
             });
-          inflight++;
+          if (presenceSnapshot) presenceInflight++;
+          else inflight++;
           try {
             const lane = admissions(relay, viewer).api;
-            const body = JSON.stringify(filters);
-            // A browser that gave up (the client's ten-second deadline) must also release
-            // this upstream request, or hung requests exhaust the inflight budget.
-            const cancel = new AbortController();
-            const release = () => cancel.abort();
-            res.once("close", release);
-            const admissionStart = performance.now();
-            let connectsBefore, upstreamStart;
-            let response;
-            try {
-              const requestSignal = AbortSignal.any([
-                cancel.signal,
-                AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
-              ]);
-              response = await admittedApiRequest(
-                lane,
-                () => {
-                  // Auth freshness and network timings begin at dispatch, not queue entry.
-                  requestSignal.throwIfAborted();
-                  timings.push(
-                    `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
-                  );
-                  const authStart = performance.now();
-                  const auth = finalizeEvent(
-                    {
-                      kind: 27235,
-                      created_at: Math.floor(Date.now() / 1000),
-                      content: "",
-                      tags: [
-                        ["u", `${relay}${upstreamPath}`],
-                        ["method", "POST"],
-                        [
-                          "payload",
-                          createHash("sha256").update(body).digest("hex"),
-                        ],
-                        ["nonce", randomBytes(16).toString("hex")],
-                      ],
-                    },
-                    key,
-                  );
-                  timings.push(
-                    `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
-                  );
-                  connectsBefore = upstream.connects();
-                  upstreamStart = performance.now();
-                  return fetchUpstream(`${relay}${upstreamPath}`, {
-                    method: "POST",
-                    headers: {
-                      "Content-Type": "application/json",
-                      Authorization:
-                        "Nostr " +
-                        Buffer.from(JSON.stringify(auth)).toString("base64"),
-                    },
-                    body,
-                    redirect: "error",
-                    signal: requestSignal,
-                  }).then((response) => {
-                    timings.push(
-                      `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
-                    );
-                    return response;
-                  });
-                },
-                requestSignal,
-                route === "/api/relay/query" &&
-                  req.headers["x-buzz-read-priority"] === "background"
-                  ? "background"
-                  : "foreground",
-              );
-              const text =
-                snapshot && response.ok
-                  ? await readSnapshotText(response)
-                  : await response.text();
-              // The relay's own service time separates server work from network time.
-              const relayMs = Number(
-                response.headers.get("x-envoy-upstream-service-time"),
-              );
-              timings.push(
-                ...upstream.connectTiming(connectsBefore),
-                ...(Number.isFinite(relayMs) &&
-                response.headers.has("x-envoy-upstream-service-time")
-                  ? [`relay;dur=${relayMs}`]
-                  : []),
-                `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
-              );
-              res.setHeader("Server-Timing", timings.join(", "));
-              stats.queries++;
-              if (!response.ok) {
-                stats.errors++;
-                let failure;
+            await lane.prepare(
+              async () => {
+                const body = JSON.stringify(filters);
+                // A browser that gave up (the client's ten-second deadline) must also release
+                // this upstream request, or hung requests exhaust the inflight budget.
+                const cancel = new AbortController();
+                const release = () => cancel.abort();
+                res.once("close", release);
+                const admissionStart = performance.now();
+                let connectsBefore, upstreamStart;
+                let response;
                 try {
-                  failure = apiFailure(response.status, JSON.parse(text));
-                } catch {
-                  failure = apiFailure(response.status, undefined);
-                }
-                return json(res, response.status, failure);
-              }
-              if (profile) {
-                const receipt = JSON.parse(text);
-                if (
-                  receipt.event_id !== filters.id ||
-                  typeof receipt.accepted !== "boolean"
-                )
-                  return json(res, 502, {
-                    error: "Profile publication could not be confirmed",
+                  const requestSignal = AbortSignal.any([
+                    cancel.signal,
+                    AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                  ]);
+                  response = await admittedApiRequest(
+                    lane,
+                    () => {
+                      // Auth freshness and network timings begin at dispatch, not queue entry.
+                      requestSignal.throwIfAborted();
+                      timings.push(
+                        `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
+                      );
+                      const authStart = performance.now();
+                      const auth = finalizeEvent(
+                        {
+                          kind: 27235,
+                          created_at: Math.floor(Date.now() / 1000),
+                          content: "",
+                          tags: [
+                            ["u", `${relay}${upstreamPath}`],
+                            ["method", "POST"],
+                            [
+                              "payload",
+                              createHash("sha256").update(body).digest("hex"),
+                            ],
+                            ["nonce", randomBytes(16).toString("hex")],
+                          ],
+                        },
+                        key,
+                      );
+                      timings.push(
+                        `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
+                      );
+                      connectsBefore = upstream.connects();
+                      upstreamStart = performance.now();
+                      return fetchUpstream(`${relay}${upstreamPath}`, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization:
+                            "Nostr " +
+                            Buffer.from(JSON.stringify(auth)).toString(
+                              "base64",
+                            ),
+                        },
+                        body,
+                        redirect: "error",
+                        signal: requestSignal,
+                      }).then((response) => {
+                        timings.push(
+                          `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
+                        );
+                        return response;
+                      });
+                    },
+                    requestSignal,
+                    presenceSnapshot
+                      ? "presence"
+                      : route === "/api/relay/query" &&
+                          req.headers["x-buzz-read-priority"] === "background"
+                        ? "background"
+                        : "foreground",
+                  );
+                  const text =
+                    snapshot && response.ok
+                      ? await readSnapshotText(response)
+                      : await response.text();
+                  // The relay's own service time separates server work from network time.
+                  const relayMs = Number(
+                    response.headers.get("x-envoy-upstream-service-time"),
+                  );
+                  timings.push(
+                    ...upstream.connectTiming(connectsBefore),
+                    ...(Number.isFinite(relayMs) &&
+                    response.headers.has("x-envoy-upstream-service-time")
+                      ? [`relay;dur=${relayMs}`]
+                      : []),
+                    `upstream;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
+                  );
+                  res.setHeader("Server-Timing", timings.join(", "));
+                  stats.queries++;
+                  if (!response.ok) {
+                    stats.errors++;
+                    let failure;
+                    try {
+                      failure = apiFailure(response.status, JSON.parse(text));
+                    } catch {
+                      failure = apiFailure(response.status, undefined);
+                    }
+                    return json(res, response.status, failure);
+                  }
+                  if (profile) {
+                    const receipt = JSON.parse(text);
+                    if (
+                      receipt.event_id !== filters.id ||
+                      typeof receipt.accepted !== "boolean"
+                    )
+                      return json(res, 502, {
+                        error: "Profile publication could not be confirmed",
+                      });
+                  }
+                  res.writeHead(200, {
+                    "Content-Type": "application/json",
+                    "Cache-Control": "no-store",
                   });
-              }
-              res.writeHead(200, {
-                "Content-Type": "application/json",
-                "Cache-Control": "no-store",
-              });
-              res.end(text);
-            } finally {
-              res.off("close", release);
-            }
+                  res.end(text);
+                } finally {
+                  res.off("close", release);
+                }
+              },
+              presenceSnapshot ? "presence" : "foreground",
+            );
           } finally {
-            inflight--;
+            if (presenceSnapshot) presenceInflight--;
+            else inflight--;
           }
         } catch (error) {
           if (res.destroyed) return; // The browser gave up first; nothing to answer.

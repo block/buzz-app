@@ -330,7 +330,15 @@ export async function connectBrokerTransport(
               const result = await fetch(`${endpoint}/sign`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(template.kind !== 9
+                    ? {
+                        "X-Buzz-Workflow-Authority":
+                          session.relayAuthor as string,
+                      }
+                    : {}),
+                },
                 body: JSON.stringify(template),
                 signal,
               });
@@ -344,7 +352,15 @@ export async function connectBrokerTransport(
               const result = await fetch(`${endpoint}/publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: {
+                  "Content-Type": "application/json",
+                  ...(event.kind !== 9
+                    ? {
+                        "X-Buzz-Workflow-Authority":
+                          session.relayAuthor as string,
+                      }
+                    : {}),
+                },
                 body: JSON.stringify(event),
                 signal,
               });

@@ -149,3 +149,19 @@ The application’s real browser/native dev shell currently uses the broker;
 that native Keychain production wiring has been exercised. The new handshake
 still requires independent review and an approved disposable live test. No
 production deployment or real create/run validation is implied by this checkpoint.
+
+## Host review follow-up (2026-09-12)
+
+Workflow broker requests carry the connection's captured relay authority in
+`X-Buzz-Workflow-Authority`. The broker requires a lowercase public key and checks
+fresh host-scoped metadata against that value at both sign and publish. The pin is
+not an authorization token and is never forwarded upstream; a new B connection
+cannot rebind an older A connection. Identity changes require reconnecting.
+
+The broker owns response-close cancellation before reading the operation body or
+awaiting metadata, propagates it to discovery/admission, and checks it before
+signing and dispatch. A late metadata result cannot create a new signature or
+publication after cancellation. Already-dispatched writes retain unknown-outcome
+semantics. Explicit numeric workflow coordinates (including leading zeros and
+`+`) enter workflow validation, which rejects every noncanonical coordinate;
+unrelated kind-5 event/coordinate deletes are unchanged in the signed adapter.

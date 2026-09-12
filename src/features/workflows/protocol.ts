@@ -17,7 +17,9 @@ export function isWorkflowOperation(
     event.kind === 46020 ||
     (event.kind === 5 &&
       event.tags.some(
-        ([name, value]) => name === "a" && value?.startsWith("30620:"),
+        // The relay parses the kind numerically (including + and leading zeros).
+        // Classify those coordinates here; workflowReference rejects aliases.
+        ([name, value]) => name === "a" && /^\+?0*30620:/.test(value ?? ""),
       ))
   );
 }

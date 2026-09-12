@@ -1,10 +1,15 @@
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
-import { expect, it } from "vitest";
-import { getPublicKey, verifyEvent } from "nostr-tools";
+import { expect, it, vi } from "vitest";
+import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 import { WORKFLOW_READ_BYTES } from "../src/features/workflows/http.ts";
+
+vi.mock("nostr-tools", async (importOriginal) => {
+  const actual = await importOriginal();
+  return { ...actual, finalizeEvent: vi.fn(actual.finalizeEvent) };
+});
 
 const id = "11111111-1111-4111-8111-111111111111";
 const runId = "22222222-2222-4222-8222-222222222222";
@@ -17,11 +22,14 @@ async function harness(
   key[31] = 8;
   const viewer = getPublicKey(key),
     calls = [],
-    logs = [];
+    logs = [],
+    closed = [],
+    completed = [];
   let handler;
   const server = createServer((req, res) => {
     if (!req.headers.origin) req.headers.origin = `http://${req.headers.host}`;
-    handler(req, res);
+    res.once("close", () => closed.push(req.url));
+    void handler(req, res).finally(() => completed.push(req.url));
   });
   await relayBrokerPlugin({
     relayUrl: "https://a.workflow.test",
@@ -31,7 +39,7 @@ async function harness(
     upstreamFetch: async (url, init) => {
       if (init.headers.Accept === "application/nostr+json") {
         expect(init.redirect).toBe("error");
-        const data = metadata(String(url), viewer);
+        const data = await metadata(String(url), viewer, init);
         if (data instanceof Error) throw data;
         return data instanceof Response ? data : Response.json(data);
       }
@@ -67,6 +75,8 @@ async function harness(
     viewer,
     calls,
     logs,
+    closed,
+    completed,
     post: (route, body, headers = {}) =>
       fetch(`${base}/api/relay/${route}`, {
         method: "POST",
@@ -317,53 +327,113 @@ it("broker checks fresh own-host evidence at sign and publish; old, other-host a
     await h.close();
   }
 });
-it("compatible broker refuses malformed, alternate-delete, webhook and forged commands before upstream writes", async () => {
+const invalidCommands = [
+  ["null", () => null],
+  ["admin deletion", () => ({ ...template(), kind: 9005 })],
+  [
+    "legacy name",
+    () => ({
+      ...template(),
+      tags: [
+        ["h", runId],
+        ["d", "name"],
+      ],
+    }),
+  ],
+  [
+    "webhook",
+    () => ({
+      ...template(),
+      content: yaml.replace("message_posted", "webhook"),
+    }),
+  ],
+  [
+    "event-target deletion",
+    () => ({
+      ...template(5),
+      tags: [
+        ["h", runId],
+        ["e", "a".repeat(64)],
+      ],
+    }),
+  ],
+  [
+    "numeric alias",
+    (viewer) => ({
+      ...template(5),
+      tags: [
+        ["h", runId],
+        ["a", `030620:${viewer}:${id}`],
+      ],
+    }),
+  ],
+  [
+    "other owner",
+    () => ({
+      ...template(5),
+      tags: [
+        ["h", runId],
+        ["a", `30620:${"a".repeat(64)}:${id}`],
+      ],
+    }),
+  ],
+  [
+    "extra tag",
+    () => ({
+      ...template(),
+      tags: [...template().tags, ["p", "a".repeat(64)]],
+    }),
+  ],
+];
+it.each(invalidCommands)(
+  "compatible broker rejects %s before signing or upstream writes",
+  async (_name, input) => {
+    const h = await harness(() => {
+      throw new Error("must not dispatch writes");
+    }, compatible);
+    try {
+      const signaturesBefore = finalizeEvent.mock.calls.length;
+      expect(
+        (
+          await h.post("sign", input(h.viewer), {
+            "X-Buzz-Workflow-Authority": h.viewer,
+          })
+        ).status,
+      ).toBe(400);
+      expect(finalizeEvent.mock.calls).toHaveLength(signaturesBefore);
+      expect(h.calls).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  },
+);
+it("compatible broker rejects forged commands before upstream writes", async () => {
   const h = await harness(() => {
     throw new Error("must not dispatch writes");
   }, compatible);
   try {
-    for (const input of [
-      null,
-      { ...template(), kind: 9005 },
-      {
-        ...template(),
-        tags: [
-          ["h", runId],
-          ["d", "name"],
-        ],
-      },
-      { ...template(), content: yaml.replace("message_posted", "webhook") },
-      {
-        ...template(5),
-        tags: [
-          ["h", runId],
-          ["e", "a".repeat(64)],
-        ],
-      },
-      {
-        ...template(5),
-        tags: [
-          ["h", runId],
-          ["a", `030620:${h.viewer}:${id}`],
-        ],
-      },
-      {
-        ...template(5),
-        tags: [
-          ["h", runId],
-          ["a", `30620:${"a".repeat(64)}:${id}`],
-        ],
-      },
-      { ...template(), tags: [...template().tags, ["p", "a".repeat(64)]] },
-    ]) {
-      expect((await h.post("sign", input)).status).toBe(400);
-    }
-    const own = await (await h.post("sign", template())).json();
+    const own = await (
+      await h.post("sign", template(), {
+        "X-Buzz-Workflow-Authority": h.viewer,
+      })
+    ).json();
     expect(
-      (await h.post("publish", { ...own, content: "tampered" })).status,
+      (
+        await h.post(
+          "publish",
+          { ...own, content: "tampered" },
+          { "X-Buzz-Workflow-Authority": h.viewer },
+        )
+      ).status,
     ).toBe(400);
     expect(
-      (await h.post("publish", { ...own, pubkey: "a".repeat(64) })).status,
+      (
+        await h.post(
+          "publish",
+          { ...own, pubkey: "a".repeat(64) },
+          { "X-Buzz-Workflow-Authority": h.viewer },
+        )
+      ).status,
     ).toBe(400);
     expect(h.calls).toHaveLength(0);
   } finally {
@@ -392,3 +462,133 @@ it("real NIP-11 discovery does not accept fallback identity, malformed or wrong-
     }
   }
 });
+
+const gate = () => {
+  let resolve;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+};
+it.each(["sign", "publish"])(
+  "disconnect during fresh discovery cancels %s before any late signature or upstream write",
+  async (operation) => {
+    const entered = gate(),
+      release = gate();
+    let hold = false,
+      metadataSignal;
+    const h = await harness(
+      ({ init }) =>
+        Response.json({
+          accepted: true,
+          event_id: JSON.parse(init.body).id,
+          message: "workflow-result",
+        }),
+      async (url, viewer, init) => {
+        if (hold) {
+          metadataSignal = init.signal;
+          entered.resolve();
+          // Deliberately ignore abort while held: the caller must also fence a late result.
+          await release.promise;
+        }
+        return compatible(url, viewer);
+      },
+    );
+    try {
+      const t = await connectBrokerTransport(h.base);
+      const input =
+        operation === "sign"
+          ? template()
+          : await t.writer.sign(template(), signal());
+      const route = `/api/relay/${operation}`;
+      const completedBefore = h.completed.filter(
+        (value) => value === route,
+      ).length;
+      const signaturesBefore = finalizeEvent.mock.calls.length;
+      const cancel = new AbortController();
+      hold = true;
+      const pending = t.writer[operation](input, cancel.signal);
+      const rejected = expect(pending).rejects.toThrow();
+      await Promise.race([entered.promise, pending]);
+      cancel.abort();
+      await rejected;
+      await vi.waitFor(() => expect(h.closed).toContain(route));
+      const discoveryAborted = metadataSignal.aborted;
+      release.resolve();
+      await vi.waitFor(() =>
+        expect(h.completed.filter((value) => value === route)).toHaveLength(
+          completedBefore + 1,
+        ),
+      );
+      expect(discoveryAborted).toBe(true);
+      expect(finalizeEvent.mock.calls).toHaveLength(signaturesBefore);
+      expect(h.calls).toHaveLength(0);
+      expect(h.logs).toHaveLength(0);
+      hold = false;
+      const event = await t.writer.sign(template(), signal());
+      expect(await t.writer.publish(event, signal())).toBe("workflow-result");
+      expect(h.calls).toHaveLength(1);
+    } finally {
+      release.resolve();
+      await h.close();
+    }
+  },
+);
+it("workflow requests pin each connection authority; reconnecting B never rebinds an open A session", async () => {
+  let rotated = false;
+  const h = await harness(
+    ({ init }) =>
+      Response.json({
+        accepted: true,
+        event_id: JSON.parse(init.body).id,
+        message: "workflow-result",
+      }),
+    (url, viewer) => compatible(url, rotated ? "a".repeat(64) : viewer),
+  );
+  try {
+    const a = await connectBrokerTransport(h.base);
+    const eventA = await a.writer.sign(template(), signal());
+    rotated = true;
+    const signaturesBefore = finalizeEvent.mock.calls.length;
+    await expect(a.writer.sign(template(), signal())).rejects.toThrow();
+    await expect(a.writer.publish(eventA, signal())).rejects.toThrow();
+    expect(finalizeEvent.mock.calls).toHaveLength(signaturesBefore);
+    expect(h.calls).toHaveLength(0);
+    const b = await connectBrokerTransport(h.base);
+    expect(b.relayAuthor).toBe("a".repeat(64));
+    const eventB = await b.writer.sign(template(), signal());
+    expect(await b.writer.publish(eventB, signal())).toBe("workflow-result");
+    await expect(a.writer.sign(template(), signal())).rejects.toThrow();
+    await expect(a.writer.publish(eventA, signal())).rejects.toThrow();
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+it.each([undefined, "", "not-a-key", "a".repeat(64)])(
+  "broker rejects absent, malformed or mismatching request authority: %s",
+  async (authority) => {
+    const h = await harness(undefined, compatible);
+    try {
+      const t = await connectBrokerTransport(h.base);
+      const event = await t.writer.sign(template(), signal());
+      const signaturesBefore = finalizeEvent.mock.calls.length;
+      const headers =
+        authority === undefined
+          ? {}
+          : { "X-Buzz-Workflow-Authority": authority };
+      for (const [route, body] of [
+        ["sign", template()],
+        ["publish", event],
+      ]) {
+        const response = await h.post(route, body, headers);
+        expect(response.status).toBe(400);
+        expect(await response.json()).toMatchObject({ sent: false });
+      }
+      expect(finalizeEvent.mock.calls).toHaveLength(signaturesBefore);
+      expect(h.calls).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  },
+);

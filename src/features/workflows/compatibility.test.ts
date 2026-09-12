@@ -180,3 +180,93 @@ it("positive metadata alone cannot authorize invalid direct workflow commands", 
   expect(signEvent).not.toHaveBeenCalled();
   expect(fetcher).toHaveBeenCalledTimes(2);
 });
+
+it.each(
+  [false, true].flatMap((compatible) =>
+    ["030620", "+30620", "+00030620"].flatMap((alias) =>
+      ["sign", "publish"].map((operation) => ({
+        compatible,
+        alias,
+        operation,
+      })),
+    ),
+  ),
+)(
+  "signed host rejects $alias at $operation with compatibility=$compatible",
+  async ({ compatible, alias, operation }) => {
+    const signEvent = vi.fn(async (t: Parameters<typeof signed>[1]) =>
+      signed(key, t),
+    );
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url === origin)
+        return Response.json(compatible ? info : { self: key.pubkey });
+      calls.push(url);
+      const event = JSON.parse(String(init?.body));
+      return Response.json({
+        accepted: true,
+        event_id: event.id,
+        message: "accepted",
+      });
+    });
+    const t = await connectSignedTransport(
+      { getPublicKey: async () => key.pubkey, signEvent },
+      origin,
+      key.pubkey,
+    );
+    assert.exists(t.writer);
+    const input = {
+      kind: 5,
+      created_at: 1,
+      content: "",
+      tags: [
+        ["h", "11111111-1111-4111-8111-111111111111"],
+        ["a", `${alias}:${key.pubkey}:22222222-2222-4222-8222-222222222222`],
+      ],
+    };
+    await expect(
+      operation === "sign"
+        ? t.writer.sign(input, new AbortController().signal)
+        : t.writer.publish(signed(key, input), new AbortController().signal),
+    ).rejects.toThrow();
+    expect(signEvent).not.toHaveBeenCalled();
+    expect(calls).toHaveLength(0);
+  },
+);
+it.each([false, true])(
+  "unrelated deletes retain signed host behavior with compatibility=%s",
+  async (compatible) => {
+    const calls: string[] = [];
+    vi.stubGlobal("fetch", async (url: string, init?: RequestInit) => {
+      if (url === origin)
+        return Response.json(compatible ? info : { self: key.pubkey });
+      calls.push(url);
+      const event = JSON.parse(String(init?.body));
+      return Response.json({
+        accepted: true,
+        event_id: event.id,
+        message: "accepted",
+      });
+    });
+    const t = await connectSignedTransport(
+      {
+        getPublicKey: async () => key.pubkey,
+        signEvent: async (t) => signed(key, t),
+      },
+      origin,
+      key.pubkey,
+    );
+    assert.exists(t.writer);
+    for (const target of [
+      ["e", "b".repeat(64)],
+      ["a", `030000:${key.pubkey}:other`],
+    ]) {
+      const event = await t.writer.sign(
+        { kind: 5, created_at: 1, content: "", tags: [target] },
+        new AbortController().signal,
+      );
+      await t.writer.publish(event, new AbortController().signal);
+    }
+    expect(calls).toEqual([`${origin}/events`, `${origin}/events`]);
+  },
+);

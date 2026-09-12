@@ -211,3 +211,59 @@ for (const kind of [9, 40002]) {
     });
   }
 }
+
+it("stays visible across three-second heartbeats, then expires eight seconds after the last signed pulse", () => {
+  const { owner, snapshot } = setup();
+  owner.accept([pulse()], true);
+  for (const seconds of [3, 6, 9]) {
+    vi.advanceTimersByTime(3000);
+    expect(snapshot()).toHaveLength(1);
+    owner.accept([pulse(undefined, epoch + seconds)], true);
+  }
+  // One missed scheduled heartbeat does not flicker; a second exhausts the margin.
+  vi.advanceTimersByTime(7999);
+  expect(snapshot()).toHaveLength(1);
+  vi.advanceTimersByTime(1);
+  expect(snapshot()).toEqual([]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("rejects delayed pre-message activity after the quiet period, but admits genuinely newer activity", () => {
+  const { owner, snapshot } = setup();
+  owner.accept([message(agent, "a", "complete", epoch)]);
+  vi.advanceTimersByTime(3000);
+  owner.accept([pulse(undefined, epoch - 1), pulse()], true);
+  expect(snapshot()).toEqual([]);
+  owner.accept([pulse(undefined, epoch + 3)], true);
+  expect(snapshot()).toHaveLength(1);
+  // A previously unseen older completion must not clear this newer activity.
+  owner.accept([message(agent, "a", "delayed completion", epoch + 1)]);
+  expect(snapshot()).toHaveLength(1);
+  vi.advanceTimersByTime(8000);
+  expect(snapshot()).toEqual([]);
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("retains completion evidence at capacity until stale pulses have expired", () => {
+  const { owner, snapshot } = setup();
+  const messages = Array.from({ length: 1024 }, (_, i) =>
+    signed(agent, {
+      kind: 9,
+      content: "complete",
+      created_at: epoch,
+      tags: [
+        ["h", "a"],
+        ["e", i.toString(16).padStart(64, "0"), "", "reply"],
+      ],
+    }),
+  );
+  owner.accept(messages);
+  vi.advanceTimersByTime(3000);
+  owner.accept([pulse(undefined, epoch + 3)], true);
+  expect(snapshot()).toEqual([]);
+  vi.advanceTimersByTime(5000);
+  owner.accept([pulse(undefined, epoch + 8)], true);
+  expect(snapshot()).toHaveLength(1);
+  owner.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});

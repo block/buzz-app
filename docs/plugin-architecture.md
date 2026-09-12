@@ -75,8 +75,9 @@ contribution when its Cordis scope ends.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher
-wins; a throwing matcher is skipped. Panels receive `{ target, close }`, without
-channel-specific props. A plugin that needs shared data declares `relay` in its
+wins; a throwing matcher is skipped. Ordinary link panels receive `{ target, close }`;
+channel-launched panels may also receive the public context described below. A
+plugin that needs shared data declares `relay` in its
 injection list and passes those capabilities to its components using a closure,
 just as the bundled Channels page does. The conversation preview adds only the two demonstrated component surfaces.
 
@@ -85,12 +86,31 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions and Profiles. Projects
+The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles and Terminal. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent operations remain future shared capabilities.
+
+### Channel-header launchers
+
+A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
+Channels renders these in its conversation header with public `context`, `pressed`,
+`available()` and `toggle(target)`. The page owns a single bottom drawer; a launcher
+selects its **exact active contribution**, not target matching. `available()` and
+`toggle()` are revoked when the mounted context or contribution is retired. Optional
+`PanelProps.channelContext` carries the current displayed public context to a channel
+panel; ordinary link/host panels do not supply it. It is presentation metadata, not
+signing authority. Plugins decide when to capture it into their own work.
+
+Channels keeps layout and channel/thread selection. The Terminal plugin binds its
+mounted launcher into the existing shortcut dispatcher, and owns sessions separately
+from drawer mounts. No global selected-channel store, extra shortcut listener or
+host companion change is required. Disabling/replacing a contribution closes its
+drawer, and re-enabling starts closed. See [Terminal](terminal.md) for native support,
+session behavior and validation limits. This is a host-matched preview addition,
+not cross-version capability negotiation.
 
 ### Top-bar launchers and the companion slot
 

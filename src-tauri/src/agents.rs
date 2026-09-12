@@ -32,15 +32,39 @@ pub(crate) struct Snapshot {
     #[serde(flatten)]
     data: ControlSnapshot,
     import_available: bool,
+    harness_options: &'static [HarnessOption],
 }
 impl Snapshot {
     fn from(data: ControlSnapshot) -> Self {
         Self {
             data,
             import_available: false,
+            harness_options: HARNESS_OPTIONS,
         }
     }
 }
+// Editing suggestions only. No discovery, auth, installation claim or default rewrite.
+// IDs/labels verified against buzz's catalog and buzz-agent's provider parser.
+#[derive(Serialize)]
+struct HarnessOption {
+    command: &'static str,
+    label: &'static str,
+    providers: &'static [ProviderOption],
+}
+#[derive(Serialize)]
+struct ProviderOption {
+    value: &'static str,
+    label: &'static str,
+}
+const HARNESS_OPTIONS: &[HarnessOption] = &[HarnessOption {
+    command: "buzz-agent",
+    label: "Buzz Agent",
+    providers: &[ProviderOption {
+        value: "databricks_v2",
+        label: "Databricks v2",
+    }],
+}];
+
 struct Host {
     controller: Controller,
     imports: Imports,

@@ -64,18 +64,29 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     let before = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
     assert_eq!(before["runtimeAvailable"], false);
     assert_eq!(before["importAvailable"], false);
+    assert_eq!(
+        before["harnessOptions"],
+        json!([{
+            "command":"buzz-agent", "label":"Buzz Agent",
+            "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
+        }])
+    );
     assert_eq!(before["agents"][0]["name"], "Sample");
     assert_eq!(before["agents"][0]["enabled"], true);
     assert_eq!(before["agents"][0]["status"], "stopped");
     assert!(!before.to_string().contains("DO_NOT_PROJECT"));
     let edit = json!({"name":"Edited","systemPrompt":"Saved via IPC","workspace":dir.path().to_str().unwrap(),
-        "harness":{"command":"buzz-agent","args":["--literal space"],"model":"chosen","provider":"chosen"},"environment":{}});
+        "harness":{"command":"buzz-agent","args":["--literal space"],"model":"chosen","provider":"databricks_v2"},"environment":{}});
     let saved = invoke(
         &view,
         "agent_control_save",
         json!({"id":id,"expectedRevision":1,"edit":edit}),
     )
     .unwrap();
+    assert_eq!(saved["harnessOptions"], before["harnessOptions"]);
+    assert_eq!(saved["runtimeAvailable"], false);
+    assert_eq!(saved["importAvailable"], false);
+    assert_eq!(saved["agents"][0]["harness"]["provider"], "databricks_v2");
     assert_eq!(saved["agents"][0]["revision"], 2);
     assert_eq!(saved["agents"][0]["systemPrompt"], "Saved via IPC");
     assert!(invoke(
@@ -99,12 +110,18 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         json!({"id":id,"action":"stop"}),
     )
     .unwrap();
+    assert_eq!(stopped["harnessOptions"], before["harnessOptions"]);
     assert_eq!(stopped["agents"][0]["enabled"], false);
     assert_eq!(stopped["agents"][0]["revision"], 2);
     let disk: Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("store/agents.json")).unwrap())
             .unwrap();
     assert_eq!(disk["agents"][0]["systemPrompt"], "Saved via IPC");
+    assert_eq!(disk["agents"][0]["harness"]["provider"], "databricks_v2");
+    assert_eq!(
+        invoke(&view, "agent_control_snapshot", json!({})).unwrap()["agents"][0]["harness"],
+        saved["agents"][0]["harness"]
+    );
     assert_eq!(disk["agents"][0]["enabled"], false);
     assert_eq!(
         disk["agents"][0]["environment"]["SAMPLE_TOKEN"],

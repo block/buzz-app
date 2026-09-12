@@ -3,7 +3,7 @@
   min-width: 0;
   gap: var(--space-2);
 }
-.agent-controls :is(input:not([type="checkbox"]), textarea) {
+.agent-controls :is(input:not([type="checkbox"]), textarea, select) {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border-primary);
@@ -16,11 +16,11 @@
 .agent-controls textarea {
   resize: vertical;
 }
-.agent-controls :is(input, textarea):focus-visible {
+.agent-controls :is(input, textarea, select):focus-visible {
   outline: 2px solid var(--purple-8);
   outline-offset: 2px;
 }
-.agent-controls :is(input, textarea):disabled {
+.agent-controls :is(input, textarea, select):disabled {
   color: var(--text-disabled);
   cursor: not-allowed;
 }

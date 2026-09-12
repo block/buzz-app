@@ -7,6 +7,7 @@ import {
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
+import { AgentHarnessEditor } from "./AgentHarnessEditor";
 import {
   agentDraft,
   agentEdit,
@@ -169,50 +170,11 @@ export function AgentEditor({
                 onChange={(event) => change({ workspace: event.target.value })}
               />
             </label>
-            <h4 className="text-heading">Harness</h4>
-            <p className="text-body-sm text-secondary">
-              The executable runs with your account’s access. Arguments are
-              passed literally, not through a shell.
-            </p>
-            <label className="agent-control-field">
-              Executable
-              <input
-                value={current.command}
-                spellCheck={false}
-                onChange={(event) => change({ command: event.target.value })}
-              />
-            </label>
-            <label className="agent-control-field">
-              Arguments (JSON array)
-              <textarea
-                rows={3}
-                value={current.args}
-                spellCheck={false}
-                onChange={(event) => change({ args: event.target.value })}
-              />
-            </label>
-            <div className="grid gap-4 sm:grid-cols-2">
-              <label className="agent-control-field">
-                Model
-                <input
-                  value={current.model}
-                  onChange={(event) => change({ model: event.target.value })}
-                />
-              </label>
-              <label className="agent-control-field">
-                Provider
-                <input
-                  value={current.provider}
-                  onChange={(event) => change({ provider: event.target.value })}
-                />
-              </label>
-            </div>
-            <p className="text-body-sm text-secondary">
-              Saved environment overrides take precedence over Model and
-              Provider: BUZZ_AGENT_MODEL / BUZZ_AGENT_PROVIDER for buzz-agent,
-              GOOSE_MODEL / GOOSE_PROVIDER for Goose. Blank selectors do not
-              clear those overrides. ACP uses the same effective model.
-            </p>
+            <AgentHarnessEditor
+              draft={current}
+              options={state.data?.harnessOptions ?? []}
+              onChange={change}
+            />
           </fieldset>
           <AgentEnvironmentEditor
             keys={agent.harness.environmentKeys}

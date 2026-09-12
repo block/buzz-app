@@ -366,3 +366,260 @@ test("native editing checkpoint blocks launch and credential import while retain
     await server.close();
   }
 });
+
+test("native-supplied harness choices preserve current values and save only explicit edits", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
+    );
+    const panel = page.getByRole("region", { name: "Local agent controls" });
+    const editor = panel.getByRole("article");
+    await editor
+      .locator("summary")
+      .filter({ hasText: "Edit agent and harness" })
+      .click();
+    const harness = editor.getByRole("combobox", {
+      name: "Harness",
+      exact: true,
+    });
+    const provider = editor.getByRole("combobox", {
+      name: "Provider",
+      exact: true,
+    });
+    const executable = editor.getByRole("textbox", {
+      name: "Executable",
+      exact: true,
+    });
+    const model = editor.getByRole("textbox", { name: "Model", exact: true });
+    const prompt = editor.getByRole("textbox", {
+      name: "System prompt",
+      exact: true,
+    });
+    const save = editor.getByRole("button", { name: "Save changes" });
+    const lastSave = () =>
+      page.evaluate(
+        () =>
+          window.agentControlFixture.calls
+            .filter((c) => c.action === "save")
+            .at(-1).payload,
+      );
+    const original = await page.evaluate(() =>
+      structuredClone(window.agentControlFixture.agent.harness),
+    );
+    delete original.environmentKeys;
+    await expect(executable).toHaveValue("fixture-acp");
+    await expect(
+      editor.getByLabel("Custom provider", { exact: true }),
+    ).toHaveValue("fixture-provider");
+    await expect(save).toBeDisabled();
+    await prompt.fill("Unrelated edit");
+    await save.click();
+    expect((await lastSave()).edit).toMatchObject({
+      harness: original,
+      environment: {},
+    });
+
+    // Selecting either suggestion changes only that field: no implicit args/model/env rewrite.
+    await harness.selectOption({ label: "Buzz Agent" });
+    await expect(
+      editor.getByLabel("Custom provider", { exact: true }),
+    ).toHaveValue("fixture-provider");
+    await provider.selectOption({ label: "Databricks v2" });
+    await expect(model).toHaveValue(original.model);
+    await save.click();
+    expect((await lastSave()).edit).toMatchObject({
+      harness: {
+        ...original,
+        command: "buzz-agent",
+        provider: "databricks_v2",
+      },
+      environment: {},
+    });
+    await panel.getByRole("button", { name: "Refresh status" }).click();
+    await page
+      .getByRole("button", { name: "Toggle page", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Toggle page", exact: true })
+      .click();
+    await editor
+      .locator("summary")
+      .filter({ hasText: "Edit agent and harness" })
+      .click();
+    await expect(harness.locator("option:checked")).toHaveText("Buzz Agent");
+    await expect(provider.locator("option:checked")).toHaveText(
+      "Databricks v2",
+    );
+    await expect(save).toBeDisabled();
+
+    // Merely entering custom editing never writes a placeholder or erases the current value.
+    await harness.selectOption({ label: "Custom executable / current value" });
+    await expect(executable).toHaveValue("buzz-agent");
+    await expect(save).toBeDisabled();
+    await executable.fill("/custom path/buzz-agent");
+    await expect(
+      editor.getByLabel("Custom provider", { exact: true }),
+    ).toHaveValue("databricks_v2");
+    await provider.selectOption({ label: "Not set" });
+    await model.fill("");
+    await save.click();
+    expect((await lastSave()).edit).toMatchObject({
+      harness: {
+        ...original,
+        command: "/custom path/buzz-agent",
+        model: "",
+        provider: "",
+      },
+      environment: {},
+    });
+    await expect(executable).toHaveValue("/custom path/buzz-agent");
+    await provider.selectOption({ label: "Custom provider / current value" });
+    await editor
+      .getByLabel("Custom provider", { exact: true })
+      .fill("unknown-provider");
+    await model.fill("unknown-model");
+    await panel.getByRole("button", { name: "Refresh status" }).click();
+    await expect(
+      editor.getByLabel("Custom provider", { exact: true }),
+    ).toHaveValue("unknown-provider");
+    await page.getByRole("button", { name: "Simulate newer revision" }).click();
+    await expect(save).toBeDisabled();
+    await editor.getByRole("button", { name: "Discard changes" }).click();
+    await expect(model).toHaveValue("");
+    await expect(
+      editor.getByLabel("Custom provider", { exact: true }),
+    ).toHaveValue("");
+    await expect(executable).toHaveValue("/custom path/buzz-agent");
+
+    // Re-read blank selectors plus unknown/absolute command; unrelated saves stay exact.
+    await prompt.fill("Blank selectors stay blank");
+    await save.click();
+    expect((await lastSave()).edit).toMatchObject({
+      harness: {
+        ...original,
+        command: "/custom path/buzz-agent",
+        model: "",
+        provider: "",
+      },
+      environment: {},
+    });
+    await editor
+      .getByLabel("Custom provider", { exact: true })
+      .fill("unknown-provider");
+    await model.fill("unknown-model");
+    await editor
+      .getByText("Advanced: executable and arguments", { exact: true })
+      .click();
+    const args = ["--custom", "literal space", 'quoted "value"'];
+    await editor
+      .getByRole("textbox", { name: "Arguments (JSON array)", exact: true })
+      .fill(JSON.stringify(args));
+    await save.click();
+    await prompt.fill("Keep unknown values too");
+    await save.click();
+    expect((await lastSave()).edit).toMatchObject({
+      harness: {
+        command: "/custom path/buzz-agent",
+        args,
+        model: "unknown-model",
+        provider: "unknown-provider",
+      },
+      environment: {},
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: test.info().outputPath("harness-dropdown-narrow.png"),
+      fullPage: true,
+    });
+    await expect(
+      editor.getByText(/Saved environment overrides take precedence/),
+    ).toBeVisible();
+    await expect(
+      editor.getByText(/Choices configure saved settings/),
+    ).toBeVisible();
+  } finally {
+    await server.close();
+  }
+});
+
+test("editor renders host choices rather than its own catalog, and tolerates an older host", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
+    );
+    const panel = page.getByRole("region", { name: "Local agent controls" });
+    const editor = panel.getByRole("article");
+    await page.evaluate(async () => {
+      const f = window.agentControlFixture;
+      f.data.harnessOptions = [
+        {
+          command: "host-command",
+          label: "Host harness",
+          providers: [{ value: "host-provider", label: "Host provider" }],
+        },
+      ];
+      await f.control.refresh();
+    });
+    await editor
+      .locator("summary")
+      .filter({ hasText: "Edit agent and harness" })
+      .click();
+    const harness = editor.getByRole("combobox", {
+      name: "Harness",
+      exact: true,
+    });
+    const provider = editor.getByRole("combobox", {
+      name: "Provider",
+      exact: true,
+    });
+    await expect(harness.locator("option")).toHaveText([
+      "Host harness",
+      "Custom executable / current value",
+    ]);
+    await harness.selectOption({ label: "Host harness" });
+    await provider.selectOption({ label: "Host provider" });
+    await editor.getByRole("button", { name: "Save changes" }).click();
+    expect(
+      await page.evaluate(() => window.agentControlFixture.agent.harness),
+    ).toMatchObject({ command: "host-command", provider: "host-provider" });
+    await page.evaluate(async () => {
+      const f = window.agentControlFixture;
+      delete f.data.harnessOptions;
+      await f.control.refresh();
+    });
+    await expect(
+      editor.getByRole("textbox", { name: "Executable", exact: true }),
+    ).toHaveValue("host-command");
+    await expect(
+      editor.getByLabel("Custom provider", { exact: true }),
+    ).toHaveValue("host-provider");
+    await expect(
+      editor.getByRole("button", { name: "Save changes" }),
+    ).toBeDisabled();
+  } finally {
+    await server.close();
+  }
+});

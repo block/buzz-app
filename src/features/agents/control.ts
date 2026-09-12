@@ -32,6 +32,13 @@ export interface AgentView {
 export interface ControlSnapshot {
   agents: AgentView[];
   runtimeAvailable: boolean;
+  /** Native-owned editing suggestions, not installation or execution evidence.
+   * Optional so an older running native host retains editable custom values. */
+  harnessOptions?: {
+    command: string;
+    label: string;
+    providers: { value: string; label: string }[];
+  }[];
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   runtimeMessage?: string | null;

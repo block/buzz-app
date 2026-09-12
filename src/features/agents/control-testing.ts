@@ -23,7 +23,18 @@ export function controlFixture() {
     error: null,
     diagnostics: ["Listener process started; readiness is unverified."],
   };
-  const data: ControlSnapshot = { runtimeAvailable: true, agents: [agent] };
+  const data: ControlSnapshot = {
+    runtimeAvailable: true,
+    agents: [agent],
+    // Simulates the native snapshot; never imported by production UI.
+    harnessOptions: [
+      {
+        command: "buzz-agent",
+        label: "Buzz Agent",
+        providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+      },
+    ],
+  };
   const calls: { action: string; payload?: unknown }[] = [];
   let failSave = false;
   const host: AgentControlHost = {

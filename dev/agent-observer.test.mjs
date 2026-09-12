@@ -1,4 +1,4 @@
-import { test, expect } from "vitest";
+import { test, expect, vi } from "vitest";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -49,7 +49,12 @@ test("purpose-bound host decoder preserves raw JSON and never returns keys", () 
     plaintext: raw,
   });
 });
-test("rejects signature, recipient, sender, direction, cardinality, freshness, content and captured-viewer violations", () => {
+test("rejects signature, recipient, sender, direction, cardinality, freshness, content and captured-viewer violations", ({
+  onTestFinished,
+}) => {
+  // A future +301s fixture becomes valid at +300s if the wall clock ticks.
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
+  onTestFinished(() => clock.mockRestore());
   const tags = frame().tags;
   const invalid = [
     { ...frame(), sig: "0".repeat(128) },

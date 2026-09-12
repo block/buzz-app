@@ -38,7 +38,7 @@ function fixture() {
             live: true,
           }),
         );
-      if (url.endsWith("/stream-retry")) {
+      if (url.endsWith("/stream-retry") || url.endsWith("/stream-presence")) {
         const d = deferred<Response>();
         controls.push(d);
         signals.push(init.signal as AbortSignal);
@@ -81,6 +81,13 @@ function fixture() {
     snapshots,
     accept,
     publish,
+    presence(index: number, state: unknown) {
+      required(bodyControllers[index]).enqueue(
+        new TextEncoder().encode(
+          `event: presence-state\ndata: ${JSON.stringify(state)}\n\n`,
+        ),
+      );
+    },
     callbacks: {
       state(s: unknown) {
         snapshots.push(s);
@@ -161,3 +168,80 @@ for (const finish of ["replacement", "dispose"] as const)
         owner.dispose();
       }
     });
+
+it("presence controls coalesce continuous demand with a fixed deadline and stale author state cannot replace current demand", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const states = vi.fn();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)({
+    ...f.callbacks,
+    presenceState: states,
+  });
+  try {
+    f.accept(0);
+    await tick();
+    for (let i = 1; i <= 10; i++) {
+      owner.presence?.update([i.toString(16).padStart(64, "0")]);
+      await vi.advanceTimersByTimeAsync(50);
+    }
+    expect(f.controls).toHaveLength(1);
+    const latest = "a".padStart(64, "0");
+    f.presence(0, { status: "ready", authors: ["1".padStart(64, "0")] });
+    await tick();
+    expect(states.mock.lastCall?.[0]).toEqual({
+      status: "pending",
+      authors: [latest],
+    });
+    required(f.controls[0]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    await vi.advanceTimersByTimeAsync(600);
+    expect(f.controls).toHaveLength(2);
+    f.presence(0, { status: "ready", authors: [latest] });
+    await tick();
+    expect(states.mock.lastCall?.[0]).toEqual({
+      status: "ready",
+      authors: [latest],
+    });
+    required(f.controls[1]).resolve(new Response(null, { status: 200 }));
+    await tick();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("stream replacement clears a queued presence timer without poisoning later controls; late failed controls are fenced", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const states = vi.fn();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)({
+    ...f.callbacks,
+    presenceState: states,
+  });
+  try {
+    f.accept(0);
+    await tick();
+    owner.presence?.update(["a".repeat(64)]);
+    owner.update(["a"]); // replacement while the first control is still queued
+    f.accept(1);
+    await tick();
+    owner.presence?.update(["b".repeat(64)]);
+    await vi.advanceTimersByTimeAsync(100);
+    expect(f.controls).toHaveLength(1);
+    owner.update(["b"]);
+    f.accept(2);
+    await tick();
+    const before = states.mock.calls.length;
+    required(f.controls[0]).resolve(new Response(null, { status: 503 }));
+    await tick();
+    expect(states).toHaveBeenCalledTimes(before);
+    owner.presence?.update(["c".repeat(64)]);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.controls).toHaveLength(2);
+    required(f.controls[1]).resolve(new Response(null, { status: 200 }));
+    await tick();
+  } finally {
+    owner.dispose();
+  }
+});

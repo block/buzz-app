@@ -2,7 +2,10 @@ import type { EventTemplate, VerifiedEvent } from "nostr-tools";
 import { eventDto } from "./events.ts";
 import { EMOJI_SET } from "./emoji.ts";
 
-export const LIVE_CHANNEL_CAPACITY = 1022; // Reserve two of the relay's 1024 slots.
+import { createPresenceLive } from "./presence-live.ts";
+import type { PresenceCapability, PresenceState } from "./presence-contract.ts";
+
+export const LIVE_CHANNEL_CAPACITY = 1020; // Two globals plus confirmed/candidate presence slots.
 export const LIVE_REPLAY_LIMIT = 500;
 const SETUP_CONCURRENCY = 4;
 const REQUEST_INTERVAL_MS = 250; // 4 starts/s leaves room below the reference 10/s quota.
@@ -12,9 +15,19 @@ const MAX_QUOTA_RETRIES = 3;
 export function createLiveAdmission() {
   let next = 0;
   let cooldown = 0;
+  let nextPresence = 0,
+    nextPublish = 0;
   return {
     delay: () =>
       Math.max(0, next - performance.now(), cooldown - performance.now()),
+    presenceDelay: () => Math.max(0, nextPresence - performance.now()),
+    publishDelay: () => Math.max(0, nextPublish - performance.now()),
+    takePresence() {
+      nextPresence = performance.now() + 1000;
+    },
+    takePublish() {
+      nextPublish = performance.now() + 1000;
+    },
     take() {
       next = performance.now() + REQUEST_INTERVAL_MS;
     },
@@ -40,11 +53,14 @@ export type LiveSnapshot = Readonly<{
 }>;
 export type LiveCallbacks = {
   receive(events: readonly VerifiedEvent[]): void;
+  presence?(events: readonly VerifiedEvent[]): void;
+  presenceState?(state: PresenceState): void;
   state(snapshot: LiveSnapshot): void;
   established(channelId?: string): void;
   denied(channelId: string, reason: string): void;
 };
 export type LiveSubscription = {
+  presence?: PresenceCapability;
   update(channels: readonly string[]): void;
   /** Host demand only: reorder existing pending routes, never grant new interests. */
   prioritize?(channels: readonly string[]): void;
@@ -127,6 +143,34 @@ export function subscribeRelayTraffic(
   const send = (value: unknown) => {
     if (!closed && socket?.readyState === 1) socket.send(JSON.stringify(value));
   };
+  function cooldown(reason: string): boolean | undefined {
+    if (!reason.startsWith("rate-limited:")) return undefined;
+    const hint = /^rate-limited: quota exceeded; retry in (\d+)s$/.exec(reason);
+    const seconds = hint ? Number(hint[1]) : 5;
+    const supported = Number.isSafeInteger(seconds) && seconds <= 60;
+    admission.pause(
+      Number.isSafeInteger(seconds) && seconds <= 86400 ? seconds : 86400,
+    );
+    if (!supported) {
+      for (const queued of routes.values())
+        if (queued.status === "pending" && !queued.wire) {
+          queued.status = "error";
+          queued.error = "Unsupported live cooldown; automatic setup stopped";
+        }
+      notify();
+    }
+    return supported;
+  }
+  const presence = createPresenceLive({
+    sign,
+    viewer,
+    callbacks,
+    admission,
+    send,
+    connected: () => !closed && authenticated,
+    wake: pump,
+    cooldown,
+  });
   function remove(route: Route) {
     clearTimeout(route.deadline);
     if (route.wire) {
@@ -191,33 +235,15 @@ export function subscribeRelayTraffic(
     delete route.wire;
     route.status = "error";
     route.error = reason;
-    if (reason.startsWith("rate-limited:")) {
-      const hint = /^rate-limited: quota exceeded; retry in (\d+)s$/.exec(
-        reason,
-      );
-      const seconds = hint ? Number(hint[1]) : 5;
-      if (!Number.isSafeInteger(seconds) || seconds > 60) {
+    if (cooldown(reason) === true) {
+      if (++route.quotaRetries <= MAX_QUOTA_RETRIES) route.status = "pending";
+      else {
         for (const queued of routes.values())
           if (queued.status === "pending" && !queued.wire) {
             queued.status = "error";
-            queued.error = "Unsupported live cooldown; automatic setup stopped";
+            queued.error =
+              "Live request cooldown retries exhausted; retry available";
           }
-        // Conservative shared pause survives replacement; never overflow a timer.
-        admission.pause(
-          Number.isSafeInteger(seconds) && seconds <= 86400 ? seconds : 86400,
-        );
-      } else {
-        admission.pause(seconds);
-        if (++route.quotaRetries <= MAX_QUOTA_RETRIES) route.status = "pending";
-        else {
-          // Stop the unsent queue too: rejection must never drain it into an exhausted budget.
-          for (const queued of routes.values())
-            if (queued.status === "pending" && !queued.wire) {
-              queued.status = "error";
-              queued.error =
-                "Live request cooldown retries exhausted; retry available";
-            }
-        }
       }
     }
     notify();
@@ -231,6 +257,13 @@ export function subscribeRelayTraffic(
     let active = [...routes.values()].filter(
       (route) => route.wire && route.status === "pending",
     ).length;
+    const foreground = [...routes.values()].some(
+      (route) =>
+        route.status === "pending" &&
+        (!route.channelId || priority.includes(route.channelId)),
+    );
+    presence.dispatch(foreground || active >= SETUP_CONCURRENCY);
+    if (presence.pending()) active++;
     const rank = (route: Route) =>
       !route.channelId
         ? -2
@@ -297,6 +330,7 @@ export function subscribeRelayTraffic(
   function clearSocket() {
     generation++;
     authenticated = false;
+    presence.reset("Presence socket disconnected; outcome unknown");
     clearTimeout(dispatchTimer);
     clearTimeout(deadline);
     for (const route of routes.values()) clearTimeout(route.deadline);
@@ -404,6 +438,7 @@ export function subscribeRelayTraffic(
         notify();
         return;
       }
+      presence.message(data);
       const route =
         typeof data[1] === "string" ? wires.get(data[1]) : undefined;
       if (!authenticated || !route) return;
@@ -416,7 +451,7 @@ export function subscribeRelayTraffic(
           return;
         }
         if (route.status === "pending") route.count++;
-        callbacks.receive([incoming]);
+        if (incoming.kind !== 20001) callbacks.receive([incoming]);
       } else if (data[0] === "EOSE" && route.status === "pending") {
         clearTimeout(route.deadline);
         route.status = "live";
@@ -440,6 +475,7 @@ export function subscribeRelayTraffic(
   }
   connect();
   return {
+    presence: presence.capability,
     prioritize(input) {
       liveChannels(input); // Same bounded ID validation, but preserve demand order.
       priority = [...new Set(input)].slice(0, 64);
@@ -456,6 +492,7 @@ export function subscribeRelayTraffic(
       clearTimeout(retryTimer);
       attempts = 0;
       if (authenticated) {
+        presence.retry();
         for (const route of routes.values()) {
           if (route.status !== "error") continue;
           route.status = "pending";
@@ -468,6 +505,7 @@ export function subscribeRelayTraffic(
     },
     dispose() {
       if (closed) return;
+      presence.dispose();
       closed = true;
       clearTimeout(retryTimer);
       clearSocket();

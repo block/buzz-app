@@ -2,7 +2,7 @@ import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { test, expect, vi } from "vitest";
-import { getPublicKey } from "nostr-tools";
+import { finalizeEvent, getPublicKey } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
 
@@ -16,6 +16,7 @@ async function harness(
   key[31] = 1;
   const requests = [];
   const sockets = [];
+  const frames = [];
   let handler;
   const server = createServer((req, res) => handler?.(req, res));
   const plugin = relayBrokerPlugin({
@@ -29,6 +30,7 @@ async function harness(
         readyState: 1,
         send(text) {
           const [kind, id, filter] = JSON.parse(text);
+          frames.push({ kind, id, filter, socket, at: performance.now() });
           if (kind === "AUTH")
             queueMicrotask(() => this.receive(["OK", id.id, true]));
           if (kind !== "REQ") return;
@@ -66,6 +68,8 @@ async function harness(
   const controllers = [];
   return {
     sockets,
+    frames,
+    key,
     requests,
     base,
     async post(channels, origin = base) {
@@ -370,6 +374,239 @@ test("priority control cannot allocate interests or bypass owner, origin, commun
     expect((await control({ streamId, channels: ["a"] })).status).toBe(404);
     expect(h.sockets).toHaveLength(1);
   } finally {
+    await h.close();
+  }
+});
+
+test("actual browser/broker presence controls preserve socket and healthy routes; only a correlated WS receipt resolves publication", async () => {
+  const h = await harness();
+  const nativeFetch = globalThis.fetch;
+  let traffic;
+  try {
+    const fetcher = vi.fn((input, init) =>
+      nativeFetch(input, {
+        ...init,
+        headers: {
+          ...init?.headers,
+          ...(init?.method === "POST" ? { Origin: h.base } : {}),
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    const callbacks = {
+      receive: vi.fn(),
+      state: vi.fn(),
+      established: vi.fn(),
+      denied: vi.fn(),
+      presence: vi.fn(),
+      presenceState: vi.fn(),
+    };
+    const transport = await connectBrokerTransport(h.base);
+    traffic = transport.subscribe(callbacks);
+    traffic.update(["a"]);
+    await until(() => callbacks.established.mock.calls.length === 3);
+    const sockets = h.sockets.length;
+    const streams = fetcher.mock.calls.filter(([url]) =>
+      String(url).endsWith("/stream"),
+    ).length;
+    const author = getPublicKey(h.key);
+    for (let i = 0; i < 1000; i++) traffic.presence.update([author]);
+    await until(
+      () => callbacks.presenceState.mock.lastCall?.[0].status === "ready",
+    );
+    const route = h.frames.find(
+      (f) => f.kind === "REQ" && f.filter.kinds[0] === 20001,
+    );
+    expect(route.filter).toEqual({
+      kinds: [20001],
+      authors: [author],
+      limit: 0,
+    });
+    const event = finalizeEvent(
+      {
+        kind: 20001,
+        content: "online",
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [],
+      },
+      h.key,
+    );
+    await route.socket.receive(["EVENT", route.id, event]);
+    await until(() => callbacks.presence.mock.calls.length === 1);
+    expect(callbacks.receive).not.toHaveBeenCalled();
+    expect(callbacks.established).toHaveBeenCalledTimes(3);
+    // Coalesced A -> B -> A must return to Ready even though the server union never changed.
+    traffic.presence.update(["f".repeat(64)]);
+    traffic.presence.update([author]);
+    expect(callbacks.presenceState.mock.lastCall?.[0].status).toBe("pending");
+    await until(
+      () => callbacks.presenceState.mock.lastCall?.[0].status === "ready",
+    );
+    const completed = vi.fn();
+    const operation = traffic.presence
+      .publish("away", new AbortController().signal)
+      .then(completed);
+    await until(() => h.frames.some((f) => f.kind === "EVENT"));
+    const frame = h.frames.find((f) => f.kind === "EVENT");
+    expect(frame.id).toMatchObject({
+      kind: 20001,
+      content: "away",
+      tags: [],
+      pubkey: author,
+    });
+    await frame.socket.receive(["OK", "wrong-id", true]);
+    await delay(20);
+    expect(completed).not.toHaveBeenCalled();
+    await frame.socket.receive(["OK", frame.id.id, true]);
+    await operation;
+    expect(completed).toHaveBeenCalledOnce();
+    traffic.presence.update([]);
+    await until(() =>
+      h.frames.some((f) => f.kind === "CLOSE" && f.id === route.id),
+    );
+    expect(h.sockets).toHaveLength(sockets);
+    expect(
+      fetcher.mock.calls.filter(([url]) => String(url).endsWith("/stream")),
+    ).toHaveLength(streams);
+    expect(h.requests.filter((r) => r.filter.kinds[0] !== 20001)).toHaveLength(
+      3,
+    );
+    expect(
+      fetcher.mock.calls.filter(([url]) =>
+        String(url).endsWith("/stream-presence"),
+      ),
+    ).toHaveLength(3);
+    expect(
+      fetcher.mock.calls.some(([url]) =>
+        /\/(events|publish|sign)$/.test(String(url)),
+      ),
+    ).toBe(false);
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
+    await h.close();
+  }
+});
+
+test("presence controls enforce origin, owner, community, shape and body bounds without extra sockets/signing", async () => {
+  const h = await harness();
+  const post = (path, body, origin = h.base) =>
+    fetch(`${h.base}${path}`, {
+      method: "POST",
+      headers: { Origin: origin, "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  try {
+    const stream = await h.post([]);
+    const streamId = stream.response.headers.get("x-buzz-live-id");
+    const author = getPublicKey(h.key);
+    await until(() => h.requests.length === 2);
+    for (const [path, body, code] of [
+      ["stream-presence", { streamId, authors: ["bad"] }, 400],
+      ["stream-presence", { streamId, authors: Array(257).fill(author) }, 400],
+      ["stream-presence", { streamId, authors: ["x".repeat(18001)] }, 413],
+      ["stream-presence-publish", { streamId, status: "offline" }, 400],
+      [
+        "stream-presence-publish",
+        { streamId, status: { status: "online" } },
+        400,
+      ],
+      ["stream-presence-publish", { streamId, status: "x".repeat(300) }, 413],
+      [
+        "stream-presence-publish",
+        { streamId: "f".repeat(32), status: "online" },
+        404,
+      ],
+    ])
+      expect((await post(`/api/relay/${path}`, body)).status).toBe(code);
+    for (const path of ["stream-presence", "stream-presence-publish"]) {
+      const body = { streamId, authors: [author], status: "online" };
+      expect(
+        (await post(`/api/relay/${path}`, body, "https://wrong.invalid"))
+          .status,
+      ).toBe(403);
+      expect((await post(`/api/relay/secondary/${path}`, body)).status).toBe(
+        404,
+      );
+    }
+    expect(h.sockets).toHaveLength(1);
+    expect(h.frames.some((f) => f.kind === "EVENT")).toBe(false);
+    expect(h.requests).toHaveLength(2);
+    stream.abort();
+    await until(() => h.sockets[0].readyState === 3);
+    expect(
+      (
+        await post("/api/relay/stream-presence", {
+          streamId,
+          authors: [author],
+        })
+      ).status,
+    ).toBe(404);
+    expect(
+      (
+        await post("/api/relay/stream-presence-publish", {
+          streamId,
+          status: "online",
+        })
+      ).status,
+    ).toBe(404);
+  } finally {
+    await h.close();
+  }
+});
+
+test("broker publication cancellation frees its owner and quota rejection remains unconfirmed with no retry", async () => {
+  const h = await harness();
+  const nativeFetch = globalThis.fetch;
+  let traffic;
+  try {
+    vi.stubGlobal("fetch", (input, init) =>
+      nativeFetch(input, {
+        ...init,
+        headers: {
+          ...init?.headers,
+          ...(init?.method === "POST" ? { Origin: h.base } : {}),
+        },
+      }),
+    );
+    const transport = await connectBrokerTransport(h.base);
+    let ready = 0;
+    traffic = transport.subscribe({
+      receive() {},
+      state() {},
+      established() {
+        ready++;
+      },
+      denied() {},
+    });
+    await until(() => ready === 2);
+    const controller = new AbortController();
+    const operation = traffic.presence.publish("online", controller.signal);
+    const failure = expect(operation).rejects.toThrow();
+    await until(() => h.frames.some((f) => f.kind === "EVENT"));
+    controller.abort();
+    await failure;
+    await delay(50); // Let HTTP close cancellation reach the server owner.
+    const second = traffic.presence.publish(
+      "away",
+      new AbortController().signal,
+    );
+    const rejected = expect(second).rejects.toThrow("unconfirmed");
+    await until(() => h.frames.filter((f) => f.kind === "EVENT").length === 2);
+    const frame = h.frames.filter((f) => f.kind === "EVENT")[1];
+    await frame.socket.receive([
+      "OK",
+      frame.id.id,
+      false,
+      "rate-limited: quota exceeded; retry in 0s",
+    ]);
+    await rejected;
+    await delay(1100);
+    expect(h.frames.filter((f) => f.kind === "EVENT")).toHaveLength(2);
+    expect(h.sockets).toHaveLength(1);
+  } finally {
+    traffic?.dispose();
+    vi.unstubAllGlobals();
     await h.close();
   }
 });

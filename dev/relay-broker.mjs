@@ -15,6 +15,10 @@ import {
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
 } from "./sidebar-preferences.mjs";
+import {
+  presenceAuthors,
+  presenceStatus,
+} from "../src/features/relay/presence-contract.ts";
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
 import { relayKlipySearchPath } from "../src/features/relay/gifs.ts";
 // Dev-only relay broker. Holds the local Buzz identity in this Node process and signs NIP-98 reads
@@ -513,22 +517,33 @@ export function relayBrokerPlugin({
               live: true,
             });
           if (
-            ["/api/relay/stream-retry", "/api/relay/stream-priority"].includes(
-              route,
-            ) &&
+            [
+              "/api/relay/stream-retry",
+              "/api/relay/stream-priority",
+              "/api/relay/stream-presence",
+              "/api/relay/stream-presence-publish",
+            ].includes(route) &&
             req.method === "POST"
           ) {
             const prioritizing = route === "/api/relay/stream-priority";
+            const observing = route === "/api/relay/stream-presence";
+            const publishingPresence =
+              route === "/api/relay/stream-presence-publish";
             let raw = "";
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > (prioritizing ? 9000 : 256))
+              if (
+                Buffer.byteLength(raw) >
+                (observing ? 18000 : prioritizing ? 9000 : 256)
+              )
                 return json(res, 413, { error: "Live control too large" });
             }
-            let streamId, priority;
+            let streamId, priority, authors, status;
             try {
               const body = JSON.parse(raw);
               streamId = body.streamId;
+              if (observing) authors = presenceAuthors(body.authors);
+              if (publishingPresence) status = presenceStatus(body.status);
               if (prioritizing) {
                 liveChannels(body.channels);
                 if (body.channels.length > 64)
@@ -548,7 +563,32 @@ export function relayBrokerPlugin({
               return json(res, 404, {
                 error: "Live stream no longer available",
               });
-            if (prioritizing) stream.traffic.prioritize(priority);
+            if (publishingPresence) {
+              const controller = new AbortController();
+              const abort = () => controller.abort();
+              res.once("close", abort);
+              try {
+                await stream.traffic.presence.publish(
+                  status,
+                  controller.signal,
+                );
+                if (!res.destroyed) return json(res, 200, { accepted: true });
+              } catch {
+                if (!res.destroyed)
+                  return json(res, 503, {
+                    error: "Presence publication unconfirmed",
+                  });
+              } finally {
+                res.off("close", abort);
+              }
+              return;
+            }
+            if (observing) {
+              stream.traffic.presence.update(authors);
+              // Reassert state on the ordered SSE lane even when the union is unchanged
+              // (e.g. A -> B -> A coalesced in the browser, or retry after a lost response).
+              stream.presence();
+            } else if (prioritizing) stream.traffic.prioritize(priority);
             else stream.traffic.retry();
             return json(res, 200, { accepted: true });
           }
@@ -559,10 +599,11 @@ export function relayBrokerPlugin({
               if (Buffer.byteLength(raw) > 150000)
                 return json(res, 413, { error: "Live interests too large" });
             }
-            let channels, priority;
+            let channels, priority, authors;
             try {
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
+              authors = presenceAuthors(body.authors ?? []);
               liveChannels(body.priority ?? []);
               if (body.priority?.length > 64)
                 throw new Error("Priority capacity reached");
@@ -598,6 +639,7 @@ export function relayBrokerPlugin({
                 `${kind ? `event: ${kind}\n` : ""}data: ${JSON.stringify(value)}\n\n`,
               );
             };
+            let presenceState = { status: "idle", authors: [] };
             const traffic = subscribeRelayTraffic(
               relay.replace(/^http/, "ws"),
               async (event) => finalizeEvent(event, key),
@@ -605,6 +647,13 @@ export function relayBrokerPlugin({
               {
                 receive: (events) => {
                   for (const event of events) write("", event);
+                },
+                presence: (events) => {
+                  for (const event of events) write("presence", event);
+                },
+                presenceState: (state) => {
+                  presenceState = state;
+                  write("presence-state", state);
                 },
                 state: (state) => write("state", state),
                 established: (channelId) => write("established", { channelId }),
@@ -617,6 +666,7 @@ export function relayBrokerPlugin({
             principal.streams++;
             traffic.prioritize(priority);
             traffic.update(channels);
+            traffic.presence.update(authors);
             const keepAlive = setInterval(
               () => res.write(": keepalive\n\n"),
               15000,
@@ -631,7 +681,12 @@ export function relayBrokerPlugin({
               streams.delete(streamId);
               res.destroy();
             };
-            streams.set(streamId, { relay, traffic, close });
+            streams.set(streamId, {
+              relay,
+              traffic,
+              close,
+              presence: () => write("presence-state", presenceState),
+            });
             res.once("close", close);
             if (res.destroyed) close();
             return;

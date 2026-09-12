@@ -1,5 +1,6 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import {
+  LIVE_CHANNEL_CAPACITY,
   createLiveAdmission,
   liveChannels,
   subscribeRelayTraffic,
@@ -185,19 +186,19 @@ it("bounds interests and exposes every omitted ID without exceeding 1024 subscri
   await h.first.auth();
   await vi.advanceTimersByTimeAsync(750);
   let index = 0;
-  while (index < 1024) {
+  while (index < LIVE_CHANNEL_CAPACITY + 2) {
     if (index >= h.first.requests().length)
       await vi.advanceTimersByTimeAsync(250);
     const request = h.first.requests()[index++];
     assert.exists(request);
     await h.first.receive(["EOSE", request[1]]);
   }
-  expect(h.first.requests()).toHaveLength(1024);
+  expect(h.first.requests()).toHaveLength(LIVE_CHANNEL_CAPACITY + 2);
   expect(
     h.callbacks.state.mock.lastCall?.[0].routes
       .filter((r) => r.status === "limited")
       .map((r) => r.channelId),
-  ).toEqual(ids.slice(1022));
+  ).toEqual(ids.slice(LIVE_CHANNEL_CAPACITY));
   expect(() => liveChannels([...ids, "excess"])).toThrow();
   for (const invalid of [[""], ["a b"], ["x".repeat(129)], [9], {}])
     expect(() => liveChannels(invalid)).toThrow();

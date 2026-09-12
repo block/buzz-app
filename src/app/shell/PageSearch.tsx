@@ -6,6 +6,8 @@ import {
   pagePresentation,
   shellPresentation,
 } from "./presentation";
+import { useTranslation } from "react-i18next";
+import { localizedPageLabel } from "../../features/localization/service";
 
 export function PageSearch({
   pages,
@@ -14,15 +16,21 @@ export function PageSearch({
   pages: readonly RegisteredPage[];
   onSelect: (key: string) => void;
 }) {
+  const { t } = useTranslation();
   const dialog = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
   const destinations = [
-    { key: "home", ...shellPresentation.home },
+    { key: "home", ...shellPresentation.home, label: t("shell.home") },
     ...orderPages(pages).map((page) => ({
       key: page.key,
       ...pagePresentation(page),
+      label: localizedPageLabel(page.key, pagePresentation(page).label, t),
     })),
-    { key: "settings", ...shellPresentation.settings },
+    {
+      key: "settings",
+      ...shellPresentation.settings,
+      label: t("shell.settings"),
+    },
   ].filter((page) =>
     page.label.toLowerCase().includes(query.trim().toLowerCase()),
   );
@@ -31,8 +39,8 @@ export function PageSearch({
       <button
         type="button"
         className="shell-icon"
-        aria-label="Find a page"
-        title="Find a page"
+        aria-label={t("shell.findPage")}
+        title={t("shell.findPage")}
         onClick={() => {
           setQuery("");
           dialog.current?.showModal();
@@ -42,21 +50,21 @@ export function PageSearch({
       </button>
       <dialog
         ref={dialog}
-        aria-label="Find a page"
+        aria-label={t("shell.findPage")}
         className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-line bg-surface p-4 text-ink shadow-surface backdrop:bg-overlay"
       >
         <div className="mb-3 flex items-center gap-3 border-b border-line pb-3">
           <Search size={18} aria-hidden="true" />
           <input
-            aria-label="Find a page"
-            placeholder="Find a page…"
+            aria-label={t("shell.findPage")}
+            placeholder={t("shell.findPagePlaceholder")}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             className="min-w-0 flex-1 rounded bg-transparent py-2 text-sm"
           />
           <button
             type="button"
-            aria-label="Close search"
+            aria-label={t("shell.closeSearch")}
             className="shell-icon"
             onClick={() => dialog.current?.close()}
           >
@@ -80,7 +88,7 @@ export function PageSearch({
           ))}
           {!destinations.length && (
             <p role="status" className="px-3 text-sm text-muted">
-              No matching pages.
+              {t("shell.noMatchingPages")}
             </p>
           )}
         </div>

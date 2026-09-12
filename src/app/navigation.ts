@@ -77,7 +77,7 @@ export function useAppNavigation(services: AppServices) {
   if (
     target.kind === "settings" &&
     target.section &&
-    !["profile", "plugins", "appearance"].includes(target.section)
+    !["profile", "plugins", "appearance", "language"].includes(target.section)
   )
     failure = "unavailable";
   const owner = useMemo(

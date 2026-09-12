@@ -133,6 +133,26 @@ recovery constraints, not a new shared-session API or a guarantee of general
 profile retry after every cache clear/network failure. See [browser coverage and
 limits](browser-testing.md#dm-label-recovery).
 
+## Membership activity
+
+Channel history and the existing live route include relay-signed kind-40099
+`member_joined`, `member_left` and `member_removed` summaries. Only recognized,
+channel-scoped payloads from the connected relay become activity rows; malformed,
+unknown and other authors' summaries are not rendered as JSON. These events do not
+grant/revoke access: the existing signed roster remains authoritative.
+
+The timeline groups adjacent arrivals/departures into compact avatar-and-text rows.
+Messages, local-day changes and gaps over an hour break groups; removals by different
+actors stay separate. Same-adder additions use “added by you” for the viewer;
+mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
+IDs, pagination cursors and retention budgets remain per event. Profiles reuse the
+shared background directory/cache, and reading anchors can resolve a member of a
+group. Activity has no message actions, thread, unread evidence or chat preview.
+
+An already-running development broker needs a coordinated restart to load the
+expanded live filter; frontend hot reload alone changes only the history/rendering
+path. No native or relay changes are required.
+
 ## Viewing threads
 
 Click a message's reply count to open its root and replies in the right column.
@@ -256,6 +276,17 @@ options exposes local-only manual unread, explicit mark-through and sync recover
 Older synchronized hints may expire under bounded retention. Synced manual-unread
 and OS notifications are not enabled by this feature.
 
+
+### Attachment layout and scrolling
+
+Image attachments reserve their preview geometry before loading and across virtualized
+row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
+and 320px tall without upscaling. Missing/invalid dimensions use a stable 360:320 frame
+that shrinks with the available width; the image is contained without cropping or
+upscaling. Unknown-size images may therefore have empty space in the frame. Loading,
+failure, or retry does not resize it or force an above-bottom reader to the newest row.
+`tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
+bottom following, reading anchors and narrow layout in Chromium and WebKit.
 
 ## Opening an exact message
 

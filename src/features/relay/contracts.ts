@@ -20,7 +20,17 @@ export type Profile = Readonly<{
   picture?: string;
   about?: string;
 }>;
-export type Attachment = Readonly<{ url: string; video: boolean }>;
+export type Attachment = Readonly<{
+  url: string;
+  video: boolean;
+  dimensions?: Readonly<{ width: number; height: number }>;
+}>;
+/** Relay-authored membership activity, not a membership grant or user message. */
+export type MembershipChange = Readonly<{
+  type: "member_joined" | "member_left" | "member_removed";
+  actor: string;
+  target: string;
+}>;
 export type ChannelMessage = Readonly<{
   id: string;
   channelId: string;
@@ -30,6 +40,7 @@ export type ChannelMessage = Readonly<{
   /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
   createdAt: number;
   content: string;
+  membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;
   /** Attachment removal changed the signed body; new text adjacency cannot bind identities. */

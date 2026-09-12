@@ -39,7 +39,7 @@ function fixture() {
             live: true,
           }),
         );
-      if (url.endsWith("/stream-retry")) {
+      if (url.endsWith("/stream-retry") || url.endsWith("/stream-observer")) {
         const d = deferred<Response>();
         controls.push(d);
         signals.push(init.signal as AbortSignal);
@@ -68,10 +68,13 @@ function fixture() {
       }),
     );
   }
-  function publish(index: number) {
+  function publish(
+    index: number,
+    snapshot: unknown = { status: "connected", routes: [] },
+  ) {
     required(bodyControllers[index]).enqueue(
       new TextEncoder().encode(
-        'event: state\ndata: {"status":"connected","routes":[]}\n\n',
+        `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`,
       ),
     );
   }
@@ -99,6 +102,33 @@ function fixture() {
     },
   };
 }
+it("rejects status snapshots beyond channel interests plus both globals and observer", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    f.accept(0);
+    await tick();
+    f.publish(0, {
+      status: "connected",
+      routes: Array.from({ length: 1028 }, (_, i) => ({
+        id: `route-${i}`,
+        status: "pending",
+        replay: "unknown",
+      })),
+    });
+    await tick();
+    expect(f.snapshots.at(-1)).toEqual({
+      status: "retrying",
+      routes: [],
+      error: "Invalid live broker status",
+    });
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("pre-header clicks preserve in-progress POST; duplicate controls coalesce", async () => {
   vi.useFakeTimers();
   const f = fixture();
@@ -169,6 +199,42 @@ for (const finish of ["replacement", "dispose"] as const)
         owner.dispose();
       }
     });
+
+it("late observer 404 from a retired stream cannot interrupt its replacement", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    f.accept(0);
+    await tick();
+    f.publish(0);
+    await tick();
+    required(owner.observe)(1);
+    await tick();
+    expect(f.controls).toHaveLength(1);
+    owner.update(["a"]);
+    f.accept(1);
+    await tick();
+    f.publish(1);
+    await tick();
+    expect(required(f.signals[0]).aborted).toBe(true);
+    const before = f.snapshots.length;
+    required(f.controls[0]).resolve(new Response(null, { status: 404 }));
+    await tick();
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(f.snapshots).toHaveLength(before);
+    expect(f.headers).toHaveLength(2);
+    required(owner.observe)(2);
+    await tick();
+    expect(f.controls).toHaveLength(2);
+    expect(required(f.signals[1]).aborted).toBe(false);
+    required(f.controls[1]).resolve(new Response(null, { status: 200 }));
+    await tick();
+  } finally {
+    owner.dispose();
+  }
+});
 
 it("preserves validated replay/live provenance through production broker transport; legacy traffic stays unknown", async () => {
   vi.useFakeTimers();

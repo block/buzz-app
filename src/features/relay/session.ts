@@ -4,6 +4,8 @@ import {
   type ReadOptions,
   type RelayReader,
 } from "./reader";
+import { createAgentActivity } from "../agents/activity";
+import { OBSERVER_KIND } from "../agents/observer";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -178,6 +180,7 @@ export function createRelaySession(
       profiles.clear();
       emoji.clear();
       agentLibrary.clear();
+      activity.clear();
       archives.clear();
       for (const purge of views.values()) purge();
       commit();
@@ -242,7 +245,9 @@ export function createRelaySession(
       events.some((event) => [39000, 39002].includes(event.kind))
     )
       channels.acceptDiscovery(events);
-    const visible = events.filter(visibility(events));
+    const visible = events
+      .filter((event) => event.kind !== OBSERVER_KIND)
+      .filter(visibility(events));
     const epoch = accessEpoch;
     profiling.measure(
       "events.reconcile",
@@ -295,6 +300,12 @@ export function createRelaySession(
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
   const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
+  const activity = createAgentActivity(
+    !!transport?.agentActivity && !!transport.subscribe,
+    (generation) => traffic?.observe?.(generation),
+    (channel) => canAccess(channel),
+    notify,
+  );
   const archives = createIdentityArchives(
     requests.reader,
     transport?.archiveAuthority,
@@ -685,6 +696,7 @@ export function createRelaySession(
     profiles: profiles.queries,
     emoji: emoji.queries,
     agentLibrary: agentLibrary.queries,
+    agentActivity: activity.queries,
     archives: archives.queries,
     media: (url: string) => transport?.media(url),
     /** A plugin may request writes from this same interface when the host supports them. */
@@ -937,6 +949,7 @@ export function createRelaySession(
     }
   }
   traffic = transport?.subscribe?.({
+    observer: (frame, generation) => activity.receive(frame, generation),
     receive(events, provenance) {
       if (closed) return;
       const candidates = new Set(
@@ -999,6 +1012,7 @@ export function createRelaySession(
     },
     state(snapshot) {
       if (closed) return;
+      activity.state(snapshot);
       if (
         snapshot.status !== "connected" &&
         liveSnapshot.status === "connected"
@@ -1061,6 +1075,7 @@ export function createRelaySession(
     async clearCache() {
       accessEpoch++;
       cacheClearEpoch++;
+      activity.clear();
       sidebarPreferences.clear();
       // New windows must not yield to or receive errors from retired owners.
       catchups.clear();
@@ -1079,6 +1094,7 @@ export function createRelaySession(
     dispose() {
       closed = true;
       lifetime.abort();
+      activity.dispose();
       sidebarPreferences.dispose();
       stopInterests();
       traffic?.dispose();

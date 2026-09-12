@@ -198,3 +198,19 @@ it("the viewing validity callback rechecks focus and settled positioning synchro
   h.unmount();
   expect(visible()).toBe(false);
 });
+
+it("membership activity cannot abort acknowledgment of a visible message below it", () => {
+  const h = setup();
+  h.setRows([
+    {
+      ...row("membership", 10, 50),
+      dataset: { messageId: "membership", membershipRow: "" },
+    } as ReturnType<typeof row>,
+    row("conversation", 100, 200),
+  ]);
+  h.mutation();
+  vi.advanceTimersByTime(750);
+  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith([
+    "conversation",
+  ]);
+});

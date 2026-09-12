@@ -187,6 +187,39 @@ it("only production live traffic can create a message notification, never histor
   });
   expect(h.owner.session.unread.attention("room", fresh.id).unread).toBe(true);
 });
+it("live membership activity and observer telemetry never become message notifications", async () => {
+  const h = await setup();
+  h.emit(
+    [
+      signed(h.relay, {
+        kind: 40099,
+        content: JSON.stringify({
+          type: "member_joined",
+          actor: h.viewer.pubkey,
+          target: h.peer.pubkey,
+        }),
+        tags: [
+          ["h", "room"],
+          ["p", h.viewer.pubkey],
+        ],
+      }),
+      signed(h.peer, {
+        kind: 24200,
+        content: "opaque",
+        tags: [
+          ["h", "room"],
+          ["p", h.viewer.pubkey],
+        ],
+      }),
+    ],
+    "live",
+  );
+  await flush();
+  expect(h.show).not.toHaveBeenCalled();
+  h.emit([h.make("fresh after activity")], "live");
+  await vi.waitFor(() => expect(h.show).toHaveBeenCalledTimes(1));
+});
+
 it("viewing suppression uses the shared lease, and suppressed candidates never become delayed alerts", async () => {
   const h = await setup();
   const row = h.make("visible");

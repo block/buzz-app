@@ -1,3 +1,5 @@
+import { PresenceIndicator } from "../presence/react";
+import type { PresenceQueries } from "../presence/directory";
 import { memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
@@ -12,6 +14,7 @@ import { usesLargeEmojiPresentation } from "./emoji-size";
 
 export type MessageRowProps = {
   row: ChannelMessage;
+  presence?: PresenceQueries | undefined;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
@@ -26,6 +29,7 @@ export type MessageRowProps = {
 
 export const MessageRow = memo(function MessageRow({
   row,
+  presence,
   unread,
   extensions,
   profile,
@@ -57,7 +61,7 @@ export const MessageRow = memo(function MessageRow({
   const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
   return (
-    <div data-message-id={row.id}>
+    <div data-message-id={row.id} data-presence-author={row.authorId}>
       {day && (
         <div className={styles.day}>
           <span>
@@ -92,6 +96,9 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.messageBody}>
           <div className={styles.byline}>
             <strong>{name}</strong>
+            {presence && (
+              <PresenceIndicator presence={presence} author={row.authorId} />
+            )}
             <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",

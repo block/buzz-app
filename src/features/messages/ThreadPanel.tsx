@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { usePresenceSurface } from "../presence/react";
 import {
   useEffect,
   useLayoutEffect,
@@ -168,6 +169,7 @@ function ThreadMessages({
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, rows);
   const scroller = useRef<HTMLElement>(null);
+  usePresenceSurface(session.presence, scroller);
   const positioned = useRef(false);
   const follow = useRef(true);
   useReading({ session, channelId, scroller, settled: positioned });
@@ -233,6 +235,7 @@ function ThreadMessages({
           <MessageRow
             extensions={extensions}
             row={snapshot.root}
+            presence={session.presence}
             profile={profiles.get(snapshot.root.authorId)}
             participantProfiles={profiles}
             media={session.media}
@@ -256,6 +259,7 @@ function ThreadMessages({
               <MessageRow
                 extensions={extensions}
                 row={row}
+                presence={session.presence}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
                 media={session.media}

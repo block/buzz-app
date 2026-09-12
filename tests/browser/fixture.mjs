@@ -25,6 +25,9 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  composerPublication: [false, { option: true }],
+  enforceQuotas: [false, { option: true }],
+  withoutPresence: [false, { option: true, scope: "worker" }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   sidebarUnread: [false, { option: true }],
@@ -44,6 +47,9 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      composerPublication,
+      enforceQuotas,
+      withoutPresence,
       readState,
       threadUnread,
       sidebarUnread,
@@ -284,6 +290,8 @@ export const test = base.extend({
           encoding: "utf8",
         }),
         browserName,
+        withoutPresence,
+        enforceQuotas,
         developmentReact,
         pluginFixtures,
         compiledBuild: {
@@ -474,6 +482,9 @@ export const test = base.extend({
     const relay = productionBroker
       ? policyRelay({
           viewer,
+          enforceQuotas,
+          presenceSnapshot: (author, status) =>
+            sign(20001, [["p", author]], status),
           answer,
           report,
           pending,
@@ -488,9 +499,28 @@ export const test = base.extend({
                     max_bytes: 8388608,
                   },
                 }),
+              }
+            : {}),
+          ...(readState || composerPublication
+            ? {
                 acceptPublication: (community, event) => {
                   expect(verifyEvent(event)).toBe(true);
                   expect(event.pubkey).toBe(viewer);
+                  if (composerPublication && event.kind === 9) {
+                    const channel = event.tags.find(
+                      ([name]) => name === "h",
+                    )?.[1];
+                    expect(channels).toContain(channel);
+                    histories.get(`${community}/${channel}`).push(event);
+                    report.publications.push({
+                      community,
+                      event,
+                      at: performance.now(),
+                    });
+                    relay.publish(community, event);
+                    return;
+                  }
+                  expect(readState).toBe(true);
                   expect(event.kind).toBe(30078);
                   expect(event.tags).toContainEqual(["t", "read-state"]);
                   const blob = JSON.parse(
@@ -614,6 +644,7 @@ export const test = base.extend({
                     report.brokerRequests.push({
                       url: req.url,
                       at: performance.now(),
+                      priority: req.headers["x-buzz-read-priority"],
                     });
                   if (req.url?.endsWith("/stream"))
                     res.once("close", () => {
@@ -727,6 +758,19 @@ export const test = base.extend({
         participants,
         viewer,
         relay,
+        presence(status, updateSnapshot = true) {
+          relay.presence(
+            "primary",
+            sign(
+              20001,
+              [],
+              status,
+              readState ? peerKey : userKey,
+              Math.floor(Date.now() / 1000),
+            ),
+            updateSnapshot,
+          );
+        },
         observer(raw, agentKey, community = "primary") {
           const agent = getPublicKey(agentKey);
           const plaintext = JSON.stringify(raw);

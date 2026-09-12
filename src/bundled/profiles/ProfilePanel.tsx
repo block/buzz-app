@@ -1,4 +1,8 @@
 import {
+  PresenceIndicator,
+  usePresenceDemand,
+} from "../../features/presence/react";
+import {
   useEffect,
   useMemo,
   useRef,
@@ -45,6 +49,7 @@ function ProfileDetails({
   pubkey: string;
   context: PanelProps["context"];
 }) {
+  usePresenceDemand(session.presence, pubkey);
   const selection = useMemo(
     () => selectProfiles(session.profiles, [pubkey]),
     [session.profiles, pubkey],
@@ -101,6 +106,7 @@ function ProfileDetails({
           size="large"
         />
         <h2 className="text-heading">{name}</h2>
+        <PresenceIndicator presence={session.presence} author={pubkey} label />
       </div>
       {profile?.about && <p className={styles.about}>{profile.about}</p>}
       {context?.canOpen(activity) && (

@@ -40,7 +40,8 @@ bin/pnpm test:browser tests/browser/layout.spec.mjs --no-deps
 bin/pnpm test:browser --no-deps --workers=1
 ```
 
-The default local gate runs `channel-opening.spec.mjs` and `scroll.spec.mjs` first,
+The default local gate runs `channel-opening.spec.mjs`, `scroll.spec.mjs`,
+`presence-contention.spec.mjs`, and `presence-control.spec.mjs` first,
 one browser/worker at a time, through the `chromium-measurements` →
 `webkit-measurements` dependency chain. Only then may functional journeys run
 with two workers. This preserves timing/heap samples without unrelated browser
@@ -197,6 +198,37 @@ admission and upstream time; retain cold/warm cache state and exact source state
 The separate `channel-opening.test.ts` exercises catch-up ownership and terminal
 retry states through the production session. A held-response reproducer establishes
 a failure mechanism; it does not on its own identify a live incident's cause.
+
+## Presence contention controls
+
+`presence-contention.spec.mjs` forces a real signed presence conflict through the
+session directory, verified reader, and production broker, then holds the upstream
+snapshot. Immediately afterward it submits the actual composer or opens a cold
+channel. The foreground host request must arrive within **200ms** of snapshot
+start (inside the old 500ms residual pacing window); broker admission must be
+under **100ms**, with host-arrival-to-upstream under **150ms**. These generous
+regression ceilings detect the inherited pacing interval, not universal zero-cost
+service. Send keeps the snapshot pending; cold navigation can abort it but must
+not inherit its consumed credit. Optimistic message text is not a send receipt.
+
+`presence-control.spec.mjs` repeats both journeys with only the directory and
+publisher disabled in a test build. It preserves normal reader, broker, signer,
+outbox, cache and connection behavior and asserts that no presence traffic occurs.
+Both files run serially in each measurement engine. Evidence separates runner-clock
+host/upstream timestamps, observed browser request events, browser resource timing,
+Server-Timing admission/auth/network, and the exported production read/write profiler.
+These clocks must not be subtracted across domains.
+
+The opt-in policy relay numerically enforces audited reference defaults: shared
+API **300/min**, WS REQ/EVENT **50/5s**, plus **60 EVENT/min**. Counters are shared
+across sockets for the same community/viewer; HTTP publications share the API
+counter with snapshots. `policy-quota.spec.mjs` deliberately exceeds each budget
+and requires correlated rejection, community isolation, and window expiry. This
+positive control prevents an empty refusal list from masquerading as enforcement.
+The short browser journeys do not saturate the client's maximum envelope or prove
+capacity isolation; colocated transport tests cover those contracts. Other devices,
+lower deployed quotas, CPU contention, SQL/Redis cost, and native GUI remain outside
+this offline model.
 
 ## DM label recovery
 

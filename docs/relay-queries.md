@@ -62,6 +62,12 @@ locally authored event is **not proof of relay acceptance**. Signature-verified
 membership, bounds and persistence. Domain folds can consume local payloads, but
 must not let them manufacture relay-authored authority.
 
+## Presence
+
+`session.presence` exposes volatile per-author status and surface-owned demand,
+using the same authenticated socket and verified background reader without message
+retention or outbox replay. See [presence ownership, traffic budgets and limits](presence.md).
+
 ## Community emoji
 
 `session.emoji` owns the current community's kind-30030 `d=buzz:custom-emoji`
@@ -184,9 +190,13 @@ The timeline, channel-list preview and filtered plugin views share that operatio
 
 ## Bounds and lifecycle
 
-- Reads: three active slots, at most one background request, 128 pending distinct
-  requests, ten-second deadlines including queue time, four filters per request,
-  500 per-filter limit, 64 KiB keys, and an 8 MiB result budget.
+- Ordinary reads: three active slots, at most one background request, 128 pending
+  distinct requests. One strictly classified presence snapshot has separate additive
+  capacity; it does not reduce those ordinary budgets. All reads retain ten-second
+  deadlines including queue time, four filters per request, 500 per-filter limit,
+  64 KiB keys, and an 8 MiB result budget. Optional consumer cancellation retains
+  its slot until underlying work settles. See [presence isolation](presence.md#foreground-isolation)
+  for host clocks, broker/setup capacities and shared server cooldowns.
 - Outbox: at most 256 operations / 2 MiB persisted, 32 KiB per submitted payload,
   three concurrent deliveries, ten-second delivery deadlines including queue time. Only outstanding
   operations count toward capacity; completed events move to a separate 2,048-event /

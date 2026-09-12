@@ -58,6 +58,16 @@ it("rejects finite, expired, future, self, denied and malformed channel/thread s
         ["h", "a"],
         ["e", "a".repeat(64)],
       ]),
+      pulse([
+        ["h", "a"],
+        ["e", "a".repeat(64), "", "mention"],
+      ]),
+      pulse([
+        ["h", "a"],
+        ["e", "a".repeat(64), "", "root"],
+        ["e", "b".repeat(64), "", "reply"],
+        ["e", "c".repeat(64), "", "mention"],
+      ]),
     ],
     true,
   );
@@ -154,3 +164,50 @@ it("bounds active and suppression records without eviction; teardown fences reta
   expect(snapshot()).toEqual([]);
   expect(vi.getTimerCount()).toBe(0);
 });
+
+for (const kind of [9, 40002]) {
+  for (const scope of ["mention", "quote", "reply", "nested"] as const) {
+    it(`kind ${kind} ${scope} content clears and suppresses its authoritative scope`, () => {
+      const { owner, snapshot } = setup();
+      const root = "a".repeat(64);
+      const threadTags = [
+        ["h", "a"],
+        ["e", root, "", "reply"],
+      ];
+      const references =
+        scope === "mention"
+          ? [["e", "b".repeat(64), "", "mention"]]
+          : scope === "quote"
+            ? [["e", "b".repeat(64)]]
+            : [
+                ...(scope === "nested" ? [["e", root, "", "root"]] : []),
+                ["e", scope === "nested" ? "c".repeat(64) : root, "", "reply"],
+                ["e", "b".repeat(64), "", "mention"],
+                ["e", "d".repeat(64)],
+              ];
+      const threaded = scope === "reply" || scope === "nested";
+      const target = pulse(threaded ? threadTags : undefined);
+      const other = pulse(threaded ? undefined : threadTags);
+      owner.accept([target, other], true);
+      owner.accept([
+        signed(agent, {
+          kind,
+          content: "fixture",
+          created_at: epoch,
+          tags: [["h", "a"], ...references],
+        }),
+      ]);
+      expect(snapshot()).toHaveLength(1);
+      expect(snapshot()[0]?.threadRootId).toBe(threaded ? undefined : root);
+      // Same-second replay and a newer pulse during the quiet period both lose.
+      owner.accept([target], true);
+      vi.advanceTimersByTime(1000);
+      owner.accept([pulse(threaded ? threadTags : undefined, epoch + 1)], true);
+      expect(snapshot()).toHaveLength(1);
+      vi.advanceTimersByTime(1000);
+      owner.accept([pulse(threaded ? threadTags : undefined, epoch + 2)], true);
+      expect(snapshot()).toHaveLength(2);
+      owner.dispose();
+    });
+  }
+}

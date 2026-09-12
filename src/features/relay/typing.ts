@@ -91,8 +91,10 @@ export function createTyping(
       )
         continue;
       const refs = event.tags.filter(([name]) => name === "e");
-      // Canonical reply, optionally with one marked root for nested replies.
+      // Pulses require an unambiguous canonical scope. Content uses the same
+      // threadReference semantics as folding, including non-thread references.
       if (
+        typing &&
         refs.length &&
         (refs.length > 2 ||
           refs.some(

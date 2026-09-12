@@ -157,6 +157,8 @@ function ChannelWorkspace({
   );
   const navigate = useCallback(
     (id: string) => {
+      setSelected(id);
+      writeView(scope, "selected-channel", id);
       if (navigator && viewer) {
         void navigator.open({
           version: 1,
@@ -167,10 +169,7 @@ function ChannelWorkspace({
             communityOrigin: scope.slice(0, -(viewer.length + 1)),
           },
         });
-        return;
       }
-      setSelected(id);
-      writeView(scope, "selected-channel", id);
     },
     [navigator, viewer, scope],
   );

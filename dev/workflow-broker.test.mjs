@@ -11,6 +11,7 @@ const runId = "22222222-2222-4222-8222-222222222222";
 const cursor = { before: "2026-09-12T14:44:19.123456+00:00", beforeId: runId };
 async function harness(
   respond = () => Response.json({ runs: [], next: null }),
+  metadata,
 ) {
   const key = new Uint8Array(32);
   key[31] = 8;
@@ -26,8 +27,14 @@ async function harness(
     relayUrl: "https://a.workflow.test",
     communityAliases: JSON.stringify({ secondary: "https://b.workflow.test" }),
     identity: () => key,
-    authority: async () => ({ relayAuthor: viewer }),
+    ...(metadata ? {} : { authority: async () => ({ relayAuthor: viewer }) }),
     upstreamFetch: async (url, init) => {
+      if (init.headers.Accept === "application/nostr+json") {
+        expect(init.redirect).toBe("error");
+        const data = metadata(String(url), viewer);
+        if (data instanceof Error) throw data;
+        return data instanceof Response ? data : Response.json(data);
+      }
       const auth = JSON.parse(
         Buffer.from(init.headers.Authorization.slice(6), "base64").toString(),
       );
@@ -57,6 +64,7 @@ async function harness(
   const base = `http://127.0.0.1:${server.address().port}`;
   return {
     base,
+    viewer,
     calls,
     logs,
     post: (route, body, headers = {}) =>
@@ -219,5 +227,168 @@ it("closing workflow interest aborts the actual broker upstream request", async 
     expect(h.calls[0].init.signal.aborted).toBe(true);
   } finally {
     await h.close();
+  }
+});
+
+const compatible = (url, viewer) => ({
+  self: viewer,
+  supported_extensions: ["buzz-workflows"],
+  workflows: { lifecycle: 1, host: new URL(url).host },
+});
+const yaml =
+  "name: Local test\nenabled: false\ntrigger:\n  on: message_posted\nsteps:\n  - id: wait\n    action: delay\n    duration: 1s\n";
+const template = (kind = 30620) => ({
+  kind,
+  created_at: Math.floor(Date.now() / 1000),
+  content: kind === 30620 ? yaml : "",
+  tags: [
+    ["h", runId],
+    ["d", id],
+  ],
+});
+it("real discovery enables only canonical workflow sign/publish with exact own events and unchanged receipts", async () => {
+  const h = await harness(({ init }) => {
+    const event = JSON.parse(init.body);
+    expect(verifyEvent(event)).toBe(true);
+    return Response.json({
+      accepted: true,
+      event_id: event.id,
+      message: "workflow-result",
+    });
+  }, compatible);
+  try {
+    const t = await connectBrokerTransport(h.base);
+    expect(t.workflows.lifecycleVersion).toBe(1);
+    expect(t.writer.kinds).toEqual([9, 30620, 46020, 5]);
+    for (const input of [
+      template(),
+      template(46020),
+      {
+        ...template(5),
+        tags: [
+          ["h", runId],
+          ["a", `30620:${h.viewer}:${id}`],
+        ],
+      },
+    ]) {
+      const event = await t.writer.sign(input, signal());
+      expect(verifyEvent(event)).toBe(true);
+      expect(event.pubkey).toBe(h.viewer);
+      expect(event.kind).toBe(input.kind);
+      expect(event.content).toBe(input.content);
+      expect(event.tags).toEqual(input.tags);
+      expect(await t.writer.publish(event, signal())).toBe("workflow-result");
+      expect(JSON.parse(h.calls.at(-1).init.body)).toEqual(
+        JSON.parse(JSON.stringify(event)),
+      );
+    }
+    expect(h.calls).toHaveLength(3);
+  } finally {
+    await h.close();
+  }
+});
+it("broker checks fresh own-host evidence at sign and publish; old, other-host and downgrade cannot inherit a write grant", async () => {
+  let enabled = true;
+  const h = await harness(
+    () => {
+      throw new Error("must not dispatch writes");
+    },
+    (url, viewer) =>
+      enabled && url.startsWith("https://a.")
+        ? compatible(url, viewer)
+        : { self: viewer },
+  );
+  try {
+    const t = await connectBrokerTransport(h.base);
+    expect(t.workflows.lifecycleVersion).toBe(1);
+    const event = await t.writer.sign(template(), signal());
+    const other = await connectBrokerTransport(h.base, undefined, "secondary");
+    expect(other.workflows.lifecycleVersion).toBeUndefined();
+    expect(other.writer.kinds).toEqual([9]);
+    await expect(other.writer.sign(template(), signal())).rejects.toThrow();
+    enabled = false;
+    await expect(t.writer.sign(template(), signal())).rejects.toThrow();
+    await expect(t.writer.publish(event, signal())).rejects.toThrow();
+    expect(
+      (await connectBrokerTransport(h.base)).workflows.lifecycleVersion,
+    ).toBeUndefined();
+    expect(h.calls).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+});
+it("compatible broker refuses malformed, alternate-delete, webhook and forged commands before upstream writes", async () => {
+  const h = await harness(() => {
+    throw new Error("must not dispatch writes");
+  }, compatible);
+  try {
+    for (const input of [
+      null,
+      { ...template(), kind: 9005 },
+      {
+        ...template(),
+        tags: [
+          ["h", runId],
+          ["d", "name"],
+        ],
+      },
+      { ...template(), content: yaml.replace("message_posted", "webhook") },
+      {
+        ...template(5),
+        tags: [
+          ["h", runId],
+          ["e", "a".repeat(64)],
+        ],
+      },
+      {
+        ...template(5),
+        tags: [
+          ["h", runId],
+          ["a", `030620:${h.viewer}:${id}`],
+        ],
+      },
+      {
+        ...template(5),
+        tags: [
+          ["h", runId],
+          ["a", `30620:${"a".repeat(64)}:${id}`],
+        ],
+      },
+      { ...template(), tags: [...template().tags, ["p", "a".repeat(64)]] },
+    ]) {
+      expect((await h.post("sign", input)).status).toBe(400);
+    }
+    const own = await (await h.post("sign", template())).json();
+    expect(
+      (await h.post("publish", { ...own, content: "tampered" })).status,
+    ).toBe(400);
+    expect(
+      (await h.post("publish", { ...own, pubkey: "a".repeat(64) })).status,
+    ).toBe(400);
+    expect(h.calls).toHaveLength(0);
+  } finally {
+    await h.close();
+  }
+});
+it("real NIP-11 discovery does not accept fallback identity, malformed or wrong-host descriptor", async () => {
+  for (const mutate of [
+    (d) => ({ ...d, self: undefined, pubkey: d.self }),
+    (d) => ({ ...d, supported_extensions: [] }),
+    (d) => ({ ...d, workflows: { ...d.workflows, lifecycle: "1" } }),
+    (d) => ({ ...d, workflows: { ...d.workflows, host: "other.test" } }),
+    (d) => ({ ...d, workflows: null }),
+  ]) {
+    const h = await harness(undefined, (url, viewer) =>
+      mutate(compatible(url, viewer)),
+    );
+    try {
+      const t = await connectBrokerTransport(h.base);
+      expect(t.workflows.lifecycleVersion).toBeUndefined();
+      expect(t.writer.kinds).toEqual([9]);
+      await expect(t.writer.sign(template(), signal())).rejects.toThrow();
+      expect(h.calls).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
   }
 });

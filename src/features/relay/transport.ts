@@ -1,3 +1,11 @@
+import {
+  isWorkflowOperation,
+  validateWorkflowEvent,
+} from "../workflows/protocol";
+import {
+  discoverWorkflowLifecycle,
+  workflowLifecycleVersion,
+} from "../workflows/compatibility";
 import { workflowHost, workflowReadPath } from "../workflows/http";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
@@ -150,6 +158,7 @@ export async function connectBrokerTransport(
     archiveAuthority?: unknown;
     writeKinds?: number[];
     workflowReads?: boolean;
+    workflowInfo?: unknown;
     relayUrl?: string;
     live?: boolean;
     sidebarPreferences?: boolean;
@@ -185,14 +194,20 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.workflowReads === true
       ? {
-          workflows: workflowHost((route, body, signal) =>
-            fetch(`${endpoint}/${route}`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(body),
-              signal,
-            }),
+          workflows: workflowHost(
+            (route, body, signal) =>
+              fetch(`${endpoint}/${route}`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(body),
+                signal,
+              }),
+            workflowLifecycleVersion(
+              session.workflowInfo,
+              session.relayUrl ?? "",
+              session.relayAuthor,
+            ),
           ),
         }
       : {}),
@@ -388,8 +403,27 @@ export async function connectSignedTransport(
 ): Promise<ReadTransport> {
   const viewer = await signer.getPublicKey();
   httpOrigin = relayOrigin(httpOrigin);
+  const lifecycleVersion = await discoverWorkflowLifecycle(
+    httpOrigin,
+    relayAuthor,
+  );
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
+  async function checkWorkflow(event: EventTemplate, signal: AbortSignal) {
+    signal.throwIfAborted();
+    if (!isWorkflowOperation(event)) return;
+    if (
+      (await discoverWorkflowLifecycle(httpOrigin, relayAuthor, signal)) !== 1
+    )
+      throw new PublishRejected(
+        "Reliable workflow writes are unavailable on this relay",
+      );
+    signal.throwIfAborted();
+    validateWorkflowEvent({ ...event, id: "", pubkey: viewer }, viewer, {
+      delete: true,
+      webhookSecrets: false,
+    });
+  }
   return {
     profiling,
     subscribe: (callbacks) => {
@@ -420,26 +454,36 @@ export async function connectSignedTransport(
         },
       };
     },
-    workflows: workflowHost((route, body, signal) =>
-      signedRequest(
-        signer,
-        `${httpOrigin}${workflowReadPath(route, body)}`,
-        undefined,
-        signal,
-        profiling,
-        route,
-        principal().api,
-        "foreground",
-        "GET",
-      ),
+    workflows: workflowHost(
+      (route, body, signal) =>
+        signedRequest(
+          signer,
+          `${httpOrigin}${workflowReadPath(route, body)}`,
+          undefined,
+          signal,
+          profiling,
+          route,
+          principal().api,
+          "foreground",
+          "GET",
+        ),
+      lifecycleVersion,
     ),
     scope: httpOrigin,
     viewer,
     relayAuthor,
     media: (url) => mediaUrl(url, undefined, httpOrigin),
     writer: {
-      sign: (event) => signer.signEvent(event),
+      async sign(event, signal) {
+        await checkWorkflow(event, signal);
+        return signer.signEvent(event);
+      },
       async publish(event, signal) {
+        await checkWorkflow(event, signal);
+        if (isWorkflowOperation(event) && event.pubkey !== viewer)
+          throw new PublishRejected(
+            "Workflow signer does not match this session",
+          );
         return acceptPublish(
           await signedRequest(
             signer,

@@ -109,3 +109,43 @@ A save receipt does not populate a read view. Refresh explicitly and match both
 permitting resave. A coordinate-only old/concurrent head is not save readback.
 Generic kind-5 deletes retain their previous behavior: only workflow-coordinate
 kind-5 operations use workflow validation and receipt semantics.
+
+## Forward lifecycle advertisement (implementation checkpoint)
+
+A repaired relay advertises the extension `buzz-workflows` in its host-scoped
+NIP-11 document, alongside its explicit stable `self` key and:
+
+```json
+{"workflows":{"lifecycle":1,"host":"relay.example:8443"}}
+```
+
+`host` is the normalized, successfully resolved request authority (no scheme or
+path; non-default port retained). The descriptor is absent when host resolution
+fails or the relay has no stable identity. Revision 1 promises atomic forward
+signed-definition/runtime saves and canonical, timestamp-ordered deletion with
+retained cutoff proofs. Legacy name, numeric-kind aliases, definition-e-target
+and admin-delete entrances reject; historical split state is not repaired or
+certified. Authorization, moderation, schema fencing and execution remain relay
+checks, not implications of this metadata.
+
+The app requires all three fields: extension, exact numeric lifecycle 1 and
+matching normalized host, plus a lowercase explicit `self` matching the session's
+relay authority. No software-version, kind-list or contact-key fallback. Metadata
+is fetched from the selected HTTPS origin without redirects, bounded to 1 MiB and
+10 seconds. Missing/malformed/failed evidence never grants workflow writes.
+
+Both signed and broker hosts discover per connection, and recheck before workflow
+signing and publication (no retained positive compatibility cache). Broker session
+DTOs project the validated descriptor; browser code validates it again. A downgrade
+can leave old UI controls visible until reconnect, but signing/publication rejects
+without sending the workflow. Broker signing permits only canonical owned
+workflow operations through the same shared validator as the session. Webhook
+saves and alternate deletion shapes are unavailable; ordinary message signing
+remains unchanged. Metadata is a compatibility assertion, not a cryptographic
+lease against a server replacement between the check and write.
+
+The application’s real browser/native dev shell currently uses the broker;
+`connectSignedTransport` is the alternative signer-owned adapter, not a claim
+that native Keychain production wiring has been exercised. The new handshake
+still requires independent review and an approved disposable live test. No
+production deployment or real create/run validation is implied by this checkpoint.

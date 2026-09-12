@@ -63,6 +63,7 @@ export function workflowHost(
     body: unknown,
     signal: AbortSignal,
   ) => Promise<Response>,
+  lifecycleVersion?: 1,
 ): WorkflowHost {
   async function read(route: string, body: unknown, signal: AbortSignal) {
     workflowReadPath(route, body);
@@ -89,6 +90,7 @@ export function workflowHost(
     }
   }
   return Object.freeze({
+    ...(lifecycleVersion === 1 ? { lifecycleVersion } : {}),
     runs: (id, cursor, signal) =>
       read("workflow-runs", { id, ...(cursor ? { cursor } : {}) }, signal),
     approvals: (id, runId, signal) =>

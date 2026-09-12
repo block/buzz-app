@@ -92,3 +92,9 @@ it("direct workflow cancellation/invalid arguments never sign or dispatch", asyn
   expect(signEvent).not.toHaveBeenCalled();
   expect(fetcher).not.toHaveBeenCalled();
 });
+
+// These are transport/admission tests; the real metadata seam is exercised in compatibility.test.ts.
+vi.mock("./compatibility", async (original) => ({
+  ...(await original<typeof import("./compatibility")>()),
+  discoverWorkflowLifecycle: async () => undefined,
+}));

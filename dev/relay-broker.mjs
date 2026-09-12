@@ -1,3 +1,8 @@
+import { workflowLifecycleVersion } from "../src/features/workflows/compatibility.ts";
+import {
+  validateWorkflowEvent,
+  WORKFLOW_KINDS,
+} from "../src/features/workflows/protocol.ts";
 import {
   workflowReadPath,
   workflowReadText,
@@ -175,7 +180,7 @@ async function relayAuthority(fetch, relay) {
     signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) throw new Error("Relay identity discovery failed");
-  const nip11 = await response.json();
+  const nip11 = JSON.parse(await workflowReadText(response));
   if (!nip11 || typeof nip11 !== "object" || Array.isArray(nip11))
     throw new Error("Relay did not advertise its identity");
   const author = nip11.self ?? nip11.pubkey;
@@ -183,6 +188,15 @@ async function relayAuthority(fetch, relay) {
     throw new Error("Relay did not advertise its identity");
   return {
     relayAuthor: author,
+    ...(workflowLifecycleVersion(nip11, relay, author) === 1
+      ? {
+          workflowInfo: {
+            self: nip11.self,
+            supported_extensions: ["buzz-workflows"],
+            workflows: { lifecycle: 1, host: new URL(relay).host },
+          },
+        }
+      : {}),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -506,18 +520,27 @@ export function relayBrokerPlugin({
               });
             }
           }
-          if (route === "/api/relay/session" && req.method === "GET")
+          if (route === "/api/relay/session" && req.method === "GET") {
+            const discovered = await authority(fetchUpstream, relay);
             return json(res, 200, {
               viewer,
-              ...(await getAuthority(relay)),
+              ...discovered,
               relayUrl: relay,
-              writeKinds: [9],
+              writeKinds:
+                workflowLifecycleVersion(
+                  discovered.workflowInfo,
+                  relay,
+                  discovered.relayAuthor,
+                ) === 1
+                  ? [9, ...WORKFLOW_KINDS]
+                  : [9],
               workflowReads: true,
               sidebarPreferences: true,
               readState: true,
               agentLibrary: true,
               live: true,
             });
+          }
           if (
             ["/api/relay/stream-retry", "/api/relay/stream-priority"].includes(
               route,
@@ -837,13 +860,35 @@ export function relayBrokerPlugin({
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
-            if (!validMessageTemplate(filters))
+            if (filters?.kind !== 9) {
+              try {
+                const discovered = await authority(fetchUpstream, relay);
+                if (
+                  workflowLifecycleVersion(
+                    discovered.workflowInfo,
+                    relay,
+                    discovered.relayAuthor,
+                  ) !== 1
+                )
+                  throw new Error("Workflow lifecycle unsupported");
+                validateWorkflowEvent(
+                  { ...filters, pubkey: signing ? viewer : filters.pubkey },
+                  viewer,
+                  { delete: true, webhookSecrets: false },
+                );
+              } catch {
+                return json(res, 400, {
+                  error: "Workflow operation unavailable or invalid",
+                  sent: false,
+                });
+              }
+            } else if (!validMessageTemplate(filters))
               return json(res, 400, { error: "Message rejected" });
             if (signing) {
               const started = performance.now();
               const event = finalizeEvent(
                 {
-                  kind: 9,
+                  kind: filters.kind,
                   content: filters.content,
                   created_at: filters.created_at,
                   tags: filters.tags,

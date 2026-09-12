@@ -294,3 +294,9 @@ it("async auth ownership is bounded across signed constructor recreation", async
   await next;
   expect(fetcher).toHaveBeenCalledTimes(1);
 });
+
+// These are transport/admission tests; the real metadata seam is exercised in compatibility.test.ts.
+vi.mock("../workflows/compatibility", async (original) => ({
+  ...(await original<typeof import("../workflows/compatibility")>()),
+  discoverWorkflowLifecycle: async () => undefined,
+}));

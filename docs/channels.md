@@ -274,3 +274,15 @@ after dwell; no automatic channel-prefix advance hides unseen siblings. Conversa
 options exposes local-only manual unread, explicit mark-through and sync recovery.
 Older synchronized hints may expire under bounded retention. Synced manual-unread
 and OS notifications are not enabled by this feature.
+
+
+### Attachment layout and scrolling
+
+Image attachments reserve their preview geometry before loading and across virtualized
+row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
+and 320px tall without upscaling. Missing/invalid dimensions use a stable 360:320 frame
+that shrinks with the available width; the image is contained without cropping or
+upscaling. Unknown-size images may therefore have empty space in the frame. Loading,
+failure, or retry does not resize it or force an above-bottom reader to the newest row.
+`tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
+bottom following, reading anchors and narrow layout in Chromium and WebKit.

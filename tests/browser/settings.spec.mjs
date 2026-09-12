@@ -127,9 +127,43 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     ).toBeFocused();
     await tab();
     await expect(
+      sections.getByRole("button", { name: "Language", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
       page.getByRole("textbox", { name: "Display name", exact: true }),
     ).toBeFocused();
   }
+});
+
+test("language selection applies Brazilian Portuguese and persists after reload", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Your profile").click();
+  await button(page, "Settings").click();
+  await button(page, "Language").click();
+
+  const language = page.getByRole("combobox", {
+    name: "Application language",
+  });
+  await language.selectOption("pt-BR");
+
+  await expect(
+    page.getByRole("heading", { name: "Configurações", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Seções das configurações" }),
+  ).toBeVisible();
+  await expect(button(page, "Início")).toBeVisible();
+  await expect(button(page, "Mensagens")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
+
+  await page.reload();
+  await expect(button(page, "Início")).toBeVisible();
+  await expect(button(page, "Mensagens")).toBeVisible();
+  await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
 });
 
 test("Settings edits the local profile inline without publishing to a community", async ({

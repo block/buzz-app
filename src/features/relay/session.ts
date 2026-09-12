@@ -15,6 +15,7 @@ import {
   browserReadStateStorage,
   type ReadStateStorage,
 } from "./read-state-storage";
+import { createTyping } from "./typing";
 import { createUnread } from "./unread";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
@@ -80,6 +81,14 @@ export function createRelaySession(
     else listener();
   };
   let canAccess: (id: string) => boolean = () => true;
+  const typing = createTyping(
+    transport?.viewer ?? "",
+    (id) =>
+      !closed &&
+      canAccess(id) &&
+      channels.queries.list().channels.some((channel) => channel.id === id),
+    notify,
+  );
   const recent = new ByteLru<{ event: RelayEvent; revision: number }>(
     4096,
     8 * 1024 * 1024,
@@ -154,6 +163,7 @@ export function createRelaySession(
     revoking++;
     try {
       accessEpoch++;
+      typing.clear();
       // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
       // authoritative access loss cancels them all, not merely explicit #h reads.
       requests.invalidate();
@@ -234,8 +244,13 @@ export function createRelaySession(
       events.some((event) => [39000, 39002].includes(event.kind))
     )
       channels.acceptDiscovery(events);
-    const visible = events.filter(visibility(events));
+    // Ephemeral typing never enters finite views, history, caches or persistence.
+    const visible = events
+      .filter((event) => event.kind !== 20002)
+      .filter(visibility(events));
     const epoch = accessEpoch;
+    typing.accept(visible);
+    if (closed || epoch !== accessEpoch) return [];
     profiling.measure(
       "events.reconcile",
       events[0]?.id ?? "empty",
@@ -567,6 +582,7 @@ export function createRelaySession(
     notify,
   );
   const session = Object.freeze({
+    typing: typing.capability,
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     live,
@@ -882,9 +898,15 @@ export function createRelaySession(
       )
         refreshRoster();
       accept(events);
+      if (liveSnapshot.status === "connected")
+        typing.accept(
+          events.filter((event) => event.kind === 20002),
+          true,
+        );
     },
     state(snapshot) {
       if (closed) return;
+      if (snapshot.status !== "connected") typing.clear();
       if (
         snapshot.status !== "connected" &&
         liveSnapshot.status === "connected"
@@ -947,6 +969,7 @@ export function createRelaySession(
     async clearCache() {
       accessEpoch++;
       cacheClearEpoch++;
+      typing.clear();
       sidebarPreferences.clear();
       // New windows must not yield to or receive errors from retired owners.
       catchups.clear();
@@ -964,6 +987,7 @@ export function createRelaySession(
     },
     dispose() {
       closed = true;
+      typing.dispose();
       lifetime.abort();
       sidebarPreferences.dispose();
       stopInterests();

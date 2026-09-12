@@ -78,7 +78,7 @@ type Route = {
   quotaRetries: number;
   deadline?: ReturnType<typeof setTimeout>;
 };
-const CHANNEL_KINDS = [9, 40002, 40003, 5, 9005, 7, 39000, 39002, 39005];
+const CHANNEL_KINDS = [9, 40002, 40003, 5, 9005, 7, 39000, 39002, 39005, 20002];
 /** One authenticated socket, independently established channel routes and two explicit globals.
  * Recent replay is opportunistic: finite reads own catch-up and history bounds. */
 export function subscribeRelayTraffic(
@@ -415,6 +415,17 @@ export function subscribeRelayTraffic(
           fail(route, "Relay supplied invalid live traffic");
           return;
         }
+        // Ephemeral channel activity must arrive on that exact authenticated
+        // channel route; a global or another channel is not an access grant.
+        if (
+          incoming.kind === 20002 &&
+          (!route.channelId ||
+            incoming.tags.filter(([name]) => name === "h").length !== 1 ||
+            !incoming.tags.some(
+              ([name, value]) => name === "h" && value === route.channelId,
+            ))
+        )
+          return;
         if (route.status === "pending") route.count++;
         callbacks.receive([incoming]);
       } else if (data[0] === "EOSE" && route.status === "pending") {

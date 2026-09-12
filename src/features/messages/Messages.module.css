@@ -661,3 +661,11 @@ button.avatar:focus-visible,
   outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
+
+.typing {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--buzz-text-scale, 1));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

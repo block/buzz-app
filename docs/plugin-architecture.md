@@ -75,9 +75,15 @@ contribution when its Cordis scope ends.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher
-wins; a throwing matcher is skipped. Ordinary link panels receive `{ target, close }`;
-channel-launched panels may also receive the public context described below. A
-plugin that needs shared data declares `relay` in its
+wins; a throwing matcher is skipped. Panels receive `{ target, close }` plus
+optional host context. A conversation host may supply
+`context: { channelId, canOpen, open }` for contextual panel-to-panel actions.
+`canOpen` is advisory active-target availability; `open` re-resolves at click time
+and returns false after the originating opening, channel, session or host
+presentation retires. This is not a global navigation API or an access grant.
+Channel-header launchers use the separate public `channelContext` metadata
+contract described below; launcher/fallback panels need not have either context.
+A plugin that needs shared data declares `relay` in its
 injection list and passes those capabilities to its components using a closure,
 just as the bundled Channels page does. The conversation preview adds only the two demonstrated component surfaces.
 

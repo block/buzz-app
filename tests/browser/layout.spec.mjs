@@ -422,13 +422,46 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     [800, 600],
     [480, 400],
     [390, 844],
+    [390, 400],
   ]) {
     await page.setViewportSize({ width, height });
     await shellFits(page, width);
     await expect(button(page, "Close Bestie panel")).toBeInViewport();
   }
   await button(page, "Close Bestie panel").click();
-  await expect(enabled).toBeInViewport();
+  await expect(bestie).toHaveCount(0);
+  await expect(launch).toHaveAttribute("aria-expanded", "false");
+  await expect(launch).toBeFocused();
+
+  // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
+  // not a Settings row: reach the toggle with real input, not scrollIntoView.
+  const settingsPage = page.getByRole("main").locator(".overflow-y-auto");
+  await expect(enabled).not.toBeInViewport();
+  const viewport = await box(settingsPage);
+  await page.mouse.move(
+    viewport.x + viewport.width / 2,
+    viewport.y + viewport.height / 2,
+  );
+  for (let gesture = 0; gesture < 4; gesture++) {
+    const toggle = await box(enabled);
+    if (
+      toggle.y >= viewport.y &&
+      toggle.y + toggle.height <= viewport.y + viewport.height
+    )
+      break;
+    const before = await settingsPage.evaluate((el) => el.scrollTop);
+    await page.mouse.wheel(0, viewport.height * 0.75);
+    await expect
+      .poll(() => settingsPage.evaluate((el) => el.scrollTop), {
+        message: "Settings wheel input makes progress toward the plugin toggle",
+      })
+      .toBeGreaterThan(before);
+  }
+  await expect(enabled).toBeInViewport({ ratio: 1 });
+  await enabled.click();
+  await expect(enabled).toHaveAttribute("aria-checked", "false");
+  await expect(enabled).toBeFocused();
+  await expect(launch).toHaveCount(0);
 });
 
 readingTest(

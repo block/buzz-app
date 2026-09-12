@@ -7,6 +7,7 @@ import type { ConversationExtensions } from "../../features/conversation/contrac
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -28,7 +29,7 @@ import {
   useChannelWindow,
   useRelayConnection,
 } from "../../features/relay/react";
-import type { Panels } from "../../features/panels/service";
+import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
@@ -112,6 +113,7 @@ export function ChannelsPage({
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
           queries={session.session}
+          relay={relay}
           navigation={sessionNavigation}
           navigator={navigator}
           viewer={session.viewer}
@@ -126,6 +128,7 @@ export function ChannelsPage({
 function ChannelWorkspace({
   extensions,
   queries,
+  relay,
   panels,
   scope,
   companion,
@@ -140,6 +143,7 @@ function ChannelWorkspace({
   navigator?: Navigation | undefined;
   viewer?: string | undefined;
   queries: RelaySession;
+  relay: RelayData;
   panels: Panels;
 }) {
   const list = useChannelList(queries.channels);
@@ -215,6 +219,34 @@ function ChannelWorkspace({
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
   }, [thread, showingThread]);
+  type Opening = { channelId: string; panel: RegisteredPanel; target: string };
+  const [opened, setOpened] = useState<Opening>();
+  const opening = useRef<Opening | undefined>(undefined);
+  const open = useCallback((next: Opening | undefined) => {
+    // Retire callbacks synchronously, before React commits the next opening.
+    opening.current = next;
+    setOpened(next);
+  }, []);
+  const panel =
+    opened &&
+    opened.channelId === current?.id &&
+    available.includes(opened.panel)
+      ? opened.panel
+      : undefined;
+  const mounted = useRef(false);
+  const channel = useRef(current?.id);
+  useLayoutEffect(() => {
+    channel.current = current?.id;
+  }, [current?.id]);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (opened && !panel) open(undefined);
+  }, [opened, panel, open]);
   const openThread = useCallback(
     (messageId: string) => {
       if (!current) return;
@@ -225,35 +257,19 @@ function ChannelWorkspace({
       setThread({ channelId: current.id, messageId });
       open(undefined);
     },
-    [current],
+    [current, open],
   );
   const closeThread = useCallback(() => {
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   }, []);
-  const [opened, open] = useState<{
-    channelId: string;
-    key: string;
-    revision: string;
-    target: string;
-  }>();
-  const panel =
-    opened?.channelId === current?.id
-      ? available.find(
-          (panel) =>
-            panel.key === opened?.key && panel.revision === opened.revision,
-        )
-      : undefined;
-  useEffect(() => {
-    if (opened && !panel) open(undefined);
-  }, [opened, panel]);
   const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
     if (panelTrigger.current?.isConnected)
       panelTrigger.current.focus({ preventScroll: true });
     else if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
-  }, []);
+  }, [open]);
   // Availability follows active contributions; dispatch still re-resolves at click time.
   const canOpenLink = useCallback(
     (target: string) =>
@@ -277,16 +293,44 @@ function ChannelWorkspace({
         setThread(undefined);
         open({
           channelId: current.id,
-          key: candidate.key,
-          revision: candidate.revision,
+          panel: candidate,
           target: url,
         });
         return true;
       }
       return false;
     },
-    [panels, current],
+    [panels, current, open],
   );
+  const panelActive = () => {
+    const connection = relay.snapshot();
+    return !!(
+      mounted.current &&
+      opened &&
+      panel &&
+      opening.current === opened &&
+      channel.current === opened.channelId &&
+      panels.snapshot().includes(panel) &&
+      connection.status === "ready" &&
+      connection.session === queries &&
+      !navigation?.signal.aborted
+    );
+  };
+  const panelContext =
+    opened && panel
+      ? {
+          channelId: opened.channelId,
+          canOpen: (target: string) => !!panels.resolve(target),
+          open: (target: string) => {
+            if (!panelActive()) return false;
+            const next = panels.resolve(target);
+            if (!next) return false;
+            // Keep the original conversation trigger for close/focus restoration.
+            open({ channelId: opened.channelId, panel: next, target });
+            return true;
+          },
+        }
+      : undefined;
   const drawerContext = useMemo(
     () =>
       current && viewer
@@ -529,6 +573,7 @@ function ChannelWorkspace({
               key="target"
               panel={panel}
               target={opened.target}
+              context={panelContext}
               close={close}
               closeLabel="Close channel panel"
             />

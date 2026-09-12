@@ -103,7 +103,15 @@ it("uses independent explicit channel routes and self-p globals; equal interests
   const event = message(keypair(), "a", "incoming", 1700000000);
   await h.first.receive(["EVENT", request[1], event]);
   await h.first.receive(["EOSE", request[1]]);
-  expect(h.callbacks.receive).toHaveBeenCalledWith([event]);
+  expect(h.callbacks.receive).toHaveBeenCalledWith([event], {
+    phase: "replay",
+    channelId: "a",
+  });
+  await h.first.receive(["EVENT", request[1], event]);
+  expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+    phase: "live",
+    channelId: "a",
+  });
   expect(h.callbacks.established).toHaveBeenCalledWith("a");
   expect(
     h.callbacks.state.mock.lastCall?.[0].routes.find(
@@ -571,6 +579,38 @@ it("requests community emoji on the existing profile route and delivers verified
     ],
   });
   await h.first.receive(["EVENT", req?.[1], event]);
-  expect(h.callbacks.receive).toHaveBeenCalledWith([event]);
+  expect(h.callbacks.receive).toHaveBeenCalledWith([event], {
+    phase: "replay",
+  });
+  h.owner.dispose();
+});
+
+it("a reconnect starts a new replay phase even for previously established routes", async () => {
+  vi.useFakeTimers();
+  const h = setup(["a"]);
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  const request = h.first.requests()[2];
+  assert.exists(request);
+  await h.first.receive(["EOSE", request[1]]);
+  const event = message(keypair(), "a", "live", 1700000000);
+  await h.first.receive(["EVENT", request[1], event]);
+  expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+    phase: "live",
+    channelId: "a",
+  });
+  h.first.close();
+  await vi.advanceTimersByTimeAsync(500);
+  const socket = h.sockets[1];
+  assert.exists(socket);
+  await socket.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  const replay = socket.requests()[2];
+  assert.exists(replay);
+  await socket.receive(["EVENT", replay[1], event]);
+  expect(h.callbacks.receive).toHaveBeenLastCalledWith([event], {
+    phase: "replay",
+    channelId: "a",
+  });
   h.owner.dispose();
 });

@@ -43,6 +43,7 @@
     "@tabler/icons-react": "^3.46.0",
     "@tanstack/react-router": "^1.168.10",
     "@tauri-apps/api": "^2.11.1",
+    "@tauri-apps/plugin-notification": "2.4.0",
     "dockview-react": "8.2.0",
     "emoji-mart": "5.6.0",
     "flexlayout-react": "0.10.8",

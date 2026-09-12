@@ -52,3 +52,9 @@ export type {
   JsonValue,
 } from "../features/navigation/targets";
 export type { PageNavigation } from "../features/navigation/service";
+
+export type {
+  Notifications,
+  NotificationInput,
+  NotificationCategoryDescriptor,
+} from "../features/notifications/service";

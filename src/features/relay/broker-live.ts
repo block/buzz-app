@@ -1,6 +1,7 @@
 import { eventDto } from "./events";
 import {
   liveChannels,
+  liveProvenance,
   type LiveCallbacks,
   type LiveSnapshot,
   type LiveSubscription,
@@ -114,7 +115,19 @@ export function subscribeBrokerTraffic(
               const data: unknown = JSON.parse(lines.join("\n"));
               if (!valid()) return;
               if (kind === "message") callbacks.receive([eventDto(data)]);
-              else if (kind === "state") {
+              else if (kind === "traffic") {
+                if (
+                  !data ||
+                  typeof data !== "object" ||
+                  !("event" in data) ||
+                  !("provenance" in data)
+                )
+                  throw new Error("Invalid live traffic envelope");
+                callbacks.receive(
+                  [eventDto(data.event)],
+                  liveProvenance(data.provenance),
+                );
+              } else if (kind === "state") {
                 const snapshot = liveSnapshot(data);
                 publish(snapshot);
               } else if (kind === "established") {

@@ -157,7 +157,8 @@ The footer reuses `MessageComposer` and sends direct replies to the resolved roo
 through `session.messages.reply`. Channel and thread drafts are separate and survive
 reconnection; failed replies remain inline with the shared retry action. Read-only
 connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. There is no jump-to-specific-reply navigation yet.
+not expose a composer. Message-addressed navigation opens a separate exact detail,
+not a position inside this bounded thread panel.
 
 Replies use ascending timestamp/event-ID order, including nested replies. Retry
 appears only after a failed read; there is no routine Refresh control. Names are
@@ -254,3 +255,18 @@ after dwell; no automatic channel-prefix advance hides unseen siblings. Conversa
 options exposes local-only manual unread, explicit mark-through and sync recovery.
 Older synchronized hints may expire under bounded retention. Synced manual-unread
 and OS notifications are not enabled by this feature.
+
+
+## Opening an exact message
+
+Message-addressed conversations show **Message detail** with only the selected
+verified row. They do not fetch an optional original thread message or traverse
+surrounding history. **Open channel** returns to normal reading with its saved
+geometry and composer intact.
+
+`MessageDetailPanel` acknowledges navigation only after the target is visible and
+focused. Reclick/Back reveals again; live/profile updates do not steal focus.
+The shared row preserves Markdown, profile links and background enrichment.
+Opening never marks read directly: the ordinary focus/visibility/dwell hook applies.
+Missing/deleted targets, access loss and failed reads expose failure/retry instead
+of falling back to the channel head. See [the evidence contract](relay-queries.md#exact-message-detail).

@@ -604,8 +604,9 @@ export function relayBrokerPlugin({
               async (event) => finalizeEvent(event, key),
               viewer,
               {
-                receive: (events) => {
-                  for (const event of events) write("", event);
+                receive: (events, provenance) => {
+                  for (const event of events)
+                    write("traffic", { event, provenance });
                 },
                 state: (state) => write("state", state),
                 established: (channelId) => write("established", { channelId }),

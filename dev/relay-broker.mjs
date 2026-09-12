@@ -11,6 +11,7 @@ import {
   readSnapshotCommunity,
 } from "../src/features/relay/read-state-snapshot.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
+import { createBestieRealtime } from "./bestie-realtime.mjs";
 import {
   decodeSidebarPreferences,
   SIDEBAR_REQUEST_BYTES,
@@ -270,6 +271,7 @@ export function relayBrokerPlugin({
   upstreamFetch,
   socketFactory,
   agentLibrary = readAgentLibrary,
+  realtime,
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -278,6 +280,9 @@ export function relayBrokerPlugin({
     async configureServer(server) {
       const key = identity();
       const viewer = getPublicKey(key);
+      const bestie = realtime
+        ? createBestieRealtime({ ...realtime, ownerKey: key })
+        : undefined;
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -323,6 +328,7 @@ export function relayBrokerPlugin({
       const streams = new Map();
       const admissions = createHostAdmission();
       server.httpServer?.once("close", () => {
+        void bestie?.close();
         for (const { close } of streams.values()) close();
         key.fill(0);
 
@@ -387,6 +393,13 @@ export function relayBrokerPlugin({
                 : "Select a community or configure BUZZ_RELAY_URL for unscoped requests",
             });
           const route = scoped ? `/api/relay/${parts[3]}` : url.pathname;
+          if (route === "/api/relay/bestie" && scoped) {
+            if (!bestie)
+              return json(res, 503, {
+                error: "Bestie voice is not configured",
+              });
+            return await bestie.handle(req, res, { relay, viewer });
+          }
           if (route === "/api/relay/identity" && req.method === "GET")
             return json(res, 200, { viewer });
           if (route === "/api/relay/gif-info" && req.method === "GET") {

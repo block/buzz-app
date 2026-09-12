@@ -1,0 +1,11 @@
+Bestie duplex media client
+
+voice.mjs, audio-worklet.mjs, capture-queue.mjs and the corresponding helper tests
+are adapted from block/buzz examples/realtime-audio at revision
+9bab300881db59c8a58ef0e54924dd2d5b4c995f, licensed under Apache-2.0.
+https://github.com/block/buzz/tree/9bab300881db59c8a58ef0e54924dd2d5b4c995f/examples/realtime-audio
+
+The capture queue and audio worklet retain the upstream implementation. Bestie's
+client supplies scoped host routes and adds plugin lifecycle cleanup, bounded
+diagnostics and exact permission-request handling. This code implements media
+transport and playback; Buzz remains responsible for provider protocol and tools.

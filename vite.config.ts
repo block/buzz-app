@@ -23,12 +23,24 @@ export default defineConfig(async ({ command, mode }) => {
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,
+        realtime: env.BUZZ_REALTIME_ENDPOINT?.trim()
+          ? {
+              endpoint: env.BUZZ_REALTIME_ENDPOINT,
+              apiKey: env.BUZZ_REALTIME_API_KEY,
+              model: env.BUZZ_REALTIME_MODEL,
+              agentPath: env.BUZZ_AGENT_BIN,
+              mcpPath: env.BUZZ_MCP_BIN,
+            }
+          : undefined,
       }),
     );
   return {
     plugins,
     define: {
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
+      "import.meta.env.VITE_BESTIE_REALTIME": JSON.stringify(
+        live && env.BUZZ_REALTIME_ENDPOINT?.trim() ? "1" : "0",
+      ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
     },
     clearScreen: false,

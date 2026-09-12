@@ -321,7 +321,9 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(bestie).toHaveCount(0);
   await launch.click();
   await expect(bestie).toBeVisible();
-  await expect(bestie).toContainText("Agent chat isn’t connected yet");
+  await expect(bestie).toContainText(
+    "Voice is available in the live development app",
+  );
   await expect(launch).toHaveAttribute("aria-expanded", "true");
   await launch.click();
   await expect(bestie).toHaveCount(0);

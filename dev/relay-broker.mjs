@@ -1,4 +1,9 @@
 import {
+  workflowReadPath,
+  workflowReadText,
+} from "../src/features/workflows/http.ts";
+import { readReceiptText } from "../src/features/relay/receipt.ts";
+import {
   decodeReadState,
   signReadState,
   READ_STATE_DECODE_BYTES,
@@ -507,6 +512,7 @@ export function relayBrokerPlugin({
               ...(await getAuthority(relay)),
               relayUrl: relay,
               writeKinds: [9],
+              workflowReads: true,
               sidebarPreferences: true,
               readState: true,
               agentLibrary: true,
@@ -697,6 +703,8 @@ export function relayBrokerPlugin({
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/gifs",
+              "/api/relay/workflow-runs",
+              "/api/relay/workflow-approvals",
             ].includes(route) ||
             req.method !== "POST"
           )
@@ -712,6 +720,25 @@ export function relayBrokerPlugin({
             filters = JSON.parse(raw);
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
+          }
+          let workflowPath;
+          if (
+            [
+              "/api/relay/workflow-runs",
+              "/api/relay/workflow-approvals",
+            ].includes(route)
+          ) {
+            try {
+              workflowPath = workflowReadPath(
+                route.slice("/api/relay/".length),
+                filters,
+              );
+            } catch {
+              return json(res, 400, {
+                error: "Invalid workflow read",
+                sent: false,
+              });
+            }
           }
           const profile = route === "/api/relay/profile";
           const claim = route === "/api/relay/claim";
@@ -836,6 +863,7 @@ export function relayBrokerPlugin({
             !claim &&
             !policy &&
             !gifs &&
+            !workflowPath &&
             !readPublishing &&
             !snapshot &&
             !validFilters(filters)
@@ -844,15 +872,18 @@ export function relayBrokerPlugin({
           const gifSearchPath = gifs ? await getGifSearchPath(relay) : null;
           if (gifs && !gifSearchPath)
             return json(res, 404, { error: "GIF search is unavailable" });
-          const upstreamPath = gifs
-            ? gifSearchPath
-            : profile || publishing || readPublishing
-              ? "/events"
-              : claim
-                ? "/api/invites/claim"
-                : policy
-                  ? "/api/invites/accept-policy"
-                  : "/query";
+          const upstreamPath =
+            workflowPath ??
+            (gifs
+              ? gifSearchPath
+              : profile || publishing || readPublishing
+                ? "/events"
+                : claim
+                  ? "/api/invites/claim"
+                  : policy
+                    ? "/api/invites/accept-policy"
+                    : "/query");
+          const method = workflowPath ? "GET" : "POST";
           if (inflight >= MAX_INFLIGHT)
             return json(res, 429, {
               error: "Query concurrency limit",
@@ -861,7 +892,7 @@ export function relayBrokerPlugin({
           inflight++;
           try {
             const lane = admissions(relay, viewer).api;
-            const body = JSON.stringify(filters);
+            const body = workflowPath ? undefined : JSON.stringify(filters);
             // A browser that gave up (the client's ten-second deadline) must also release
             // this upstream request, or hung requests exhaust the inflight budget.
             const cancel = new AbortController();
@@ -891,11 +922,15 @@ export function relayBrokerPlugin({
                       content: "",
                       tags: [
                         ["u", `${relay}${upstreamPath}`],
-                        ["method", "POST"],
-                        [
-                          "payload",
-                          createHash("sha256").update(body).digest("hex"),
-                        ],
+                        ["method", method],
+                        ...(body === undefined
+                          ? []
+                          : [
+                              [
+                                "payload",
+                                createHash("sha256").update(body).digest("hex"),
+                              ],
+                            ]),
                         ["nonce", randomBytes(16).toString("hex")],
                       ],
                     },
@@ -907,7 +942,7 @@ export function relayBrokerPlugin({
                   connectsBefore = upstream.connects();
                   upstreamStart = performance.now();
                   return fetchUpstream(`${relay}${upstreamPath}`, {
-                    method: "POST",
+                    method,
                     headers: {
                       "Content-Type": "application/json",
                       Authorization:
@@ -933,7 +968,11 @@ export function relayBrokerPlugin({
               const text =
                 snapshot && response.ok
                   ? await readSnapshotText(response)
-                  : await response.text();
+                  : workflowPath && response.ok
+                    ? await workflowReadText(response)
+                    : publishing && response.ok
+                      ? await readReceiptText(response)
+                      : await response.text();
               // The relay's own service time separates server work from network time.
               const relayMs = Number(
                 response.headers.get("x-envoy-upstream-service-time"),

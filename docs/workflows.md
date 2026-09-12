@@ -83,3 +83,29 @@ DB rollback/stale/concurrent deletion tests in the relay; UI keyboard/focus,
 dirty-close/conflict drafts, narrow layouts and YAML ownership tests. Fixture
 feedback can precede final package gates. Live identity/signing/destructive
 workflow trials require a separate consented test, not this implementation approval.
+
+## Host checkpoint (2026-09-12)
+
+The app implements lazy structured history reads in both signed and dev-broker
+hosts. The broker exposes only `workflow-runs` / `workflow-approvals` POST inputs,
+constructs fixed upstream GET routes, preserves the exact cursor pair, and shares
+the captured principal's API admission. History capability means the adapter
+exists, not that an older relay serves the endpoint: failures remain explicit.
+Responses are stream-bounded to 1 MiB before parsing; command receipts to 16 KiB.
+
+All workflow writes remain unavailable in real host connections at this
+checkpoint. Fixtures may supply `WorkflowHost.lifecycleVersion = 1` to exercise
+commands. No real host advertises that evidence until the forward relay repair
+and compatibility handshake are implemented and reviewed. Receipt tests do not
+prove a deployed database transaction.
+
+Revocation puts existing and newly opened denied views in `unavailable`, purges
+all data before callbacks, and cancels late results. A regrant requires explicit
+fresh interest; it never revives an old snapshot. UI must not reopen a recovered
+private draft from an unavailable view. Secret reveal remains disabled.
+
+A save receipt does not populate a read view. Refresh explicitly and match both
+`operation.workflow` and `operation.eventId === definition.revision` before
+permitting resave. A coordinate-only old/concurrent head is not save readback.
+Generic kind-5 deletes retain their previous behavior: only workflow-coordinate
+kind-5 operations use workflow validation and receipt semantics.

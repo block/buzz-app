@@ -45,8 +45,13 @@ export function createOutbox(
     profiling = createRelayProfiler(),
     notifyListener = (listener: () => void) => listener(),
     preparePublish,
+    needsReceipt = () => false,
+    onReceipt = (_event: EventData, _message: string | undefined) => {},
   }: {
     timeoutMs?: number;
+    /** Commands await their receipt even after a verified echo. Never persisted. */
+    needsReceipt?: (event: EventData) => boolean;
+    onReceipt?: (event: EventData, message: string | undefined) => void;
     onAccepted?: (event: RelayEvent) => void;
     profiling?: RelayProfiler;
     notifyListener?: (listener: () => void) => void;
@@ -58,6 +63,7 @@ export function createOutbox(
     ) => Promise<(() => void) | undefined>;
   } = {},
 ) {
+  const awaitsReceipt = needsReceipt;
   let snapshot: readonly OutgoingEvent[] = Object.freeze([]);
   let visible: readonly OutgoingEvent[] = snapshot;
   let finalSnapshot: readonly OutgoingEvent[] | undefined;
@@ -223,17 +229,20 @@ export function createOutbox(
       clearTimeout(attempt.timer);
       attempts.delete(id);
       const item = find(id);
-      if (!closed && item)
+      if (!closed && item) {
+        if (awaitsReceipt(item.event)) onReceipt(item.event, undefined);
         saveStatus({
           ...item,
           delivery: failedDelivery(attempt),
           error: error.message,
         });
+      }
     }
   }
   function failedDelivery(attempt: Attempt): Delivery {
     return attempt.previousDelivery === "unknown" ||
-      attempt.previousDelivery === "accepted"
+      attempt.previousDelivery === "accepted" ||
+      attempt.previousDelivery === "seen"
       ? attempt.previousDelivery
       : "failed";
   }
@@ -308,38 +317,55 @@ export function createOutbox(
       // transport publisher crosses that boundary, including for signed retries.
       if (closed || !find(id)) return;
       signal.throwIfAborted();
-      await profiling.measureAsync("send.publish", id, () => {
+      const receipt = await profiling.measureAsync("send.publish", id, () => {
         check?.();
         publishing = true;
         return Promise.race([writer.publish(signed, signal), aborted]);
       });
       if (closed || signal.aborted) return;
+      if (awaitsReceipt(signed))
+        onReceipt(signed, typeof receipt === "string" ? receipt : undefined);
       const latest = find(id);
       if (latest)
-        saveStatus({ ...latest, delivery: "accepted", error: undefined });
+        saveStatus({
+          ...latest,
+          delivery:
+            latest.delivery === "seen" || attempt.previousDelivery === "seen"
+              ? "seen"
+              : "accepted",
+          error: undefined,
+        });
       onAccepted(signed);
     } catch (error) {
       const latest = find(id);
       // A verified observation ends the attempt even if its HTTP ACK never arrives.
       total(!closed && !latest ? "ok" : "error");
       if (closed) return;
+      if (latest && awaitsReceipt(latest.event))
+        onReceipt(latest.signed ?? latest.event, undefined);
       if (latest)
         saveStatus({
           ...latest,
           delivery:
-            attempt.previousDelivery === "accepted"
-              ? "accepted"
-              : publishing && !(error instanceof PublishRejected)
-                ? "unknown"
-                : failedDelivery(attempt),
-          error: `${
-            attempt.previousDelivery === "unknown" ||
-            attempt.previousDelivery === "accepted"
-              ? error instanceof PublishRejected
-                ? "Retry blocked: "
-                : "Retry failed: "
-              : ""
-          }${error instanceof Error ? error.message : String(error)}`,
+            latest.delivery === "seen" || attempt.previousDelivery === "seen"
+              ? "seen"
+              : attempt.previousDelivery === "accepted"
+                ? "accepted"
+                : publishing && !(error instanceof PublishRejected)
+                  ? "unknown"
+                  : failedDelivery(attempt),
+          error: awaitsReceipt(latest.event)
+            ? publishing && !(error instanceof PublishRejected)
+              ? "Workflow delivery could not be confirmed; retain this operation to retry."
+              : "Workflow command rejected; retain the draft and refresh before retrying."
+            : `${
+                attempt.previousDelivery === "unknown" ||
+                attempt.previousDelivery === "accepted"
+                  ? error instanceof PublishRejected
+                    ? "Retry blocked: "
+                    : "Retry failed: "
+                  : ""
+              }${error instanceof Error ? error.message : String(error)}`,
         });
       if (publishing && latest?.signed && !(error instanceof PublishRejected))
         onAccepted(latest.signed);
@@ -347,6 +373,15 @@ export function createOutbox(
       total();
       clearTimeout(attempt.timer);
       if (attempts.get(id) === attempt) attempts.delete(id);
+      const observed = find(id);
+      if (!closed && observed?.delivery === "seen") {
+        completed.set(id, observed);
+        snapshot = Object.freeze(
+          snapshot.filter((item) => item.event.id !== id),
+        );
+        notify();
+        void persist(id).catch(() => {});
+      }
       if (!closed)
         for (const queued of snapshot)
           if (queued.delivery === "sending") void deliver(queued.event.id);
@@ -414,15 +449,28 @@ export function createOutbox(
       return event.id;
     },
     retry(id: string) {
-      const item = find(id);
+      const retained = completed.peek(id);
+      const item =
+        find(id) ??
+        (retained && awaitsReceipt(retained.event) ? retained : undefined);
       if (!closed && item && !attempts.has(id)) {
+        if (!find(id)) {
+          if (snapshot.length >= MAX_PENDING)
+            throw new Error("Too many outstanding operations");
+          completed.delete(id);
+          snapshot = Object.freeze([...snapshot, item]);
+        }
         replace({ ...item, delivery: "sending", error: undefined });
         schedule(id, undefined, item.delivery);
       }
     },
     async dismiss(id: string) {
       if (closed || attempts.has(id)) return;
-      const previous = find(id);
+      const retained = completed.peek(id);
+      const previous =
+        find(id) ??
+        (retained && awaitsReceipt(retained.event) ? retained : undefined);
+      if (previous && awaitsReceipt(previous.event)) completed.delete(id);
       snapshot = Object.freeze(snapshot.filter((item) => item.event.id !== id));
       notify();
       try {
@@ -467,15 +515,33 @@ export function createOutbox(
       const [first] = confirmed;
       if (!first) return;
       for (const event of confirmed) {
-        completed.set(
-          event.id,
-          Object.freeze({ event, signed: event, delivery: "seen" }),
-        );
+        if (awaitsReceipt(event) && attempts.has(event.id)) {
+          snapshot = Object.freeze(
+            snapshot.map((item) =>
+              item.event.id === event.id
+                ? Object.freeze({
+                    ...item,
+                    signed: event,
+                    delivery: "seen" as const,
+                  })
+                : item,
+            ),
+          );
+        } else
+          completed.set(
+            event.id,
+            Object.freeze({ event, signed: event, delivery: "seen" }),
+          );
       }
       snapshot = Object.freeze(
-        snapshot.filter((item) => !byId.has(item.event.id)),
+        snapshot.filter(
+          (item) =>
+            !byId.has(item.event.id) ||
+            (awaitsReceipt(item.event) && attempts.has(item.event.id)),
+        ),
       );
       for (const event of confirmed) {
+        if (awaitsReceipt(event) && attempts.has(event.id)) continue;
         const attempt = attempts.get(event.id);
         attempt?.controller?.abort();
         clearTimeout(attempt?.timer);

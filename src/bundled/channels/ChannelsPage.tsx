@@ -522,6 +522,7 @@ function ChannelWorkspace({
         />
         {current ? (
           <ChannelBody
+            viewer={viewer}
             extensions={extensions}
             key={current.id}
             queries={queries}
@@ -590,6 +591,7 @@ function ChannelWorkspace({
 }
 
 function ChannelBody({
+  viewer,
   extensions,
   scope,
   queries,
@@ -603,6 +605,7 @@ function ChannelBody({
   extensions?: ConversationExtensions | undefined;
   scope: string;
   queries: RelaySession;
+  viewer?: string | undefined;
   channelId: string;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
@@ -643,6 +646,7 @@ function ChannelBody({
     );
   return (
     <ChannelTimeline
+      viewer={viewer}
       extensions={extensions}
       scope={scope}
       channelId={channelId}

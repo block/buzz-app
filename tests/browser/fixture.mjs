@@ -761,7 +761,13 @@ export const test = base.extend({
         presence(status, updateSnapshot = true) {
           relay.presence(
             "primary",
-            sign(20001, [], status, userKey, Math.floor(Date.now() / 1000)),
+            sign(
+              20001,
+              [],
+              status,
+              readState ? peerKey : userKey,
+              Math.floor(Date.now() / 1000),
+            ),
             updateSnapshot,
           );
         },

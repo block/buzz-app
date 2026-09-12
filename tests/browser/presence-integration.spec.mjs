@@ -3,12 +3,24 @@ import { open } from "./timeline.mjs";
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 
-test.use({ productionBroker: true });
+// A real reading journey can publish durable read intent while presence runs.
+test.use({ productionBroker: true, readState: true });
 test("presence: production conversation routes, seed, conflicting live repair and navigation", async ({
   page,
   app,
 }, testInfo) => {
   await open(page, app);
+  const presenceRoute = () =>
+    app.relay.sockets
+      .filter((s) => s.readyState === 1 && s.community === "primary")
+      .flatMap((s) => [...s.routes.values()])
+      .filter((f) => f.kinds.includes(20001));
+  // The fixture's peer owns the history; inject only after live delivery exists.
+  const author = app.histories.get("primary/alpha")[0].pubkey;
+  await expect
+    .poll(() => presenceRoute().some((f) => f.authors.includes(author)))
+    .toBe(true);
+  app.presence("online");
   const online = history(page).locator('[data-presence-status="online"]');
   await expect(online.first()).toBeVisible();
   const reads = () =>
@@ -49,10 +61,24 @@ test("presence: production conversation routes, seed, conflicting live repair an
   await expect(
     history(page).locator('[data-presence-status="away"]').first(),
   ).toBeVisible();
-  const presenceRoute = () =>
-    app.relay.sockets
-      .flatMap((s) => [...s.routes.values()])
-      .filter((f) => f.kinds.includes(20001));
+  // Exercise the real dwell -> journal -> encrypted HTTP publication alongside
+  // presence, rather than making success depend on finishing before its debounce.
+  await history(page).focus();
+  await expect
+    .poll(() => app.report.readPublications.length, { timeout: 12000 })
+    .toBeGreaterThan(0);
+  const { community, event, blob } = app.report.readPublications[0];
+  expect(community).toBe("primary");
+  expect(event.kind).toBe(30078);
+  const messageContexts = Object.keys(blob.contexts).filter((key) =>
+    key.startsWith("msg:"),
+  );
+  expect(messageContexts.length).toBeGreaterThan(0);
+  const ids = new Set(app.histories.get("primary/alpha").map(({ id }) => id));
+  for (const key of messageContexts) {
+    expect(ids.has(key.slice(4))).toBe(true);
+    expect(event.content).not.toContain(key.slice(4));
+  }
   await page.getByRole("button", { name: "Home", exact: true }).first().click();
   await expect.poll(() => presenceRoute().length).toBe(0);
   // Agent Activity's separately owned route survives presence demand teardown.

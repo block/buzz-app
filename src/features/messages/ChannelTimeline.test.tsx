@@ -326,6 +326,9 @@ function setup({
     gesture() {
       section.props.onWheel();
     },
+    dispatchScroll() {
+      section.props.onScroll({ currentTarget: element });
+    },
     scroll(user = true) {
       resized(element);
       render();
@@ -338,9 +341,9 @@ function setup({
       );
       render(runFrames);
     },
-    setRows(next: ChannelMessage[]) {
+    setRows(next: ChannelMessage[], runFrames = true) {
       rows = next;
-      render();
+      render(runFrames);
     },
     prepend() {
       rows = [{ id: "older", authorId: "author" } as ChannelMessage, ...rows];
@@ -706,17 +709,21 @@ it("prepending retires the preceding bottom-reflow observer and its queued frame
   h.unmount();
 });
 
-it("ordinary initial bottom and append commands do not install resize-follow observation", () => {
+it("initial bottom and ordinary appends follow late measured list reflow", () => {
   const h = setup();
   h.handle.scrollToIndex.mockClear();
   h.measureRows();
-  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "end",
+  });
   h.element.scrollTop = 3038;
   h.scroll();
   h.append();
   h.handle.scrollToIndex.mockClear();
   h.measureRows();
-  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
   h.unmount();
 });
 
@@ -1023,4 +1030,294 @@ it("live group growth follows the displayed group index rather than a hidden raw
   h.setRows([first, second, membershipRow("third", 3)]);
   expect(h.handle.scrollToIndex).toHaveBeenCalledWith(0, { align: "end" });
   h.unmount();
+});
+
+it("membership append retains bottom intent across intermediate scroll geometry and another append", () => {
+  const first = membershipRow("first", 1);
+  const h = setup({ initialRows: [first] });
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.setRows([first, membershipRow("second", 2)]);
+  // List measurements change after the end-scroll. No reader gesture occurred.
+  h.element.scrollHeight += 200;
+  h.scroll(false);
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(0, {
+    align: "end",
+  });
+  h.handle.scrollToIndex.mockClear();
+  h.setRows([first, membershipRow("second", 2), membershipRow("third", 3)]);
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(0, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+});
+
+it.each([false, true])(
+  "a reader gesture cancels membership late-follow, queued=%s",
+  (queued) => {
+    const first = membershipRow("first", 1);
+    const h = setup({ initialRows: [first] });
+    h.element.scrollTop = 3038;
+    h.scroll();
+    h.setRows([first, membershipRow("second", 2)]);
+    h.handle.scrollToIndex.mockClear();
+    if (queued) h.measureRows(false);
+    h.gesture();
+    h.element.scrollTop = 2000;
+    h.scroll();
+    h.measureRows();
+    h.setRows([first, membershipRow("second", 2), membershipRow("third", 3)]);
+    expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+    h.unmount();
+    expect(h.saved().bottom).toBe(false);
+  },
+);
+
+it.each([false, true])(
+  "a resolved membership anchor retains its rendered ID until a gesture=%s",
+  (gesture) => {
+    const { membership: _membership, ...preceding } = membershipRow(
+      "preceding",
+      0,
+    );
+    const h = setup({
+      initialRows: [
+        preceding,
+        membershipRow("anchor", 1),
+        membershipRow("representative", 2),
+      ],
+      mounted: [
+        { id: "preceding", y: -20 },
+        { id: "representative", y: 42 },
+      ],
+      initial: {
+        offset: 80851,
+        bottom: false,
+        anchor: { id: "anchor", y: 42 },
+      },
+    });
+    expect(h.handle.scrollToIndex).toHaveBeenCalledWith(1, {
+      align: "start",
+      offset: -42,
+    });
+    h.scroll(false);
+    h.element.clientWidth = 650;
+    h.resize();
+    h.scroll(gesture);
+    h.handle.scrollToIndex.mockClear();
+    h.element.clientWidth = 1124;
+    h.resize();
+    expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(
+      gesture ? 0 : 1,
+      {
+        align: "start",
+        offset: gesture ? 20 : -42,
+      },
+    );
+    h.unmount();
+    expect(h.saved().anchor).toEqual(
+      gesture ? { id: "preceding", y: -20 } : { id: "representative", y: 42 },
+    );
+  },
+);
+
+it("a gesture cannot re-arm bottom follow through an intervening membership append", () => {
+  const first = membershipRow("first", 1);
+  const h = setup({ initialRows: [first] });
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.handle.scrollToIndex.mockClear();
+  h.setRows([first, membershipRow("second", 2)], false);
+  h.element.scrollTop = 2000;
+  h.scroll(false);
+  h.measureRows();
+  h.setRows([first, membershipRow("second", 2), membershipRow("third", 3)]);
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
+
+it("an append before gesture geometry arrives cannot make later reader scroll sticky", () => {
+  const first = membershipRow("first", 1);
+  const h = setup({ initialRows: [first] });
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.setRows([first, membershipRow("second", 2)]);
+  h.element.scrollTop = 2000;
+  h.scroll(false);
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  h.setRows([first, membershipRow("second", 2), membershipRow("third", 3)]);
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
+
+it("a gesture with no movement does not disable the next append's bottom follow", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.handle.scrollToIndex.mockClear();
+  h.append();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
+  h.scroll(false);
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("a reader scroll handler before the append frame cancels its bottom command", () => {
+  const first = membershipRow("first", 1);
+  const h = setup({ initialRows: [first] });
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.handle.scrollToIndex.mockClear();
+  h.setRows([first, membershipRow("second", 2)], false);
+  h.element.scrollTop = 2000;
+  h.dispatchScroll();
+  h.flush();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
+
+it("a no-scroll click followed by a tall append follows without mistaking growth for movement", () => {
+  const first = membershipRow("first", 1);
+  const h = setup({ initialRows: [first] });
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.setRows([first, membershipRow("second", 2)], false);
+  h.element.scrollHeight += 200;
+  h.handle.scrollToIndex.mockClear();
+  h.flush();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(0, {
+    align: "end",
+  });
+  h.element.scrollTop += 200;
+  h.dispatchScroll();
+  h.element.scrollHeight += 200;
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(0, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("multiple scroll events from one gesture can leave the near-bottom threshold", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.gesture();
+  h.element.scrollTop -= 40;
+  h.dispatchScroll();
+  h.element.scrollTop -= 260;
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.append();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(false);
+});
+
+it("cancelled resize settles before later reader scroll/save", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.element.clientWidth = 650;
+  h.gesture();
+  h.resize(false);
+  h.element.scrollTop = 2000;
+  h.flush();
+  h.element.scrollTop = 1900;
+  h.dispatchScroll();
+  h.unmount();
+  expect(h.saved()).toEqual({ offset: 1900, bottom: false });
+});
+
+it("list shrinkage clamps the offset without revoking bottom follow", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.append();
+  h.element.scrollHeight -= 200;
+  h.element.scrollTop -= 200;
+  h.dispatchScroll();
+  h.element.scrollHeight += 200;
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("input saves pending DOM movement even if navigation precedes its scroll event", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  // A later input/navigation can arrive after movement but before onScroll.
+  h.element.scrollTop = 2000;
+  h.gesture();
+  h.unmount();
+  expect(h.saved()).toEqual({ offset: 2000, bottom: false });
+});
+
+it("growth before a no-scroll click does not revoke the existing bottom intent", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.append();
+  h.element.scrollHeight += 200;
+  h.gesture();
+  h.handle.scrollToIndex.mockClear();
+  h.edit();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalled();
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
+});
+
+it("estimated list shrinkage can leave an intermediate gap without becoming reader movement", () => {
+  const h = setup();
+  h.element.scrollTop = 3038;
+  h.scroll();
+  h.append();
+  // Virtua first overestimates the new rows, then contracts its list before
+  // the final end-scroll catches up. Both height and offset drop together.
+  h.element.scrollHeight += 400;
+  h.dispatchScroll();
+  h.element.scrollHeight -= 200;
+  h.element.scrollTop -= 200;
+  h.dispatchScroll();
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(2, {
+    align: "end",
+  });
+  h.unmount();
+  expect(h.saved().bottom).toBe(true);
 });

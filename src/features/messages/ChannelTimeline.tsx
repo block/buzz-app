@@ -122,10 +122,38 @@ function Timeline({
     last?: string | undefined;
   }>({});
   const intent = useRef(0);
+  const measuredPosition = useRef<{
+    offset: number;
+    height: number;
+    width: number;
+    viewport: number;
+  } | null>(null);
   const olderDemand = useRef(false);
   const settled = useRef(false),
     userScrolled = useRef(false),
     follow = useRef(true);
+  const recordPosition = useCallback((element: HTMLElement) => {
+    const position = positionAt(element, restoredAnchor.current);
+    const previous = measuredPosition.current;
+    // List shrinkage can clamp scrollTop upward without reader movement. An
+    // upward offset beyond that clamp is input, including later events from
+    // one smooth keyboard scroll / scrollbar drag. Layout growth alone is not.
+    const movedUp =
+      previous &&
+      element.clientWidth === previous.width &&
+      element.clientHeight === previous.viewport &&
+      element.scrollTop <
+        previous.offset + Math.min(0, element.scrollHeight - previous.height);
+    if (previous && follow.current && !movedUp) position.bottom = true;
+    savedPosition.current = position;
+    follow.current = position.bottom;
+    measuredPosition.current = {
+      offset: element.scrollTop,
+      height: element.scrollHeight,
+      width: element.clientWidth,
+      viewport: element.clientHeight,
+    };
+  }, []);
   useReading({ session: queries, channelId, scroller, settled });
   const prepend =
     !!edges.current.first &&
@@ -170,13 +198,7 @@ function Timeline({
     };
     // Initial signature only; mutations invalidate the saved cache on remount.
   }, [channelId, geometry, scope]);
-  const previousSize = useRef(size);
   useLayoutEffect(() => {
-    const resized =
-      previousSize.current.width > 0 &&
-      previousSize.current.height > 0 &&
-      previousSize.current !== size;
-    previousSize.current = size;
     // Row updates include edits/reactions/replies, not only new message IDs.
     // Above-bottom reading and prepend anchoring remain Virtua's responsibility.
     edges.current = { first: rows[0]?.id, last: rows.at(-1)?.id };
@@ -190,15 +212,15 @@ function Timeline({
     // virtua attaches its scroller in an effect; wait through the StrictMode probe.
     // A new gesture wins over restoration queued before that gesture.
     const scheduledIntent = intent.current;
+    const restore =
+      !settled.current && savedPosition.current && !savedPosition.current.bottom
+        ? savedPosition.current
+        : null;
     let observer: ResizeObserver | undefined;
     let frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
-        if (
-          !settled.current &&
-          savedPosition.current &&
-          !savedPosition.current.bottom
-        ) {
-          const anchor = savedPosition.current.anchor;
+        if (restore) {
+          const anchor = restore.anchor;
           const index = anchor
             ? rows.findIndex(
                 (row) =>
@@ -207,24 +229,30 @@ function Timeline({
               )
             : -1;
           if (anchor && index >= 0) {
-            restoredAnchor.current = anchor.id;
+            restoredAnchor.current = rows[index]?.id;
             handle.current.scrollToIndex(index, {
               align: "start",
               offset: -anchor.y,
             });
-          } else handle.current.scrollTo(savedPosition.current.offset);
+          } else handle.current.scrollTo(restore.offset);
           follow.current = false;
         } else {
+          // Input can move the DOM before its scroll event is delivered.
+          if (scroller.current && measuredPosition.current)
+            recordPosition(scroller.current);
+          if (!follow.current) {
+            settled.current = true;
+            return;
+          }
           handle.current.scrollToIndex(rows.length - 1, { align: "end" });
-          // Width changes can produce row measurements after Virtua's scroll
-          // scheduler expires. Keep this restoration's bottom intent through
-          // measured list reflow, never through a new gesture or row update.
-          const list = resized ? scroller.current?.querySelector("ol") : null;
+          // Appends and width changes can measure after Virtua's end-scroll.
+          // Keep bottom intent through list reflow, never through a new gesture.
+          const list = scroller.current?.querySelector("ol");
           if (list) {
             observer = new ResizeObserver(() => {
               cancelAnimationFrame(frame);
               frame = requestAnimationFrame(() => {
-                if (intent.current === scheduledIntent)
+                if (intent.current === scheduledIntent && follow.current)
                   handle.current?.scrollToIndex(rows.length - 1, {
                     align: "end",
                   });
@@ -240,7 +268,7 @@ function Timeline({
       cancelAnimationFrame(frame);
       observer?.disconnect();
     };
-  }, [rows, size, prepend]);
+  }, [rows, size, prepend, recordPosition]);
   const revealed = useRef<string | undefined>(undefined);
   useLayoutEffect(() => {
     if (!width || !revealMessageId || revealed.current === revealMessageId)
@@ -303,6 +331,7 @@ function Timeline({
   const gesture = () => {
     restoredAnchor.current = undefined;
     intent.current++;
+    if (scroller.current) recordPosition(scroller.current);
     userScrolled.current = true;
     // At a restored top edge, input cannot move the DOM and emits no scroll.
     if (scroller.current && scroller.current.scrollTop <= 0)
@@ -329,8 +358,7 @@ function Timeline({
           element.clientWidth === size.width &&
           element.clientHeight === size.height
         ) {
-          savedPosition.current = positionAt(element, restoredAnchor.current);
-          follow.current = savedPosition.current.bottom;
+          recordPosition(element);
         }
         loadNearTop(element);
       }}

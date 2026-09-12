@@ -160,27 +160,69 @@ describe("message fold", () => {
       [0, []],
     ]);
   });
-  it("unwraps 40002 agent envelopes and separates image markdown into attachments", () => {
+  it("does not exhaust the call stack while projecting deeply nested untrusted Markdown", () => {
+    const nested = message(
+      alice,
+      channel,
+      `${"> ".repeat(10_000)}![deep](https://x.test/deep.png)`,
+      10,
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [nested]);
+    assert.exists(row);
+    expect(row.content).toContain("![deep](https://x.test/deep.png)");
+    expect(row.attachments).toEqual([]);
+  });
+
+  it.each([9, 40002])(
+    "preserves code indentation when projecting images in kind %s",
+    (kind) => {
+      const content = "    @Mic\n\n![image](https://x.test/image.png)";
+      const event = signed(alice, {
+        kind,
+        content: kind === 40002 ? JSON.stringify({ content }) : content,
+        tags: [
+          ["h", channel],
+          ["p", bob.pubkey],
+        ],
+      });
+      const [row] = foldMessages(channel, relay.pubkey, [event]);
+      expect(row?.content).toBe("    @Mic");
+      expect(row?.attachments).toEqual([
+        { url: "https://x.test/image.png", video: false },
+      ]);
+    },
+  );
+
+  it("unwraps agent envelopes and projects valid CommonMark images through one safe URL policy", () => {
     const agent = signed(bob, {
       kind: 40002,
       content: JSON.stringify({
-        content:
-          "See ![shot](https://x.test/a.png) and ![clip](https://x.test/b.mp4)",
+        content: `See ![shot](https://x.test/a.png "title"), ![clip](<https://x.test/b.mp4>), and ![reference][image].
+
+![blocked](https://user:secret@x.test/private.png)
+
+[image]: https://x.test/reference.jpg`,
       }),
       created_at: 10,
       tags: [
         ["h", channel],
         ["imeta", "url https://x.test/c.jpg", "m image/jpeg"],
         ["imeta", "url http://insecure.test/d.jpg"],
+        ["imeta", "url https://user:secret@x.test/e.jpg"],
       ],
     });
     const [row] = foldMessages(channel, relay.pubkey, [agent]);
     assert.exists(row);
-    expect(row.content).toBe("See  and");
+    expect(row.content).toBe(`See , , and .
+
+
+
+[image]: https://x.test/reference.jpg`);
     expect(row.attachments).toEqual([
       { url: "https://x.test/c.jpg", video: false },
       { url: "https://x.test/a.png", video: false },
       { url: "https://x.test/b.mp4", video: true },
+      { url: "https://x.test/reference.jpg", video: false },
     ]);
   });
 });

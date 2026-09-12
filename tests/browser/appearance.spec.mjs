@@ -162,8 +162,14 @@ test("saved dark document paints before the application module is allowed to exe
   page,
   app,
 }) => {
-  await page.goto(app.origin);
-  await page.evaluate((key) => localStorage.setItem(key, "dark"), key);
+  const relayRequests = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/relay/"))
+      relayRequests.push(request.url());
+  });
+  // Seed only persisted input before the first document. Booting a live app
+  // just to save this preference races its pending relay reads against goto.
+  await page.addInitScript((key) => localStorage.setItem(key, "dark"), key);
   // Completing a no-op module keeps React from executing without leaving a
   // pending script request. WebKit stalls animation frames when that pending
   // request coexists with @font-face rules, even after styles are computed.
@@ -196,10 +202,13 @@ test("saved dark document paints before the application module is allowed to exe
       "background-color",
       "rgb(17, 24, 29)",
     );
+    // Pre-paint coverage must never start (then tear down) a relay session.
+    expect(relayRequests).toEqual([]);
   } finally {
     await page.unrouteAll({ behavior: "wait" });
   }
   await page.reload();
+  await expect(button(page, "Your profile")).toBeVisible();
   await expectMode(page, "dark");
 });
 

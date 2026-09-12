@@ -1,5 +1,7 @@
 import activityManifest from "./agent-activity/manifest.json";
 import * as activity from "./agent-activity";
+import terminalManifest from "./terminal/manifest.json";
+import * as terminal from "./terminal";
 import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
 import mentionsManifest from "./mentions/manifest.json";
@@ -20,6 +22,7 @@ import type { BundledPlugin } from "../plugins/manager";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...activityManifest, apiVersion: 1 }, module: activity },
+  { manifest: { ...terminalManifest, apiVersion: 1 }, module: terminal },
   { manifest: { ...profilesManifest, apiVersion: 1 }, module: profiles },
   { manifest: { ...mentionsManifest, apiVersion: 1 }, module: mentions },
   { manifest: { ...emojiManifest, apiVersion: 1 }, module: emoji },

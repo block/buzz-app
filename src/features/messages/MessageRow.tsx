@@ -1,12 +1,12 @@
-import { Fragment, memo, useCallback, useSyncExternalStore } from "react";
+import { memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
-import { profileMentionParts } from "./profile-mentions";
-import { messageParts } from "../relay/emoji";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { MessageMarkdown } from "./MessageMarkdown";
+import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 
@@ -99,24 +99,25 @@ export const MessageRow = memo(function MessageRow({
               })}
             </time>
           </div>
-          <p className={styles.text} data-single-emoji={emojiOnly || undefined}>
-            <MessageText
-              row={row}
-              extensions={extensions}
-              media={media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              participantProfiles={participantProfiles}
-            />
-          </p>
+          <MessageMarkdown
+            row={row}
+            extensions={extensions}
+            media={media}
+            onOpenLink={onOpenLink}
+            canOpenLink={canOpenLink}
+            participantProfiles={participantProfiles}
+            largeEmoji={emojiOnly}
+          />
           <DeliveryNotice row={row} retry={retry} />
           {row.attachments.map((attachment) => {
-            const source = media(attachment.url);
+            const url = safeMessageUrl(attachment.url);
+            if (!url) return null;
+            const source = media(url);
             return attachment.video || !source ? (
               <a
                 className={styles.attachment}
-                key={attachment.url}
-                href={attachment.url}
+                key={url}
+                href={url}
                 target="_blank"
                 rel="noreferrer"
               >
@@ -125,8 +126,8 @@ export const MessageRow = memo(function MessageRow({
             ) : (
               <a
                 className={styles.attachmentImage}
-                key={attachment.url}
-                href={attachment.url}
+                key={url}
+                href={url}
                 target="_blank"
                 rel="noreferrer"
                 aria-label="Open image attachment"
@@ -135,7 +136,7 @@ export const MessageRow = memo(function MessageRow({
                     !event.metaKey &&
                     !event.ctrlKey &&
                     !event.shiftKey &&
-                    onOpenLink(attachment.url)
+                    onOpenLink(url)
                   )
                     event.preventDefault();
                 }}
@@ -246,87 +247,4 @@ function useThreadUnread(
     [unread, channelId, rootId],
   );
   return useSyncExternalStore(subscribe, get, get);
-}
-function MessageText({
-  row,
-  extensions,
-  media,
-  onOpenLink,
-  canOpenLink,
-  participantProfiles,
-}: Pick<
-  MessageRowProps,
-  | "row"
-  | "extensions"
-  | "media"
-  | "onOpenLink"
-  | "canOpenLink"
-  | "participantProfiles"
->) {
-  return profileMentionParts(row, participantProfiles).map(
-    (segment, segmentIndex) => {
-      const segmentKey = `${segmentIndex}:${segment.target ?? segment.text}`;
-      if (segment.target && canOpenLink?.(segment.target)) {
-        const target = segment.target;
-        return (
-          <button
-            key={segmentKey}
-            type="button"
-            className={styles.mention}
-            aria-label={`View ${segment.text.slice(1)} profile`}
-            onClick={(event) => {
-              event.currentTarget.focus();
-              onOpenLink(target);
-            }}
-          >
-            {segment.text}
-          </button>
-        );
-      }
-      return (
-        <Fragment key={segmentKey}>
-          {messageParts(segment.text).map((part, index) => {
-            const key = `${index}:${part.slice(0, 20)}`;
-            if (!part.startsWith("https://")) {
-              return (
-                <span key={key}>
-                  {extensions ? (
-                    <InlineText
-                      registry={extensions.inline}
-                      content={{ text: part, message: row }}
-                      media={media}
-                    />
-                  ) : (
-                    part
-                  )}
-                </span>
-              );
-            }
-            const url = part.replace(/[.,;:!?)\]}]+$/, "");
-            return (
-              <span key={key}>
-                <a
-                  href={url}
-                  target="_blank"
-                  rel="noreferrer"
-                  onClick={(event) => {
-                    if (
-                      !event.metaKey &&
-                      !event.ctrlKey &&
-                      !event.shiftKey &&
-                      onOpenLink(url)
-                    )
-                      event.preventDefault();
-                  }}
-                >
-                  {url}
-                </a>
-                {part.slice(url.length)}
-              </span>
-            );
-          })}
-        </Fragment>
-      );
-    },
-  );
 }

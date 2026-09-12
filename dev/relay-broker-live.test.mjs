@@ -161,6 +161,123 @@ test("real HTTP accepts the 1022-channel body and rejects invalid/oversized/orig
   }
 });
 
+test.each([null, 1])(
+  "maximum channel interests survive observer startup and toggles (initial %s) through the real broker/browser stream",
+  async (initialObserver) => {
+    const h = await harness();
+    const nativeFetch = globalThis.fetch;
+    let traffic;
+    try {
+      const fetcher = vi.fn((input, init) =>
+        nativeFetch(input, {
+          ...init,
+          headers: {
+            ...init?.headers,
+            ...(init?.method === "POST" ? { Origin: h.base } : {}),
+          },
+        }),
+      );
+      vi.stubGlobal("fetch", fetcher);
+      const transport = await connectBrokerTransport(h.base);
+      const states = [],
+        received = [];
+      let snapshot;
+      traffic = transport.subscribe({
+        receive(events) {
+          received.push(...events);
+        },
+        established() {},
+        denied() {},
+        state(value) {
+          snapshot = value;
+          states.push(value);
+        },
+      });
+      const ids = Array.from(
+        { length: 1024 },
+        (_, i) => `channel-${String(i).padStart(4, "0")}`,
+      );
+      traffic.observe(initialObserver);
+      traffic.update(ids);
+      const streamPosts = () =>
+        fetcher.mock.calls.filter(([url]) => String(url).endsWith("/stream"))
+          .length;
+      let sockets, posts;
+      for (const [phase, observer] of [
+        initialObserver,
+        initialObserver === null ? 1 : null,
+        initialObserver,
+      ].entries()) {
+        traffic.observe(observer);
+        const enabled = observer !== null;
+        await until(
+          () =>
+            snapshot?.status === "connected" &&
+            snapshot.routes.length === 1026 + Number(enabled) &&
+            snapshot.routes.some(
+              (r) => r.channelId === ids[0] && r.status === "live",
+            ) &&
+            (!enabled ||
+              snapshot.routes.some(
+                (r) => r.id === "observer" && r.status === "live",
+              )),
+        );
+        expect(
+          snapshot.routes
+            .filter((r) => r.channelId)
+            .map((r) => r.channelId)
+            .sort(),
+        ).toEqual(ids);
+        expect(
+          snapshot.routes
+            .filter((r) => r.status === "limited")
+            .map((r) => r.channelId),
+        ).toEqual(ids.slice(enabled ? 1021 : 1022));
+        // Status retains every interest, but only 1024 routes may have a wire.
+        expect(
+          snapshot.routes.filter((r) => r.status !== "limited"),
+        ).toHaveLength(1024);
+        expect(snapshot.routes.some((r) => r.id === "observer")).toBe(enabled);
+        sockets ??= h.sockets.length;
+        posts ??= streamPosts();
+        expect(h.sockets).toHaveLength(sockets);
+        expect(streamPosts()).toBe(posts);
+
+        const socket = h.sockets.at(-1);
+        for (const [kind, tags] of [
+          [9, [["h", ids[0]]]],
+          [0, []],
+          [44100, [["p", getPublicKey(h.key)]]],
+        ]) {
+          const route = h.requests.find(
+            (r) => r.socket === socket && r.filter.kinds.includes(kind),
+          );
+          expect(route).toBeDefined();
+          const event = finalizeEvent(
+            {
+              kind,
+              tags,
+              created_at: Math.floor(Date.now() / 1000),
+              content: `ordinary traffic in observer phase ${phase}`,
+            },
+            h.key,
+          );
+          await socket.receive(["EVENT", route.id, event]);
+          await until(() => received.some((r) => r.id === event.id));
+        }
+        expect(received).toHaveLength((phase + 1) * 3);
+        expect(
+          states.filter((s) => s.status === "retrying" || s.status === "error"),
+        ).toEqual([]);
+      }
+    } finally {
+      traffic?.dispose();
+      vi.unstubAllGlobals();
+      await h.close();
+    }
+  },
+);
+
 test.each([
   "rate-limited: quota exceeded; retry in 0s",
   "temporary: fixture read unavailable",

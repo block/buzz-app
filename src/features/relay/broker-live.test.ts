@@ -67,10 +67,13 @@ function fixture() {
       }),
     );
   }
-  function publish(index: number) {
+  function publish(
+    index: number,
+    snapshot: unknown = { status: "connected", routes: [] },
+  ) {
     required(bodyControllers[index]).enqueue(
       new TextEncoder().encode(
-        'event: state\ndata: {"status":"connected","routes":[]}\n\n',
+        `event: state\ndata: ${JSON.stringify(snapshot)}\n\n`,
       ),
     );
   }
@@ -91,6 +94,33 @@ function fixture() {
     },
   };
 }
+it("rejects status snapshots beyond channel interests plus both globals and observer", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    f.accept(0);
+    await tick();
+    f.publish(0, {
+      status: "connected",
+      routes: Array.from({ length: 1028 }, (_, i) => ({
+        id: `route-${i}`,
+        status: "pending",
+        replay: "unknown",
+      })),
+    });
+    await tick();
+    expect(f.snapshots.at(-1)).toEqual({
+      status: "retrying",
+      routes: [],
+      error: "Invalid live broker status",
+    });
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("pre-header clicks preserve in-progress POST; duplicate controls coalesce", async () => {
   vi.useFakeTimers();
   const f = fixture();

@@ -319,7 +319,8 @@ function liveSnapshot(value: unknown): LiveSnapshot {
       snapshot.status,
     ) ||
     !Array.isArray(snapshot.routes) ||
-    snapshot.routes.length > 1026 ||
+    // Keep limited channels visible alongside both globals and the optional observer.
+    snapshot.routes.length > 1027 ||
     (snapshot.error !== undefined && typeof snapshot.error !== "string")
   )
     throw new Error("Invalid live broker status");

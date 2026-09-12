@@ -60,8 +60,18 @@ Author edits/deletes use the shared fold. Delivery uncertainty remains visible.
 Feed rows deliberately do not interpret relay thread summaries: the session does
 not expose the signing identity needed to validate those summaries in this page.
 Opening a thread uses the authoritative shared reader and its existing bounded,
-oldest-first history behavior. Selected channel state survives reload; thread
-selection and feed search do not become new URL routes.
+oldest-first history behavior. Versioned host page routes retain view, search query, channel and thread through
+Back/Forward and reload. Search keystrokes replace the current visit. A bounded
+plugin-lifetime map retains feed scroll/focus for up to 100 visits (not across app
+restart); shared channel/thread readers retain their own reading positions and
+drafts. Navigation completion acknowledges the mounted destination shell or
+roster failure, not that cold history has finished loading.
+
+Rail and feed source/open controls participate in the shared bounded intent
+preparation path on pointer/focus. No channel-head fan-out occurs on feed mount.
+An aggregate excerpt is not a channel window: an unprepared cold click still
+needs an authoritative head read. Typing is not implemented in this host; shared
+receive-only session integration awaits explicit FOUNDATION approval.
 
 ## Trying it
 

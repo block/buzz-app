@@ -16,7 +16,8 @@ type ConversationProps = {
   name: string;
   extensions?: ConversationExtensions | undefined;
   back(): void;
-  initialThread?: string | undefined;
+  thread?: string | undefined;
+  openThread(id: string): void;
 };
 
 export function PulseConversation({
@@ -27,9 +28,9 @@ export function PulseConversation({
   name,
   extensions,
   back,
-  initialThread,
+  thread,
+  openThread,
 }: ConversationProps) {
-  const [thread, setThread] = useState(initialThread);
   return (
     <div className={styles.detail}>
       <header className={styles.heading}>
@@ -49,7 +50,7 @@ export function PulseConversation({
             channelName={name}
             messageId={thread}
             extensions={extensions}
-            close={() => setThread(undefined)}
+            close={back}
             onOpenLink={openLink}
           />
         </div>
@@ -61,7 +62,7 @@ export function PulseConversation({
           channelId={channelId}
           name={name}
           extensions={extensions}
-          onOpenThread={setThread}
+          onOpenThread={openThread}
         />
       )}
     </div>
@@ -77,7 +78,7 @@ function PulseChannelMessages({
   name,
   extensions,
   onOpenThread,
-}: Omit<ConversationProps, "back" | "initialThread"> & {
+}: Omit<ConversationProps, "back" | "thread" | "openThread"> & {
   onOpenThread(id: string): void;
 }) {
   const window = useChannelWindow(session.channels, channelId);

@@ -41,6 +41,11 @@ test("Pulse opens shared threads, follows edits, purges revoked sources and unlo
   await reply.fill("A separate reply draft");
   await page.screenshot({ path: testInfo.outputPath("pulse-thread.png") });
   await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  // A direct thread entry returns to the actual feed origin, not an invented channel visit.
+  await expect(
+    page.getByRole("article", { name: "Activity in Alpha" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Open conversation ↗" }).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha" }),
   ).toHaveValue("");

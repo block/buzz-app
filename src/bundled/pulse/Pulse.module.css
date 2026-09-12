@@ -3,6 +3,14 @@
 .root {
   height: 100%;
   min-height: 0;
+  --surface: var(--bg-panel);
+  --text: var(--text-primary);
+  --text-muted: var(--text-secondary);
+  --surface-control: var(--neutral-2);
+  --surface-hover: var(--neutral-4);
+  --primary: var(--neutral-11);
+  --on-primary: var(--neutral-1);
+  --pulse-line: var(--neutral-2);
 }
 .canvas {
   display: flex;
@@ -22,7 +30,7 @@
   flex-direction: column;
   min-height: 0;
   padding: 8px;
-  border-right: 1px solid var(--border);
+  border-right: 1px solid var(--pulse-line);
 }
 .sidebar nav button {
   border: 0;
@@ -58,7 +66,7 @@
 }
 .sidebarDivider {
   margin: 8px 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--pulse-line);
 }
 .channelSearch {
   min-width: 0;
@@ -74,6 +82,10 @@
   flex: 1;
   overflow: auto;
   scrollbar-width: thin;
+}
+.channelList .channelIcon {
+  background: var(--blue-3);
+  color: var(--blue-11);
 }
 .channelList button > span:last-child {
   overflow: hidden;
@@ -100,17 +112,15 @@
 .feedContent[hidden] {
   display: none;
 }
+.feedHeading[hidden] {
+  display: none;
+}
 .feedHeading {
   display: flex;
   justify-content: space-between;
   align-items: center;
   padding: 8px 28px;
   gap: 12px;
-}
-.feedHeading button {
-  border: 0;
-  background: transparent;
-  padding: 8px;
 }
 .feedHeading h1 {
   margin: 0;
@@ -122,7 +132,7 @@
   color: var(--text-muted);
   font-size: 12px;
   line-height: 1.5;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--pulse-line);
 }
 .search {
   display: flex;
@@ -159,7 +169,7 @@
 }
 .card {
   padding: 0 28px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--pulse-line);
 }
 .source {
   max-width: 200px;
@@ -254,7 +264,7 @@
   align-items: center;
   gap: 12px;
   padding: 16px;
-  border-bottom: 1px solid var(--border);
+  border-bottom: 1px solid var(--pulse-line);
 }
 .heading strong {
   min-width: 0;
@@ -302,7 +312,7 @@
     width: auto;
     flex: 0 0 auto;
     border-right: 0;
-    border-bottom: 1px solid var(--border);
+    border-bottom: 1px solid var(--pulse-line);
     padding: 8px;
   }
   .sidebar nav:first-of-type {
@@ -333,4 +343,20 @@
   .card {
     padding: 0 16px;
   }
+}
+
+.findRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+.findRow .channelSearch {
+  margin-bottom: 0;
+}
+.findRow button {
+  border: 0;
+  background: transparent;
+  padding: 6px;
+  color: var(--text-muted);
 }

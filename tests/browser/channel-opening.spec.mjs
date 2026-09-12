@@ -141,3 +141,134 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
     app.relay.releaseProfiles();
   }
 });
+
+for (const surface of ["Messages", "Pulse"]) {
+  test(`${surface} comparable cold and warm channel opening with shared production broker`, async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: surface, exact: true })
+      .click();
+    const rail =
+      surface === "Pulse"
+        ? page.getByRole("navigation", { name: "Pulse conversations" })
+        : page;
+    const button = (name) => rail.getByRole("button", { name, exact: true });
+    await expect(button("Beta")).toBeVisible();
+    await expect(
+      surface === "Pulse"
+        ? page.getByRole("article").first()
+        : page
+            .getByRole("region", { name: "Channel message history" })
+            .locator("[data-message-id]")
+            .first(),
+    ).toBeVisible();
+    // Equivalent unprepared Beta: no hover/focus, empty authoritative window.
+    expect(heads(app, "beta")).toHaveLength(0);
+    const measure = async (name) =>
+      button(name).evaluate(
+        async (button, { name, ids }) => {
+          const start = performance.now();
+          button.click();
+          await new Promise((resolve, reject) => {
+            const deadline = setTimeout(
+              () => reject(new Error("opening did not paint")),
+              10000,
+            );
+            const check = () => {
+              const history = document.querySelector(
+                '[aria-label="Channel message history"]',
+              );
+              const composer = document.querySelector(
+                `textarea[placeholder="Message #${name}"]`,
+              );
+              const rect = history?.getBoundingClientRect();
+              const visible =
+                rect &&
+                [...history.querySelectorAll("[data-message-id]")].some(
+                  (row) => {
+                    const bounds = row.getBoundingClientRect();
+                    return (
+                      ids.includes(row.dataset.messageId) &&
+                      bounds.height > 0 &&
+                      bounds.bottom > rect.top &&
+                      bounds.top < rect.bottom
+                    );
+                  },
+                );
+              if (!composer || !visible) return requestAnimationFrame(check);
+              requestAnimationFrame(() => {
+                clearTimeout(deadline);
+                resolve();
+              });
+            };
+            requestAnimationFrame(check);
+          });
+          return { start, visibleMs: performance.now() - start };
+        },
+        {
+          name,
+          ids: app.histories
+            .get(`primary/${name.toLowerCase()}`)
+            .map((event) => event.id),
+        },
+      );
+    const coldResponse = page.waitForResponse(
+      (response) =>
+        response.url().endsWith("/query") &&
+        response
+          .request()
+          .postDataJSON()
+          ?.some((filter) => filter.top_level && filter["#h"]?.[0] === "beta"),
+    );
+    const cold = await measure("Beta");
+    const response = await coldResponse;
+    await response.finished();
+    app.report.coldRequest = {
+      timeOrigin: await page.evaluate(() => performance.timeOrigin),
+      timing: response.request().timing(),
+      serverTiming: response.headers()["server-timing"],
+    };
+    app.report.measurements.push({
+      surface,
+      state: "cold-unprepared",
+      channel: "Beta",
+      ...cold,
+    });
+    expect(heads(app, "beta")).toHaveLength(1);
+    await measure("Alpha");
+    const before = heads(app, "beta").length + heads(app, "alpha").length;
+    for (const name of ["Beta", "Alpha", "Beta", "Alpha"]) {
+      const { visibleMs } = await measure(name);
+      app.report.measurements.push({
+        surface,
+        state: "warm",
+        channel: name,
+        visibleMs,
+      });
+      expect(visibleMs).toBeLessThan(100);
+    }
+    expect(heads(app, "beta").length + heads(app, "alpha").length).toBe(before);
+    // The diagnostics control belongs to Messages, but exports this same session.
+    if (surface === "Pulse")
+      await page
+        .getByRole("navigation", { name: "Pages", exact: true })
+        .getByRole("button", { name: "Messages", exact: true })
+        .click();
+    const diagnostics = page
+      .locator("summary")
+      .filter({ hasText: /^Relay timings$/ });
+    await diagnostics.evaluate((el) => {
+      for (let p = el.parentElement; p; p = p.parentElement)
+        if (p.tagName === "DETAILS") p.open = true;
+    });
+    const download = page.waitForEvent("download");
+    await page.getByRole("button", { name: "Export timings" }).click();
+    app.report.relayTimings = JSON.parse(
+      await readFile(await (await download).path(), "utf8"),
+    );
+  });
+}

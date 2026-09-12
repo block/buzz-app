@@ -680,6 +680,7 @@ button.avatar:focus-visible,
   width: 28px;
   height: 28px;
   font-size: 10px;
+  border-radius: 9px;
 }
 .bubbleMessage .messageBody {
   margin-left: 38px;
@@ -688,7 +689,7 @@ button.avatar:focus-visible,
 }
 .bubbleMessage .byline {
   padding: 0 4px;
-  margin-bottom: 6px;
+  margin-bottom: 4px;
   gap: 6px;
   font-size: 12px;
   line-height: 18px;
@@ -698,6 +699,8 @@ button.avatar:focus-visible,
   max-width: 100%;
   margin: 0;
   padding: 8px 14px;
+  font-size: calc(14px * var(--buzz-text-scale, 1));
+  line-height: calc(20px * var(--buzz-text-scale, 1));
   border-radius: 20px;
   background: var(--surface-control);
 }

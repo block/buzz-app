@@ -1,4 +1,18 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { Navigation } from "../../features/navigation/controller";
+import type { PageNavigation } from "../../features/navigation/service";
+import {
+  validPulseRoute,
+  type PulseRoute,
+  type PulsePositions,
+} from "./navigation";
+import {
+  useLayoutEffect,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from "react";
 import {
   Hash,
   Inbox,
@@ -21,8 +35,7 @@ import { usePulseFeed } from "./usePulseFeed";
 import { PulseConversation } from "./PulseConversation";
 import styles from "./Pulse.module.css";
 
-type View = "for-you" | "all" | "search";
-type Selection = { channelId: string; thread?: string | undefined };
+type View = PulseRoute["view"];
 const views = [
   { id: "search", title: "Search", icon: Search },
   { id: "for-you", title: "For you", icon: Inbox },
@@ -32,18 +45,34 @@ export function PulsePage({
   relay,
   extensions,
   companion,
+  navigation,
+  navigator,
+  positions,
 }: {
   relay: RelayData;
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
+  positions: PulsePositions;
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
 }) {
   const connection = useRelayConnection(relay);
+  const request = navigation?.forSession(relay, connection);
+  useEffect(() => {
+    if (connection.status === "disconnected")
+      request?.complete({ status: "opened" });
+    else if (connection.status === "error")
+      request?.complete({ status: "failed", reason: "unavailable" });
+  }, [connection.status, request]);
   return (
     <section className={styles.root} aria-label="Pulse">
       <PanelFrame companion={companion}>
         {connection.status === "ready" ? (
           <PulseWorkspace
             key={`${connection.scope}:${connection.generation}`}
+            navigation={request}
+            navigator={navigator}
+            positions={positions}
             session={connection.session}
             scope={connection.scope ?? "disconnected"}
             viewer={connection.viewer}
@@ -77,7 +106,13 @@ function PulseWorkspace({
   scope,
   viewer,
   extensions,
+  navigation,
+  navigator,
+  positions,
 }: {
+  navigation?: PageNavigation | undefined;
+  navigator?: Navigation | undefined;
+  positions: PulsePositions;
   session: RelaySession;
   scope: string;
   viewer?: string | undefined;
@@ -86,48 +121,100 @@ function PulseWorkspace({
   const list = useChannelList(session.channels);
   const feed = usePulseFeed(session, list.channels, list.status === "ready");
   const channels = visibleChannels(list.channels);
-  const [view, setView] = useState<View>(() => {
+  const [fallback, setFallback] = useState<PulseRoute>(() => {
     const saved = readView<unknown>(scope, "pulse-view", "all");
-    return saved === "for-you" || saved === "search" ? saved : "all";
+    return {
+      view: saved === "for-you" || saved === "search" ? saved : "all",
+      search: "",
+    };
   });
-  const [selected, setSelected] = useState<Selection | undefined>(() => {
-    const id = readView<unknown>(scope, "pulse-channel", undefined);
-    return typeof id === "string" ? { channelId: id } : undefined;
-  });
-  const [search, setSearch] = useState("");
+  const target = navigation?.target;
+  const route =
+    target?.kind === "page" &&
+    target.route &&
+    validPulseRoute(target.route.params)
+      ? target.route.params
+      : fallback;
+  const { view, search } = route;
   const [channelSearch, setChannelSearch] = useState("");
-  const trigger = useRef<HTMLElement | null>(null);
-  const current = channels.find(
-    (channel) => channel.id === selected?.channelId,
-  );
+  const current = channels.find((channel) => channel.id === route.channelId);
+  const destination = (next: PulseRoute) => ({
+    version: 1 as const,
+    kind: "page" as const,
+    pluginId: "buzz.pulse",
+    pageId: "pulse",
+    ...(viewer
+      ? {
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        }
+      : {}),
+    route: { version: 1, params: next },
+  });
+  useEffect(() => {
+    if (!navigation || navigation.signal.aborted) return;
+    if (navigation.target.kind === "page" && !navigation.target.route) {
+      navigation.resolve(destination(fallback));
+    } else if (list.status === "error") {
+      navigation.complete({ status: "failed", reason: "unavailable" });
+    } else if (list.status === "ready") {
+      navigation.complete(
+        route.channelId && !current
+          ? { status: "failed", reason: "unavailable" }
+          : { status: "opened" },
+      );
+    }
+  });
+  const navigate = (next: PulseRoute, replace = false) => {
+    setFallback(next);
+    writeView(scope, "pulse-view", next.view);
+    if (navigator) void navigator.open(destination(next), { replace });
+  };
   const open = (channelId: string, thread?: string, source?: HTMLElement) => {
-    trigger.current =
-      source ??
-      (document.activeElement instanceof HTMLElement
-        ? document.activeElement
-        : null);
-    setSelected({ channelId, thread });
-    writeView(scope, "pulse-channel", channelId);
+    if (source && positionKey) {
+      positions.set(positionKey, {
+        top: scroll.current?.scrollTop ?? 0,
+        ...(source.dataset.pulseFocus
+          ? { focus: source.dataset.pulseFocus }
+          : {}),
+      });
+    }
+    navigate({ view, search, channelId, ...(thread ? { thread } : {}) });
   };
   const back = () => {
-    setSelected(undefined);
-    writeView(scope, "pulse-channel", null);
-    requestAnimationFrame(() => {
-      if (trigger.current?.isConnected) trigger.current.focus();
-    });
+    if (navigator?.snapshot().canGoBack) navigator.back();
+    else navigate({ view, search }, true);
   };
-  const switchView = (next: View) => {
-    setView(next);
-    writeView(scope, "pulse-view", next);
-    setSelected(undefined);
-    writeView(scope, "pulse-channel", null);
-  };
+  const switchView = (next: View) => navigate({ view: next, search });
   const rows = useMemo(
     () =>
       filterRows(feed.rows, list.channels, feed.profiles, view, search, viewer),
     [feed.rows, list.channels, feed.profiles, view, search, viewer],
   );
   const scroll = useRef<HTMLDivElement>(null);
+  const positionKey = navigation ? `${scope}:${navigation.entryId}` : undefined;
+  const restored = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (current || !positionKey || !scroll.current || feed.status !== "ready")
+      return;
+    if (restored.current === positionKey) return;
+    restored.current = positionKey;
+    const saved = positions.get(positionKey);
+    scroll.current.scrollTop = saved?.top ?? 0;
+    if (saved?.focus) {
+      scroll.current
+        .querySelector<HTMLElement>(
+          `[data-pulse-focus="${CSS.escape(saved.focus)}"]`,
+        )
+        ?.focus({ preventScroll: true });
+    }
+  }, [current, positionKey, positions, feed.status]);
+  // Hidden feed DOM remains mounted for warm returns; restore once on each visit.
+  useEffect(() => {
+    if (current) restored.current = undefined;
+  }, [current]);
   // Freeze channel order while reading; content edits and revoked sources stay live.
   const [order, setOrder] = useState<string[]>([]);
   const rowChannels = rows.map((row) => row.channelId).join("\n");
@@ -176,14 +263,28 @@ function PulseWorkspace({
           ))}
         </nav>
         <div className={styles.sidebarDivider} />
-        <input
-          className={styles.channelSearch}
-          type="search"
-          aria-label="Find a Pulse conversation"
-          placeholder="Find a conversation"
-          value={channelSearch}
-          onChange={(event) => setChannelSearch(event.target.value)}
-        />
+        <div className={styles.findRow}>
+          <input
+            className={styles.channelSearch}
+            type="search"
+            aria-label="Find a Pulse conversation"
+            placeholder="Find a conversation"
+            value={channelSearch}
+            onChange={(event) => setChannelSearch(event.target.value)}
+          />
+          <button
+            type="button"
+            aria-label="Refresh Pulse"
+            title="Refresh Pulse"
+            disabled={loading}
+            onClick={() => {
+              session.channels.refreshList?.();
+              feed.refresh();
+            }}
+          >
+            <RefreshCw size={17} aria-hidden="true" />
+          </button>
+        </div>
         <nav className={styles.channelList} aria-label="Pulse conversations">
           {matchingChannels.slice(0, 100).map((channel) => {
             const Icon = channel.channelType === "dm" ? MessageCircle : Hash;
@@ -199,7 +300,9 @@ function PulseWorkspace({
                   open(channel.id, undefined, event.currentTarget)
                 }
               >
-                <span className={styles.navIcon}>
+                <span
+                  className={`${styles.navIcon} ${channel.channelType === "dm" ? "" : styles.channelIcon}`}
+                >
                   {channel.channelType === "dm" ? (
                     channelLabel(channel, feed.profiles)
                       .slice(0, 2)
@@ -234,34 +337,23 @@ function PulseWorkspace({
       <section className={styles.main} aria-label="Pulse content">
         {current && (
           <PulseConversation
-            key={`${current.id}:${selected?.thread ?? ""}`}
+            key={current.id}
             session={session}
             viewer={viewer}
             scope={scope}
             channelId={current.id}
             name={channelLabel(current, feed.profiles)}
-            initialThread={selected?.thread}
+            thread={route.thread}
+            openThread={(id) => open(current.id, id)}
             extensions={extensions}
             back={back}
           />
         )}
         <div className={styles.feedContent} hidden={!!current}>
-          <header className={styles.feedHeading}>
+          <header className={styles.feedHeading} hidden={view === "all"}>
             <div>
               <h1>{title}</h1>
             </div>
-            <button
-              type="button"
-              aria-label="Refresh Pulse"
-              title="Refresh Pulse"
-              disabled={loading}
-              onClick={() => {
-                session.channels.refreshList?.();
-                feed.refresh();
-              }}
-            >
-              <RefreshCw size={17} aria-hidden="true" />
-            </button>
           </header>
           <div className={styles.intro} hidden={view === "all"}>
             {view === "for-you"
@@ -279,11 +371,32 @@ function PulseWorkspace({
                 aria-label="Search recent Pulse activity"
                 placeholder="Search this feed"
                 value={search}
-                onChange={(event) => setSearch(event.target.value)}
+                maxLength={1024}
+                onChange={(event) =>
+                  navigate({ ...route, search: event.target.value }, true)
+                }
               />
             </label>
           )}
-          <div className={styles.feed} ref={scroll}>
+          <div
+            className={styles.feed}
+            ref={scroll}
+            onFocusCapture={(event) => {
+              const focus = (event.target as HTMLElement).dataset.pulseFocus;
+              if (!current && positionKey && focus)
+                positions.set(positionKey, {
+                  top: event.currentTarget.scrollTop,
+                  focus,
+                });
+            }}
+            onScroll={(event) => {
+              if (!current && positionKey)
+                positions.set(positionKey, {
+                  ...positions.get(positionKey),
+                  top: event.currentTarget.scrollTop,
+                });
+            }}
+          >
             {pendingOrder && (
               <button
                 className={styles.latest}
@@ -333,6 +446,11 @@ function PulseWorkspace({
                       context={
                         <button
                           className={styles.source}
+                          data-pulse-focus={`${channel.id}:source`}
+                          onPointerEnter={() =>
+                            session.channels.prepare?.(channel.id)
+                          }
+                          onFocus={() => session.channels.prepare?.(channel.id)}
                           type="button"
                           onClick={(event) =>
                             open(channel.id, undefined, event.currentTarget)
@@ -349,17 +467,24 @@ function PulseWorkspace({
                             className={styles.reply}
                             type="button"
                             aria-label="Open thread / reply"
+                            data-pulse-focus={`${channel.id}:thread`}
                             onClick={(event) =>
                               open(channel.id, row.id, event.currentTarget)
                             }
                           >
                             <MessageCircle size={16} aria-hidden="true" />
-                            <span>Reply</span>
                           </button>
                           <button
                             className={styles.reply}
                             type="button"
                             aria-label="Open conversation ↗"
+                            data-pulse-focus={`${channel.id}:open`}
+                            onPointerEnter={() =>
+                              session.channels.prepare?.(channel.id)
+                            }
+                            onFocus={() =>
+                              session.channels.prepare?.(channel.id)
+                            }
                             onClick={(event) =>
                               open(channel.id, undefined, event.currentTarget)
                             }

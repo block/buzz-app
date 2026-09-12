@@ -43,3 +43,22 @@ test("save readback requires operation revision plus owner/channel/id", () => {
     exactSaveReadback({ ...operation, outcome: "unknown" }, [exact]),
   ).toBeUndefined();
 });
+
+test("draft boundaries match signing: UTF-8 bytes, steps and legacy enabled default", () => {
+  const pad = `#${"a".repeat(24_000 - new TextEncoder().encode(fixtureYaml).length - 1)}`;
+  expect(draftError(fixtureYaml + pad)).toBeNull();
+  expect(draftError(`${fixtureYaml}${pad}é`)).toMatch(/24,000 bytes/);
+  const steps = (count: number) =>
+    "name: bounded\ntrigger: {on: message_posted}\nsteps:\n" +
+    Array.from(
+      { length: count },
+      (_, i) => `  - {id: step_${i}, action: delay, duration: 1s}\n`,
+    ).join("");
+  expect(draftError(steps(100))).toBeNull();
+  expect(draftError(steps(101))).toMatch(/100 steps/);
+  expect(draftError(fixtureYaml.replace("enabled: false\n", ""))).toBeNull();
+  for (const value of ["null", "'true'", "1"])
+    expect(
+      draftError(fixtureYaml.replace("enabled: false", `enabled: ${value}`)),
+    ).toMatch(/true or false/);
+});

@@ -29,8 +29,8 @@ export function visualForm(yaml: string): ReturnType<typeof yamlToFormState> {
 
 /** Draft shape validation is not relay authorization or a promise of execution. */
 export function draftError(yaml: string): string | null {
-  if (new TextEncoder().encode(yaml).length > 64 * 1024)
-    return "The draft is too large (64 KiB maximum).";
+  if (new TextEncoder().encode(yaml).length > 24_000)
+    return "The draft is too large (24,000 bytes maximum).";
   try {
     const doc = parseDocument(yaml);
     if (doc.errors.length)
@@ -50,6 +50,7 @@ export function draftError(yaml: string): string | null {
       return "Choose a trigger.";
     if (!Array.isArray(data.steps) || !data.steps.length)
       return "Add at least one step.";
+    if (data.steps.length > 100) return "Use at most 100 steps.";
     const ids = new Set<string>();
     for (const step of data.steps) {
       if (

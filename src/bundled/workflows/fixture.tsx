@@ -1,5 +1,8 @@
 import { createRoot } from "react-dom/client";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
+import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
+import "@fontsource-variable/inter/wght.css";
+import "@fontsource/jetbrains-mono/400.css";
 import "../../shared/styles/globals.css";
 import "./workflows.css";
 import { Panel } from "../../shared/design-system/ui/Panel";
@@ -14,6 +17,7 @@ import {
 const fixture = createWorkflowFixture();
 Object.assign(window, { workflowFixture: fixture });
 function Fixture() {
+  useKeyboardFocusVisibility();
   const [mounted, setMounted] = useState(true);
   return (
     <main data-buzz-ui="" className="text-body" style={{ padding: 24 }}>
@@ -60,4 +64,9 @@ function Fixture() {
   );
 }
 const root = document.getElementById("root");
-if (root) createRoot(root).render(<Fixture />);
+if (root)
+  createRoot(root).render(
+    <StrictMode>
+      <Fixture />
+    </StrictMode>,
+  );

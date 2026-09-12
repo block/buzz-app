@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useCallback, useState } from "react";
 import type {
   WorkflowCapability,
   WorkflowDefinition,
@@ -43,18 +43,21 @@ function RunPage({
   cursor: WorkflowRunCursor | undefined;
   onPage: (cursor: WorkflowRunCursor | undefined) => void;
 }) {
-  const view = useMemo(
-    () => capability.runs(workflow, cursor),
-    [capability, workflow, cursor],
+  const { snapshot, refresh } = useWorkflowView(
+    useCallback(
+      () => capability.runs(workflow, cursor),
+      [capability, workflow, cursor],
+    ),
   );
-  const snapshot = useWorkflowView(view);
+  const [approvalRun, setApprovalRun] = useState<string | null>(null);
+  if (!snapshot) return <p role="status">Reading runs…</p>;
   return (
     <section aria-label="Workflow runs" className="workflow-runs">
       <div className="workflow-toolbar">
         <h3 className="text-heading">Runs</h3>
         <Button
           disabled={snapshot.status === "loading"}
-          onClick={() => void view.refresh()}
+          onClick={() => void refresh()}
         >
           Refresh runs
         </Button>
@@ -99,14 +102,23 @@ function RunPage({
               {JSON.stringify(run.trace, null, 2)}
             </pre>
           </details>
-          <details>
-            <summary>Approval history (read-only)</summary>
-            <ApprovalHistory
-              capability={capability}
-              workflow={workflow}
-              runId={run.id}
-            />
-          </details>
+          <Button
+            size="compact"
+            onClick={() =>
+              setApprovalRun(approvalRun === run.id ? null : run.id)
+            }
+          >
+            {approvalRun === run.id ? "Hide approvals" : "Read approvals"}
+          </Button>
+          {approvalRun === run.id && (
+            <section aria-label="Approval history (read-only)">
+              <ApprovalRows
+                capability={capability}
+                workflow={workflow}
+                runId={run.id}
+              />
+            </section>
+          )}
         </article>
       ))}
       <div className="workflow-toolbar">
@@ -126,24 +138,6 @@ function RunPage({
     </section>
   );
 }
-function ApprovalHistory({
-  capability,
-  workflow,
-  runId,
-}: {
-  capability: WorkflowCapability;
-  workflow: WorkflowReference;
-  runId: string;
-}) {
-  const [opened, setOpened] = useState(false);
-  return opened ? (
-    <ApprovalRows capability={capability} workflow={workflow} runId={runId} />
-  ) : (
-    <Button size="compact" onClick={() => setOpened(true)}>
-      Read approvals
-    </Button>
-  );
-}
 function ApprovalRows({
   capability,
   workflow,
@@ -153,11 +147,13 @@ function ApprovalRows({
   workflow: WorkflowReference;
   runId: string;
 }) {
-  const view = useMemo(
-    () => capability.approvals(workflow, runId),
-    [capability, workflow, runId],
+  const { snapshot, refresh } = useWorkflowView(
+    useCallback(
+      () => capability.approvals(workflow, runId),
+      [capability, workflow, runId],
+    ),
   );
-  const snapshot = useWorkflowView(view);
+  if (!snapshot) return <p role="status">Reading approvals…</p>;
   return (
     <div>
       {snapshot.status === "ready" ? (
@@ -181,7 +177,7 @@ function ApprovalRows({
       <Button
         size="compact"
         disabled={snapshot.status === "loading"}
-        onClick={() => void view.refresh()}
+        onClick={() => void refresh()}
       >
         Refresh approvals
       </Button>

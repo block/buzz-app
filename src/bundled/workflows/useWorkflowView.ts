@@ -1,16 +1,31 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import type { WorkflowView } from "../../features/workflows/types";
 
-/** Host factories create idle interest; the mounted consumer owns start/stop. */
-export function useWorkflowView<T>(view: WorkflowView<T>) {
+/** Allocate host interest on subscription, not render. StrictMode may discard a
+ * render or unsubscribe/resubscribe without constructing a new component. */
+export function useWorkflowView<T>(create: () => WorkflowView<T>) {
+  const store = useMemo(() => {
+    let view: WorkflowView<T> | undefined;
+    return {
+      snapshot: () => view?.snapshot(),
+      refresh: () => view?.refresh() ?? Promise.resolve(),
+      subscribe(listener: () => void) {
+        const owned = create();
+        view = owned;
+        const stop = owned.subscribe(listener);
+        void owned.refresh();
+        return () => {
+          stop();
+          owned.dispose();
+          if (view === owned) view = undefined;
+        };
+      },
+    };
+  }, [create]);
   const snapshot = useSyncExternalStore(
-    view.subscribe,
-    view.snapshot,
-    view.snapshot,
+    store.subscribe,
+    store.snapshot,
+    store.snapshot,
   );
-  useEffect(() => {
-    void view.refresh();
-    return () => view.dispose();
-  }, [view]);
-  return snapshot;
+  return { snapshot, refresh: store.refresh };
 }

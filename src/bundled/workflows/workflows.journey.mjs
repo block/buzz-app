@@ -27,6 +27,12 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   page.on("pageerror", (error) => errors.push(String(error)));
   await page.goto(url);
   const button = (name) => page.getByRole("button", { name, exact: true });
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowFixture.definitions.active()),
+    )
+    .toBe(1);
+  await button("Refresh configurations").click();
   await button("Message helper").click();
   await page.getByRole("tab", { name: "YAML", exact: true }).click();
   const yaml = page.getByLabel("Workflow YAML", { exact: true });
@@ -66,8 +72,12 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
   await button("Continue editing retained draft").click();
   expect(await button("Save workflow").isEnabled()).toBe(true);
   await button("Close editor").click();
-  await expect.poll(() => page.getByRole("alertdialog").count()).toBe(1);
-  await button("Keep editing").click();
+  await expect(
+    page.getByRole("alertdialog", { name: "Leave this draft?" }),
+  ).toBeVisible();
+  await expect(button("Keep editing")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(button("Close editor")).toBeFocused();
   expect(await yaml.inputValue()).toContain("Rejected draft");
   await button("Revoke access").click();
   await expect
@@ -109,14 +119,140 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
     ).toBe(true);
   }
   await button("Toggle appearance").click();
-  expect(await page.locator("html").getAttribute("data-color-mode")).toBe(
-    "dark",
+  await expect(page.locator("html")).toHaveAttribute("data-color-mode", "dark");
+  // Wait for the shared control transition before checking its final paint.
+  await expect(button("Close editor")).toHaveCSS("color", "rgb(245, 245, 245)");
+  await expect(button("Close editor")).toHaveCSS(
+    "background-color",
+    "rgb(22, 22, 22)",
   );
+  await yaml.focus();
+  await page.keyboard.press("ArrowLeft");
+  await expect(yaml).toHaveCSS("outline-style", "solid");
+  await expect(yaml).toHaveCSS("outline-width", "2px");
   await button("Unmount plugin").click();
   await expect
     .poll(() =>
       page.evaluate(() => window.workflowFixture.definitions.disposed()),
     )
     .toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("history reads are lazy, paged by exact cursor and released; unknown operations never get a replacement ID", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Message helper").click();
+  expect(await page.evaluate(() => window.workflowFixture.calls.runs)).toBe(0);
+  await button("Read runs").click();
+  await expect(page.getByText("Current step: 1")).toBeVisible();
+  expect(
+    await page.evaluate(() => window.workflowFixture.calls.approvals),
+  ).toBe(0);
+  await button("Read approvals").click();
+  await expect(
+    page.getByText("notify: granted — Fixture decision"),
+  ).toBeVisible();
+  await button("Hide approvals").click();
+  expect(
+    await page.evaluate(() =>
+      window.workflowFixture.approvalViews.every((view) => view.disposed()),
+    ),
+  ).toBe(true);
+  await button("Older runs").click();
+  await expect(page.getByText("No runs returned on this page.")).toBeVisible();
+  expect(await page.evaluate(() => window.workflowFixture.runCursor())).toEqual(
+    {
+      before: "2026-09-12T12:00:00.123456Z",
+      beforeId: "77777777-7777-4777-8777-777777777777",
+    },
+  );
+  expect(
+    await page.evaluate(() =>
+      window.workflowFixture.runViews
+        .slice(0, -1)
+        .every((view) => view.disposed()),
+    ),
+  ).toBe(true);
+  await button("Hide runs").click();
+  expect(
+    await page.evaluate(() =>
+      window.workflowFixture.runViews.every((view) => view.disposed()),
+    ),
+  ).toBe(true);
+  await button("Run now").click();
+  await button("Unknown operation").click();
+  await expect(button("Run now")).toBeDisabled();
+  const id = await page.evaluate(
+    () =>
+      window.workflowFixture.capability.operations.snapshot().at(-1).eventId,
+  );
+  await button("Retry same signed operation").click();
+  expect(await page.evaluate(() => window.workflowFixture.calls.retry)).toEqual(
+    [id],
+  );
+  await button("Close editor").click();
+  await button("Message helper").click();
+  await expect(button("Run now")).toBeDisabled();
+  await expect(button("Save workflow")).toBeDisabled();
+  expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
+    1,
+  );
+});
+
+test("real session page under StrictMode fences community changes, warns for dirty channel navigation and purges access", async ({
+  page,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const choose = async (name) => {
+    await page.getByRole("combobox", { name: "Channel", exact: true }).click();
+    await page.getByRole("option", { name, exact: true }).click();
+  };
+  await choose("First channel");
+  await button("Fixture A helper").click();
+  await expect(button("Save workflow")).toBeDisabled();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Unsaved private text");
+  await choose("Second channel");
+  await expect(page.getByRole("alertdialog")).toBeVisible();
+  await button("Keep editing").click();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "Unsaved private text",
+  );
+  await choose("Second channel");
+  await page
+    .getByRole("alertdialog")
+    .getByRole("button", { name: "Change channel", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Workflow editor" }),
+  ).toHaveCount(0);
+  await choose("First channel");
+  await button("Fixture A helper").click();
+  await button("Switch community").click();
+  await expect(
+    page.getByRole("region", { name: "Workflow editor" }),
+  ).toHaveCount(0);
+  await choose("First channel");
+  await button("Fixture B helper").click();
+  await button("Switch community").click();
+  await choose("First channel");
+  await button("Fixture A helper").click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Revoked private text");
+  await button("Revoke selected channel").click();
+  await expect(
+    page.getByRole("region", { name: "Workflow editor" }),
+  ).toHaveCount(0);
+  expect(await page.locator("body").innerText()).not.toContain(
+    "Revoked private text",
+  );
   expect(errors).toEqual([]);
 });

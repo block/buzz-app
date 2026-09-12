@@ -2,7 +2,6 @@ import { useState } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useChannelList, useRelayConnection } from "../../features/relay/react";
-import type { WorkflowCapability } from "../../features/workflows/types";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { Select } from "../../shared/design-system/ui/Select";
@@ -52,10 +51,7 @@ export function WorkflowCommunity({
   session: RelaySession;
   viewer: string;
 }) {
-  // Typed optional only during staged host integration; not an alternate capability.
-  const capability = (
-    session as RelaySession & { workflows?: WorkflowCapability }
-  ).workflows;
+  const capability = session.workflows;
   const channels = useChannelList(session.channels);
   const [selected, setSelected] = useState("");
   const [draftAtRisk, setDraftAtRisk] = useState(false);

@@ -1,6 +1,6 @@
 import {
   useEffect,
-  useMemo,
+  useCallback,
   useRef,
   useState,
   useSyncExternalStore,
@@ -39,11 +39,12 @@ export function WorkflowChannel({
   viewer: string;
   onDraftRiskChange?: (atRisk: boolean) => void;
 }) {
-  const view = useMemo(
-    () => capability.definitions(channelId),
-    [capability, channelId],
+  const { snapshot, refresh } = useWorkflowView(
+    useCallback(
+      () => capability.definitions(channelId),
+      [capability, channelId],
+    ),
   );
-  const snapshot = useWorkflowView(view);
   const operations = useSyncExternalStore(
     capability.operations.subscribe,
     capability.operations.snapshot,
@@ -113,11 +114,10 @@ export function WorkflowChannel({
     else open(next);
   };
   useEffect(() => {
-    if (operation?.eventId && operation.outcome === "succeeded")
-      void view.refresh();
-  }, [operation?.eventId, operation?.outcome, view]);
+    if (operation?.eventId && operation.outcome === "succeeded") void refresh();
+  }, [operation?.eventId, operation?.outcome, refresh]);
   useEffect(() => {
-    if (!operation || !draft || snapshot.status !== "ready") return;
+    if (!operation || !draft || snapshot?.status !== "ready") return;
     const saved = exactSaveReadback(operation, snapshot.data.items);
     if (saved) {
       submission.current = null;
@@ -127,7 +127,7 @@ export function WorkflowChannel({
   // A cleared/unavailable view withdraws the saved private definition from display.
   // Unsaved user-authored drafts never become a second retained definition cache.
   useEffect(() => {
-    if (snapshot.status === "unavailable" || snapshot.status === "idle") {
+    if (snapshot?.status === "unavailable" || snapshot?.status === "idle") {
       submission.current = null;
       setDraft(null);
       setPendingSelection(null);
@@ -135,7 +135,7 @@ export function WorkflowChannel({
       setReadRuns(false);
       setError(null);
     }
-  }, [snapshot.status]);
+  }, [snapshot?.status]);
   const save = () => {
     if (
       !draft ||
@@ -239,13 +239,14 @@ export function WorkflowChannel({
         : operation?.outcome === "rejected"
           ? "Save rejected. Your draft is retained; review the error before retrying."
           : "This operation has not been resolved. Your draft and operation identity are retained.";
+  if (!snapshot) return <p role="status">Reading configurations…</p>;
   return (
     <section aria-label={`Workflows in ${channelName}`}>
       <div className="workflow-toolbar">
         <h2 className="text-heading">Saved configurations</h2>
         <Button
           disabled={snapshot.status === "loading"}
-          onClick={() => void view.refresh()}
+          onClick={() => void refresh()}
         >
           Refresh configurations
         </Button>

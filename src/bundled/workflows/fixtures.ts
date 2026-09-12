@@ -3,6 +3,10 @@ import type {
   WorkflowDefinition,
   WorkflowOperation,
   WorkflowView,
+  WorkflowRun,
+  WorkflowRunCursor,
+  WorkflowApproval,
+  WorkflowDefinitions,
 } from "../../features/workflows/types";
 
 export const fixtureViewer = "11".repeat(32);
@@ -17,6 +21,22 @@ steps:
     action: send_message
     text: Hello from a fixture
 `;
+export const fixtureRun: WorkflowRun = {
+  id: "77777777-7777-4777-8777-777777777777",
+  workflowId: "55555555-5555-4555-8555-555555555555",
+  status: "completed",
+  currentStep: 1,
+  trace: [{ step: "notify", status: "completed" }],
+  createdAt: 1_789_224_000,
+  startedAt: 1_789_224_000,
+  completedAt: 1_789_224_001,
+  errorCode: null,
+  errorMessage: null,
+};
+export const fixtureCursor: WorkflowRunCursor = {
+  before: "2026-09-12T12:00:00.123456Z",
+  beforeId: fixtureRun.id,
+};
 export const fixtureDefinition: WorkflowDefinition = {
   id: "55555555-5555-4555-8555-555555555555",
   owner: fixtureViewer,
@@ -59,15 +79,38 @@ export function fixtureView<T>(data: T) {
 
 /** Explicit offline test capability; never used by the bundled plugin entry. */
 export function createWorkflowFixture() {
-  const definitions = fixtureView({
-    items: [fixtureDefinition] as readonly WorkflowDefinition[],
-    partial: false,
-  });
+  let definitionState: ReturnType<
+    WorkflowView<WorkflowDefinitions>["snapshot"]
+  > = {
+    status: "ready",
+    data: { items: [fixtureDefinition], partial: false },
+  };
+  const definitionViews: ReturnType<typeof fixtureView<WorkflowDefinitions>>[] =
+    [];
+  const definitions = {
+    update(next: typeof definitionState) {
+      definitionState = next;
+      for (const owned of definitionViews)
+        if (!owned.disposed()) owned.update(next);
+    },
+    disposed: () => definitionViews.every((owned) => owned.disposed()),
+    active: () => definitionViews.filter((owned) => !owned.disposed()).length,
+  };
   const listeners = new Set<() => void>();
   let operations: readonly WorkflowOperation[] = [];
   let counter = 0;
   let savedInput: Parameters<WorkflowCapability["save"]>[0] | undefined;
-  const calls = { save: 0, delete: 0, trigger: 0, runs: 0, approvals: 0 };
+  const calls = {
+    save: 0,
+    delete: 0,
+    trigger: 0,
+    runs: 0,
+    approvals: 0,
+    retry: [] as string[],
+  };
+  const runViews: { disposed(): boolean }[] = [];
+  const approvalViews: { disposed(): boolean }[] = [];
+  let runCursor: WorkflowRunCursor | undefined;
   const publish = (next: readonly WorkflowOperation[]) => {
     operations = next;
     for (const listener of listeners) listener();
@@ -99,14 +142,36 @@ export function createWorkflowFixture() {
       delete: true,
       webhookSecrets: false,
     },
-    definitions: () => definitions.view,
-    runs: () => {
+    definitions: () => {
+      const owned = fixtureView(definitionState.data);
+      owned.update(definitionState);
+      definitionViews.push(owned);
+      return owned.view;
+    },
+    runs: (_workflow, cursor) => {
       calls.runs++;
-      return fixtureView({ runs: [], next: null }).view;
+      runCursor = cursor;
+      const next = fixtureView({
+        runs: cursor ? [] : [fixtureRun],
+        next: cursor ? null : fixtureCursor,
+      });
+      runViews.push(next);
+      return next.view;
     },
     approvals: () => {
       calls.approvals++;
-      return fixtureView([]).view;
+      const next = fixtureView<readonly WorkflowApproval[]>([
+        {
+          reference: "cc".repeat(32),
+          runId: fixtureRun.id,
+          stepId: "notify",
+          status: "granted",
+          note: "Fixture decision",
+          createdAt: 1_789_224_000,
+        },
+      ]);
+      approvalViews.push(next);
+      return next.view;
     },
     save(input) {
       calls.save++;
@@ -136,7 +201,9 @@ export function createWorkflowFixture() {
           listeners.delete(listener);
         };
       },
-      retry() {},
+      retry(id) {
+        calls.retry.push(id);
+      },
       async dismiss() {},
     },
     takeWebhookSecret() {
@@ -148,6 +215,9 @@ export function createWorkflowFixture() {
     definitions,
     calls,
     input: () => savedInput,
+    runCursor: () => runCursor,
+    runViews,
+    approvalViews,
     finish(outcome: WorkflowOperation["outcome"], exact = true) {
       const operation = operations.at(-1);
       if (!operation) throw new Error("No operation");
@@ -184,6 +254,9 @@ export function createWorkflowFixture() {
                 ...item,
                 outcome,
                 delivery: outcome === "rejected" ? "failed" : "accepted",
+                ...(item.action === "trigger" && outcome === "succeeded"
+                  ? { runId: fixtureRun.id }
+                  : {}),
                 ...(outcome === "rejected"
                   ? { error: "Fixture conflict" }
                   : {}),

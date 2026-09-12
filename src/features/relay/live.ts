@@ -435,12 +435,11 @@ export function subscribeRelayTraffic(
           fail(route, "Relay supplied invalid live traffic");
           return;
         }
-        // Ephemeral channel activity must arrive on that exact authenticated
-        // channel route; a global or another channel is not an access grant.
+        // Preserve route consistency before receive() discards the subscription ID.
+        // The typing owner separately checks scope shape and channel access.
         if (
           incoming.kind === 20002 &&
           (!route.channelId ||
-            incoming.tags.filter(([name]) => name === "h").length !== 1 ||
             !incoming.tags.some(
               ([name, value]) => name === "h" && value === route.channelId,
             ))

@@ -5,7 +5,8 @@ import {
   subscribeRelayTraffic,
   type LiveCallbacks,
 } from "./live";
-import { keypair, message, signed } from "./testing";
+import { keypair, message, roster, signed, scriptedTransport } from "./testing";
+import { createRelaySession } from "./session";
 class Socket {
   readyState = 1;
   onmessage?: (event: { data: string }) => Promise<void>;
@@ -653,5 +654,84 @@ it("admits signed typing only on its authenticated channel route, without extra 
   ]);
   expect(h.callbacks.receive).toHaveBeenCalledTimes(1);
   h.owner.dispose();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it("keeps misrouted activity out of accessible conversations; session rejects ambiguous scope", async () => {
+  vi.useFakeTimers();
+  const h = setup();
+  const relay = keypair();
+  const wire = scriptedTransport(h.key.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      h.callbacks.receive.mockImplementation(callbacks.receive);
+      h.callbacks.state.mockImplementation(callbacks.state);
+      return h.owner;
+    },
+  });
+  // Establish both accessible channels before starting their live routes.
+  h.callbacks.receive([
+    roster(relay, "a", [h.key.pubkey]),
+    roster(relay, "b", [h.key.pubkey]),
+  ]);
+  await h.first.auth();
+  await vi.advanceTimersByTimeAsync(750);
+  const requests = h.first.requests();
+  const a = requests.find((r) => r[2]["#h"]?.includes("a"));
+  const b = requests.find((r) => r[2]["#h"]?.includes("b"));
+  assert.exists(a);
+  assert.exists(b);
+  const agent = keypair();
+  const activity = (tags: string[][]) =>
+    signed(agent, {
+      kind: 20002,
+      created_at: Math.floor(Date.now() / 1000),
+      content: "",
+      tags,
+    });
+  const pulse = activity([["h", "b"]]);
+  const snapshot = owner.session.typing.snapshot;
+  for (const route of [requests[0], requests[1], a]) {
+    await h.first.receive(["EVENT", route?.[1], pulse]);
+    expect(snapshot()).toEqual([]);
+  }
+  for (const tags of [
+    [],
+    [["h"]],
+    [["h", "bad channel"]],
+    [["h", "denied"]],
+    [
+      ["h", "b"],
+      ["h", "b"],
+    ],
+    [
+      ["h", "b"],
+      ["h", "a"],
+    ],
+    [
+      ["h", "b"],
+      ["e", "bad", "", "reply"],
+    ],
+  ]) {
+    const event = activity(tags);
+    await h.first.receive(["EVENT", b[1], event]);
+    expect(snapshot()).toEqual([]);
+    // Even a host that has already discarded route metadata cannot activate these.
+    h.callbacks.receive([event]);
+    expect(snapshot()).toEqual([]);
+  }
+  await h.first.receive(["EVENT", b[1], pulse]);
+  expect(snapshot()).toEqual([{ channelId: "b", pubkey: agent.pubkey }]);
+  // Once route metadata is gone, the session can only use the event's own scope.
+  const other = activity([["h", "a"]]);
+  await h.first.receive(["EVENT", b[1], other]);
+  expect(snapshot()).toHaveLength(1);
+  h.callbacks.receive([other]);
+  expect(snapshot()).toEqual([
+    { channelId: "b", pubkey: agent.pubkey },
+    { channelId: "a", pubkey: agent.pubkey },
+  ]);
+  owner.dispose();
   expect(vi.getTimerCount()).toBe(0);
 });

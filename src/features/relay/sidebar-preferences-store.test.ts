@@ -4,6 +4,7 @@ import { flush, keypair, scriptedTransport } from "./testing";
 import type {
   SidebarAssignmentMutator,
   SidebarPreferences,
+  SidebarSortMutator,
 } from "./sidebar-preferences";
 
 const data: SidebarPreferences = {
@@ -14,12 +15,14 @@ const data: SidebarPreferences = {
 function setup(
   decode = vi.fn(async (): Promise<SidebarPreferences> => data),
   write?: SidebarAssignmentMutator,
+  writeSort?: SidebarSortMutator,
 ) {
   const wire = scriptedTransport(keypair().pubkey, keypair().pubkey);
   const owner = createRelaySession({
     ...wire.transport,
     decodeSidebarPreferences: decode,
     ...(write ? { writeSidebarAssignment: write } : {}),
+    ...(writeSort ? { writeSidebarSort: writeSort } : {}),
   });
   return { wire, owner, preferences: owner.session.sidebarPreferences, decode };
 }
@@ -283,3 +286,31 @@ it.each(["clearCache", "dispose"] as const)(
     }
   },
 );
+
+it("applies a confirmed sort without disturbing groups or stars", async () => {
+  const writeSort = vi.fn<SidebarSortMutator>(async () => ({
+    "section:work": "recent",
+  }));
+  const { wire, owner, preferences } = setup(undefined, undefined, writeSort);
+  try {
+    const initial = preferences.ensure();
+    await flush();
+    wire.next().respond([]);
+    await initial;
+    await expect(
+      preferences.setSort("section:work", "recent", ["work"]),
+    ).resolves.toEqual({ "section:work": "recent" });
+    expect(writeSort).toHaveBeenCalledWith(
+      "section:work",
+      "recent",
+      ["work"],
+      expect.any(AbortSignal),
+    );
+    expect(preferences.snapshot().data).toEqual({
+      ...data,
+      sort: { "section:work": "recent" },
+    });
+  } finally {
+    owner.dispose();
+  }
+});

@@ -140,6 +140,7 @@ export const test = base.extend({
               channels: { alpha: { starred: true, updatedAt: 1 } },
             },
           ],
+          ["channel-sort", { version: 1, groups: {} }],
         ]) {
           records.set(
             coordinate,
@@ -607,11 +608,11 @@ export const test = base.extend({
                   const coordinate = event.tags.find(
                     ([key]) => key === "d",
                   )?.[1];
-                  if (coordinate === "channel-sections") {
-                    expect(event.tags).toContainEqual([
-                      "t",
-                      "channel-sections",
-                    ]);
+                  if (
+                    coordinate === "channel-sections" ||
+                    coordinate === "channel-sort"
+                  ) {
+                    expect(event.tags).toContainEqual(["t", coordinate]);
                     const blob = JSON.parse(
                       nip44.v2.decrypt(
                         event.content,
@@ -619,8 +620,21 @@ export const test = base.extend({
                       ),
                     );
                     readEvents.get(community).set(coordinate, event);
-                    report.sidebarPublications ??= [];
-                    report.sidebarPublications.push({ community, event, blob });
+                    if (coordinate === "channel-sections") {
+                      report.sidebarPublications ??= [];
+                      report.sidebarPublications.push({
+                        community,
+                        event,
+                        blob,
+                      });
+                    } else {
+                      report.sidebarSortPublications ??= [];
+                      report.sidebarSortPublications.push({
+                        community,
+                        event,
+                        blob,
+                      });
+                    }
                     return;
                   }
                   expect(event.tags).toContainEqual(["t", "read-state"]);
@@ -710,7 +724,7 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(2);
+        expect(body.length).toBeLessThanOrEqual(3);
         const filter = body[0];
         const result = [
           ...new Map(

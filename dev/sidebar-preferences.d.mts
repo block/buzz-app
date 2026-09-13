@@ -26,3 +26,25 @@ export function mutateSidebarAssignment(
 export const SIDEBAR_REQUEST_BYTES: number;
 export const SIDEBAR_UPLOAD_SLOTS: number;
 export const SIDEBAR_UPLOAD_MS: number;
+
+export function assertSidebarSortIntent(intent: unknown): void;
+export function prepareSidebarSort(
+  events: readonly RelayEvent[],
+  intent: {
+    group: string;
+    mode: "alpha" | "recent";
+    sectionIds: readonly string[];
+  },
+  secret: Uint8Array,
+  now?: number,
+): { groups: Readonly<Record<string, "alpha" | "recent">>; event?: RelayEvent };
+export function mutateSidebarSort(
+  intent: {
+    group: string;
+    mode: "alpha" | "recent";
+    sectionIds: readonly string[];
+  },
+  secret: Uint8Array,
+  readHead: () => Promise<readonly RelayEvent[]>,
+  publish: (event: RelayEvent) => Promise<void>,
+): Promise<Readonly<Record<string, "alpha" | "recent">>>;

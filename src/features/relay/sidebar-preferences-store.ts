@@ -1,6 +1,8 @@
 import type {
   SidebarAssignmentMutator,
   SidebarPreferences,
+  SidebarSortMode,
+  SidebarSortMutator,
 } from "./sidebar-preferences";
 
 type Snapshot = Readonly<{
@@ -14,6 +16,7 @@ export function createSidebarPreferencesStore(
   read: (signal?: AbortSignal) => Promise<SidebarPreferences>,
   available: boolean,
   write?: SidebarAssignmentMutator,
+  writeSort?: SidebarSortMutator,
   notify = (listener: () => void) => listener(),
 ) {
   const listeners = new Set<() => void>();
@@ -34,6 +37,7 @@ export function createSidebarPreferencesStore(
       ),
       assignments: Object.freeze({ ...data.assignments }),
       starred: Object.freeze([...data.starred]),
+      ...(data.sort ? { sort: Object.freeze({ ...data.sort }) } : {}),
     });
   const publish = (next: Snapshot) => {
     snapshot = Object.freeze(next);
@@ -79,6 +83,7 @@ export function createSidebarPreferencesStore(
     queries: Object.freeze({
       available,
       writable: !!write,
+      sortWritable: !!writeSort,
       assign(channelId: string, sectionId?: string, signal?: AbortSignal) {
         if (closed || !write)
           return Promise.reject(
@@ -104,9 +109,47 @@ export function createSidebarPreferencesStore(
                 sections: groups.sections,
                 assignments: groups.assignments,
                 starred: current?.starred ?? [],
+                ...(current?.sort ? { sort: current.sort } : {}),
               }),
             });
             return groups;
+          });
+        writeQueue = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      },
+      async setSort(
+        group: string,
+        mode: SidebarSortMode,
+        sectionIds: readonly string[],
+        signal?: AbortSignal,
+      ) {
+        if (closed || !writeSort)
+          throw new Error("Sidebar sorting is read-only in this host");
+        const writeGeneration = generation;
+        const run = writeQueue
+          .catch(() => {})
+          .then(async () => {
+            if (closed || generation !== writeGeneration)
+              throw new Error("Sidebar sorting is unavailable");
+            const sort = await writeSort(
+              group,
+              mode,
+              sectionIds,
+              signal ?? new AbortController().signal,
+            );
+            if (closed || generation !== writeGeneration)
+              throw new Error("Sidebar sorting is unavailable");
+            mutation++;
+            const current = snapshot.data ?? {
+              sections: [],
+              assignments: {},
+              starred: [],
+            };
+            publish({ status: "ready", data: retained({ ...current, sort }) });
+            return sort;
           });
         writeQueue = run.then(
           () => undefined,

@@ -10,6 +10,7 @@ import {
   type SidebarAssignmentMutator,
   type SidebarDecoder,
   type SidebarPreferences,
+  type SidebarSortMutator,
 } from "./sidebar-preferences";
 import { createHostAdmission } from "./host-admission";
 import { relayOrigin } from "../communities/destination";
@@ -54,6 +55,8 @@ export interface ReadTransport {
   ): Promise<RelayEvent[]>;
   /** Host-only, relay-scoped mutation of one existing sidebar group assignment. */
   readonly writeSidebarAssignment?: SidebarAssignmentMutator;
+  /** Host-only encrypted mutation of one per-section sort preference. */
+  readonly writeSidebarSort?: SidebarSortMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -67,6 +70,11 @@ export interface ReadTransport {
   readonly relayAuthor: string;
   /** Explicit NIP-11 self from this community, never a contact-key fallback. */
   readonly archiveAuthority?: string;
+  /** Purpose-bound authoritative sidebar recency query, max 128 channel IDs. */
+  channelActivity?(
+    channelIds: readonly string[],
+    signal: AbortSignal,
+  ): Promise<RelayEvent[]>;
   query(
     filters: readonly ReadFilter[],
     signal?: AbortSignal,
@@ -154,6 +162,7 @@ export async function connectBrokerTransport(
     live?: boolean;
     sidebarPreferences?: boolean;
     sidebarPreferenceWrites?: boolean;
+    sidebarSortWrites?: boolean;
     agentLibrary?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
@@ -327,6 +336,30 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    ...(session.sidebarSortWrites
+      ? {
+          async writeSidebarSort(group, mode, sectionIds, signal) {
+            const result = await fetch(`${endpoint}/sidebar-sort`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ group, mode, sectionIds }),
+              signal,
+            });
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new Error(failure.error);
+            }
+            const value = (await result.json()) as { groups?: unknown };
+            return (
+              projectSidebarPreferences(undefined, undefined, {
+                version: 1,
+                groups: value.groups,
+              }).sort ?? {}
+            );
+          },
+        }
+      : {}),
     ...(session.writeKinds
       ? {
           writer: {
@@ -359,6 +392,26 @@ export async function connectBrokerTransport(
           },
         }
       : {}),
+    async channelActivity(channelIds, signal) {
+      const result = await fetch(`${endpoint}/query`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Buzz-Read-Priority": "background",
+        },
+        body: JSON.stringify(
+          channelIds.map((channelId) => ({
+            kinds: [9, 40002, 45001, 45003],
+            "#h": [channelId],
+            limit: 1,
+          })),
+        ),
+        signal,
+      });
+      if (!result.ok) throw httpReadError(result.status);
+      return parseEvents(await result.json(), signal);
+    },
     media: (url) =>
       mediaUrl(
         url,
@@ -464,6 +517,25 @@ export async function connectSignedTransport(
           event.id,
         );
       },
+    },
+    async channelActivity(channelIds, signal) {
+      const filters = channelIds.map((channelId) => ({
+        kinds: [9, 40002, 45001, 45003],
+        "#h": [channelId],
+        limit: 1,
+      }));
+      const result = await signedPost(
+        signer,
+        `${httpOrigin}/query`,
+        filters,
+        signal,
+        profiling,
+        "channel-activity",
+        principal().api,
+        "background",
+      );
+      if (!result.ok) throw httpReadError(result.status);
+      return parseEvents(await result.json(), signal);
     },
     async query(filters, signal, requestId = "read", priority = "foreground") {
       const result = await signedPost(

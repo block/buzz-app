@@ -43,6 +43,9 @@ it("signed reads/writes share cooldown across constructor recreation; viewer/com
     status: 429,
     retryAfterMs: 1000,
   });
+  await expect(
+    first.channelActivity?.(["c"], new AbortController().signal),
+  ).rejects.toMatchObject({ status: 429 });
   // A different signer object wrapping the same viewer still shares the host principal.
   const second = await connectSignedTransport(
     { ...identity },

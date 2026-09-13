@@ -20,6 +20,7 @@ import {
   decodeSidebarPreferences,
   mutateSidebarAssignment,
   prepareSidebarAssignment,
+  prepareSidebarSort,
   SIDEBAR_REQUEST_BYTES,
 } from "../../../dev/sidebar-preferences.mjs";
 import { keypair, signed, scriptedTransport, flush, roster } from "./testing";
@@ -75,6 +76,12 @@ it("reads legacy preferences through the production session, transport, and boun
         kinds: [30078],
         authors: [viewer.pubkey],
         "#d": ["channel-stars"],
+        limit: 1,
+      },
+      {
+        kinds: [30078],
+        authors: [viewer.pubkey],
+        "#d": ["channel-sort"],
         limit: 1,
       },
     ]);
@@ -717,4 +724,61 @@ it("confirms the requested assignment while preserving newer unrelated assignmen
   );
   expect(publishedAssignments).toEqual({ general: "work" });
   expect(result.assignments).toEqual({ general: "work", random: "work" });
+});
+
+it("prepares encrypted per-section sort preferences and prunes orphaned section keys", () => {
+  const viewer = keypair();
+  const key = nip44.v2.utils.getConversationKey(viewer.secret, viewer.pubkey);
+  const head = signed(viewer, {
+    kind: 30078,
+    created_at: 100,
+    tags: [["d", "channel-sort"]],
+    content: nip44.v2.encrypt(
+      JSON.stringify({
+        version: 1,
+        groups: { channels: "recent", "section:gone": "recent" },
+      }),
+      key,
+    ),
+  });
+  key.fill(0);
+  const prepared = prepareSidebarSort(
+    [head],
+    { group: "section:work", mode: "recent", sectionIds: ["work"] },
+    viewer.secret,
+    50_000,
+  );
+  expect(prepared.groups).toEqual({
+    channels: "recent",
+    "section:work": "recent",
+  });
+  expect(prepared.event).toMatchObject({
+    kind: 30078,
+    created_at: 101,
+    tags: [
+      ["d", "channel-sort"],
+      ["t", "channel-sort"],
+    ],
+  });
+  if (!prepared.event) throw new Error("Missing sort event");
+  const sectionsKey = nip44.v2.utils.getConversationKey(
+    viewer.secret,
+    viewer.pubkey,
+  );
+  const sections = signed(viewer, {
+    kind: 30078,
+    tags: [["d", "channel-sections"]],
+    content: nip44.v2.encrypt(
+      JSON.stringify({
+        version: 1,
+        sections: [{ id: "work", name: "Work", order: 0 }],
+        assignments: {},
+      }),
+      sectionsKey,
+    ),
+  });
+  sectionsKey.fill(0);
+  expect(
+    decodeSidebarPreferences([sections, prepared.event], viewer.secret).sort,
+  ).toEqual(prepared.groups);
 });

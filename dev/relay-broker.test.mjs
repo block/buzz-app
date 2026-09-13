@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   createUpstream,
   validFilters,
+  validChannelActivityFilters,
   validMessageTemplate,
 } from "./relay-broker.mjs";
 
@@ -111,4 +112,26 @@ test("the upstream pool reuses warm connections and reports only new connects", 
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
   }
+});
+
+test("broker admits only purpose-bound 128-channel activity batches", () => {
+  const filter = (id) => ({
+    kinds: [9, 40002, 45001, 45003],
+    "#h": [id],
+    limit: 1,
+  });
+  assert.equal(
+    validChannelActivityFilters(
+      Array.from({ length: 128 }, (_, i) => filter(`room-${i}`)),
+    ),
+    true,
+  );
+  for (const invalid of [
+    Array.from({ length: 129 }, (_, i) => filter(`room-${i}`)),
+    [filter("bad id")],
+    [{ ...filter("room"), limit: 2 }],
+    [{ ...filter("room"), kinds: [9, 40002] }],
+    [{ ...filter("room"), extra: true }],
+  ])
+    assert.equal(validChannelActivityFilters(invalid), false);
 });

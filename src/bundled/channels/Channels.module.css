@@ -441,3 +441,43 @@
   border-top: 1px solid var(--border);
   overflow: hidden;
 }
+
+.channelSection > summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.channelList .sectionMenuButton {
+  width: 28px;
+  min-height: 28px;
+  padding: 0;
+  justify-content: center;
+  color: var(--text-muted);
+}
+.sectionMenu {
+  position: fixed;
+  z-index: 7;
+  width: min(190px, calc(100vw - 16px));
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: var(--elevation-popover);
+}
+.sectionMenu p {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0;
+  padding: 5px 8px;
+  color: var(--text-muted);
+  font-size: calc(11px * var(--buzz-text-scale, 1));
+}
+.sectionMenu button[aria-checked="true"] {
+  background: var(--surface-accent);
+  font-weight: 600;
+}
+.sectionMenu button[aria-checked="true"]::after {
+  content: "✓";
+  margin-inline-start: auto;
+}

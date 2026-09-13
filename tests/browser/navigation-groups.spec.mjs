@@ -44,6 +44,9 @@ test("row menu moves and removes a channel through the confirmed saved-group wri
   await expect(
     work.getByRole("button", { name: "Beta", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    channels.getByLabel("Actions for Beta", { exact: true }),
+  ).toBeFocused();
   expect(app.report.sidebarPublications).toHaveLength(1);
   expect(app.report.sidebarPublications[0].blob.assignments).toEqual({});
 
@@ -55,11 +58,49 @@ test("row menu moves and removes a channel through the confirmed saved-group wri
   await expect(
     channels.getByRole("button", { name: "Beta", exact: true }),
   ).toHaveCount(0);
+  await expect(
+    work.getByLabel("Actions for Beta", { exact: true }),
+  ).toBeFocused();
   expect(app.report.sidebarPublications).toHaveLength(2);
   expect(app.report.sidebarPublications[1].blob.assignments).toEqual({
     beta: "work",
   });
   expect(app.report.unexpected).toEqual([]);
+});
+
+test("section menus persist independent A–Z and Recent sorting", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", {
+    name: "Subscribed channels",
+  });
+  const work = sidebar
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Work$/ }) });
+
+  await work.getByLabel("More actions for Work").click();
+  const menu = page.getByRole("menu", { name: "Actions for Work" });
+  await expect(
+    menu.getByRole("menuitemradio", { name: "A–Z" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await menu.getByRole("menuitemradio", { name: "Recent" }).click();
+  await expect(
+    work.getByRole("button", { name: "Beta", exact: true }),
+  ).toBeVisible();
+  expect(app.report.sidebarSortPublications).toHaveLength(1);
+  expect(app.report.sidebarSortPublications[0].blob).toEqual({
+    version: 1,
+    groups: { "section:work": "recent" },
+  });
+
+  await sidebar.getByLabel("More actions for DMs").click();
+  await expect(
+    page
+      .getByRole("menu", { name: "Actions for DMs" })
+      .getByRole("menuitemradio", { name: "A–Z" }),
+  ).toHaveAttribute("aria-checked", "true");
 });
 
 test.use({

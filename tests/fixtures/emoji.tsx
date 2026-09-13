@@ -76,6 +76,7 @@ const sessions = ["a", "b"].map((community) => {
       ],
     });
   let catalog = makeSet();
+  let archiveTime = 10;
   const owner = createRelaySession(
     {
       viewer: viewer.pubkey,
@@ -170,6 +171,25 @@ const sessions = ["a", "b"].map((community) => {
       catalogRead = undefined;
       releaseCatalogRead = undefined;
     },
+    archive(value: boolean) {
+      live.receive([
+        signed(relay, {
+          kind: 39002,
+          created_at: archiveTime,
+          content: "",
+          tags: [
+            ["d", "c"],
+            ["p", viewer.pubkey],
+          ],
+        }),
+        signed(relay, {
+          kind: 39000,
+          created_at: archiveTime++,
+          content: "",
+          tags: [["d", "c"], ...(value ? [["archived", "true"]] : [])],
+        }),
+      ]);
+    },
   };
 });
 Object.assign(window, {
@@ -181,6 +201,7 @@ Object.assign(window, {
     refresh: () => sessions[0]?.session.emoji.refresh(),
     holdCatalog: () => sessions[0]?.holdCatalog(),
     releaseCatalog: () => sessions[0]?.releaseCatalog(),
+    archive: (value: boolean) => sessions[0]?.archive(value),
     status: (community: string) =>
       sessions
         .find((item) => item.community === community)

@@ -106,6 +106,10 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
         page.evaluate(() => window.emojiFixture.report.publications.length),
       )
       .toBe(4);
+    await page.evaluate(() => window.emojiFixture.archive(true));
+    await expect(plus).toHaveCount(0);
+    await page.evaluate(() => window.emojiFixture.archive(false));
+    await expect(plus).toHaveCount(1);
     const boundaryEvents = await page.evaluate(() =>
       window.emojiFixture.report.publications
         .slice(1)

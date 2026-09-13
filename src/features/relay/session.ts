@@ -599,7 +599,8 @@ export function createRelaySession(
       (id) =>
         local().find((item) => item.event.id === id)?.event ??
         recent.peek(id)?.event ??
-        retainedThreadEvent(id),
+        retainedThreadEvent(id) ??
+        channels.retainedEvent(id),
       emoji.tags,
       validateMentions,
     ),

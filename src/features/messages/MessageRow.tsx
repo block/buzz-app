@@ -13,6 +13,13 @@ import { usesLargeEmojiPresentation } from "./emoji-size";
 import { ReactionTool } from "../conversation/ReactionTool";
 import type { RelaySession } from "../relay/session";
 
+const emptySubscribe = () => () => {};
+const EMPTY_CHANNEL_LIST = Object.freeze({
+  status: "unavailable" as const,
+  channels: Object.freeze([]),
+});
+const emptyChannelList = () => EMPTY_CHANNEL_LIST;
+
 export type MessageRowProps = {
   row: ChannelMessage;
   session?: RelaySession | undefined;
@@ -49,6 +56,11 @@ export const MessageRow = memo(function MessageRow({
     row.channelId,
     row.threadRootId ?? row.id,
   );
+  const channelList = useSyncExternalStore(
+    session?.channels.subscribeList ?? emptySubscribe,
+    session?.channels.list ?? emptyChannelList,
+    session?.channels.list ?? emptyChannelList,
+  );
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
@@ -68,9 +80,8 @@ export const MessageRow = memo(function MessageRow({
     session &&
     scope &&
     session.outbox?.supports(7) &&
-    !session.channels
-      .list()
-      .channels.find((channel) => channel.id === row.channelId)?.archived
+    !channelList.channels.find((channel) => channel.id === row.channelId)
+      ?.archived
   );
   return (
     <div data-message-id={row.id}>

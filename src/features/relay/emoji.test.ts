@@ -176,6 +176,29 @@ it("reactions use retained thread targets after shared-cache eviction", () => {
     ]),
   });
 });
+it("reactions use retained channel-window targets after shared-cache eviction", () => {
+  const h = session();
+  const root = message(member, "c", "Still visible", 1);
+  h.session.channels.ensure("c");
+  h.live.receive([root]);
+  h.live.receive(
+    Array.from({ length: 9 }, (_, index) =>
+      message(member, "other", "x".repeat(1024 * 1024), 100 + index),
+    ),
+  );
+  expect(h.session.channels.window("c").rows[0]?.id).toBe(root.id);
+  const id = h.session.messages.react(root.id, "👍");
+  expect(
+    h.session.outbox?.snapshot().find((item) => item.event.id === id)?.event,
+  ).toMatchObject({
+    kind: 7,
+    content: "👍",
+    tags: expect.arrayContaining([
+      ["h", "c"],
+      ["e", root.id],
+    ]),
+  });
+});
 it("accepts every catalog shortcode length through session reaction authoring", async () => {
   const h = session();
   const root = message(member, "c", "React here", 1);

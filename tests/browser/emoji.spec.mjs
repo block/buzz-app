@@ -78,9 +78,32 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const originalSrc = await historic.getAttribute("src");
     expect(originalSrc).toContain("/emoji-media/a/");
     await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
-    // Select only the rendered image deterministically, then use the browser's
-    // real clipboard. Pointer-drag selection is engine and platform dependent.
-    await sentSingleEmoji.locator("img").evaluate((image) => {
+    // Preserve the manual selection contract while isolating the clipboard
+    // assertion from WebKit's platform-dependent pointer selection result.
+    const emojiImage = sentSingleEmoji.locator("img");
+    const copyBounds = await emojiImage.boundingBox();
+    await page.mouse.move(
+      copyBounds.x - 2,
+      copyBounds.y + copyBounds.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(
+      copyBounds.x + copyBounds.width + 2,
+      copyBounds.y + copyBounds.height / 2,
+      { steps: 8 },
+    );
+    await page.mouse.up();
+    expect(
+      await emojiImage.evaluate((image) => {
+        const selection = window.getSelection();
+        return (
+          !!selection &&
+          !selection.isCollapsed &&
+          selection.containsNode(image, true)
+        );
+      }),
+    ).toBe(true);
+    await emojiImage.evaluate((image) => {
       const range = document.createRange();
       range.selectNode(image);
       const selection = window.getSelection();

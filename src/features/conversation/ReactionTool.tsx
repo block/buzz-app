@@ -6,6 +6,20 @@ import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { messageViewKey } from "../messages/view-key";
 import type { Outbox } from "../relay/outbox";
 
+const toolOrder = (tool: ComposerTool) =>
+  Number.isFinite(tool.order) ? (tool.order ?? 0) : 0;
+export function selectReactionTool(
+  tools: readonly Contribution<ComposerTool>[],
+) {
+  return tools
+    .filter((tool) => tool.reactionComponent)
+    .sort(
+      (a, b) =>
+        toolOrder(a) - toolOrder(b) ||
+        (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
+    )[0];
+}
+
 export function ReactionTool({
   registry,
   ...props
@@ -21,9 +35,7 @@ export function ReactionTool({
     registry.snapshot,
     registry.snapshot,
   );
-  const tool = [...tools]
-    .sort((a, b) => a.key.localeCompare(b.key))
-    .find((item) => item.reactionComponent);
+  const tool = selectReactionTool(tools);
   return tool ? (
     <ContributionBoundary
       key={contributionKey(tool)}

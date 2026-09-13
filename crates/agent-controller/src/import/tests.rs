@@ -73,6 +73,7 @@ fn preview_is_keyless_commit_resolves_preserves_and_never_enables_or_mutates_sou
             LegacySource::Installed,
             old.path().into(),
             dest.path().into(),
+            "wss://relay.example",
         )
         .unwrap();
     let serialized = serde_json::to_string(&preview).unwrap();
@@ -137,6 +138,7 @@ fn changed_source_duplicate_selection_and_credential_failure_do_not_commit() {
             LegacySource::Installed,
             old.path().into(),
             dest.path().into(),
+            "wss://relay.example",
         )
         .unwrap();
     let id = preview.candidates[0].id.clone();
@@ -162,6 +164,7 @@ fn changed_source_duplicate_selection_and_credential_failure_do_not_commit() {
             LegacySource::Installed,
             old.path().into(),
             dest.path().into(),
+            "wss://relay.example",
         )
         .unwrap();
     let unavailable = Memory {
@@ -192,6 +195,7 @@ fn inline_key_is_verified_and_not_copied_to_native_config() {
             LegacySource::Installed,
             old.path().into(),
             dest.path().into(),
+            "wss://relay.example",
         )
         .unwrap();
     let mut store = Store::open(dest.path().into()).unwrap();
@@ -236,6 +240,7 @@ fn orphan_or_reserved_env_refuses_before_any_key_read() {
                 LegacySource::Installed,
                 old.path().into(),
                 dest.path().into(),
+                "wss://relay.example",
             )
             .unwrap();
         let mut store = Store::open(dest.path().into()).unwrap();
@@ -269,16 +274,15 @@ fn chosen_source_binds_config_and_credentials_without_fallback() {
         .unwrap();
         let mut imports = Imports::default();
         let preview = imports
-            .preview(selected, old.path().into(), dest.path().into())
+            .preview(
+                selected,
+                old.path().into(),
+                dest.path().into(),
+                "wss://chosen.example",
+            )
             .unwrap();
         assert!(preview.source_path.contains(selected.app_directory()));
-        assert_eq!(
-            preview.candidates[0].relay_url,
-            match selected {
-                LegacySource::Installed => "wss://relay.example",
-                LegacySource::Development => "wss://development.example",
-            }
-        );
+        assert_eq!(preview.candidates[0].relay_url, "wss://chosen.example");
         let mut store = Store::open(dest.path().into()).unwrap();
         let other = match selected {
             LegacySource::Installed => LegacySource::Development,
@@ -335,6 +339,7 @@ fn changed_source_during_credential_acquisition_never_commits_settings() {
             LegacySource::Installed,
             old.path().into(),
             dest.path().into(),
+            "wss://relay.example",
         )
         .unwrap();
     let mut store = Store::open(dest.path().into()).unwrap();
@@ -358,4 +363,268 @@ fn changed_source_during_credential_acquisition_never_commits_settings() {
     // Create-only app custody can remain after a cancelled/failed import; never
     // delete keys that a prior successful import may already reference.
     assert_eq!(credentials.keys.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn explicit_destination_replaces_legacy_pins_without_hiding_keys_or_reading_credentials() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    source(old.path());
+    let path = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents/managed-agents.json");
+    let pins = [
+        Value::Null,
+        json!(""),
+        json!("  "),
+        json!("not a URL"),
+        json!("ws://insecure.example"),
+        json!("wss://raw.example/path"),
+        json!("wss://raw.example?private=query"),
+        json!("wss://user:secret@raw.example"),
+        json!("wss://stale.example"),
+    ];
+    let mut records = vec![json!({"pubkey":"", "slug":"keyless", "relay_url":""})];
+    for (index, pin) in pins.iter().enumerate() {
+        let mut record = json!({"pubkey": if index == 0 { PUB.into() } else { format!("{:064x}", index + 100) },
+            "name":format!("Agent {index}"), "private_key_nsec":KEY, "system_prompt":"private-prompt"});
+        if !pin.is_null() {
+            record["relay_url"] = pin.clone();
+        }
+        records.push(record);
+    }
+    let bytes = serde_json::to_vec(&records).unwrap();
+    fs::write(&path, &bytes).unwrap();
+    let mut imports = Imports::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let keys = Memory::default();
+    let preview = imports
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "https://CHOSEN.example/",
+        )
+        .unwrap();
+    assert_eq!(preview.candidates.len(), pins.len());
+    for candidate in &preview.candidates {
+        assert_eq!(candidate.relay_url, "wss://chosen.example");
+        assert_eq!(
+            candidate.id,
+            agent_id(&candidate.pubkey, "wss://chosen.example")
+        );
+    }
+    let serialized = serde_json::to_string(&preview).unwrap();
+    for hidden in [
+        "raw.example",
+        "insecure.example",
+        "stale.example",
+        "not a URL",
+        "private-prompt",
+        KEY,
+    ] {
+        assert!(!serialized.contains(hidden));
+    }
+    assert_eq!(keys.reads.load(Ordering::SeqCst), 0);
+    assert!(keys.keys.lock().unwrap().is_empty());
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+    // A missing legacy pin is ordinary source data, not a reason to skip this key.
+    let selected = &preview.candidates[0];
+    imports
+        .commit(
+            &preview.token,
+            std::slice::from_ref(&selected.id),
+            &mut store,
+            &keys,
+        )
+        .unwrap();
+    let saved = &store.agents().unwrap()[0];
+    assert_eq!(saved.pubkey, PUB);
+    assert_eq!(saved.relay_url, "wss://chosen.example");
+    assert_eq!(saved.id, selected.id);
+    assert_eq!(saved.credential_id, selected.id);
+    assert!(!saved.enabled);
+    assert_eq!(keys.keys.lock().unwrap().len(), 1);
+    assert_eq!(fs::read(&path).unwrap(), bytes);
+}
+
+#[test]
+fn commit_routes_blank_malformed_and_valid_stale_pins_only_to_the_confirmed_destination() {
+    for pin in [
+        "",
+        "ws://insecure.example",
+        "wss://stale.example",
+        "wss://user:secret@raw.example/path?token=private",
+    ] {
+        let old = tempfile::tempdir().unwrap();
+        let dest = tempfile::tempdir().unwrap();
+        source(old.path());
+        let path = old
+            .path()
+            .join(LegacySource::Installed.app_directory())
+            .join("agents/managed-agents.json");
+        let bytes =
+            serde_json::to_vec(&json!([{"pubkey": PUB, "name":"Selected", "relay_url":pin}]))
+                .unwrap();
+        fs::write(&path, &bytes).unwrap();
+        let mut imports = Imports::default();
+        let keys = Memory::default();
+        let mut store = Store::open(dest.path().into()).unwrap();
+        let a = imports
+            .preview(
+                LegacySource::Installed,
+                old.path().into(),
+                dest.path().into(),
+                "wss://first.example",
+            )
+            .unwrap();
+        let b = imports
+            .preview(
+                LegacySource::Installed,
+                old.path().into(),
+                dest.path().into(),
+                "https://CONFIRMED.example/",
+            )
+            .unwrap();
+        assert_ne!(a.token, b.token);
+        // An old token must not authorize even IDs from the new preview.
+        assert!(imports
+            .commit(&a.token, &[b.candidates[0].id.clone()], &mut store, &keys)
+            .is_err());
+        assert!(imports
+            .commit(&a.token, &[a.candidates[0].id.clone()], &mut store, &keys)
+            .is_err());
+        assert!(imports
+            .commit(&b.token, &[a.candidates[0].id.clone()], &mut store, &keys)
+            .is_err());
+        assert_eq!(keys.reads.load(Ordering::SeqCst), 0);
+        assert!(keys.keys.lock().unwrap().is_empty());
+        imports
+            .commit(&b.token, &[b.candidates[0].id.clone()], &mut store, &keys)
+            .unwrap();
+        let saved = &store.agents().unwrap()[0];
+        assert_eq!(saved.relay_url, "wss://confirmed.example");
+        assert_eq!(saved.id, agent_id(PUB, "wss://confirmed.example"));
+        assert_eq!(saved.credential_id, saved.id);
+        assert_eq!(saved.imported["record"]["relay_url"], pin);
+        assert!(!saved.enabled);
+        assert_eq!(fs::read(&path).unwrap(), bytes);
+    }
+}
+
+#[test]
+fn invalid_destination_discards_pending_without_echoing_inputs_or_acquiring_keys() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let bytes = source(old.path());
+    let mut imports = Imports::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let keys = Memory::default();
+    for invalid in [
+        "",
+        "not a URL",
+        "ws://raw.example",
+        "http://raw.example",
+        "wss://user:secret@raw.example",
+        "wss://raw.example/path",
+        "wss://raw.example?token=private",
+        "wss://raw.example#private",
+    ] {
+        let prior = imports
+            .preview(
+                LegacySource::Installed,
+                old.path().into(),
+                dest.path().into(),
+                "wss://chosen.example",
+            )
+            .unwrap();
+        assert_eq!(
+            imports
+                .preview(
+                    LegacySource::Installed,
+                    old.path().into(),
+                    dest.path().into(),
+                    invalid
+                )
+                .err()
+                .unwrap(),
+            "Choose a secure community origin without credentials, path or query"
+        );
+        assert!(imports
+            .commit(
+                &prior.token,
+                &[prior.candidates[0].id.clone()],
+                &mut store,
+                &keys
+            )
+            .is_err());
+    }
+    assert_eq!(keys.reads.load(Ordering::SeqCst), 0);
+    assert!(keys.keys.lock().unwrap().is_empty());
+    assert!(store.agents().unwrap().is_empty());
+    assert_eq!(
+        fs::read(
+            old.path()
+                .join(LegacySource::Installed.app_directory())
+                .join("agents/managed-agents.json")
+        )
+        .unwrap(),
+        bytes
+    );
+}
+
+#[test]
+fn duplicate_keys_ignore_pin_differences_and_source_pin_changes_still_invalidate() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    source(old.path());
+    let path = old
+        .path()
+        .join(LegacySource::Installed.app_directory())
+        .join("agents/managed-agents.json");
+    let mut imports = Imports::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let keys = Memory::default();
+    for other_pin in ["", "wss://stale.example", "wss://different.example"] {
+        fs::write(&path, serde_json::to_vec(&json!([
+            {"pubkey":PUB,"relay_url":"wss://stale.example"}, {"pubkey":PUB,"relay_url":other_pin}
+        ])).unwrap()).unwrap();
+        assert_eq!(
+            imports
+                .preview(
+                    LegacySource::Installed,
+                    old.path().into(),
+                    dest.path().into(),
+                    "wss://chosen.example"
+                )
+                .err()
+                .unwrap(),
+            "Source contains duplicate agent identities"
+        );
+    }
+    let mut records = json!([{"pubkey":PUB,"relay_url":""}]);
+    fs::write(&path, serde_json::to_vec(&records).unwrap()).unwrap();
+    let preview = imports
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "wss://chosen.example",
+        )
+        .unwrap();
+    records[0]["relay_url"] = json!("wss://ignored-but-changed.example");
+    fs::write(&path, serde_json::to_vec(&records).unwrap()).unwrap();
+    assert!(imports
+        .commit(
+            &preview.token,
+            &[preview.candidates[0].id.clone()],
+            &mut store,
+            &keys
+        )
+        .unwrap_err()
+        .contains("Source changed"));
+    assert_eq!(keys.reads.load(Ordering::SeqCst), 0);
+    assert!(keys.keys.lock().unwrap().is_empty());
+    assert!(store.agents().unwrap().is_empty());
 }

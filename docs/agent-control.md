@@ -137,10 +137,18 @@ fixture the controls simulate native responses, not agent execution.
   Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and
   `GOOSE_MODEL`/`GOOSE_PROVIDER` (Goose) overrides win over Model/Provider
   selectors; blank selectors do not erase them. ACP uses the same effective model.
-- Import previews only the chosen installed/development library. It exposes the
-  source path and exact selected keys/destinations; nothing selects all by default.
-  Only explicit commit imports, always disabled. No key minting, enrollment or
-  source-store write. Native must reject changed source and duplicate ownership.
+- Import previews only the chosen installed/development library and requires an
+  explicit secure **Destination community** origin. Old Buzz ignores saved relay
+  pins at runtime; blank, stale or malformed saved pins do not route or hide
+  identities here. Native validates the chosen destination, shows it beside each
+  exact key, and retains it with the preview token through commit. Source or
+  destination edits discard selection and invalidate late preview results. Nothing
+  selects all by default. Duplicate source keys fail closed even with different
+  old pins; changed sources and duplicate destination ownership are rejected.
+  Only explicit commit imports, always disabled. No key minting, membership
+  enrollment or source-store write. After a failed preview, **Retry status**, then
+  correct the destination/source and preview again; never edit the old library to
+  work around a destination error.
 - Operations are serialized except explicit recovery Stop during a pending
   Start/Restart credential wait. Stop can reach the native fence for that identity
   or another known running identity; only one Stop is admitted at a time. Other
@@ -328,9 +336,10 @@ pipeline change or real credential in environment/build configuration is needed.
 
 Attended sequence (not executed by the implementer):
 
-1. Keep old Buzz running while reviewing settings/import; do not Start yet. Import
-   preview reads only the chosen installed/development library. Select exact
-   key/community rows and explicitly import. This can prompt for the selected
+1. Keep old Buzz running while reviewing settings/import; do not Start yet. Choose
+   installed/development library and explicitly enter **Destination community**
+   (secure origin), then Preview. Review the returned destination beside each exact
+   key and explicitly import selected rows. This can prompt for the selected
    legacy `secrets` Keychain blob and creates separate app credentials at service
    `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. Source stays
    read-only; imported rows are disabled. No enrollment/new key or service fallback.

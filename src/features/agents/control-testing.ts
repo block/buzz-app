@@ -37,6 +37,7 @@ export function controlFixture() {
   };
   const calls: { action: string; payload?: unknown }[] = [];
   let failSave = false;
+  let importDestination = "";
   const host: AgentControlHost = {
     async snapshot() {
       calls.push({ action: "snapshot" });
@@ -68,8 +69,9 @@ export function controlFixture() {
       agent.runningRevision = action === "stop" ? null : agent.revision;
       return structuredClone(data);
     },
-    async previewImport(source) {
-      calls.push({ action: "preview", payload: source });
+    async previewImport(source, destination) {
+      calls.push({ action: "preview", payload: { source, destination } });
+      importDestination = destination;
       return {
         token: "fixture-preview",
         sourcePath: `/fixture/${source}/managed-agents.json`,
@@ -79,7 +81,7 @@ export function controlFixture() {
             id: "second-fixture",
             name: "Fixture agent",
             pubkey: "cd".repeat(32),
-            relayUrl: "wss://other.example.test",
+            relayUrl: importDestination,
           },
         ],
       };
@@ -90,7 +92,7 @@ export function controlFixture() {
         ...structuredClone(agent),
         id: "second-fixture",
         pubkey: "cd".repeat(32),
-        relayUrl: "wss://other.example.test",
+        relayUrl: importDestination,
         status: "stopped",
         enabled: false,
         runningRevision: null,

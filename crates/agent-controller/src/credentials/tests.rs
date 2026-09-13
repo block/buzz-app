@@ -228,6 +228,7 @@ fn preview_commit_uses_production_adapter_and_reads_back_create_only_destination
             LegacySource::Development,
             legacy.path().into(),
             dest.path().into(),
+            "wss://relay.example",
         )
         .unwrap();
     assert!(fake.calls.lock().unwrap().is_empty());

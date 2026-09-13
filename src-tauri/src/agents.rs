@@ -353,10 +353,15 @@ async fn start(
 pub(crate) async fn agent_control_import_preview(
     state: tauri::State<'_, AgentHost>,
     source: LegacySource,
+    destination: String,
 ) -> Result<ImportPreview, String> {
     run(state.inner().clone(), move |host| {
-        host.imports
-            .preview(source, host.legacy_parent.clone(), host.workspace.clone())
+        host.imports.preview(
+            source,
+            host.legacy_parent.clone(),
+            host.workspace.clone(),
+            &destination,
+        )
     })
     .await
 }

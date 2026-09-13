@@ -128,7 +128,7 @@ it("status failure admits only Stop for a retained identity and still serializes
     () => control.action("fixture-agent", "restart"),
     () => control.action("unknown-agent", "stop"),
     () => control.save("fixture-agent", 1, edit),
-    () => control.previewImport("installed"),
+    () => control.previewImport("installed", "wss://chosen.example"),
     () => control.commitImport("fixture-preview", ["second-fixture"]),
   ]) {
     await expect(attempt()).rejects.toThrow("Refresh");
@@ -179,10 +179,16 @@ it("import forwards exact selection and never starts imported agents", async () 
   const fixture = controlFixture();
   const control = createAgentControl(fixture.host);
   await control.refresh();
-  const preview = await control.previewImport("development");
+  const preview = await control.previewImport(
+    "development",
+    "wss://chosen.example",
+  );
   await control.commitImport(preview.token, ["second-fixture"]);
   expect(fixture.calls.slice(-2)).toEqual([
-    { action: "preview", payload: "development" },
+    {
+      action: "preview",
+      payload: { source: "development", destination: "wss://chosen.example" },
+    },
     {
       action: "import",
       payload: { token: preview.token, ids: ["second-fixture"] },
@@ -252,9 +258,9 @@ for (const launch of ["start", "restart"] as const) {
             await expect(control.action(target, "restart")).rejects.toThrow(
               "in progress",
             );
-            await expect(control.previewImport("installed")).rejects.toThrow(
-              "in progress",
-            );
+            await expect(
+              control.previewImport("installed", "wss://chosen.example"),
+            ).rejects.toThrow("in progress");
             late.resolve(before);
             await starting;
           }

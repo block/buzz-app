@@ -122,6 +122,9 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await panel.getByText("Import from old Buzz", { exact: true }).click();
     await panel.getByLabel("Development Buzz", { exact: true }).check();
     await panel
+      .getByLabel("Destination community", { exact: true })
+      .fill("wss://chosen.example");
+    await panel
       .getByRole("button", { name: "Preview selected library" })
       .click();
     await expect(
@@ -193,6 +196,9 @@ for (const previouslyStopped of [false, true]) {
         await expect(stop).toBeDisabled();
       }
       await panel.getByText("Import from old Buzz", { exact: true }).click();
+      await panel
+        .getByLabel("Destination community", { exact: true })
+        .fill("wss://chosen.example");
       await panel
         .getByRole("button", { name: "Preview selected library" })
         .click();
@@ -344,6 +350,9 @@ test("native editing checkpoint blocks launch and credential import while retain
     await expect(
       panel.getByText(/Import is disabled in this integration checkpoint/),
     ).toBeVisible();
+    await panel
+      .getByLabel("Destination community", { exact: true })
+      .fill("wss://chosen.example");
     await panel
       .getByRole("button", { name: "Preview selected library" })
       .click();
@@ -772,3 +781,167 @@ for (const launch of ["start", "restart"]) {
     });
   }
 }
+
+for (const changed of ["destination", "source"]) {
+  test(`import ${changed} edits clear selection and fence delayed previews`, async ({
+    page,
+  }) => {
+    const server = await createServer({
+      ...config,
+      configFile: false,
+      logLevel: "error",
+      server: { host: "127.0.0.1", port: 0, strictPort: false },
+    });
+    await server.listen();
+    try {
+      await page.goto(
+        `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
+      );
+      const panel = page.getByRole("region", { name: "Local agent controls" });
+      await panel.getByText("Import from old Buzz", { exact: true }).click();
+      const destination = panel.getByLabel("Destination community", {
+        exact: true,
+      });
+      const preview = panel.getByRole("button", {
+        name: "Preview selected library",
+      });
+      const commit = panel.getByRole("button", {
+        name: "Import selected identities",
+      });
+      await expect(destination).toHaveValue("");
+      await expect(preview).toBeDisabled();
+      await destination.fill("wss://first.example");
+      await preview.click();
+      await panel.getByRole("checkbox").check();
+      await expect(commit).toBeEnabled();
+      if (changed === "destination")
+        await destination.fill("wss://chosen.example");
+      else await panel.getByLabel("Development Buzz", { exact: true }).check();
+      await expect(panel.getByRole("checkbox")).toHaveCount(0);
+      await expect(commit).toHaveCount(0);
+      await preview.click();
+      await expect(panel.getByRole("checkbox")).not.toBeChecked();
+      await expect(commit).toBeDisabled();
+      // Delay the actual host boundary, not a leaf projection helper.
+      await page.evaluate(() => {
+        const fixture = window.agentControlFixture;
+        const original = fixture.host.previewImport;
+        fixture.host.previewImport = async (...args) => {
+          const result = await original(...args);
+          await new Promise((resolve) => {
+            fixture.releasePreview = resolve;
+          });
+          return result;
+        };
+        fixture.restorePreview = () => {
+          fixture.host.previewImport = original;
+        };
+      });
+      await preview.click();
+      await expect(preview).toBeDisabled();
+      // Inputs remain editable during this read-only preview; writes remain blocked.
+      if (changed === "destination")
+        await destination.fill("wss://final.example");
+      else await panel.getByLabel("Installed Buzz", { exact: true }).check();
+      await page.evaluate(() => window.agentControlFixture.releasePreview());
+      await expect(preview).toBeEnabled();
+      await expect(panel.getByRole("checkbox")).toHaveCount(0);
+      await expect(commit).toHaveCount(0);
+      await page.evaluate(() => window.agentControlFixture.restorePreview());
+      await preview.click();
+      await expect(panel.getByRole("checkbox")).not.toBeChecked();
+      const expectedDestination =
+        changed === "destination"
+          ? "wss://final.example"
+          : "wss://first.example";
+      await expect(
+        panel.getByText(expectedDestination, { exact: true }),
+      ).toBeVisible();
+      await panel.getByRole("checkbox").check();
+      await commit.click();
+      const saved = await page.evaluate(() =>
+        window.agentControlFixture.data.agents.at(-1),
+      );
+      expect(saved.relayUrl).toBe(expectedDestination);
+      expect(saved.enabled).toBe(false);
+      const calls = await page.evaluate(() => window.agentControlFixture.calls);
+      expect(
+        calls.filter((call) => call.action === "preview").at(-1).payload,
+      ).toEqual({
+        source: "installed",
+        destination: expectedDestination,
+      });
+      expect(calls.filter((call) => call.action === "import")).toHaveLength(1);
+      expect(
+        calls.some(
+          (call) => call.action === "start" || call.action === "restart",
+        ),
+      ).toBe(false);
+    } finally {
+      await server.close();
+    }
+  });
+}
+
+test("rejected import preview keeps inputs and recovers through Retry status", async ({
+  page,
+}) => {
+  const server = await createServer({
+    ...config,
+    configFile: false,
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
+    );
+    const panel = page.getByRole("region", { name: "Local agent controls" });
+    await panel.getByText("Import from old Buzz", { exact: true }).click();
+    const destination = panel.getByLabel("Destination community", {
+      exact: true,
+    });
+    const preview = panel.getByRole("button", {
+      name: "Preview selected library",
+    });
+    await destination.fill("ws://not-supported.example");
+    await page.evaluate(() => {
+      const fixture = window.agentControlFixture;
+      const original = fixture.host.previewImport;
+      fixture.host.previewImport = async () => {
+        throw "Choose a secure community origin without credentials, path or query";
+      };
+      fixture.restorePreview = () => {
+        fixture.host.previewImport = original;
+      };
+    });
+    await preview.click();
+    await expect(panel.getByRole("alert")).toContainText(
+      "Choose a secure community origin",
+    );
+    await expect(destination).toHaveValue("ws://not-supported.example");
+    await expect(preview).toBeDisabled();
+    await panel.getByRole("button", { name: "Retry status" }).click();
+    await expect(destination).toBeEnabled();
+    await page.evaluate(() => window.agentControlFixture.restorePreview());
+    await destination.fill("wss://corrected.example");
+    await preview.click();
+    await expect(
+      panel.getByText("wss://corrected.example", { exact: true }),
+    ).toBeVisible();
+    await expect(panel.getByRole("checkbox")).not.toBeChecked();
+    await expect(
+      panel.getByRole("button", { name: "Import selected identities" }),
+    ).toBeDisabled();
+    expect(
+      await page.evaluate(() =>
+        window.agentControlFixture.calls.some(
+          (call) => call.action === "import",
+        ),
+      ),
+    ).toBe(false);
+  } finally {
+    await server.close();
+  }
+});

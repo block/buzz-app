@@ -78,8 +78,10 @@ impl Imports {
         source_kind: LegacySource,
         app_data_parent: PathBuf,
         workspace: PathBuf,
+        destination: &str,
     ) -> Result<ImportPreview> {
         self.pending = None;
+        let relay = canonical_relay(destination)?;
         let source = app_data_parent.join(source_kind.app_directory());
         let data = read_source(&source)?;
         let mut candidates = Vec::new();
@@ -92,15 +94,14 @@ impl Imports {
             if !canonical_key(key) {
                 return Err("Source contains an invalid agent identity".into());
             }
-            let relay = canonical_relay(string(record, "relay_url"))?;
             let id = agent_id(key, &relay);
             if !seen.insert(id.clone()) {
-                return Err("Source contains duplicate agent/community records".into());
+                return Err("Source contains duplicate agent identities".into());
             }
             candidates.push(Candidate {
                 id,
                 pubkey: key.into(),
-                relay_url: relay,
+                relay_url: relay.clone(),
                 name: string(record, "name").into(),
             });
         }
@@ -113,6 +114,7 @@ impl Imports {
             source_path: source.join("agents/managed-agents.json").display().to_string(),
             candidates,
             warnings: vec![
+                "Import uses the destination shown below, not old saved relay values. Community membership is not established by importing.".into(),
                 "Imports stay disabled. Stop old Buzz before enabling an imported identity.".into(),
                 "Provider defaults baked into the old app cannot be inferred from these files; review the imported harness before starting.".into(),
                 "This copies selected identities and resolved settings; old Buzz remains unchanged.".into(),
@@ -163,13 +165,9 @@ impl Imports {
             let record = data
                 .records
                 .iter()
-                .find(|r| {
-                    string(r, "pubkey") == candidate.pubkey
-                        && canonical_relay(string(r, "relay_url")).ok().as_ref()
-                            == Some(&candidate.relay_url)
-                })
+                .find(|r| string(r, "pubkey") == candidate.pubkey)
                 .ok_or("Import identity disappeared")?;
-            let agent = resolve(&data, record, &pending.workspace)?;
+            let agent = resolve(&data, record, &pending.workspace, &candidate.relay_url)?;
             agent.validate()?;
             agents.push((agent, string(record, "private_key_nsec").to_owned()));
         }
@@ -256,7 +254,7 @@ fn object(value: &Value) -> Result<BTreeMap<String, String>> {
     serde_json::from_value(value.clone())
         .map_err(|_| "Source environment must contain string values".into())
 }
-fn resolve(data: &Source, record: &Value, workspace: &Path) -> Result<Agent> {
+fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -> Result<Agent> {
     let definition = if string(record, "persona_id").is_empty() {
         record
     } else {
@@ -318,7 +316,9 @@ fn resolve(data: &Source, record: &Value, workspace: &Path) -> Result<Agent> {
         },
     };
     let pubkey = string(record, "pubkey").to_owned();
-    let relay_url = canonical_relay(string(record, "relay_url"))?;
+    // Legacy pins are ignored by old Buzz at runtime. Only the destination
+    // confirmed in this native preview may route the imported identity.
+    let relay_url = destination.to_owned();
     let id = agent_id(&pubkey, &relay_url);
     let mut retained = record.clone();
     if let Some(record) = retained.as_object_mut() {

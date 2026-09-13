@@ -69,7 +69,10 @@ export interface AgentControlHost {
     edit: AgentEdit,
   ): Promise<ControlSnapshot>;
   action(id: string, action: AgentAction): Promise<ControlSnapshot>;
-  previewImport(source: ImportSource): Promise<AgentImportPreview>;
+  previewImport(
+    source: ImportSource,
+    destination: string,
+  ): Promise<AgentImportPreview>;
   commitImport(token: string, ids: string[]): Promise<ControlSnapshot>;
 }
 export interface AgentControlState {
@@ -224,9 +227,9 @@ export function createAgentControl(
         action === "stop" && canStopAgent(state, id),
         action === "stop" ? undefined : id,
       ),
-    previewImport: (source) =>
+    previewImport: (source, destination) =>
       run(
-        (native) => native.previewImport(source),
+        (native) => native.previewImport(source, destination),
         () => {},
       ),
     commitImport: (token, ids) =>

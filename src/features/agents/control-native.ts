@@ -13,8 +13,8 @@ export function nativeAgentControlHost(): AgentControlHost | null {
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),
     action: (id, action) => invoke("agent_control_action", { id, action }),
-    previewImport: (source) =>
-      invoke("agent_control_import_preview", { source }),
+    previewImport: (source, destination) =>
+      invoke("agent_control_import_preview", { source, destination }),
     commitImport: (token, ids) =>
       invoke("agent_control_import_commit", { token, ids }),
   };

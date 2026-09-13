@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import type {
   AgentControl,
   AgentImportPreview,
@@ -16,9 +16,18 @@ export function AgentImport({
   commitAvailable?: boolean;
 }) {
   const [source, setSource] = useState<ImportSource>("installed");
+  const [destination, setDestination] = useState("");
+  const [previewing, setPreviewing] = useState(false);
+  const generation = useRef(0);
   const [preview, setPreview] = useState<AgentImportPreview | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const invalidatePreview = () => {
+    generation.current++;
+    setPreview(null);
+    setSelected([]);
+    setNotice(null);
+  };
   return (
     <details className="space-y-4">
       <summary className="cursor-pointer text-body font-semibold">
@@ -36,7 +45,7 @@ export function AgentImport({
           access Keychain; credential acceptance is still pending.
         </p>
       )}
-      <fieldset disabled={disabled} className="space-y-3">
+      <fieldset disabled={disabled && !previewing} className="space-y-3">
         <legend className="text-body font-semibold">Source library</legend>
         <div className="flex flex-wrap gap-4">
           {(["installed", "development"] as const).map((value) => (
@@ -48,25 +57,44 @@ export function AgentImport({
                 checked={source === value}
                 onChange={() => {
                   setSource(value);
-                  setPreview(null);
-                  setSelected([]);
-                  setNotice(null);
+                  invalidatePreview();
                 }}
               />
               {value === "installed" ? "Installed Buzz" : "Development Buzz"}
             </label>
           ))}
         </div>
+        <label className="block space-y-1">
+          <span>Destination community</span>
+          <input
+            className="w-full rounded border border-primary bg-panel p-2"
+            type="text"
+            value={destination}
+            placeholder="wss://community.example"
+            spellCheck={false}
+            onChange={(event) => {
+              setDestination(event.target.value);
+              invalidatePreview();
+            }}
+          />
+        </label>
+        <p className="text-body-sm text-secondary">
+          Choose the secure community origin for these identities. Old saved
+          relay values are not used. Import does not join or start agents there.
+        </p>
         <Button
-          disabled={disabled}
+          disabled={disabled || previewing || !destination.trim()}
           onClick={() => {
-            setPreview(null);
-            setSelected([]);
-            setNotice(null);
+            invalidatePreview();
+            const current = generation.current;
+            setPreviewing(true);
             void control
-              .previewImport(source)
-              .then(setPreview)
-              .catch(() => {});
+              .previewImport(source, destination)
+              .then((result) => {
+                if (generation.current === current) setPreview(result);
+              })
+              .catch(() => {})
+              .finally(() => setPreviewing(false));
           }}
         >
           Preview selected library

@@ -153,7 +153,7 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
     let preview = invoke(
         &view,
         "agent_control_import_preview",
-        json!({"source":"development"}),
+        json!({"source":"development","destination":"wss://chosen.example"}),
     )
     .unwrap();
     assert!(preview["sourcePath"]
@@ -163,7 +163,7 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
     assert!(invoke(
         &view,
         "agent_control_import_preview",
-        json!({"source":"installed"})
+        json!({"source":"installed","destination":"wss://chosen.example"})
     )
     .is_err());
     assert_eq!(
@@ -219,7 +219,7 @@ fn native_contention_fails_fast_and_quit_preserves_enabled_intent() {
         ),
         (
             "agent_control_import_preview",
-            json!({"source":"installed"}),
+            json!({"source":"installed","destination":"wss://chosen.example"}),
         ),
     ] {
         assert_eq!(
@@ -393,8 +393,9 @@ fn nonpreview_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     let source = dir.path().join("legacy/xyz.block.buzz.app.dev/agents");
     std::fs::create_dir_all(&source).unwrap();
     let bytes = serde_json::to_vec(&json!([
-        {"pubkey":PUB, "relay_url":"wss://relay.example", "name":"Selected", "agent_command":"buzz-agent", "agent_args":[], "start_on_app_launch":true},
-        {"pubkey":"ab".repeat(32), "relay_url":"wss://relay.example", "name":"Not selected"}
+        {"pubkey":PUB, "relay_url":"", "name":"Selected", "agent_command":"buzz-agent", "agent_args":[], "start_on_app_launch":true},
+        {"pubkey":"ab".repeat(32), "relay_url":"wss://stale.example", "name":"Not selected"},
+        {"pubkey":"cd".repeat(32), "relay_url":"wss://user:secret@raw.example/path", "name":"Unsupported old pin"}
     ])).unwrap();
     std::fs::write(source.join("managed-agents.json"), &bytes).unwrap();
     let memory = Arc::new(Memory::default());
@@ -404,13 +405,50 @@ fn nonpreview_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
         Ok(())
     })
     .unwrap();
+    // Required IPC destination: a missing argument must not use a legacy pin.
+    assert!(invoke(
+        &view,
+        "agent_control_import_preview",
+        json!({"source":"development"})
+    )
+    .is_err());
+    let invalid = invoke(
+        &view,
+        "agent_control_import_preview",
+        json!({"source":"development","destination":"wss://user:private@raw.example/path"}),
+    )
+    .unwrap_err();
+    assert_eq!(
+        invalid,
+        "Choose a secure community origin without credentials, path or query"
+    );
+    let prior = invoke(
+        &view,
+        "agent_control_import_preview",
+        json!({"source":"development","destination":"wss://prior.example"}),
+    )
+    .unwrap();
     let preview = invoke(
         &view,
         "agent_control_import_preview",
-        json!({"source":"development"}),
+        json!({"source":"development","destination":"https://CHOSEN.example/"}),
     )
     .unwrap();
+    assert!(invoke(
+        &view,
+        "agent_control_import_commit",
+        json!({"token":prior["token"],"ids":[prior["candidates"][0]["id"]]})
+    )
+    .is_err());
     assert!(memory.1.lock().unwrap().is_empty());
+    assert!(memory.0.lock().unwrap().is_empty());
+    assert_eq!(preview["candidates"].as_array().unwrap().len(), 3);
+    for candidate in preview["candidates"].as_array().unwrap() {
+        assert_eq!(candidate["relayUrl"], "wss://chosen.example");
+    }
+    for hidden in ["raw.example", "stale.example", "user:secret", KEY] {
+        assert!(!preview.to_string().contains(hidden));
+    }
     let selected = preview["candidates"]
         .as_array()
         .unwrap()
@@ -425,6 +463,13 @@ fn nonpreview_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     .unwrap();
     assert_eq!(imported["agents"].as_array().unwrap().len(), 1);
     assert_eq!(imported["agents"][0]["pubkey"], PUB);
+    assert_eq!(imported["agents"][0]["relayUrl"], "wss://chosen.example");
+    assert_eq!(imported["agents"][0]["id"], selected["id"]);
+    assert!(memory
+        .0
+        .lock()
+        .unwrap()
+        .contains_key(selected["id"].as_str().unwrap()));
     assert_eq!(imported["agents"][0]["enabled"], false);
     assert_eq!(imported["agents"][0]["status"], "stopped");
     assert!(!imported.to_string().contains(KEY));

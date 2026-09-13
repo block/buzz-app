@@ -177,8 +177,8 @@ The footer reuses `MessageComposer` and sends direct replies to the resolved roo
 through `session.messages.reply`. Channel and thread drafts are separate and survive
 reconnection; failed replies remain inline with the shared retry action. Read-only
 connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. Message-addressed navigation opens a separate exact detail,
-not a position inside this bounded thread panel.
+not expose a composer. Exact navigation can retain and focus a selected reply
+beyond the traversal range; it does not extend that range or promise complete history.
 
 Replies use ascending timestamp/event-ID order, including nested replies. Retry
 appears only after a failed read; there is no routine Refresh control. Names are
@@ -290,14 +290,17 @@ bottom following, reading anchors and narrow layout in Chromium and WebKit.
 
 ## Opening an exact message
 
-Message-addressed conversations show **Message detail** with only the selected
-verified row. They do not fetch an optional original thread message or traverse
-surrounding history. **Open channel** returns to normal reading with its saved
-geometry and composer intact.
+Message-addressed conversations reuse the normal timeline and thread panel. A
+verified, loaded top-level target is revealed in the timeline. An off-window
+message opens as the root in the existing thread panel; a reply opens there with
+its actual root and bounded surrounding replies. No around-message channel query
+or separate detail screen is added. The presentation choice stays fixed for that
+navigation attempt; exact reads do not insert isolated old rows into channel history.
 
-`MessageDetailPanel` acknowledges navigation only after the target is visible and
-focused. Reclick/Back reveals again; live/profile updates do not steal focus.
-The shared row preserves Markdown, profile links and background enrichment.
+Navigation completes only after the exact folded target is visible and focused.
+Reclick/Back reveals again; live/profile updates do not steal focus. The shared
+rows preserve Markdown, profile links, composers and background enrichment.
 Opening never marks read directly: the ordinary focus/visibility/dwell hook applies.
 Missing/deleted targets, access loss and failed reads expose failure/retry instead
-of falling back to the channel head. See [the evidence contract](relay-queries.md#exact-message-detail).
+of channel-head success. An accessible reply remains visible when its root is
+unavailable, without a thread composer. See [the evidence contract](relay-queries.md#exact-message-navigation).

@@ -234,7 +234,7 @@ test("a fully visible incoming row stays quiet without publishing read intent", 
 });
 
 for (const kind of ["mention", "thread reply"]) {
-  test(`live ${kind} notification opens only its exact focused row, then ordinary dwell reads it`, async ({
+  test(`live ${kind} notification focuses its exact row in the normal conversation, then ordinary dwell reads it`, async ({
     page,
     app,
   }) => {
@@ -278,11 +278,11 @@ for (const kind of ["mention", "thread reply"]) {
     const start = performance.now();
     await page.evaluate(() => window.notificationEvents[0].onclick());
     expect(app.report.readPublications.length).toBe(before);
-    const detail = page.getByRole("region", {
-      name: "Message detail",
+    const surface = page.getByRole("region", {
+      name: root ? "Thread messages" : "Channel message history",
       exact: true,
     });
-    const row = detail.locator(`[data-message-id="${incoming.id}"]`);
+    const row = surface.locator(`[data-message-id="${incoming.id}"]`);
     await expect(row).toBeFocused();
     await expect(row).toBeVisible();
     await expect(row.locator("strong").filter({ hasText: kind })).toHaveText(
@@ -294,17 +294,31 @@ for (const kind of ["mention", "thread reply"]) {
       )
       .toBe("opened");
     app.report.measurements.push({
-      mode: `live ${kind} click to exact detail`,
+      mode: `live ${kind} click to exact conversation row`,
       clickToOpenedMs: performance.now() - start,
     });
     expect(app.report.readPublications.length).toBe(before);
-    await expect(detail.locator("[data-message-id]")).toHaveCount(1);
     await expect(
       page.getByRole("textbox", { name: "Message #Beta", exact: true }),
-    ).toHaveCount(0);
-    expect(app.report.queries.filter((q) => q.filter.depth_limit)).toHaveLength(
-      0,
-    );
+    ).toBeVisible();
+    if (root) {
+      await expect(
+        surface.locator(`[data-message-id="${root.id}"]`),
+      ).toBeAttached();
+      await expect(
+        page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      ).toBeVisible();
+      await expect
+        .poll(() => app.report.queries.some((q) => q.filter.depth_limit))
+        .toBe(true);
+    } else {
+      await expect(
+        page.getByRole("region", { name: "Thread messages", exact: true }),
+      ).toHaveCount(0);
+      expect(
+        app.report.queries.filter((q) => q.filter.depth_limit),
+      ).toHaveLength(0);
+    }
     await expect
       .poll(() => app.report.readPublications.length)
       .toBeGreaterThan(before);

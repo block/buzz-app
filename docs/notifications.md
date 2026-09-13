@@ -45,7 +45,9 @@ checks, not that an OS banner was displayed or read.
 - Browser clicks use the existing typed, account/community-scoped navigation path. It owns
   membership/provider checks and exact opening. Changing account invalidates old
   callbacks; changing community does not turn an old alert into a dead click.
-  Clicks never mark a message read.
+  Loaded top-level targets use the timeline; off-window targets and replies use
+  the existing thread panel with exact scroll/focus. Clicks never mark a message
+  read; normal focused, visible dwell does.
 
 There is no notification database, Recent notifications UI, cold/reload receipt
 protocol, uniform OS withdrawal subsystem, or closed-app push. Preferences are

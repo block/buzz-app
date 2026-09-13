@@ -174,7 +174,7 @@ export const test = base.extend({
         );
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
-    const detailEvents = [];
+    const targetEvents = [];
     let exact;
     if (exactMessages) {
       const root = histories.get("primary/alpha")[2];
@@ -213,7 +213,7 @@ export const test = base.extend({
         userKey,
         target.created_at + 3,
       );
-      detailEvents.push(...replies, edit, reaction, deletion);
+      targetEvents.push(...replies, edit, reaction, deletion);
       exact = { root, target, replies, edit, reaction, deletion };
     }
     if (membershipActivity) {
@@ -231,7 +231,9 @@ export const test = base.extend({
     }
     // Opt-in upstream thread evidence: no client cache/read-state injection.
     // Uppercase signed references exercise canonical thread/unread parity.
-    const threadReplies = new Map();
+    const threadReplies = new Map(
+      exact ? [[exact.root.id, exact.replies]] : [],
+    );
     const threadSummaries = [];
     if (threadUnread) {
       const history = histories.get("primary/alpha");
@@ -441,7 +443,7 @@ export const test = base.extend({
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
           .flatMap(([, events]) => events)
-          .concat(community === "primary" ? detailEvents : [])
+          .concat(community === "primary" ? targetEvents : [])
           .filter(
             (event) =>
               filter.ids.includes(event.id) &&
@@ -455,7 +457,7 @@ export const test = base.extend({
         filter["#e"] &&
         filter.kinds?.every((kind) => [5, 7, 9005, 39005, 40003].includes(kind))
       )
-        return (community === "primary" ? detailEvents : [])
+        return (community === "primary" ? targetEvents : [])
           .filter(
             (event) =>
               filter.kinds.includes(event.kind) &&
@@ -467,8 +469,21 @@ export const test = base.extend({
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
           .slice(0, filter.limit);
-      if (threadUnread && filter.depth_limit)
-        return (threadReplies.get(filter["#e"]?.[0]) ?? [])
+      if (filter.depth_limit) {
+        const rootId = filter["#e"]?.[0];
+        const candidates = [
+          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
+        ].filter((event) => {
+          const refs = event.tags.filter(([key]) => key === "e");
+          const root =
+            refs.find((tag) => tag[3] === "root") ??
+            refs.find((tag) => tag[3] === "reply");
+          return root?.[1]?.toLowerCase() === rootId;
+        });
+        const rows = [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
           .filter(
             (event) =>
               filter.thread_cursor === undefined ||
@@ -476,7 +491,29 @@ export const test = base.extend({
               (event.created_at === filter.thread_cursor &&
                 event.id > filter.thread_cursor_id),
           )
+          .toSorted(
+            (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+          )
           .slice(0, filter.limit);
+        const ids = new Set(rows.map((event) => event.id));
+        const aux = [];
+        if (filter.include_aux && community === "primary")
+          for (let hop = 0; hop < 2; hop++)
+            for (const event of targetEvents) {
+              if (
+                ids.has(event.id) ||
+                ![5, 7, 9005, 39005, 40003].includes(event.kind)
+              )
+                continue;
+              if (
+                event.tags.some(([key, value]) => key === "e" && ids.has(value))
+              ) {
+                aux.push(event);
+                ids.add(event.id);
+              }
+            }
+        return [...rows, ...aux];
+      }
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&
@@ -652,10 +689,19 @@ export const test = base.extend({
           throw new Error(
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
-        expect(body).toHaveLength(1);
+        expect(body.length).toBeGreaterThan(0);
+        expect(body.length).toBeLessThanOrEqual(2);
         const filter = body[0];
-        report.queries.push({ community, filter });
-        const result = answer(community, filter);
+        const result = [
+          ...new Map(
+            body
+              .flatMap((filter) => {
+                report.queries.push({ community, filter });
+                return answer(community, filter);
+              })
+              .map((event) => [event.id, event]),
+          ).values(),
+        ];
         if (filter.until !== undefined) {
           pending.push({
             community,

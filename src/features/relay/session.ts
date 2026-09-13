@@ -43,11 +43,6 @@ import {
 } from "./outbox";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
-import {
-  createMessageDetail,
-  DETAIL_READ_LIMIT,
-  DetailLimitError,
-} from "./message-detail";
 import { ByteLru } from "./budget";
 import { createRelayProfiler } from "./profiling";
 import {
@@ -100,7 +95,6 @@ export function createRelaySession(
   const refreshers = new Set<() => Promise<void>>();
   const views = new Map<() => void, (clear?: boolean) => void>();
   const threads = new Set<ReturnType<typeof createThreadView>>();
-  const details = new Set<ReturnType<typeof createMessageDetail>>();
   const writer = transport?.writer;
   const writes =
     transport && writer
@@ -130,7 +124,7 @@ export function createRelaySession(
       : undefined;
   const rawLocal = () => writes?.local.snapshot() ?? [];
   function retainedThreadEvent(id: string) {
-    for (const thread of [...threads, ...details]) {
+    for (const thread of threads) {
       if (!canAccess(thread.channelId)) continue;
       const event = thread.event(id);
       if (event) return event;
@@ -608,63 +602,12 @@ export function createRelaySession(
       emoji.tags,
       validateMentions,
     ),
-    /** Exact-target evidence stays separate from channel head/history ingestion. */
-    messageDetail(channelId: string, messageId: string) {
-      if (closed || views.size >= 64)
-        throw new Error("Relay view capacity unavailable");
-      if (!/^[0-9a-f]{64}$/.test(messageId))
-        throw new Error("Message detail needs a valid message ID");
-      const detail = createMessageDetail({
-        channelId,
-        messageId,
-        relayAuthor: transport?.relayAuthor ?? "",
-        reader: {
-          async read(filters, settings) {
-            const epoch = accessEpoch;
-            let events: readonly RelayEvent[];
-            try {
-              events = await requests.reader.read(filters, settings);
-            } catch (error) {
-              // This owned reader knows the channel even for reference-only aux.
-              if (
-                !closed &&
-                epoch === accessEpoch &&
-                readErrorKind(error) === "denied"
-              )
-                channels.denyChannel(channelId, error);
-              throw error;
-            }
-            if (closed || epoch !== accessEpoch)
-              throw new DOMException("Stale message detail", "AbortError");
-            settings?.signal?.throwIfAborted();
-            // Count before visibility filtering: a full raw response may have
-            // omitted an author tombstone. Never call that a complete fold.
-            if (events.length >= DETAIL_READ_LIMIT)
-              throw new DetailLimitError();
-            return accept(events, false);
-          },
-        },
-        local: localViews,
-        canAccess: () => !closed && canAccess(channelId),
-        visible: (events) => events.filter(visibility(events)),
-        notify,
-      });
-      details.add(detail);
-      detail.receive(recent.entries().map(([, item]) => item.event));
-      observations.add(detail.receive);
-      const unsubscribe = localViews?.subscribe(detail.changed);
-      const dispose = () => {
-        detail.view.dispose();
-        unsubscribe?.();
-        observations.delete(detail.receive);
-        details.delete(detail);
-        views.delete(dispose);
-      };
-      views.set(dispose, detail.purge);
-      return { ...detail.view, dispose };
-    },
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
-    thread(channelId: string, messageId: string) {
+    thread(
+      channelId: string,
+      messageId: string,
+      options?: { exact?: boolean },
+    ) {
       if (closed || views.size >= 64)
         throw new Error("Relay view capacity unavailable");
       if (!/^[0-9a-f]{64}$/.test(messageId))
@@ -673,7 +616,39 @@ export function createRelaySession(
         channelId,
         messageId,
         relayAuthor: transport?.relayAuthor ?? "",
-        reader: verified,
+        reader: options?.exact
+          ? {
+              async read(filters, settings) {
+                const epoch = accessEpoch;
+                let events: readonly RelayEvent[];
+                try {
+                  events = await requests.reader.read(filters, settings);
+                } catch (error) {
+                  if (
+                    !closed &&
+                    epoch === accessEpoch &&
+                    readErrorKind(error) === "denied"
+                  )
+                    channels.denyChannel(channelId, error);
+                  throw error;
+                }
+                if (closed || epoch !== accessEpoch)
+                  throw new DOMException("Stale thread target", "AbortError");
+                settings?.signal?.throwIfAborted();
+                // A capped raw target/overlay read cannot establish a safe fold.
+                if (
+                  !filters.some((filter) => filter.depth_limit) &&
+                  events.length >= 500
+                )
+                  throw new Error(
+                    "Selected message exceeded its evidence limit",
+                  );
+                // Isolated lookup must not masquerade as contiguous channel history.
+                return accept(events, false);
+              },
+            }
+          : verified,
+        exact: options?.exact ?? false,
         seed: recent.peek(messageId)?.event,
         local: localViews,
         canAccess: () => !closed && canAccess(channelId),
@@ -681,6 +656,8 @@ export function createRelaySession(
         notify,
       });
       threads.add(thread);
+      if (options?.exact)
+        thread.receive(recent.entries().map(([, item]) => item.event));
       observations.add(thread.receive);
       const unsubscribe = localViews?.subscribe(thread.changed);
       const dispose = () => {
@@ -1053,7 +1030,7 @@ export function createRelaySession(
         return;
       }
       if (!channels.canAccess(channelId)) return;
-      for (const thread of [...threads, ...details])
+      for (const thread of threads)
         if (thread.channelId === channelId) void thread.view.refresh();
       const job = {
         generation: liveGeneration,

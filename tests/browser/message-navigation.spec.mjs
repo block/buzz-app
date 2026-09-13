@@ -2,8 +2,8 @@ import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
 test.use({ pluginFixtures: true, exactMessages: true });
-const detail = (page) =>
-  page.getByRole("region", { name: "Message detail", exact: true });
+const thread = (page) =>
+  page.getByRole("region", { name: "Thread messages", exact: true });
 const target = (app, id = app.exact.target.id) => ({
   version: 1,
   kind: "conversation",
@@ -50,7 +50,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
       mode,
       clickToOpenedMs: performance.now() - start,
     });
-    const row = detail(page).locator(`[data-message-id="${id}"]`);
+    const row = thread(page).locator(`[data-message-id="${id}"]`);
     await expect(row).toBeVisible();
     await expect(row).toBeFocused();
     expect(await status(page)).toBe("opened");
@@ -65,27 +65,27 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
           exact: true,
         }),
       ).toHaveCount(0); // Edited-body names cannot inherit original signed recipients.
+      await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
       await expect(
-        page.getByText("Message detail · Selected message only."),
+        page.getByRole("textbox", { name: "Reply to thread", exact: true }),
       ).toBeVisible();
-      expect(await detail(page).locator("[data-message-id]").count()).toBe(1);
     }
   }
   expect(app.report.queries.filter((q) => q.filter.top_level).length).toBe(
     initialHeadQueries,
   );
-  expect(app.report.queries.filter((q) => q.filter.depth_limit)).toHaveLength(
-    0,
-  );
+  expect(app.report.queries.some((q) => q.filter.depth_limit)).toBe(true);
   expect(app.report.queries.filter((q) => q.filter.until)).toHaveLength(0);
   // Use an unedited reply to exercise exact mention/profile identity plumbing.
   expect(
     await openTarget(page, target(app, app.exact.replies.at(-2).id)),
   ).toEqual({ status: "opened" });
-  const mention = detail(page).getByRole("button", {
-    name: "View Alice Fixture profile",
-    exact: true,
-  });
+  const mention = thread(page)
+    .locator(`[data-message-id="${app.exact.replies.at(-2).id}"]`)
+    .getByRole("button", {
+      name: "View Alice Fixture profile",
+      exact: true,
+    });
   await mention.click();
   await expect(
     page.getByRole("region", { name: "Profile details" }),
@@ -95,7 +95,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     .click();
   await expect(mention).toBeFocused();
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-  await page.getByRole("button", { name: "Open channel", exact: true }).click();
+  await page.getByRole("button", { name: "Close thread", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
@@ -104,9 +104,121 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   ).toHaveCount(0);
   await page.getByRole("button", { name: "Go back", exact: true }).click();
   await expect(
-    detail(page).locator(`[data-message-id="${app.exact.target.id}"]`),
+    thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toBeFocused();
   await expect.poll(() => status(page)).toBe("opened");
+});
+
+test("loaded virtual rows reveal per attempt without thread reads or live-update focus theft", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const history = page.getByRole("region", {
+    name: "Channel message history",
+    exact: true,
+  });
+  const id = app.histories.get("primary/alpha").at(-18).id;
+  const composer = page.getByRole("textbox", {
+    name: "Message #Alpha",
+    exact: true,
+  });
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const start = performance.now();
+    expect(await openTarget(page, target(app, id))).toEqual({
+      status: "opened",
+    });
+    const row = history.locator(`[data-message-id="${id}"]`);
+    await expect(row).toBeFocused();
+    await expect(row).toBeInViewport();
+    app.report.measurements.push({
+      mode: `loaded timeline attempt ${attempt}`,
+      clickToOpenedMs: performance.now() - start,
+    });
+    await composer.focus();
+    await history.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
+    });
+  }
+  expect(app.report.queries.filter((q) => q.filter.depth_limit)).toHaveLength(
+    0,
+  );
+  await expect(thread(page)).toHaveCount(0);
+  app.append("primary", "alpha", "Live after exact timeline reveal");
+  await expect(history).toContainText("Live after exact timeline reveal");
+  await expect(composer).toBeFocused();
+});
+
+test("an accessible exact reply stays visible without its root or a thread composer", async ({
+  page,
+  app,
+}) => {
+  app.histories.set(
+    "primary/alpha",
+    app.histories
+      .get("primary/alpha")
+      .filter((event) => event.id !== app.exact.root.id),
+  );
+  await open(page, app);
+  expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+  await expect(
+    thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
+  ).toBeFocused();
+  await expect(
+    thread(page).getByText("Original message unavailable."),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+});
+
+test("exact reply reveals before slow surrounding traversal and keeps its position afterwards", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let intercepted;
+  const seen = new Promise((resolve) => {
+    intercepted = resolve;
+  });
+  let first = true;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      !first ||
+      !route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.depth_limit)
+    )
+      return route.continue();
+    first = false;
+    intercepted();
+    await held;
+    await route.continue().catch(() => {});
+  });
+  await page.evaluate((value) => {
+    window.exactResult = window.fixtureNavigation.open(value);
+  }, target(app));
+  await seen;
+  await expect.poll(() => status(page)).toBe("opened");
+  const row = thread(page).locator(
+    `[data-message-id="${app.exact.target.id}"]`,
+  );
+  await expect(row).toBeFocused();
+  await expect(row).toBeInViewport();
+  const close = page.getByRole("button", { name: "Close thread", exact: true });
+  await close.focus();
+  release();
+  await expect(thread(page).locator("[data-message-id]")).toHaveCount(81);
+  await expect(row).toBeInViewport();
+  await expect(close).toBeFocused();
 });
 
 test("unknown target fails without channel-head success and retries in the same visit", async ({
@@ -131,7 +243,7 @@ test("unknown target fails without channel-head success and retries in the same 
   expect(
     await page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),
   ).toBe(visit);
-  await expect(page.locator("[data-message-id]")).toHaveCount(0);
+  await expect(thread(page).locator("[data-message-id]")).toHaveCount(0);
 });
 
 test("superseding a held exact read cancels it; a late response cannot steal focus or complete the next visit", async ({
@@ -172,7 +284,7 @@ test("superseding a held exact read cancels it; a late response cannot steal foc
   await composer.focus();
   release();
   await expect(composer).toBeFocused();
-  await expect(detail(page)).toHaveCount(0);
+  await expect(thread(page)).toHaveCount(0);
   await expect.poll(() => status(page)).toBe("opened");
 });
 
@@ -211,11 +323,11 @@ test("same-scope replacement withdraws a held old session and reopens the exact 
     window.fixtureRelay.disconnect();
     return generation;
   });
-  await expect(detail(page)).toHaveCount(0);
+  await expect(thread(page)).toHaveCount(0);
   await page.evaluate(() => window.fixtureRelay.retry());
   release();
   await expect(
-    detail(page).locator(`[data-message-id="${app.exact.target.id}"]`),
+    thread(page).locator(`[data-message-id="${app.exact.target.id}"]`),
   ).toBeFocused();
   expect(
     await page.evaluate(() => window.fixtureRelay.snapshot().generation),
@@ -225,15 +337,15 @@ test("same-scope replacement withdraws a held old session and reopens the exact 
   });
 });
 
-test("post-success membership loss removes detail and live updates do not snap it back to the target", async ({
+test("post-success membership loss removes the thread and live updates do not snap it back to the target", async ({
   page,
   app,
 }) => {
   await open(page, app);
   expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-  const region = detail(page);
+  const region = thread(page);
   const channelButton = page.getByRole("button", {
-    name: "Open channel",
+    name: "Close thread",
     exact: true,
   });
   await channelButton.focus();
@@ -261,7 +373,7 @@ test("post-success membership loss removes detail and live updates do not snap i
 
 const readingTest = test.extend({ tallMessages: true });
 readingTest(
-  "exact detail leaves the ordinary channel reading anchor unchanged",
+  "exact thread navigation leaves the ordinary channel reading anchor unchanged",
   async ({ page, app }) => {
     const { settle, anchor, expectAnchor } = await import("./timeline.mjs");
     await open(page, app);
@@ -274,7 +386,7 @@ readingTest(
     const reading = await anchor(page);
     expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
     await page
-      .getByRole("button", { name: "Open channel", exact: true })
+      .getByRole("button", { name: "Close thread", exact: true })
       .click();
     await expect(history).toBeVisible();
     await settle(page);

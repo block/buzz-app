@@ -351,11 +351,14 @@ function ThreadMessages({
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>
         )}
+        {snapshot.targetStatus === "unavailable" && (
+          <p role="status">Selected message unavailable.</p>
+        )}
         {snapshot.error && <p role="alert">{snapshot.error}</p>}
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {snapshot.error && (
+        {(snapshot.error || snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
             <button type="button" onClick={() => void view.refresh()}>
               Retry thread

@@ -92,7 +92,10 @@ export function createThreadView({
           (exact && event.id === messageId) ||
           (!!rootId && threadReference(event)?.rootId === rootId)),
     );
-    const ids = new Set([...remote, ...rows].map((event) => event.id));
+    const ids = new Set([
+      ...(exact ? [messageId] : []),
+      ...[...remote, ...rows].map((event) => event.id),
+    ]);
     const result = new Map(rows.map((event) => [event.id, event]));
     // Aux closure includes deletion of an auxiliary, not just direct row overlays.
     for (let hop = 0; hop < 2; hop++) {
@@ -153,22 +156,21 @@ export function createThreadView({
         ? rows.find((row) => row.id === messageId)
         : undefined;
     if (targetStatus === "ready" && !target) targetStatus = "unavailable";
-    const readable = !exact || targetStatus === "ready";
-    const replies = rows
+    const readable = rows.filter(
+      (row) => !exact || row.id !== messageId || targetStatus === "ready",
+    );
+    const replies = readable
       .filter(
         (row) =>
-          readable &&
-          row.id !== rootId &&
-          (!rootUnavailable || row.id === messageId),
+          row.id !== rootId && (!rootUnavailable || row.id === messageId),
       )
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
     snapshot = Object.freeze({
       ...snapshot,
       ...patch,
-      root:
-        readable && !rootUnavailable
-          ? rows.find((row) => row.id === rootId)
-          : undefined,
+      root: !rootUnavailable
+        ? readable.find((row) => row.id === rootId)
+        : undefined,
       replies: Object.freeze(replies),
       ...(exact ? { target, targetStatus } : {}),
     });
@@ -248,7 +250,9 @@ export function createThreadView({
     let nextCursor = replace ? undefined : cursor;
     let nextPages = replace ? 0 : pages;
     let fetched: readonly RelayEvent[] = [];
-    if (exact && replace) targetStatus = "loading";
+    // Repair retains already-verified presentation; only a new/unavailable
+    // selection waits for its initial fold. Never unmount a reader on reconnect.
+    if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
     publish({ status: "loading", error: undefined });
     try {
       if (exact && replace) {

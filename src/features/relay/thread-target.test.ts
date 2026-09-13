@@ -286,3 +286,64 @@ it("disposes held exact reads and purges loaded targets on cache clear", async (
   await next.clearCache();
   expect(next.view.snapshot().target).toBeUndefined();
 });
+
+it("seeds a retained deletion after its selected target was evicted from the shared cache", async () => {
+  const h = setup();
+  h.view.dispose();
+  h.traffic.receive([reply]);
+  const noise = Array.from({ length: 140 }, (_, i) =>
+    message(alice, "b", `${i}${"x".repeat(65536)}`, i + 20),
+  );
+  h.traffic.receive(noise.slice(0, 100));
+  // Still-resolvable deletion is newer in the LRU than its original content.
+  h.traffic.receive([aux(5, reply)]);
+  h.traffic.receive(noise.slice(100)); // >8 MiB evicts the target, not this tombstone.
+  const view = h.session.thread("a", reply.id, { exact: true });
+  const reading = view.refresh();
+  h.next().respond([reply]);
+  await flush();
+  h.next().respond([]); // Sparse relay read omits the already-observed deletion.
+  await flush();
+  const tombstones = h.next();
+  expect(tombstones.filters[0]?.kinds).toEqual([5, 9005]);
+  tombstones.respond([]);
+  await reading;
+  expect(view.snapshot()).toMatchObject({
+    targetStatus: "unavailable",
+    target: undefined,
+  });
+});
+
+it("retains verified rows throughout repair and keeps valid context when the selected reply is deleted", async () => {
+  const h = setup();
+  const sibling = message(alice, "a", "Sibling", 2, [
+    ["e", root.id, "", "reply"],
+  ]);
+  const { loading } = await targetRead(h);
+  h.next().respond([root, sibling]);
+  await loading;
+  const repairing = h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "loading",
+    root: { id: root.id },
+    target: { id: reply.id },
+    targetStatus: "ready",
+  });
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([
+    sibling.id,
+    reply.id,
+  ]);
+  h.next().respond([reply]);
+  await flush();
+  h.next().respond([]);
+  await flush();
+  h.next().respond([root, sibling]);
+  await repairing;
+  h.traffic.receive([aux(5, reply)]);
+  expect(h.view.snapshot()).toMatchObject({
+    root: { id: root.id },
+    target: undefined,
+    targetStatus: "unavailable",
+  });
+  expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([sibling.id]);
+});

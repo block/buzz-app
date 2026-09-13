@@ -900,6 +900,20 @@ export const test = base.extend({
           }
           return event;
         },
+        deleteTarget() {
+          const event = sign(
+            5,
+            [
+              ["h", "alpha"],
+              ["e", exact.target.id],
+            ],
+            "",
+            userKey,
+            exact.target.created_at + 100,
+          );
+          targetEvents.push(event);
+          relay.publish("primary", event);
+        },
         reply(rootId, own = false) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");

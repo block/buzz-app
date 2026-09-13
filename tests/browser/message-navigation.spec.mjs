@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, end, settle } from "./timeline.mjs";
 
 test.use({ pluginFixtures: true, exactMessages: true });
 const thread = (page) =>
@@ -136,9 +136,7 @@ test("loaded virtual rows reveal per attempt without thread reads or live-update
       clickToOpenedMs: performance.now() - start,
     });
     await composer.focus();
-    await history.evaluate((element) => {
-      element.scrollTop = element.scrollHeight;
-    });
+    await end(page);
   }
   expect(app.report.queries.filter((q) => q.filter.depth_limit)).toHaveLength(
     0,
@@ -408,5 +406,100 @@ readTest(
     await expect
       .poll(() => app.report.readPublications.length)
       .toBeGreaterThan(before);
+  },
+);
+
+const liveTest = test.extend({ productionBroker: true });
+liveTest(
+  "stream repair retains thread rows, reading position and composer focus after exact opening",
+  async ({ page, app }) => {
+    await open(page, app);
+    await expect.poll(() => app.relay.hasRoute("primary", "alpha")).toBe(true);
+    expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+    const region = thread(page);
+    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(region.getByText("Loading thread…")).toHaveCount(0);
+    const readingRow = region.locator(
+      `[data-message-id="${app.exact.replies[40].id}"]`,
+    );
+    await readingRow.scrollIntoViewIfNeeded();
+    await region.dispatchEvent("wheel", { deltaY: -1 });
+    const composer = page.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await composer.fill("Preserve my thread draft");
+    await settle(page);
+    const before = await region.evaluate((element) => element.scrollTop);
+    let release;
+    const held = new Promise((resolve) => {
+      release = resolve;
+    });
+    let intercepted;
+    const seen = new Promise((resolve) => {
+      intercepted = resolve;
+    });
+    let first = true;
+    await page.route("**/api/relay/**/query", async (route) => {
+      if (
+        !first ||
+        !route
+          .request()
+          .postDataJSON()
+          .some((filter) => filter.ids?.includes(app.exact.target.id))
+      )
+        return route.continue();
+      first = false;
+      intercepted();
+      await held;
+      await route.continue().catch(() => {});
+    });
+    app.relay.disconnect("primary");
+    await seen;
+    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    await expect(composer).toBeFocused();
+    expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
+      before,
+      0,
+    );
+    release();
+    await expect(region.getByText("Loading thread…")).toHaveCount(0);
+    await expect(composer).toBeFocused();
+    await expect(composer).toHaveValue("Preserve my thread draft");
+    expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
+      before,
+      0,
+    );
+    await expect(readingRow).toBeInViewport();
+  },
+);
+
+liveTest(
+  "deleting the selected reply keeps valid thread context and exposes a local unavailable state",
+  async ({ page, app }) => {
+    await open(page, app);
+    expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+    const region = thread(page);
+    await expect(region.locator("[data-message-id]")).toHaveCount(81);
+    app.deleteTarget();
+    await expect(
+      region.locator(`[data-message-id="${app.exact.target.id}"]`),
+    ).toHaveCount(0);
+    await expect(
+      region.locator(`[data-message-id="${app.exact.root.id}"]`),
+    ).toBeAttached();
+    await expect(region.locator("[data-message-id]")).toHaveCount(80);
+    await expect(
+      region.getByText("Selected message unavailable."),
+    ).toBeVisible();
+    await expect(region.getByText("Original message unavailable.")).toHaveCount(
+      0,
+    );
+    await expect(
+      region.getByRole("button", { name: "Retry thread", exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toBeVisible();
   },
 );

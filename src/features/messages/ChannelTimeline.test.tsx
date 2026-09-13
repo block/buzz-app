@@ -245,6 +245,8 @@ function setup({
     children: unknown[];
     onScroll: (event: unknown) => void;
     onWheel: () => void;
+    onFocus: (event: unknown) => void;
+    onBlur: (event: unknown) => void;
   }>;
   let section: Section;
   let channelId = "channel";
@@ -306,6 +308,29 @@ function setup({
   return {
     element,
     handle,
+    focus(id?: string) {
+      section.props.onFocus({
+        target: { closest: () => (id ? { dataset: { messageId: id } } : null) },
+      });
+      render();
+    },
+    blur(inside: boolean) {
+      section.props.onBlur({
+        currentTarget: { contains: () => inside },
+        relatedTarget: null,
+      });
+      render();
+    },
+    pinned() {
+      const virtualizer = section.props.children.find(
+        (child) =>
+          !!child &&
+          typeof child === "object" &&
+          "type" in child &&
+          child.type === Virtualizer,
+      ) as ReactElement<{ keepMounted: number[] }>;
+      return virtualizer.props.keepMounted;
+    },
     loadOlder,
     olderReads,
     flush,
@@ -398,6 +423,28 @@ function setup({
     },
   };
 }
+
+it("pins only the focused message by identity across prepend and releases on focus exit", () => {
+  const h = setup();
+  expect(h.pinned()).toEqual([]);
+  h.focus("last");
+  expect(h.pinned()).toEqual([1]);
+  h.prepend();
+  expect(h.pinned()).toEqual([2]);
+  h.blur(true);
+  expect(h.pinned()).toEqual([2]);
+  h.focus("first");
+  expect(h.pinned()).toEqual([1]);
+  h.blur(false);
+  expect(h.pinned()).toEqual([]);
+  h.focus("last");
+  h.focus(); // The history region itself is not a message row.
+  expect(h.pinned()).toEqual([]);
+  h.focus("last");
+  h.setRows([]);
+  expect(h.pinned()).toEqual([]);
+  h.unmount();
+});
 
 it("persists the event target's reading position at real component cleanup, not the previous virtualizer offset", () => {
   const h = setup();

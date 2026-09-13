@@ -112,6 +112,8 @@ function Timeline({
     () => geometrySignature(window.rows, profiles),
     [window.rows, profiles],
   );
+  const [focusedMessageId, setFocusedMessageId] = useState<string>();
+  const focusedIndex = rows.findIndex((row) => row.id === focusedMessageId);
   const scroller = useRef<HTMLElement>(null);
   const handle = useRef<VirtualizerHandle>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
@@ -406,6 +408,16 @@ function Timeline({
       onTouchMove={gesture}
       onKeyDown={gesture}
       onPointerDown={gesture}
+      onFocus={(event) => {
+        setFocusedMessageId(
+          event.target.closest<HTMLElement>("[data-message-id]")?.dataset
+            .messageId,
+        );
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget))
+          setFocusedMessageId(undefined);
+      }}
       tabIndex={0}
       aria-label="Channel message history"
       onScroll={(event) => {
@@ -448,6 +460,8 @@ function Timeline({
           scrollRef={scroller}
           shift={prepend}
           bufferSize={1600}
+          // Reflow must not evict the focused control and drop keyboard focus.
+          keepMounted={focusedIndex < 0 ? [] : [focusedIndex]}
           as="ol"
           item="li"
           startMargin={EDGE_HEIGHT}

@@ -1,4 +1,4 @@
-import { test, expect } from "vitest";
+import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -6,6 +6,12 @@ import {
   nip44,
 } from "nostr-tools";
 import { decodeAgentObserver } from "./agent-observer.mjs";
+
+const now = 1700000000;
+beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+});
+afterEach(() => vi.restoreAllMocks());
 
 const owner = generateSecretKey(),
   agent = generateSecretKey(),
@@ -18,7 +24,7 @@ const raw = JSON.stringify({
   sessionId: null,
   turnId: null,
   seq: 1,
-  timestamp: new Date().toISOString(),
+  timestamp: new Date(now * 1000).toISOString(),
   payload: { text: "<script>not markup</script>" },
 });
 function frame(patch = {}, plaintext = raw) {

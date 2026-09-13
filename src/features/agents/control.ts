@@ -1,6 +1,7 @@
 /** Native-owned configuration and process evidence; never a relay-session capability. */
 // Keep injection reachable from the generated author contract, not host construction.
 import type {} from "@deepseek-ai/cordis";
+import { createAgentModels, type AgentModels, type ModelHost } from "./models";
 declare module "@deepseek-ai/cordis" {
   interface Context {
     agentControl: AgentControl;
@@ -42,6 +43,7 @@ export interface ControlSnapshot {
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
   runtimeMessage?: string | null;
+  databricksDefaults?: { host: string; filter: string };
 }
 export interface AgentEdit {
   name: string;
@@ -58,6 +60,7 @@ export interface AgentImportPreview {
   warnings: string[];
 }
 export interface AgentControlHost {
+  models?: ModelHost;
   snapshot(): Promise<ControlSnapshot>;
   save(
     id: string,
@@ -75,6 +78,7 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  models?: AgentModels;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
@@ -103,6 +107,7 @@ export const agentControlUnavailable =
 export function createAgentControl(
   host: AgentControlHost | null,
 ): AgentControl & { dispose(): void } {
+  const models = createAgentModels(host?.models);
   let state: AgentControlState = {
     status: host ? "idle" : "unavailable",
     data: null,
@@ -181,6 +186,7 @@ export function createAgentControl(
   }
 
   return {
+    models,
     snapshot: () => state,
     subscribe(listener) {
       listeners.add(listener);
@@ -206,6 +212,7 @@ export function createAgentControl(
       run((native) => native.commitImport(token, ids), ready),
     dispose() {
       disposed = true;
+      models.dispose();
       generation++;
       listeners.clear();
     },

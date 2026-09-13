@@ -4,6 +4,11 @@ import { createAgentControl, type AgentControlHost } from "./control";
 export function nativeAgentControlHost(): AgentControlHost | null {
   if (!isTauri()) return null;
   return {
+    models: {
+      begin: () => invoke("agent_models_begin"),
+      run: (ticket, request) => invoke("agent_models_run", { ticket, request }),
+      cancel: (ticket) => invoke("agent_models_cancel", { ticket }),
+    },
     snapshot: () => invoke("agent_control_snapshot"),
     save: (id, expectedRevision, edit) =>
       invoke("agent_control_save", { id, expectedRevision, edit }),

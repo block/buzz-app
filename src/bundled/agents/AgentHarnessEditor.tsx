@@ -1,14 +1,26 @@
 import { useState } from "react";
-import type { ControlSnapshot } from "../../features/agents/control";
+import type {
+  AgentControl,
+  ControlSnapshot,
+} from "../../features/agents/control";
+import { AgentModelPicker } from "./AgentModelPicker";
 import type { AgentDraft } from "./agent-edit";
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
 export function AgentHarnessEditor({
   draft,
+  id,
+  savedRevision,
+  control,
+  defaults,
   options,
   onChange,
 }: {
   draft: AgentDraft;
+  id: string;
+  savedRevision: number;
+  control: AgentControl;
+  defaults: ControlSnapshot["databricksDefaults"];
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
@@ -62,17 +74,17 @@ export function AgentHarnessEditor({
           ]}
           onChange={(provider) => onChange({ provider })}
         />
-        <label className="agent-control-field">
-          Model
-          <input
-            value={draft.model}
-            onChange={(event) => onChange({ model: event.target.value })}
-          />
-        </label>
       </div>
+      <AgentModelPicker
+        savedRevision={savedRevision}
+        id={id}
+        draft={draft}
+        control={control}
+        defaults={defaults}
+        onChange={(model) => onChange({ model })}
+      />
       <p className="text-body-sm text-secondary">
-        Model entry stays manual; available models have not been queried. Saved
-        environment overrides take precedence over Model and Provider:
+        Saved environment overrides take precedence over Model and Provider:
         BUZZ_AGENT_MODEL / BUZZ_AGENT_PROVIDER for buzz-agent, GOOSE_MODEL /
         GOOSE_PROVIDER for Goose. Blank selectors do not clear those overrides.
         ACP uses the same effective model.

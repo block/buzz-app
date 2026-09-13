@@ -171,6 +171,10 @@ export function AgentEditor({
               />
             </label>
             <AgentHarnessEditor
+              id={agent.id}
+              savedRevision={agent.revision}
+              control={control}
+              defaults={state.data?.databricksDefaults}
               draft={current}
               options={state.data?.harnessOptions ?? []}
               onChange={change}

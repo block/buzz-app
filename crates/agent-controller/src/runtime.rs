@@ -226,6 +226,12 @@ struct Running {
     process: Process,
     revision: u64,
 }
+/// Deliberately not serializable: only the native connection owner consumes it.
+pub struct ModelContext {
+    pub host: Option<String>,
+    pub filter: Option<String>,
+    pub model_overridden: bool,
+}
 pub struct Controller {
     pub(crate) store: Store,
     credentials: Arc<dyn Credentials>,
@@ -276,6 +282,45 @@ impl Controller {
             }
         }
         Ok(snapshot)
+    }
+    /// Native-only catalog configuration. Never serialize environment values or
+    /// lend runtime credentials to model discovery. Resolve an unsaved edit on a
+    /// clone using the same validation and precedence as Save/runtime.
+    pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
+        let mut agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err(
+                "Saved settings changed; discard or reconcile the draft before connecting".into(),
+            );
+        }
+        agent.apply(edit)?;
+        if Path::new(&agent.harness.command)
+            .file_name()
+            .and_then(|s| s.to_str())
+            != Some("buzz-agent")
+        {
+            return Err("Model discovery requires the Buzz Agent harness".into());
+        }
+        let provider = agent
+            .environment
+            .get("BUZZ_AGENT_PROVIDER")
+            .unwrap_or(&agent.harness.provider);
+        if provider != "databricks_v2" {
+            return Err("Effective provider is not Databricks v2; check the provider and environment overrides".into());
+        }
+        if agent.environment.contains_key("DATABRICKS_TOKEN") {
+            return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
+        }
+        Ok(ModelContext {
+            host: agent.environment.get("DATABRICKS_HOST").cloned(),
+            filter: agent.environment.get("DATABRICKS_MODEL_FILTER").cloned(),
+            model_overridden: agent.environment.contains_key("BUZZ_AGENT_MODEL"),
+        })
     }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<ControlSnapshot> {
         self.store.save(id, revision, edit)?;

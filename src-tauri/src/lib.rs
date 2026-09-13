@@ -1,4 +1,6 @@
+mod agent_models;
 mod agents;
+use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 use agents::{
     agent_control_action, agent_control_import_commit, agent_control_import_preview,
     agent_control_save, agent_control_snapshot, AgentHost,
@@ -165,7 +167,10 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_save,
         agent_control_action,
         agent_control_import_preview,
-        agent_control_import_commit
+        agent_control_import_commit,
+        agent_models_begin,
+        agent_models_cancel,
+        agent_models_run
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -196,6 +201,12 @@ pub fn run() {
                     .join(".buzz");
                 Ok((root, legacy, workspace))
             })();
+            app.manage(ModelHost::new(
+                paths
+                    .as_ref()
+                    .map(|(root, _, _)| root.join("databricks-connections"))
+                    .map_err(Clone::clone),
+            ));
             app.manage(AgentHost::open(paths));
             Ok(())
         })
@@ -205,6 +216,9 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
+            if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<ModelHost>().shutdown();
+            }
             if matches!(event, tauri::RunEvent::Exit)
                 && app.state::<AgentHost>().shutdown().is_err()
             {

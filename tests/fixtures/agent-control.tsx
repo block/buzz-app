@@ -8,7 +8,49 @@ import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKe
 import "../../src/shared/styles/globals.css";
 
 const fixture = controlFixture();
+const modelCalls: string[] = [];
+let modelMode = "success";
+let releaseModels: (() => void) | undefined;
+fixture.host.models = {
+  begin: async () => {
+    modelCalls.push("begin");
+    return modelCalls.length;
+  },
+  cancel: async () => {
+    modelCalls.push("cancel");
+    releaseModels?.();
+  },
+  run: async (_ticket, request) => {
+    modelCalls.push(request.action);
+    if (modelMode === "wait")
+      await new Promise<void>((resolve) => {
+        releaseModels = resolve;
+      });
+    if (modelMode === "error") throw "Synthetic connection failure.";
+    return {
+      host: request.host,
+      models:
+        modelMode === "empty" || request.action === "disconnect"
+          ? []
+          : [
+              { id: "catalog.schema.real-model", name: "Friendly Model" },
+              { id: "endpoint-two", name: "Other Model" },
+            ],
+      modelOverridden: false,
+      disconnected: request.action === "disconnect",
+    };
+  },
+};
 const control = createAgentControl(fixture.host);
+Object.assign(window, {
+  agentModelsFixture: {
+    calls: modelCalls,
+    mode: (value: string) => {
+      modelMode = value;
+    },
+    release: () => releaseModels?.(),
+  },
+});
 Object.assign(window, { agentControlFixture: { ...fixture, control } });
 function Fixture() {
   useKeyboardFocusVisibility();

@@ -10,6 +10,7 @@ name = "buzz_foundation_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+url = "2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
@@ -17,10 +18,14 @@ tauri = { version = "2", features = [] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+buzz-agent = { git = "https://github.com/block/buzz.git", rev = "84b0fd04b7831657df2873c3a835412f47cebb03" }
+tokio = { version = "1", features = ["sync", "time", "macros"] }
+sha2 = "0.10"
+url = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 
 [dev-dependencies]
 tempfile = "3"
-serde_json = "1"
 tauri = { version = "2", features = ["test"] }

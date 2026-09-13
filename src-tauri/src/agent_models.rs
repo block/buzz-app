@@ -1,0 +1,475 @@
+//! Native connection owner. No work on snapshot/render; only an explicit ticket
+//! admits auth/catalog work. This lock is independent of agent Save/Stop.
+use buzz_agent::{
+    auth::BrowserOpener, config::DatabricksModelFilter, databricks::DatabricksConnection,
+};
+use buzz_agent_controller::AgentEdit;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+use std::{
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
+use tauri_plugin_opener::OpenerExt;
+
+mod defaults {
+    include!(concat!(env!("OUT_DIR"), "/agent_defaults.rs"));
+}
+const CANCELLED: &str = "Connection request cancelled or expired";
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Defaults {
+    host: String,
+    filter: String,
+}
+pub(crate) fn defaults() -> Defaults {
+    Defaults {
+        host: defaults::HOST.into(),
+        filter: defaults::FILTER.into(),
+    }
+}
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct Request {
+    id: String,
+    expected_revision: u64,
+    edit: Option<AgentEdit>,
+    host: String,
+    filter: String,
+    action: Operation,
+}
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+enum Operation {
+    Connect,
+    Refresh,
+    Disconnect,
+}
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct Catalog {
+    host: String,
+    models: Vec<Model>,
+    model_overridden: bool,
+    disconnected: bool,
+}
+#[derive(Serialize)]
+struct Model {
+    id: String,
+    name: String,
+}
+struct Ticket {
+    id: u64,
+    abort: Option<tokio::task::AbortHandle>,
+    cancelled: bool,
+    created: std::time::Instant,
+}
+struct State {
+    root: Result<PathBuf, String>,
+    next: u64,
+    pending: Option<Ticket>,
+    closed: bool,
+}
+#[derive(Clone)]
+pub(crate) struct ModelHost {
+    state: Arc<Mutex<State>>,
+    factory: Arc<dyn Factory>,
+}
+impl ModelHost {
+    pub(crate) fn new(root: Result<PathBuf, String>) -> Self {
+        Self {
+            state: Arc::new(Mutex::new(State {
+                root,
+                next: 0,
+                pending: None,
+                closed: false,
+            })),
+            factory: Arc::new(StrictFactory),
+        }
+    }
+    fn begin(&self) -> Result<u64, String> {
+        let mut state = self.state.lock().map_err(|_| CANCELLED)?;
+        if state.closed {
+            return Err(CANCELLED.into());
+        }
+        if state
+            .pending
+            .as_ref()
+            .is_some_and(|p| p.abort.is_none() && p.created.elapsed() > Duration::from_secs(15))
+        {
+            state.pending = None;
+        }
+        if state.pending.is_some() {
+            return Err("Another model connection request is in progress; cancel it first".into());
+        }
+        state.next = state
+            .next
+            .checked_add(1)
+            .filter(|n| *n <= 9_007_199_254_740_991)
+            .ok_or(CANCELLED)?;
+        let id = state.next;
+        state.pending = Some(Ticket {
+            id,
+            abort: None,
+            cancelled: false,
+            created: std::time::Instant::now(),
+        });
+        Ok(id)
+    }
+    fn cancel(&self, ticket: u64) -> Result<(), String> {
+        let mut state = self.state.lock().map_err(|_| CANCELLED)?;
+        if let Some(pending) = state.pending.as_mut().filter(|p| p.id == ticket) {
+            pending.cancelled = true;
+            if let Some(abort) = &pending.abort {
+                // Keep admission occupied until JoinHandle confirms the future
+                // (including callback/credential work) has actually been dropped.
+                abort.abort();
+            } else {
+                state.pending = None;
+            }
+        }
+        Ok(())
+    }
+    pub(crate) fn shutdown(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.closed = true;
+            if let Some(pending) = state.pending.take() {
+                if let Some(abort) = pending.abort {
+                    abort.abort();
+                }
+            }
+        }
+    }
+    async fn run(
+        &self,
+        ticket: u64,
+        work: impl std::future::Future<Output = Result<Catalog, String>> + Send + 'static,
+    ) -> Result<Catalog, String> {
+        let task = {
+            let mut state = self.state.lock().map_err(|_| CANCELLED)?;
+            let pending = state
+                .pending
+                .as_mut()
+                .filter(|p| {
+                    p.id == ticket
+                        && p.abort.is_none()
+                        && !p.cancelled
+                        && p.created.elapsed() < Duration::from_secs(15)
+                })
+                .ok_or(CANCELLED)?;
+            let task = tokio::spawn(async move {
+                tokio::time::timeout(Duration::from_secs(180), work)
+                    .await
+                    .map_err(|_| "Connection timed out; retry explicitly".to_owned())?
+            });
+            pending.abort = Some(task.abort_handle());
+            task
+        };
+        // The supervisor owns retirement even if the IPC response future is
+        // dropped. Only the worker is abortable; admission reopens AFTER drop.
+        let owner = self.clone();
+        let (send, receive) = tokio::sync::oneshot::channel();
+        tokio::spawn(async move {
+            let result = task.await.map_err(|_| CANCELLED.to_owned()).and_then(|r| r);
+            let result = (|| {
+                let mut state = owner.state.lock().map_err(|_| CANCELLED)?;
+                if !state.pending.as_ref().is_some_and(|p| p.id == ticket) {
+                    return Err(CANCELLED.into());
+                }
+                let cancelled = state.pending.as_ref().is_some_and(|p| p.cancelled) || state.closed;
+                state.pending = None;
+                if cancelled {
+                    Err(CANCELLED.into())
+                } else {
+                    result
+                }
+            })();
+            let _ = send.send(result);
+        });
+        receive.await.map_err(|_| CANCELLED.to_owned())?
+    }
+    fn cache(&self, host: &str) -> Result<PathBuf, String> {
+        let state = self.state.lock().map_err(|_| CANCELLED)?;
+        let root = state.root.clone()?;
+        if !root.is_absolute() {
+            return Err("App connection storage must be absolute".into());
+        }
+        // Store owns the parent profile; refuse links at this boundary rather
+        // than following a redirected cache or deleting another profile's data.
+        let private = |path: &std::path::Path| -> Result<(), String> {
+            if path.exists() {
+                let meta = std::fs::symlink_metadata(path)
+                    .map_err(|_| "App connection storage unavailable")?;
+                if !meta.is_dir() || meta.file_type().is_symlink() {
+                    return Err("App connection storage is not a private directory".into());
+                }
+            } else {
+                std::fs::create_dir(path).map_err(|_| "App connection storage unavailable")?;
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+                    .map_err(|_| "App connection permissions unavailable")?;
+            }
+            Ok(())
+        };
+        let parent = root.parent().ok_or("App connection storage unavailable")?;
+        let meta =
+            std::fs::symlink_metadata(parent).map_err(|_| "App connection storage unavailable")?;
+        if !meta.is_dir() || meta.file_type().is_symlink() {
+            return Err("App connection profile unavailable".into());
+        }
+        private(&root)?;
+        let cache = root.join(format!("{:x}", Sha256::digest(host.as_bytes())));
+        if let Ok(meta) = std::fs::symlink_metadata(&cache) {
+            if !meta.is_dir() || meta.file_type().is_symlink() {
+                return Err("App workspace cache unavailable".into());
+            }
+        }
+        // The pinned helper appends this namespace. Validate it too: checking
+        // only the workspace parent would still follow a redirected child.
+        private(&cache)?;
+        private(&cache.join("databricks-strict"))?;
+        Ok(cache)
+    }
+}
+struct Opener<R: tauri::Runtime>(tauri::AppHandle<R>);
+impl<R: tauri::Runtime> BrowserOpener for Opener<R> {
+    fn open(&self, url: &str) -> Result<(), String> {
+        self.0
+            .opener()
+            .open_url(url, None::<&str>)
+            .map_err(|_| "Could not open the sign-in browser".into())
+    }
+}
+fn origin(raw: &str) -> Result<String, String> {
+    let invalid = || {
+        "Enter an HTTPS workspace origin without credentials, path, query or fragment".to_owned()
+    };
+    let authority = raw
+        .strip_prefix("https://")
+        .ok_or_else(invalid)?
+        .strip_suffix('/')
+        .unwrap_or(raw.strip_prefix("https://").unwrap());
+    let url = url::Url::parse(raw).map_err(|_| invalid())?;
+    if raw.trim() != raw
+        || raw.chars().any(char::is_control)
+        || raw.contains('\\')
+        || authority.contains(['/', '@'])
+        || url.host_str().is_none()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || url.path() != "/"
+    {
+        return Err(invalid());
+    }
+    Ok(url.as_str().trim_end_matches('/').into())
+}
+fn resolve(
+    request: &Request,
+    context: &buzz_agent_controller::ModelContext,
+) -> Result<(String, Option<DatabricksModelFilter>), String> {
+    if request.host.len() > 4096 || request.filter.len() > 4096 {
+        return Err("Connection settings are too long".into());
+    }
+    let host = origin(context.host.as_deref().unwrap_or(&request.host))?;
+    if context.host.is_some() && origin(&request.host)? != host {
+        return Err("Workspace conflicts with the saved/draft DATABRICKS_HOST override; use that workspace or edit the override".into());
+    }
+    if context
+        .filter
+        .as_ref()
+        .is_some_and(|v| v != &request.filter)
+    {
+        return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
+    }
+    let filter = DatabricksModelFilter::parse(Some(&request.filter))
+        .map_err(|_| "Invalid model filter".to_owned())?;
+    Ok((host, filter))
+}
+#[tauri::command]
+pub(crate) fn agent_models_begin(state: tauri::State<'_, ModelHost>) -> Result<u64, String> {
+    state.begin()
+}
+#[tauri::command]
+pub(crate) fn agent_models_cancel(
+    state: tauri::State<'_, ModelHost>,
+    ticket: u64,
+) -> Result<(), String> {
+    state.cancel(ticket)
+}
+#[tauri::command]
+pub(crate) async fn agent_models_run<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    state: tauri::State<'_, ModelHost>,
+    agents: tauri::State<'_, crate::agents::AgentHost>,
+    ticket: u64,
+    request: Request,
+) -> Result<Catalog, String> {
+    let host = state.inner().clone();
+    let controller = agents.inner().clone();
+    // Disconnect is recovery: changing provider or breaking saved settings must
+    // not trap credentials. Its explicit host selects ONLY this app's cache.
+    let prepared = if request.action == Operation::Disconnect {
+        controller
+            .ensure_open()
+            .and_then(|_| origin(&request.host))
+            .and_then(|workspace| {
+                host.cache(&workspace)
+                    .map(|cache| (false, workspace, None, cache))
+            })
+    } else {
+        // Short settings read only; never hold the controller across network waits.
+        request
+            .edit
+            .clone()
+            .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
+            .and_then(|edit| controller.model_context(&request.id, request.expected_revision, edit))
+            .and_then(|context| {
+                resolve(&request, &context)
+                    .map(|(workspace, filter)| (context.model_overridden, workspace, filter))
+            })
+            .and_then(|(overridden, workspace, filter)| {
+                host.cache(&workspace)
+                    .map(|cache| (overridden, workspace, filter, cache))
+            })
+    };
+    let factory = state.factory.clone();
+    host.run(ticket, async move {
+        let (model_overridden, workspace, filter, cache) = prepared?;
+        execute(
+            request.action,
+            workspace,
+            filter,
+            cache,
+            model_overridden,
+            factory,
+            Arc::new(Opener(app)),
+        )
+        .await
+    })
+    .await
+}
+
+// Production always uses the strict immutable helper. Tests replace only the
+// network/auth transport behind the same command admission and operation logic.
+trait Connection: Send + Sync {
+    fn connect(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
+    fn models(
+        &self,
+        filter: Option<DatabricksModelFilter>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<Vec<buzz_agent::catalog::ModelEntry>, String>>
+                + Send
+                + '_,
+        >,
+    >;
+}
+trait Factory: Send + Sync {
+    fn open(
+        &self,
+        workspace: &str,
+        cache: &std::path::Path,
+        opener: Arc<dyn BrowserOpener>,
+    ) -> Result<Box<dyn Connection>, String>;
+}
+struct StrictFactory;
+impl Factory for StrictFactory {
+    fn open(
+        &self,
+        workspace: &str,
+        cache: &std::path::Path,
+        opener: Arc<dyn BrowserOpener>,
+    ) -> Result<Box<dyn Connection>, String> {
+        DatabricksConnection::new(workspace, cache, opener)
+            .map(|c| Box::new(c) as Box<dyn Connection>)
+            .map_err(|_| "Could not open the app-isolated Databricks connection".into())
+    }
+}
+impl Connection for DatabricksConnection {
+    fn connect(
+        &self,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
+        Box::pin(async {
+            self.connect()
+                .await
+                .map_err(|_| "Sign-in was not completed. Cancel or retry Connect explicitly".into())
+        })
+    }
+    fn models(
+        &self,
+        filter: Option<DatabricksModelFilter>,
+    ) -> std::pin::Pin<
+        Box<
+            dyn std::future::Future<Output = Result<Vec<buzz_agent::catalog::ModelEntry>, String>>
+                + Send
+                + '_,
+        >,
+    > {
+        Box::pin(async {
+            self.discover_models(filter).await.map_err(|_| "Models unavailable. Check the workspace/filter or explicitly reconnect if authentication expired".into())
+        })
+    }
+}
+async fn execute(
+    action: Operation,
+    workspace: String,
+    filter: Option<DatabricksModelFilter>,
+    cache: PathBuf,
+    model_overridden: bool,
+    factory: Arc<dyn Factory>,
+    opener: Arc<dyn BrowserOpener>,
+) -> Result<Catalog, String> {
+    if action == Operation::Disconnect {
+        match std::fs::remove_dir_all(&cache) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(_) => return Err("Could not remove this app's connection credentials".into()),
+        }
+        return Ok(Catalog {
+            host: workspace,
+            models: vec![],
+            model_overridden,
+            disconnected: true,
+        });
+    }
+    let connection = factory.open(&workspace, &cache, opener)?;
+    if action == Operation::Connect {
+        connection.connect().await?;
+    }
+    let entries = connection.models(filter).await?;
+    if entries.len() > 10_000
+        || entries.iter().any(|m| {
+            m.id.len() > 512
+                || m.name.len() > 1024
+                || m.id.chars().any(char::is_control)
+                || m.name.chars().any(char::is_control)
+        })
+    {
+        return Err("Model catalog exceeds the app's safe display limits; use a narrower filter or custom ID".into());
+    }
+    // Upstream's explicitly labelled authenticated-empty defaults are NOT
+    // discovered IDs. Keep custom entry, show empty instead of guessing models.
+    let models = entries
+        .into_iter()
+        .filter(|m| !m.name.ends_with(" (default catalog)"))
+        .map(|m| Model {
+            id: m.id,
+            name: m.name,
+        })
+        .collect();
+    Ok(Catalog {
+        host: workspace,
+        models,
+        model_overridden,
+        disconnected: false,
+    })
+}
+
+#[cfg(test)]
+mod tests;

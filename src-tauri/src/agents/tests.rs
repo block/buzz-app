@@ -2,13 +2,24 @@ use super::*;
 use serde_json::{json, Value};
 use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime};
 
-fn fixture() -> (
+pub(crate) fn fixture() -> (
+    tempfile::TempDir,
+    AgentHost,
+    tauri::App<MockRuntime>,
+    tauri::WebviewWindow<MockRuntime>,
+) {
+    fixture_with_models(|dir| crate::agent_models::ModelHost::new(Ok(dir.join("models"))))
+}
+pub(crate) fn fixture_with_models(
+    models: impl FnOnce(&std::path::Path) -> crate::agent_models::ModelHost,
+) -> (
     tempfile::TempDir,
     AgentHost,
     tauri::App<MockRuntime>,
     tauri::WebviewWindow<MockRuntime>,
 ) {
     let dir = tempfile::tempdir().unwrap();
+    let model_host = models(dir.path());
     let host = AgentHost::open(Ok((
         dir.path().join("store"),
         dir.path().join("legacy"),
@@ -16,6 +27,7 @@ fn fixture() -> (
     )));
     let app = mock_builder()
         .manage(host.clone())
+        .manage(model_host)
         .invoke_handler(crate::commands())
         .build(mock_context(noop_assets()))
         .unwrap();
@@ -24,7 +36,7 @@ fn fixture() -> (
         .unwrap();
     (dir, host, app, view)
 }
-fn invoke(
+pub(crate) fn invoke(
     view: &tauri::WebviewWindow<MockRuntime>,
     cmd: &str,
     body: Value,
@@ -43,7 +55,7 @@ fn invoke(
     )
     .map(|body| body.deserialize().unwrap())
 }
-fn seed(dir: &std::path::Path) -> String {
+pub(crate) fn seed(dir: &std::path::Path) -> String {
     let id = format!(
         "{}-{}",
         "ab".repeat(32),

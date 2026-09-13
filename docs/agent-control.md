@@ -24,6 +24,8 @@ private key. Its synthetic enabled flag lets you exercise Stop, but the native
 launch gate prevents startup regardless of that flag. The directory remains
 printed and retained for inspection.
 `--prepare-only` prepares these files but does not launch an app or dev server.
+Native watching is disabled, so source changes cannot trigger an unattended native
+relaunch. Frontend Vite hot reload remains available; coordinate edits during sign-in.
 
 Open Agents, edit the sample name/prompt/harness/environment and Save. Reload the
 window to verify disk persistence; compare Saved revision. Invalid arguments or
@@ -35,8 +37,10 @@ not close old Buzz. No GUI acceptance is implied until a person tries this.
 Preview selected library is keyless/read-only but reads the explicitly selected
 old library. Skip preview to keep the exercise wholly synthetic. No background
 library scan, Keychain operation, live import, relay connection or live agent
-start/stop is performed by this launch path. Never put real credentials in sample
-fields. `BUZZ_AGENT_CONTROL_HOME` is a native process-only storage override, must
+start/stop is performed by this launch path. Databricks Connect is now an optional
+explicit browser sign-in; its app-isolated credentials persist under the printed
+temporary directory until Disconnect or manual cleanup. Never put real credentials
+in sample fields. `BUZZ_AGENT_CONTROL_HOME` is a native process-only storage override, must
 be absolute, and cannot select an import source. Normal startup uses this app's
 `app_data_dir/agent-controller`, never the old library as a destination.
 
@@ -81,7 +85,7 @@ fixture the controls simulate native responses, not agent execution.
   `control-service.ts` constructs it once at root app composition and exposes its
   `AgentControl` interface through Cordis injection. Only the app disposes the projection;
   the author contract exposes neither its disposal nor host construction.
-- `control-native.ts`: the five named native IPC commands. Browser returns an
+- `control-native.ts`: named native IPC commands, including explicit model-request tickets. Browser returns an
   unavailable capability; no fetch fallback, local storage, signing or runner.
 - `bundled/agents/AgentControlPanel.tsx`: compose with `{ control }` independently
   of selected community or relay connectivity. It owns only observation and UI
@@ -117,9 +121,9 @@ fixture the controls simulate native responses, not agent execution.
 - Harness and Provider choices come from native `harnessOptions` through the
   injected Core snapshot: Buzz Agent (`buzz-agent`) and Databricks v2
   (`databricks_v2`). These are editing suggestions, not installation or execution
-  evidence. There is no discovery/sign-in or copied settings subsystem. Custom
+  evidence. There is no copied settings subsystem. Custom
   command/provider values remain editable, including absolute paths; model entry
-  stays manual. Selecting a choice changes only its field, not arguments,
+  remains editable beside explicit Databricks Connect/search. Selecting a choice changes only its field, not arguments,
   model/provider defaults or write-only environment overrides. Advanced arguments
   remain a literal JSON array. Old native hosts without this metadata fall back
   to custom entry; restart the sample launcher to rebuild native and see the new
@@ -174,3 +178,93 @@ controller tests, bundled runtime verification and an attended packaged workflow
 with old Buzz stopped and an explicitly approved isolated identity. Live agents
 must not be cut over merely because this browser fixture works. The legacy reaper
 and cross-app duplicate listener risks need their own native acceptance evidence.
+
+## Databricks connection and searchable models (local preview)
+
+After independent auth-boundary review and an attended launch, open Agents → Edit
+agent and harness. Select Buzz Agent and Databricks v2, expand **Connect and search
+Databricks v2 models**, enter the workspace HTTPS origin explicitly, then click
+**Connect**. Complete browser sign-in only if prompted. Back in the app, search by
+label or ID and choose a result; the exact ID goes in Model. Save explicitly.
+Typing, blank/custom/current models, Save/Discard, arguments and write-only
+environment patches retain their existing semantics. No execution/import gate changes.
+
+- Native `agent_models.rs` owns one ticketed, 180-second operation lane, separate
+  from the controller lock. Only Connect can open a browser; Refresh is headless.
+  Cancel, context change, page unmount and root disposal retire the ticket. Native
+  admission remains occupied until the old task's future has actually dropped.
+- The immutable `buzz-agent` dependency is pinned to
+  `84b0fd04b7831657df2873c3a835412f47cebb03`; no local-checkout dependency. It owns
+  OAuth PKCE, redirects/destination enforcement, refresh, catalog parsing/filtering
+  and per-page bounds. Native rejects over 10,000 projected models or oversized IDs.
+- Credentials remain under this app's `agent-controller/databricks-connections/`
+  plus a canonical-host SHA256 directory and the helper's strict namespace.
+  Unix directories are owner-only; helper token files are owner-only. They are
+  **not Keychain-encrypted**; other code running as your OS user can access them.
+  Non-Unix helper persistence remains memory-only. No old Buzz cache/Keychain or
+  ambient `DATABRICKS_HOST`/`DATABRICKS_TOKEN` is read.
+- Disconnect removes this app's cache for the explicitly displayed workspace;
+  it does not revoke browser sessions or tokens at Databricks. Cancel may happen
+  after successful authentication; use Disconnect if credentials should be removed.
+- Workspace/filter fields are lookup context, not saved harness settings. Saved or
+  draft environment overrides take precedence; conflicting inputs fail before
+  auth rather than querying a misleading catalog. An effective non-v2 provider,
+  token override or revision conflict also blocks connection. `BUZZ_AGENT_MODEL`
+  produces a visible override warning, never leaks its value or rewrites it.
+- Catalogs may be partial; no completeness claim. The pinned helper's labelled
+  authenticated-empty defaults are omitted here because they are not discovered
+  IDs. Empty/error states keep manual entry available.
+- Private build configuration may supply only nonsecret defaults through
+  `BUZZ_BUILD_AGENT_ENV` (`DATABRICKS_HOST`, `DATABRICKS_MODEL_FILTER`; the existing
+  `DATABRICKS_MODEL` convention is ignored, never chosen automatically). Unknown
+  or secret keys fail the build. Unset means no workspace. Default sample launch
+  scrubs this input and all ambient Databricks variables. No private release
+  pipeline changes are included; enter a workspace explicitly for this preview.
+
+This is a source/native-build checkpoint, not a signed package or live credential
+acceptance. Synthetic IPC/browser coverage and upstream SSO harness evidence do not
+replace an attended app Connect → models → Save → reload → Disconnect try.
+
+
+### Attended connection checklist and cleanup
+
+Keep old Buzz running. Use the native launcher above, not the browser-only fixture
+or the upstream standalone SSO harness. No Accessibility/screen automation is
+required: the person opens the page and clicks Connect. If port 1445 is occupied,
+stop only the preview server you own; do not terminate another app.
+
+1. Open **Agents → Sample agent (not runnable) → Edit agent and harness**.
+   The sample already selects Buzz Agent / Databricks v2.
+2. Expand **Connect and search Databricks v2 models**. Enter the intended HTTPS
+   workspace origin, without a token/path/query. No `.env.local` edit is needed.
+3. Before Connect, confirm the Model remains `sample-model`. Optionally click
+   Refresh: an empty app cache must report unavailable, without a browser.
+4. Click **Connect**, approve browser sign-in if asked, and return to the app.
+   Search by name or ID. Choose explicitly; verify Model receives the exact ID.
+   Search/loading alone must not change it. Save, reload this same window, and
+   confirm the saved ID/revision. Re-running the launcher creates a NEW sample.
+5. Re-enter the same workspace after reload (lookup context is not saved), then
+   **Refresh models**. It may refresh this app's token, but must never open sign-in.
+   Try a custom ID or blank Model and refresh; each value must stay untouched.
+6. For cancellation, click Connect/Refresh, then **Cancel connection** while pending.
+   A cancelled browser tab may remain open; close it yourself. Save/Stop are not
+   held behind network waits. A brief busy error on immediate retry means the old
+   task is still dropping; retry explicitly.
+7. Enter the original workspace and **Disconnect**. Confirm removal, then Refresh
+   should fail headlessly. Changing the workspace does not delete earlier caches.
+   Disconnect each used workspace or remove the whole disposable profile below.
+8. Quit **Buzz Agent Editor Preview**, then Ctrl+C its launch terminal if still
+   running. Keep old Buzz open. Do not delete files while the preview is running.
+
+The terminal prints `Disposable native settings: <temporary-profile>/agents`.
+Credentials are under that path at
+`databricks-connections/<SHA256-of-canonical-origin>/databricks-strict/`.
+After quitting, inspect the printed **temporary profile parent** in Finder and move
+that `buzz-agent-editor-*` folder to Trash. It contains this disposable sample,
+plugin profile and any remaining Databricks cache; never remove the old Buzz
+library or the repository. This does not sign out the browser or revoke provider
+tokens. The separate preview WebView may retain noncredential appearance state.
+
+App native Connect/refresh-after-reload/Disconnect acceptance is still pending.
+The source was built and synthetic native commands were exercised; no claim is
+made that a person has completed this checklist in the new app yet.

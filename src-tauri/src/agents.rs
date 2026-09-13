@@ -33,6 +33,7 @@ pub(crate) struct Snapshot {
     data: ControlSnapshot,
     import_available: bool,
     harness_options: &'static [HarnessOption],
+    databricks_defaults: crate::agent_models::Defaults,
 }
 impl Snapshot {
     fn from(data: ControlSnapshot) -> Self {
@@ -40,6 +41,7 @@ impl Snapshot {
             data,
             import_available: false,
             harness_options: HARNESS_OPTIONS,
+            databricks_defaults: crate::agent_models::defaults(),
         }
     }
 }
@@ -123,6 +125,17 @@ impl AgentHost {
         }
         operation(host)
     }
+    pub(crate) fn ensure_open(&self) -> Result<(), String> {
+        self.with(|_| Ok(()))
+    }
+    pub(crate) fn model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        edit: AgentEdit,
+    ) -> Result<buzz_agent_controller::ModelContext, String> {
+        self.with(|host| host.controller.model_context(id, revision, edit))
+    }
     pub(crate) fn shutdown(&self) -> Result<(), String> {
         let mut state = self
             .0
@@ -195,4 +208,4 @@ pub(crate) async fn agent_control_import_commit(
 }
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

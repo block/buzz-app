@@ -31,7 +31,7 @@ await writeFile(
             command: "buzz-agent",
             args: [],
             model: "sample-model",
-            provider: "sample-provider",
+            provider: "databricks_v2",
           },
           environment: { SAMPLE_VALUE: "write-only-example" },
           revision: 1,
@@ -77,18 +77,18 @@ console.log(
   "Safe: edit/save the sample and reload to verify persistence. Stop disables its synthetic enabled intent.",
 );
 console.log(
-  "Start/Restart and credential import are disabled. No live relay, Keychain or agent launch.",
+  "Start/Restart and identity credential import are disabled. No live relay, Keychain or agent launch. Databricks Connect is optional and may open a browser only after your click.",
 );
 console.log(
   "Preview selected library is read-only but reads your chosen old library; skip it to keep this test wholly synthetic.",
 );
 console.log(
-  "The directory is retained for inspection; delete it yourself when finished.",
+  "Databricks credentials, if you explicitly connect, persist only under this temporary settings directory. Disconnect removes this app/workspace cache, not browser/provider sessions. Delete the directory yourself when finished.",
 );
 if (!process.argv.includes("--prepare-only")) {
   const env = Object.fromEntries(
     Object.entries(process.env).filter(
-      ([key]) => !/^(BUZZ_|BUZZODZ_|NOSTR_|VITE_)/.test(key),
+      ([key]) => !/^(BUZZ_|BUZZODZ_|NOSTR_|VITE_|DATABRICKS_)/.test(key),
     ),
   );
   env.BUZZ_AGENT_CONTROL_HOME = agents;
@@ -96,7 +96,7 @@ if (!process.argv.includes("--prepare-only")) {
   env.BUZZODZ_PROFILE = "agent-preview";
   const child = spawn(
     join(root, "bin/pnpm"),
-    ["exec", "tauri", "dev", "--config", config],
+    ["exec", "tauri", "dev", "--no-watch", "--config", config],
     { cwd: root, env, stdio: "inherit" },
   );
   child.on("error", () => {

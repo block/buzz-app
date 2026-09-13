@@ -33,3 +33,36 @@ it("all command names and camelCase payloads match the native contract", async (
     ],
   ]);
 });
+it("model operations use explicit ticket commands and no construction-time invocation", async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(isTauri).mockReturnValue(true);
+  const models = nativeAgentControlHost()?.models;
+  expect(invoke).not.toHaveBeenCalled();
+  const request = {
+    id: "sample",
+    expectedRevision: 1,
+    edit: {
+      name: "Sample",
+      systemPrompt: "",
+      workspace: "/tmp",
+      harness: {
+        command: "buzz-agent",
+        args: [],
+        model: "",
+        provider: "databricks_v2",
+      },
+      environment: {},
+    },
+    host: "https://example.com",
+    filter: "",
+    action: "refresh" as const,
+  };
+  await models?.begin();
+  await models?.run(12, request);
+  await models?.cancel(12);
+  expect(vi.mocked(invoke).mock.calls).toEqual([
+    ["agent_models_begin"],
+    ["agent_models_run", { ticket: 12, request }],
+    ["agent_models_cancel", { ticket: 12 }],
+  ]);
+});

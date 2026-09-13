@@ -19,6 +19,7 @@ import {
 } from "./read-state-storage";
 import { createUnread } from "./unread";
 import type { IncomingListener, IncomingMessage } from "./incoming";
+import { objectBody } from "./body";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createEmojiDirectory } from "./emoji-directory";
@@ -960,7 +961,7 @@ export function createRelaySession(
                   ([name]) => name === "h",
                 );
                 return (
-                  event.kind === 9 &&
+                  (event.kind === 9 || event.kind === 40002) &&
                   event.pubkey !== transport.viewer &&
                   destinations.length === 1 &&
                   destinations[0]?.[1] === provenance.channelId &&
@@ -993,13 +994,17 @@ export function createRelaySession(
         visible.flatMap((event) => {
           if (!candidates.has(event.id) || delivered.has(event.id)) return [];
           delivered.add(event.id);
+          const body =
+            event.kind === 40002 ? objectBody(event.content) : undefined;
+          const content =
+            typeof body?.content === "string" ? body.content : event.content;
           return [
             Object.freeze({
               channelId: provenance.channelId as string,
               messageId: event.id,
               createdAt: event.created_at,
               authorId: event.pubkey,
-              previewContent: event.content.slice(0, 4096),
+              previewContent: content.slice(0, 4096),
             }),
           ];
         }),

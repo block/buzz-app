@@ -128,6 +128,8 @@ export function bindMessageNotifications(
             if (
               sync.status === "loading" ||
               sync.status === "error" ||
+              (sync.capability !== "unsupported" &&
+                sync.completeness === "unknown") ||
               attention.status === "unknown"
             )
               return "wait";
@@ -148,7 +150,19 @@ export function bindMessageNotifications(
     stopIncoming = owned.subscribeIncoming(receive);
     // Only reconsider retained live candidates; readiness is not an event source.
     stopSync = owned.unread.subscribeSync(() => notifications.revalidate());
-    stopAccess = owned.channels.subscribeList(() => notifications.revalidate());
+    // App-global ownership: Channels may not be mounted. Start its shared
+    // observation only after discovery, so an empty startup roster cannot
+    // consume the unread owner's one-shot evidence repair.
+    const accessChanged = () => {
+      notifications.revalidate();
+      if (
+        owned.channels.list().status === "ready" &&
+        owned.unread.sync().capability !== "unsupported"
+      )
+        void owned.unread.ensure();
+    };
+    stopAccess = owned.channels.subscribeList(accessChanged);
+    accessChanged();
   };
   const stop = communities.relay.subscribe(update);
   const stopCommunities = communities.subscribe(update);

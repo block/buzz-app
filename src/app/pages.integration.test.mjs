@@ -142,10 +142,10 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     const agentChannels = services.pages
       .snapshot()
       .find((page) => page.pluginId === "buzz.agent-channels");
-    assert.equal(agentChannels.title, "Agent channels");
+    assert.equal(agentChannels.title, "Agent dashboard");
     assert.match(
       renderToStaticMarkup(createElement(agentChannels.component)),
-      /Connect to a community to see where your agents work/,
+      /Connect to a community to see where your agents are working/,
     );
     await services.plugins.change("disable", "buzz.agent-channels");
     assert.equal(

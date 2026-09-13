@@ -1,18 +1,18 @@
-# Agent channels: selected-community relationship view
+# Agent dashboard: selected-community relationship view
 
 ## First slice
 
-Agent channels is a bundled page plugin that lists authorized channels in the
+Agent dashboard is a bundled page plugin that gives an agent-first view of
 currently selected community where an identity from the current Buzz agent
 library is a member now or has authored activity returned by a finite verified
 relay read. It is a relationship view, not a directory, ownership proof,
 runtime monitor, or cross-community index.
 
-The plugin injects only `pages` and `relay`. It reuses the session-owned agent
-library, identity archive evidence, channel roster, verified finite reader and
-media helper. It does not create a relay connection, cache, outbox or host route.
-Switching community or reconnecting remounts its session-owned subtree using
-scope plus generation.
+The plugin injects `pages`, `relay`, and the shared external-object provider
+registry. It reuses the session-owned agent library, identity archive evidence,
+channel roster, verified finite reader and media helper. It does not create a
+relay connection, cache, outbox or host route. Switching community or
+reconnecting remounts its session-owned subtree using scope plus generation.
 
 ## Relationship model
 
@@ -31,8 +31,38 @@ authored by exact library identity pubkeys and carrying an authorized channel's
 `h` tag; pending, unknown-delivery and failed local outbox events are excluded.
 Display names never establish a relationship.
 
-The list is one projection of this model. A later node-and-edge visualization can
-consume the same nodes and edges without changing relay ownership or scraping UI.
+## Dashboard projection
+
+The page projects the relationship records into one row per agent, ordered by
+current channel membership and recent observed activity. Selecting an agent
+centers its avatar in a bounded relationship map: channel nodes form the first
+ring, and other agent avatars connect through channels they share with the
+selected agent. The map deliberately limits visible nodes for legibility; the
+selected agent's full channel list remains available below it and supplies the
+non-visual equivalent for keyboard, touch and narrow layouts.
+
+The dashboard summary retains current/past/unknown membership, sampled message
+count and last observed activity. It does not infer presence, running state,
+task status or complete lifetime work from messages.
+
+## Pull request outcomes
+
+The optional **Outcomes** view extracts canonical pull request links directly
+from eligible agent-authored activity and retains each signed message ID,
+channel, agent and share timestamp as association evidence. Repeated shares of
+the same pull request are grouped rather than double-counted.
+
+External details come through `features/objects`, a typed contribution registry
+that is separate from panel presentation. The GitHub plugin registers both its
+existing panel and an object provider, so Agent dashboard never imports GitHub
+implementation code. The provider supplies current public state, title, author,
+branch and change facts with bounded four-at-a-time loading; disabling GitHub
+removes both capabilities. Private or unavailable GitHub objects remain visible
+from their signed Buzz reference with a truthful enrichment error.
+
+A shared link establishes observable association, not pull request authorship or
+causation. The UI therefore says **shared by** and **associated work**, never
+claims that an agent authored a pull request or caused its merge.
 
 ## Bounds and truthful states
 

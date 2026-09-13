@@ -55,6 +55,8 @@
   --color-warning: var(--warning);
   --color-warning-surface: var(--warning-surface);
   --color-warning-border: var(--warning-border);
+  --color-success: var(--success);
+  --color-success-surface: var(--success-surface);
   --color-overlay: var(--overlay);
   --color-toggle-track: var(--toggle-track);
   --color-toggle-thumb: var(--toggle-thumb);

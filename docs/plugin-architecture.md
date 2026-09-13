@@ -42,13 +42,14 @@ app/                    host, startup, navigation, Settings
 plugins/                installation, lifecycle, contribution ownership
 features/pages/         page contract and host rendering
 features/panels/        target resolution, launcher contract and reusable card/frame
+features/objects/       typed external-object identification and data loading
 features/shortcuts/     in-app binding dispatch, focus rules and plugin ownership
 features/relay/         shared channel data, queries, profiles and durable delivery
 features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
 bundled/projects/       title-only Projects page scaffold
 bundled/agents/         read-only current-Buzz agent library page
-bundled/agent-channels/ relationship-first current-community channel list
+bundled/agent-channels/ agent-first dashboard and relationship map
 features/agents/        shared session-owned local library view
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin companion panel and its snake launcher
@@ -84,16 +85,20 @@ and returns false after the originating opening, channel, session or host
 presentation retires. This is not a global navigation API or an access grant.
 Channel-header launchers use the separate public `channelContext` metadata
 contract described below; launcher/fallback panels need not have either context.
-A plugin that needs shared data declares `relay` in its
-injection list and passes those capabilities to its components using a closure,
-just as the bundled Channels page does. The conversation preview adds only the two demonstrated component surfaces.
+A page that needs integration facts without panel UI uses
+`objects.resolve(target)` / `objects.load(target, signal)`; providers own
+recognition and bounded external loading, and disappear when their plugin is
+disabled. A plugin that needs shared data declares `relay` in its injection list
+and passes those capabilities to its components using a closure, just as the
+bundled Channels page does. The conversation preview adds only the two
+demonstrated component surfaces.
 
 Channels owns its selected channel and docked target. The panel view isolates
 render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, Agent channels, GitHub, Bestie, Emoji, Mentions, Profiles and Terminal. Projects
+The initial distribution contains Channels, Projects, Agents, Agent dashboard, GitHub, Bestie, Emoji, Mentions, Profiles and Terminal. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.

@@ -5,7 +5,7 @@ settings:
   excludeLinksFromLockfile: false
 
 patchedDependencies:
-  virtua@0.51.0: d4a70ea6f8e1b7cc52b298606fb7c63d0db0ea027e37e4e5c0a2a2130e6ccca7
+  virtua@0.51.0: 43caf8bc7b925d94039b441fce931deffc5dcc97fc0431f3893d87a11d55c237
 
 importers:
 
@@ -79,7 +79,7 @@ importers:
         version: 4.0.1
       virtua:
         specifier: 0.51.0
-        version: 0.51.0(patch_hash=d4a70ea6f8e1b7cc52b298606fb7c63d0db0ea027e37e4e5c0a2a2130e6ccca7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
+        version: 0.51.0(patch_hash=43caf8bc7b925d94039b441fce931deffc5dcc97fc0431f3893d87a11d55c237)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
     devDependencies:
       '@biomejs/biome':
         specifier: 2.5.12
@@ -2958,7 +2958,7 @@ snapshots:
       '@types/unist': 3.0.3
       vfile-message: 4.0.3
 
-  virtua@0.51.0(patch_hash=d4a70ea6f8e1b7cc52b298606fb7c63d0db0ea027e37e4e5c0a2a2130e6ccca7)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
+  virtua@0.51.0(patch_hash=43caf8bc7b925d94039b441fce931deffc5dcc97fc0431f3893d87a11d55c237)(react-dom@19.2.8(react@19.2.8))(react@19.2.8):
     optionalDependencies:
       react: 19.2.8
       react-dom: 19.2.8(react@19.2.8)

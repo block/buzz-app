@@ -1,100 +1,251 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { expect, it } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-// Exercise the actual pinned ESM bundle that Vite imports, not a copied model.
-// Private names are deliberately version-specific: updating Virtua requires
-// reviewing/removing the patch and this extraction together.
+// Exercise the installed React ESM's actual store, observer and element driver.
+// Names are deliberately version-coupled: review this extraction on upgrade.
 const source = readFileSync(
   fileURLToPath(import.meta.resolve("virtua")),
   "utf8",
 );
 const start = source.indexOf("var {min:");
-const end = source.indexOf("}, C = e => {");
+const end = source.indexOf("}, W = (e, t) => {");
 if (start < 0 || end < 0)
-  throw new Error("Review Virtua store extraction after version change");
-const helper = source.includes("const isMacWebKit =")
-  ? source.slice(source.indexOf("const isMacWebKit ="), start)
-  : "";
+  throw new Error("Review Virtua driver extraction after version change");
+const helperStart = source.indexOf("const isMacWebKit =");
+const helper = helperStart >= 0 ? source.slice(helperStart, start) : "";
 const core = source.slice(start, end + 1);
 
-function setup(
+beforeEach(() => vi.useFakeTimers());
+afterEach(() => vi.useRealTimers());
+
+function setup({
   platform = "MacIntel",
   vendor = "Apple Computer, Inc.",
   touch = 0,
   agent = "Macintosh",
-) {
-  const { store, layout } = new Function(
+  horizontal = false,
+  direction = "ltr",
+  offset = 1300,
+} = {}) {
+  const {
+    store: createStore,
+    layout,
+    driver: createDriver,
+  } = new Function(
     "navigator",
-    `${helper}${core};return {store:y,layout:R};`,
-  )({ platform, vendor, maxTouchPoints: touch, userAgent: agent });
-  const value = store(layout(20, 100));
-  value.W(4, 500); // viewport measurement
-  value.W(1, 1300); // real driver scroll observation establishes direction
-  return value;
+    "getComputedStyle",
+    `${helper}${core};return {store:y,layout:R,driver:E};`,
+  )({ platform, vendor, maxTouchPoints: touch, userAgent: agent }, () => ({
+    direction,
+  }));
+  const store = createStore(layout(20, 100));
+  const declarations = new Map();
+  const style = {
+    getPropertyValue: (name) => declarations.get(name)?.[0] ?? "",
+    getPropertyPriority: (name) => declarations.get(name)?.[1] ?? "",
+    setProperty: (name, value, priority = "") =>
+      declarations.set(name, [value, priority]),
+    removeProperty: (name) => declarations.delete(name),
+  };
+  const viewport = new EventTarget();
+  const calls = [];
+  const axis = horizontal ? "overflow-x" : "overflow-y";
+  const key = horizontal ? "scrollLeft" : "scrollTop";
+  const option = horizontal ? "left" : "top";
+  Object.assign(viewport, {
+    style,
+    offsetParent: {},
+    scrollTop: 0,
+    scrollLeft: 0,
+    ownerDocument: {
+      defaultView: {
+        ResizeObserver: class {
+          observe() {}
+          unobserve() {}
+          disconnect() {}
+        },
+      },
+    },
+  });
+  viewport[key] = direction === "rtl" ? -offset : offset;
+  for (const method of ["scrollTo", "scrollBy"])
+    viewport[method] = (options) => {
+      calls.push({
+        method,
+        options,
+        overflow: style.getPropertyValue(axis),
+        priority: style.getPropertyPriority(axis),
+      });
+      viewport[key] =
+        (method === "scrollBy" ? viewport[key] : 0) + options[option];
+    };
+  store.W(4, 500); // measured viewport
+  store.W(1, offset); // observed native scrolling
+  const driver = createDriver(store, horizontal);
+  driver.D({}, viewport);
+  return {
+    store,
+    driver,
+    viewport,
+    style,
+    axis,
+    calls,
+    prepend(length = 40) {
+      store.W(5, [length, true]);
+      driver.J();
+    },
+  };
 }
 
-it("defers prepend correction on macOS WebKit with matching row/scroll extent", () => {
-  const store = setup();
-  store.W(5, [40, true]);
-  expect(store.L()[0]).toBe(0);
-  expect(store.u(39) + store.h(39)).toBe(2000);
-  expect(store.t()).toBe(2000);
-  store.W(2); // existing observer's scroll-idle boundary, not native acknowledgement
-  expect(store.t()).toBe(4000);
-  expect(store.u(39) + store.h(39)).toBe(4000);
-  expect(store.L()[0]).toBe(2000);
-  expect(store.L()[0]).toBe(0); // no duplicate correction
+it("interrupts the actual correction before its relative DOM write, even after inferred idle", () => {
+  const c = setup();
+  c.store.W(2); // observer idle is NOT native momentum completion
+  c.prepend();
+  expect(c.calls).toEqual([
+    {
+      method: "scrollBy",
+      options: { top: 2000, behavior: "instant" },
+      overflow: "hidden",
+      priority: "important",
+    },
+  ]);
+  expect(c.viewport.scrollTop).toBe(3300);
+  expect(c.store.t()).toBe(4000); // no deferred extent/store policy
+  expect(c.store.u(39)).toBe(3900);
+  c.driver.J();
+  expect(c.calls).toHaveLength(1);
+  vi.runAllTimers();
+  expect(c.style.getPropertyValue(c.axis)).toBe("");
+  expect(vi.getTimerCount()).toBe(0);
 });
 
-it("reversal cannot expose extra trailing extent while compensation is pending", () => {
-  const store = setup();
-  store.W(5, [40, true]);
-  store.W(1, 1500); // reverse to the old bottom
-  expect(store.t() - store.o()).toBe(1500);
-  expect(store.u(39) + store.h(39)).toBe(store.t());
+it("does not defer while scrolling or interrupt without a correction", () => {
+  const c = setup();
+  c.driver.J();
+  expect(c.calls).toHaveLength(0);
+  expect(vi.getTimerCount()).toBe(0);
+  c.prepend();
+  expect(c.calls).toHaveLength(1);
+  expect(c.store.t()).toBe(4000);
+  expect(c.store.L()[0]).toBe(0);
 });
 
-it("positive and negative measured changes preserve row and extent accounting", () => {
-  for (const height of [50, 150]) {
-    const store = setup();
-    store.W(3, [[0, height]]);
-    expect(store.L()[0]).toBe(0);
-    expect(store.u(19) + store.h(19)).toBe(2000);
-    expect(store.t()).toBe(2000);
-    store.W(2);
-    expect(store.t()).toBe(1900 + height);
-    expect(store.L()[0]).toBe(height - 100);
+it("preserves absolute edge correction and RTL axis normalization", () => {
+  for (const config of [
+    { offset: 1500 },
+    { horizontal: true, direction: "rtl", offset: 1500 },
+  ]) {
+    const c = setup(config);
+    c.prepend();
+    expect(c.calls).toEqual([
+      {
+        method: "scrollTo",
+        options: {
+          [config.horizontal ? "left" : "top"]: config.horizontal
+            ? -3500
+            : 3500,
+          behavior: "instant",
+        },
+        overflow: "hidden",
+        priority: "important",
+      },
+    ]);
+    c.driver._();
   }
 });
 
-it("idle prepend still corrects immediately", () => {
-  const store = setup();
-  store.W(2);
-  store.W(5, [40, true]);
-  expect(store.t()).toBe(4000);
-  expect(store.L()[0]).toBe(2000);
+it("restores exact value and priority after overlapping corrections without touching the other axis", () => {
+  const c = setup();
+  c.style.setProperty("overflow-y", "scroll", "important");
+  c.style.setProperty("overflow-x", "clip", "");
+  c.prepend();
+  c.prepend(60);
+  expect(c.calls.map((call) => call.overflow)).toEqual(["hidden", "hidden"]);
+  expect(vi.getTimerCount()).toBe(1);
+  expect(c.style.getPropertyValue("overflow-x")).toBe("clip");
+  vi.runAllTimers();
+  expect(c.style.getPropertyValue("overflow-y")).toBe("scroll");
+  expect(c.style.getPropertyPriority("overflow-y")).toBe("important");
 });
 
-for (const [name, platform, vendor, touch, agent, deferred] of [
-  ["macOS Chrome", "MacIntel", "Google Inc.", 0, "Macintosh", false],
-  ["macOS Firefox", "MacIntel", "", 0, "Macintosh", false],
-  ["Linux WebKit", "Linux x86_64", "Apple Computer, Inc.", 0, "Linux", false],
-  [
-    "desktop-mode iPad",
-    "MacIntel",
-    "Apple Computer, Inc.",
-    5,
-    "Macintosh",
-    true,
-  ],
-  ["iPhone", "iPhone", "Apple Computer, Inc.", 5, "iPhone", true],
+it("restores immediately on dispose and permits a fresh lifecycle", () => {
+  const c = setup();
+  c.style.setProperty(c.axis, "auto");
+  c.prepend();
+  c.driver._();
+  expect(c.style.getPropertyValue(c.axis)).toBe("auto");
+  expect(c.style.getPropertyPriority(c.axis)).toBe("");
+  expect(vi.getTimerCount()).toBe(0);
+  c.driver.D({}, c.viewport);
+  c.prepend(60);
+  expect(c.calls.at(-1).overflow).toBe("hidden");
+  c.driver._();
+  expect(c.style.getPropertyValue(c.axis)).toBe("auto");
+});
+
+it("does not overwrite a later style owner", () => {
+  const c = setup();
+  c.prepend();
+  c.style.setProperty(c.axis, "clip", "important");
+  vi.runAllTimers();
+  expect(c.style.getPropertyValue(c.axis)).toBe("clip");
+  expect(c.style.getPropertyPriority(c.axis)).toBe("important");
+});
+
+it("interrupts positive and negative resize compensation at the same production driver", () => {
+  for (const size of [50, 150]) {
+    const c = setup();
+    c.store.W(3, [[0, size]]);
+    c.driver.J();
+    expect(c.calls).toEqual([
+      {
+        method: "scrollBy",
+        options: { top: size - 100, behavior: "instant" },
+        overflow: "hidden",
+        priority: "important",
+      },
+    ]);
+    c.driver._();
+  }
+});
+
+it("does not change the imperative scheduler's smooth or instant scrolling policy", async () => {
+  for (const smooth of [false, true]) {
+    const c = setup();
+    c.store.W(
+      3,
+      Array.from({ length: 20 }, (_, index) => [index, 100]),
+    );
+    await c.driver.V(() => 900, smooth);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(c.calls.at(-1).overflow).toBe("");
+    expect(c.calls.at(-1).options).toEqual({
+      top: 900,
+      behavior: smooth ? "smooth" : "instant",
+    });
+    c.driver._();
+    vi.clearAllTimers();
+  }
+});
+
+for (const [name, config, deferred] of [
+  ["macOS Chrome", { vendor: "Google Inc." }, false],
+  ["macOS Firefox", { vendor: "" }, false],
+  ["Linux WebKit", { platform: "Linux x86_64" }, false],
+  ["desktop-mode iPad", { touch: 5 }, true],
+  ["iPhone", { platform: "iPhone", agent: "iPhone", touch: 5 }, true],
 ]) {
-  it(`preserves existing ${name} behavior`, () => {
-    const store = setup(platform, vendor, touch, agent);
-    store.W(5, [40, true]);
-    expect(store.t()).toBe(4000); // no new extent policy outside macOS WebKit
-    expect(store.L()[0]).toBe(deferred ? 0 : 2000);
-    expect(store.u(39)).toBe(deferred ? 1900 : 3900);
+  it(`preserves existing ${name} policy`, () => {
+    const c = setup(config);
+    c.prepend();
+    expect(c.calls).toHaveLength(deferred ? 0 : 1);
+    if (deferred) {
+      c.store.W(2);
+      c.driver.J();
+    }
+    expect(c.calls.at(-1).overflow).toBe("");
+    expect(c.store.t()).toBe(4000);
+    c.driver._();
   });
 }

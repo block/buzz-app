@@ -1,38 +1,58 @@
 diff --git a/lib/index.js b/lib/index.js
-index a183cc7b1669aab25467840540ce3bd1c025fb47..f77bd4c39df936c8a427920dc4cef1f4be6d216e 100644
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -6,6 +6,11 @@ import { jsx as c } from "react/jsx-runtime";
+@@ -5,3 +5,7 @@
+ import { jsx as c } from "react/jsx-runtime";
  
  import { flushSync as f } from "react-dom";
- 
-+// Keep macOS WebKit compensation on the existing deferred-jump path.
-+// Immediate corrections during native input can leave offsets and rows out of
-+// sync. Pending rows and their scroll extent must move together.
-+const isMacWebKit = () => typeof navigator !== "undefined" && !b() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
 +
- var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v = e => [ ...e ].sort((e, t) => e - t), p = setTimeout, S = clearTimeout, m = "function" == typeof queueMicrotask ? queueMicrotask : e => {
-     Promise.resolve().then(e);
- }, $ = () => {
-@@ -19,7 +24,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
- })(() => !!/iP(hone|od|ad)/.test(navigator.userAgent) || "MacIntel" === navigator.platform && navigator.maxTouchPoints > 0), I = e => u(e.t(), e.o()), y = ({i: e, l: t, u: n, h: o, v: r, p: i, t: s, S: l, m: c, $: f}, h = 0) => {
-     let g = !!f, v = !!h, p = 1, S = 0, m = 0, $ = 0, w = 0, _ = 0, z = 0, I = 0, y = 0, x = null, k = [ 0, v ? u(h - 1, 0) : -1 ], R = 0, C = !1;
-     const T = /* @__PURE__ */ new Set, M = () => $ - m, O = () => M() + _ + w, E = e => n(e) - _, L = e => {
--        e && (b() && 0 !== I || x && 1 === y ? _ += e : w += e);
-+        e && ((b() || isMacWebKit()) && 0 !== I || x && 1 === y ? _ += e : w += e);
-     };
++// WebKit can restore a stale native scroll offset after an instant correction.
++// Interrupt only the corrected axis; observer-inferred idle is not native idle.
++const isMacWebKit = () => typeof navigator !== "undefined" && !b() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
+@@ -249,7 +253,22 @@
+         o && o();
+     } ];
+ }, E = (e, t) => {
+-    let n, o, r = $(), i = !1;
++    let n, o, r = $(), i = !1, restoreOverflow;
++    const interruptMomentum = () => {
++        // Repeated corrections in one task share the original declaration.
++        restoreOverflow && restoreOverflow();
++        const style = n.style, property = t ? "overflow-x" : "overflow-y";
++        const value = style.getPropertyValue(property), priority = style.getPropertyPriority(property);
++        style.setProperty(property, "hidden", "important");
++        const restore = () => {
++            S(timer);
++            if (style.getPropertyValue(property) === "hidden" && style.getPropertyPriority(property) === "important") {
++                value ? style.setProperty(property, value, priority) : style.removeProperty(property);
++            }
++            restoreOverflow = void 0;
++        }, timer = p(restore);
++        restoreOverflow = restore;
++    };
+     const s = t ? "scrollLeft" : "scrollTop", l = t ? "left" : "top", c = t ? "overflowX" : "overflowY", [f, a] = O(e, () => r[0], (e, t) => {
+         n.scrollTo({
+             [l]: T(e, i),
+@@ -266,7 +285,8 @@
      return {
-         _: () => {
-@@ -45,7 +50,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
-         M: () => 0 !== I,
-         o: () => S,
-         O: () => m,
--        t: s,
-+        t: () => s() - (isMacWebKit() ? _ : 0),
-         L: () => (z = w, w = 0, [ z, 2 === y ]),
-         H: (e, t) => {
-             const n = [ e, t ];
-@@ -797,4 +802,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         D(f, u = f.parentElement) {
+             h.A(n = u), t && (i = "rtl" === getComputedStyle(u).direction), o = M(e, u, t, () => T(u[s], i), (t, n, o) => {
+-                if (o) {
++                if (isMacWebKit()) interruptMomentum();
++                else if (o) {
+                     const e = u.style, t = e[c];
+                     e[c] = "hidden", p(() => {
+                         e[c] = t;
+@@ -283,7 +303,7 @@
+             }), r[1](!0);
+         },
+         _() {
+-            h.X(), o && o.X(), r[1](!1), r = $();
++            restoreOverflow && restoreOverflow(), h.X(), o && o.X(), r[1](!1), r = $();
+         },
+         P: (e, t) => (d.set(e, t), h.A(e), () => {
+             d.delete(e), h.B(e);
+@@ -797,4 +817,3 @@
  });
  
  export { G as VList, j as Virtualizer, U as WindowVirtualizer, N as experimental_VGrid };

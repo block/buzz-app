@@ -189,6 +189,9 @@ the complete suite still runs with `pnpm test` / `just scan`:
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
+- **Windows native notifications:** Clippy and all Tauri-package tests on Windows,
+  using the repository Rust pin through rustup (Hermit is not available there).
+  This compiles the Windows backend; it does not exercise OS banner interaction.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
   per engine), each with two workers. They start alongside measurements on separate
@@ -204,7 +207,7 @@ the complete suite still runs with `pnpm test` / `just scan`:
 
 Actions and tool versions are pinned, installs use the frozen lockfile, and
 Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
-Superseded PR runs are cancelled. CI uses disposable Ubuntu runners and no live
+Superseded PR runs are cancelled. CI uses disposable Ubuntu/Windows runners and no live
 Buzz identity or signing credentials. It is not native GUI acceptance, a signed
 package, or a cross-platform release gate. `just scan` remains available locally;
 CI does not add full scans to commit/push or ordinary interactive feedback rounds.

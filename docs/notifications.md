@@ -16,7 +16,7 @@ export function apply(ctx) {
 ```
 
 Categories use existing installation ownership. Disabled/replaced plugins cannot
-submit new alerts. A browser notification click belongs to the host; opening never enables
+submit new alerts. A notification click belongs to the host; opening never enables
 a missing destination plugin. `submit()` means a candidate was accepted for policy
 checks, not that an OS banner was displayed or read.
 
@@ -40,9 +40,11 @@ checks, not that an OS banner was displayed or read.
   choice still wins. Observable API errors are reported, never auto-retried.
 - Running-session dedup is bounded to 2,048 source identities/two minutes; pending
   candidates are capped at 128. Browser presentation retains at most 128 active
-  alerts, closing the oldest before retiring its callback. These are not durable
+  alerts, closing the oldest before retiring its callback. Desktop retains at most
+  128 active callbacks/waits and rejects new presentations at capacity rather than
+  evicting an existing target or queuing unbounded workers. These are not durable
   exactly-once or cross-window guarantees.
-- Browser clicks use the existing typed, account/community-scoped navigation path. It owns
+- Browser and desktop clicks use the existing typed, account/community-scoped navigation path. It owns
   membership/provider checks and exact opening. Changing account invalidates old
   callbacks; changing community does not turn an old alert into a dead click.
   Loaded top-level targets use the timeline; off-window targets and replies use
@@ -66,22 +68,42 @@ generic category text.
 ## Current acceptance limits
 
 The browser adapter works only in a running tab with the Notification API.
-Desktop builds use the official Tauri notification plugin for macOS, Linux and
-Windows, with the same eligibility, master/category choices and default-on policy.
-Only the plugin's permission and send commands are granted to the main window.
+Desktop builds use one small Tauri bridge into the same maintained backends as
+the official plugin: mac-notification-sys on macOS, notify-rust on Linux, and
+tauri-winrt-notification on Windows. No dependency upgrade or new native FFI is
+needed. The plugin is retained only for its permission API; its send capability
+is no longer granted. The main-window-only bridge carries display text and an
+opaque presentation ID, never an account, credential or navigation destination.
+Its Tauri response channel is registered before native submission.
 
-The stock desktop plugin does not expose actual OS permission state, per-banner
-sound suppression, or message-click navigation. Settings therefore describes
-permission/sound as system-controlled and does not offer an ineffective desktop
-sound toggle. Browser exact-message opening is unchanged. No custom native
-activation or cold-start recovery is added to supply those missing capabilities.
-The public desktop send API is fire-and-forget: a returned call is **not** proof
-of delivery, and asynchronous native/OS failures are not observable by the host.
+Desktop clicks restore/foreground Buzz and then call the existing activation
+closure. macOS explicitly waits for a body click off the UI thread (the generic
+notify-rust wrapper omits that flag). Windows retains its callback when the
+banner fades, because timeout is not removal from Notification Center. Linux
+requests the standard default action and checks that the notification service
+supports actions; GTK's standard present operation shows/restores/raises the
+window without the framework's stale minimized-state focus guard. Compositor
+focus policy still applies. Dismissal never navigates. Observable send/focus
+failures reach Settings without retry; a focus error does not discard navigation.
 
-Real banners still require OS permission, an available notification service and
+The permission API does not expose actual OS permission state. Settings describes
+permission and sound as system-controlled, without an ineffective desktop sound
+toggle. The bridge accepts a submission before waiting for interaction: acceptance
+is **not** proof that a visible banner appeared. The macOS backend does not expose
+all delivery failures, and no uniform withdrawal/receipt guarantee is promised.
+Callbacks stop navigating after account change or frontend disposal. Native waits
+remain bounded until the OS resolves them; no artificial expiry strands an
+otherwise actionable alert. Reload/cold-start restoration remains out of scope.
+
+Real banners require OS permission, an available notification service and
 appropriate app packaging/installation. macOS development notifications can be
 attributed to Terminal; Windows development notifications may use PowerShell's
 identity. Test the packaged app identity before claiming release acceptance.
-Chromium/WebKit fixtures replace only the OS Notification API; adapter tests do
-not prove real OS permission dialogs, appearance, sound or focus behavior. Native
-build results and real banner observations must be reported per platform.
+Chromium/WebKit fixtures replace only OS/IPC boundaries; tests and native builds
+do not prove actual permission dialogs, appearance, sound or foregrounding.
+Report native checks and real banner/click results separately for each platform.
+
+For macOS, Windows and Linux, manual acceptance includes background and minimized
+Buzz, two distinct message/thread targets, immediate banner click, banner fade
+then Notification Center click, dismissal without navigation, and old-account or
+revoked-access rejection. A macOS pass is not Windows/Linux acceptance.

@@ -1,8 +1,7 @@
-import { isTauri } from "@tauri-apps/api/core";
+import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
 import {
   isPermissionGranted,
   requestPermission,
-  sendNotification,
 } from "@tauri-apps/plugin-notification";
 
 export type NotificationPermissionState =
@@ -28,9 +27,21 @@ export interface NotificationPlatform {
   dispose(): void;
 }
 
-/** Official desktop plugin; browser callbacks are not supported by its shim. */
+type DesktopResponse = Readonly<{
+  id: string;
+  kind: "activated" | "closed" | "failed";
+  error?: string;
+}>;
+
+/** One native presentation owner, with its callback registered before sending. */
 export function createNotifications(): NotificationPlatform {
   if (!isTauri()) return createBrowserNotifications();
+  let disposed = false;
+  const active = new Map<string, Channel<DesktopResponse>>();
+  const release = (id: string, channel: Channel<DesktopResponse>) => {
+    channel.onmessage = () => {};
+    active.delete(id);
+  };
   return {
     label: "Desktop notifications",
     systemManaged: true,
@@ -41,12 +52,36 @@ export function createNotifications(): NotificationPlatform {
       const permission = await requestPermission();
       return permission === "granted" ? "unknown" : permission;
     },
-    async show(item) {
-      // The public SDK is fire-and-forget. No click callback, delivery receipt,
-      // withdrawal or portable sound override is promised by this desktop path.
-      sendNotification({ title: item.title, body: item.body });
+    async show(item, activate, failed) {
+      if (disposed) throw new Error("Desktop notifications have stopped");
+      // Reject before sending instead of stranding an older alert's target.
+      if (active.size >= 128)
+        throw new Error("Too many active desktop notifications (maximum 128)");
+      const channel = new Channel<DesktopResponse>((response) => {
+        if (disposed || response.id !== item.id || !active.has(item.id)) return;
+        release(item.id, channel);
+        if (response.error) failed(new Error(response.error));
+        if (response.kind === "activated") activate();
+      });
+      active.set(item.id, channel);
+      try {
+        // Native code restores/focuses the main window before returning the click.
+        // No destination or account data crosses this boundary.
+        await invoke("notification_show", {
+          id: item.id,
+          title: item.title,
+          body: item.body,
+          onEvent: channel,
+        });
+      } catch (error) {
+        release(item.id, channel);
+        throw error;
+      }
     },
-    dispose() {},
+    dispose() {
+      disposed = true;
+      for (const [id, channel] of active) release(id, channel);
+    },
   };
 }
 

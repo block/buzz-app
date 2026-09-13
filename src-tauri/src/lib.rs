@@ -1,4 +1,6 @@
+mod notifications;
 mod terminal;
+use notifications::{notification_show, Notifications};
 use tauri::Manager as _;
 use terminal::{
     terminal_close, terminal_close_owner, terminal_create_owner, terminal_read, terminal_resize,
@@ -159,8 +161,10 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .manage(Imports::default())
         .manage(Terminals::default())
+        .manage(Notifications::default())
         .manage(PluginManager(Manager::from_env()))
         .invoke_handler(tauri::generate_handler![
+            notification_show,
             terminal_create_owner,
             terminal_spawn,
             terminal_read,

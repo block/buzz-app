@@ -339,7 +339,10 @@ name = "buzz-foundation"
 version = "0.0.0"
 dependencies = [
  "buzzodz-plugins",
+ "gtk",
  "libc",
+ "mac-notification-sys",
+ "notify-rust",
  "portable-pty",
  "serde",
  "tauri",
@@ -347,6 +350,7 @@ dependencies = [
  "tauri-plugin-dialog",
  "tauri-plugin-notification",
  "tauri-plugin-opener",
+ "tauri-winrt-notification",
  "url",
  "uuid",
 ]

@@ -70,7 +70,8 @@ export function NotificationSettings({
         {state.systemManaged ? (
           <p className="text-sm text-muted">
             Manage sound and permission in system notification settings. Desktop
-            banners do not open a specific message when clicked.
+            clicks bring Buzz forward and open the message or thread while Buzz
+            is running.
           </p>
         ) : (
           <>

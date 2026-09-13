@@ -13,9 +13,16 @@ const sdk = vi.hoisted(() => ({
   isPermissionGranted: vi.fn(async () => true),
   requestPermission: vi.fn(async () => "granted"),
   sendNotification: vi.fn(),
+  invoke: vi.fn(async () => {}),
 }));
 const native = vi.hoisted(() => ({ value: true }));
-vi.mock("@tauri-apps/api/core", () => ({ isTauri: () => native.value }));
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => native.value,
+  invoke: sdk.invoke,
+  Channel: class {
+    constructor(public onmessage: (response: unknown) => void) {}
+  },
+}));
 vi.mock("@tauri-apps/plugin-notification", () => sdk);
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
@@ -45,13 +52,13 @@ function setup() {
       () => true,
       () => true,
     );
-  return { service, submit };
+  return { service, submit, navigation, ctx };
 }
 async function flush() {
   for (let i = 0; i < 40; i++) await Promise.resolve();
 }
 
-it("the default service sends desktop banners via the official SDK and shared policy", async () => {
+it("the default service sends desktop banners via the native bridge and shared policy", async () => {
   const { service, submit } = setup();
   await flush();
   expect(service.snapshot()).toMatchObject({
@@ -63,16 +70,18 @@ it("the default service sends desktop banners via the official SDK and shared po
   await submit("first");
   await submit("first");
   await flush();
-  expect(sdk.sendNotification).toHaveBeenCalledExactlyOnceWith({
+  expect(sdk.invoke).toHaveBeenCalledExactlyOnceWith("notification_show", {
     title: "Buzz",
     body: "New mentions",
+    id: expect.any(String),
+    onEvent: expect.objectContaining({ onmessage: expect.any(Function) }),
   });
   service.updatePreferences({ enabled: false });
   await submit("off");
   service.updatePreferences({ enabled: true, categories: { mention: false } });
   await submit("category-off");
   await flush();
-  expect(sdk.sendNotification).toHaveBeenCalledTimes(1);
+  expect(sdk.invoke).toHaveBeenCalledTimes(1);
 });
 
 it("an explicit permission request uses the SDK without claiming OS permission is known", async () => {
@@ -82,18 +91,18 @@ it("an explicit permission request uses the SDK without claiming OS permission i
   expect(service.snapshot().permission).toBe("default");
   await submit("pending");
   await flush();
-  expect(sdk.sendNotification).not.toHaveBeenCalled();
+  expect(sdk.invoke).not.toHaveBeenCalled();
   sdk.isPermissionGranted.mockResolvedValue(true);
   await service.requestPermission();
   await flush();
   expect(sdk.requestPermission).toHaveBeenCalledOnce();
   expect(service.snapshot().permission).toBe("unknown");
-  expect(sdk.sendNotification).toHaveBeenCalledOnce();
+  expect(sdk.invoke).toHaveBeenCalledOnce();
 });
 
 it("observable SDK failures surface once without retry or a browser fallback", async () => {
   const { service, submit } = setup();
-  sdk.sendNotification.mockImplementationOnce(() => {
+  sdk.invoke.mockImplementationOnce(() => {
     throw new Error("SDK unavailable");
   });
   await submit("failed");
@@ -101,13 +110,13 @@ it("observable SDK failures surface once without retry or a browser fallback", a
   expect(service.snapshot().error).toBe("SDK unavailable");
   await submit("failed");
   await flush();
-  expect(sdk.sendNotification).toHaveBeenCalledOnce();
+  expect(sdk.invoke).toHaveBeenCalledOnce();
   await submit("next");
   await flush();
-  expect(sdk.sendNotification).toHaveBeenCalledTimes(2);
+  expect(sdk.invoke).toHaveBeenCalledTimes(2);
 });
 
-it("desktop settings keep master/categories but explain OS sound and click limits", async () => {
+it("desktop settings explain OS sound and running-app exact clicks", async () => {
   const { service } = setup();
   await flush();
   const html = renderToStaticMarkup(
@@ -119,7 +128,7 @@ it("desktop settings keep master/categories but explain OS sound and click limit
     "Manage sound and permission in system notification settings",
   );
   expect(html).toContain(
-    "Desktop banners do not open a specific message when clicked",
+    "Desktop clicks bring Buzz forward and open the message or thread while Buzz is",
   );
   expect(html).not.toContain("<span>Sound</span>");
   expect(html).not.toContain("Permission granted");
@@ -131,7 +140,7 @@ it("non-Tauri runs select the unchanged browser adapter, never the native SDK", 
   expect(platform.label).toBe("Browser notifications");
   expect(await platform.permission()).toBe("unsupported");
   expect(sdk.isPermissionGranted).not.toHaveBeenCalled();
-  expect(sdk.sendNotification).not.toHaveBeenCalled();
+  expect(sdk.invoke).not.toHaveBeenCalled();
 });
 
 it("the production desktop adapter forwards the message title and preview unchanged", async () => {
@@ -157,8 +166,147 @@ it("the production desktop adapter forwards the message title and preview unchan
       ),
   );
   await flush();
-  expect(sdk.sendNotification).toHaveBeenCalledExactlyOnceWith({
+  expect(sdk.invoke).toHaveBeenCalledExactlyOnceWith("notification_show", {
     title: "Pinky mentioned you in #Room",
     body: "Hello Wes",
+    id: expect.any(String),
+    onEvent: expect.objectContaining({ onmessage: expect.any(Function) }),
   });
+});
+
+function presentation(index = 0) {
+  const call = sdk.invoke.mock.calls[index] as unknown as [
+    string,
+    {
+      id: string;
+      onEvent: {
+        onmessage(response: { id: string; kind: string; error?: string }): void;
+      };
+    },
+  ];
+  return call[1];
+}
+
+it("the production default returns each native click to its exact navigation callback once", async () => {
+  const { service, navigation } = setup();
+  const open = vi.fn();
+  navigation.subscribe(() => open(navigation.snapshot().entry.target));
+  for (const section of ["notifications", "appearance"] as const) {
+    await service.admit(
+      "mention",
+      "Mentions",
+      {
+        sourceKey: section,
+        target: { version: 1, kind: "settings", section },
+      },
+      () => true,
+      () => true,
+    );
+  }
+  await flush();
+  const first = presentation(0),
+    second = presentation(1);
+  expect(first.id).not.toBe(second.id);
+  first.onEvent.onmessage({ id: second.id, kind: "activated" });
+  expect(open).not.toHaveBeenCalled();
+  second.onEvent.onmessage({ id: second.id, kind: "activated" });
+  first.onEvent.onmessage({ id: first.id, kind: "activated" });
+  first.onEvent.onmessage({ id: first.id, kind: "activated" });
+  expect(open.mock.calls.map(([target]) => target)).toEqual([
+    { version: 1, kind: "settings", section: "appearance" },
+    { version: 1, kind: "settings", section: "notifications" },
+  ]);
+});
+
+it("native close/error never opens or retries; focus failure still preserves exact navigation", async () => {
+  const { service, submit, navigation } = setup();
+  const open = vi.fn();
+  navigation.subscribe(() => open(navigation.snapshot().entry.target));
+  for (const source of ["closed", "failed", "focus"]) await submit(source);
+  await flush();
+  const first = presentation(0),
+    second = presentation(1),
+    third = presentation(2);
+  first.onEvent.onmessage({ id: first.id, kind: "closed" });
+  second.onEvent.onmessage({
+    id: second.id,
+    kind: "failed",
+    error: "OS submission failed",
+  });
+  expect(service.snapshot().error).toBe("OS submission failed");
+  expect(open).not.toHaveBeenCalled();
+  third.onEvent.onmessage({
+    id: third.id,
+    kind: "activated",
+    error: "Window focus failed",
+  });
+  expect(open).toHaveBeenCalledOnce();
+  expect(service.snapshot().error).toBe("Window focus failed");
+  await service.refreshPermission();
+  await flush();
+  expect(sdk.invoke).toHaveBeenCalledTimes(3);
+});
+
+it("account replacement and service disposal fence previously displayed native clicks", async () => {
+  const { service, submit, navigation, ctx } = setup();
+  const open = vi.fn();
+  navigation.subscribe(() => open(navigation.snapshot().entry.target));
+  await submit("old-account");
+  await flush();
+  const first = presentation(0);
+  service.selectViewer("b".repeat(64));
+  first.onEvent.onmessage({ id: first.id, kind: "activated" });
+  expect(open).not.toHaveBeenCalled();
+  await submit("disposed");
+  await flush();
+  const second = presentation(1);
+  await ctx.fiber.dispose();
+  second.onEvent.onmessage({ id: second.id, kind: "activated" });
+  expect(open).not.toHaveBeenCalled();
+});
+
+it("the click channel exists before native submission, including immediate activation", async () => {
+  const { navigation, submit } = setup();
+  const open = vi.fn();
+  navigation.subscribe(() => open(navigation.snapshot().entry.target));
+  sdk.invoke.mockImplementationOnce(async (...args: unknown[]) => {
+    const { id, onEvent } = args[1] as ReturnType<typeof presentation>;
+    onEvent.onmessage({ id, kind: "activated" });
+  });
+  await submit("immediate");
+  await flush();
+  expect(open).toHaveBeenCalledExactlyOnceWith({
+    version: 1,
+    kind: "settings",
+  });
+});
+
+it("native presentation rejects at capacity before sending instead of evicting live targets", async () => {
+  const platform = createNotifications();
+  const activate = vi.fn(),
+    failed = vi.fn();
+  for (let i = 0; i < 128; i++)
+    await platform.show(
+      { id: String(i), title: "Buzz", body: "Hi", silent: true },
+      activate,
+      failed,
+    );
+  await expect(
+    platform.show(
+      { id: "overflow", title: "Buzz", body: "Hi", silent: true },
+      activate,
+      failed,
+    ),
+  ).rejects.toThrow("maximum 128");
+  expect(sdk.invoke).toHaveBeenCalledTimes(128);
+  const first = presentation(0);
+  first.onEvent.onmessage({ id: first.id, kind: "activated" });
+  expect(activate).toHaveBeenCalledOnce();
+  await platform.show(
+    { id: "next", title: "Buzz", body: "Hi", silent: true },
+    activate,
+    failed,
+  );
+  expect(sdk.invoke).toHaveBeenCalledTimes(129);
+  platform.dispose();
 });

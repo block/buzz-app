@@ -78,8 +78,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const originalSrc = await historic.getAttribute("src");
     expect(originalSrc).toContain("/emoji-media/a/");
     await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
-    // Preserve the manual selection contract while isolating the clipboard
-    // assertion from WebKit's platform-dependent pointer selection result.
+    // Preserve real pointer selection, then observe the app's native copy event
+    // payload directly. Linux WebKit does not paste a script-installed DOM range
+    // from its platform clipboard, even though the handler populated the event.
     const emojiImage = sentSingleEmoji.locator("img");
     const copyBounds = await emojiImage.boundingBox();
     await page.mouse.move(
@@ -103,6 +104,21 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         );
       }),
     ).toBe(true);
+    const observeCopyPayload = () =>
+      page.evaluate(() => {
+        window.__emojiCopyPayload = undefined;
+        document.addEventListener(
+          "copy",
+          (event) => {
+            window.__emojiCopyPayload = {
+              prevented: event.defaultPrevented,
+              text: event.clipboardData?.getData("text/plain"),
+            };
+          },
+          { once: true },
+        );
+      });
+    const copyPayload = () => page.evaluate(() => window.__emojiCopyPayload);
     await emojiImage.evaluate((image) => {
       const range = document.createRange();
       range.selectNode(image);
@@ -110,10 +126,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       selection.removeAllRanges();
       selection.addRange(range);
     });
+    await observeCopyPayload();
     await page.keyboard.press("ControlOrMeta+c");
-    await draft().focus();
-    await page.keyboard.press("ControlOrMeta+v");
-    await expect(draft()).toHaveValue(":party:");
+    expect(await copyPayload()).toEqual({ prevented: true, text: ":party:" });
     await historic.evaluate((image) => {
       const range = document.createRange();
       range.selectNodeContents(image.closest("p"));
@@ -121,13 +136,20 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       selection.removeAllRanges();
       selection.addRange(range);
     });
+    await observeCopyPayload();
+    await page.keyboard.press("ControlOrMeta+c");
+    expect(await copyPayload()).toEqual({
+      prevented: true,
+      text: "Historic :unknown:party: and https://example.test/:party:",
+    });
+    // Independently prove this browser's real clipboard transport with the exact
+    // handler payload; the editable source path intentionally uses native copy.
+    await draft().fill(":party:");
+    await draft().press("ControlOrMeta+a");
     await page.keyboard.press("ControlOrMeta+c");
     await draft().fill("");
     await page.keyboard.press("ControlOrMeta+v");
-    await expect(draft()).toHaveValue(
-      "Historic :unknown:party: and https://example.test/:party:",
-    );
-    await draft().fill(":party:");
+    await expect(draft()).toHaveValue(":party:");
     // One Shift+Left selects one rendered custom emoji, not its trailing colon.
     await draft().press("Shift+ArrowLeft");
     expect(

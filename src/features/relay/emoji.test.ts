@@ -32,11 +32,12 @@ const owners: { dispose(): void }[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
-function session(scope = "a") {
+function session(scope = "a", publishSucceeds = false) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
   const sign = vi.fn(async (template) => signed(viewer, template));
   const publish = vi.fn(async (_event: RelayEvent) => {
+    if (publishSucceeds) return;
     throw new PublishRejected("retry test");
   });
   const query = vi.fn(wire.transport.query);
@@ -176,11 +177,11 @@ it("reactions use retained thread targets after shared-cache eviction", () => {
     ]),
   });
 });
-it("reactions use retained channel-window targets after shared-cache eviction", () => {
-  const h = session();
+it("reconciles retained channel reactions through confirmation and access loss", async () => {
+  const h = session("a", true);
   const root = message(member, "c", "Still visible", 1);
   h.session.channels.ensure("c");
-  h.live.receive([root]);
+  h.live.receive([roster(relay, "c", [viewer.pubkey], 1), root]);
   h.live.receive(
     Array.from({ length: 9 }, (_, index) =>
       message(member, "other", "x".repeat(1024 * 1024), 100 + index),
@@ -188,16 +189,29 @@ it("reactions use retained channel-window targets after shared-cache eviction", 
   );
   expect(h.session.channels.window("c").rows[0]?.id).toBe(root.id);
   const id = h.session.messages.react(root.id, "👍");
-  expect(
-    h.session.outbox?.snapshot().find((item) => item.event.id === id)?.event,
-  ).toMatchObject({
-    kind: 7,
-    content: "👍",
-    tags: expect.arrayContaining([
-      ["h", "c"],
-      ["e", root.id],
-    ]),
-  });
+  expect(h.session.channels.window("c").rows[0]?.reactions).toEqual([
+    { content: "👍" },
+  ]);
+  await flush();
+  await flush();
+  const operation = h.session.outbox
+    ?.snapshot()
+    .find((item) => item.event.id === id);
+  expect(operation).toMatchObject({ delivery: "accepted", signed: { id } });
+  const confirmation = h.wire.pending.find((request) =>
+    request.filters.some((filter) => filter.ids?.includes(id)),
+  );
+  if (!confirmation || !operation?.signed)
+    throw new Error("Missing signed reaction confirmation");
+  confirmation.respond([operation.signed]);
+  await flush();
+  expect(h.session.outbox?.snapshot()).toHaveLength(0);
+  expect(h.session.channels.window("c").rows[0]?.reactions).toEqual([
+    { content: "👍" },
+  ]);
+  h.live.receive([roster(relay, "c", [], 2)]);
+  expect(h.session.channels.window("c").rows).toEqual([]);
+  expect(() => h.session.messages.react(root.id, "🎉")).toThrow(/Load/);
 });
 it("accepts every catalog shortcode length through session reaction authoring", async () => {
   const h = session();

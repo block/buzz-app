@@ -623,3 +623,152 @@ test("editor renders host choices rather than its own catalog, and tolerates an 
     await server.close();
   }
 });
+
+for (const launch of ["start", "restart"]) {
+  for (const lateFailure of [false, true]) {
+    test(`${launch} credential wait leaves real Stop buttons usable and ignores late ${lateFailure ? "failure" : "success"}`, async ({
+      page,
+    }) => {
+      const server = await createServer({
+        ...config,
+        configFile: false,
+        logLevel: "error",
+        server: { host: "127.0.0.1", port: 0, strictPort: false },
+      });
+      await server.listen();
+      try {
+        await page.goto(
+          `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
+        );
+        await expect(
+          page.getByRole("article", { name: "Manage Fixture agent" }),
+        ).toBeVisible();
+        await page.evaluate(
+          async ({ launch, lateFailure }) => {
+            const f = window.agentControlFixture;
+            f.agent.enabled = launch === "restart";
+            f.agent.status = launch === "restart" ? "running" : "stopped";
+            f.data.agents.push({
+              ...structuredClone(f.agent),
+              id: "other",
+              name: "Other running agent",
+              enabled: true,
+              status: "running",
+            });
+            await f.control.refresh();
+            const stale = structuredClone(f.data);
+            f.host.action = (id, action) => {
+              f.calls.push({ action, payload: { id } });
+              if (action !== "stop")
+                return new Promise((resolve, reject) => {
+                  window.releaseLaunch = () =>
+                    lateFailure
+                      ? reject("Late cancelled launch")
+                      : resolve(stale);
+                });
+              return new Promise((resolve) => {
+                window.releaseStop = () => {
+                  const row = f.data.agents.find((agent) => agent.id === id);
+                  row.enabled = false;
+                  row.status = "stopped";
+                  row.runningRevision = null;
+                  resolve(structuredClone(f.data));
+                };
+              });
+            };
+          },
+          { launch, lateFailure },
+        );
+        const first = page.getByRole("article", {
+          name: "Manage Fixture agent",
+        });
+        const other = page.getByRole("article", {
+          name: "Manage Other running agent",
+        });
+        const firstStop = first.getByRole("button", {
+          name: "Stop",
+          exact: true,
+        });
+        const otherStop = other.getByRole("button", {
+          name: "Stop",
+          exact: true,
+        });
+        await first
+          .getByRole("button", {
+            name: launch === "start" ? "Start" : "Restart",
+            exact: true,
+          })
+          .click();
+        await expect
+          .poll(() => page.evaluate(() => typeof window.releaseLaunch))
+          .toBe("function");
+        await expect(firstStop).toBeEnabled(); // even the previously stopped row
+        await expect(otherStop).toBeEnabled();
+        await expect(
+          other.getByRole("button", { name: "Restart", exact: true }),
+        ).toBeDisabled();
+        // A different running agent can be stopped without releasing the prompt.
+        await otherStop.click();
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                window.agentControlFixture.calls
+                  .filter((call) => call.action === "stop")
+                  .at(-1)?.payload.id,
+            ),
+          )
+          .toBe("other");
+        await expect(firstStop).toBeDisabled(); // one Stop IPC at a time
+        await page.evaluate(() => window.releaseStop());
+        await expect(
+          other.getByText("Disabled · mentions will not wake this agent"),
+        ).toBeVisible();
+        await expect(firstStop).toBeEnabled();
+        // Then cancel the pending launch via the real button/projection as well.
+        await firstStop.click();
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () =>
+                window.agentControlFixture.calls
+                  .filter((call) => call.action === "stop")
+                  .at(-1)?.payload.id,
+            ),
+          )
+          .toBe("fixture-agent");
+        await page.evaluate(() => window.releaseStop());
+        await expect(
+          first.getByText("Disabled · mentions will not wake this agent"),
+        ).toBeVisible();
+        await expect(
+          first.getByRole("button", { name: "Restart", exact: true }),
+        ).toBeDisabled();
+        await page.evaluate(() => window.releaseLaunch());
+        await expect
+          .poll(() =>
+            page.evaluate(
+              () => window.agentControlFixture.control.snapshot().pendingLaunch,
+            ),
+          )
+          .toBe(null);
+        await expect(
+          first.getByRole("button", { name: "Restart", exact: true }),
+        ).toBeEnabled();
+        await expect(
+          first.getByText("Disabled · mentions will not wake this agent"),
+        ).toBeVisible();
+        await expect(
+          other.getByText("Disabled · mentions will not wake this agent"),
+        ).toBeVisible();
+        await expect(
+          page
+            .getByRole("region", { name: "Local agent controls" })
+            .getByRole("alert"),
+        ).toHaveCount(0);
+      } finally {
+        await server.close();
+      }
+    });
+  }
+}

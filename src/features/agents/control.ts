@@ -76,6 +76,9 @@ export interface AgentControlState {
   status: "idle" | "loading" | "ready" | "error" | "unavailable";
   data: ControlSnapshot | null;
   busy: boolean;
+  /** A credential wait may be interrupted only by explicit Stop. */
+  pendingLaunch?: string | null;
+  stopping?: boolean;
   error: string | null;
 }
 export interface AgentControl {
@@ -91,13 +94,15 @@ export interface AgentControl {
 
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
 export function canStopAgent(state: AgentControlState, id: string): boolean {
-  if (state.busy) return false;
+  if (state.busy && (!state.pendingLaunch || state.stopping)) return false;
   const agent = state.data?.agents.find((candidate) => candidate.id === id);
   return (
     !!agent &&
     (state.status === "error" ||
       (state.status === "ready" &&
-        (agent.enabled || agent.status !== "stopped")))
+        (state.pendingLaunch === id ||
+          agent.enabled ||
+          agent.status !== "stopped")))
   );
 }
 
@@ -158,15 +163,22 @@ export function createAgentControl(
     operation: (host: AgentControlHost) => Promise<T>,
     apply: (result: T) => void,
     allowRecoveryStop = false,
+    launchId?: string,
   ): Promise<T> {
     if (!host || disposed) throw new Error(agentControlUnavailable);
-    if (state.busy) throw new Error("Another agent operation is in progress.");
+    if (state.busy && !allowRecoveryStop)
+      throw new Error("Another agent operation is in progress.");
     if (state.status !== "ready" && !allowRecoveryStop)
       throw new Error("Refresh local agents before trying again.");
     const current = ++generation;
     // A pre-write read must not overwrite this command, even when it completes later.
     read = null;
-    update({ busy: true, error: null });
+    update({
+      busy: true,
+      error: null,
+      ...(launchId ? { pendingLaunch: launchId } : {}),
+      stopping: allowRecoveryStop,
+    });
     try {
       const result = await operation(host);
       if (disposed || current !== generation)
@@ -176,13 +188,20 @@ export function createAgentControl(
     } catch (error) {
       // Host rejects with sanitized user-facing strings, never raw child output.
       const detail = typeof error === "string" ? `${error} ` : "";
-      update({
-        status: "error",
-        error: `${detail}Could not confirm the operation. Refresh status before other operations; Stop remains available for known agents. Your edits are retained.`,
-      });
+      if (current === generation)
+        update({
+          status: "error",
+          error: `${detail}Could not confirm the operation. Refresh status before other operations; Stop remains available for known agents. Your edits are retained.`,
+        });
       throw new Error("Could not confirm the agent operation.");
     } finally {
-      update({ busy: false });
+      // A superseded launch still owns its credential wait, but never the newer
+      // Stop's result/error/busy lane. Keep other writes blocked until it settles.
+      if (!disposed && launchId) {
+        update({ pendingLaunch: null, busy: !!state.stopping });
+      } else if (current === generation) {
+        update({ stopping: false, busy: !!state.pendingLaunch });
+      }
     }
   }
 
@@ -203,6 +222,7 @@ export function createAgentControl(
         (native) => native.action(id, action),
         ready,
         action === "stop" && canStopAgent(state, id),
+        action === "stop" ? undefined : id,
       ),
     previewImport: (source) =>
       run(

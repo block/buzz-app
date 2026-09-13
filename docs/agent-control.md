@@ -141,8 +141,12 @@ fixture the controls simulate native responses, not agent execution.
   source path and exact selected keys/destinations; nothing selects all by default.
   Only explicit commit imports, always disabled. No key minting, enrollment or
   source-store write. Native must reject changed source and duplicate ownership.
-- Operations are serialized in this projection, and old pre-write reads cannot
-  overwrite newer command evidence. Failed reads/commands retain the last snapshot
+- Operations are serialized except explicit recovery Stop during a pending
+  Start/Restart credential wait. Stop can reach the native fence for that identity
+  or another known running identity; only one Stop is admitted at a time. Other
+  writes remain blocked until the launch wait settles. Superseded launch success,
+  error and finalization cannot overwrite the newer Stop result or unlock its
+  pending operation. Old pre-write reads cannot overwrite newer command evidence. Failed reads/commands retain the last snapshot
   and draft with explicit uncertainty. Start/Restart/Save/import require a fresh
   successful host read before retry. Explicit Stop is the only recovery exception:
   it remains available for identities in the retained snapshot, even if that stale

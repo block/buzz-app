@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createAgentControl } from "./control";
+import { canStopAgent, createAgentControl } from "./control";
 import { controlFixture } from "./control-testing";
 import { agentDraft, agentEdit } from "../../bundled/agents/agent-edit";
 
@@ -189,4 +189,103 @@ it("import forwards exact selection and never starts imported agents", async () 
     },
   ]);
   expect(control.snapshot().data?.agents[1]?.enabled).toBe(false);
+});
+
+for (const launch of ["start", "restart"] as const) {
+  for (const otherAgent of [false, true]) {
+    for (const rejectLaunch of [false, true]) {
+      for (const launchFirst of [false, true]) {
+        it(`${launch}: Stop ${otherAgent ? "another agent" : "pending agent"} survives late ${rejectLaunch ? "failure" : "success"} ${launchFirst ? "during" : "after"} Stop`, async () => {
+          const fixture = controlFixture();
+          fixture.agent.enabled = launch !== "start";
+          fixture.agent.status = launch === "start" ? "stopped" : "running";
+          fixture.data.agents.push({
+            ...structuredClone(fixture.agent),
+            id: "other",
+            enabled: true,
+            status: "running",
+          });
+          const control = createAgentControl(fixture.host);
+          await control.refresh();
+          const late = deferred<typeof fixture.data>();
+          const stop = deferred<typeof fixture.data>();
+          const before = structuredClone(fixture.data);
+          const action = vi
+            .spyOn(fixture.host, "action")
+            .mockImplementation((_id, kind) =>
+              kind === "stop"
+                ? stop.promise
+                : late.promise.then((data) => {
+                    if (rejectLaunch) throw "Old launch failure";
+                    return data;
+                  }),
+            );
+          const starting = control
+            .action(fixture.agent.id, launch)
+            .catch(() => {});
+          const target = otherAgent ? "other" : fixture.agent.id;
+          expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+          expect(canStopAgent(control.snapshot(), "other")).toBe(true);
+          expect(canStopAgent(control.snapshot(), "unknown")).toBe(false);
+          const stopping = control.action(target, "stop");
+          expect(action).toHaveBeenLastCalledWith(target, "stop");
+          expect(canStopAgent(control.snapshot(), target)).toBe(false);
+          await expect(control.action(target, "stop")).rejects.toThrow(
+            "in progress",
+          );
+          if (launchFirst) {
+            late.resolve(before);
+            await starting;
+            expect(control.snapshot().busy).toBe(true);
+            expect(control.snapshot().error).toBeNull();
+          }
+          const stopped = structuredClone(before);
+          const row = stopped.agents.find((agent) => agent.id === target);
+          if (!row) throw new Error("Missing test agent");
+          row.enabled = false;
+          row.status = "stopped";
+          stop.resolve(stopped);
+          await stopping;
+          const result = control.snapshot().data;
+          if (!launchFirst) {
+            expect(control.snapshot().busy).toBe(true);
+            await expect(control.action(target, "restart")).rejects.toThrow(
+              "in progress",
+            );
+            await expect(control.previewImport("installed")).rejects.toThrow(
+              "in progress",
+            );
+            late.resolve(before);
+            await starting;
+          }
+          expect(control.snapshot().data).toBe(result);
+          expect(control.snapshot().data).toEqual(stopped);
+          expect(control.snapshot().status).toBe("ready");
+          expect(control.snapshot().error).toBeNull();
+          expect(control.snapshot().busy).toBe(false);
+        });
+      }
+    }
+  }
+}
+it("a superseded launch cannot erase Stop's failure or allow writes while it waits", async () => {
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  await control.refresh();
+  const late = deferred<typeof fixture.data>();
+  vi.spyOn(fixture.host, "action").mockImplementation((_id, action) =>
+    action === "stop" ? Promise.reject("Disable not confirmed") : late.promise,
+  );
+  const launch = control.action(fixture.agent.id, "restart").catch(() => {});
+  await expect(control.action(fixture.agent.id, "stop")).rejects.toThrow(
+    "confirm",
+  );
+  const error = control.snapshot().error;
+  expect(control.snapshot().busy).toBe(true);
+  expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+  late.resolve(structuredClone(fixture.data));
+  await launch;
+  expect(control.snapshot().status).toBe("error");
+  expect(control.snapshot().error).toBe(error);
+  expect(control.snapshot().busy).toBe(false);
 });

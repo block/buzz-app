@@ -176,7 +176,11 @@ requires its own checks; these results do not certify later commits.
 
 Fresh accepted saves project the configured enabled flag into runtime state;
 omitting it defaults to enabled. Historical split rows and exact pre-fix event
-replays are not repaired. Existing trigger caches can remain stale for roughly
-ten seconds: disable is not immediate distributed cancellation of selected or
-running work. Packaged production host/sign-in, historical reconciliation and a
-complete schedule/webhook/approval/permission matrix remain outside this slice.
+replays are not repaired. Trigger caches can still hold stale selections, but the
+[companion relay repair](https://github.com/block/buzz/pull/7621) at `c73db439d`
+checks the selected definition and creation incarnation atomically when admitting
+a new run. A committed disable, update or deletion rejects an ineligible or stale
+selection; callers cannot refresh only the admission record and execute the old
+definition. This is not cancellation of already-admitted runs. Packaged production
+host/sign-in, historical reconciliation and a complete
+schedule/webhook/approval/permission matrix remain outside this slice.

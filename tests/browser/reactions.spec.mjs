@@ -1,17 +1,12 @@
 import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm } from "node:fs/promises";
-import { join } from "node:path";
-import { tmpdir } from "node:os";
 
 test("reaction plus opens a visible emoji-only picker, restores focus and publishes custom emoji", async ({
   page,
 }) => {
-  const cacheDir = await mkdtemp(join(tmpdir(), "buzz-reactions-vite-"));
   const server = await createServer({
-    cacheDir,
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
@@ -122,6 +117,5 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     expect(errors).toEqual([]);
   } finally {
     await server.close();
-    await rm(cacheDir, { recursive: true, force: true });
   }
 });

@@ -9,6 +9,7 @@ import {
 } from "react";
 import { X } from "lucide-react";
 import type { ConversationExtensions } from "../conversation/contracts";
+import type { PageNavigation } from "../navigation/service";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
@@ -19,6 +20,7 @@ import { useReading } from "./use-reading";
 import { messageViewKey } from "./view-key";
 
 export type ThreadPanelProps = {
+  navigation?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -54,11 +56,21 @@ function OwnedThreadPanel({
   close,
   onOpenLink,
   canOpenLink,
+  navigation,
 }: ThreadPanelProps) {
-  const [view, setView] = useState<ThreadView>();
-  const [error, setError] = useState<string>();
+  const [owned, setOwned] = useState<{
+    navigation: PageNavigation | undefined;
+    view?: ThreadView;
+    error?: string;
+  }>();
+  const view = owned?.navigation === navigation ? owned?.view : undefined;
+  const error = owned?.navigation === navigation ? owned?.error : undefined;
   const [attempt, setAttempt] = useState(0);
   const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (error)
+      navigation?.complete({ status: "failed", reason: "unavailable" });
+  }, [error, navigation]);
   useEffect(() => {
     closeButton.current?.focus();
   }, []);
@@ -66,15 +78,14 @@ function OwnedThreadPanel({
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery after view allocation fails.
   useEffect(() => {
     try {
-      const owned = session.thread(channelId, messageId);
-      setError(undefined);
-      setView(owned);
-      void owned.refresh();
-      return () => owned.dispose();
+      const view = session.thread(channelId, messageId);
+      setOwned({ navigation, view });
+      void view.refresh();
+      return () => view.dispose();
     } catch (error) {
-      setError(String(error));
+      setOwned({ navigation, error: String(error) });
     }
-  }, [session, channelId, messageId, attempt]);
+  }, [session, channelId, messageId, attempt, navigation]);
   return (
     <aside
       className={styles.thread}
@@ -117,6 +128,7 @@ function OwnedThreadPanel({
           view={view}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
+          navigation={navigation}
         />
       ) : (
         <p className={styles.empty} role="status">
@@ -135,7 +147,9 @@ function ThreadMessages({
   view,
   onOpenLink,
   canOpenLink,
+  navigation,
 }: {
+  navigation?: PageNavigation | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -170,6 +184,7 @@ function ThreadMessages({
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
+  const presented = useRef<PageNavigation | undefined>(undefined);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
@@ -181,6 +196,44 @@ function ThreadMessages({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
+    if (navigation?.signal.aborted) return;
+    if (
+      navigation &&
+      presented.current !== navigation &&
+      navigation.target.kind === "conversation" &&
+      navigation.target.messageId
+    ) {
+      const target = element?.querySelector<HTMLElement>(
+        `[data-message-id="${navigation.target.messageId}"]`,
+      );
+      if (
+        element &&
+        target &&
+        snapshot.root &&
+        snapshot.status === "ready" &&
+        !snapshot.canLoadMore
+      ) {
+        const bounds = target.getBoundingClientRect();
+        element.scrollTop +=
+          bounds.top -
+          element.getBoundingClientRect().top -
+          Math.max(0, (element.clientHeight - bounds.height) / 2);
+        positioned.current = true;
+        follow.current = false;
+        presented.current = navigation;
+        navigation.complete({ status: "opened" });
+      } else if (
+        snapshot.status === "error" ||
+        (snapshot.status === "ready" && !snapshot.canLoadMore)
+      ) {
+        presented.current = navigation;
+        navigation.complete({
+          status: "failed",
+          reason: snapshot.status === "error" ? "unavailable" : "not-found",
+        });
+      }
+      return;
+    }
     if (
       !element ||
       (!positioned.current &&
@@ -191,7 +244,7 @@ function ThreadMessages({
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
-  }, [snapshot.status, snapshot.canLoadMore, rows, profiles, sent]);
+  }, [snapshot.status, snapshot.canLoadMore, rows, profiles, sent, navigation]);
   const keepReadingPosition = () => {
     if (positioned.current) return;
     positioned.current = true;
@@ -231,6 +284,8 @@ function ThreadMessages({
       >
         {snapshot.root ? (
           <MessageRow
+            session={session}
+            scope={scope}
             extensions={extensions}
             row={snapshot.root}
             profile={profiles.get(snapshot.root.authorId)}
@@ -254,6 +309,8 @@ function ThreadMessages({
           {snapshot.replies.map((row) => (
             <li key={row.id}>
               <MessageRow
+                session={session}
+                scope={scope}
                 extensions={extensions}
                 row={row}
                 profile={profiles.get(row.authorId)}

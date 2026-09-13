@@ -19,11 +19,14 @@ import * as bestie from "./bestie";
 import projectsManifest from "./projects/manifest.json";
 import * as projects from "./projects";
 import type { BundledPlugin } from "../plugins/manager";
+import linksManifest from "./links/manifest.json";
+import * as links from "./links";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...activityManifest, apiVersion: 1 }, module: activity },
   { manifest: { ...terminalManifest, apiVersion: 1 }, module: terminal },
   { manifest: { ...profilesManifest, apiVersion: 1 }, module: profiles },
+  { manifest: { ...linksManifest, apiVersion: 1 }, module: links },
   { manifest: { ...mentionsManifest, apiVersion: 1 }, module: mentions },
   { manifest: { ...emojiManifest, apiVersion: 1 }, module: emoji },
   { manifest: { ...channelsManifest, apiVersion: 1 }, module: channels },

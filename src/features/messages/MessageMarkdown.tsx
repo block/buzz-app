@@ -1,4 +1,16 @@
-import type { AnchorHTMLAttributes, MouseEvent } from "react";
+import { Children, isValidElement, type ReactNode } from "react";
+import type { RelaySession } from "../relay/session";
+import { MessageLink } from "../conversation/MessageLink";
+import { parseBuzzLink } from "../navigation/buzz-links";
+import { messageLinkParts, normalizeWrappedLinks } from "./message-link-parts";
+import {
+  ReferenceText,
+  channelLinkLabel,
+  emptyReferenceDirectory,
+} from "./ReferenceText";
+import { IconAt, IconRobot } from "@tabler/icons-react";
+import { profileKey } from "../profiles/target";
+import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, { type Components, type UrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
@@ -201,42 +213,22 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
   };
 }
 
-const transformUrl: UrlTransform = (value) => safeMessageUrl(value);
-
-function MessageLink({
-  href,
-  onOpenLink,
-  children,
-  ...props
-}: AnchorHTMLAttributes<HTMLAnchorElement> & {
-  onOpenLink(url: string): boolean;
-}) {
-  const url = href ? safeMessageUrl(href) : undefined;
-  if (!url) return <span>{children}</span>;
-  return (
-    <a
-      {...props}
-      href={url}
-      title={url}
-      target="_blank"
-      rel="noopener noreferrer"
-      onClick={(event: MouseEvent<HTMLAnchorElement>) => {
-        if (
-          !event.metaKey &&
-          !event.ctrlKey &&
-          !event.shiftKey &&
-          onOpenLink(url)
-        )
-          event.preventDefault();
-      }}
-    >
-      {children}
-    </a>
-  );
-}
+const transformUrl: UrlTransform = (value) =>
+  parseBuzzLink(value) ? value : safeMessageUrl(value);
+const labelText = (children: ReactNode): string =>
+  Children.toArray(children)
+    .map((child) =>
+      isValidElement<{ children?: ReactNode }>(child)
+        ? labelText(child.props.children)
+        : String(child),
+    )
+    .join("");
 
 export function MessageMarkdown({
   row,
+  directory = emptyReferenceDirectory,
+  session,
+  scope,
   extensions,
   media,
   onOpenLink,
@@ -245,6 +237,9 @@ export function MessageMarkdown({
   largeEmoji = false,
 }: {
   row: ChannelMessage;
+  directory?: typeof emptyReferenceDirectory;
+  session?: RelaySession | undefined;
+  scope?: string | undefined;
   extensions?: ConversationExtensions | undefined;
   media(url: string): string | undefined;
   onOpenLink(url: string): boolean;
@@ -254,13 +249,75 @@ export function MessageMarkdown({
 }) {
   if (row.content.length > MAX_MARKDOWN_LENGTH)
     return <div className={styles.plainText}>{row.content}</div>;
-  const scan = scanMarkdown(row.content);
+  let scan = scanMarkdown(row.content);
   if (scan.tooDeep)
     return <div className={styles.plainText}>{row.content}</div>;
 
+  const literalRanges: { start: number; end: number }[] = [];
+  const collectLiterals = (node: MarkdownNode) => {
+    if (literalContext(node.type) && node.type !== "link") {
+      const start = node.position?.start.offset,
+        end = node.position?.end.offset;
+      if (start !== undefined && end !== undefined)
+        literalRanges.push({ start, end });
+    } else for (const child of node.children ?? []) collectLiterals(child);
+  };
+  collectLiterals(scan.tree);
+  const normalized = normalizeWrappedLinks(row.content, (start, end) =>
+    literalRanges.some((range) => start < range.end && end > range.start),
+  );
+  if (normalized !== row.content) {
+    row = { ...row, content: normalized };
+    scan = scanMarkdown(normalized);
+  }
+  const renderLink = (url: string, label?: string, children?: ReactNode) => (
+    <MessageLink
+      url={url}
+      label={label ?? channelLinkLabel(url, scope, directory.channels)}
+      registry={extensions?.links}
+      onOpenLink={onOpenLink}
+      session={session}
+      scope={scope}
+    >
+      {children}
+    </MessageLink>
+  );
+  const renderInline = (text: string) =>
+    extensions ? (
+      <InlineText
+        registry={extensions.inline}
+        content={{ text, message: row }}
+        media={media}
+      />
+    ) : (
+      text
+    );
+  const renderText = (text: string) => {
+    let offset = 0;
+    return messageLinkParts(text).map((part) => {
+      const key = `${offset}:${part.text}`;
+      offset += part.text.length;
+      return part.url ? (
+        <span key={key}>{renderLink(part.url, part.label)}</span>
+      ) : (
+        <ReferenceText
+          key={key}
+          text={part.text}
+          mentions={[]}
+          directory={directory}
+          renderText={renderInline}
+          onOpenLink={onOpenLink}
+          extensions={extensions}
+          session={session}
+          scope={scope}
+        />
+      );
+    });
+  };
+
   const protectedContent = protectInlineContent(
     row,
-    participantProfiles,
+    participantProfiles ?? directory.profiles,
     scan.tree,
   );
   const components: Components = {
@@ -271,9 +328,16 @@ export function MessageMarkdown({
         data-single-emoji={largeEmoji || undefined}
       />
     ),
-    a: ({ node: _node, ...props }) => (
-      <MessageLink {...props} onOpenLink={onOpenLink} />
-    ),
+    a: ({ href, children }) =>
+      href ? (
+        renderLink(
+          href,
+          labelText(children) === href ? undefined : labelText(children),
+          labelText(children) === href ? undefined : children,
+        )
+      ) : (
+        <span>{children}</span>
+      ),
     img: ({ node: _node, alt }) =>
       alt ? <span className={styles.imageAlt}>{alt}</span> : null,
     span: ({ node: _node, children, ...props }) => {
@@ -287,30 +351,28 @@ export function MessageMarkdown({
         typeof target === "string" &&
         canOpenLink?.(target)
       ) {
+        const agent = directory.agents.some(
+          (agent) => agent.pubkey === profileKey(target),
+        );
+        const Icon = agent ? IconRobot : IconAt;
         return (
           <button
             type="button"
-            className={styles.mention}
+            className={referenceStyles.link}
+            data-mention-kind={agent ? "agent" : "person"}
             aria-label={`View ${text.slice(1)} profile`}
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
             }}
           >
-            {text}
+            <Icon aria-hidden="true" className={referenceStyles.icon} />
+            {text.slice(1)}
           </button>
         );
       }
       return typeof text === "string" ? (
-        extensions ? (
-          <InlineText
-            registry={extensions.inline}
-            content={{ text, message: row }}
-            media={media}
-          />
-        ) : (
-          text
-        )
+        renderText(text)
       ) : (
         <span {...props}>{children}</span>
       );

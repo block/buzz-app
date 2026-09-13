@@ -433,6 +433,8 @@ function Timeline({
               />
             ) : (
               <MessageRow
+                session={queries}
+                scope={scope}
                 key={row.id}
                 row={row}
                 unread={queries.unread}

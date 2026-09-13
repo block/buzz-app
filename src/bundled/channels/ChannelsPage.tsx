@@ -1,6 +1,7 @@
 import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
+import { buzzLinkTarget } from "../../features/navigation/buzz-links";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -64,15 +65,7 @@ export function ChannelsPage({
   const sessionNavigation = navigation?.forSession(relay, session);
   useEffect(() => {
     if (!navigation || !sessionNavigation) return;
-    if (
-      navigation.target.kind === "conversation" &&
-      navigation.target.messageId
-    )
-      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
-    else if (
-      session.status === "disconnected" &&
-      navigation.target.kind === "page"
-    )
+    if (session.status === "disconnected" && navigation.target.kind === "page")
       sessionNavigation.complete({ status: "opened" });
     else if (session.status === "error")
       sessionNavigation.complete({ status: "failed", reason: "unavailable" });
@@ -215,7 +208,16 @@ function ChannelWorkspace({
       });
     }
   }, [requestedChannel, current, list.status, navigation, viewer, scope]);
-  const showingThread = thread?.channelId === current?.id ? thread : undefined;
+  const requestedMessage =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined;
+  const showingThread =
+    requestedMessage && current
+      ? { channelId: current.id, messageId: requestedMessage }
+      : thread?.channelId === current?.id
+        ? thread
+        : undefined;
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
   }, [thread, showingThread]);
@@ -250,6 +252,15 @@ function ChannelWorkspace({
   const openThread = useCallback(
     (messageId: string) => {
       if (!current) return;
+      if (
+        requestedMessage &&
+        navigator &&
+        navigation?.target.kind === "conversation"
+      ) {
+        const { threadRootId: _thread, ...target } = navigation.target;
+        void navigator.open({ ...target, messageId });
+        return;
+      }
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -257,12 +268,24 @@ function ChannelWorkspace({
       setThread({ channelId: current.id, messageId });
       open(undefined);
     },
-    [current, open],
+    [current, open, requestedMessage, navigator, navigation],
   );
   const closeThread = useCallback(() => {
     setThread(undefined);
+    if (
+      requestedMessage &&
+      navigator &&
+      navigation?.target.kind === "conversation"
+    ) {
+      const {
+        messageId: _message,
+        threadRootId: _thread,
+        ...channel
+      } = navigation.target;
+      void navigator.open(channel);
+    }
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
-  }, []);
+  }, [requestedMessage, navigator, navigation]);
   const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
@@ -284,6 +307,18 @@ function ChannelWorkspace({
   );
   const openLink = useCallback(
     (url: string) => {
+      if (url.startsWith("buzz://")) {
+        if (!navigator || !viewer) return false;
+        const target = buzzLinkTarget(url, {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        });
+        if (!target) return false;
+        setThread(undefined);
+        open(undefined);
+        void navigator.open(target);
+        return true;
+      }
       const candidate = panels.resolve(url);
       if (current && candidate) {
         panelTrigger.current =
@@ -300,7 +335,7 @@ function ChannelWorkspace({
       }
       return false;
     },
-    [panels, current, open],
+    [panels, current, open, navigator, viewer, scope],
   );
   const panelActive = () => {
     const connection = relay.snapshot();
@@ -563,6 +598,7 @@ function ChannelWorkspace({
               channelName={current?.name ?? ""}
               channelId={showingThread.channelId}
               messageId={showingThread.messageId}
+              navigation={requestedMessage ? navigation : undefined}
               close={closeThread}
               onOpenLink={openLink}
               canOpenLink={canOpenLink}

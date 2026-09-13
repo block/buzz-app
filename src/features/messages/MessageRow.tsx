@@ -1,10 +1,12 @@
 import { memo, useCallback, useSyncExternalStore } from "react";
+import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
@@ -12,6 +14,8 @@ import { usesLargeEmojiPresentation } from "./emoji-size";
 
 export type MessageRowProps = {
   row: ChannelMessage;
+  session?: RelaySession | undefined;
+  scope?: string | undefined;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
@@ -26,6 +30,8 @@ export type MessageRowProps = {
 
 export const MessageRow = memo(function MessageRow({
   row,
+  session,
+  scope,
   unread,
   extensions,
   profile,
@@ -37,6 +43,7 @@ export const MessageRow = memo(function MessageRow({
   onOpenThread,
   participantProfiles,
 }: MessageRowProps) {
+  const directory = useReferenceDirectory(session);
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -100,6 +107,9 @@ export const MessageRow = memo(function MessageRow({
             </time>
           </div>
           <MessageMarkdown
+            directory={directory}
+            session={session}
+            scope={scope}
             row={row}
             extensions={extensions}
             media={media}

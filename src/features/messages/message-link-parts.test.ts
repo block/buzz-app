@@ -1,0 +1,146 @@
+import { expect, it } from "vitest";
+import { messageLinkParts } from "./message-link-parts";
+import { targetLink } from "../navigation/targets";
+
+it("recognizes bare and wrapped Buzz channel, message, thread and shared links", () => {
+  const urls = [
+    "buzz://channel/general",
+    `buzz://message?channel=general&id=${"a".repeat(64)}`,
+    `buzz://message?channel=general&id=${"a".repeat(64)}&thread=${"b".repeat(64)}`,
+    targetLink({ version: 1, kind: "home" }),
+  ];
+  for (const url of urls) {
+    for (const text of [url, `<${url}>`]) {
+      const parts = messageLinkParts(`See ${text}.`);
+      expect(parts.filter((part) => part.url)).toEqual([{ text: url, url }]);
+      expect(parts.map((part) => part.text).join("")).toBe(`See ${url}.`);
+    }
+  }
+});
+it("does not turn malformed Buzz addresses into links", () => {
+  const content = "<buzz://message?channel=general&id=bad>";
+  expect(messageLinkParts(content).some((part) => part.url)).toBe(false);
+  expect(
+    messageLinkParts(content)
+      .map((part) => part.text)
+      .join(""),
+  ).toBe(content);
+});
+
+it("removes only paired autolink brackets and preserves surrounding punctuation", () => {
+  const parts = messageLinkParts(
+    "See <https://drive.google.com/file/d/example>, then <https://example.com/path?q=hello!>.",
+  );
+  expect(parts.filter((part) => part.url).map((part) => part.url)).toEqual([
+    "https://drive.google.com/file/d/example",
+    "https://example.com/path?q=hello!",
+  ]);
+  expect(parts.map((part) => part.text).join("")).toBe(
+    "See https://drive.google.com/file/d/example, then https://example.com/path?q=hello!.",
+  );
+});
+
+it.each([
+  "a < b > c",
+  "<https://>",
+  "<https://example.com",
+  "https://example.com>",
+  "<javascript:alert(1)>",
+])("preserves non-autolink brackets: %s", (content) => {
+  expect(
+    messageLinkParts(content)
+      .map((part) => part.text)
+      .join(""),
+  ).toBe(content);
+});
+
+it("keeps ordinary link punctuation outside the destination and leaves prose available to inline renderers", () => {
+  const parts = messageLinkParts(":party: https://example.com. After");
+  expect(parts.filter((part) => part.url)).toEqual([
+    { text: "https://example.com", url: "https://example.com" },
+  ]);
+  expect(parts.map((part) => part.text).join("")).toBe(
+    ":party: https://example.com. After",
+  );
+});
+
+it.each([
+  "[this shadcdn/ui clone](https://github.com/duobaseio/forui)",
+  "[this shadcdn/ui clone](<https://github.com/duobaseio/forui>)",
+  String.raw`[this shadcdn/ui clone]\(https://github.com/duobaseio/forui\)`,
+  String.raw`[this shadcdn/ui clone]\([https://github.com/duobaseio/forui](https://github.com/duobaseio/forui))`,
+])("renders a labeled link without exposing wrappers: %s", (link) => {
+  const parts = messageLinkParts(`See ${link}. Thanks!`);
+  expect(parts.filter((part) => part.url)).toEqual([
+    {
+      text: "this shadcdn/ui clone",
+      label: "this shadcdn/ui clone",
+      url: "https://github.com/duobaseio/forui",
+    },
+  ]);
+  expect(parts.map((part) => part.text).join("")).toBe(
+    "See this shadcdn/ui clone. Thanks!",
+  );
+});
+
+it("keeps balanced and escaped URL parentheses inside labeled destinations", () => {
+  for (const link of [
+    "[Docs](https://example.com/wiki/Function_(math))",
+    String.raw`[Docs](https://example.com/wiki/Function_\(math\))`,
+  ]) {
+    expect(messageLinkParts(link).filter((part) => part.url)).toEqual([
+      {
+        text: "Docs",
+        label: "Docs",
+        url: "https://example.com/wiki/Function_(math)",
+      },
+    ]);
+  }
+});
+
+it("supports Buzz labels, escaped label punctuation, and multiple links in prose", () => {
+  const parts = messageLinkParts(
+    String.raw`Ask [design](buzz://channel/design), then [Docs \[new\]](https://example.com/docs).`,
+  );
+  expect(parts.filter((part) => part.url)).toEqual([
+    { text: "design", label: "design", url: "buzz://channel/design" },
+    {
+      text: "Docs [new]",
+      label: "Docs [new]",
+      url: "https://example.com/docs",
+    },
+  ]);
+  expect(parts.map((part) => part.text).join("")).toBe(
+    "Ask design, then Docs [new].",
+  );
+});
+
+it.each([
+  "[unsafe](javascript:alert(1))",
+  "[bad](buzz://message?channel=general&id=bad)",
+  "[unfinished](https://example.com",
+  "[not a link] (just prose)",
+])("preserves unsupported or unfinished syntax: %s", (content) => {
+  expect(
+    messageLinkParts(content)
+      .map((part) => part.text)
+      .join(""),
+  ).toBe(content);
+});
+
+it("bounds repeated unfinished wrappers while retaining a later valid link", () => {
+  for (const prefix of [
+    "[".repeat(80_000),
+    String.raw`\[`.repeat(40_000),
+    "[x](".repeat(20_000),
+    String.raw`[x]\(`.repeat(16_000),
+  ]) {
+    const parts = messageLinkParts(
+      `${prefix} [Docs](https://example.com/docs)`,
+    );
+    expect(parts.filter((part) => part.url)).toEqual([
+      { text: "Docs", label: "Docs", url: "https://example.com/docs" },
+    ]);
+    expect(parts.map((part) => part.text).join("")).toBe(`${prefix} Docs`);
+  }
+});

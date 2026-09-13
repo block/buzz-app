@@ -1,23 +1,19 @@
 # Workflows capability and bundled UI handoff
 
-Status: implementation contract, not a shipped or live-validated feature.
-Wes approved session FOUNDATION wiring and workflow-only relay save/delete repair
-on 2026-09-12 (Buzz event `768f982eb3295e1bcbc69614d61b38deb3dc608e62864a5c58df9d8453f7fac9`).
+Status: implemented and exercised in isolated browser/broker trials against a
+patched relay; not shipped or packaged-native validated.
 
-## Ownership and base
+## Ownership
 
-App baseline: `17f90c18fff6b86bc029e710401fb2b60bc385ea`.
-Brain owns `src/features/workflows/**`, relay transport/outbox/session integration,
-`dev/` host adapters, catalogs, dependencies, this document, and the separate
-legacy relay repair. Pinky owns `src/bundled/workflows/**` and adjacent UI/helper
-tests in a separate worktree. No shared live-tree mutations.
+The bundled page owns presentation and drafts. The shared session owns workflow
+reads, commands and receipt handling through its existing reader and outbox.
+Host adapters own signing, publication and relay compatibility discovery. The
+relay owns authorization, execution and atomic signed-definition/runtime state.
 
 The type contract is [types.ts](../src/features/workflows/types.ts).
 UI imports that capability by type and receives the captured session's
-`workflows` property once integration lands; build/test UI compositions against
-explicit fixture capabilities meanwhile. Do not implement an alternate host in
-bundled code. Use the existing `pages` + `relay` injection and
-`useRelayConnection`, not new plugins/author API or a router.
+`workflows` property. It uses the existing `pages` + `relay` injection and
+`useRelayConnection`, with no alternate connection, cache, outbox or router.
 
 ## First complete UI slice
 
@@ -34,7 +30,7 @@ bundled code. Use the existing `pages` + `relay` injection and
   writes retain drafts. Show accepted delivery separately from domain success.
   Delete requires confirmation and host availability; an old relay's generic
   accepted kind-5 receipt does not prove deletion.
-- Manual run and bounded real run/trace next, before advanced editor polish.
+- Manual run and bounded run history/trace detail.
   Only returned run ID correlates a run; never choose newest run as recovery.
   Approval rows are read-only; their hash is not an approval token.
 - Form and YAML share restrictions. Webhook create/transition cannot bypass the
@@ -84,7 +80,7 @@ dirty-close/conflict drafts, narrow layouts and YAML ownership tests. Fixture
 feedback can precede final package gates. Live identity/signing/destructive
 workflow trials require a separate consented test, not this implementation approval.
 
-## Host checkpoint (2026-09-12)
+## Host adapters
 
 The app implements lazy structured history reads in both signed and dev-broker
 hosts. The broker exposes only `workflow-runs` / `workflow-approvals` POST inputs,
@@ -93,11 +89,9 @@ the captured principal's API admission. History capability means the adapter
 exists, not that an older relay serves the endpoint: failures remain explicit.
 Responses are stream-bounded to 1 MiB before parsing; command receipts to 16 KiB.
 
-All workflow writes remain unavailable in real host connections at this
-checkpoint. Fixtures may supply `WorkflowHost.lifecycleVersion = 1` to exercise
-commands. No real host advertises that evidence until the forward relay repair
-and compatibility handshake are implemented and reviewed. Receipt tests do not
-prove a deployed database transaction.
+Workflow writes require positively discovered `WorkflowHost.lifecycleVersion = 1`.
+Old or unverified relays remain browse-only; fixtures can supply that capability
+explicitly. Receipt tests do not prove a deployed database transaction.
 
 Revocation puts existing and newly opened denied views in `unavailable`, purges
 all data before callbacks, and cancels late results. A regrant requires explicit
@@ -110,7 +104,7 @@ permitting resave. A coordinate-only old/concurrent head is not save readback.
 Generic kind-5 deletes retain their previous behavior: only workflow-coordinate
 kind-5 operations use workflow validation and receipt semantics.
 
-## Forward lifecycle advertisement (implementation checkpoint)
+## Forward lifecycle advertisement
 
 A repaired relay advertises the extension `buzz-workflows` in its host-scoped
 NIP-11 document, alongside its explicit stable `self` key and:
@@ -146,11 +140,11 @@ lease against a server replacement between the check and write.
 
 The application’s real browser/native dev shell currently uses the broker;
 `connectSignedTransport` is the alternative signer-owned adapter, not a claim
-that native Keychain production wiring has been exercised. The new handshake
-still requires independent review and an approved disposable live test. No
-production deployment or real create/run validation is implied by this checkpoint.
+that native Keychain production wiring has been exercised. The handshake and forward
+lifecycle were independently reviewed and exercised against a disposable local
+relay. This does not imply a production deployment or packaged sign-in support.
 
-## Host review follow-up (2026-09-12)
+## Authority and cancellation
 
 Workflow broker requests carry the connection's captured relay authority in
 `X-Buzz-Workflow-Authority`. The broker requires a lowercase public key and checks
@@ -165,3 +159,24 @@ publication after cancellation. Already-dispatched writes retain unknown-outcome
 semantics. Explicit numeric workflow coordinates (including leading zeros and
 `+`) enter workflow validation, which rejects every noncanonical coordinate;
 unrelated kind-5 event/coordinate deletes are unchanged in the signed adapter.
+
+## Validation and remaining boundaries
+
+Isolated Chromium/WebKit trials exercised disabled creation/manual rejection,
+keyboard enable/save/cancel, reaction execution, edits, stale-editor conflict and
+draft retention, run/trace display, disable/re-enable, and confirmed deletion with
+fresh reads. A committed save with an unknown response was recovered by replaying
+the exact signed event and matching its revision on readback, not by issuing a
+replacement operation. This was not a UI retry-button acceptance test.
+
+The frozen pre-integration app `b62d617` passed 264 functional browser tests (132
+per engine). Real-relay trials used the `900f43b` production app bytes and relay
+`ab411c30b` with two loopback-only listener adaptations. Later mainline integration
+requires its own checks; these results do not certify later commits.
+
+Fresh accepted saves project the configured enabled flag into runtime state;
+omitting it defaults to enabled. Historical split rows and exact pre-fix event
+replays are not repaired. Existing trigger caches can remain stale for roughly
+ten seconds: disable is not immediate distributed cancellation of selected or
+running work. Packaged production host/sign-in, historical reconciliation and a
+complete schedule/webhook/approval/permission matrix remain outside this slice.

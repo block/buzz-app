@@ -42,6 +42,7 @@ export function MessageLink({
   label,
   session,
   scope,
+  interactive = true,
 }: {
   url: string;
   children?: ReactNode;
@@ -50,6 +51,7 @@ export function MessageLink({
   label?: string | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
+  interactive?: boolean;
 }) {
   const renderers = useSyncExternalStore(
     registry?.subscribe ?? subscribe,
@@ -105,7 +107,12 @@ export function MessageLink({
   };
   const anchor = (entry?: Contribution<LinkRenderer>) => {
     const Content = entry?.component;
-    const element = (
+    const content = Content ? (
+      <Content url={url} />
+    ) : (
+      (children ?? label ?? url)
+    );
+    const element = interactive ? (
       <a
         href={url}
         aria-label={label}
@@ -114,10 +121,14 @@ export function MessageLink({
         data-link-renderer={entry?.key}
         {...navigation}
       >
-        {Content ? <Content url={url} /> : (children ?? label ?? url)}
+        {content}
       </a>
+    ) : (
+      <span className={entry?.className} data-link-renderer={entry?.key}>
+        {content}
+      </span>
     );
-    return preview && session ? (
+    return interactive && preview && session ? (
       <PreviewCard
         trigger={element}
         link={<a href={url} {...navigation} />}

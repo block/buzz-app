@@ -348,6 +348,12 @@ same `registerTool` contract. No page imports their implementations. Optional nu
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
 `-10` to retain its position before default-order tools such as Emoji.
 
+Nonempty drafts also render through the shared message Markdown and link components
+in a bounded live preview beneath the editor. Its links and mentions are display-only,
+so inspecting the draft cannot navigate or start a message-hover read. Selected
+recipient keys come from the existing draft; previewing typed names never adds
+notification intent. The textarea retains editing, selection, completion and sending.
+
 Tools receive `insertText`, `insertMention({ pubkey, name })` and `focus` commands.
 Mention insertion atomically records visible text and exact notification intent;
 `true` means the edit was accepted, **not** that membership or delivery succeeded.

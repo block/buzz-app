@@ -266,6 +266,7 @@ export function MessageMarkdown({
   canOpenLink,
   participantProfiles,
   largeEmoji = false,
+  interactive = true,
 }: {
   row: ChannelMessage;
   directory?: typeof emptyReferenceDirectory;
@@ -277,6 +278,7 @@ export function MessageMarkdown({
   canOpenLink?: ((target: string) => boolean) | undefined;
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   largeEmoji?: boolean | undefined;
+  interactive?: boolean;
 }) {
   if (row.content.length > MAX_MARKDOWN_LENGTH)
     return <div className={styles.plainText}>{row.content}</div>;
@@ -309,6 +311,7 @@ export function MessageMarkdown({
       onOpenLink={onOpenLink}
       session={session}
       scope={scope}
+      interactive={interactive}
     >
       {children}
     </MessageLink>
@@ -341,6 +344,7 @@ export function MessageMarkdown({
           extensions={extensions}
           session={session}
           scope={scope}
+          interactive={interactive}
         />
       );
     });
@@ -380,26 +384,33 @@ export function MessageMarkdown({
       if (
         typeof text === "string" &&
         typeof target === "string" &&
-        canOpenLink?.(target)
+        (!interactive || canOpenLink?.(target))
       ) {
         const agent = directory.agents.some(
           (agent) => agent.pubkey === profileKey(target),
         );
         const Icon = agent ? IconRobot : IconAt;
+        const Mention = interactive ? "button" : "span";
         return (
-          <button
-            type="button"
+          <Mention
+            type={interactive ? "button" : undefined}
             className={referenceStyles.link}
             data-mention-kind={agent ? "agent" : "person"}
-            aria-label={`View ${text.slice(1)} profile`}
-            onClick={(event) => {
-              event.currentTarget.focus();
-              onOpenLink(target);
-            }}
+            aria-label={
+              interactive ? `View ${text.slice(1)} profile` : undefined
+            }
+            onClick={
+              interactive
+                ? (event) => {
+                    event.currentTarget.focus();
+                    onOpenLink(target);
+                  }
+                : undefined
+            }
           >
             <Icon aria-hidden="true" className={referenceStyles.icon} />
             {text.slice(1)}
-          </button>
+          </Mention>
         );
       }
       return typeof text === "string" ? (

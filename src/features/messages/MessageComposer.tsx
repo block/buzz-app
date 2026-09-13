@@ -34,6 +34,7 @@ import type {
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
+import { ComposerPreview } from "./ComposerPreview";
 
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
@@ -464,6 +465,16 @@ function Composer({
           </span>
         )}
       </div>
+      {!!draft.trim() && (
+        <ComposerPreview
+          draft={value}
+          session={session}
+          scope={scope}
+          channelId={channelId}
+          extensions={extensions}
+          emoji={emojiCatalog.entries}
+        />
+      )}
       {!!value.recipients.length && (
         <section
           className={styles.mentionRecipients}

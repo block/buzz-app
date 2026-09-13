@@ -81,6 +81,7 @@ export function ReferenceText({
   extensions,
   session,
   scope,
+  interactive = true,
 }: {
   text: string;
   mentions: readonly string[];
@@ -90,6 +91,7 @@ export function ReferenceText({
   extensions?: ConversationExtensions | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
+  interactive?: boolean;
 }) {
   const references = messageReferences(
     text,
@@ -118,6 +120,7 @@ export function ReferenceText({
           onOpenLink={onOpenLink}
           session={session}
           scope={scope}
+          interactive={interactive}
         />
       ) : (
         <span

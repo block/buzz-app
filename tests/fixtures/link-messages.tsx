@@ -7,6 +7,7 @@ import type { PluginModule } from "../../src/plugins/api";
 import type { ChannelMessage } from "../../src/features/relay/contracts";
 import type { RelaySession } from "../../src/features/relay/session";
 import * as links from "../../src/bundled/links";
+import { readView, writeView } from "../../src/shared/view-state";
 import "../../src/shared/styles/globals.css";
 
 // Real MessageRow + plugin lifecycle, with no relay, identity or writes.
@@ -25,12 +26,57 @@ const broken: PluginModule = {
 };
 const root = new Context();
 const runtime = new PluginRuntime(root, async (plugin) =>
-  plugin.revision === "broken" ? broken : links,
+  plugin.manifest.id === "fixture.mentions"
+    ? mentionTools
+    : plugin.revision === "broken"
+      ? broken
+      : links,
 );
 const conversation = new ConversationService(root);
+const mentionTools: PluginModule = {
+  inject: ["conversation"],
+  apply(ctx) {
+    ctx.conversation.registerTool({
+      id: "fixture-mentions",
+      title: "Example mentions",
+      component: ({ insertMention }) => (
+        <>
+          <button
+            type="button"
+            onClick={() =>
+              insertMention({ pubkey: "a".repeat(64), name: "Alex Chen" })
+            }
+          >
+            Mention Alex Chen
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              insertMention({ pubkey: "b".repeat(64), name: "Build Bot" })
+            }
+          >
+            Mention Build Bot
+          </button>
+        </>
+      ),
+    });
+  },
+};
 function mode(revision: string) {
-  runtime.reconcile(
-    revision === "off"
+  runtime.reconcile([
+    {
+      manifest: {
+        id: "fixture.mentions",
+        name: "Example mentions",
+        apiVersion: 1,
+      },
+      enabled: true,
+      source: "bundled",
+      revision: "1",
+      previous: null,
+      error: null,
+    },
+    ...(revision === "off"
       ? []
       : [
           {
@@ -41,8 +87,8 @@ function mode(revision: string) {
             previous: null,
             error: null,
           },
-        ],
-  );
+        ]),
+  ]);
 }
 mode("on");
 const row: ChannelMessage = {
@@ -73,7 +119,22 @@ const library = {
   definitions: [],
   identities: [{ pubkey: "b".repeat(64), name: "Build Bot" }],
 };
+const emoji = { status: "ready", entries: [] };
+const sent: Array<{ text: string; mentions: readonly string[] }> = [];
+Object.assign(window, { linkComposerFixture: { sent } });
 const previewSession = {
+  outbox: { supports: () => true },
+  emoji: {
+    snapshot: () => emoji,
+    subscribe: () => () => {},
+    ensure: async () => {},
+  },
+  messages: {
+    send: (_channelId: string, text: string, mentions: readonly string[]) => {
+      sent.push({ text, mentions });
+      return `preview-${sent.length}`;
+    },
+  },
   channels: { list: () => directory, subscribeList: () => () => {} },
   profiles: {
     snapshot: () => profiles,
@@ -108,6 +169,18 @@ const previewSession = {
     };
   },
 } as unknown as RelaySession;
+const composerScope = "link-composer-preview-v1";
+if (readView(composerScope, "draft:design", null) === null) {
+  writeView(composerScope, "draft:design", {
+    text: row.content,
+    recipients: [...profiles].map(([pubkey, profile]) => ({
+      pubkey,
+      name: profile.name,
+      start: row.content.indexOf(`@${profile.name}`),
+      end: row.content.indexOf(`@${profile.name}`) + profile.name.length + 1,
+    })),
+  });
+}
 function Preview() {
   const [opened, setOpened] = useState("No link opened");
   const [enabled, setEnabled] = useState("on");
@@ -162,6 +235,14 @@ function Preview() {
         retry={undefined}
       />
       <p role="status">{opened}</p>
+      <h2>Try composing</h2>
+      <conversation.ui.Composer
+        scope={composerScope}
+        session={previewSession}
+        channelId="design"
+        channelName="design"
+        onSend={() => setOpened(`Preview only: ${sent.at(-1)?.text}`)}
+      />
     </main>
   );
 }

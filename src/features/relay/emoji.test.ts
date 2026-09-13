@@ -152,6 +152,59 @@ it("actual session cold send is draft-safe; A/B sends, replies and signed retrie
   ]);
   expect(a.session.emoji.snapshot().entries[0]?.url).toBe("https://new.test/p");
 });
+it("reactions use retained thread targets after shared-cache eviction", () => {
+  const h = session();
+  const root = message(member, "c", "Still visible", 1);
+  h.live.receive([root]);
+  const thread = h.session.thread("c", root.id);
+  owners.push(thread);
+  h.live.receive(
+    Array.from({ length: 9 }, (_, index) =>
+      message(member, "other", "x".repeat(1024 * 1024), 100 + index),
+    ),
+  );
+  expect(thread.snapshot().root?.id).toBe(root.id);
+  const id = h.session.messages.react(root.id, "👍");
+  expect(
+    h.session.outbox?.snapshot().find((item) => item.event.id === id)?.event,
+  ).toMatchObject({
+    kind: 7,
+    content: "👍",
+    tags: expect.arrayContaining([
+      ["h", "c"],
+      ["e", root.id],
+    ]),
+  });
+});
+it("accepts every catalog shortcode length through session reaction authoring", async () => {
+  const h = session();
+  const root = message(member, "c", "React here", 1);
+  const names = [62, 63, 64].map((length) => "a".repeat(length));
+  h.live.receive([root]);
+  const ready = h.session.emoji.ensure();
+  h.wire.next().respond([
+    set(
+      member,
+      1,
+      names.map((name) => ["emoji", name, `https://a.test/${name}.png`]),
+    ),
+  ]);
+  await ready;
+  for (const name of names) {
+    const content = `:${name}:`;
+    const id = h.session.messages.react(root.id, content);
+    expect(
+      h.session.outbox?.snapshot().find((item) => item.event.id === id)?.event,
+    ).toMatchObject({
+      kind: 7,
+      content,
+      tags: expect.arrayContaining([
+        ["e", root.id],
+        ["emoji", name, `https://a.test/${name}.png`],
+      ]),
+    });
+  }
+});
 it("reactions use the loaded target and preserve custom emoji on a failed delivery retry", async () => {
   const h = session();
   const root = message(member, "c", "React here", 1);
@@ -182,6 +235,9 @@ it("reactions use the loaded target and preserve custom emoji on a failed delive
   expect(() => h.session.messages.react(root.id, "x".repeat(65))).toThrow(
     /long/,
   );
+  expect(() =>
+    h.session.messages.react(root.id, `:${"x".repeat(65)}:`),
+  ).toThrow(/long/);
 });
 it("plain sends are immediate and do not acquire a palette; load failure requires explicit retry", async () => {
   const h = session();

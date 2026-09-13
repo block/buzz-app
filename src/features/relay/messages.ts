@@ -1,3 +1,4 @@
+import { validReactionContent } from "./emoji";
 import type { EventData } from "./events";
 import type { Outbox } from "./outbox";
 
@@ -83,7 +84,7 @@ export function createMessages(
       const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channelId) throw new Error("Message has no channel");
       const value = text(content);
-      if ([...value].length > 64) throw new Error("Reaction is too long");
+      if (!validReactionContent(value)) throw new Error("Reaction is too long");
       return writer(7).send({
         kind: 7,
         content: value,

@@ -20,6 +20,7 @@ import {
 } from "./sidebar-preferences.mjs";
 import { createHostAdmission } from "../src/features/relay/host-admission.ts";
 import { relayKlipySearchPath } from "../src/features/relay/gifs.ts";
+import { validReactionContent } from "../src/features/relay/emoji.ts";
 // Dev-only relay broker. Holds the local Buzz identity in this Node process and signs NIP-98 reads
 // for the browser, so no key ever reaches page JavaScript. The dev server loads it whenever
 // BUZZ_DEV_VIEWER is configured; production builds and tests never load it.
@@ -210,7 +211,8 @@ export function validMessageTemplate(event) {
       const references = event.tags.filter((tag) => tag[0] === "e");
       if (event.kind === 7)
         return (
-          [...event.content.trim()].length <= 64 &&
+          event.content === event.content.trim() &&
+          validReactionContent(event.content) &&
           references.length === 1 &&
           references[0].length === 2 &&
           /^[0-9a-f]{64}$/.test(references[0][1])

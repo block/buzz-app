@@ -406,6 +406,15 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
     expect((await h.post("publish", event)).status).toBe(200);
     expect(h.calls).toHaveLength(1);
     expect(h.calls[0].body).toEqual(JSON.parse(JSON.stringify(event)));
+    for (const length of [62, 63, 64]) {
+      const content = `:${"a".repeat(length)}:`;
+      const signed = await h.post("sign", { ...template, content });
+      expect(signed.status).toBe(200);
+      const boundaryEvent = await signed.json();
+      expect(boundaryEvent.content).toBe(content);
+      expect((await h.post("publish", boundaryEvent)).status).toBe(200);
+    }
+    expect(h.calls).toHaveLength(4);
     for (const route of ["sign", "publish"]) {
       for (const tags of [
         [],
@@ -424,8 +433,16 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
       expect(
         (await h.post(route, { ...event, content: "x".repeat(65) })).status,
       ).toBe(400);
+      expect(
+        (await h.post(route, { ...event, content: `:${"a".repeat(65)}:` }))
+          .status,
+      ).toBe(400);
+      expect(
+        (await h.post(route, { ...event, content: ` ${"x".repeat(64)}` }))
+          .status,
+      ).toBe(400);
     }
-    expect(h.calls).toHaveLength(1);
+    expect(h.calls).toHaveLength(4);
   } finally {
     await h.close();
   }

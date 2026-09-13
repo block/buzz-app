@@ -1,0 +1,39 @@
+diff --git a/lib/index.js b/lib/index.js
+index a183cc7b1669aab25467840540ce3bd1c025fb47..f77bd4c39df936c8a427920dc4cef1f4be6d216e 100644
+--- a/lib/index.js
++++ b/lib/index.js
+@@ -6,6 +6,11 @@ import { jsx as c } from "react/jsx-runtime";
+ 
+ import { flushSync as f } from "react-dom";
+ 
++// Keep macOS WebKit compensation on the existing deferred-jump path.
++// Immediate corrections during native input can leave offsets and rows out of
++// sync. Pending rows and their scroll extent must move together.
++const isMacWebKit = () => typeof navigator !== "undefined" && !b() && navigator.platform === "MacIntel" && navigator.vendor === "Apple Computer, Inc.";
++
+ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v = e => [ ...e ].sort((e, t) => e - t), p = setTimeout, S = clearTimeout, m = "function" == typeof queueMicrotask ? queueMicrotask : e => {
+     Promise.resolve().then(e);
+ }, $ = () => {
+@@ -19,7 +24,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+ })(() => !!/iP(hone|od|ad)/.test(navigator.userAgent) || "MacIntel" === navigator.platform && navigator.maxTouchPoints > 0), I = e => u(e.t(), e.o()), y = ({i: e, l: t, u: n, h: o, v: r, p: i, t: s, S: l, m: c, $: f}, h = 0) => {
+     let g = !!f, v = !!h, p = 1, S = 0, m = 0, $ = 0, w = 0, _ = 0, z = 0, I = 0, y = 0, x = null, k = [ 0, v ? u(h - 1, 0) : -1 ], R = 0, C = !1;
+     const T = /* @__PURE__ */ new Set, M = () => $ - m, O = () => M() + _ + w, E = e => n(e) - _, L = e => {
+-        e && (b() && 0 !== I || x && 1 === y ? _ += e : w += e);
++        e && ((b() || isMacWebKit()) && 0 !== I || x && 1 === y ? _ += e : w += e);
+     };
+     return {
+         _: () => {
+@@ -45,7 +50,7 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+         M: () => 0 !== I,
+         o: () => S,
+         O: () => m,
+-        t: s,
++        t: () => s() - (isMacWebKit() ? _ : 0),
+         L: () => (z = w, w = 0, [ z, 2 === y ]),
+         H: (e, t) => {
+             const n = [ e, t ];
+@@ -797,4 +802,3 @@ var {min: a, max: u, abs: d, floor: h} = Math, g = (e, t, n) => a(n, u(t, e)), v
+ });
+ 
+ export { G as VList, j as Virtualizer, U as WindowVirtualizer, N as experimental_VGrid };
+-//# sourceMappingURL=index.js.map

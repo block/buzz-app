@@ -53,7 +53,7 @@ async fn notify(connection: &Connection, title: &str, body: &str) -> Result<Outc
         icon,
         title,
         body,
-        ["default", "Open"],
+        vec!["default", "Open"],
         HashMap::<&str, Value<'_>>::new(),
         -1i32,
     );

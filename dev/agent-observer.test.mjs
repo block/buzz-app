@@ -8,8 +8,9 @@ import {
 import { decodeAgentObserver } from "./agent-observer.mjs";
 
 const now = 1700000000;
+// Keep frame construction and validation in the same second at the ±300s boundary.
 beforeEach(() => {
-  vi.spyOn(Date, "now").mockReturnValue(now * 1000);
+  vi.spyOn(Date, "now").mockReturnValue(now * 1000 + 999);
 });
 afterEach(() => vi.restoreAllMocks());
 

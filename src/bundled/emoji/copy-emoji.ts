@@ -38,27 +38,41 @@ export function copyEmoji(event: ClipboardEvent) {
 }
 
 // Walk the detached selection only: no hidden DOM insertion, image loads or
-// changes to the user's selection. Preserve explicit breaks and block boundaries.
+// changes to the user's selection. Preserve explicit breaks, blocks, and the
+// tab/newline boundaries browsers use for table cells and rows.
 function selectedText(node: Node): string {
   if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
   if (node instanceof Element && node.tagName === "BR") return "\n";
   let text = "";
-  let previousBlock = false;
+  let previous: Node | undefined;
   for (const child of node.childNodes) {
-    const block =
-      child instanceof Element &&
-      /^(DIV|P|LI|OL|UL|SECTION|H[1-6])$/.test(child.tagName);
     const value = selectedText(child);
-    if (
-      text &&
-      value &&
-      (block || previousBlock) &&
-      !text.endsWith("\n") &&
-      !value.startsWith("\n")
-    )
-      text += "\n";
+    if (text && value) {
+      const separator = siblingSeparator(previous, child);
+      if (
+        separator &&
+        !text.endsWith(separator) &&
+        !value.startsWith(separator)
+      )
+        text += separator;
+    }
     text += value;
-    previousBlock = block;
+    previous = child;
   }
   return text;
+}
+
+function siblingSeparator(previous: Node | undefined, current: Node) {
+  const previousTag = previous instanceof Element ? previous.tagName : "";
+  const currentTag = current instanceof Element ? current.tagName : "";
+  if (/^(TD|TH)$/.test(previousTag) || /^(TD|TH)$/.test(currentTag))
+    return "\t";
+  if (
+    /^(TR|THEAD|TBODY|TFOOT)$/.test(previousTag) ||
+    /^(TR|THEAD|TBODY|TFOOT)$/.test(currentTag) ||
+    /^(DIV|P|LI|OL|UL|SECTION|TABLE|H[1-6])$/.test(previousTag) ||
+    /^(DIV|P|LI|OL|UL|SECTION|TABLE|H[1-6])$/.test(currentTag)
+  )
+    return "\n";
+  return "";
 }

@@ -128,7 +128,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await observeCopyPayload();
     await page.keyboard.press("ControlOrMeta+c");
-    expect(await copyPayload()).toEqual({ prevented: true, text: ":party:" });
+    await expect
+      .poll(copyPayload)
+      .toEqual({ prevented: true, text: ":party:" });
     await historic.evaluate((image) => {
       const range = document.createRange();
       range.selectNodeContents(image.closest("p"));
@@ -138,9 +140,40 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await observeCopyPayload();
     await page.keyboard.press("ControlOrMeta+c");
-    expect(await copyPayload()).toEqual({
+    await expect.poll(copyPayload).toEqual({
       prevented: true,
       text: "Historic :unknown:party: and https://example.test/:party:",
+    });
+    const table = page.locator("table");
+    await expect(table.locator('img[alt=":party:"]')).toHaveCount(1);
+    await table.evaluate((element) => {
+      const range = document.createRange();
+      range.selectNodeContents(element);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    await observeCopyPayload();
+    await page.keyboard.press("ControlOrMeta+c");
+    await expect.poll(copyPayload).toEqual({
+      prevented: true,
+      text: "State\tCount\n:party:\t12\ndone\t34",
+    });
+    await table
+      .locator("tbody tr")
+      .first()
+      .evaluate((row) => {
+        const range = document.createRange();
+        range.selectNodeContents(row);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      });
+    await observeCopyPayload();
+    await page.keyboard.press("ControlOrMeta+c");
+    await expect.poll(copyPayload).toEqual({
+      prevented: true,
+      text: ":party:\t12",
     });
     // Independently prove this browser's real clipboard transport with the exact
     // handler payload; the editable source path intentionally uses native copy.

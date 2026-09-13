@@ -140,6 +140,13 @@ const sessions = ["a", "b"].map((community) => {
   const single = message(viewer, "c", ":party:", 4, [
     ["emoji", "party", `${origin}/media/1.png`],
   ]);
+  const table = message(
+    viewer,
+    "c",
+    "| State | Count |\n| --- | --- |\n| :party: | 12 |\n| done | 34 |",
+    5,
+    [["emoji", "party", `${origin}/media/table.png`]],
+  );
   live.receive([root]);
   return {
     ...owner,
@@ -151,6 +158,7 @@ const sessions = ["a", "b"].map((community) => {
       broken,
       unloaded,
       single,
+      table,
     ]),
     replace(empty = false) {
       time++;

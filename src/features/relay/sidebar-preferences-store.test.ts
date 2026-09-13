@@ -1,22 +1,141 @@
 import { expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { flush, keypair, scriptedTransport } from "./testing";
-import type { SidebarPreferences } from "./sidebar-preferences";
+import type {
+  SidebarAssignmentMutator,
+  SidebarPreferences,
+} from "./sidebar-preferences";
 
 const data: SidebarPreferences = {
   sections: [{ id: "work", name: "Work", order: 0 }],
   assignments: { alpha: "work" },
   starred: ["beta"],
 };
-function setup(decode = vi.fn(async (): Promise<SidebarPreferences> => data)) {
+function setup(
+  decode = vi.fn(async (): Promise<SidebarPreferences> => data),
+  write?: SidebarAssignmentMutator,
+) {
   const wire = scriptedTransport(keypair().pubkey, keypair().pubkey);
   const owner = createRelaySession({
     ...wire.transport,
     decodeSidebarPreferences: decode,
+    ...(write ? { writeSidebarAssignment: write } : {}),
   });
   return { wire, owner, preferences: owner.session.sidebarPreferences, decode };
 }
 
+it("applies a confirmed assignment to the retained session snapshot", async () => {
+  const write = vi.fn<SidebarAssignmentMutator>(async () => ({
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { alpha: "later" },
+  }));
+  const { wire, owner, preferences } = setup(undefined, write);
+  try {
+    const initial = preferences.ensure();
+    await flush();
+    wire.next().respond([]);
+    await initial;
+    const listener = vi.fn();
+    preferences.subscribe(listener);
+    await expect(preferences.assign("alpha", "later")).resolves.toMatchObject({
+      assignments: { alpha: "later" },
+    });
+    expect(write).toHaveBeenCalledWith(
+      { channelId: "alpha", sectionId: "later" },
+      expect.any(AbortSignal),
+    );
+    expect(preferences.snapshot()).toEqual({
+      status: "ready",
+      data: {
+        sections: [
+          { id: "work", name: "Work", order: 0 },
+          { id: "later", name: "Later", order: 1 },
+        ],
+        assignments: { alpha: "later" },
+        starred: ["beta"],
+      },
+    });
+    expect(Object.isFrozen(preferences.snapshot().data?.assignments)).toBe(
+      true,
+    );
+    expect(listener).toHaveBeenCalledOnce();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("keeps the last confirmed snapshot when an assignment fails", async () => {
+  const write = vi.fn<SidebarAssignmentMutator>(async () => {
+    throw new Error("relay rejected write");
+  });
+  const { wire, owner, preferences } = setup(undefined, write);
+  try {
+    const initial = preferences.ensure();
+    await flush();
+    wire.next().respond([]);
+    await initial;
+    const retained = preferences.snapshot();
+    await expect(preferences.assign("alpha")).rejects.toThrow(
+      "relay rejected write",
+    );
+    expect(preferences.snapshot()).toBe(retained);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("does not let an older refresh overwrite a confirmed assignment", async () => {
+  let resolveDecode!: (value: SidebarPreferences) => void;
+  const decode = vi.fn(
+    async () =>
+      new Promise<SidebarPreferences>((resolve) => {
+        resolveDecode = resolve;
+      }),
+  );
+  const write = vi.fn<SidebarAssignmentMutator>(async () => ({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { alpha: "work" },
+  }));
+  const { wire, owner, preferences } = setup(decode, write);
+  try {
+    const refresh = preferences.ensure();
+    await flush();
+    wire.next().respond([]);
+    await flush();
+    await preferences.assign("alpha", "work");
+    resolveDecode({ ...data, assignments: {} });
+    await refresh;
+    expect(preferences.snapshot().data?.assignments).toEqual({ alpha: "work" });
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("rejects queued assignment results after session cache clear", async () => {
+  let resolveWrite!: (
+    value: Awaited<ReturnType<SidebarAssignmentMutator>>,
+  ) => void;
+  const write = vi.fn<SidebarAssignmentMutator>(
+    async () =>
+      new Promise((resolve) => {
+        resolveWrite = resolve;
+      }),
+  );
+  const { owner, preferences } = setup(undefined, write);
+  const pending = preferences.assign("alpha", "work");
+  await flush();
+  await owner.clearCache();
+  resolveWrite({
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: { alpha: "work" },
+  });
+  await expect(pending).rejects.toThrow("unavailable");
+  expect(preferences.snapshot()).toEqual({ status: "idle" });
+  owner.dispose();
+});
 it("one session retains groups across observers and deduplicates initial reads", async () => {
   const { wire, owner, preferences, decode } = setup();
   try {

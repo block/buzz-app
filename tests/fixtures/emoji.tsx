@@ -143,9 +143,16 @@ const sessions = ["a", "b"].map((community) => {
   const table = message(
     viewer,
     "c",
-    "| State | Count |\n| --- | --- |\n| :party: | 12 |\n| done | 34 |",
+    "| State | Owner | Count | Tail |\n| --- | --- | --- | --- |\n| :party: | | 12 | |\n| | lead | | end |",
     5,
     [["emoji", "party", `${origin}/media/table.png`]],
+  );
+  const blocks = message(
+    viewer,
+    "c",
+    "> Quote :party:\n\n```text\ncode\n```",
+    6,
+    [["emoji", "party", `${origin}/media/blocks.png`]],
   );
   live.receive([root]);
   return {
@@ -159,6 +166,7 @@ const sessions = ["a", "b"].map((community) => {
       unloaded,
       single,
       table,
+      blocks,
     ]),
     replace(empty = false) {
       time++;

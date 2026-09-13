@@ -157,7 +157,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await page.keyboard.press("ControlOrMeta+c");
     await expect.poll(copyPayload).toEqual({
       prevented: true,
-      text: "State\tCount\n:party:\t12\ndone\t34",
+      text: "State\tOwner\tCount\tTail\n:party:\t\t12\t\n\tlead\t\tend",
     });
     await table
       .locator("tbody tr")
@@ -173,7 +173,28 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await page.keyboard.press("ControlOrMeta+c");
     await expect.poll(copyPayload).toEqual({
       prevented: true,
-      text: ":party:\t12",
+      text: ":party:\t\t12\t",
+    });
+    const blockquote = page.locator("blockquote");
+    const preformatted = blockquote.locator("xpath=following-sibling::pre[1]");
+    await expect(blockquote.locator('img[alt=":party:"]')).toHaveCount(1);
+    await blockquote.evaluate((element) => {
+      const start = element.querySelector("p")?.firstChild;
+      const end = element.nextElementSibling?.querySelector("code")?.lastChild;
+      if (!start || !end) throw new Error("Missing quote/code text boundaries");
+      const range = document.createRange();
+      range.setStart(start, 0);
+      range.setEnd(end, end.textContent?.length ?? 0);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
+    await expect(preformatted).toContainText("code");
+    await observeCopyPayload();
+    await page.keyboard.press("ControlOrMeta+c");
+    await expect.poll(copyPayload).toEqual({
+      prevented: true,
+      text: "Quote :party:\n\ncode\n",
     });
     // Independently prove this browser's real clipboard transport with the exact
     // handler payload; the editable source path intentionally uses native copy.

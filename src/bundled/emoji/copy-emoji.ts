@@ -47,15 +47,16 @@ function selectedText(node: Node): string {
   let previous: Node | undefined;
   for (const child of node.childNodes) {
     const value = selectedText(child);
-    if (text && value) {
-      const separator = siblingSeparator(previous, child);
-      if (
-        separator &&
-        !text.endsWith(separator) &&
-        !value.startsWith(separator)
-      )
-        text += separator;
-    }
+    const separator = previous && siblingSeparator(previous, child);
+    if (separator === "\t") text += separator;
+    else if (
+      text &&
+      value &&
+      separator &&
+      !text.endsWith(separator) &&
+      !value.startsWith(separator)
+    )
+      text += separator;
     text += value;
     previous = child;
   }
@@ -70,8 +71,10 @@ function siblingSeparator(previous: Node | undefined, current: Node) {
   if (
     /^(TR|THEAD|TBODY|TFOOT)$/.test(previousTag) ||
     /^(TR|THEAD|TBODY|TFOOT)$/.test(currentTag) ||
-    /^(DIV|P|LI|OL|UL|SECTION|TABLE|H[1-6])$/.test(previousTag) ||
-    /^(DIV|P|LI|OL|UL|SECTION|TABLE|H[1-6])$/.test(currentTag)
+    /^(DIV|P|LI|OL|UL|SECTION|TABLE|BLOCKQUOTE|PRE|H[1-6])$/.test(
+      previousTag,
+    ) ||
+    /^(DIV|P|LI|OL|UL|SECTION|TABLE|BLOCKQUOTE|PRE|H[1-6])$/.test(currentTag)
   )
     return "\n";
   return "";

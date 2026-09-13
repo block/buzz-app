@@ -2,6 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "vite";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
+import { parse as parseYaml } from "yaml";
 
 let server;
 let url;
@@ -148,6 +149,115 @@ test("workflow editor preserves YAML, resolves exact saves, retains conflicts an
       page.evaluate(() => window.workflowFixture.definitions.disposed()),
     )
     .toBe(true);
+  expect(errors).toEqual([]);
+});
+
+test("keyboard switches feed enabled-save confirmation and disabled readback", async ({
+  page,
+  browserName,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  page.on("console", (message) => {
+    if (message.type() === "error") errors.push(message.text());
+  });
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  const enabled = page.getByRole("switch", {
+    name: "Enabled in configuration",
+  });
+  const reply = page.getByRole("switch", {
+    name: "Reply in the triggering thread",
+  });
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  const focusByTab = async (control) => {
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (await control.evaluate((node) => node === document.activeElement))
+        return;
+      await page.keyboard.press(tab);
+    }
+    await expect(control).toBeFocused();
+  };
+  const saves = () => page.evaluate(() => window.workflowFixture.calls.save);
+  const savedYaml = async () =>
+    parseYaml(await page.evaluate(() => window.workflowFixture.input().yaml));
+
+  await button("New workflow").click();
+  const name = page.getByLabel("Workflow name", { exact: true });
+  await name.fill("Keyboard workflow");
+  await button("Add Send Message").click();
+  await page.getByLabel("Message text", { exact: true }).fill("Offline only");
+  await name.focus();
+  await page.keyboard.press(tab);
+  await expect(enabled).toBeFocused();
+  await expect(enabled).not.toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(enabled).toBeChecked();
+  await page.keyboard.press("Enter");
+  await expect(enabled).not.toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(enabled).toBeChecked();
+
+  await focusByTab(reply);
+  await page.keyboard.press("Enter");
+  await expect(reply).toBeChecked();
+  await page.keyboard.press("Space");
+  await expect(reply).not.toBeChecked();
+  await page.keyboard.press("Enter");
+  await expect(reply).toBeChecked();
+  await focusByTab(button("Save workflow"));
+  await page.keyboard.press("Enter");
+  const dialog = page.getByRole("alertdialog");
+  await expect(dialog).toContainText("It will run for every new message");
+  await expect(button("Keep editing")).toBeFocused();
+  expect(await saves()).toBe(0);
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(button("Save workflow")).toBeFocused();
+  expect(await saves()).toBe(0);
+  await page.keyboard.press("Space");
+  await expect(button("Keep editing")).toBeFocused();
+  await page.keyboard.press(tab);
+  await expect(button("Save enabled workflow")).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect.poll(saves).toBe(1);
+  expect((await savedYaml()).enabled).not.toBe(false);
+  expect((await savedYaml()).steps[0].reply_in_thread).toBe(true);
+  await expect(enabled).toBeDisabled();
+  await expect(reply).toBeDisabled();
+  await enabled.click({ force: true });
+  await enabled.press("Space");
+  await reply.press("Enter");
+  await expect(enabled).toBeChecked();
+  await expect(reply).toBeChecked();
+  expect(await saves()).toBe(1);
+
+  // The offline capability supplies the exact asynchronous receipt/readback.
+  await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await expect(button("Save workflow")).toBeEnabled();
+  await expect(enabled).toBeChecked();
+  await expect(reply).toBeChecked();
+  await name.focus();
+  await page.keyboard.press(tab);
+  await expect(enabled).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(enabled).not.toBeChecked();
+  await focusByTab(reply);
+  await page.keyboard.press("Space");
+  await expect(reply).not.toBeChecked();
+  await focusByTab(button("Save workflow"));
+  await page.keyboard.press("Enter");
+  await expect.poll(saves).toBe(2);
+  await expect(dialog).toHaveCount(0);
+  expect((await savedYaml()).enabled).toBe(false);
+  expect((await savedYaml()).steps[0].reply_in_thread).not.toBe(true);
+  await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await expect(enabled).toBeEnabled();
+  await expect(enabled).not.toBeChecked();
+  await expect(reply).not.toBeChecked();
   expect(errors).toEqual([]);
 });
 

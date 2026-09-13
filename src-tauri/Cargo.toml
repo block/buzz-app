@@ -32,5 +32,6 @@ mac-notification-sys = "=0.6.15"
 tauri-winrt-notification = "=0.7.3"
 
 [target.'cfg(target_os = "linux")'.dependencies]
-notify-rust = "=4.18.0"
+zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }
+futures-lite = "=2.6.1"
 gtk = "0.18"

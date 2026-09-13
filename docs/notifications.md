@@ -68,10 +68,12 @@ generic category text.
 ## Current acceptance limits
 
 The browser adapter works only in a running tab with the Notification API.
-Desktop builds use one small Tauri bridge into the same maintained backends as
-the official plugin: mac-notification-sys on macOS, notify-rust on Linux, and
-tauri-winrt-notification on Windows. No dependency upgrade or new native FFI is
-needed. Permission and sound remain system-controlled; no permission-only plugin
+Desktop builds use one small Tauri bridge into maintained native backends:
+mac-notification-sys on macOS, the freedesktop notification interface through
+zbus on Linux, and tauri-winrt-notification on Windows. Linux uses the already
+locked zbus dependency directly because notify-rust's send-then-listen wrapper
+can lose early actions. No dependency upgrade or new native FFI is needed.
+Permission and sound remain system-controlled; no permission-only plugin
 or synthetic desktop permission prompt is installed. The main-window-only bridge
 carries display text and an opaque presentation ID, never an account, credential
 or navigation destination. Its Tauri response channel is registered before native
@@ -82,8 +84,13 @@ closure. macOS explicitly waits for a body click off the UI thread (the generic
 notify-rust wrapper omits that flag). Windows retains its callback when the
 banner fades, because timeout is not removal from Notification Center. Linux
 requests the standard default action and checks that the notification service
-supports actions; GTK's standard present operation shows/restores/raises the
-window without the framework's stale minimized-state focus guard. Compositor
+supports actions. A single, sender-filtered receiver is armed on the same D-Bus
+connection before Notify. It is drained while the reply is pending; first terminal
+responses are retained by ID (maximum 128 distinct IDs, including other apps'
+broadcasts), then correlated with the returned ID. Overflow reports failure and
+releases capacity; this is not proof that Notify was never displayed. GTK's
+standard present operation shows/restores/raises the window without the
+framework's stale minimized-state focus guard. Compositor
 focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 

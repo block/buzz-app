@@ -1,5 +1,5 @@
 //! Running-session desktop clicks. Policy and navigation remain in the host service.
-//! The maintained OS backends already used by Tauri own delivery and native callbacks.
+//! Maintained OS backends own delivery; Linux uses their standard D-Bus interface.
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tauri::{ipc::Channel, Manager};
@@ -183,52 +183,12 @@ fn show(app: tauri::AppHandle, title: String, body: String, pending: Arc<Pending
 }
 
 #[cfg(target_os = "linux")]
+mod linux;
+
+#[cfg(target_os = "linux")]
 fn show(_app: tauri::AppHandle, title: String, body: String, pending: Arc<Pending>) {
     tauri::async_runtime::spawn(async move {
-        let capabilities = tauri::async_runtime::spawn_blocking(notify_rust::get_capabilities)
-            .await
-            .map_err(|e| e.to_string())
-            .and_then(|result| result.map_err(|e| e.to_string()));
-        match capabilities {
-            Ok(capabilities)
-                if capabilities
-                    .iter()
-                    .any(|capability| capability == "actions") => {}
-            Ok(_) => {
-                pending.finish(Outcome::Failed(
-                    "The desktop notification service does not support clicks".into(),
-                ));
-                return;
-            }
-            Err(error) => {
-                pending.finish(Outcome::Failed(error));
-                return;
-            }
-        }
-        let result = notify_rust::Notification::new()
-            .summary(&title)
-            .body(&body)
-            .appname("Buzz")
-            .auto_icon()
-            .action("default", "Open")
-            .show_async()
-            .await;
-        match result {
-            Ok(handle) => {
-                handle
-                    .wait_for_action_async(|response| {
-                        pending.finish(
-                            if matches!(response, notify_rust::NotificationResponse::Default) {
-                                Outcome::Activated
-                            } else {
-                                Outcome::Closed
-                            },
-                        );
-                    })
-                    .await
-            }
-            Err(error) => pending.finish(Outcome::Failed(error.to_string())),
-        }
+        linux::show(zbus::Connection::session().await, &title, &body, pending).await;
     });
 }
 

@@ -57,7 +57,9 @@ need their own validation.
   This is broader validation, not a signed package or a cross-platform test.
 
 Before the first `scan`, install the pinned browser engines with
-`bin/pnpm test:browser:install`; missing engines fail rather than skip. See
+`bin/pnpm test:browser:install`; missing engines fail rather than skip. Linux native
+notification tests also require `dbus-daemon` (installed in CI). They start and stop
+isolated test buses, never use the desktop session bus or display real banners. See
 [browser regression coverage and measurement limits](browser-testing.md).
 
 Installs run on every invocation to account for branch and lockfile changes.

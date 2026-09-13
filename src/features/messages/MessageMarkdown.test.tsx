@@ -73,18 +73,21 @@ function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
   return [node, ...elements(node.props.children as ReactNode)];
 }
 function profileButtons(content: string, options: RenderOptions = {}) {
-  const markdown = elements(MessageMarkdown(props(content, options))).find(
-    (node) => node.type === Markdown,
-  );
+  const rendered = elements(MessageMarkdown(props(content, options)));
+  const markdown = rendered.find((node) => node.type === Markdown);
   if (!markdown) throw new Error("Missing Markdown");
   const parsed = Markdown(markdown.props as ComponentProps<typeof Markdown>);
-  const Span = (markdown.props.components as Components).span as (
-    props: ComponentProps<"span">,
-  ) => ReactNode;
-  if (typeof Span !== "function") throw new Error("Missing inline renderer");
+  const Span = (markdown.props.components as Components).span;
+  const renderSpan = (
+    rendered.find((node) =>
+      Boolean((node.props.value as Components | undefined)?.span),
+    )?.props.value as Components | undefined
+  )?.span as (props: ComponentProps<"span">) => ReactNode;
+  if (typeof renderSpan !== "function")
+    throw new Error("Missing inline renderer");
   return elements(parsed)
     .filter((node) => node.type === Span)
-    .flatMap((node) => elements(Span(node.props)))
+    .flatMap((node) => elements(renderSpan(node.props)))
     .filter((node) => node.type === "button");
 }
 

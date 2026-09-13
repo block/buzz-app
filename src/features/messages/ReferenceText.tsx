@@ -22,7 +22,10 @@ const profilesSnapshot = () => emptyProfiles;
 const channelsSnapshot = () => undefined;
 const agentsSnapshot = () => undefined;
 
-export function useReferenceDirectory(session?: RelaySession) {
+export function useReferenceDirectory(
+  session: RelaySession | undefined,
+  hasMentions: boolean,
+) {
   const profiles = useSyncExternalStore(
     session?.profiles?.subscribe ?? noop,
     session?.profiles?.snapshot ?? profilesSnapshot,
@@ -39,8 +42,9 @@ export function useReferenceDirectory(session?: RelaySession) {
     agentsSnapshot,
   );
   useEffect(() => {
-    if (agents?.status === "idle") void session?.agentLibrary.refresh();
-  }, [session, agents?.status]);
+    if (hasMentions && agents?.status === "idle")
+      void session?.agentLibrary.refresh();
+  }, [session, hasMentions, agents?.status]);
   return {
     profiles,
     channels: channels?.channels ?? emptyChannels,

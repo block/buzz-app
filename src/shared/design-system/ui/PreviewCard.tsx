@@ -32,17 +32,15 @@ export function PreviewCard({
   link,
   "aria-label": label,
 }: PreviewCardProps) {
-  const triggerRef = useRef<HTMLElement>(null);
-  const popupRef = useRef<HTMLElement>(null);
+  const triggerRef = useRef<HTMLAnchorElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
   return (
     <BasePreviewCard.Root open={open} onOpenChange={onOpenChange}>
       <BasePreviewCard.Trigger
         render={trigger}
         delay={250}
         closeDelay={150}
-        ref={(element: HTMLAnchorElement | null) => {
-          triggerRef.current = element;
-        }}
+        ref={triggerRef}
         onKeyDown={(event) => {
           if (
             link &&
@@ -59,9 +57,7 @@ export function PreviewCard({
         <BasePreviewCard.Positioner side={side} align="start" sideOffset={8}>
           <BasePreviewCard.Popup
             data-buzz-ui=""
-            ref={(element: HTMLDivElement | null) => {
-              popupRef.current = element;
-            }}
+            ref={popupRef}
             onKeyDown={(event) => {
               if (link && event.key === "Tab") {
                 // The portal is at the end of the document. Resume from its

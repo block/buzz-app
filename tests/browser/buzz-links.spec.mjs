@@ -15,6 +15,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   page,
   app,
 }) => {
+  app.relay.holdProfiles([app.viewer]);
   await open(page, app);
   const history = app.histories.get("primary/alpha");
   const target = history.find((row) => row.content === "Broadcast reply");
@@ -58,18 +59,6 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   await page.screenshot({
     path: test.info().outputPath("buzz-link-preview.png"),
   });
-  await page.keyboard.press("Escape");
-  await expect(preview).toHaveCount(0);
-  await page.mouse.move(1400, 10);
-  await link.press("Tab");
-  await page.keyboard.press("Shift+Tab");
-  // WebKit follows macOS's tab-to-links preference; retain keyboard modality
-  // while focusing the specific trigger under test.
-  await link.focus();
-  await expect(link).toBeFocused();
-  await expect(
-    preview.getByText("Broadcast reply", { exact: true }),
-  ).toBeVisible();
   await preview.click();
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -89,10 +78,32 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   ).toBeInViewport();
   await button(page, "Go back").click();
   await expect(panel).toHaveCount(0);
-  await link.press("Tab");
+  await page.mouse.move(1400, 10);
+  await row.getByRole("link", { name: "#Beta", exact: true }).focus();
   await page.keyboard.press("Shift+Tab");
+  // WebKit follows macOS's tab-to-links preference; retain keyboard modality
+  // while focusing the specific trigger under test.
   await link.focus();
+  await expect(link).toBeFocused();
+  expect(
+    await link.evaluate((element) => element.matches(":focus-visible")),
+  ).toBe(true);
+  const focusedTrigger = await link.elementHandle();
+  app.relay.releaseProfiles();
+  await expect(
+    row.getByRole("button", {
+      name: "View Fixture Reader profile",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(await focusedTrigger.evaluate((element) => element.isConnected)).toBe(
+    true,
+  );
+  await expect(link).toBeFocused();
   await expect(preview).toBeVisible();
+  expect(
+    app.report.brokerRequests.some(({ url }) => url.endsWith("/agent-library")),
+  ).toBe(false);
   await link.press("Tab");
   await expect(preview).toBeFocused();
   await preview.press("Enter");

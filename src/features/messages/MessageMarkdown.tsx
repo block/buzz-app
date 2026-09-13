@@ -1,4 +1,11 @@
-import { Children, isValidElement, type ReactNode } from "react";
+import {
+  Children,
+  createContext,
+  isValidElement,
+  useContext,
+  type ComponentPropsWithoutRef,
+  type ReactNode,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
@@ -11,7 +18,11 @@ import {
 import { IconAt, IconRobot } from "@tabler/icons-react";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import Markdown, { type Components, type UrlTransform } from "react-markdown";
+import Markdown, {
+  type Components,
+  type ExtraProps,
+  type UrlTransform,
+} from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import remarkGfm from "remark-gfm";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -224,6 +235,26 @@ const labelText = (children: ReactNode): string =>
     )
     .join("");
 
+type MessageComponents = {
+  [Tag in "p" | "a" | "img" | "span"]: (
+    props: ComponentPropsWithoutRef<Tag> & ExtraProps,
+  ) => ReactNode;
+};
+const MessageComponentsContext = createContext<MessageComponents | null>(null);
+function useMessageComponents() {
+  const components = useContext(MessageComponentsContext);
+  if (!components) throw new Error("Missing message rendering context");
+  return components;
+}
+// Keep component types stable: profile/directory updates must not remount a
+// focused link or discard its pending preview timer.
+const markdownComponents: Components = {
+  p: (props) => useMessageComponents().p(props),
+  a: (props) => useMessageComponents().a(props),
+  img: (props) => useMessageComponents().img(props),
+  span: (props) => useMessageComponents().span(props),
+};
+
 export function MessageMarkdown({
   row,
   directory = emptyReferenceDirectory,
@@ -320,7 +351,7 @@ export function MessageMarkdown({
     participantProfiles ?? directory.profiles,
     scan.tree,
   );
-  const components: Components = {
+  const components: MessageComponents = {
     p: ({ node: _node, ...props }) => (
       <p
         {...props}
@@ -380,18 +411,20 @@ export function MessageMarkdown({
   };
 
   const markdown = (
-    <Markdown
-      remarkPlugins={[
-        remarkGfm,
-        remarkBreaks,
-        [remarkInlineContent, protectedContent],
-      ]}
-      components={components}
-      skipHtml
-      urlTransform={transformUrl}
-    >
-      {protectedContent.content}
-    </Markdown>
+    <MessageComponentsContext value={components}>
+      <Markdown
+        remarkPlugins={[
+          remarkGfm,
+          remarkBreaks,
+          [remarkInlineContent, protectedContent],
+        ]}
+        components={markdownComponents}
+        skipHtml
+        urlTransform={transformUrl}
+      >
+        {protectedContent.content}
+      </Markdown>
+    </MessageComponentsContext>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }

@@ -43,7 +43,7 @@ export const MessageRow = memo(function MessageRow({
   onOpenThread,
   participantProfiles,
 }: MessageRowProps) {
-  const directory = useReferenceDirectory(session);
+  const directory = useReferenceDirectory(session, row.mentions.length > 0);
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,

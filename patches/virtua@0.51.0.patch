@@ -1,9 +1,7 @@
 diff --git a/lib/index.js b/lib/index.js
 --- a/lib/index.js
 +++ b/lib/index.js
-@@ -5,3 +5,7 @@
- import { jsx as c } from "react/jsx-runtime";
- 
+@@ -7,1 +7,5 @@
  import { flushSync as f } from "react-dom";
 +
 +// WebKit can restore a stale native scroll offset after an instant correction.
@@ -52,8 +50,6 @@ diff --git a/lib/index.js b/lib/index.js
          },
          P: (e, t) => (d.set(e, t), h.A(e), () => {
              d.delete(e), h.B(e);
-@@ -797,4 +817,3 @@
- });
- 
+@@ -799,2 +819,1 @@
  export { G as VList, j as Virtualizer, U as WindowVirtualizer, N as experimental_VGrid };
 -//# sourceMappingURL=index.js.map

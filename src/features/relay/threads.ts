@@ -50,6 +50,7 @@ export function createThreadView({
   visible,
   notify,
   exact = false,
+  admit = (events) => events,
 }: {
   channelId: string;
   messageId: string;
@@ -61,6 +62,10 @@ export function createThreadView({
   visible(events: readonly RelayEvent[]): readonly RelayEvent[];
   notify(listener: () => void): void;
   exact?: boolean;
+  /** Exact finite reads enter session reconciliation only after a complete fold. */
+  admit?:
+    | ((events: readonly RelayEvent[]) => readonly RelayEvent[])
+    | undefined;
 }) {
   let disposed = false;
   let rootId: string | undefined;
@@ -69,6 +74,7 @@ export function createThreadView({
     ? "loading"
     : undefined;
   let remote: readonly RelayEvent[] = [];
+  let staged: readonly RelayEvent[] = [];
   let cursor: RelayEvent | undefined;
   let pages = 0;
   let controller: AbortController | undefined;
@@ -94,7 +100,7 @@ export function createThreadView({
     );
     const ids = new Set([
       ...(exact ? [messageId] : []),
-      ...[...remote, ...rows].map((event) => event.id),
+      ...[...remote, ...staged, ...rows].map((event) => event.id),
     ]);
     const result = new Map(rows.map((event) => [event.id, event]));
     // Aux closure includes deletion of an auxiliary, not just direct row overlays.
@@ -176,11 +182,12 @@ export function createThreadView({
     });
     for (const listener of listeners) notify(listener);
   }
-  function retain(events: readonly RelayEvent[]) {
+  function retain(events: readonly RelayEvent[], commit = true) {
     if (events.length > MAX_EVENTS || byteSize(events) > MAX_BYTES) {
       // Never silently evict a deletion/ancestor then display resurrected content.
       controller?.abort();
       remote = [];
+      staged = [];
       rootId = undefined;
       cursor = undefined;
       pages = 0;
@@ -195,7 +202,7 @@ export function createThreadView({
       });
       return false;
     }
-    remote = events;
+    if (commit) remote = events;
     return true;
   }
   function receive(events: readonly RelayEvent[]) {
@@ -215,9 +222,11 @@ export function createThreadView({
     controller?.abort();
     controller = undefined;
     again = false;
+    staged = [];
     if (exact) targetStatus = "loading";
     if (clear || !canAccess()) {
       remote = [];
+      staged = [];
       rootId = undefined;
       cursor = undefined;
       pages = 0;
@@ -286,8 +295,10 @@ export function createThreadView({
           ],
           { signal: owned.signal },
         );
-        if (!active() || !retain(union(remote, related(overlays)))) return;
-        const ids = remote
+        if (!active()) return;
+        staged = related(overlays);
+        if (!retain(union(remote, staged), false)) return;
+        const ids = union(remote, staged)
           .filter(
             (event) =>
               AUX.has(event.kind) &&
@@ -301,8 +312,15 @@ export function createThreadView({
             [{ kinds: [5, 9005], "#e": ids, limit: 500 }],
             { signal: owned.signal },
           );
-          if (!active() || !retain(union(remote, related(tombstones)))) return;
+          if (!active()) return;
+          staged = union(staged, related(tombstones));
+          if (!retain(union(remote, staged), false)) return;
         }
+        // Keep incomplete finite overlays out of both our displayed fold and
+        // the shared observation path. Live evidence still reconciles immediately.
+        const accepted = admit([event, ...staged]);
+        if (!active() || !retain(union(remote, related(accepted)))) return;
+        staged = [];
         targetStatus = "ready";
         publish();
         if (snapshot.targetStatus !== "ready") {
@@ -327,7 +345,7 @@ export function createThreadView({
       }
       let more = false;
       for (let page = 0; page < targetPages; page++) {
-        const events = await reader.read(
+        const response = await reader.read(
           [
             { ids: [rootId], "#h": [channelId], limit: 1 },
             {
@@ -347,6 +365,8 @@ export function createThreadView({
           ],
           { signal: owned.signal },
         );
+        if (!active()) return;
+        const events = admit(response);
         if (!active()) return;
         if (
           !events.some(
@@ -413,6 +433,7 @@ export function createThreadView({
       }
     } finally {
       if (controller === owned) {
+        staged = [];
         controller = undefined;
         if (again && !disposed) {
           again = false;
@@ -423,7 +444,10 @@ export function createThreadView({
   }
   return {
     channelId,
-    event: (id: string) => remote.find((event) => event.id === id),
+    // Staged verified IDs allow immediate live delete-of-overlay access checks,
+    // without publishing the incomplete finite overlay into any shared view.
+    event: (id: string) =>
+      [...remote, ...staged].find((event) => event.id === id),
     receive,
     purge,
     changed: () => publish(),

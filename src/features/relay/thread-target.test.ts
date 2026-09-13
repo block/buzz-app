@@ -347,3 +347,40 @@ it("retains verified rows throughout repair and keeps valid context when the sel
   });
   expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([sibling.id]);
 });
+
+for (const outcome of ["deleted", "failed", "live withdrawal"] as const) {
+  it(`keeps the last safe selected fold through held repair overlays: ${outcome}`, async () => {
+    const h = setup();
+    const { loading } = await targetRead(h);
+    h.next().respond([root]);
+    await loading;
+    const repair = h.view.refresh();
+    h.next().respond([reply]);
+    await flush();
+    const edit = aux(40003, reply, "Unsafe intermediate edit");
+    h.next().respond([edit]);
+    await flush();
+    const held = h.next();
+    expect(held.filters[0]?.kinds).toEqual([5, 9005]);
+    expect(h.view.snapshot().target?.content).toBe(reply.content);
+    expect(h.view.snapshot().replies[0]?.content).toBe(reply.content);
+    if (outcome === "failed") held.fail(new Error("offline"));
+    else {
+      if (outcome === "live withdrawal") {
+        h.traffic.receive([aux(5, edit)]); // Resolve against staged evidence without exposing it.
+        h.traffic.receive([aux(5, reply)]);
+        expect(h.view.snapshot().target).toBeUndefined();
+      }
+      held.respond([aux(5, edit)]);
+      await flush();
+      if (outcome !== "live withdrawal") h.next().respond([root]);
+    }
+    await repair;
+    if (outcome === "live withdrawal") {
+      expect(h.view.snapshot().targetStatus).toBe("unavailable");
+    } else {
+      expect(h.view.snapshot().target?.content).toBe(reply.content);
+      expect(h.view.snapshot().replies[0]?.content).toBe(reply.content);
+    }
+  });
+}

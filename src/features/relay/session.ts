@@ -643,12 +643,13 @@ export function createRelaySession(
                   throw new Error(
                     "Selected message exceeded its evidence limit",
                   );
-                // Isolated lookup must not masquerade as contiguous channel history.
-                return accept(events, false);
+                // The thread owner admits the complete target fold atomically.
+                return events;
               },
             }
           : verified,
         exact: options?.exact ?? false,
+        admit: options?.exact ? (events) => accept(events, false) : undefined,
         seed: recent.peek(messageId)?.event,
         local: localViews,
         canAccess: () => !closed && canAccess(channelId),

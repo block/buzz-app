@@ -78,19 +78,15 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     const originalSrc = await historic.getAttribute("src");
     expect(originalSrc).toContain("/emoji-media/a/");
     await expect(page.locator('img[src*="reaction.png"]')).toHaveCount(1);
-    // Drag across the rendered image, then use the browser's real clipboard.
-    const copyBounds = await sentSingleEmoji.locator("img").boundingBox();
-    await page.mouse.move(
-      copyBounds.x - 2,
-      copyBounds.y + copyBounds.height / 2,
-    );
-    await page.mouse.down();
-    await page.mouse.move(
-      copyBounds.x + copyBounds.width + 2,
-      copyBounds.y + copyBounds.height / 2,
-      { steps: 8 },
-    );
-    await page.mouse.up();
+    // Select only the rendered image deterministically, then use the browser's
+    // real clipboard. Pointer-drag selection is engine and platform dependent.
+    await sentSingleEmoji.locator("img").evaluate((image) => {
+      const range = document.createRange();
+      range.selectNode(image);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
     await page.keyboard.press("ControlOrMeta+c");
     await draft().focus();
     await page.keyboard.press("ControlOrMeta+v");

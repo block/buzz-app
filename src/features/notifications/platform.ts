@@ -1,8 +1,4 @@
 import { Channel, invoke, isTauri } from "@tauri-apps/api/core";
-import {
-  isPermissionGranted,
-  requestPermission,
-} from "@tauri-apps/plugin-notification";
 
 export type NotificationPermissionState =
   | NotificationPermission
@@ -45,13 +41,9 @@ export function createNotifications(): NotificationPlatform {
   return {
     label: "Desktop notifications",
     systemManaged: true,
-    // The desktop plugin reports API availability, not the OS user's permission.
-    permission: async () =>
-      (await isPermissionGranted()) ? "unknown" : "default",
-    async requestPermission() {
-      const permission = await requestPermission();
-      return permission === "granted" ? "unknown" : permission;
-    },
+    // The native backends do not expose an OS permission check or prompt.
+    permission: async () => "unknown",
+    requestPermission: async () => "unknown",
     async show(item, activate, failed) {
       if (disposed) throw new Error("Desktop notifications have stopped");
       // Reject before sending instead of stranding an older alert's target.

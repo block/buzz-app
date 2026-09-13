@@ -43,7 +43,6 @@
     "@tabler/icons-react": "^3.46.0",
     "@tanstack/react-router": "^1.168.10",
     "@tauri-apps/api": "^2.11.1",
-    "@tauri-apps/plugin-notification": "2.4.0",
     "@xterm/addon-fit": "0.10.0",
     "@xterm/xterm": "5.5.0",
     "blurhash": "2.0.5",

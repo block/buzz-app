@@ -42,24 +42,26 @@ export function NotificationSettings({
                     ? "Permission is controlled by system notification settings."
                     : "Allow notifications to receive alerts."}
         </p>
-        <div className="flex gap-2">
-          {permission === "default" && (
+        {!state.systemManaged && (
+          <div className="flex gap-2">
+            {permission === "default" && (
+              <button
+                type="button"
+                disabled={state.requesting}
+                onClick={() => void notifications.requestPermission()}
+              >
+                Allow notifications
+              </button>
+            )}
             <button
               type="button"
               disabled={state.requesting}
-              onClick={() => void notifications.requestPermission()}
+              onClick={() => void notifications.refreshPermission()}
             >
-              Allow notifications
+              Check permission
             </button>
-          )}
-          <button
-            type="button"
-            disabled={state.requesting}
-            onClick={() => void notifications.refreshPermission()}
-          >
-            Check permission
-          </button>
-        </div>
+          </div>
+        )}
         <Toggle
           label="Notify while viewing"
           checked={preferences.notifyWhileViewing}

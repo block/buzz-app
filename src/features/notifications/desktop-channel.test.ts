@@ -51,6 +51,16 @@ function callback(index = 0) {
   return { call, id, send };
 }
 
+it("reports system-managed permission without a window.Notification shim or native calls", async () => {
+  const platform = createNotifications();
+  expect(platform.systemManaged).toBe(true);
+  expect(await platform.permission()).toBe("unknown");
+  expect(await platform.requestPermission()).toBe("unknown");
+  expect(invoke).not.toHaveBeenCalled();
+  expect(callbacks.size).toBe(0);
+  platform.dispose();
+});
+
 it("serializes each pre-registered channel and releases it after ordered native completion", async () => {
   const platform = createNotifications();
   const first = vi.fn(),

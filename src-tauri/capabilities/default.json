@@ -1,13 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
-  "description": "Allow the main window title bar controls, external HTTP(S) links, and notifications.",
+  "description": "Allow the main window title bar controls and external HTTP(S) links.",
   "windows": ["main"],
   "permissions": [
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
-    "notification:allow-is-permission-granted",
-    "notification:allow-request-permission",
     {
       "identifier": "opener:allow-open-url",
       "allow": [{ "url": "https://*" }, { "url": "http://*" }]

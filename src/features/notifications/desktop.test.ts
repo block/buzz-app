@@ -10,9 +10,6 @@ import { NotificationsService } from "./service";
 import { messageNotificationText } from "./content";
 
 const sdk = vi.hoisted(() => ({
-  isPermissionGranted: vi.fn(async () => true),
-  requestPermission: vi.fn(async () => "granted"),
-  sendNotification: vi.fn(),
   invoke: vi.fn(async () => {}),
 }));
 const native = vi.hoisted(() => ({ value: true }));
@@ -23,7 +20,6 @@ vi.mock("@tauri-apps/api/core", () => ({
     constructor(public onmessage: (response: unknown) => void) {}
   },
 }));
-vi.mock("@tauri-apps/plugin-notification", () => sdk);
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
@@ -66,7 +62,6 @@ it("the default service sends desktop banners via the native bridge and shared p
     systemManaged: true,
     preferences: { enabled: true },
   });
-  expect(sdk.requestPermission).not.toHaveBeenCalled();
   await submit("first");
   await submit("first");
   await flush();
@@ -84,20 +79,20 @@ it("the default service sends desktop banners via the native bridge and shared p
   expect(sdk.invoke).toHaveBeenCalledTimes(1);
 });
 
-it("an explicit permission request uses the SDK without claiming OS permission is known", async () => {
+it("desktop permission remains system-managed without a permission RPC or shim", async () => {
   const { service, submit } = setup();
-  sdk.isPermissionGranted.mockResolvedValue(false);
+  await flush();
   await service.refreshPermission();
-  expect(service.snapshot().permission).toBe("default");
-  await submit("pending");
-  await flush();
-  expect(sdk.invoke).not.toHaveBeenCalled();
-  sdk.isPermissionGranted.mockResolvedValue(true);
   await service.requestPermission();
-  await flush();
-  expect(sdk.requestPermission).toHaveBeenCalledOnce();
   expect(service.snapshot().permission).toBe("unknown");
+  expect(sdk.invoke).not.toHaveBeenCalled();
+  await submit("first");
+  await flush();
   expect(sdk.invoke).toHaveBeenCalledOnce();
+  expect(sdk.invoke).toHaveBeenCalledWith(
+    "notification_show",
+    expect.anything(),
+  );
 });
 
 it("observable SDK failures surface once without retry or a browser fallback", async () => {
@@ -132,6 +127,8 @@ it("desktop settings explain OS sound and running-app exact clicks", async () =>
   );
   expect(html).not.toContain("<span>Sound</span>");
   expect(html).not.toContain("Permission granted");
+  expect(html).not.toContain("Check permission");
+  expect(html).not.toContain("Allow notifications");
 });
 
 it("non-Tauri runs select the unchanged browser adapter, never the native SDK", async () => {
@@ -139,7 +136,6 @@ it("non-Tauri runs select the unchanged browser adapter, never the native SDK", 
   const platform = createNotifications();
   expect(platform.label).toBe("Browser notifications");
   expect(await platform.permission()).toBe("unsupported");
-  expect(sdk.isPermissionGranted).not.toHaveBeenCalled();
   expect(sdk.invoke).not.toHaveBeenCalled();
 });
 

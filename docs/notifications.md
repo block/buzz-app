@@ -71,10 +71,11 @@ The browser adapter works only in a running tab with the Notification API.
 Desktop builds use one small Tauri bridge into the same maintained backends as
 the official plugin: mac-notification-sys on macOS, notify-rust on Linux, and
 tauri-winrt-notification on Windows. No dependency upgrade or new native FFI is
-needed. The plugin is retained only for its permission API; its send capability
-is no longer granted. The main-window-only bridge carries display text and an
-opaque presentation ID, never an account, credential or navigation destination.
-Its Tauri response channel is registered before native submission.
+needed. Permission and sound remain system-controlled; no permission-only plugin
+or synthetic desktop permission prompt is installed. The main-window-only bridge
+carries display text and an opaque presentation ID, never an account, credential
+or navigation destination. Its Tauri response channel is registered before native
+submission.
 
 Desktop clicks restore/foreground Buzz and then call the existing activation
 closure. macOS explicitly waits for a body click off the UI thread (the generic
@@ -86,11 +87,12 @@ window without the framework's stale minimized-state focus guard. Compositor
 focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 
-The permission API does not expose actual OS permission state. Settings describes
-permission and sound as system-controlled, without an ineffective desktop sound
-toggle. The bridge accepts a submission before waiting for interaction: acceptance
-is **not** proof that a visible banner appeared. The macOS backend does not expose
-all delivery failures, and no uniform withdrawal/receipt guarantee is promised.
+Desktop permission state is not observable through these backends. Settings
+describes permission and sound as system-controlled, without ineffective desktop
+permission or sound controls. The bridge accepts a submission before waiting for
+interaction: acceptance is **not** proof that a visible banner appeared. The macOS
+backend does not expose all delivery failures, and no uniform withdrawal/receipt
+guarantee is promised.
 Callbacks stop navigating after account change or frontend disposal. Native waits
 remain bounded until the OS resolves them; no artificial expiry strands an
 otherwise actionable alert. Reload/cold-start restoration remains out of scope.

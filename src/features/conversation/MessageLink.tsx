@@ -9,7 +9,7 @@ import type { ContributionReader, LinkRenderer } from "./contracts";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import type { RelaySession } from "../relay/session";
-import { parseBuzzLink } from "../navigation/buzz-links";
+import { parseBuzzLink, isBuzzLink } from "../navigation/buzz-links";
 import { LinkLabelContext, LinkContentContext } from "./LinkLabelContext";
 import { BuzzLinkPreview } from "./BuzzLinkPreview";
 import { messageViewKey } from "../messages/view-key";
@@ -61,7 +61,7 @@ export function MessageLink({
   const renderer = resolveLink(url, renderers);
   const [unavailable, setUnavailable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
-  const internal = url.startsWith("buzz://");
+  const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination =
     parsed?.format === "legacy"

@@ -119,6 +119,69 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   expect((await state(page)).entry.target.channelId).toBe("beta");
 });
 
+test("activating a panel from a linked thread retires the navigation-owned thread instead of splitting the rail", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const history = app.histories.get("primary/alpha");
+  const target = history.find((row) => row.content === "Broadcast reply");
+  const href = `buzz://message?channel=alpha&id=${target.id}`;
+  const message = app.append("primary", "alpha", `Open <${href}>.`);
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"]`,
+  );
+  const link = row.getByRole("link", { name: "Alpha", exact: true });
+  await expect(link).toBeVisible();
+  await link.click();
+  const thread = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  await expect(
+    thread.locator(`[data-message-id="${target.id}"]`),
+  ).toBeInViewport();
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
+  // Open a panel while the linked thread is showing. Navigation still owns the
+  // thread target, so it must be retired rather than share the rail slot with
+  // the newly activated panel. (The fixture registers a catch-all panel.)
+  await row
+    .getByRole("button", { name: "View Fixture Reader profile", exact: true })
+    .click();
+  await expect(
+    page.getByRole("complementary", { name: "Wrong panel", exact: true }),
+  ).toBeVisible();
+  await expect(thread).toHaveCount(0);
+  // Exactly the sidebar plus one panel: the thread does not survive alongside it.
+  await expect(page.getByRole("complementary")).toHaveCount(2);
+});
+
+test("a mixed-case Buzz scheme activates in-app instead of falling through to an external tab", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  // parseBuzzLink normalizes the scheme via URL, so a BUZZ:// link is a valid
+  // internal destination; activation must classify it the same way rather than
+  // treating it as an external _blank link.
+  const message = app.append(
+    "primary",
+    "alpha",
+    "Jump to <BUZZ://channel/beta>.",
+  );
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${message.id}"]`,
+  );
+  const link = row.getByRole("link", { name: "#Beta", exact: true });
+  await expect(link).toBeVisible();
+  await link.click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
+  await expect.poll(async () => (await state(page)).status).toBe("opened");
+  expect((await state(page)).entry.target.channelId).toBe("beta");
+});
+
 test("unavailable messages fail honestly and legacy links still open when Links is disabled", async ({
   page,
   app,

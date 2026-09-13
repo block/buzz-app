@@ -15,6 +15,17 @@ type BuzzLink =
       threadRootId?: string;
     };
 
+/** True for any `buzz:` scheme link, regardless of case. Classification must
+ * match `parseBuzzLink`, which normalizes the scheme via `URL`; a lowercase-only
+ * `startsWith` check would misroute `BUZZ://…` to external handling. */
+export function isBuzzLink(href: string): boolean {
+  try {
+    return new URL(href).protocol === "buzz:";
+  } catch {
+    return false;
+  }
+}
+
 /** Legacy links are relative to the receiving conversation's community, never an access grant. */
 export function parseBuzzLink(href: string): BuzzLink | null {
   try {

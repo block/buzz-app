@@ -73,14 +73,18 @@ function PreviewContent({
     if (authorId)
       void session.profiles.ensure([authorId], "background").catch(() => {});
   }, [session, authorId]);
-  if (snapshot.status === "error")
-    return <span role="status">Message preview unavailable.</span>;
-  if (!message || !snapshot.root)
+  // Only paint reconciled content: a "ready" snapshot has folded in cached
+  // edits/deletions, while an idle/loading seed is still the raw root event.
+  // A terminal state (read error, denied/interrupted purge, or an exhausted
+  // read that never found the target) fails honestly instead of loading forever.
+  const stopped =
+    snapshot.status === "error" ||
+    (snapshot.status === "idle" && snapshot.error !== undefined) ||
+    (snapshot.status === "ready" && !snapshot.canLoadMore);
+  if (snapshot.status !== "ready" || !message || !snapshot.root)
     return (
       <span role="status">
-        {snapshot.status === "ready" && !snapshot.canLoadMore
-          ? "Message preview unavailable."
-          : "Loading message…"}
+        {stopped ? "Message preview unavailable." : "Loading message…"}
       </span>
     );
   const profile = profiles.get(message.authorId);

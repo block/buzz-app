@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { buzzLinkKind, buzzLinkTarget, parseBuzzLink } from "./buzz-links";
+import {
+  buzzLinkKind,
+  buzzLinkTarget,
+  isBuzzLink,
+  parseBuzzLink,
+} from "./buzz-links";
 import { targetLink } from "./targets";
 
 const scope = {
@@ -64,4 +69,16 @@ it.each([
   "javascript:alert(1)",
 ])("leaves unsupported or malformed links inert: %s", (href) => {
   expect(parseBuzzLink(href)).toBeNull();
+});
+it("classifies the buzz scheme case-insensitively, matching URL normalization", () => {
+  // The activation boundaries must agree with parseBuzzLink, which normalizes
+  // the scheme via `new URL`; a mixed-case link must not fall through to
+  // external `_blank` handling.
+  expect(isBuzzLink("buzz://channel/general")).toBe(true);
+  expect(isBuzzLink("BUZZ://channel/general")).toBe(true);
+  expect(isBuzzLink("Buzz://message?channel=general&id=x")).toBe(true);
+  expect(isBuzzLink(example)).toBe(true);
+  expect(isBuzzLink("https://example.com")).toBe(false);
+  expect(isBuzzLink("javascript:alert(1)")).toBe(false);
+  expect(isBuzzLink("not a url")).toBe(false);
 });

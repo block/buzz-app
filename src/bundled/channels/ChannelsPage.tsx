@@ -1,7 +1,10 @@
 import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
-import { buzzLinkTarget } from "../../features/navigation/buzz-links";
+import {
+  buzzLinkTarget,
+  isBuzzLink,
+} from "../../features/navigation/buzz-links";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
@@ -270,8 +273,10 @@ function ChannelWorkspace({
     },
     [current, open, requestedMessage, navigator, navigation],
   );
-  const closeThread = useCallback(() => {
-    setThread(undefined);
+  const retireNavigationThread = useCallback(() => {
+    // A message link makes navigation own the thread target. Dropping the
+    // messageId retires that thread so it never shares the panel slot with a
+    // newly activated panel; a locally opened thread is retired via setThread.
     if (
       requestedMessage &&
       navigator &&
@@ -284,8 +289,12 @@ function ChannelWorkspace({
       } = navigation.target;
       void navigator.open(channel);
     }
-    if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
   }, [requestedMessage, navigator, navigation]);
+  const closeThread = useCallback(() => {
+    setThread(undefined);
+    retireNavigationThread();
+    if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
+  }, [retireNavigationThread]);
   const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
@@ -307,7 +316,7 @@ function ChannelWorkspace({
   );
   const openLink = useCallback(
     (url: string) => {
-      if (url.startsWith("buzz://")) {
+      if (isBuzzLink(url)) {
         if (!navigator || !viewer) return false;
         const target = buzzLinkTarget(url, {
           viewer,
@@ -326,6 +335,7 @@ function ChannelWorkspace({
             ? document.activeElement
             : null;
         setThread(undefined);
+        retireNavigationThread();
         open({
           channelId: current.id,
           panel: candidate,
@@ -335,7 +345,7 @@ function ChannelWorkspace({
       }
       return false;
     },
-    [panels, current, open, navigator, viewer, scope],
+    [panels, current, open, navigator, viewer, scope, retireNavigationThread],
   );
   const panelActive = () => {
     const connection = relay.snapshot();

@@ -5,6 +5,7 @@ import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { PanelsService } from "../features/panels/service";
+import { ObjectsService } from "../features/objects/service";
 import { Context } from "@deepseek-ai/cordis";
 import { PagesService } from "../features/pages/service";
 import { bundledPlugins } from "../bundled";
@@ -22,6 +23,7 @@ export function createServices() {
   const shortcuts = new ShortcutsService(ctx);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
+  const objects = new ObjectsService(ctx);
   const conversation = new ConversationService(ctx);
   const communities = createCommunities(
     ctx,
@@ -36,6 +38,7 @@ export function createServices() {
     conversation,
     pages,
     panels,
+    objects,
     plugins,
     relay,
     communities,

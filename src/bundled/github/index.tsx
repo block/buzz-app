@@ -8,11 +8,12 @@ import {
 } from "lucide-react";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
+import type { ExternalObjectReference } from "../../features/objects/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
 import { loadGitHubDetails, type GitHubDetails } from "./data";
 import styles from "./GitHub.module.css";
 
-export const inject = ["panels"];
+export const inject = ["panels", "objects"];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.panels.register({
     id: "object",
@@ -20,7 +21,40 @@ export const apply: PluginModule["apply"] = (ctx) => {
     matches: (target) => !!parseGitHubReference(target),
     component: GitHubPanel,
   });
+  ctx.objects.register({
+    id: "objects",
+    title: "GitHub",
+    identify: githubObjectReference,
+    async load(reference, signal) {
+      const github = parseGitHubReference(reference.url);
+      if (!github) throw new Error("Unsupported GitHub object.");
+      const details = await loadGitHubDetails(github, signal);
+      return Object.freeze({
+        reference,
+        title: details.title,
+        ...(details.body ? { body: details.body } : {}),
+        ...(details.state ? { state: details.state } : {}),
+        ...(details.author ? { author: details.author } : {}),
+        facts: Object.freeze(details.facts),
+      });
+    },
+  });
 };
+
+function githubObjectReference(
+  target: string,
+): ExternalObjectReference | undefined {
+  const reference = parseGitHubReference(target);
+  if (!reference) return;
+  return Object.freeze({
+    provider: "github",
+    key: `${reference.repository}:${reference.kind}:${reference.label}`,
+    kind: reference.kind,
+    url: reference.url,
+    label: reference.label,
+    group: reference.repository,
+  });
+}
 const labels = {
   repository: "Repository",
   pull: "Pull request",

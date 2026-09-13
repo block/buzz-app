@@ -3,6 +3,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { PagesService } from "../pages/service";
 import { PanelsService } from "../panels/service";
+import { ObjectsService } from "../objects/service";
 import { ConversationService } from "../conversation/service";
 import { provideRelay } from "../relay/service";
 import { provideNavigation } from "../navigation/service";
@@ -26,6 +27,7 @@ it("independently unloads panels without removing the page or shared data", asyn
   );
   const pages = new PagesService(root),
     panels = new PanelsService(root);
+  new ObjectsService(root);
   new ConversationService(root);
   provideNavigation(root);
   const relay = provideRelay(root);

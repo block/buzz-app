@@ -6,6 +6,8 @@ import profilesManifest from "./profiles/manifest.json";
 import * as profiles from "./profiles";
 import mentionsManifest from "./mentions/manifest.json";
 import * as mentions from "./mentions";
+import agentChannelsManifest from "./agent-channels/manifest.json";
+import * as agentChannels from "./agent-channels";
 import emojiManifest from "./emoji/manifest.json";
 import * as emoji from "./emoji";
 import agentsManifest from "./agents/manifest.json";
@@ -31,4 +33,8 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...bestieManifest, apiVersion: 1 }, module: bestie },
   { manifest: { ...projectsManifest, apiVersion: 1 }, module: projects },
   { manifest: { ...agentsManifest, apiVersion: 1 }, module: agents },
+  {
+    manifest: { ...agentChannelsManifest, apiVersion: 1 },
+    module: agentChannels,
+  },
 ];

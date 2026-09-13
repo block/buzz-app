@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
+import type { EventData } from "../relay/events";
 import type { ComposerTool, ContributionReader } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
@@ -67,7 +68,6 @@ function OwnedReactionTool({
   disabled: boolean;
 }) {
   const [error, setError] = useState<string>();
-  const [sentId, setSentId] = useState<string>();
   const alive = useRef(false);
   const unavailable = useRef(disabled);
   useLayoutEffect(() => {
@@ -94,7 +94,7 @@ function OwnedReactionTool({
           )
             return false;
           try {
-            setSentId(session.messages.react(messageId, emoji));
+            session.messages.react(messageId, emoji);
             setError(undefined);
             return true;
           } catch (reason) {
@@ -108,28 +108,43 @@ function OwnedReactionTool({
         }}
       />
       {error && <span role="alert">{error}</span>}
-      {sentId && session.outbox && (
-        <ReactionDelivery outbox={session.outbox} id={sentId} />
+      {session.outbox && (
+        <ReactionDelivery outbox={session.outbox} messageId={messageId} />
       )}
     </>
   ) : null;
 }
 
-function ReactionDelivery({ outbox, id }: { outbox: Outbox; id: string }) {
+export function reactionTarget(event: Pick<EventData, "kind" | "tags">) {
+  return event.kind === 7
+    ? event.tags.find((tag) => tag[0] === "e")?.[1]
+    : undefined;
+}
+
+function ReactionDelivery({
+  outbox,
+  messageId,
+}: {
+  outbox: Outbox;
+  messageId: string;
+}) {
   const operations = useSyncExternalStore(
     outbox.subscribe,
     outbox.snapshot,
     outbox.snapshot,
   );
-  const operation = operations.find((item) => item.event.id === id);
-  if (!operation || !["failed", "unknown"].includes(operation.delivery))
-    return null;
+  const operation = operations.find(
+    (item) =>
+      ["failed", "unknown"].includes(item.delivery) &&
+      reactionTarget(item.event) === messageId,
+  );
+  if (!operation) return null;
   return (
     <span role="status">
       {operation.delivery === "failed"
         ? "Couldn’t add reaction."
         : "Reaction delivery not confirmed."}{" "}
-      <button type="button" onClick={() => outbox.retry(id)}>
+      <button type="button" onClick={() => outbox.retry(operation.event.id)}>
         Retry reaction
       </button>
     </span>

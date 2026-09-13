@@ -114,6 +114,24 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       [62, 63, 64].map((length) => `:${"a".repeat(length)}:`),
     );
     expect(boundaryEvents.every(({ kind }) => kind === 7)).toBe(true);
+    await page.evaluate(() => window.emojiFixture.rejectReaction());
+    await plus.click();
+    await page
+      .locator("em-emoji-picker button")
+      .filter({ has: page.locator('img[src*="1.png"]') })
+      .first()
+      .click();
+    const retry = page.getByRole("button", { name: "Retry reaction" });
+    await expect(retry).toBeVisible();
+    await page.evaluate(() => window.emojiFixture.remount());
+    await expect(retry).toBeVisible();
+    await retry.click();
+    await expect(retry).toHaveCount(0);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(5);
     expect(errors).toEqual([]);
   } finally {
     await server.close();

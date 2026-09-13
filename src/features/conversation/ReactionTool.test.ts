@@ -6,7 +6,7 @@ import type {
   ComposerToolProps,
   ReactionToolProps,
 } from "./contracts";
-import { selectReactionTool } from "./ReactionTool";
+import { reactionTarget, selectReactionTool } from "./ReactionTool";
 
 const Component = () => null;
 const ComposerComponent = Component as ComponentType<ComposerToolProps>;
@@ -50,3 +50,19 @@ it.each([undefined, Number.NaN, Number.POSITIVE_INFINITY])(
     ).toBe("plugin/before");
   },
 );
+
+it("identifies only reactions with a target", () => {
+  expect(
+    reactionTarget({
+      kind: 7,
+      tags: [
+        ["h", "channel"],
+        ["e", "target"],
+      ],
+    }),
+  ).toBe("target");
+  expect(reactionTarget({ kind: 7, tags: [["h", "channel"]] })).toBeUndefined();
+  expect(
+    reactionTarget({ kind: 9, tags: [["e", "thread", "", "reply"]] }),
+  ).toBeUndefined();
+});

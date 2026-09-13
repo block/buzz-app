@@ -4,7 +4,7 @@ import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
 import * as emojiPlugin from "../../src/bundled/emoji";
 import emojiManifest from "../../src/bundled/emoji/manifest.json";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { MessageRow } from "../../src/features/messages/MessageRow";
@@ -37,7 +37,8 @@ const report = {
 const sessions = ["a", "b"].map((community) => {
   const origin = `https://${community}.test`;
   let time = 1,
-    fail = false;
+    fail = false,
+    rejectReaction = false;
   let live!: LiveCallbacks;
   let catalogRead: Promise<void> | undefined;
   let releaseCatalogRead: (() => void) | undefined;
@@ -109,6 +110,10 @@ const sessions = ["a", "b"].map((community) => {
           return signed(viewer, template);
         },
         async publish(event) {
+          if (event.kind === 7 && rejectReaction) {
+            rejectReaction = false;
+            throw new Error("Fixture reaction rejected");
+          }
           report.publications.push({ community, event });
           live.receive([event]);
         },
@@ -187,6 +192,9 @@ const sessions = ["a", "b"].map((community) => {
       catalogRead = undefined;
       releaseCatalogRead = undefined;
     },
+    rejectReaction() {
+      rejectReaction = true;
+    },
     archive(value: boolean) {
       live.receive([
         signed(relay, {
@@ -214,9 +222,11 @@ Object.assign(window, {
     replace: () => sessions[0]?.replace(),
     remove: () => sessions[0]?.replace(true),
     fail: (value: boolean) => sessions[0]?.fail(value),
+    rejectReaction: () => sessions[0]?.rejectReaction(),
     refresh: () => sessions[0]?.session.emoji.refresh(),
     holdCatalog: () => sessions[0]?.holdCatalog(),
     releaseCatalog: () => sessions[0]?.releaseCatalog(),
+    remount: () => window.dispatchEvent(new Event("emoji-remount")),
     archive: (value: boolean) => sessions[0]?.archive(value),
     status: (community: string) =>
       sessions
@@ -226,7 +236,13 @@ Object.assign(window, {
 });
 function Fixture() {
   const [selected, select] = useState(0),
-    [thread, setThread] = useState(false);
+    [thread, setThread] = useState(false),
+    [messageRevision, setMessageRevision] = useState(0);
+  useEffect(() => {
+    const remount = () => setMessageRevision((revision) => revision + 1);
+    window.addEventListener("emoji-remount", remount);
+    return () => window.removeEventListener("emoji-remount", remount);
+  }, []);
   const item = sessions[selected];
   if (!item) return null;
   return (
@@ -246,20 +262,22 @@ function Fixture() {
       </button>
       <h1>Community {item.community}</h1>
 
-      {item.rows.map((row) => (
-        <MessageRow
-          extensions={extensions}
-          key={row.id}
-          row={row}
-          session={item.session}
-          scope={item.community}
-          profile={{ name: "Fixture Reader" }}
-          media={item.session.media}
-          onOpenLink={() => false}
-          day={false}
-          retry={undefined}
-        />
-      ))}
+      <section key={`${selected}/${messageRevision}`}>
+        {item.rows.map((row) => (
+          <MessageRow
+            extensions={extensions}
+            key={row.id}
+            row={row}
+            session={item.session}
+            scope={item.community}
+            profile={{ name: "Fixture Reader" }}
+            media={item.session.media}
+            onOpenLink={() => false}
+            day={false}
+            retry={undefined}
+          />
+        ))}
+      </section>
       <MessageComposer
         extensions={extensions}
         session={item.session}

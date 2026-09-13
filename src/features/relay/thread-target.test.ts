@@ -384,3 +384,27 @@ for (const outcome of ["deleted", "failed", "live withdrawal"] as const) {
     }
   });
 }
+
+it("never retains a selected reply rejected by the shared dual-channel access gate", async () => {
+  const denied = message(alice, "a", "Forbidden dual-tag reply", 3, [
+    ["h", "b"],
+    ["e", root.id, "", "reply"],
+  ]);
+  const h = setup(denied.id);
+  h.traffic.receive([
+    roster(relay, "a", [viewer.pubkey]),
+    roster(relay, "b", []),
+  ]);
+  const reading = h.view.refresh();
+  h.next().respond([denied]);
+  await reading;
+  expect(h.view.snapshot()).toMatchObject({
+    targetStatus: "unavailable",
+    target: undefined,
+    replies: [],
+  });
+  expect(h.pending).toHaveLength(0); // No overlay/traversal can authorize rejected content.
+  h.traffic.receive([root]);
+  expect(h.view.snapshot().target).toBeUndefined();
+  expect(h.view.snapshot().replies).toEqual([]);
+});

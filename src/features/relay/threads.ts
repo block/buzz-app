@@ -265,10 +265,14 @@ export function createThreadView({
     publish({ status: "loading", error: undefined });
     try {
       if (exact && replace) {
-        const selected = await reader.read(
+        const response = await reader.read(
           [{ ids: [messageId], "#h": [channelId], limit: 1 }],
           { signal: owned.signal },
         );
+        if (!active()) return;
+        // Admit the immutable selected content before retention, just as normal
+        // reads do. Only its separately fetched overlays wait for closure.
+        const selected = admit(response);
         if (!active()) return;
         const event = selected.find(
           (event) =>

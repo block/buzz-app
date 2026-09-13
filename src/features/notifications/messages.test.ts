@@ -233,6 +233,8 @@ async function setup(
 it.each([9, 40002])(
   "only production live kind-%s traffic can notify, never history/replay/local observation",
   async (kind) => {
+    // Keep second-rounded fixtures outside the cutoff while signing/admitting.
+    vi.spyOn(Date, "now").mockReturnValue(1_780_000_000_000);
     const h = await setup();
     const original = h.make;
     h.make = (text, age = 0, author = h.peer) =>
@@ -260,6 +262,39 @@ it.each([9, 40002])(
     expect(h.owner.session.unread.attention("room", fresh.id).unread).toBe(
       true,
     );
+  },
+);
+it.each(
+  [9, 40002].flatMap((kind) =>
+    [
+      { age: -30001, allowed: false },
+      { age: -30000, allowed: true },
+      { age: 120000, allowed: true },
+      { age: 120001, allowed: false },
+    ].map((boundary) => ({ kind, ...boundary })),
+  ),
+)(
+  "live kind-$kind at age $age ms: notification allowed=$allowed",
+  async ({ kind, age, allowed }) => {
+    const createdAt = 1_780_000_000;
+    vi.spyOn(Date, "now").mockReturnValue(createdAt * 1000 + age);
+    const h = await setup();
+    h.emit(
+      [
+        signed(h.peer, {
+          kind,
+          created_at: createdAt,
+          content: "boundary",
+          tags: [
+            ["h", "room"],
+            ["p", h.viewer.pubkey],
+          ],
+        }),
+      ],
+      "live",
+    );
+    await flush();
+    expect(h.show).toHaveBeenCalledTimes(allowed ? 1 : 0);
   },
 );
 it("live membership activity and observer telemetry never become message notifications", async () => {

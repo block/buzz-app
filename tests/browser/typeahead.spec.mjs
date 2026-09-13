@@ -559,7 +559,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   ).toBe(":party-parrot: hello");
   await input.fill(":party-parrot:");
   await expect(input).toHaveAttribute("data-custom-emoji-only", "true");
-  const renderedEmoji = composer.locator("img");
+  const renderedEmoji = input.locator("xpath=..").locator("img");
   await expect(renderedEmoji).toHaveCount(1);
   await expect(renderedEmoji).toHaveCSS("width", "42px");
   await expect(renderedEmoji).toHaveCSS("height", "42px");

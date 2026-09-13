@@ -90,6 +90,31 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       "https://a.test/media/1.png",
     ]);
     expect(event.tags.filter(([name]) => name === "e")).toHaveLength(1);
+    for (const length of [62, 63, 64]) {
+      await plus.click();
+      const boundarySearch = page.locator(
+        'em-emoji-picker input[type="search"]',
+      );
+      const shortcode = "a".repeat(length);
+      await boundarySearch.fill(shortcode);
+      await page
+        .getByRole("button", { name: `:${shortcode}:`, exact: true })
+        .click();
+    }
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(4);
+    const boundaryEvents = await page.evaluate(() =>
+      window.emojiFixture.report.publications
+        .slice(1)
+        .map(({ event }) => event),
+    );
+    expect(boundaryEvents.map(({ content }) => content)).toEqual(
+      [62, 63, 64].map((length) => `:${"a".repeat(length)}:`),
+    );
+    expect(boundaryEvents.every(({ kind }) => kind === 7)).toBe(true);
     expect(errors).toEqual([]);
   } finally {
     await server.close();

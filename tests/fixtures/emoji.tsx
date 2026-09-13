@@ -52,6 +52,10 @@ const sessions = ["a", "b"].map((community) => {
           ? []
           : [
               ["emoji", "party", `${origin}/media/${time}.png`],
+              ...[62, 63, 64].map((length) => {
+                const name = "a".repeat(length);
+                return ["emoji", name, `${origin}/media/${name}.png`];
+              }),
               ...(community === "a"
                 ? [
                     ["emoji", "aonly", `${origin}/media/aonly.png`],

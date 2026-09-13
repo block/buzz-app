@@ -4,8 +4,9 @@
 
 This document describes the read-only compatibility/mention slice. The Agents
 page now also exposes a separate [native local-controls checkpoint](agent-control.md)
-for editing saved agents/harnesses. It does not yet launch agents or import credentials;
-old Buzz remains responsible for live replies.
+for saved settings, selected credential import and bundled Start/Stop/Restart.
+The disposable editor still blocks execution/import; old Buzz remains responsible
+for live replies until the separately attended management handover.
 
 V1 **reuses the current Buzz library and mentions existing agents in channels
 and threads**. No migration to relay-only storage. Creation, editing,

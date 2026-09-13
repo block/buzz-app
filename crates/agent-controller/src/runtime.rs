@@ -1,3 +1,4 @@
+use crate::bundle::RuntimeBundle;
 use crate::config::Agent;
 use crate::process::Process;
 use crate::{AgentEdit, ControlSnapshot, Credentials, ProcessStatus, Result, Store};
@@ -7,33 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
-/// Resolved once from this app's own bundle. Never search the old app/checkout
-/// for Buzz tools. External ACP executables must use explicit absolute paths.
-pub struct RuntimeBundle {
-    directory: PathBuf,
-}
 impl RuntimeBundle {
-    pub fn new(directory: PathBuf) -> Result<Self> {
-        if !directory.is_absolute() {
-            return Err("Runtime bundle path must be absolute".into());
-        }
-        let bundle = Self { directory };
-        for name in [
-            "buzz-acp",
-            "buzz-agent",
-            "buzz-dev-mcp",
-            "buzz",
-            "git-credential-nostr",
-        ] {
-            bundle.executable(name)?;
-        }
-        Ok(bundle)
-    }
-    fn executable(&self, name: &str) -> Result<PathBuf> {
-        let path = self.directory.join(name);
-        executable(&path)?;
-        Ok(path)
-    }
     fn command(&self, agent: &Agent, key: &crate::Secret) -> Result<Command> {
         agent.validate()?;
         if key.pubkey() != agent.pubkey {
@@ -107,8 +82,8 @@ impl RuntimeBundle {
             Path::new("/sbin"),
         ])
         .map_err(|_| "Invalid runtime tools path")?;
-        command.env("PATH", path);
         command.envs(&agent.environment);
+        command.env("PATH", path);
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -199,7 +174,44 @@ impl RuntimeBundle {
         Ok(command)
     }
 }
-fn executable(path: &Path) -> Result<()> {
+fn effective_databricks(agent: &Agent) -> Result<Option<crate::connection::DatabricksSettings>> {
+    let buzz_agent = Path::new(&agent.harness.command)
+        .file_name()
+        .and_then(|s| s.to_str())
+        == Some("buzz-agent");
+    if !buzz_agent {
+        return Ok(None);
+    }
+    if !agent.harness.args.is_empty() {
+        return Err(
+            "Buzz Agent runs in ACP mode without arguments; use Connect for sign-in".into(),
+        );
+    }
+    let provider = agent
+        .environment
+        .get("BUZZ_AGENT_PROVIDER")
+        .unwrap_or(&agent.harness.provider);
+    if !matches!(
+        provider.as_str(),
+        "databricks_v2" | "databricks-v2" | "databricks"
+    ) {
+        return Ok(None);
+    }
+    if agent.environment.contains_key("DATABRICKS_TOKEN") {
+        return Err("Remove DATABRICKS_TOKEN to use this app's persistent OAuth connection".into());
+    }
+    let mut settings = agent.harness.databricks.clone().unwrap_or_default();
+    if let Some(host) = agent.environment.get("DATABRICKS_HOST") {
+        settings.host = host.clone();
+    }
+    if let Some(filter) = agent.environment.get("DATABRICKS_MODEL_FILTER") {
+        settings.filter = filter.clone();
+    }
+    settings.host = crate::connection::origin(&settings.host)?;
+    settings.validate()?;
+    Ok(Some(settings))
+}
+pub(crate) fn executable(path: &Path) -> Result<()> {
     let metadata = path
         .metadata()
         .map_err(|_| "Required runtime executable is missing")?;
@@ -225,6 +237,20 @@ pub enum Action {
 struct Running {
     process: Process,
     revision: u64,
+    databricks_host: Option<String>,
+    temporary: Option<tempfile::TempDir>,
+    _ownership: crate::ownership::Ownership,
+}
+impl Drop for Running {
+    fn drop(&mut self) {
+        if self.process.stop().is_err() {
+            // Never delete temporary signing material out from under an unconfirmed
+            // descendant. Retain the private directory for explicit recovery.
+            if let Some(directory) = self.temporary.take() {
+                let _ = directory.keep();
+            }
+        }
+    }
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
 pub struct ModelContext {
@@ -238,12 +264,14 @@ pub struct Controller {
     bundle: Result<RuntimeBundle>,
     running: BTreeMap<String, Running>,
     errors: BTreeMap<String, String>,
+    ownership_root: PathBuf,
 }
 impl Controller {
     pub fn new(
         store: Store,
         credentials: Arc<dyn Credentials>,
         bundle: Result<RuntimeBundle>,
+        ownership_root: PathBuf,
     ) -> Self {
         Self {
             store,
@@ -251,6 +279,7 @@ impl Controller {
             bundle,
             running: BTreeMap::new(),
             errors: BTreeMap::new(),
+            ownership_root,
         }
     }
     pub fn snapshot(&mut self) -> Result<ControlSnapshot> {
@@ -317,10 +346,36 @@ impl Controller {
             return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
         }
         Ok(ModelContext {
-            host: agent.environment.get("DATABRICKS_HOST").cloned(),
-            filter: agent.environment.get("DATABRICKS_MODEL_FILTER").cloned(),
+            host: agent
+                .environment
+                .get("DATABRICKS_HOST")
+                .cloned()
+                .or_else(|| {
+                    agent
+                        .harness
+                        .databricks
+                        .as_ref()
+                        .map(|s| s.host.clone())
+                        .filter(|h| !h.is_empty())
+                }),
+            filter: agent
+                .environment
+                .get("DATABRICKS_MODEL_FILTER")
+                .cloned()
+                .or_else(|| agent.harness.databricks.as_ref().map(|s| s.filter.clone())),
             model_overridden: agent.environment.contains_key("BUZZ_AGENT_MODEL"),
         })
+    }
+    pub fn prepare_import(
+        &self,
+        imports: &mut crate::Imports,
+        token: &str,
+        ids: &[String],
+    ) -> Result<crate::PreparedImport> {
+        imports.prepare(token, ids, &self.store)
+    }
+    pub fn commit_import(&mut self, prepared: crate::CredentialedImport) -> Result<()> {
+        prepared.commit(&mut self.store)
     }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<ControlSnapshot> {
         self.store.save(id, revision, edit)?;
@@ -366,7 +421,57 @@ impl Controller {
         }
         self.snapshot()
     }
+    pub fn credential_request(&self, id: &str) -> Result<(String, String, u64, Option<String>)> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        let workspace = effective_databricks(&agent)?.map(|s| s.host);
+        self.bundle.as_ref().map_err(Clone::clone)?;
+        Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
+    }
+    pub fn action_with_key(
+        &mut self,
+        id: &str,
+        action: Action,
+        revision: u64,
+        key: &crate::Secret,
+    ) -> Result<ControlSnapshot> {
+        if self.credential_request(id)?.2 != revision {
+            return Err("Saved settings changed while opening credentials; retry Start".into());
+        }
+        self.store.enabled(id, true)?;
+        if matches!(action, Action::Restart) {
+            self.stop(id)?;
+        }
+        match self.start_with_key(id, Some(key)) {
+            Ok(()) => {
+                self.errors.remove(id);
+            }
+            Err(error) => {
+                self.errors.insert(id.into(), error);
+            }
+        }
+        self.snapshot()
+    }
+    pub fn record_error(&mut self, id: &str, error: String) {
+        self.errors.insert(id.into(), error);
+    }
+    pub fn enabled_ids(&self) -> Result<Vec<String>> {
+        Ok(self
+            .store
+            .agents()?
+            .into_iter()
+            .filter(|a| a.enabled)
+            .map(|a| a.id)
+            .collect())
+    }
     fn start(&mut self, id: &str) -> Result<()> {
+        self.start_with_key(id, None)
+    }
+    fn start_with_key(&mut self, id: &str, supplied: Option<&crate::Secret>) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
                 return Ok(());
@@ -383,17 +488,50 @@ impl Controller {
             return Err("Agent is disabled".into());
         }
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
-        let key = self
-            .credentials
-            .read(&agent.credential_id, &agent.pubkey)?
-            .ok_or("Saved agent key is unavailable; nothing was started")?;
-        let mut command = bundle.command(&agent, &key)?;
+        let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
+        let stored;
+        let key = match supplied {
+            Some(key) => key,
+            None => {
+                stored = self
+                    .credentials
+                    .read(&agent.credential_id, &agent.pubkey)?
+                    .ok_or("Saved agent key is unavailable; nothing was started")?;
+                &stored
+            }
+        };
+        let settings = effective_databricks(&agent)?;
+        let config = self.store.root();
+        crate::connection::oauth_root(config)?;
+        let runs = config.join("runs");
+        crate::connection::private_directory(&runs)?;
+        let temporary = tempfile::Builder::new()
+            .prefix("agent-")
+            .tempdir_in(&runs)
+            .map_err(|_| "Could not create private runtime directory")?;
+        let mut command = bundle.command(&agent, key)?;
+        // Last writer wins: neither user environment nor relay persona extra_env
+        // may redirect credentials/temp signing material outside this app profile.
+        command
+            .env("BUZZ_AGENT_CONFIG_DIR", config)
+            .env("TMPDIR", temporary.path())
+            .env("TMP", temporary.path())
+            .env("TEMP", temporary.path());
+        if let Some(settings) = &settings {
+            command
+                .env("DATABRICKS_HOST", &settings.host)
+                .env("DATABRICKS_MODEL_FILTER", &settings.filter)
+                .env_remove("DATABRICKS_TOKEN");
+        }
         let process = Process::spawn(&mut command)?;
         self.running.insert(
             id.into(),
             Running {
                 process,
                 revision: agent.revision,
+                databricks_host: settings.map(|s| s.host),
+                temporary: Some(temporary),
+                _ownership: ownership,
             },
         );
         Ok(())
@@ -404,6 +542,28 @@ impl Controller {
         }
         self.running.remove(id);
         Ok(())
+    }
+    /// Caller holds the same native mutex used for Start/Restart. Use captured
+    /// running settings, never a later saved edit, to determine credential users.
+    pub fn disconnect(&mut self, workspace: &str) -> Result<()> {
+        let workspace = crate::connection::origin(workspace)?;
+        // Reap exits before deciding; failed teardown retains ownership and blocks.
+        let ids: Vec<_> = self.running.keys().cloned().collect();
+        for id in ids {
+            let run = self.running.get_mut(&id).unwrap();
+            if !run.process.alive()? {
+                self.running.remove(&id);
+            }
+        }
+        if self
+            .running
+            .values()
+            .any(|r| r.databricks_host.as_deref() == Some(&workspace))
+        {
+            return Err("Stop agents using this Databricks workspace before Disconnect".into());
+        }
+        let cache = crate::connection::oauth_root(self.store.root())?;
+        crate::connection::disconnect(&cache, &workspace)
     }
     pub fn shutdown(&mut self) -> Result<()> {
         let ids: Vec<_> = self.running.keys().cloned().collect();

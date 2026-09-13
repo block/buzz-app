@@ -13,6 +13,7 @@ pub(crate) fn fixture() -> Agent {
         system_prompt: "Take over the test world".into(),
         workspace: "/tmp".into(),
         harness: HarnessEdit {
+            databricks: None,
             command: "buzz-agent".into(),
             args: vec![],
             model: "test-model".into(),

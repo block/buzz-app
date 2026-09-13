@@ -10,8 +10,13 @@ export interface AgentDraft {
   model: string;
   provider: string;
   environment: Record<string, string | null>;
+  databricks?: { host: string; filter: string } | null;
 }
-export function agentDraft(agent: AgentView): AgentDraft {
+export function agentDraft(
+  agent: AgentView,
+  defaults?: { host: string; filter: string },
+): AgentDraft {
+  const databricks = agent.harness.databricks ?? defaults;
   return {
     revision: agent.revision,
     name: agent.name,
@@ -22,6 +27,7 @@ export function agentDraft(agent: AgentView): AgentDraft {
     model: agent.harness.model,
     provider: agent.harness.provider,
     environment: {},
+    ...(databricks ? { databricks: { ...databricks } } : {}),
   };
 }
 export function agentEdit(draft: AgentDraft): AgentEdit {
@@ -51,6 +57,7 @@ export function agentEdit(draft: AgentDraft): AgentEdit {
       args,
       model: draft.model,
       provider: draft.provider,
+      ...(draft.databricks ? { databricks: { ...draft.databricks } } : {}),
     },
     environment: { ...draft.environment },
   };

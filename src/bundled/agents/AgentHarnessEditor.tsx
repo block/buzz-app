@@ -81,7 +81,7 @@ export function AgentHarnessEditor({
         draft={draft}
         control={control}
         defaults={defaults}
-        onChange={(model) => onChange({ model })}
+        onChange={onChange}
       />
       <p className="text-body-sm text-secondary">
         Saved environment overrides take precedence over Model and Provider:

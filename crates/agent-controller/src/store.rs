@@ -56,6 +56,9 @@ impl Store {
         store.read()?;
         Ok(store)
     }
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
     fn path(&self) -> PathBuf {
         self.root.join("agents.json")
     }

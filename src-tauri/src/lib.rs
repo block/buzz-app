@@ -204,10 +204,16 @@ pub fn run() {
             app.manage(ModelHost::new(
                 paths
                     .as_ref()
-                    .map(|(root, _, _)| root.join("databricks-connections"))
+                    .map(|(root, _, _)| root.clone())
                     .map_err(Clone::clone),
             ));
-            app.manage(AgentHost::open(paths));
+            let preview = std::env::var("BUZZ_AGENT_CONTROL_PREVIEW").as_deref() == Ok("1");
+            let resources = app
+                .path()
+                .resource_dir()
+                .map(|root| root.join("agent-runtime"))
+                .map_err(|_| "Could not resolve app runtime resources".to_owned());
+            app.manage(AgentHost::initialize(paths, resources, preview));
             Ok(())
         })
         .manage(Imports::default())
@@ -216,13 +222,18 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
+            if let tauri::RunEvent::ExitRequested { api, .. } = &event {
+                app.state::<ModelHost>().shutdown();
+                if app.state::<AgentHost>().shutdown().is_err() {
+                    api.prevent_exit();
+                    eprintln!("Agent shutdown incomplete; app exit was refused");
+                }
+            }
             if matches!(event, tauri::RunEvent::Exit) {
                 app.state::<ModelHost>().shutdown();
-            }
-            if matches!(event, tauri::RunEvent::Exit)
-                && app.state::<AgentHost>().shutdown().is_err()
-            {
-                eprintln!("Native agent shutdown could not be confirmed");
+                if app.state::<AgentHost>().shutdown().is_err() {
+                    eprintln!("Native agent shutdown could not be confirmed");
+                }
             }
         });
 }

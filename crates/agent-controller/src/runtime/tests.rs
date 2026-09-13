@@ -28,8 +28,9 @@ fn agent(workspace: &Path) -> Agent {
         system_prompt: "test prompt".into(),
         workspace: workspace.display().to_string(),
         harness: HarnessEdit {
+            databricks: None,
             command: "buzz-agent".into(),
-            args: vec!["--test".into()],
+            args: vec![],
             model: "test-model".into(),
             provider: "test-provider".into(),
         },
@@ -55,11 +56,32 @@ fn bundle(directory: &Path) -> RuntimeBundle {
         let path = directory.join(name);
         fs::write(&path, r#"#!/bin/sh
 printf '%s\n' "$BUZZ_ACP_LAZY_POOL" "$BUZZ_ACP_IDLE_POOL_SLEEP" "$BUZZ_ACP_SYSTEM_PROMPT" "$BUZZ_ACP_MODEL" "$BUZZ_ACP_AGENT_ARGS" "$BUZZ_RELAY_URL" "$BUZZ_ACP_RESPOND_TO" "$BUZZ_MANAGED_AGENT" "$BUZZ_ACP_REPLAY_FLOOR" "$PROVIDER_TEST_SETTING" >> starts
+printf '%s\n' "$BUZZ_AGENT_CONFIG_DIR" "$DATABRICKS_HOST" "$DATABRICKS_MODEL_FILTER" "${DATABRICKS_TOKEN-unset}" "$TMPDIR" "$PATH" > runtime-env
 trap 'exit 0' TERM INT
 while :; do /bin/sleep 0.1; done
 "#).unwrap();
         fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
     }
+    let files: BTreeMap<_, _> = [
+        "buzz-acp",
+        "buzz-agent",
+        "buzz-dev-mcp",
+        "buzz",
+        "git-credential-nostr",
+    ]
+    .into_iter()
+    .map(|name| {
+        use sha2::{Digest, Sha256};
+        (
+            name,
+            format!(
+                "{:x}",
+                Sha256::digest(fs::read(directory.join(name)).unwrap())
+            ),
+        )
+    })
+    .collect();
+    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":1,"revision":"84b0fd04b7831657df2873c3a835412f47cebb03","target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
     RuntimeBundle::new(directory.into()).unwrap()
 }
 fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {
@@ -111,13 +133,18 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     let mut store = Store::open(store_root.clone()).unwrap();
     let a = agent(dir.path());
     store.insert(vec![a.clone()]).unwrap();
-    let mut controller = Controller::new(store, Arc::new(Memory), Ok(bundle(tools.path())));
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
     let snapshot = controller.action(&a.id, Action::Start).unwrap();
     assert!(matches!(snapshot.agents[0].status, ProcessStatus::Running));
     let first = wait_for_contents(&dir.path().join("starts"), |text| {
         (text.lines().count() == 10).then(|| text.to_owned())
     });
-    assert_eq!(first, "true\n900\ntest prompt\ntest-model\n--test\nwss://relay.example\nowner-only\n\n\nexplicit-value\n");
+    assert_eq!(first, "true\n900\ntest prompt\ntest-model\n\nwss://relay.example\nowner-only\n\n\nexplicit-value\n");
     controller.action(&a.id, Action::Start).unwrap();
     assert_eq!(controller.running.len(), 1);
     let edit = AgentEdit {
@@ -156,6 +183,7 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
         Store::open(store_root).unwrap(),
         Arc::new(Memory),
         Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
     );
     let restored = controller.restore().unwrap();
     assert!(!restored.agents[0].enabled);
@@ -203,6 +231,7 @@ fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
         store,
         Arc::new(Memory),
         Err("Runtime bundle is missing".into()),
+        dir.path().join("ownership"),
     );
     let failed = controller.action(&a.id, Action::Start).unwrap();
     assert!(matches!(failed.agents[0].status, ProcessStatus::Failed));
@@ -280,7 +309,12 @@ fn start_refuses_an_attestation_for_a_different_agent() {
     a.auth_tag = Some(crate::secret::test_attestation(&"ab".repeat(32)));
     let mut store = Store::open(dir.path().join("config")).unwrap();
     store.insert(vec![a.clone()]).unwrap();
-    let mut controller = Controller::new(store, Arc::new(Memory), Ok(bundle(tools.path())));
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
     let failed = controller.action(&a.id, Action::Start).unwrap();
     assert!(matches!(failed.agents[0].status, ProcessStatus::Failed));
     assert_eq!(
@@ -302,7 +336,12 @@ fn stop_reaches_owned_process_when_store_is_malformed_or_row_disappears() {
         let mut store = Store::open(config.clone()).unwrap();
         let a = agent(dir.path());
         store.insert(vec![a.clone()]).unwrap();
-        let mut controller = Controller::new(store, Arc::new(Memory), Ok(bundle(tools.path())));
+        let mut controller = Controller::new(
+            store,
+            Arc::new(Memory),
+            Ok(bundle(tools.path())),
+            dir.path().join("ownership"),
+        );
         controller.action(&a.id, Action::Start).unwrap();
         wait_for_contents(&dir.path().join("starts"), |text| {
             (text.lines().count() == 10).then_some(())
@@ -393,9 +432,190 @@ fn start_and_restart_reject_missing_saved_identities() {
         Store::open(dir.path().join("config")).unwrap(),
         Arc::new(Memory),
         Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
     );
     for action in [Action::Start, Action::Restart] {
         assert!(controller.action("missing", action).is_err());
     }
+    assert!(controller.running.is_empty());
+}
+
+#[test]
+#[cfg(unix)]
+fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
+    use crate::connection::DatabricksSettings;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut a = agent(dir.path());
+    a.harness.provider = "databricks_v2".into();
+    a.harness.databricks = Some(DatabricksSettings {
+        host: "https://EXAMPLE.com:443/".into(),
+        filter: "foo*".into(),
+    });
+    // TMPDIR and PATH can be supplied by settings, but the app's private runtime
+    // storage and bundled tools are authoritative.
+    a.environment
+        .insert("TMPDIR".into(), "/unusable-user-override".into());
+    let config = dir.path().join("config");
+    let mut store = Store::open(config.clone()).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let runtime = bundle(tools.path());
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(runtime),
+        dir.path().join("ownership"),
+    );
+    let started = controller.action(&a.id, Action::Start).unwrap();
+    assert!(matches!(started.agents[0].status, ProcessStatus::Running));
+    let env = wait_for_contents(&dir.path().join("runtime-env"), |text| {
+        (text.lines().count() == 6).then(|| text.lines().map(str::to_owned).collect::<Vec<_>>())
+    });
+    assert_eq!(env[0], config.to_str().unwrap());
+    assert_eq!(env[1], "https://example.com");
+    assert_eq!(env[2], "foo*");
+    assert_eq!(env[3], "unset");
+    assert!(env[5].starts_with(tools.path().to_str().unwrap()));
+    let run = &controller.running[&a.id];
+    assert_eq!(run.databricks_host.as_deref(), Some("https://example.com"));
+    let temp = run.temporary.as_ref().unwrap().path().to_owned();
+    assert!(temp.starts_with(config.join("runs")));
+    assert_eq!(env[4], temp.to_str().unwrap());
+    let cache = config.join("buzz-agent/oauth/databricks");
+    assert!(cache.is_dir());
+    let edit = AgentEdit {
+        name: a.name.clone(),
+        system_prompt: a.system_prompt.clone(),
+        workspace: a.workspace.clone(),
+        harness: HarnessEdit {
+            databricks: Some(DatabricksSettings {
+                host: "https://other.example.com".into(),
+                filter: "".into(),
+            }),
+            ..a.harness.clone()
+        },
+        environment: BTreeMap::new(),
+    };
+    controller.save(&a.id, 1, edit).unwrap();
+    assert!(controller
+        .disconnect("https://example.com")
+        .unwrap_err()
+        .contains("Stop agents"));
+    controller.disconnect("https://other.example.com").unwrap();
+    controller.action(&a.id, Action::Stop).unwrap();
+    assert!(!temp.exists());
+    controller.disconnect("https://example.com").unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn manifest_integrity_and_exact_identity_exclusion_across_profiles() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut first = Store::open(dir.path().join("first")).unwrap();
+    first.insert(vec![a.clone()]).unwrap();
+    let mut second = Store::open(dir.path().join("second")).unwrap();
+    second.insert(vec![a.clone()]).unwrap();
+    let shared = dir.path().join("ownership");
+    let mut first = Controller::new(
+        first,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        shared.clone(),
+    );
+    let mut second = Controller::new(
+        second,
+        Arc::new(Memory),
+        Ok(RuntimeBundle::new(tools.path().into()).unwrap()),
+        shared,
+    );
+    first.action(&a.id, Action::Start).unwrap();
+    let blocked = second.action(&a.id, Action::Start).unwrap();
+    assert!(blocked.agents[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("Another buzz-app profile"));
+    first.action(&a.id, Action::Stop).unwrap();
+    assert!(matches!(
+        second.action(&a.id, Action::Start).unwrap().agents[0].status,
+        ProcessStatus::Running
+    ));
+    second.action(&a.id, Action::Stop).unwrap();
+    fs::write(tools.path().join("buzz-agent"), "tampered").unwrap();
+    let failed = second.action(&a.id, Action::Start).unwrap();
+    assert!(failed.agents[0]
+        .error
+        .as_deref()
+        .unwrap()
+        .contains("integrity"));
+    assert!(second.running.is_empty());
+    assert!(RuntimeBundle::new(tools.path().into()).is_err());
+}
+
+#[test]
+#[cfg(unix)]
+#[ignore = "requires immutable staged runtime resources; run explicitly after build-agent-runtime"]
+fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../src-tauri/resources/agent-runtime")
+        .canonicalize()
+        .unwrap();
+    let mut a = agent(dir.path());
+    a.harness.provider = "databricks_v2".into();
+    a.harness.databricks = Some(crate::connection::DatabricksSettings {
+        host: "https://workspace.example.invalid".into(),
+        filter: "".into(),
+    });
+    // Bind/retain a closed-to-WS listener locally: no external relay or live agent.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    a.relay_url = format!("wss://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    a.id = agent_id(PUB, &a.relay_url);
+    let config = dir.path().join("config");
+    let mut store = Store::open(config.clone()).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        RuntimeBundle::new(tools),
+        dir.path().join("ownership"),
+    );
+    for action in [Action::Start, Action::Restart] {
+        let result = controller.action(&a.id, action).unwrap();
+        assert!(
+            matches!(result.agents[0].status, ProcessStatus::Running),
+            "{:?}",
+            result.agents[0].error
+        );
+        std::thread::sleep(Duration::from_millis(250));
+        let result = controller.snapshot().unwrap();
+        assert!(
+            matches!(result.agents[0].status, ProcessStatus::Running),
+            "{:?}",
+            result.agents[0].error
+        );
+    }
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .path()
+        .to_owned();
+    assert!(temp.exists());
+    controller.action(&a.id, Action::Stop).unwrap();
+    assert!(!temp.exists());
+    assert!(!controller.store.agents().unwrap()[0].enabled);
+    controller.action(&a.id, Action::Start).unwrap();
+    let temp = controller.running[&a.id]
+        .temporary
+        .as_ref()
+        .unwrap()
+        .path()
+        .to_owned();
+    controller.shutdown().unwrap();
+    assert!(!temp.exists());
+    assert!(controller.store.agents().unwrap()[0].enabled);
     assert!(controller.running.is_empty());
 }

@@ -92,6 +92,7 @@ if (!process.argv.includes("--prepare-only")) {
     ),
   );
   env.BUZZ_AGENT_CONTROL_HOME = agents;
+  env.BUZZ_AGENT_CONTROL_PREVIEW = "1";
   env.BUZZODZ_HOME = join(directory, "plugins");
   env.BUZZODZ_PROFILE = "agent-preview";
   const child = spawn(

@@ -21,10 +21,10 @@ export function AgentModelPicker({
   draft: AgentDraft;
   control: AgentControl;
   defaults: ControlSnapshot["databricksDefaults"];
-  onChange(model: string): void;
+  onChange(patch: Partial<AgentDraft>): void;
 }) {
-  const [host, setHost] = useState(defaults?.host ?? "");
-  const [filter, setFilter] = useState(defaults?.filter ?? "");
+  const host = draft.databricks?.host ?? defaults?.host ?? "";
+  const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
   const [catalog, setCatalog] = useState<{
     key: string;
     data: ModelCatalog;
@@ -118,7 +118,7 @@ export function AgentModelPicker({
         <input
           value={draft.model}
           spellCheck={false}
-          onChange={(event) => onChange(event.target.value)}
+          onChange={(event) => onChange({ model: event.target.value })}
         />
       </label>
       <p className="text-body-sm text-secondary">
@@ -135,7 +135,9 @@ export function AgentModelPicker({
             value={host}
             placeholder="https://workspace.example.com"
             spellCheck={false}
-            onChange={(event) => setHost(event.target.value)}
+            onChange={(event) =>
+              onChange({ databricks: { host: event.target.value, filter } })
+            }
           />
         </label>
         <label className="agent-control-field">
@@ -143,14 +145,16 @@ export function AgentModelPicker({
           <input
             value={filter}
             spellCheck={false}
-            onChange={(event) => setFilter(event.target.value)}
+            onChange={(event) =>
+              onChange({ databricks: { host, filter: event.target.value } })
+            }
           />
         </label>
         <p className="text-body-sm text-secondary">
           Connect may open your browser. Credentials stay in this app’s private
           native cache, separate from old Buzz. Refresh never opens sign-in.
-          Workspace/filter fields apply to this lookup, not saved harness
-          settings; saved or draft environment overrides must match.
+          Save persists workspace/filter for inference; Connect does not save or
+          start an agent. Saved or draft environment overrides must match.
         </p>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -204,7 +208,7 @@ export function AgentModelPicker({
               value={null}
               itemToStringLabel={(model) => `${model.name} — ${model.id}`}
               onValueChange={(model) => {
-                if (model) onChange(model.id);
+                if (model) onChange({ model: model.id });
               }}
             >
               <Combobox.Label>Search available models</Combobox.Label>

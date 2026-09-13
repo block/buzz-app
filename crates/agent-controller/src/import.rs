@@ -48,6 +48,7 @@ pub struct Candidate {
     pub relay_url: String,
     pub name: String,
 }
+#[derive(Clone)]
 struct Pending {
     preview: ImportPreview,
     source: PathBuf,
@@ -55,7 +56,7 @@ struct Pending {
     digest: String,
     workspace: PathBuf,
 }
-#[derive(Default)]
+#[derive(Default, Clone)]
 pub struct Imports {
     sequence: u64,
     pending: Option<Pending>,
@@ -67,6 +68,9 @@ struct Source {
     digest: String,
 }
 impl Imports {
+    pub fn discard(&mut self) {
+        self.pending = None;
+    }
     /// Native resolves the app-data parent, never from a browser-supplied path.
     /// Bind config directory and credential service to the same explicit choice.
     pub fn preview(
@@ -123,13 +127,12 @@ impl Imports {
         });
         Ok(preview)
     }
-    pub fn commit(
+    pub fn prepare(
         &mut self,
         token: &str,
         ids: &[String],
-        store: &mut Store,
-        credentials: &dyn Credentials,
-    ) -> Result<()> {
+        store: &Store,
+    ) -> Result<PreparedImport> {
         let pending = self
             .pending
             .as_ref()
@@ -170,11 +173,47 @@ impl Imports {
             agent.validate()?;
             agents.push((agent, string(record, "private_key_nsec").to_owned()));
         }
+        Ok(PreparedImport {
+            agents,
+            source_kind: pending.source_kind,
+            source: pending.source.clone(),
+            digest: pending.digest.clone(),
+        })
+    }
+    pub fn commit(
+        &mut self,
+        token: &str,
+        ids: &[String],
+        store: &mut Store,
+        credentials: &dyn Credentials,
+    ) -> Result<()> {
+        let prepared = self.prepare(token, ids, store)?;
+        prepared.acquire(credentials)?.commit(store)?;
+        self.pending = None;
+        Ok(())
+    }
+}
+/// Native-only import plan; never serialized. Credential operations can happen
+/// outside the controller mutex. The source snapshot is copied, never mutated.
+pub struct PreparedImport {
+    agents: Vec<(Agent, String)>,
+    source_kind: LegacySource,
+    source: PathBuf,
+    digest: String,
+}
+pub struct CredentialedImport {
+    agents: Vec<Agent>,
+    source: PathBuf,
+    digest: String,
+}
+impl PreparedImport {
+    pub fn acquire(self, credentials: &dyn Credentials) -> Result<CredentialedImport> {
+        let agents = self.agents;
         // All config validation precedes credential writes. Retry can reuse a
         // verified identical key saved by a partial prior attempt, never replace it.
         for (agent, inline) in &agents {
             let key = if inline.is_empty() {
-                credentials.read_legacy(pending.source_kind, &agent.pubkey)?
+                credentials.read_legacy(self.source_kind, &agent.pubkey)?
             } else {
                 Secret::parse(inline, &agent.pubkey)?
             };
@@ -192,9 +231,19 @@ impl Imports {
                 return Err("Credential read-back differed; import was not completed".into());
             }
         }
-        store.insert(agents.into_iter().map(|(a, _)| a).collect())?;
-        self.pending = None;
-        Ok(())
+        Ok(CredentialedImport {
+            agents: agents.into_iter().map(|(a, _)| a).collect(),
+            source: self.source,
+            digest: self.digest,
+        })
+    }
+}
+impl CredentialedImport {
+    pub fn commit(self, store: &mut Store) -> Result<()> {
+        if read_source(&self.source)?.digest != self.digest {
+            return Err("Source changed during credential access; preview again".into());
+        }
+        store.insert(self.agents)
     }
 }
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {
@@ -283,6 +332,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path) -> Result<Agent> {
         system_prompt: string(definition, "system_prompt").into(),
         workspace: workspace.display().to_string(),
         harness: HarnessEdit {
+            databricks: None,
             command,
             args,
             model: fallback("model"),

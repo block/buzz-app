@@ -323,3 +323,39 @@ fn chosen_source_binds_config_and_credentials_without_fallback() {
         "buzz-desktop-dev"
     );
 }
+
+#[test]
+fn changed_source_during_credential_acquisition_never_commits_settings() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    source(old.path());
+    let mut imports = Imports::default();
+    let preview = imports
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+        )
+        .unwrap();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let prepared = imports
+        .prepare(&preview.token, &[preview.candidates[0].id.clone()], &store)
+        .unwrap();
+    let credentials = Memory::default();
+    let acquired = prepared.acquire(&credentials).unwrap();
+    fs::write(
+        old.path()
+            .join(LegacySource::Installed.app_directory())
+            .join("agents/global-agent-config.json"),
+        "{}",
+    )
+    .unwrap();
+    assert!(acquired
+        .commit(&mut store)
+        .unwrap_err()
+        .contains("Source changed"));
+    assert!(store.agents().unwrap().is_empty());
+    // Create-only app custody can remain after a cancelled/failed import; never
+    // delete keys that a prior successful import may already reference.
+    assert_eq!(credentials.keys.lock().unwrap().len(), 1);
+}

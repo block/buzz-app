@@ -1,11 +1,12 @@
 //! Native connection owner. No work on snapshot/render; only an explicit ticket
 //! admits auth/catalog work. This lock is independent of agent Save/Stop.
 use buzz_agent::{
-    auth::BrowserOpener, config::DatabricksModelFilter, databricks::DatabricksConnection,
+    auth::{BrowserOpener, PkceOAuthConfig, PkceOAuthTokenSource},
+    config::{Config, DatabricksModelFilter, Provider},
 };
+use buzz_agent_controller::connection::{oauth_root, origin};
 use buzz_agent_controller::AgentEdit;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::{
     path::PathBuf,
     sync::{Arc, Mutex},
@@ -85,7 +86,7 @@ impl ModelHost {
                 pending: None,
                 closed: false,
             })),
-            factory: Arc::new(StrictFactory),
+            factory: Arc::new(RuntimeFactory),
         }
     }
     fn begin(&self) -> Result<u64, String> {
@@ -189,50 +190,9 @@ impl ModelHost {
         });
         receive.await.map_err(|_| CANCELLED.to_owned())?
     }
-    fn cache(&self, host: &str) -> Result<PathBuf, String> {
+    fn cache(&self, _host: &str) -> Result<PathBuf, String> {
         let state = self.state.lock().map_err(|_| CANCELLED)?;
-        let root = state.root.clone()?;
-        if !root.is_absolute() {
-            return Err("App connection storage must be absolute".into());
-        }
-        // Store owns the parent profile; refuse links at this boundary rather
-        // than following a redirected cache or deleting another profile's data.
-        let private = |path: &std::path::Path| -> Result<(), String> {
-            if path.exists() {
-                let meta = std::fs::symlink_metadata(path)
-                    .map_err(|_| "App connection storage unavailable")?;
-                if !meta.is_dir() || meta.file_type().is_symlink() {
-                    return Err("App connection storage is not a private directory".into());
-                }
-            } else {
-                std::fs::create_dir(path).map_err(|_| "App connection storage unavailable")?;
-            }
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-                    .map_err(|_| "App connection permissions unavailable")?;
-            }
-            Ok(())
-        };
-        let parent = root.parent().ok_or("App connection storage unavailable")?;
-        let meta =
-            std::fs::symlink_metadata(parent).map_err(|_| "App connection storage unavailable")?;
-        if !meta.is_dir() || meta.file_type().is_symlink() {
-            return Err("App connection profile unavailable".into());
-        }
-        private(&root)?;
-        let cache = root.join(format!("{:x}", Sha256::digest(host.as_bytes())));
-        if let Ok(meta) = std::fs::symlink_metadata(&cache) {
-            if !meta.is_dir() || meta.file_type().is_symlink() {
-                return Err("App workspace cache unavailable".into());
-            }
-        }
-        // The pinned helper appends this namespace. Validate it too: checking
-        // only the workspace parent would still follow a redirected child.
-        private(&cache)?;
-        private(&cache.join("databricks-strict"))?;
-        Ok(cache)
+        oauth_root(&state.root.clone()?)
     }
 }
 struct Opener<R: tauri::Runtime>(tauri::AppHandle<R>);
@@ -243,29 +203,6 @@ impl<R: tauri::Runtime> BrowserOpener for Opener<R> {
             .open_url(url, None::<&str>)
             .map_err(|_| "Could not open the sign-in browser".into())
     }
-}
-fn origin(raw: &str) -> Result<String, String> {
-    let invalid = || {
-        "Enter an HTTPS workspace origin without credentials, path, query or fragment".to_owned()
-    };
-    let authority = raw
-        .strip_prefix("https://")
-        .ok_or_else(invalid)?
-        .strip_suffix('/')
-        .unwrap_or(raw.strip_prefix("https://").unwrap());
-    let url = url::Url::parse(raw).map_err(|_| invalid())?;
-    if raw.trim() != raw
-        || raw.chars().any(char::is_control)
-        || raw.contains('\\')
-        || authority.contains(['/', '@'])
-        || url.host_str().is_none()
-        || url.query().is_some()
-        || url.fragment().is_some()
-        || url.path() != "/"
-    {
-        return Err(invalid());
-    }
-    Ok(url.as_str().trim_end_matches('/').into())
 }
 fn resolve(
     request: &Request,
@@ -339,6 +276,15 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     let factory = state.factory.clone();
     host.run(ticket, async move {
         let (model_overridden, workspace, filter, cache) = prepared?;
+        if request.action == Operation::Disconnect {
+            controller.disconnect(&workspace)?;
+            return Ok(Catalog {
+                host: workspace,
+                models: vec![],
+                model_overridden,
+                disconnected: true,
+            });
+        }
         execute(
             request.action,
             workspace,
@@ -353,7 +299,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     .await
 }
 
-// Production always uses the strict immutable helper. Tests replace only the
+// Production reuses the immutable engine with its existing auth policy. Tests replace only the
 // network/auth transport behind the same command admission and operation logic.
 trait Connection: Send + Sync {
     fn connect(
@@ -378,25 +324,56 @@ trait Factory: Send + Sync {
         opener: Arc<dyn BrowserOpener>,
     ) -> Result<Box<dyn Connection>, String>;
 }
-struct StrictFactory;
-impl Factory for StrictFactory {
+struct RuntimeFactory;
+struct RuntimeConnection {
+    workspace: String,
+    cache: PathBuf,
+    auth: Arc<PkceOAuthTokenSource>,
+}
+impl Factory for RuntimeFactory {
     fn open(
         &self,
         workspace: &str,
         cache: &std::path::Path,
         opener: Arc<dyn BrowserOpener>,
     ) -> Result<Box<dyn Connection>, String> {
-        DatabricksConnection::new(workspace, cache, opener)
-            .map(|c| Box::new(c) as Box<dyn Connection>)
-            .map_err(|_| "Could not open the app-isolated Databricks connection".into())
+        let workspace = origin(workspace)?;
+        Ok(Box::new(RuntimeConnection::new(workspace, cache, opener)?))
     }
 }
-impl Connection for DatabricksConnection {
+impl RuntimeConnection {
+    fn new(
+        workspace: String,
+        cache: &std::path::Path,
+        opener: Arc<dyn BrowserOpener>,
+    ) -> Result<Self, String> {
+        // Match the pinned runtime's discovery/client/scopes/namespace exactly.
+        // Do not call the convenience wrapper: its default opener logs the URL.
+        let auth = PkceOAuthTokenSource::new_with(
+            PkceOAuthConfig {
+                discovery_url: format!("{workspace}/oidc/.well-known/oauth-authorization-server"),
+                client_id: "databricks-cli".into(),
+                scopes: vec!["all-apis".into(), "offline_access".into()],
+                cache_namespace: "databricks".into(),
+                cache_dir_override: Some(cache.to_path_buf()),
+            },
+            opener,
+        )
+        .map_err(|_| "Could not open the app-isolated Databricks connection")?;
+        Ok(Self {
+            workspace,
+            cache: cache.into(),
+            auth,
+        })
+    }
+}
+impl Connection for RuntimeConnection {
     fn connect(
         &self,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
         Box::pin(async {
-            self.connect()
+            self.auth
+                .interactive_login()
                 .await
                 .map_err(|_| "Sign-in was not completed. Cancel or retry Connect explicitly".into())
         })
@@ -412,7 +389,14 @@ impl Connection for DatabricksConnection {
         >,
     > {
         Box::pin(async {
-            self.discover_models(filter).await.map_err(|_| "Models unavailable. Check the workspace/filter or explicitly reconnect if authentication expired".into())
+            let config = Config::for_discovery(
+                Provider::DatabricksV2,
+                String::new(),
+                self.workspace.clone(),
+                filter,
+            );
+            buzz_agent::discover_databricks_models_with_cache_dir(&config, Some(&self.cache)).await
+                .map_err(|_| "Models unavailable. Check the workspace/filter or explicitly reconnect if authentication expired".into())
         })
     }
 }
@@ -425,19 +409,6 @@ async fn execute(
     factory: Arc<dyn Factory>,
     opener: Arc<dyn BrowserOpener>,
 ) -> Result<Catalog, String> {
-    if action == Operation::Disconnect {
-        match std::fs::remove_dir_all(&cache) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(_) => return Err("Could not remove this app's connection credentials".into()),
-        }
-        return Ok(Catalog {
-            host: workspace,
-            models: vec![],
-            model_overridden,
-            disconnected: true,
-        });
-    }
     let connection = factory.open(&workspace, &cache, opener)?;
     if action == Operation::Connect {
         connection.connect().await?;
@@ -473,3 +444,6 @@ async fn execute(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod bundled_tests;

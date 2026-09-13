@@ -2,10 +2,11 @@
 
 The real Agents page now receives one app-owned native capability. Native IPC uses
 persistent settings and the controller, not the in-memory editor fixture. The
-read-only old library stays separately expandable. **This is an editing checkpoint,
-not a replacement runner:** Start/Restart and credential import are blocked natively
-and in the UI until OS credential acceptance, independent runtime packaging and
-cross-app ownership protection are complete. Old Buzz still owns live replies.
+read-only old library stays separately expandable. **Normal native startup now enables
+the local management loop when its immutable runtime resources are staged.** The
+disposable editor still blocks execution and credential import. The real-agent
+handover requires independent review and an attended trial; old Buzz still owns
+live replies until that separate switch.
 
 ## Try the connected desktop with disposable sample data
 
@@ -44,19 +45,20 @@ in sample fields. `BUZZ_AGENT_CONTROL_HOME` is a native process-only storage ove
 be absolute, and cannot select an import source. Normal startup uses this app's
 `app_data_dir/agent-controller`, never the old library as a destination.
 
-## Remaining runtime boundary
+## Runtime boundary
 
 Native host holds one serialized controller for the app lifetime; page/plugin/
-community disposal only drops observations. App exit fences queued requests and
-calls shutdown. This checkpoint deliberately does not restore enabled intent or
-attach PlatformCredentials: bundling and exclusion are not yet ready, and toggling
-a saved enabled flag cannot bypass that native gate. The connected page reports
-`runtimeAvailable: false` and `importAvailable: false`.
+community disposal only drops observations. Normal startup restores saved enabled
+intent using app-owned Keychain custody and manifest-verified resources. Preview
+startup uses a rejecting credential adapter and never restores. App Quit fences
+pending starts and stops owned processes, retaining enabled intent for next launch.
+A pending OS credential dialog does not hold the controller; Stop, Disconnect and
+Quit retire late starts. Save during a credential wait requires an explicit retry.
 
-The app's existing native identity/relay/media path remains separate work; the
-preview does not depend on or certify it. Packaging, truthful listener/work state,
-real Keychain prompts/ACLs and isolated mention → reply → sleep → Stop acceptance
-are still outstanding. Do not cut over live agents on the strength of this editor.
+The app's native identity/relay/media path remains separately owned work. The
+management-only launcher below intentionally disables the dev broker, so its
+fixture channel UI cannot prove live replies. Account integration, native Keychain
+consent and mention → reply → idle wake → Stop acceptance remain trial gates.
 
 ## Older in-memory editor fixture
 
@@ -187,7 +189,8 @@ Databricks v2 models**, enter the workspace HTTPS origin explicitly, then click
 **Connect**. Complete browser sign-in only if prompted. Back in the app, search by
 label or ID and choose a result; the exact ID goes in Model. Save explicitly.
 Typing, blank/custom/current models, Save/Discard, arguments and write-only
-environment patches retain their existing semantics. No execution/import gate changes.
+environment patches retain their existing semantics. The disposable preview still
+blocks execution/import; normal native management is described below.
 
 - Native `agent_models.rs` owns one ticketed, 180-second operation lane, separate
   from the controller lock. Only Connect can open a browser; Refresh is headless.
@@ -195,19 +198,22 @@ environment patches retain their existing semantics. No execution/import gate ch
   admission remains occupied until the old task's future has actually dropped.
 - The immutable `buzz-agent` dependency is pinned to
   `84b0fd04b7831657df2873c3a835412f47cebb03`; no local-checkout dependency. It owns
-  OAuth PKCE, redirects/destination enforcement, refresh, catalog parsing/filtering
-  and per-page bounds. Native rejects over 10,000 projected models or oversized IDs.
-- Credentials remain under this app's `agent-controller/databricks-connections/`
-  plus a canonical-host SHA256 directory and the helper's strict namespace.
+  OAuth PKCE, refresh, catalog parsing/filtering and per-page bounds. The approved
+  existing-runtime route retains current Buzz endpoint/redirect semantics; it does
+  NOT enforce the earlier preview's strict same-origin/no-redirect policy. Native rejects over 10,000 projected models or oversized IDs.
+- OAuth credentials remain under this app's
+  `agent-controller/buzz-agent/oauth/databricks/<connection-hash>.json`. Connect,
+  native catalog, worker catalog and inference share this exact engine layout.
   Unix directories are owner-only; helper token files are owner-only. They are
   **not Keychain-encrypted**; other code running as your OS user can access them.
   Non-Unix helper persistence remains memory-only. No old Buzz cache/Keychain or
   ambient `DATABRICKS_HOST`/`DATABRICKS_TOKEN` is read.
-- Disconnect removes this app's cache for the explicitly displayed workspace;
-  it does not revoke browser sessions or tokens at Databricks. Cancel may happen
+- Disconnect requires Stop for all owned workers using the displayed workspace,
+  retires pending starts for it, and removes only its app cache (retaining the lock
+  inode). It does not revoke browser sessions or tokens at Databricks. Cancel may happen
   after successful authentication; use Disconnect if credentials should be removed.
-- Workspace/filter fields are lookup context, not saved harness settings. Saved or
-  draft environment overrides take precedence; conflicting inputs fail before
+- Save persists workspace/filter with the harness revision; Connect does not save
+  or start. Saved or draft environment overrides take precedence; conflicting inputs fail before
   auth rather than querying a misleading catalog. An effective non-v2 provider,
   token override or revision conflict also blocks connection. `BUZZ_AGENT_MODEL`
   produces a visible override warning, never leaks its value or rewrites it.
@@ -243,8 +249,7 @@ stop only the preview server you own; do not terminate another app.
    Search by name or ID. Choose explicitly; verify Model receives the exact ID.
    Search/loading alone must not change it. Save, reload this same window, and
    confirm the saved ID/revision. Re-running the launcher creates a NEW sample.
-5. Re-enter the same workspace after reload (lookup context is not saved), then
-   **Refresh models**. It may refresh this app's token, but must never open sign-in.
+5. Confirm the saved workspace after reload, then **Refresh models**. It may refresh this app's token, but must never open sign-in.
    Try a custom ID or blank Model and refresh; each value must stay untouched.
 6. For cancellation, click Connect/Refresh, then **Cancel connection** while pending.
    A cancelled browser tab may remain open; close it yourself. Save/Stop are not
@@ -258,13 +263,102 @@ stop only the preview server you own; do not terminate another app.
 
 The terminal prints `Disposable native settings: <temporary-profile>/agents`.
 Credentials are under that path at
-`databricks-connections/<SHA256-of-canonical-origin>/databricks-strict/`.
+`buzz-agent/oauth/databricks/`. Old disposable strict-preview caches are not
+copied or reused; explicitly Connect again for the existing-runtime route.
 After quitting, inspect the printed **temporary profile parent** in Finder and move
 that `buzz-agent-editor-*` folder to Trash. It contains this disposable sample,
 plugin profile and any remaining Databricks cache; never remove the old Buzz
 library or the repository. This does not sign out the browser or revoke provider
 tokens. The separate preview WebView may retain noncredential appearance state.
 
-App native Connect/refresh-after-reload/Disconnect acceptance is still pending.
-The source was built and synthetic native commands were exercised; no claim is
-made that a person has completed this checklist in the new app yet.
+Wes reported successful native preview Connect/model listing at the earlier
+`36eefeab` checkpoint. That does not prove this changed cache policy, inference,
+refresh/reload/Disconnect or the real-agent management loop.
+
+
+## Existing-runtime management checkpoint (macOS, attended only)
+
+Build without launching any app or accessing old credentials:
+
+```sh
+bin/pnpm install --frozen-lockfile
+bin/node scripts/build-agent-runtime.mjs
+bin/pnpm build
+bin/cargo build -p buzz-foundation
+```
+
+`runtime/agent-runtime.json` pins the five tools to published revision
+`84b0fd04b7831657df2873c3a835412f47cebb03`. The build script uses pinned Cargo,
+`cargo install --git --rev --locked`, scrubs injected Buzz/provider environment,
+and stages binaries plus revision/target/SHA256 manifest in
+`src-tauri/resources/agent-runtime`. Native build copies them to
+`target/debug/agent-runtime`. Generated binaries/manifest are not committed.
+Startup verifies the exact tool set, target, revision and file hashes; required
+launch tools are rehashed before spawn. No PATH/old-bundle fallback or runtime
+download. The manifest detects corrupt/mixed resources, not a same-user attacker
+who can replace the app and manifest. Inputs are immutable, not a promise of
+bit-identical machine-independent binaries. This build is not a signed installer.
+
+After independent review, a human may launch the persistent management-only app:
+
+```sh
+bin/node scripts/agent-control-management.mjs
+```
+
+This uses the actual app/native commands, the ordinary app identifier and
+persistent native `app_data_dir/agent-controller` (macOS:
+`~/Library/Application Support/dev.local.buzz.foundation/agent-controller`).
+It does not seed samples or enable preview gates. It disables dotenv/live broker
+and native watching; opens **Buzz Foundation — Agent management** at loopback
+1445. Frontend hot reload remains enabled. No Accessibility automation is required.
+Do not run it alongside the editor preview (same port), or another copy of this
+app (same profile lock). `--prepare-only` prints the launch description without
+opening a window/server. Quit the named app and stop its terminal when done.
+
+The launcher scrubs ambient Buzz/Nostr/Databricks variables; only explicitly
+supplied `BUZZ_BUILD_AGENT_ENV` is retained as a private BUILD input. Native build
+validation permits only nonsecret host/filter defaults (plus the ignored old
+model-default convention); source contains no internal workspace. Unset means no
+workspace default. Runtime tools never embed that private build input. No release
+pipeline change or real credential in environment/build configuration is needed.
+
+Attended sequence (not executed by the implementer):
+
+1. Keep old Buzz running while reviewing settings/import; do not Start yet. Import
+   preview reads only the chosen installed/development library. Select exact
+   key/community rows and explicitly import. This can prompt for the selected
+   legacy `secrets` Keychain blob and creates separate app credentials at service
+   `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. Source stays
+   read-only; imported rows are disabled. No enrollment/new key or service fallback.
+   Refused/missing custody is an explicit blocker, not a reason to migrate keys.
+2. Inspect prompt, workspace, harness/provider/model and write-only overrides. Choose
+   Buzz Agent / Databricks v2, no arguments. Enter workspace/filter, Connect
+   explicitly, select a real model or custom ID and Save. Reload preserves settings.
+3. **Before Start, obtain the separate handover agreement.** The human must stop
+   old Buzz AND its listeners and keep them stopped. Native refuses detected
+   `buzz-desktop`/legacy listener paths, never kills them. Cooperating new-app
+   profiles also hold an exact-key/canonical-community OS lock. Neither protects
+   against relaunching unmodified old Buzz: no coexistence guarantee.
+4. Start, observe process-alive/error state, Save an edit, then Restart. `running`
+   means process alive only. An isolated live channel/thread mention and reply,
+   idle wake, Stop preventing wake and Quit descendant cleanup must still be
+   witnessed; fixture messages in this management-only app are not relay evidence.
+   Use an independently working real client, or integrate the separately owned
+   Account/native messaging first. Do not repeat the standalone SSO harness.
+5. Stop all agents on a workspace before Disconnect. A saved host edit does not
+   change the running host; restart first or stop its existing worker. Temporary
+   runtime signing files live under private `runs/agent-*` and disappear only
+   after confirmed teardown. This is process lifecycle management, not a sandbox
+   for arbitrary same-user code that escapes its Unix session.
+6. Roll back by Stop + confirmed cleanup of the new owner, Quit, then resume the
+   same identity in old Buzz. Never delete the old library or its credentials.
+
+Explicit limits: local Unix execution; native credential import currently macOS;
+no conditional attestation, remote/team/mesh runtime; custom harnesses require an
+absolute executable and are not certified by the bundled Buzz Agent test. Saved
+unsupported configuration stays editable but Start refuses it. OAuth files are
+owner-only, not Keychain-encrypted. Cancelled/failed import may leave create-only
+app custody for retry but no enabled/configured agent. The previous strict-preview
+cache is neither migrated nor reused. Native UI, actual Keychain ACLs, production
+TLS/Databricks inference, live relay replies, forced native quit, signed packaging
+and other platforms remain unproven by the synthetic checks.

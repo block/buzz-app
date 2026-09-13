@@ -41,6 +41,7 @@ pub struct HarnessView {
     pub model: String,
     pub provider: String,
     pub environment_keys: Vec<String>,
+    pub databricks: Option<crate::connection::DatabricksSettings>,
 }
 #[derive(Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -68,6 +69,8 @@ pub struct HarnessEdit {
     pub args: Vec<String>,
     pub model: String,
     pub provider: String,
+    #[serde(default)]
+    pub databricks: Option<crate::connection::DatabricksSettings>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -105,6 +108,7 @@ impl Agent {
                 model: self.harness.model.clone(),
                 provider: self.harness.provider.clone(),
                 environment_keys: self.environment.keys().cloned().collect(),
+                databricks: self.harness.databricks.clone(),
             },
             revision: self.revision,
             running_revision: None,
@@ -170,6 +174,9 @@ impl Agent {
         }
         text(&self.harness.model, 512, "Model")?;
         text(&self.harness.provider, 128, "Provider")?;
+        if let Some(settings) = &self.harness.databricks {
+            settings.validate()?;
+        }
         if self.environment.len() > 128 {
             return Err("Too many environment entries".into());
         }

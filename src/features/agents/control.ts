@@ -22,6 +22,7 @@ export interface AgentView {
     model: string;
     provider: string;
     environmentKeys: string[];
+    databricks?: { host: string; filter: string } | null;
   };
   revision: number;
   runningRevision: number | null;

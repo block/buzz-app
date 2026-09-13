@@ -8,7 +8,7 @@ pub(crate) fn fixture() -> (
     tauri::App<MockRuntime>,
     tauri::WebviewWindow<MockRuntime>,
 ) {
-    fixture_with_models(|dir| crate::agent_models::ModelHost::new(Ok(dir.join("models"))))
+    fixture_with_models(|dir| crate::agent_models::ModelHost::new(Ok(dir.join("store"))))
 }
 pub(crate) fn fixture_with_models(
     models: impl FnOnce(&std::path::Path) -> crate::agent_models::ModelHost,
@@ -20,11 +20,15 @@ pub(crate) fn fixture_with_models(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let model_host = models(dir.path());
-    let host = AgentHost::open(Ok((
-        dir.path().join("store"),
-        dir.path().join("legacy"),
-        dir.path().join("workspace"),
-    )));
+    let host = AgentHost::open(
+        Ok((
+            dir.path().join("store"),
+            dir.path().join("legacy"),
+            dir.path().join("workspace"),
+        )),
+        Err(RUNTIME_GATE.into()),
+        true,
+    );
     let app = mock_builder()
         .manage(host.clone())
         .manage(model_host)
@@ -181,11 +185,11 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
 fn malformed_store_does_not_prevent_native_host_construction() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("agents.json"), "RAW_SECRET_INVALID").unwrap();
-    let host = AgentHost::open(Ok((
-        dir.path().into(),
-        dir.path().into(),
-        dir.path().into(),
-    )));
+    let host = AgentHost::open(
+        Ok((dir.path().into(), dir.path().into(), dir.path().into())),
+        Err(RUNTIME_GATE.into()),
+        true,
+    );
     let error = host.with(|h| h.snapshot()).err().unwrap();
     assert!(!error.contains("RAW_SECRET"));
     assert!(error.contains("malformed"));
@@ -223,4 +227,217 @@ fn native_contention_fails_fast_and_quit_preserves_enabled_intent() {
             "Agent host is shutting down"
         );
     }
+}
+
+#[test]
+fn legacy_guard_is_process_path_evidence_not_name_substring_or_coexistence_claim() {
+    for listing in [
+        " 100 /Applications/Buzz.app/Contents/MacOS/buzz-desktop",
+        " 200 /checkout/target/debug/buzz-desktop",
+    ] {
+        assert!(refuse_legacy_listing(listing).is_err());
+    }
+    assert!(refuse_legacy_listing(
+        "123 /tmp/buzz-agent\n456 /tmp/buzz-foundation\n789 /tmp/buzz-desktop-notes"
+    )
+    .is_ok());
+}
+
+#[tokio::test]
+#[ignore = "requires staged immutable runtime resources; run explicitly after build-agent-runtime"]
+async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() {
+    struct Delayed {
+        entered: std::sync::mpsc::Sender<()>,
+        release: Mutex<std::sync::mpsc::Receiver<()>>,
+    }
+    impl Credentials for Delayed {
+        fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
+            panic!("not an import")
+        }
+        fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
+            panic!("not a write")
+        }
+        fn read(&self, _: &str, _: &str) -> Result<Option<Secret>, String> {
+            self.entered.send(()).unwrap();
+            self.release.lock().unwrap().recv().unwrap();
+            Err("Synthetic credential refusal".into())
+        }
+    }
+    let (dir, host, _app, view) = fixture();
+    let id = seed(dir.path());
+    // Use the actual resource manifest when staged; no child is spawned and no
+    // PlatformCredentials method is ever called by this fixture.
+    let tools = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/agent-runtime");
+    assert!(
+        tools.join("manifest.json").is_file(),
+        "Build immutable runtime resources first"
+    );
+    let (entered, receive) = std::sync::mpsc::channel();
+    let receive = Arc::new(Mutex::new(receive));
+    let (release, wait) = std::sync::mpsc::channel();
+    let credentials: Arc<dyn Credentials> = Arc::new(Delayed {
+        entered,
+        release: Mutex::new(wait),
+    });
+    host.with(|h| {
+        let replacement = Store::open(dir.path().join("replacement"))?;
+        // Reopen the same durable fixture only after replacing/dropping its owner.
+        h.controller = Controller::new(
+            replacement,
+            credentials.clone(),
+            Err("placeholder".into()),
+            dir.path().join("ownership"),
+        );
+        h.controller = Controller::new(
+            Store::open(dir.path().join("store"))?,
+            credentials.clone(),
+            RuntimeBundle::new(tools),
+            dir.path().join("ownership"),
+        );
+        h.credentials = credentials;
+        h.preview = false;
+        h.legacy_check = || Ok(());
+        Ok(())
+    })
+    .unwrap();
+    let path = dir.path().join("store/agents.json");
+    let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    saved["agents"][0]["harness"]["provider"] = json!("databricks_v2");
+    saved["agents"][0]["harness"]["databricks"] =
+        json!({"host":"https://workspace.example", "filter":""});
+    std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+    for action in ["disconnect", "stop", "quit"] {
+        if action == "quit" {
+            let path = dir.path().join("store/agents.json");
+            let mut saved: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            saved["agents"][0]["enabled"] = json!(true);
+            std::fs::write(path, serde_json::to_vec(&saved).unwrap()).unwrap();
+        }
+        let owner = host.clone();
+        let agent_id = id.clone();
+        let running = tokio::spawn(async move {
+            if action == "quit" {
+                owner.restore().await;
+                Err("restore completed".into())
+            } else {
+                start(owner, agent_id, Action::Start, false).await
+            }
+        });
+        tokio::task::spawn_blocking({
+            let receive = receive.clone();
+            move || {
+                receive
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(std::time::Duration::from_secs(5))
+            }
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        if action == "quit" {
+            host.shutdown().unwrap();
+        } else if action == "disconnect" {
+            host.disconnect("https://workspace.example").unwrap();
+        } else {
+            invoke(
+                &view,
+                "agent_control_action",
+                json!({"id":id,"action":"stop"}),
+            )
+            .unwrap();
+        }
+        release.send(()).unwrap();
+        assert!(running.await.unwrap().is_err());
+        if action == "quit" {
+            let mut state = host.0.lock().unwrap();
+            let h = state.as_mut().unwrap_or_else(|_| panic!("fixture host"));
+            let snapshot = h.controller.snapshot().unwrap();
+            assert!(snapshot.agents[0].error.is_none());
+            assert!(snapshot.agents[0].enabled);
+        }
+    }
+}
+
+#[test]
+fn nonpreview_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
+    const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
+    const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+    #[derive(Default)]
+    struct Memory(Mutex<BTreeMap<String, String>>, Mutex<Vec<LegacySource>>);
+    impl Credentials for Memory {
+        fn read_legacy(&self, source: LegacySource, pubkey: &str) -> Result<Secret, String> {
+            assert!(matches!(source, LegacySource::Development));
+            self.1.lock().unwrap().push(source);
+            Secret::parse(KEY, pubkey)
+        }
+        fn read(&self, id: &str, pubkey: &str) -> Result<Option<Secret>, String> {
+            self.0
+                .lock()
+                .unwrap()
+                .get(id)
+                .map(|v| Secret::parse(v, pubkey))
+                .transpose()
+        }
+        fn add(&self, id: &str, key: &Secret) -> Result<(), String> {
+            assert!(self
+                .0
+                .lock()
+                .unwrap()
+                .insert(id.into(), key.hex().to_string())
+                .is_none());
+            Ok(())
+        }
+    }
+    let (dir, host, _app, view) = fixture();
+    let source = dir.path().join("legacy/xyz.block.buzz.app.dev/agents");
+    std::fs::create_dir_all(&source).unwrap();
+    let bytes = serde_json::to_vec(&json!([
+        {"pubkey":PUB, "relay_url":"wss://relay.example", "name":"Selected", "agent_command":"buzz-agent", "agent_args":[], "start_on_app_launch":true},
+        {"pubkey":"ab".repeat(32), "relay_url":"wss://relay.example", "name":"Not selected"}
+    ])).unwrap();
+    std::fs::write(source.join("managed-agents.json"), &bytes).unwrap();
+    let memory = Arc::new(Memory::default());
+    host.with(|h| {
+        h.preview = false;
+        h.credentials = memory.clone();
+        Ok(())
+    })
+    .unwrap();
+    let preview = invoke(
+        &view,
+        "agent_control_import_preview",
+        json!({"source":"development"}),
+    )
+    .unwrap();
+    assert!(memory.1.lock().unwrap().is_empty());
+    let selected = preview["candidates"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|c| c["pubkey"] == PUB)
+        .unwrap();
+    let imported = invoke(
+        &view,
+        "agent_control_import_commit",
+        json!({"token":preview["token"],"ids":[selected["id"]]}),
+    )
+    .unwrap();
+    assert_eq!(imported["agents"].as_array().unwrap().len(), 1);
+    assert_eq!(imported["agents"][0]["pubkey"], PUB);
+    assert_eq!(imported["agents"][0]["enabled"], false);
+    assert_eq!(imported["agents"][0]["status"], "stopped");
+    assert!(!imported.to_string().contains(KEY));
+    assert_eq!(memory.1.lock().unwrap().len(), 1);
+    assert_eq!(
+        std::fs::read(source.join("managed-agents.json")).unwrap(),
+        bytes
+    );
+    assert!(invoke(
+        &view,
+        "agent_control_import_commit",
+        json!({"token":preview["token"],"ids":[selected["id"]]})
+    )
+    .is_err());
+    host.shutdown().unwrap();
 }

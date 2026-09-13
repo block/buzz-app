@@ -27,7 +27,7 @@ export function AgentEditor({
   const [draft, setDraft] = useState<AgentDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const current = draft ?? agentDraft(agent);
+  const current = draft ?? agentDraft(agent, state.data?.databricksDefaults);
   const dirty = draft !== null;
   const stale = current.revision !== agent.revision;
   const blocked = state.busy || state.status !== "ready";

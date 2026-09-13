@@ -41,3 +41,16 @@ it("refuses argument values unsupported by the current ACP transport", () => {
     );
   }
 });
+
+it("persists connection edits, preserves saved blanks, and clones private-build defaults", () => {
+  const agent = controlFixture().agent;
+  const defaults = { host: "https://workspace.example", filter: "llm" };
+  const draft = agentDraft(agent, defaults);
+  expect(agentEdit(draft).harness.databricks).toEqual(defaults);
+  if (!draft.databricks) throw new Error("Missing connection draft");
+  draft.databricks.host = "https://other.example";
+  expect(defaults.host).toBe("https://workspace.example");
+  agent.harness.databricks = { host: "", filter: "" };
+  const saved = agentDraft(agent, defaults);
+  expect(agentEdit(saved).harness.databricks).toEqual({ host: "", filter: "" });
+});

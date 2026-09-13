@@ -88,7 +88,7 @@ fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let fake = Arc::new(Fake::default());
     let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
-        let host = ModelHost::new(Ok(dir.join("models")));
+        let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
@@ -121,7 +121,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
         json!([{"id":"endpoint-two","name":"Endpoint Two"}])
     );
     let first_cache = fake.opened.lock().unwrap()[0].1.clone();
-    assert!(first_cache.starts_with(dir.path().join("models")));
+    assert_eq!(first_cache, dir.path().join("store/buzz-agent/oauth"));
     let mut connect = req.clone();
     connect["action"] = json!("connect");
     call(connect.clone()).unwrap();
@@ -143,7 +143,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let mut other = req.clone();
     other["host"] = json!("https://other.example.com");
     call(other).unwrap();
-    assert_ne!(fake.opened.lock().unwrap().last().unwrap().1, first_cache);
+    assert_eq!(fake.opened.lock().unwrap().last().unwrap().1, first_cache);
     let count = fake.opened.lock().unwrap().len();
     for patch in [
         json!({"DATABRICKS_TOKEN":"NEVER_PRINT"}),
@@ -166,14 +166,20 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     assert_eq!(projected["modelOverridden"], true);
     assert!(!projected.to_string().contains("PRIVATE_MODEL"));
     std::fs::create_dir_all(&first_cache).unwrap();
-    std::fs::write(first_cache.join("synthetic"), "SYNTHETIC").unwrap();
+    let cache_key = "https://workspace.example.com/oidc/.well-known/oauth-authorization-server|databricks-cli|all-apis,offline_access";
+    use sha2::{Digest, Sha256};
+    let cached = first_cache
+        .join("databricks")
+        .join(format!("{:x}.json", Sha256::digest(cache_key.as_bytes())));
+    std::fs::write(&cached, "SYNTHETIC").unwrap();
     let sentinel = dir.path().join("legacy-sentinel");
     std::fs::write(&sentinel, "UNCHANGED").unwrap();
     let mut disconnect = req;
     disconnect["action"] = json!("disconnect");
     disconnect.as_object_mut().unwrap().remove("edit");
     assert_eq!(call(disconnect).unwrap()["disconnected"], true);
-    assert!(!first_cache.exists());
+    assert!(!cached.exists());
+    assert!(first_cache.exists());
     assert!(sentinel.exists());
     let snapshot = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
     assert_eq!(snapshot["agents"][0]["harness"]["model"], "sample");
@@ -193,7 +199,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     .is_err());
 }
 #[test]
-fn strict_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
+fn runtime_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
     struct NoBrowser;
     impl BrowserOpener for NoBrowser {
         fn open(&self, _: &str) -> Result<(), String> {
@@ -204,7 +210,7 @@ fn strict_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
     // No live endpoint can be contacted with an empty app-isolated token cache.
     let runtime = tokio::runtime::Runtime::new().unwrap();
     runtime.block_on(async {
-        let connection = StrictFactory
+        let connection = RuntimeFactory
             .open(
                 "https://workspace.example.invalid",
                 dir.path(),
@@ -220,7 +226,7 @@ fn strict_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        let connection = StrictFactory
+        let connection = RuntimeFactory
             .open(
                 &format!("https://127.0.0.1:{port}"),
                 dir.path(),
@@ -234,7 +240,7 @@ fn strict_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
                 .is_err()
         );
     });
-    assert!(StrictFactory
+    assert!(RuntimeFactory
         .open(
             "http://workspace.example.com",
             dir.path(),
@@ -362,7 +368,7 @@ fn linked_cache_is_refused_before_credential_work() {
 fn real_ipc_refuses_linked_helper_namespace_before_opening_connection() {
     let fake = Arc::new(Fake::default());
     let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
-        let host = ModelHost::new(Ok(dir.join("models")));
+        let host = ModelHost::new(Ok(dir.join("store")));
         ModelHost {
             state: host.state,
             factory: Arc::new(fake.clone()),
@@ -372,10 +378,10 @@ fn real_ipc_refuses_linked_helper_namespace_before_opening_connection() {
     let other = tempfile::tempdir().unwrap();
     let sentinel = other.path().join("untouched");
     std::fs::write(&sentinel, "SYNTHETIC").unwrap();
-    let cache = ModelHost::new(Ok(dir.path().join("models")))
+    let cache = ModelHost::new(Ok(dir.path().join("store")))
         .cache("https://workspace.example.com")
         .unwrap();
-    let namespace = cache.join("databricks-strict");
+    let namespace = cache.join("databricks");
     std::fs::create_dir_all(&namespace).unwrap();
     std::fs::remove_dir(&namespace).unwrap();
     std::os::unix::fs::symlink(other.path(), namespace).unwrap();

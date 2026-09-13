@@ -47,5 +47,49 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
     sidebarSections(roster).flatMap((section) =>
       section.rows.map((channel) => channel.id),
     ),
-  ).toEqual(["star", "work", "other", "forum", "dm", "group-dm"]);
+  ).toEqual(["other", "star", "work", "forum", "dm", "group-dm"]);
+});
+
+it("sorts every section independently with deterministic inactive and tie fallbacks", () => {
+  const roster = [
+    row("z-id", { name: "same", lastActivityAt: 20 }),
+    row("a-id", { name: "Same", lastActivityAt: 20 }),
+    row("new", { name: "Zulu", lastActivityAt: 30 }),
+    row("quiet-b", { name: "beta" }),
+    row("quiet-a", { name: "Alpha" }),
+    row("forum-old", {
+      name: "Forum old",
+      channelType: "forum",
+      lastActivityAt: 5,
+    }),
+    row("forum-new", {
+      name: "Forum new",
+      channelType: "forum",
+      lastActivityAt: 10,
+    }),
+  ];
+  const preferences = {
+    sections: [{ id: "work", name: "Work", order: 0 }],
+    assignments: {
+      "z-id": "work",
+      "a-id": "work",
+      new: "work",
+      "quiet-b": "work",
+      "quiet-a": "work",
+    },
+    starred: [],
+    sort: { "section:work": "recent" as const, forums: "alpha" as const },
+  };
+  expect(
+    sidebarSections(roster, preferences).map((section) => [
+      section.key,
+      section.rows.map((channel) => channel.id),
+    ]),
+  ).toEqual([
+    ["group:work", ["new", "a-id", "z-id", "quiet-a", "quiet-b"]],
+    ["forums", ["forum-new", "forum-old"]],
+  ]);
+  expect(sidebarSections(roster)[0]?.rows.map((channel) => channel.id)).toEqual(
+    ["quiet-a", "quiet-b", "a-id", "z-id", "new"],
+  );
 });

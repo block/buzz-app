@@ -1,6 +1,108 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+test.use({ productionBroker: true, savedSidebar: true });
+
+test("row menu moves and removes a channel through the confirmed saved-group writer", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", {
+    name: "Subscribed channels",
+  });
+  const work = sidebar
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Work$/ }) });
+  const channels = sidebar
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+  await expect(
+    work.getByRole("button", { name: "Beta", exact: true }),
+  ).toBeVisible();
+
+  await work.getByLabel("Actions for Beta", { exact: true }).click();
+  const menu = page.getByRole("menu", { name: "Group for Beta" });
+  await expect(menu).toBeVisible();
+  await expect(
+    menu.getByRole("menuitemradio", { name: "Work" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("End");
+  await expect(
+    page.getByRole("menuitem", { name: "Remove from group" }),
+  ).toBeFocused();
+  await page.keyboard.press("Home");
+  await expect(menu.getByRole("menuitemradio", { name: "Work" })).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    page.getByRole("menuitem", { name: "Remove from group" }),
+  ).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(
+    channels.getByRole("button", { name: "Beta", exact: true }),
+  ).toBeVisible();
+  await expect(
+    work.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    channels.getByLabel("Actions for Beta", { exact: true }),
+  ).toBeFocused();
+  expect(app.report.sidebarPublications).toHaveLength(1);
+  expect(app.report.sidebarPublications[0].blob.assignments).toEqual({});
+
+  await channels.getByLabel("Actions for Beta", { exact: true }).click();
+  await page.getByRole("menuitemradio", { name: "Work" }).click();
+  await expect(
+    work.getByRole("button", { name: "Beta", exact: true }),
+  ).toBeVisible();
+  await expect(
+    channels.getByRole("button", { name: "Beta", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    work.getByLabel("Actions for Beta", { exact: true }),
+  ).toBeFocused();
+  expect(app.report.sidebarPublications).toHaveLength(2);
+  expect(app.report.sidebarPublications[1].blob.assignments).toEqual({
+    beta: "work",
+  });
+  expect(app.report.unexpected).toEqual([]);
+});
+
+test("section menus persist independent A–Z and Recent sorting", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", {
+    name: "Subscribed channels",
+  });
+  const work = sidebar
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Work$/ }) });
+
+  await work.getByLabel("More actions for Work").click();
+  const menu = page.getByRole("menu", { name: "Actions for Work" });
+  await expect(
+    menu.getByRole("menuitemradio", { name: "A–Z" }),
+  ).toHaveAttribute("aria-checked", "true");
+  await menu.getByRole("menuitemradio", { name: "Recent" }).click();
+  await expect(
+    work.getByRole("button", { name: "Beta", exact: true }),
+  ).toBeVisible();
+  expect(app.report.sidebarSortPublications).toHaveLength(1);
+  expect(app.report.sidebarSortPublications[0].blob).toEqual({
+    version: 1,
+    groups: { "section:work": "recent" },
+  });
+
+  await sidebar.getByLabel("More actions for DMs").click();
+  await expect(
+    page
+      .getByRole("menu", { name: "Actions for DMs" })
+      .getByRole("menuitemradio", { name: "A–Z" }),
+  ).toHaveAttribute("aria-checked", "true");
+});
+
 test.use({
   productionBroker: true,
   savedSidebar: true,

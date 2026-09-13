@@ -14,6 +14,10 @@ import {
 import { readAgentLibrary } from "./agent-library.mjs";
 import {
   decodeSidebarPreferences,
+  assertSidebarAssignmentIntent,
+  mutateSidebarAssignment,
+  assertSidebarSortIntent,
+  mutateSidebarSort,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
@@ -49,6 +53,7 @@ const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
   MAX_MEDIA_BYTES = 20 * 1024 * 1024,
+  SIDEBAR_HEAD_BYTES = SIDEBAR_REQUEST_BYTES + 4096,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -221,6 +226,29 @@ export function validMessageTemplate(event) {
     })()
   );
 }
+export function validChannelActivityFilters(filters) {
+  return (
+    Array.isArray(filters) &&
+    filters.length >= 1 &&
+    filters.length <= 128 &&
+    filters.every(
+      (filter) =>
+        filter &&
+        typeof filter === "object" &&
+        filter.limit === 1 &&
+        Array.isArray(filter.kinds) &&
+        filter.kinds.length === 4 &&
+        [9, 40002, 45001, 45003].every((kind) => filter.kinds.includes(kind)) &&
+        Array.isArray(filter["#h"]) &&
+        filter["#h"].length === 1 &&
+        typeof filter["#h"][0] === "string" &&
+        /^[a-zA-Z0-9_-]{1,128}$/.test(filter["#h"][0]) &&
+        Object.keys(filter).every((key) =>
+          ["kinds", "#h", "limit"].includes(key),
+        ),
+    )
+  );
+}
 export function validFilters(filters) {
   return (
     Array.isArray(filters) &&
@@ -282,6 +310,27 @@ export function relayBrokerPlugin({
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
+      const readSidebarHead = async (response, label = "group") => {
+        if (!response.body)
+          throw new Error(`Sidebar ${label} response missing`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        let bytes = 0,
+          text = "";
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) return JSON.parse(text + decoder.decode());
+            bytes += value.byteLength;
+            if (bytes > SIDEBAR_HEAD_BYTES)
+              throw new Error(`Sidebar ${label} response exceeds capacity`);
+            text += decoder.decode(value, { stream: true });
+          }
+        } finally {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+      };
       // Discovery is lazy and independent for each community; unavailable relays never block startup.
       const registered = new Map(Object.entries(aliases));
       const authorities = new Map();
@@ -321,6 +370,7 @@ export function relayBrokerPlugin({
       let inflight = 0;
       let sidebarUploads = 0;
       let libraryRead;
+      const sidebarMutations = new Map();
       const streams = new Map();
       const admissions = createHostAdmission();
       server.httpServer?.once("close", () => {
@@ -488,6 +538,150 @@ export function relayBrokerPlugin({
               sidebarUploads--;
             }
           }
+          if (
+            [
+              "/api/relay/sidebar-assignment",
+              "/api/relay/sidebar-sort",
+            ].includes(route) &&
+            req.method === "POST"
+          ) {
+            const sorting = route === "/api/relay/sidebar-sort";
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 2048)
+                return json(res, 413, {
+                  error: `Sidebar ${sorting ? "sort" : "assignment"} intent is too large`,
+                });
+            }
+            let intent;
+            try {
+              intent = JSON.parse(raw);
+              if (sorting) assertSidebarSortIntent(intent);
+              else assertSidebarAssignmentIntent(intent);
+            } catch {
+              return json(res, 400, {
+                error: `Invalid sidebar ${sorting ? "sort" : "assignment"} intent`,
+              });
+            }
+            const request = new AbortController();
+            const close = () => request.abort();
+            res.once("close", close);
+            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
+            const mutation = previous
+              .catch(() => {})
+              .then(async () => {
+                request.signal.throwIfAborted();
+                const filter = [
+                  {
+                    kinds: [30078],
+                    authors: [viewer],
+                    "#d": [sorting ? "channel-sort" : "channel-sections"],
+                    limit: 1,
+                  },
+                ];
+                const lane = admissions(relay, viewer).api;
+                const requestSignal = AbortSignal.any([
+                  request.signal,
+                  AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                ]);
+                const dispatch = (path, body) =>
+                  admittedApiRequest(
+                    lane,
+                    () => {
+                      requestSignal.throwIfAborted();
+                      const value = JSON.stringify(body);
+                      const auth = finalizeEvent(
+                        {
+                          kind: 27235,
+                          created_at: Math.floor(Date.now() / 1000),
+                          content: "",
+                          tags: [
+                            ["u", `${relay}${path}`],
+                            ["method", "POST"],
+                            [
+                              "payload",
+                              createHash("sha256").update(value).digest("hex"),
+                            ],
+                            ["nonce", randomBytes(16).toString("hex")],
+                          ],
+                        },
+                        key,
+                      );
+                      return fetchUpstream(`${relay}${path}`, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization:
+                            "Nostr " +
+                            Buffer.from(JSON.stringify(auth)).toString(
+                              "base64",
+                            ),
+                        },
+                        body: value,
+                        redirect: "error",
+                        signal: requestSignal,
+                      });
+                    },
+                    requestSignal,
+                  );
+                const readHead = async () => {
+                  const response = await dispatch("/query", filter);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar ${sorting ? "sort" : "group"} query failed (${response.status})`,
+                    );
+                  return readSidebarHead(response, sorting ? "sort" : "group");
+                };
+                const publishEvent = async (event) => {
+                  const response = await dispatch("/events", event);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar ${sorting ? "sort" : "group"} publish failed (${response.status})`,
+                    );
+                  const receipt = await response.json();
+                  if (
+                    receipt.event_id !== event.id ||
+                    receipt.accepted !== true
+                  )
+                    throw new Error(
+                      "Sidebar group publication was not accepted",
+                    );
+                };
+                const value = await (sorting
+                  ? mutateSidebarSort(intent, key, readHead, publishEvent)
+                  : mutateSidebarAssignment(
+                      intent,
+                      key,
+                      readHead,
+                      publishEvent,
+                    ));
+                return sorting ? { groups: value } : value;
+              });
+            sidebarMutations.set(relay, mutation);
+            try {
+              return json(res, 200, await mutation);
+            } catch (error) {
+              if (error instanceof ApiPaused)
+                return json(res, 429, {
+                  error: error.message,
+                  sent: false,
+                  paused: true,
+                  retryAfterMs: error.retryAfterMs,
+                });
+              return json(res, 502, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : `Sidebar ${sorting ? "sort" : "assignment"} failed`,
+                sent: false,
+              });
+            } finally {
+              res.off("close", close);
+              if (sidebarMutations.get(relay) === mutation)
+                sidebarMutations.delete(relay);
+            }
+          }
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
               // Share concurrent reads, never retain the local snapshot after completion.
@@ -512,6 +706,8 @@ export function relayBrokerPlugin({
               writeKinds: [9],
               sidebarPreferences: true,
               readState: true,
+              sidebarPreferenceWrites: true,
+              sidebarSortWrites: true,
               agentLibrary: true,
               live: true,
               agentActivity: true,
@@ -862,7 +1058,8 @@ export function relayBrokerPlugin({
             !gifs &&
             !readPublishing &&
             !snapshot &&
-            !validFilters(filters)
+            !validFilters(filters) &&
+            !validChannelActivityFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
           const gifSearchPath = gifs ? await getGifSearchPath(relay) : null;

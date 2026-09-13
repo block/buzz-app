@@ -15,6 +15,14 @@ import {
   projectSidebarPreferences,
   readSidebarPreferences,
 } from "./sidebar-preferences";
+import {
+  assertSidebarAssignmentIntent,
+  decodeSidebarPreferences,
+  mutateSidebarAssignment,
+  prepareSidebarAssignment,
+  prepareSidebarSort,
+  SIDEBAR_REQUEST_BYTES,
+} from "../../../dev/sidebar-preferences.mjs";
 import { keypair, signed, scriptedTransport, flush, roster } from "./testing";
 import type { LiveCallbacks } from "./live";
 import { ReadError } from "./errors";
@@ -68,6 +76,12 @@ it("reads legacy preferences through the production session, transport, and boun
         kinds: [30078],
         authors: [viewer.pubkey],
         "#d": ["channel-stars"],
+        limit: 1,
+      },
+      {
+        kinds: [30078],
+        authors: [viewer.pubkey],
+        "#d": ["channel-sort"],
         limit: 1,
       },
     ]);
@@ -578,3 +592,193 @@ it.each([
     }
   },
 );
+
+it("rejects invalid assignment intents before any relay work", () => {
+  for (const intent of [
+    null,
+    [],
+    {},
+    { channelId: "" },
+    { channelId: "general", sectionId: "" },
+    { channelId: "general", extra: true },
+  ])
+    expect(() => assertSidebarAssignmentIntent(intent)).toThrow(
+      "Invalid sidebar assignment intent",
+    );
+});
+
+it("prepares one host-owned assignment without replacing unrelated groups", () => {
+  const viewer = keypair();
+  const encrypt = (value: unknown, created_at = 100) =>
+    signed(viewer, {
+      kind: 30078,
+      created_at,
+      tags: [["d", "channel-sections"]],
+      content: nip44.v2.encrypt(
+        JSON.stringify(value),
+        nip44.v2.utils.getConversationKey(viewer.secret, viewer.pubkey),
+      ),
+    });
+  const head = encrypt({
+    version: 1,
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { general: "work", random: "later" },
+  });
+  const moved = prepareSidebarAssignment(
+    [head],
+    { channelId: "general", sectionId: "later" },
+    viewer.secret,
+    50_000,
+  );
+  expect(moved.groups.assignments).toEqual({
+    general: "later",
+    random: "later",
+  });
+  expect(moved.event).toBeDefined();
+  if (!moved.event) throw new Error("Missing sidebar assignment event");
+  expect(moved.event).toMatchObject({
+    kind: 30078,
+    pubkey: viewer.pubkey,
+    created_at: 101,
+    tags: [
+      ["d", "channel-sections"],
+      ["t", "channel-sections"],
+    ],
+  });
+  expect(decodeSidebarPreferences([moved.event], viewer.secret)).toMatchObject({
+    sections: [
+      { id: "work", name: "Work", order: 0 },
+      { id: "later", name: "Later", order: 1 },
+    ],
+    assignments: { general: "later", random: "later" },
+  });
+  const removed = prepareSidebarAssignment(
+    [moved.event],
+    { channelId: "general" },
+    viewer.secret,
+    50_000,
+  );
+  expect(removed.groups.assignments).toEqual({ random: "later" });
+  expect(() =>
+    prepareSidebarAssignment(
+      [head],
+      { channelId: "general", sectionId: "gone" },
+      viewer.secret,
+    ),
+  ).toThrow("no longer exists");
+  const same = prepareSidebarAssignment(
+    [head],
+    { channelId: "general", sectionId: "work" },
+    viewer.secret,
+  );
+  expect(same.event).toBeUndefined();
+});
+
+it("applies decoder-parity bounds to the untrusted sidebar group head", () => {
+  const viewer = keypair();
+  const event = signed(viewer, {
+    kind: 30078,
+    tags: [["d", "channel-sections"]],
+    content: "x".repeat(SIDEBAR_REQUEST_BYTES),
+  });
+  expect(Buffer.byteLength(JSON.stringify([event]))).toBeGreaterThan(
+    SIDEBAR_REQUEST_BYTES,
+  );
+  expect(() =>
+    prepareSidebarAssignment([event], { channelId: "general" }, viewer.secret),
+  ).toThrow("Invalid sidebar group head");
+});
+
+it("confirms the requested assignment while preserving newer unrelated assignments", async () => {
+  const viewer = keypair();
+  const encrypt = (assignments: Record<string, string>) =>
+    signed(viewer, {
+      kind: 30078,
+      tags: [["d", "channel-sections"]],
+      content: nip44.v2.encrypt(
+        JSON.stringify({
+          version: 1,
+          sections: [{ id: "work", name: "Work", order: 0 }],
+          assignments,
+        }),
+        nip44.v2.utils.getConversationKey(viewer.secret, viewer.pubkey),
+      ),
+    });
+  const initial = encrypt({});
+  let confirmation = [initial];
+  let publishedAssignments: Readonly<Record<string, string>> = {};
+  const result = await mutateSidebarAssignment(
+    { channelId: "general", sectionId: "work" },
+    viewer.secret,
+    async () => confirmation,
+    async (event) => {
+      publishedAssignments = decodeSidebarPreferences(
+        [event],
+        viewer.secret,
+      ).assignments;
+      confirmation = [encrypt({ ...publishedAssignments, random: "work" })];
+    },
+  );
+  expect(publishedAssignments).toEqual({ general: "work" });
+  expect(result.assignments).toEqual({ general: "work", random: "work" });
+});
+
+it("prepares encrypted per-section sort preferences and prunes orphaned section keys", () => {
+  const viewer = keypair();
+  const key = nip44.v2.utils.getConversationKey(viewer.secret, viewer.pubkey);
+  const head = signed(viewer, {
+    kind: 30078,
+    created_at: 100,
+    tags: [["d", "channel-sort"]],
+    content: nip44.v2.encrypt(
+      JSON.stringify({
+        version: 1,
+        groups: { channels: "recent", "section:gone": "recent" },
+      }),
+      key,
+    ),
+  });
+  key.fill(0);
+  const prepared = prepareSidebarSort(
+    [head],
+    { group: "section:work", mode: "recent", sectionIds: ["work"] },
+    viewer.secret,
+    50_000,
+  );
+  expect(prepared.groups).toEqual({
+    channels: "recent",
+    "section:work": "recent",
+  });
+  expect(prepared.event).toMatchObject({
+    kind: 30078,
+    created_at: 101,
+    tags: [
+      ["d", "channel-sort"],
+      ["t", "channel-sort"],
+    ],
+  });
+  if (!prepared.event) throw new Error("Missing sort event");
+  const sectionsKey = nip44.v2.utils.getConversationKey(
+    viewer.secret,
+    viewer.pubkey,
+  );
+  const sections = signed(viewer, {
+    kind: 30078,
+    tags: [["d", "channel-sections"]],
+    content: nip44.v2.encrypt(
+      JSON.stringify({
+        version: 1,
+        sections: [{ id: "work", name: "Work", order: 0 }],
+        assignments: {},
+      }),
+      sectionsKey,
+    ),
+  });
+  sectionsKey.fill(0);
+  expect(
+    decodeSidebarPreferences([sections, prepared.event], viewer.secret).sort,
+  ).toEqual(prepared.groups);
+});

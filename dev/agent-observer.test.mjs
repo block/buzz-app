@@ -1,4 +1,4 @@
-import { test, expect, vi } from "vitest";
+import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import {
   finalizeEvent,
   generateSecretKey,
@@ -6,6 +6,12 @@ import {
   nip44,
 } from "nostr-tools";
 import { decodeAgentObserver } from "./agent-observer.mjs";
+
+// Keep frame construction and validation in the same second at the ±300s boundary.
+beforeEach(() => {
+  vi.spyOn(Date, "now").mockReturnValue(1700000000999);
+});
+afterEach(() => vi.restoreAllMocks());
 
 const owner = generateSecretKey(),
   agent = generateSecretKey(),
@@ -49,12 +55,7 @@ test("purpose-bound host decoder preserves raw JSON and never returns keys", () 
     plaintext: raw,
   });
 });
-test("rejects signature, recipient, sender, direction, cardinality, freshness, content and captured-viewer violations", ({
-  onTestFinished,
-}) => {
-  // A future +301s fixture becomes valid at +300s if the wall clock ticks.
-  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now());
-  onTestFinished(() => clock.mockRestore());
+test("rejects signature, recipient, sender, direction, cardinality, freshness, content and captured-viewer violations", () => {
   const tags = frame().tags;
   const invalid = [
     { ...frame(), sig: "0".repeat(128) },

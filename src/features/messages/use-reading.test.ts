@@ -171,3 +171,19 @@ it("focus leaving the reading surface cancels pending evidence", () => {
   vi.advanceTimersByTime(1000);
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
 });
+
+it("membership activity cannot abort acknowledgment of a visible message below it", () => {
+  const h = setup();
+  h.setRows([
+    {
+      ...row("membership", 10, 50),
+      dataset: { messageId: "membership", membershipRow: "" },
+    } as ReturnType<typeof row>,
+    row("conversation", 100, 200),
+  ]);
+  h.mutation();
+  vi.advanceTimersByTime(750);
+  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith([
+    "conversation",
+  ]);
+});

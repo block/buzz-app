@@ -43,7 +43,8 @@ export function useReading({
       return [...element.querySelectorAll<HTMLElement>("[data-message-id]")]
         .flatMap((row) => {
           const bounds = row.getBoundingClientRect();
-          return row.dataset.messageId &&
+          return row.dataset.membershipRow === undefined &&
+            row.dataset.messageId &&
             bounds.height > 0 &&
             bounds.width > 0 &&
             bounds.top >= Math.max(viewport.top, 0) &&

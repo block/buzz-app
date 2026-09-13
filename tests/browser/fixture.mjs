@@ -33,6 +33,7 @@ export const test = base.extend({
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
+  membershipActivity: [false, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -51,6 +52,7 @@ export const test = base.extend({
       largeSidebar,
       dmLabels,
       tallMessages,
+      membershipActivity,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -61,6 +63,28 @@ export const test = base.extend({
     const relayKey = generateSecretKey();
     const userKey = generateSecretKey();
     const viewer = getPublicKey(userKey);
+    const membershipKeys = membershipActivity
+      ? [generateSecretKey(), generateSecretKey()]
+      : [];
+    const membershipEvent = (
+      type,
+      targetIndex,
+      time,
+      actorIndex = -1,
+      forged = false,
+    ) =>
+      sign(
+        40099,
+        [["h", "alpha"]],
+        JSON.stringify({
+          type,
+          actor:
+            actorIndex < 0 ? viewer : getPublicKey(membershipKeys[actorIndex]),
+          target: getPublicKey(membershipKeys[targetIndex]),
+        }),
+        forged ? userKey : relayKey,
+        time,
+      );
     const peerKey = dmLabels || readState ? generateSecretKey() : undefined;
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
@@ -147,6 +171,13 @@ export const test = base.extend({
         );
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    if (membershipActivity) {
+      const history = histories.get("primary/alpha");
+      history.push(
+        membershipEvent("member_joined", 0, 1700000740),
+        membershipEvent("member_joined", 1, 1700000741),
+      );
+    }
     if (sidebarUnread) {
       for (const id of ["dm-030", "dm-090"])
         histories.set(`primary/${id}`, [
@@ -283,6 +314,9 @@ export const test = base.extend({
       measurements: [],
     };
     const pending = [];
+    const retiredStreams = new Set();
+    const observerFailures = [];
+    const consoleLocations = new Map();
     const send = (response, body, status = 200) => {
       response.writeHead(status, { "Content-Type": "application/json" });
       response.end(JSON.stringify(body));
@@ -335,6 +369,18 @@ export const test = base.extend({
       if (filter.kinds?.includes(0))
         return [
           sign(0, [], JSON.stringify({ name: "Fixture Reader" }), userKey),
+          ...membershipKeys
+            .filter((key) => filter.authors?.includes(getPublicKey(key)))
+            .map((key) =>
+              sign(
+                0,
+                [],
+                JSON.stringify({
+                  name: key === membershipKeys[0] ? "Pinky" : "Brain",
+                }),
+                key,
+              ),
+            ),
           ...(peerKey && filter.authors?.includes(getPublicKey(peerKey))
             ? [
                 sign(
@@ -382,6 +428,7 @@ export const test = base.extend({
       if (!history)
         throw new Error(`Unexpected query: ${JSON.stringify(filter)}`);
       const candidates = history
+        .filter((event) => !filter.kinds || filter.kinds.includes(event.kind))
         .filter(
           (event) =>
             filter.until === undefined ||
@@ -562,11 +609,15 @@ export const test = base.extend({
             async configurePreviewServer(server) {
               if (relay) {
                 report.brokerRequests = [];
-                server.middlewares.use((req, _res, next) => {
+                server.middlewares.use((req, res, next) => {
                   if (req.url?.startsWith("/api/relay/"))
                     report.brokerRequests.push({
                       url: req.url,
                       at: performance.now(),
+                    });
+                  if (req.url?.endsWith("/stream"))
+                    res.once("close", () => {
+                      retiredStreams.add(res.getHeader("x-buzz-live-id"));
                     });
                   next();
                 });
@@ -606,8 +657,26 @@ export const test = base.extend({
       });
       page.on("pageerror", (error) => report.errors.push(error.message));
       page.on("console", (message) => {
-        if (message.type() === "error")
+        if (message.type() === "error") {
+          consoleLocations.set(
+            report.consoleErrors.length,
+            message.location().url,
+          );
           report.consoleErrors.push(message.text());
+        }
+      });
+      page.on("response", (response) => {
+        if (
+          response.url().endsWith("/stream-observer") &&
+          response.status() === 404
+        ) {
+          const { streamId } = response.request().postDataJSON();
+          observerFailures.push({
+            streamId,
+            url: response.url(),
+            retired: retiredStreams.has(streamId),
+          });
+        }
       });
       await page.addInitScript(
         ({ viewer }) => {
@@ -632,9 +701,52 @@ export const test = base.extend({
         report,
         pending,
         histories,
+        membership(
+          type,
+          targetIndex,
+          actorIndex = -1,
+          forged = false,
+          deliver = true,
+        ) {
+          const history = histories.get("primary/alpha");
+          const event = membershipEvent(
+            type,
+            targetIndex,
+            history.at(-1).created_at + 1,
+            actorIndex,
+            forged,
+          );
+          history.push(event);
+          if (!deliver) return event;
+          if (relay) relay.publish("primary", event);
+          else
+            for (const client of streams.get("primary") ?? [])
+              client.write(`data: ${JSON.stringify(event)}\n\n`);
+          return event;
+        },
         participants,
         viewer,
         relay,
+        observer(raw, agentKey, community = "primary") {
+          const agent = getPublicKey(agentKey);
+          const plaintext = JSON.stringify(raw);
+          const event = sign(
+            24200,
+            [
+              ["p", viewer],
+              ["agent", agent],
+              ["frame", "telemetry"],
+            ],
+            nip44.v2.encrypt(
+              plaintext,
+              nip44.v2.utils.getConversationKey(agentKey, viewer),
+            ),
+            agentKey,
+            Math.floor(Date.now() / 1000),
+          );
+          relay.observer(community, event);
+          return { event, plaintext, agent };
+        },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
         hideChannel(id) {
@@ -708,9 +820,29 @@ export const test = base.extend({
         },
       });
       expect(report.unexpected).toEqual([]);
+      // Aborted startup streams can race an already-dispatched observer control.
+      // Permit only 404s whose exact stream was already closed by the real host;
+      // a current/unknown stream failure still fails, and all errors stay recorded.
+      report.retiredObserverControls = [...observerFailures];
+      expect(observerFailures.every((failure) => failure.retired)).toBe(true);
+      const retiredConsole = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 404/.test(
+            message,
+          )
+        )
+          return false;
+        const match = observerFailures.findIndex(
+          (failure) => failure.url === consoleLocations.get(index),
+        );
+        if (match < 0) return false;
+        observerFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
-          (message) =>
+          (message, index) =>
+            !retiredConsole(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

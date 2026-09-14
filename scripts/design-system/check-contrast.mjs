@@ -80,6 +80,7 @@ const TEXT_ROLES = [
   "--text-disabled",
   "--purple-12", // accent text: links, active nav, chip labels
   "--red-12", // error text: failed session start, rejected form
+  "--green-12", // completion text in the foundation alignment proposal
 ];
 
 /**

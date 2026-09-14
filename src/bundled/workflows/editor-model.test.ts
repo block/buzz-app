@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { draftError, exactSaveReadback, visualForm } from "./editor-model";
+import { draftError, exactSaveReadback } from "./editor-model";
+import { yamlToFormState } from "./workflowFormTypes";
 import {
   createWorkflowFixture,
   fixtureDefinition,
@@ -7,13 +8,14 @@ import {
 } from "./fixtures";
 
 test("advanced fields stay raw; opening does not transform source", () => {
-  expect(visualForm(fixtureYaml).ok).toBe(true);
-  expect(visualForm(`${fixtureYaml}future: retain-me\n`).ok).toBe(false);
-  expect(visualForm(fixtureYaml.replace("message_posted", "webhook")).ok).toBe(
-    false,
-  );
+  expect(yamlToFormState(fixtureYaml).ok).toBe(true);
+  expect(yamlToFormState(`${fixtureYaml}future: retain-me\n`).ok).toBe(false);
   expect(
-    visualForm(fixtureYaml.replace("    text:", "    if: true\n    text:")).ok,
+    yamlToFormState(fixtureYaml.replace("message_posted", "webhook")).ok,
+  ).toBe(false);
+  expect(
+    yamlToFormState(fixtureYaml.replace("    text:", "    if: true\n    text:"))
+      .ok,
   ).toBe(false);
   expect(draftError(fixtureYaml)).toBeNull();
   expect(
@@ -61,4 +63,29 @@ test("draft boundaries match signing: UTF-8 bytes, steps and legacy enabled defa
     expect(
       draftError(fixtureYaml.replace("enabled: false", `enabled: ${value}`)),
     ).toMatch(/true or false/);
+});
+
+test("invalid timeout values block draft submission", () => {
+  for (const timeout of [
+    "'oops'",
+    "'0s'",
+    "0",
+    "1.5",
+    "null",
+    "9007199254740992",
+  ]) {
+    expect(
+      draftError(
+        fixtureYaml.replace(
+          "    text:",
+          `    timeout_secs: ${timeout}\n    text:`,
+        ),
+      ),
+    ).toMatch(/timeout.*positive whole number/);
+  }
+  expect(
+    draftError(
+      fixtureYaml.replace("    text:", "    timeout_secs: 300\n    text:"),
+    ),
+  ).toBeNull();
 });

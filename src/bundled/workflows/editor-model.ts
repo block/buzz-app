@@ -3,10 +3,7 @@ import type {
   WorkflowDefinition,
   WorkflowOperation,
 } from "../../features/workflows/types";
-import { yamlToFormState, type WorkflowFormState } from "./workflowFormTypes";
-
-/** The form parser owns only the two triggers and two actions this UI edits. */
-export const visualForm = yamlToFormState;
+import type { WorkflowFormState } from "./workflowFormTypes";
 
 /** Draft shape validation is not relay authorization or a promise of execution. */
 export function draftError(yaml: string): string | null {
@@ -44,6 +41,11 @@ export function draftError(yaml: string): string | null {
         return "Step IDs must be unique, with 1–64 letters, digits or underscores.";
       ids.add(step.id);
       if (typeof step.action !== "string") return "Each step needs an action.";
+      if (
+        step.timeout_secs !== undefined &&
+        (!Number.isSafeInteger(step.timeout_secs) || step.timeout_secs <= 0)
+      )
+        return "Step timeout must be a positive whole number of seconds (for example, 30s in Form mode), or left blank.";
       if (
         step.action === "send_message" &&
         (typeof step.text !== "string" || !step.text.trim())

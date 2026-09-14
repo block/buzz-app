@@ -27,7 +27,6 @@ const channels = [fixtureChannel, secondChannel];
 let incoming: ((events: readonly RelayEvent[]) => void) | undefined;
 let generation = 0;
 let currentScope = "Fixture A";
-let definitionReads = 0;
 function session(scope: string) {
   let journal: ReadJournal | undefined;
   const events = channels.flatMap((channel, index) => [
@@ -54,8 +53,6 @@ function session(scope: string) {
       relayAuthor: authority.pubkey,
       media: () => undefined,
       async query(filters) {
-        if (filters.some((filter) => filter.kinds?.includes(30620)))
-          definitionReads++;
         return events.filter((event) =>
           filters.some(
             (filter) =>
@@ -118,9 +115,6 @@ function switchScope() {
   };
   for (const listener of listeners) listener();
 }
-Object.assign(window, {
-  sessionFixture: { definitionReads: () => definitionReads },
-});
 function Fixture() {
   useKeyboardFocusVisibility();
   const [mounted, setMounted] = useState(true);

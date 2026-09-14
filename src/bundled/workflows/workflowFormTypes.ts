@@ -50,10 +50,14 @@ export const ACTION_LABELS: Record<ActionType, string> = {
   send_message: "Send Message",
 };
 
-function parseTimeoutSecs(timeoutSecs: string | undefined): number | undefined {
-  if (!timeoutSecs) return undefined;
+function parseTimeoutSecs(
+  timeoutSecs: string | undefined,
+): number | string | undefined {
+  if (!timeoutSecs?.trim()) return undefined;
   const parsed = parseDurationSeconds(timeoutSecs);
-  return parsed !== null && parsed > 0 ? parsed : undefined;
+  // Keep invalid input in the YAML draft so validation rejects it instead of
+  // silently saving a definition with no timeout. It also remains dirty on leave.
+  return parsed !== null && parsed > 0 ? parsed : timeoutSecs;
 }
 
 function actionFieldsForStep(step: StepFormState): Record<string, unknown> {
@@ -104,16 +108,9 @@ export function formStateToYaml(state: WorkflowFormState): string {
   return yamlStringify(workflow);
 }
 
-const STEP_ID_PATTERN = /^step_(\d+)$/;
-
 export function nextStepId(existingSteps: StepFormState[]): string {
   const existingIds = new Set(existingSteps.map((s) => s.id));
-  let maxN = 0;
-  for (const id of existingIds) {
-    const match = STEP_ID_PATTERN.exec(id);
-    if (match) maxN = Math.max(maxN, Number(match[1]));
-  }
-  let n = maxN + 1;
+  let n = 1;
   while (existingIds.has(`step_${n}`)) n++;
   return `step_${n}`;
 }

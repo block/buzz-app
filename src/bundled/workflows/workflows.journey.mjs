@@ -584,3 +584,84 @@ test("legacy deletion is a request, not verified runtime removal", async ({
     1,
   );
 });
+
+test("invalid timeout text stays in the draft and blocks saves in both editor modes", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Message helper").click();
+  await page.getByText("Step options", { exact: true }).click();
+  const timeout = page.getByLabel("Step timeout (optional)", { exact: true });
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  for (const input of ["oops", "0s", "1.5", "9007199254740992"]) {
+    await timeout.fill(input);
+    await expect(timeout).toHaveValue(input);
+    await expect(button("Save workflow")).toBeDisabled();
+    await expect(
+      page.getByRole("status").filter({ hasText: /timeout/ }),
+    ).toContainText("positive whole number");
+    await page.getByRole("tab", { name: "YAML", exact: true }).click();
+    expect(parseYaml(await yaml.inputValue()).steps[0].timeout_secs).toBe(
+      input,
+    );
+    await expect(button("Save workflow")).toBeDisabled();
+    await page.getByRole("tab", { name: "Form", exact: true }).click();
+    await page.getByText("Step options", { exact: true }).click();
+    await expect(timeout).toHaveValue(input);
+  }
+  await button("Close editor").click();
+  await expect(
+    page.getByRole("alertdialog", { name: "Leave this draft?" }),
+  ).toBeVisible();
+  await button("Keep editing").click();
+  await expect(timeout).toHaveValue("9007199254740992");
+  await timeout.fill("5m");
+  await expect(button("Save workflow")).toBeEnabled();
+  await button("Save workflow").click();
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.calls.save))
+    .toBe(1);
+  expect(
+    parseYaml(await page.evaluate(() => window.workflowFixture.input().yaml))
+      .steps[0].timeout_secs,
+  ).toBe(300);
+  await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await expect(button("Save workflow")).toBeEnabled();
+  if (!(await timeout.isVisible()))
+    await page.getByText("Step options", { exact: true }).click();
+  await timeout.fill(" ");
+  await button("Save workflow").click();
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.calls.save))
+    .toBe(2);
+  expect(
+    parseYaml(await page.evaluate(() => window.workflowFixture.input().yaml))
+      .steps[0],
+  ).not.toHaveProperty("timeout_secs");
+});
+
+test("both Add actions allocate unused IDs after a very large parsed ID", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Message helper").click();
+  await page.getByRole("tab", { name: "YAML", exact: true }).click();
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  const definition = parseYaml(await yaml.inputValue());
+  definition.steps[0].id = "step_9007199254740992";
+  // JSON is YAML, and avoids testing a second serializer in this browser fixture.
+  await yaml.fill(JSON.stringify(definition));
+  await page.getByRole("tab", { name: "Form", exact: true }).click();
+  await button("Add Send Message").click();
+  await page
+    .getByLabel("Message text", { exact: true })
+    .nth(1)
+    .fill("Another message");
+  await button("Add Delay").click();
+  await page.getByRole("tab", { name: "YAML", exact: true }).click();
+  expect(
+    parseYaml(await yaml.inputValue()).steps.map((step) => step.id),
+  ).toEqual(["step_9007199254740992", "step_1", "step_2"]);
+});

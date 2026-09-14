@@ -4,6 +4,7 @@ import { parse as parseYaml } from "yaml";
 
 import {
   formStateToYaml,
+  nextStepId,
   yamlToFormState,
   DEFAULT_FORM_STATE,
 } from "./workflowFormTypes.ts";
@@ -56,7 +57,6 @@ test("recognized nodes with unknown fields are refused without touching YAML", (
     `name: Test\nunknown: true\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
     `name: Test\ntrigger: { on: message_posted, future_filter: x }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
     `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: send_message, text: hi, retry: 3 }]\n`,
-    `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: call_webhook, url: https://example.com, auth: bearer }]\n`,
   ];
 
   for (const yaml of fixtures) {
@@ -99,20 +99,12 @@ test("invalid IDs, shapes, and scalar types are refused", () => {
       `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: send_message, text: 42 }]\n`,
     ],
     [
-      "numeric header",
-      `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: call_webhook, url: https://example.com, headers: { X-Retry: 3 } }]\n`,
-    ],
-    [
       "zero timeout",
       `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, timeout_secs: 0, action: send_message, text: hi }]\n`,
     ],
     [
       "fractional timeout",
       `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, timeout_secs: 1.5, action: send_message, text: hi }]\n`,
-    ],
-    [
-      "unsupported method",
-      `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: call_webhook, url: https://example.com, method: OPTIONS }]\n`,
     ],
   ];
 
@@ -127,24 +119,6 @@ test("step condition capabilities stay in YAML mode", () => {
   const conditionResult = yamlToFormState(condition);
   assert.equal(conditionResult.ok, false);
   assert.match(conditionResult.error, /conditions.*YAML editor/);
-});
-
-test("malformed and unowned schedule definitions stay losslessly in YAML mode", () => {
-  const fixtures = [
-    `name: Missing\ntrigger: { on: schedule }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
-    `name: Both\ntrigger: { on: schedule, cron: "0 9 * * *", interval: 1h }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
-    `name: Numeric\ntrigger: { on: schedule, interval: 30 }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
-    `name: Unknown\ntrigger: { on: schedule, cron: "0 9 * * *", timezone: UTC }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
-    `name: Invalid cron\ntrigger: { on: schedule, cron: "60 9 * * *" }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
-  ];
-
-  for (const yaml of fixtures) {
-    const original = yaml;
-    const result = yamlToFormState(yaml);
-    assert.equal(result.ok, false);
-    assert.match(result.error, /YAML editor/);
-    assert.equal(yaml, original);
-  }
 });
 
 test("presents step timeout seconds as durations and serializes them numerically", () => {
@@ -175,7 +149,6 @@ test("values the Form serializer would normalize are refused", () => {
     `name: Test\ntrigger: { on: reaction_added, emoji: "" }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
     `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, name: " spaced ", action: send_message, text: hi }]\n`,
     `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: send_message, text: hi, channel: "" }]\n`,
-    `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: call_webhook, url: https://example.com, headers: { " padded ": value } }]\n`,
   ];
 
   for (const yaml of fixtures) assert.equal(yamlToFormState(yaml).ok, false);
@@ -258,5 +231,32 @@ test("unsupported legacy triggers and actions remain YAML-only without parsing i
     );
     assert.equal(result.ok, false);
     assert.match(result.error, /Unsupported action.*YAML editor/);
+  }
+});
+
+test("step IDs fill the first gap without interpreting numeric suffixes", () => {
+  const steps = ["step_9007199254740992", "step_1", "step_3"].map((id) => ({
+    id,
+    action: "delay",
+    duration: "1s",
+  }));
+  assert.equal(nextStepId(steps), "step_2");
+  assert.equal(nextStepId([]), "step_1");
+});
+
+test("invalid nonblank timeout text survives serialization for validation", () => {
+  for (const timeoutSecs of ["oops", "0s", "1.5", "9007199254740992"]) {
+    assert.equal(
+      parseYaml(formStateToYaml(sendMessageState({ timeoutSecs }))).steps[0]
+        .timeout_secs,
+      timeoutSecs,
+    );
+  }
+  for (const timeoutSecs of [undefined, "", " "]) {
+    assert.equal(
+      parseYaml(formStateToYaml(sendMessageState({ timeoutSecs }))).steps[0]
+        .timeout_secs,
+      undefined,
+    );
   }
 });

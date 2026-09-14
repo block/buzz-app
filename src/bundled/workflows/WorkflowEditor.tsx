@@ -5,9 +5,13 @@ import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowForm } from "./WorkflowForm";
-import { draftError, hasWebhookTrigger, visualForm } from "./editor-model";
+import { draftError, hasWebhookTrigger } from "./editor-model";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
-import { formStateToYaml, type WorkflowFormState } from "./workflowFormTypes";
+import {
+  formStateToYaml,
+  yamlToFormState,
+  type WorkflowFormState,
+} from "./workflowFormTypes";
 import {
   readWorkflowDocumentFields,
   yamlWithWorkflowEnabled,
@@ -35,14 +39,14 @@ export function WorkflowEditor({
 }) {
   const id = useId();
   const [mode, setMode] = useState<"form" | "yaml">(() =>
-    visualForm(yaml).ok ? "form" : "yaml",
+    yamlToFormState(yaml).ok ? "form" : "yaml",
   );
   const [formDraft, setFormDraft] = useState<WorkflowFormState | null>(null);
   const [formYaml, setFormYaml] = useState(yaml);
   const [activating, setActivating] = useState(false);
   const [modeError, setModeError] = useState<string | null>(null);
   const fields = readWorkflowDocumentFields(yaml);
-  const parsed = visualForm(yaml);
+  const parsed = yamlToFormState(yaml);
   // An incomplete form is still an editable draft. An external YAML change must
   // be reparsed instead of reviving stale form state.
   const form =

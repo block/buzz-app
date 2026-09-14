@@ -51,12 +51,11 @@ function PreviewContent({
     view.snapshot,
     view.snapshot,
   );
+  const target =
+    snapshot.target?.id === messageId ? snapshot.target : undefined;
   const message =
-    snapshot.target?.id === messageId
-      ? snapshot.target
-      : [snapshot.root, ...snapshot.replies].find(
-          (row) => row?.id === messageId,
-        );
+    target ??
+    [snapshot.root, ...snapshot.replies].find((row) => row?.id === messageId);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -72,8 +71,8 @@ function PreviewContent({
     if (authorId)
       void session.profiles.ensure([authorId], "background").catch(() => {});
   }, [session, authorId]);
-  // Only paint reconciled content: a "ready" snapshot has folded in cached
-  // edits/deletions, while an idle/loading seed is still the raw root event.
+  // Only paint reconciled content: a ready exact target is independent of its
+  // thread root, while an idle/loading root seed is still the raw event.
   // A terminal state (read error, denied/interrupted purge, or an exhausted
   // read that never found the target) fails honestly instead of loading forever.
   const stopped =
@@ -82,7 +81,10 @@ function PreviewContent({
     snapshot.targetStatus === "unavailable" ||
     (snapshot.status === "idle" && snapshot.error !== undefined) ||
     (snapshot.status === "ready" && !message && !snapshot.canLoadMore);
-  if (snapshot.status !== "ready" || !message || !snapshot.root)
+  const ready = target
+    ? snapshot.targetStatus === "ready"
+    : snapshot.status === "ready";
+  if (!ready || !message)
     return (
       <span role="status">
         {stopped ? "Message preview unavailable." : "Loading message…"}

@@ -15,6 +15,14 @@ function validUrl(url: string): boolean {
 
 const unescapeLink = (text: string) => text.replace(/\\([[\]()\\])/g, "$1");
 
+function markdownDestination(value: string) {
+  const title =
+    /[ \t]+(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))$/.exec(
+      value,
+    );
+  return (title ? value.slice(0, title.index) : value).trim();
+}
+
 function trimBareUrl(candidate: string) {
   const balance = new Map([
     [")", { open: 0, close: 0 }],
@@ -97,7 +105,7 @@ export function messageLinkParts(
         match[0].endsWith("\\("),
       );
       if (!closing) continue;
-      let url = content.slice(start, closing.close).trim();
+      let url = markdownDestination(content.slice(start, closing.close));
       // A pasted autolink can itself be Markdown: [label]([url](url)).
       const nested = /^\[([^\]\r\n]+)\]\((.+)\)$/.exec(url);
       if (nested && nested[1] === nested[2]) url = nested[1] ?? url;

@@ -324,6 +324,17 @@ test("editable composer renders links and mentions while preserving source and n
       await expect(input).toHaveJSProperty("value", expected);
     }
 
+    // Markdown titles stay in the authored source while the composer decorates
+    // only the destination and label, matching the delivered message renderer.
+    const titledSource = '[Docs](https://example.com "Guide")';
+    await input.fill(titledSource);
+    await expect(input.locator("[data-source]")).toHaveText("Docs");
+    await expect(input).toHaveJSProperty("value", titledSource);
+    await input.press("Enter");
+    expect(
+      (await page.evaluate(() => window.linkComposerFixture.sent)).at(-1),
+    ).toEqual({ text: titledSource, mentions: [] });
+
     // A compact label still copies, edits, and sends the full destination.
     const longUrl =
       "https://www.figma.com/design/example/Builderlab-—-Branding?node-id=1119-21207";

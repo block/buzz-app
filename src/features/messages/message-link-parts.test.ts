@@ -131,6 +131,27 @@ it("keeps balanced and escaped URL parentheses inside labeled destinations", () 
   }
 });
 
+it.each([
+  '[Docs](https://example.com "Guide")',
+  "[Docs](https://example.com 'Guide')",
+  "[Docs](https://example.com (Guide))",
+  '[Docs](<https://example.com> "Guide")',
+])(
+  "separates a Markdown title from its labeled link destination: %s",
+  (link) => {
+    const ranges: { start: number; end: number; url: string }[] = [];
+    const parts = messageLinkParts(link, undefined, (start, end, url) =>
+      ranges.push({ start, end, url }),
+    );
+    expect(parts.filter((part) => part.url)).toEqual([
+      { text: "Docs", label: "Docs", url: "https://example.com" },
+    ]);
+    expect(ranges).toEqual([
+      { start: 0, end: link.length, url: "https://example.com" },
+    ]);
+  },
+);
+
 it("supports Buzz labels, escaped label punctuation, and multiple links in prose", () => {
   const parts = messageLinkParts(
     String.raw`Ask [design](buzz://channel/design), then [Docs \[new\]](https://example.com/docs).`,

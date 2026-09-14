@@ -217,6 +217,29 @@ it("renders the exact target independently of bounded thread replies", () => {
     ),
   ).toBe(true);
 });
+it("renders a reconciled exact target when its thread root is unavailable", () => {
+  const target = {
+    ...root,
+    id: "c".repeat(64),
+    content: "reply with unavailable root",
+    threadRootId: root.id,
+  };
+  const result = setup(
+    {
+      ...base,
+      status: "error",
+      error: "Thread root is unavailable.",
+      target,
+      targetStatus: "ready",
+    },
+    target.id,
+  );
+  expect(
+    elements(result.tree).some(
+      (element) => element.props.children === "reply with unavailable root",
+    ),
+  ).toBe(true);
+});
 it("fails safely when an exact target timestamp is outside Date range", () => {
   const target = { ...root, createdAt: 8_640_000_000_001 };
   const result = setup({

@@ -1,24 +1,21 @@
 import type { PluginModule } from "../../plugins/api";
+import { Bestie } from "./Bestie";
+import { createBestieCall } from "./call";
 
-export const inject = ["panels"];
+export const inject = ["panels", "relay"];
 export const apply: PluginModule["apply"] = (ctx) => {
+  const call = createBestieCall(ctx.relay);
+  ctx.effect(() => () => call.dispose());
   ctx.panels.register({
     id: "companion",
     title: "Bestie",
     matches: () => false,
     launcher: { icon: "/bestie.png", target: "" },
-    component: Bestie,
+    component: () => (
+      <Bestie
+        call={call}
+        available={import.meta.env.VITE_BESTIE_REALTIME === "1"}
+      />
+    ),
   });
 };
-
-function Bestie() {
-  return (
-    <div className="flex min-h-full flex-col items-center justify-center gap-4 p-6 text-center">
-      <img src="/bestie.png" alt="" className="size-20 object-contain" />
-      <h2 className="text-lg font-semibold">Meet your Bestie</h2>
-      <p className="max-w-xs text-sm text-muted">
-        Your companion’s home in Buzz. Agent chat isn’t connected yet.
-      </p>
-    </div>
-  );
-}

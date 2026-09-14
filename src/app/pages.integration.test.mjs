@@ -101,7 +101,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       renderToStaticMarkup(
         createElement(firstBestie.component, { target: "", close() {} }),
       ),
-      /isn’t connected yet/,
+      /Voice is available/,
     );
     await services.plugins.change("disable", "buzz.bestie");
     assert.equal(

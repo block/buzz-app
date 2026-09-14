@@ -83,6 +83,17 @@ Home, Channels, and GitHub can each be toggled independently in Settings.
 
 See [client and community ownership](docs/communities.md) for the minimal join/profile flow, session scopes, and switching checks.
 
+## Bestie voice
+
+Bestie's headphones button starts a duplex voice conversation through an OpenAI
+Realtime compatible WebSocket endpoint. It uses the Buzz agent's existing MCP
+tools, with automatic tool approval by default. Select **Ask each time** before
+connecting to review commands individually. Thinking also defaults to Off and
+can be selected before connecting. See [setup and behavior](docs/bestie-voice.md).
+
+This currently uses the live development broker described above, in either
+`just web` or `just desktop`. Packaged applications do not yet include that host.
+
 ## CLI
 
 Run `pnpm buzzodz --help` from this repository, or install the standalone executable:

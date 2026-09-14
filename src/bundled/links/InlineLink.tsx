@@ -145,7 +145,12 @@ export function LinkLabel({
         {content}
       </span>
     );
-  // Keep the icon with the start of its label, while allowing long URLs to wrap.
+  // Shorten only raw destinations; authored labels and resolved channel names stay intact.
+  if (label === href) {
+    const characters = Array.from(label);
+    if (characters.length > 45) label = `${characters.slice(0, 44).join("")}…`;
+  }
+  // Keep the icon with the start of its label.
   const lead = (label.match(/^(?:https?:\/\/)?[^/\s]+/)?.[0] ?? label).slice(
     0,
     24,

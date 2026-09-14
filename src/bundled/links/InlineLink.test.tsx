@@ -98,7 +98,28 @@ it.each([
   expect(linkKind(href)).toBe(kind);
   const markup = renderToStaticMarkup(<InlineLink href={href} />);
   expect(markup).toContain(`data-link-kind="${kind}"`);
-  expect(markup.replace(/<[^>]+>/g, "")).toBe(href);
+  expect(markup).toContain(`href="${href}"`);
+});
+
+it.each([44, 45, 46, 200])(
+  "caps raw URL labels at 45 characters (source length %i)",
+  (length) => {
+    const href = "https://figma.com/design/".padEnd(length, "a");
+    const markup = renderToStaticMarkup(<InlineLink href={href} />);
+    const text = markup.replace(/<[^>]+>/g, "");
+    expect(markup).toContain(`href="${href}"`);
+    expect(text).toBe(length <= 45 ? href : `${href.slice(0, 44)}…`);
+  },
+);
+
+it("preserves authored labels on long URLs", () => {
+  const href = `https://figma.com/design/${"a".repeat(100)}`;
+  const label = "View the full design and all of the discussion notes";
+  const markup = renderToStaticMarkup(
+    <InlineLink href={href}>{label}</InlineLink>,
+  );
+  expect(markup.replace(/<[^>]+>/g, "")).toBe(label);
+  expect(markup).toContain(`href="${href}"`);
 });
 
 it.each([

@@ -313,6 +313,14 @@ function ChannelWorkspace({
   const openThread = useCallback(
     (messageId: string) => {
       if (!currentId) return;
+      const target = navigator?.snapshot().entry.target;
+      if (
+        target?.kind === "conversation" &&
+        target.channelId === currentId &&
+        target.messageId === messageId &&
+        target.threadRootId === messageId
+      )
+        return;
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement

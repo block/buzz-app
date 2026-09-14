@@ -24,6 +24,18 @@ test("Back restores each thread visit before the previous channel", async ({
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
   await threadButton(roots[1]).click();
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
+  const openThread = await panel
+    .getByRole("region", { name: "Thread messages", exact: true })
+    .elementHandle();
+  await threadButton(roots[1]).click();
+  await page.evaluate(
+    () =>
+      new Promise((resolve) =>
+        requestAnimationFrame(() => requestAnimationFrame(resolve)),
+      ),
+  );
+  await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
+  expect(await openThread.evaluate((node) => node.isConnected)).toBe(true);
   await page.getByRole("button", { name: "Beta", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),

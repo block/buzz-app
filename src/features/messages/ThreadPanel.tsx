@@ -322,29 +322,33 @@ function ThreadMessages({
             <p className={styles.empty}>Original message unavailable.</p>
           )
         )}
-        <div className={styles.threadDivider}>
-          {snapshot.replies.length}{" "}
-          {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
-        </div>
-        <ol>
-          {snapshot.replies.map((row) => (
-            <li key={row.id}>
-              <MessageRow
-                extensions={extensions}
-                row={row}
-                session={session}
-                scope={scope}
-                profile={profiles.get(row.authorId)}
-                participantProfiles={profiles}
-                media={session.media}
-                onOpenLink={onOpenLink}
-                canOpenLink={canOpenLink}
-                day={false}
-                retry={session.messages.retry}
-              />
-            </li>
-          ))}
-        </ol>
+        {(snapshot.root || snapshot.status !== "loading") && (
+          <>
+            <div className={styles.threadDivider}>
+              {snapshot.replies.length}{" "}
+              {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
+            </div>
+            <ol>
+              {snapshot.replies.map((row) => (
+                <li key={row.id}>
+                  <MessageRow
+                    extensions={extensions}
+                    row={row}
+                    session={session}
+                    scope={scope}
+                    profile={profiles.get(row.authorId)}
+                    participantProfiles={profiles}
+                    media={session.media}
+                    onOpenLink={onOpenLink}
+                    canOpenLink={canOpenLink}
+                    day={false}
+                    retry={session.messages.retry}
+                  />
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>

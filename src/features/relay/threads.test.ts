@@ -45,6 +45,23 @@ function seeded() {
   return { ...h, view: h.session.thread("a", root.id) };
 }
 
+it("seeds a thread root synchronously from its retained channel window", async () => {
+  const h = setup();
+  h.traffic.receive([roster(relay, "a", [viewer.pubkey])]);
+  h.session.channels.ensure("a");
+  h.next().respond([
+    root,
+    bounds(relay, "a", "head", { has_more: false, next_cursor: null }),
+  ]);
+  await flush();
+  expect(h.session.channels.window("a").rows.map((row) => row.id)).toEqual([
+    root.id,
+  ]);
+
+  const view = h.session.thread("a", root.id);
+  expect(view.snapshot().root?.id).toBe(root.id);
+});
+
 it("resolves canonical marked ancestry, never arbitrary references or a lone root", () => {
   const tags = (extra: string[][]) => message(alice, "a", "test", 1, extra);
   expect(threadReference(tags([["e", root.id]]))).toBeUndefined();

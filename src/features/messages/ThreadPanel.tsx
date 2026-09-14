@@ -93,7 +93,10 @@ function OwnedThreadPanel({
   useEffect(() => {
     try {
       if (navigation?.signal.aborted) return;
-      const owned = navigation
+      const exact =
+        navigation?.target.kind === "conversation" &&
+        navigation.target.threadRootId !== messageId;
+      const owned = exact
         ? session.thread(channelId, messageId, { exact: true })
         : session.thread(channelId, messageId);
       const cancel = () => {
@@ -206,23 +209,29 @@ function ThreadMessages({
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
+  const rootTarget =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.threadRootId === messageId;
   const revealed = useMessageReveal({
     scroller,
     settled: positioned,
     messageId,
     signal: navigation?.signal,
-    ready:
-      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+    ready: rootTarget
+      ? snapshot.root?.id === messageId
+      : snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
   });
   useEffect(() => {
     if (!navigation || navigation.signal.aborted) return;
-    if (snapshot.targetStatus === "unavailable")
+    if (rootTarget && snapshot.status === "error")
+      navigation.complete({ status: "failed", reason: "unavailable" });
+    else if (snapshot.targetStatus === "unavailable")
       navigation.complete({ status: "failed", reason: "not-found" });
     else if (snapshot.targetStatus === "error")
       navigation.complete({ status: "failed", reason: "unavailable" });
-  }, [navigation, snapshot.targetStatus]);
+  }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
@@ -322,33 +331,29 @@ function ThreadMessages({
             <p className={styles.empty}>Original message unavailable.</p>
           )
         )}
-        {(snapshot.root || snapshot.status !== "loading") && (
-          <>
-            <div className={styles.threadDivider}>
-              {snapshot.replies.length}{" "}
-              {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
-            </div>
-            <ol>
-              {snapshot.replies.map((row) => (
-                <li key={row.id}>
-                  <MessageRow
-                    extensions={extensions}
-                    row={row}
-                    session={session}
-                    scope={scope}
-                    profile={profiles.get(row.authorId)}
-                    participantProfiles={profiles}
-                    media={session.media}
-                    onOpenLink={onOpenLink}
-                    canOpenLink={canOpenLink}
-                    day={false}
-                    retry={session.messages.retry}
-                  />
-                </li>
-              ))}
-            </ol>
-          </>
-        )}
+        <div className={styles.threadDivider}>
+          {snapshot.replies.length}{" "}
+          {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
+        </div>
+        <ol>
+          {snapshot.replies.map((row) => (
+            <li key={row.id}>
+              <MessageRow
+                extensions={extensions}
+                row={row}
+                session={session}
+                scope={scope}
+                profile={profiles.get(row.authorId)}
+                participantProfiles={profiles}
+                media={session.media}
+                onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                day={false}
+                retry={session.messages.retry}
+              />
+            </li>
+          ))}
+        </ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>

@@ -530,31 +530,6 @@ it("uses the resolved root with the shared composer and reveals an own send even
     false,
   );
 });
-it("presents replies only with their root context unless the root is unavailable", () => {
-  const h = messagesHarness();
-  h.snapshot.root = undefined;
-  h.snapshot.status = "loading";
-  h.snapshot.replies = [{ ...row, id: "reply", content: "Reply" }];
-  expect(
-    elements(h.render()).filter((element) => element.type === MessageRow),
-  ).toHaveLength(0);
-
-  h.snapshot.root = row;
-  h.snapshot.status = "ready";
-  expect(
-    elements(h.render())
-      .filter((element) => element.type === MessageRow)
-      .map((element) => (element.props.row as ChannelMessage).id),
-  ).toEqual([row.id, "reply"]);
-
-  h.snapshot.root = undefined;
-  h.snapshot.status = "error";
-  expect(
-    elements(h.render())
-      .filter((element) => element.type === MessageRow)
-      .map((element) => (element.props.row as ChannelMessage).id),
-  ).toEqual(["reply"]);
-});
 it.each([
   { gap: 79, follows: true },
   { gap: 80, follows: false },

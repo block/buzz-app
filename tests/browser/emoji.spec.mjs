@@ -114,14 +114,25 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
             window.__emojiCopyPayload = {
               prevented: event.defaultPrevented,
               text: event.clipboardData?.getData("text/plain"),
+              trusted: event.isTrusted,
             };
           },
           { once: true },
         );
       });
     const copyPayload = () => page.evaluate(() => window.__emojiCopyPayload);
-    // Playwright WebKit dispatches native editing commands with Meta on every host.
-    const editingModifier = browserName === "webkit" ? "Meta" : "ControlOrMeta";
+    const copySelection = async () => {
+      if (browserName === "webkit") {
+        // Headless WebKit does not dispatch Copy for selected non-editable content
+        // from Playwright keyboard input on Linux. Invoke its browser copy command;
+        // this uses the real selection and document listener, not a synthetic event.
+        expect(await page.evaluate(() => document.execCommand("copy"))).toBe(
+          true,
+        );
+        return;
+      }
+      await page.keyboard.press("ControlOrMeta+c");
+    };
     await emojiImage.evaluate((image) => {
       const range = document.createRange();
       range.selectNode(image);
@@ -130,10 +141,10 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       selection.addRange(range);
     });
     await observeCopyPayload();
-    await page.keyboard.press(`${editingModifier}+c`);
+    await copySelection();
     await expect
       .poll(copyPayload)
-      .toEqual({ prevented: true, text: ":party:" });
+      .toEqual({ prevented: true, text: ":party:", trusted: true });
     await historic.evaluate((image) => {
       const range = document.createRange();
       range.selectNodeContents(image.closest("p"));
@@ -142,10 +153,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       selection.addRange(range);
     });
     await observeCopyPayload();
-    await page.keyboard.press(`${editingModifier}+c`);
+    await copySelection();
     await expect.poll(copyPayload).toEqual({
       prevented: true,
       text: "Historic :unknown:party: and https://example.test/:party:",
+      trusted: true,
     });
     const table = page.locator("table");
     await expect(table.locator('img[alt=":party:"]')).toHaveCount(1);
@@ -157,10 +169,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       selection.addRange(range);
     });
     await observeCopyPayload();
-    await page.keyboard.press(`${editingModifier}+c`);
+    await copySelection();
     await expect.poll(copyPayload).toEqual({
       prevented: true,
       text: "State\tOwner\tCount\tTail\n:party:\t\t12\t\n\tlead\t\tend",
+      trusted: true,
     });
     await table
       .locator("tbody tr")
@@ -173,10 +186,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         selection.addRange(range);
       });
     await observeCopyPayload();
-    await page.keyboard.press(`${editingModifier}+c`);
+    await copySelection();
     await expect.poll(copyPayload).toEqual({
       prevented: true,
       text: ":party:\t\t12\t",
+      trusted: true,
     });
     const blockquote = page.locator("blockquote");
     const preformatted = blockquote.locator("xpath=following-sibling::pre[1]");
@@ -194,18 +208,19 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await expect(preformatted).toContainText("code");
     await observeCopyPayload();
-    await page.keyboard.press(`${editingModifier}+c`);
+    await copySelection();
     await expect.poll(copyPayload).toEqual({
       prevented: true,
       text: "Quote :party:\n\ncode\n",
+      trusted: true,
     });
     // Independently prove this browser's real clipboard transport with the exact
     // handler payload; the editable source path intentionally uses native copy.
     await draft().fill(":party:");
-    await draft().press(`${editingModifier}+a`);
-    await page.keyboard.press(`${editingModifier}+c`);
+    await draft().press("ControlOrMeta+a");
+    await page.keyboard.press("ControlOrMeta+c");
     await draft().fill("");
-    await page.keyboard.press(`${editingModifier}+v`);
+    await page.keyboard.press("ControlOrMeta+v");
     await expect(draft()).toHaveValue(":party:");
     // One Shift+Left selects one rendered custom emoji, not its trailing colon.
     await draft().press("Shift+ArrowLeft");
@@ -214,9 +229,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         element.value.slice(element.selectionStart, element.selectionEnd),
       ),
     ).toBe(":party:");
-    await page.keyboard.press(`${editingModifier}+c`);
+    await page.keyboard.press("ControlOrMeta+c");
     await draft().fill("");
-    await page.keyboard.press(`${editingModifier}+v`);
+    await page.keyboard.press("ControlOrMeta+v");
     await expect(draft()).toHaveValue(":party:");
     await draft().fill(":party::party:");
     const selectedDraftText = () =>

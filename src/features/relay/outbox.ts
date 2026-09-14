@@ -1,3 +1,4 @@
+import { isWorkflowOperation } from "../workflows/protocol";
 import { yieldToHost } from "./yield";
 import { getEventHash, type EventTemplate } from "nostr-tools";
 import { eventDto, type EventData, type RelayEvent } from "./events";
@@ -450,7 +451,13 @@ export function createOutbox(
     },
     retry(id: string) {
       const item = find(id);
-      if (!closed && item && !attempts.has(id)) {
+      // Workflow recovery is inspect/dismiss only, including restored intents.
+      if (
+        !closed &&
+        item &&
+        !isWorkflowOperation(item.event) &&
+        !attempts.has(id)
+      ) {
         replace({ ...item, delivery: "sending", error: undefined });
         schedule(id, undefined, item.delivery);
       }

@@ -39,7 +39,12 @@ export function createWorkflows({
   notify?: (listener: () => void) => void;
 }) {
   let closed = false;
-  const views = new Set<{ clear(): void; emit(): void; dispose(): void }>();
+  const views = new Set<{
+    clear(): void;
+    interrupt(): void;
+    emit(): void;
+    dispose(): void;
+  }>();
   const listeners = new Set<() => void>();
   type Result = {
     outcome: WorkflowOperation["outcome"];
@@ -152,6 +157,19 @@ export function createWorkflows({
     }
     const owner = {
       clear,
+      interrupt() {
+        controller?.abort();
+        controller = undefined;
+        pending = undefined;
+        if (snapshot.status === "idle" || snapshot.status === "unavailable")
+          return;
+        snapshot = Object.freeze({
+          status: "error",
+          data: snapshot.data,
+          error:
+            "Connection interrupted. Refresh to check current workflow data; your draft is retained.",
+        });
+      },
       emit,
       dispose() {
         disposed = true;
@@ -251,6 +269,8 @@ export function createWorkflows({
     revision?: string,
   ) {
     assertAccess(workflow);
+    if (workflow.owner !== viewer)
+      throw new Error("Only the workflow owner can modify or run it");
     assertOperation(kind);
     const tags = [
       ["h", workflow.channelId],
@@ -433,6 +453,11 @@ export function createWorkflows({
       }
       results.set(event.id, result);
       rebuild();
+    },
+    interrupt() {
+      // Socket recovery retires reads, not editor intent or HTTP receipt interest.
+      for (const owned of views) owned.interrupt();
+      for (const owned of views) owned.emit();
     },
     clear() {
       results.clear();

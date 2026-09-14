@@ -36,7 +36,7 @@ function setup(timeoutMs = 10000) {
     },
   };
   const owner = createOutbox(key.pubkey, { sign, publish }, storage, {
-    needsReceipt: (event) => [30620, 46020].includes(event.kind),
+    needsReceipt: (event) => [30620, 46020, 5].includes(event.kind),
     onReceipt,
     timeoutMs,
   });
@@ -71,7 +71,9 @@ function setup(timeoutMs = 10000) {
         content: "disabled workflow",
         tags: [
           ["h", "channel"],
-          ["d", "workflow"],
+          ...(kind === 5
+            ? [["a", `30620:${key.pubkey}:workflow`]]
+            : [["d", "workflow"]]),
         ],
       }),
   };
@@ -142,7 +144,7 @@ it("receipt waits are bounded and late results after disposal never publish", as
   await vi.advanceTimersByTimeAsync(0);
   expect(late.onReceipt).not.toHaveBeenCalled();
 });
-it("restores signed command intent without sending, exact retry receives only duplicate outcome", async () => {
+it("restores signed command intent for inspection without generic replay", async () => {
   const h = setup();
   const id = h.send(46020);
   await flush();
@@ -164,11 +166,9 @@ it("restores signed command intent without sending, exact retry receives only du
   restored.outbox.retry(id);
   await flush();
   expect(sign).not.toHaveBeenCalled();
-  expect(publish.mock.calls[0]?.[0]).toEqual(h.published());
-  expect(receipt).toHaveBeenCalledExactlyOnceWith(
-    h.published(),
-    "duplicate: already processed",
-  );
+  expect(publish).not.toHaveBeenCalled();
+  expect(receipt).not.toHaveBeenCalled();
+  expect(restored.outbox.snapshot()[0]?.delivery).toBe("unknown");
 });
 it("bounds receipt bytes while streaming before JSON decoding", async () => {
   const cancel = vi.fn();
@@ -201,19 +201,37 @@ it("seen commands can dismiss retained receipts without another publication", as
   expect(h.saved()).toEqual([]);
   expect(h.publish).toHaveBeenCalledTimes(1);
 });
-it("rejection text never journals command secrets; successful retry stays seen", async () => {
-  const h = setup();
-  const id = h.send();
-  await flush();
-  h.reject(new PublishRejected("PRIVATE"));
-  await flush();
-  expect(h.outbox.snapshot()[0]?.delivery).toBe("failed");
-  expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
-  h.outbox.retry(id);
-  await flush();
-  h.observe([h.published()]);
-  h.settle("response:{}");
-  await flush();
-  expect(h.local.snapshot()[0]?.delivery).toBe("seen");
-  expect(h.outbox.snapshot()).toEqual([]);
-});
+it.each([30620, 46020, 5])(
+  "rejection text never journals command secrets and generic retry cannot replay kind %s",
+  async (kind) => {
+    const h = setup();
+    const id = h.send(kind);
+    await flush();
+    h.reject(new PublishRejected("PRIVATE"));
+    await flush();
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed");
+    expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
+    h.outbox.retry(id);
+    await flush();
+    expect(h.publish).toHaveBeenCalledTimes(1);
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("failed");
+  },
+);
+
+it.each([30620, 46020, 5])(
+  "unknown kind %s is inspect-only while dismissal remains available",
+  async (kind) => {
+    const h = setup();
+    const id = h.send(kind);
+    await flush();
+    h.reject(new Error("connection lost"));
+    await flush();
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("unknown");
+    h.outbox.retry(id);
+    await flush();
+    expect(h.publish).toHaveBeenCalledTimes(1);
+    expect(h.outbox.snapshot()[0]?.delivery).toBe("unknown");
+    await h.outbox.dismiss(id);
+    expect(h.outbox.snapshot()).toEqual([]);
+  },
+);

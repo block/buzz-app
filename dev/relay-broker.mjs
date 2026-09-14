@@ -876,7 +876,7 @@ export function relayBrokerPlugin({
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
-            if (filters?.kind !== 9) {
+            if (![7, 9].includes(filters?.kind)) {
               try {
                 validateWorkflowEvent(
                   { ...filters, pubkey: signing ? viewer : filters.pubkey },

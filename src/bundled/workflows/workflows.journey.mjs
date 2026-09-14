@@ -665,3 +665,118 @@ test("both Add actions allocate unused IDs after a very large parsed ID", async 
     parseYaml(await yaml.inputValue()).steps.map((step) => step.id),
   ).toEqual(["step_9007199254740992", "step_1", "step_2"]);
 });
+
+test("real session reconnect retains unsaved YAML and an in-flight returned run ID", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await page.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await page
+    .getByRole("option", { name: "First channel", exact: true })
+    .click();
+  await button("Fixture A helper").click();
+  await page.getByRole("tab", { name: "YAML", exact: true }).click();
+  const yaml = page.getByLabel("Workflow YAML", { exact: true });
+  const original = await yaml.inputValue();
+  const edited = original.replace(
+    "Hello from a fixture",
+    "Unsaved reconnect draft",
+  );
+  expect(edited).not.toBe(original);
+  await yaml.fill(edited);
+  await page.evaluate(() => window.workflowSessionFixture.state("retrying"));
+  await expect(page.getByText(/Connection interrupted/)).toBeVisible();
+  await expect(yaml).toHaveValue(edited);
+  await page.evaluate(() => window.workflowSessionFixture.state("connected"));
+  await button("Refresh configurations").click();
+  await expect(page.getByText(/Connection interrupted/)).toHaveCount(0);
+  await expect(yaml).toHaveValue(edited);
+  await yaml.fill(original);
+  await button("Run now").click();
+  try {
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.workflowSessionFixture.publications()),
+      )
+      .toBe(1);
+    await page.evaluate(() => window.workflowSessionFixture.state("retrying"));
+    await expect(
+      page.getByText("Requesting a run…", { exact: true }),
+    ).toBeVisible();
+  } finally {
+    await page.evaluate(() => window.workflowSessionFixture.settle());
+  }
+  await expect(
+    page.getByText("Run requested. Inspect run history for its result.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByText("Delivery details", { exact: true }).click();
+  await expect(
+    page.getByText("Returned run ID: 33333333-3333-4333-8333-333333333333", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(yaml).toHaveValue(original);
+  await button("Revoke selected channel").click();
+  await expect(yaml).toHaveCount(0);
+  await expect(
+    page.getByRole("region", { name: "Workflow operations" }),
+  ).toHaveCount(0);
+});
+
+test("generic Outbox offers message retry but no workflow replay", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await page.getByRole("combobox", { name: "Channel", exact: true }).click();
+  await page
+    .getByRole("option", { name: "First channel", exact: true })
+    .click();
+  await button("Fixture A helper").click();
+  await button("Run now").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(1);
+  await page.evaluate(() => window.workflowSessionFixture.reject());
+  await expect(
+    page.getByText("Run request was rejected.", { exact: true }),
+  ).toBeVisible();
+  await page.getByText("Outbox · 1 items", { exact: true }).click();
+  const outbox = page
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Outbox ·/ }) });
+  await expect(outbox.getByText(/Not sent/)).toBeVisible();
+  await expect(
+    outbox.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
+  await page.evaluate(() => window.workflowSessionFixture.sendMessage());
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(2);
+  await page.evaluate(() => window.workflowSessionFixture.reject());
+  const message = outbox
+    .getByRole("listitem")
+    .filter({ hasText: "Retryable message" });
+  await expect(message).toContainText("Not sent");
+  await message.getByRole("button", { name: "Retry", exact: true }).click();
+  try {
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.workflowSessionFixture.publications()),
+      )
+      .toBe(3);
+  } finally {
+    await page.evaluate(() => window.workflowSessionFixture.settle());
+  }
+  await expect(message).toContainText("Sent");
+  await expect(
+    outbox.getByRole("button", { name: "Retry", exact: true }),
+  ).toHaveCount(0);
+});

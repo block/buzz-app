@@ -23,7 +23,8 @@ See the [capability contract](../src/features/workflows/types.ts).
 
 The outbox journals intent/signature before publication. A verified echo does
 not replace the result-bearing receipt. Restored commands never run automatically;
-result text stays ephemeral, outside the journal.
+result text stays ephemeral, outside the journal. Workflow intents cannot be replayed
+through generic Outbox Retry either; inspection and dismissal remain available.
 
 **Check saved configuration** resolves an unknown save only when a fresh verified
 head matches its owner, channel, UUID and exact signed revision. Missing/different
@@ -36,7 +37,9 @@ Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.
 
 Reads begin on UI interest and stop on unmount or access loss; no background poll.
-Access loss purges private snapshots before callbacks. Drafts are editor-local,
+Transient socket recovery cancels stale reads but retains the draft and active
+HTTP receipt correlation; refresh checks current data. Actual access loss purges
+private snapshots before callbacks. Drafts are editor-local,
 not durable, and never move between viewers or communities. The broker preserves
 same-origin checks, signature validation, captured principal quotas, cancellation,
 fixed upstream paths and bounded history/receipt bodies.

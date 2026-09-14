@@ -1043,7 +1043,7 @@ export function createRelaySession(
         requests.invalidate();
         agentLibrary.clear();
         archives.clear();
-        workflows.clear();
+        workflows.interrupt();
         channels.staleHeads();
         unread.stale();
       }

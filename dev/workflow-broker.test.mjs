@@ -91,7 +91,7 @@ it("real broker scoped history signs exact GET path/cursor and captured principa
     const first = await connectBrokerTransport(h.base);
     const other = await connectBrokerTransport(h.base, undefined, "secondary");
     expect(h.calls).toHaveLength(0);
-    expect(first.writer.kinds).toEqual([9, 30620, 46020, 5]);
+    expect(first.writer.kinds).toEqual([7, 9, 30620, 46020, 5]);
     await first.workflows.runs(id, cursor, signal());
     await other.workflows.runs(id, undefined, signal());
     await first.workflows.runs(id, undefined, signal());
@@ -254,7 +254,7 @@ it("existing backend signs only canonical workflow sign/publish with exact own e
   }, existingBackend);
   try {
     const t = await connectBrokerTransport(h.base);
-    expect(t.writer.kinds).toEqual([9, 30620, 46020, 5]);
+    expect(t.writer.kinds).toEqual([7, 9, 30620, 46020, 5]);
     for (const input of [
       template(),
       template(46020),

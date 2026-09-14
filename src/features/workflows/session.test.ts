@@ -1,7 +1,14 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import type { RelayEvent } from "../relay/events";
-import { keypair, roster, signed, scriptedTransport } from "../relay/testing";
+import type { LiveCallbacks } from "../relay/live";
+import {
+  flush,
+  keypair,
+  roster,
+  signed,
+  scriptedTransport,
+} from "../relay/testing";
 const channelId = "11111111-1111-4111-8111-111111111111";
 const id = "22222222-2222-4222-8222-222222222222";
 const relay = keypair(),
@@ -23,6 +30,7 @@ afterEach(() => {
 function setup() {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let incoming!: (events: readonly RelayEvent[]) => void;
+  let state!: LiveCallbacks["state"];
   let resolveRuns!: (value: unknown) => void;
   const runs = vi.fn(
     (_id: string, _cursor: unknown, _signal: AbortSignal) =>
@@ -35,6 +43,7 @@ function setup() {
     workflows: { runs },
     subscribe(callbacks) {
       incoming = callbacks.receive;
+      state = callbacks.state;
       return { update() {}, retry() {}, dispose() {} };
     },
   });
@@ -43,6 +52,7 @@ function setup() {
     ...wire,
     ...owner,
     runs,
+    state: (status: "connected" | "retrying") => state({ status, routes: [] }),
     emit: (events: readonly RelayEvent[]) => incoming(events),
     resolveRuns: (value: unknown) => resolveRuns(value),
   };
@@ -294,3 +304,92 @@ it("session fresh definition read resolves a lost save, while ordinary echo does
   expect(sign).toHaveBeenCalledTimes(1);
   expect(publish).toHaveBeenCalledTimes(1);
 });
+
+it("transient reconnect cancels reads without purging authorized snapshots", async () => {
+  const h = setup();
+  h.emit([roster(relay, channelId, [viewer.pubkey], 1)]);
+  h.state("connected");
+  const definitions = h.session.workflows.definitions(channelId);
+  const loading = definitions.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([definition]);
+  await loading;
+  const history = h.session.workflows.runs(reference);
+  const pending = history.refresh();
+  await vi.waitFor(() => expect(h.runs).toHaveBeenCalledTimes(1));
+  h.state("retrying");
+  expect(definitions.snapshot()).toMatchObject({
+    status: "error",
+    data: { items: [{ revision: definition.id }] },
+  });
+  expect(history.snapshot().status).toBe("error");
+  expect(h.runs.mock.calls[0]?.[2].aborted).toBe(true);
+  h.resolveRuns({ runs: [], next: null });
+  await pending;
+  expect(history.snapshot().status).toBe("error");
+  h.state("connected");
+  const refresh = definitions.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  h.next().respond([definition]);
+  await refresh;
+  expect(definitions.snapshot().status).toBe("ready");
+});
+
+it.each(["reconnect", "revoke", "dispose"])(
+  "in-flight run receipt across %s follows session authority",
+  async (transition) => {
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let traffic!: LiveCallbacks;
+    let settle!: (message: string) => void;
+    const publish = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const owner = createRelaySession(
+      {
+        ...wire.transport,
+        writer: {
+          kinds: [46020],
+          sign: async (template) => signed(viewer, template),
+          publish,
+        },
+        workflows: { runs: async () => ({ runs: [], next: null }) },
+        subscribe(callbacks) {
+          traffic = callbacks;
+          return { update() {}, retry() {}, dispose() {} };
+        },
+      },
+      { outboxStorage: { load: () => [], save() {} } },
+    );
+    owners.push(owner);
+    traffic.receive([roster(relay, channelId, [viewer.pubkey], 1)]);
+    traffic.state({ status: "connected", routes: [] });
+    const eventId = owner.session.workflows.trigger({
+      ...reference,
+      yaml: definition.content,
+      revision: definition.id,
+      createdAt: 10,
+    });
+    await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+    if (transition === "reconnect")
+      traffic.state({ status: "retrying", routes: [] });
+    else if (transition === "revoke")
+      traffic.receive([roster(relay, channelId, [], 2)]);
+    else owner.dispose();
+    settle('response:{"run_id":"33333333-3333-4333-8333-333333333333"}');
+    if (transition === "reconnect") {
+      await vi.waitFor(() =>
+        expect(owner.session.workflows.operations.snapshot()[0]).toMatchObject({
+          eventId,
+          outcome: "succeeded",
+          runId: "33333333-3333-4333-8333-333333333333",
+        }),
+      );
+    } else {
+      await flush();
+      expect(owner.session.workflows.operations.snapshot()).toEqual([]);
+    }
+  },
+);

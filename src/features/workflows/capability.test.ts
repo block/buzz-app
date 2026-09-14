@@ -328,3 +328,20 @@ it("dismissal cannot unlock an active echoed command", async () => {
   await h.capability.operations.dismiss(operation);
   expect(h.capability.operations.snapshot()).toEqual([]);
 });
+
+it.each(["save", "trigger", "delete"] as const)(
+  "foreign definitions stay browsable but cannot be used for %s",
+  async (action) => {
+    const h = setup();
+    const foreign = { ...h.definition, owner: keypair().pubkey };
+    const write =
+      action === "save"
+        ? () => h.capability.save({ channelId, yaml, existing: foreign })
+        : () => h.capability[action](foreign);
+    expect(write).toThrow(/owner/i);
+    await flush();
+    expect(h.sign).not.toHaveBeenCalled();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(() => h.capability.runs(foreign)).not.toThrow();
+  },
+);

@@ -17,7 +17,7 @@ import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
 import { ByteLru, byteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
-import { createMediaPreparation } from "./media";
+import { createMediaPreparation, saveData } from "./media";
 
 type Listener = () => void;
 type WindowState = {
@@ -321,21 +321,32 @@ export function createChannelStore(
     if (previous >= 0) mediaIntents.splice(previous, 1);
     mediaIntents.unshift(channelId);
     mediaIntents.length = Math.min(3, mediaIntents.length);
-    const urls = mediaIntents.flatMap((id) => {
-      const rows = heads.peek(id)?.rows ?? windows.get(id)?.snapshot.rows ?? [];
-      const authors = rows.slice(-12).reverse().flatMap(rowProfileIds);
-      return authors.flatMap((author) => {
-        const picture = directory.queries.snapshot().get(author)?.picture;
-        const url = picture && transport?.media(picture);
-        return url ? [url] : [];
-      });
-    });
+    const urls = mediaIntents.flatMap(avatarUrlsFor);
     media.prepare(urls);
   }
-  async function fetchProfiles(rows: readonly ChannelMessage[]) {
+  /** Background head reads warm request-level avatars without displacing the
+   * focused channel's intent window. */
+  function prepareWarmMedia(channelId: string) {
+    media.warm(avatarUrlsFor(channelId));
+  }
+  function avatarUrlsFor(id: string): string[] {
+    const rows = heads.peek(id)?.rows ?? windows.get(id)?.snapshot.rows ?? [];
+    const authors = rows.slice(-12).reverse().flatMap(rowProfileIds);
+    return authors.flatMap((author) => {
+      const picture = directory.queries.snapshot().get(author)?.picture;
+      const url = picture && transport?.media(picture);
+      return url ? [url] : [];
+    });
+  }
+  async function fetchProfiles(
+    rows: readonly ChannelMessage[],
+    warmChannelId?: string,
+  ) {
     try {
       await directory.ensure(rows.flatMap(rowProfileIds), "background");
       if (!disposed && intent) prepareMedia(intent);
+      // Profiles are the prerequisite for resolving a channel's avatar URLs.
+      if (!disposed && warmChannelId) prepareWarmMedia(warmChannelId);
     } catch {
       // Names are optional for channel rendering. Missing profiles remain retryable.
     }
@@ -463,7 +474,10 @@ export function createChannelStore(
     // Durable message warmth must not wait behind optional name enrichment.
     const savedProfiles =
       generation === epoch ? save(channelId, head) : undefined;
-    void fetchProfiles(head.rows).then(() => {
+    void fetchProfiles(
+      head.rows,
+      priority === "background" && intent !== channelId ? channelId : undefined,
+    ).then(() => {
       if (generation === epoch) save(channelId, head, savedProfiles);
     });
     if (intent === channelId) prepareMedia(channelId);
@@ -873,7 +887,7 @@ export function createChannelStore(
     return best;
   }
   async function drainWarm() {
-    if (warming) return;
+    if (warming || saveData()) return;
     warming = true;
     try {
       while (warmCandidates.size) {
@@ -978,6 +992,7 @@ export function createChannelStore(
       intent = channelId;
       const head = heads.get(channelId);
       if (head) prepareMedia(channelId);
+      if (saveData()) return;
       if (
         preparing ||
         (head && !head.cached && now() - head.savedAt < FRESH_FOR)

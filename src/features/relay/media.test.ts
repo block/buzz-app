@@ -1,5 +1,5 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
-import { createMediaPreparation } from "./media";
+import { createMediaPreparation, saveData, wasIntended } from "./media";
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -39,6 +39,68 @@ it("bounds speculation, charges decoded pixels, and releases active image timers
   second.onload();
   expect(second.decode).not.toHaveBeenCalled();
   media.dispose();
-  expect(media.stats()).toEqual({ entries: 0, bytes: 0, active: 0, queued: 0 });
+  expect(media.stats()).toEqual({
+    entries: 0,
+    bytes: 0,
+    active: 0,
+    queued: 0,
+    prefetched: 0,
+  });
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("prefetch warming appends across channels instead of replacing the queue", () => {
+  const created: FakeImage[] = [];
+  class FakeImage {
+    onload: (() => void) | null = null;
+    onerror: (() => void) | null = null;
+    naturalWidth = 100;
+    naturalHeight = 100;
+    src = "";
+    decode = vi.fn(async () => {});
+    constructor() {
+      created.push(this);
+    }
+  }
+  vi.stubGlobal("Image", FakeImage);
+  const media = createMediaPreparation();
+  media.prepare(["focus-1", "focus-2"]);
+  // prepare() immediately activates two; a warm pass appends behind them.
+  media.warm(["warm-1", "warm-2", "warm-3"]);
+  expect(media.stats()).toMatchObject({ queued: 3, prefetched: 3 });
+  // A focused prepare intent replaces queued speculation.
+  media.prepare(["focus-3"]);
+  expect(media.stats()).toMatchObject({ queued: 1, prefetched: 3 });
+  expect(wasIntended("warm-1")).toBe(true);
+});
+
+it("Save-Data disables warming but nothing else", () => {
+  const created: FakeImage[] = [];
+  class FakeImage {
+    onload: (() => void) | null = null;
+    src = "";
+    decode = vi.fn(async () => {});
+    constructor() {
+      created.push(this);
+    }
+  }
+  vi.stubGlobal("Image", FakeImage);
+  vi.stubGlobal("navigator", { connection: { saveData: true } });
+  expect(saveData()).toBe(true);
+  const media = createMediaPreparation();
+  media.prepare(["a", "b"]);
+  media.warm(["c"]);
+  expect(media.stats()).toMatchObject({
+    active: 0,
+    queued: 0,
+    prefetched: 0,
+  });
+  expect(created).toHaveLength(0);
+
+  vi.stubGlobal("navigator", { connection: { saveData: false } });
+  media.prepare(["a"]);
+  expect(created).toHaveLength(1);
+
+  vi.stubGlobal("navigator", {});
+  expect(saveData()).toBe(false);
 });

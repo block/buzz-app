@@ -79,11 +79,12 @@ scripts/bootstrap-worktree.sh /absolute/path/to/source/checkout
 ```
 
 The idempotent script copies the source checkout's git-ignored `.env.local`
-without overwriting an existing target, then installs locked dependencies in the
-new worktree. It rejects checkouts from another repository. Keychain credentials
-remain machine-shared; do not copy private keys, `node_modules`, caches, build
-output, `.npmrc`, or other ignored files. Install hooks separately as described
-below so existing custom hooks are never silently replaced.
+without overwriting an existing target, then uses the new worktree's Hermit proxy
+to run `bin/pnpm install --frozen-lockfile`. It rejects checkouts from another
+repository. Keychain credentials and pnpm's package cache remain machine-shared;
+do not copy private keys, `node_modules`, build output, `.npmrc`, or other ignored
+files. Install hooks separately as described below so existing custom hooks are
+never silently replaced.
 
 ## Interactive product iteration
 

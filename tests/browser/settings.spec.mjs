@@ -127,6 +127,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     ).toBeFocused();
     await tab();
     await expect(
+      sections.getByRole("button", { name: "Notifications", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
       sections.getByRole("button", { name: "Language", exact: true }),
     ).toBeFocused();
     await tab();
@@ -158,6 +162,7 @@ test("language selection applies Brazilian Portuguese and persists after reload"
   ).toBeVisible();
   await expect(button(page, "Início")).toBeVisible();
   await expect(button(page, "Mensagens")).toBeVisible();
+  await expect(button(page, "Notificações")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("lang", "pt-BR");
 
   await page.reload();

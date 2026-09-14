@@ -1,6 +1,13 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
-import { Blocks, Settings2, UserRound, Palette, Languages } from "lucide-react";
+import {
+  Blocks,
+  Settings2,
+  UserRound,
+  Palette,
+  Bell,
+  Languages,
+} from "lucide-react";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
@@ -10,11 +17,14 @@ import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { LanguageSettings } from "./LanguageSettings";
 import { useTranslation } from "react-i18next";
+import { NotificationSettings } from "./NotificationSettings";
+import type { NotificationsService } from "../features/notifications/service";
 
 const sections = [
   { id: "profile", label: "settings.profile", icon: UserRound },
   { id: "plugins", label: "settings.plugins", icon: Blocks },
   { id: "appearance", label: "settings.appearance", icon: Palette },
+  { id: "notifications", label: "settings.notifications", icon: Bell },
   { id: "language", label: "settings.language", icon: Languages },
 ] as const;
 
@@ -22,12 +32,14 @@ export function Settings({
   plugins,
   communities,
   appearance,
+  notifications,
   navigation,
   onSection,
 }: {
   plugins: PluginManager;
   communities: Communities;
   appearance: Appearance;
+  notifications: NotificationsService;
   navigation?:
     | import("../features/navigation/service").PageNavigation
     | undefined;
@@ -94,6 +106,9 @@ export function Settings({
           ))}
         </nav>
         <div className="min-w-0">
+          <div hidden={selected !== "notifications"}>
+            <NotificationSettings notifications={notifications} />
+          </div>
           <div hidden={selected !== "appearance"}>
             <AppearanceSettings appearance={appearance} />
           </div>

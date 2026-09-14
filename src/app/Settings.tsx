@@ -1,6 +1,13 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
-import { Blocks, Settings2, UserRound, Palette, Bell } from "lucide-react";
+import {
+  Blocks,
+  Settings2,
+  UserRound,
+  Palette,
+  Bell,
+  Languages,
+} from "lucide-react";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
@@ -8,14 +15,17 @@ import { ProfileSettings } from "./ProfileSettings";
 
 import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
+import { LanguageSettings } from "./LanguageSettings";
+import { useTranslation } from "react-i18next";
 import { NotificationSettings } from "./NotificationSettings";
 import type { NotificationsService } from "../features/notifications/service";
 
 const sections = [
-  { id: "profile", label: "Profile", icon: UserRound },
-  { id: "plugins", label: "Plugins", icon: Blocks },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "profile", label: "settings.profile", icon: UserRound },
+  { id: "plugins", label: "settings.plugins", icon: Blocks },
+  { id: "appearance", label: "settings.appearance", icon: Palette },
+  { id: "notifications", label: "settings.notifications", icon: Bell },
+  { id: "language", label: "settings.language", icon: Languages },
 ] as const;
 
 export function Settings({
@@ -35,6 +45,7 @@ export function Settings({
     | undefined;
   onSection?: (section: string) => void;
 }) {
+  const { t } = useTranslation();
   const [selected, setSelected] =
     useState<(typeof sections)[number]["id"]>("profile");
   const requestedSection =
@@ -68,13 +79,13 @@ export function Settings({
             id="settings-title"
             className="m-0 text-3xl font-medium tracking-tight"
           >
-            Settings
+            {t("settings.title")}
           </h1>
         </div>
       </div>
       <div className="grid gap-6 @min-[36rem]:grid-cols-[10rem_minmax(0,1fr)]">
         <nav
-          aria-label="Settings sections"
+          aria-label={t("settings.sections")}
           className="flex flex-wrap gap-1 self-start rounded-2xl border border-shell-edge/80 bg-surface/60 p-2 @min-[36rem]:flex-col"
         >
           {sections.map(({ id, label, icon: Icon }) => (
@@ -90,7 +101,7 @@ export function Settings({
               }}
             >
               <Icon aria-hidden="true" size={18} strokeWidth={1.6} />
-              {label}
+              {t(label)}
             </button>
           ))}
         </nav>
@@ -103,6 +114,9 @@ export function Settings({
           </div>
           <div hidden={selected !== "profile"}>
             <ProfileSettings communities={communities} />
+          </div>
+          <div hidden={selected !== "language"}>
+            <LanguageSettings />
           </div>
           <div hidden={selected !== "plugins"}>
             <section aria-labelledby="plugin-settings-title">

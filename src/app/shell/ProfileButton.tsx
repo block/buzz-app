@@ -7,6 +7,7 @@ import {
 } from "react";
 import { Settings, UserRound } from "lucide-react";
 import type { Communities } from "../../features/communities/service";
+import { useTranslation } from "react-i18next";
 
 export function ProfileButton({
   communities,
@@ -17,6 +18,7 @@ export function ProfileButton({
   settingsSelected: boolean;
   onSettings(): void;
 }) {
+  const { t } = useTranslation();
   const { profile } = useSyncExternalStore(
     communities.subscribe,
     communities.snapshot,
@@ -54,10 +56,10 @@ export function ProfileButton({
           event.currentTarget.focus();
           setOpen((value) => !value);
         }}
-        aria-label="Your profile"
+        aria-label={t("shell.yourProfile")}
         aria-expanded={open}
         aria-controls={id}
-        title={profile.name || "Your profile"}
+        title={profile.name || t("shell.yourProfile")}
         className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-0 bg-surface/65 p-0 text-ink"
       >
         {/* Keep mouse-origin Tab traversal rooted at the button in WebKit. */}
@@ -80,12 +82,12 @@ export function ProfileButton({
       </button>
       <nav
         id={id}
-        aria-label="Your account"
+        aria-label={t("shell.yourAccount")}
         hidden={!open}
         className="absolute top-full right-0 z-50 mt-2 w-56 max-w-[calc(100vw-2rem)] rounded-2xl border border-line bg-surface p-2 shadow-surface"
       >
         <p className="m-0 truncate px-3 py-2 text-sm font-medium">
-          {profile.name || "Your account"}
+          {profile.name || t("shell.yourAccount")}
         </p>
         <button
           type="button"
@@ -98,7 +100,7 @@ export function ProfileButton({
           }}
         >
           <Settings aria-hidden="true" size={17} />
-          Settings
+          {t("shell.settings")}
         </button>
       </nav>
     </div>

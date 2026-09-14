@@ -77,7 +77,7 @@ export function useAppNavigation(services: AppServices) {
   if (
     target.kind === "settings" &&
     target.section &&
-    !["profile", "plugins", "appearance", "notifications"].includes(
+    !["profile", "plugins", "appearance", "notifications", "language"].includes(
       target.section,
     )
   )

@@ -8,6 +8,8 @@ import { ProfileButton } from "./ProfileButton";
 import { PageSearch } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
+import { useTranslation } from "react-i18next";
+import { localizedPageLabel } from "../../features/localization/service";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 
@@ -36,6 +38,7 @@ export function AppShell({
   companion?: ReactNode;
   children: ReactNode;
 }) {
+  const { t } = useTranslation();
   return (
     <div
       data-shell-tone={tone}
@@ -51,7 +54,7 @@ export function AppShell({
         }}
         className="sr-only focus:not-sr-only focus:absolute focus:z-50 focus:rounded-lg focus:bg-surface focus:p-3"
       >
-        Skip to content
+        {t("shell.skipToContent")}
       </a>
       <header
         data-tauri-drag-region
@@ -64,7 +67,7 @@ export function AppShell({
             onSelect={onCommunitySelect}
           />
         </div>
-        <nav aria-label="Pages" className="shell-pages">
+        <nav aria-label={t("shell.pages")} className="shell-pages">
           <button
             type="button"
             className="shell-tab"
@@ -72,7 +75,7 @@ export function AppShell({
             onClick={() => onSelect("home")}
           >
             <House aria-hidden="true" size={15} strokeWidth={1.7} />
-            Home
+            {t("shell.home")}
           </button>
           {orderPages(pages).map((page) => {
             const { label, icon: Icon } = pagePresentation(page);
@@ -85,7 +88,7 @@ export function AppShell({
                 onClick={() => onSelect(page.key)}
               >
                 <Icon aria-hidden="true" size={15} strokeWidth={1.7} />
-                {label}
+                {localizedPageLabel(page.key, label, t)}
               </button>
             );
           })}

@@ -36,10 +36,6 @@ export type ThreadPanelProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    closeButton.current?.focus();
-  }, []);
   return (
     <aside
       className={styles.thread}
@@ -51,17 +47,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
         }
       }}
     >
-      <header className={styles.heading}>
-        <strong>Thread</strong>
-        <button
-          ref={closeButton}
-          type="button"
-          aria-label="Close thread"
-          onClick={props.close}
-        >
-          <X size={18} aria-hidden="true" />
-        </button>
-      </header>
+      <ThreadHeader close={props.close} />
       <OwnedThreadPanel
         key={messageViewKey(
           props.session,
@@ -72,6 +58,25 @@ export function ThreadPanel(props: ThreadPanelProps) {
         {...props}
       />
     </aside>
+  );
+}
+function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeButton.current?.focus();
+  }, []);
+  return (
+    <header className={styles.heading}>
+      <strong>Thread</strong>
+      <button
+        ref={closeButton}
+        type="button"
+        aria-label="Close thread"
+        onClick={close}
+      >
+        <X size={18} aria-hidden="true" />
+      </button>
+    </header>
   );
 }
 function OwnedThreadPanel({

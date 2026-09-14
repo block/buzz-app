@@ -356,7 +356,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
   });
 });
 
-it("the actual message reply button opens that message and retains the trigger focus target", () => {
+it("the actual message reply button opens its selected message and canonical thread root while retaining the trigger focus target", () => {
   const open = vi.fn(),
     focus = vi.fn();
   const tree = MessageRow({
@@ -374,7 +374,23 @@ it("the actual message reply button opens that message and retains the trigger f
     ) => void
   )({ currentTarget: { focus } });
   expect(focus).toHaveBeenCalledTimes(1);
-  expect(open).toHaveBeenCalledExactlyOnceWith(row.id);
+  expect(open).toHaveBeenCalledExactlyOnceWith(row.id, row.id);
+
+  const nested = MessageRow({
+    row: { ...row, id: "b".repeat(64), threadRootId: row.id },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    onOpenThread: open,
+  });
+  (
+    button(nested, "View thread: 2 replies").props.onClick as (
+      event: unknown,
+    ) => void
+  )({ currentTarget: { focus } });
+  expect(open).toHaveBeenLastCalledWith("b".repeat(64), row.id);
 });
 
 function messagesHarness() {

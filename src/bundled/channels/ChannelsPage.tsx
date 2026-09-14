@@ -276,7 +276,7 @@ function ChannelWorkspace({
       ? { ...thread, navigation: undefined }
       : undefined;
   if (showingThread?.navigation) priorRoutedThread.current = showingThread;
-  else if (!navigation || (requestedMessage && !exact))
+  else if (!showingThread && (!navigation || (requestedMessage && !exact)))
     showingThread = priorRoutedThread.current;
   else priorRoutedThread.current = undefined;
   useEffect(() => {
@@ -311,14 +311,14 @@ function ChannelWorkspace({
     if (opened && !panel) open(undefined);
   }, [opened, panel, open]);
   const openThread = useCallback(
-    (messageId: string) => {
+    (messageId: string, threadRootId: string) => {
       if (!currentId) return;
       const target = navigator?.snapshot().entry.target;
       if (
         target?.kind === "conversation" &&
         target.channelId === currentId &&
         target.messageId === messageId &&
-        target.threadRootId === messageId
+        target.threadRootId === threadRootId
       )
         return;
       threadTrigger.current =
@@ -332,7 +332,7 @@ function ChannelWorkspace({
           kind: "conversation",
           channelId: currentId,
           messageId,
-          threadRootId: messageId,
+          threadRootId,
           scope: {
             viewer,
             communityOrigin: scope.slice(0, -(viewer.length + 1)),
@@ -710,7 +710,7 @@ const ChannelBody = memo(function ChannelBody({
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
-  onOpenThread(messageId: string): void;
+  onOpenThread(messageId: string, threadRootId: string): void;
 }) {
   const window = useChannelWindow(queries.channels, channelId);
   useEffect(() => {

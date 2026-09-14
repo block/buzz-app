@@ -21,7 +21,7 @@ export function BuzzLinkPreview({
   const [error, setError] = useState(false);
   useEffect(() => {
     try {
-      const owned = session.thread(channelId, messageId);
+      const owned = session.thread(channelId, messageId, { exact: true });
       setView(owned);
       void owned.refresh();
       return () => owned.dispose();
@@ -51,9 +51,12 @@ function PreviewContent({
     view.snapshot,
     view.snapshot,
   );
-  const message = [snapshot.root, ...snapshot.replies].find(
-    (row) => row?.id === messageId,
-  );
+  const message =
+    snapshot.target?.id === messageId
+      ? snapshot.target
+      : [snapshot.root, ...snapshot.replies].find(
+          (row) => row?.id === messageId,
+        );
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -64,10 +67,6 @@ function PreviewContent({
     session.channels.list,
     session.channels.list,
   );
-  useEffect(() => {
-    if (snapshot.status === "ready" && !message && snapshot.canLoadMore)
-      void view.loadMore();
-  }, [snapshot, message, view]);
   const authorId = message?.authorId;
   useEffect(() => {
     if (authorId)
@@ -79,8 +78,10 @@ function PreviewContent({
   // read that never found the target) fails honestly instead of loading forever.
   const stopped =
     snapshot.status === "error" ||
+    snapshot.targetStatus === "error" ||
+    snapshot.targetStatus === "unavailable" ||
     (snapshot.status === "idle" && snapshot.error !== undefined) ||
-    (snapshot.status === "ready" && !snapshot.canLoadMore);
+    (snapshot.status === "ready" && !message && !snapshot.canLoadMore);
   if (snapshot.status !== "ready" || !message || !snapshot.root)
     return (
       <span role="status">
@@ -90,6 +91,8 @@ function PreviewContent({
   const profile = profiles.get(message.authorId);
   const name = profile?.name ?? message.authorId.slice(0, 10);
   const date = new Date(message.createdAt * 1000);
+  if (!Number.isFinite(date.getTime()))
+    return <span role="status">Message preview unavailable.</span>;
   const channel = channels.channels.find(
     (item) => item.id === message.channelId,
   );

@@ -111,6 +111,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     panel.locator(`[data-message-id="${target.id}"]`),
   ).toBeInViewport();
   await button(page, "Close thread").click();
+  await expect(link).toBeFocused();
   await row.getByRole("link", { name: "#Beta", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),

@@ -338,6 +338,11 @@ function ChannelWorkspace({
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
         });
         if (!target) return false;
+        if (target.kind === "conversation" && target.messageId)
+          threadTrigger.current =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null;
         setThread(undefined);
         open(undefined);
         void navigator.open(target);

@@ -15,6 +15,39 @@ function validUrl(url: string): boolean {
 
 const unescapeLink = (text: string) => text.replace(/\\([[\]()\\])/g, "$1");
 
+function trimBareUrl(candidate: string) {
+  const balance = new Map([
+    [")", { open: 0, close: 0 }],
+    ["]", { open: 0, close: 0 }],
+    ["}", { open: 0, close: 0 }],
+  ]);
+  for (const char of candidate) {
+    const pair =
+      char === "(" || char === ")"
+        ? balance.get(")")
+        : char === "[" || char === "]"
+          ? balance.get("]")
+          : char === "{" || char === "}"
+            ? balance.get("}")
+            : undefined;
+    if (pair)
+      pair[char === "(" || char === "[" || char === "{" ? "open" : "close"]++;
+  }
+  let end = candidate.length;
+  while (end > 0) {
+    const char = candidate[end - 1] ?? "";
+    if (/[.,;:!?]/.test(char)) {
+      end--;
+      continue;
+    }
+    const pair = balance.get(char);
+    if (!pair || pair.close <= pair.open) break;
+    pair.close--;
+    end--;
+  }
+  return candidate.slice(0, end);
+}
+
 /** Find the wrapper's end without cutting parentheses out of a URL. */
 function closingParenthesis(content: string, start: number, escaped: boolean) {
   let depth = 1;
@@ -82,7 +115,7 @@ export function messageLinkParts(
     parts.push({ text: content.slice(offset, match.index) });
     const wrapped = match[0].startsWith("<");
     const candidate = wrapped ? match[0].slice(1, -1) : match[0];
-    const url = wrapped ? candidate : candidate.replace(/[.,;:!?)\]}]+$/, "");
+    const url = wrapped ? candidate : trimBareUrl(candidate);
     if (validUrl(url)) {
       onLink?.(
         match.index,

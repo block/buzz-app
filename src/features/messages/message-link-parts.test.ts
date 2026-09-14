@@ -64,6 +64,28 @@ it("keeps ordinary link punctuation outside the destination and leaves prose ava
   );
 });
 
+it("keeps balanced bare URL delimiters in the decorated range and trims only unmatched closers", () => {
+  const balanced = "https://en.wikipedia.org/wiki/Function_(mathematics)";
+  const unmatched = "https://example.com/docs)";
+  const content = `See ${balanced}, then ${unmatched}.`;
+  const ranges: { start: number; end: number; url: string }[] = [];
+  const parts = messageLinkParts(content, undefined, (start, end, url) =>
+    ranges.push({ start, end, url }),
+  );
+  expect(parts.filter((part) => part.url)).toEqual([
+    { text: balanced, url: balanced },
+    {
+      text: "https://example.com/docs",
+      url: "https://example.com/docs",
+    },
+  ]);
+  expect(ranges.map(({ start, end }) => content.slice(start, end))).toEqual([
+    balanced,
+    "https://example.com/docs",
+  ]);
+  expect(parts.map((part) => part.text).join("")).toBe(content);
+});
+
 it.each([
   "[this shadcdn/ui clone](https://github.com/duobaseio/forui)",
   "[this shadcdn/ui clone](<https://github.com/duobaseio/forui>)",

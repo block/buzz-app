@@ -1,4 +1,5 @@
 import {
+  useRef,
   useState,
   useSyncExternalStore,
   type ReactNode,
@@ -61,6 +62,7 @@ export function MessageLink({
   const renderer = resolveLink(url, renderers);
   const [unavailable, setUnavailable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
+  const trigger = useRef<HTMLAnchorElement>(null);
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination =
@@ -80,6 +82,8 @@ export function MessageLink({
     onClick: (event: MouseEvent<HTMLAnchorElement>) => {
       if (internal) {
         event.preventDefault();
+        if (trigger.current?.isConnected)
+          trigger.current.focus({ preventScroll: true });
         const opened = onOpenLink(url);
         setUnavailable(!opened);
         if (opened) setPreviewOpen(false);
@@ -98,6 +102,8 @@ export function MessageLink({
       ? (event: MouseEvent<HTMLAnchorElement>) => {
           if (event.button === 1) {
             event.preventDefault();
+            if (trigger.current?.isConnected)
+              trigger.current.focus({ preventScroll: true });
             const opened = onOpenLink(url);
             setUnavailable(!opened);
             if (opened) setPreviewOpen(false);
@@ -114,6 +120,7 @@ export function MessageLink({
     );
     const element = interactive ? (
       <a
+        ref={trigger}
         href={url}
         aria-label={label}
         title={!preview ? url : undefined}

@@ -83,7 +83,7 @@ const root: ChannelMessage = {
   reactions: [],
   replyCount: 0,
 };
-function setup(snapshot: ThreadSnapshot) {
+function setup(snapshot: ThreadSnapshot, messageId = root.id) {
   Object.assign(hooks, {
     refs: [],
     ref: 0,
@@ -100,8 +100,9 @@ function setup(snapshot: ThreadSnapshot) {
     loadMore: vi.fn(async () => {}),
     dispose: vi.fn(),
   } satisfies ThreadView;
+  const thread = vi.fn(() => view);
   const session = {
-    thread: vi.fn(() => view),
+    thread,
     profiles: {
       subscribe: () => () => {},
       snapshot: () => new Map(),
@@ -117,7 +118,7 @@ function setup(snapshot: ThreadSnapshot) {
   BuzzLinkPreview({
     session,
     channelId: "channel",
-    messageId: root.id,
+    messageId,
   });
   for (const effect of hooks.pending.splice(0)) effect();
   // Re-render the outer component now that the effect allocated the view, then
@@ -126,15 +127,15 @@ function setup(snapshot: ThreadSnapshot) {
   const rendered = BuzzLinkPreview({
     session,
     channelId: "channel",
-    messageId: root.id,
+    messageId,
   }) as ReactElement;
   const child = elements(rendered).find((e) => typeof e.type === "function");
-  if (!child) return rendered;
+  if (!child) throw new Error("Missing preview content");
   hooks.ref = hooks.index = hooks.effect = 0;
   const render = child.type as (props: unknown) => ReactElement;
   const tree = render(child.props);
   for (const effect of hooks.pending.splice(0)) effect();
-  return tree;
+  return { tree, thread };
 }
 const base: ThreadSnapshot = {
   status: "idle",
@@ -147,12 +148,17 @@ const base: ThreadSnapshot = {
 it("does not paint the seed root until the snapshot reconciles edits and deletions", () => {
   // A seeded but still-loading view exposes the raw root; a cached deletion or
   // edit is a different event that only folds in once the read reaches "ready".
-  const seeded = setup({ ...base, status: "loading", root, canLoadMore: true });
+  const seeded = setup({
+    ...base,
+    status: "loading",
+    root,
+    canLoadMore: true,
+  }).tree;
   expect(text(seeded)).toBe("Loading message…");
   expect(elements(seeded).some((e) => e.type === "strong")).toBe(false);
-  const idleSeed = setup({ ...base, status: "idle", root });
+  const idleSeed = setup({ ...base, status: "idle", root }).tree;
   expect(text(idleSeed)).toBe("Loading message…");
-  const ready = setup({ ...base, status: "ready", root });
+  const ready = setup({ ...base, status: "ready", root }).tree;
   expect(elements(ready).some((e) => e.type === "strong")).toBe(true);
 });
 it("reports terminal unavailability instead of loading forever", () => {
@@ -162,14 +168,63 @@ it("reports terminal unavailability instead of loading forever", () => {
     ...base,
     status: "idle",
     error: "This channel is no longer available.",
-  });
+  }).tree;
   expect(text(denied)).toBe("Message preview unavailable.");
-  const failed = setup({ ...base, status: "error", error: "read failed" });
+  const failed = setup({
+    ...base,
+    status: "error",
+    error: "read failed",
+  }).tree;
   expect(text(failed)).toBe("Message preview unavailable.");
-  const exhausted = setup({ ...base, status: "ready", root: undefined });
+  const exhausted = setup({
+    ...base,
+    status: "ready",
+    root: undefined,
+  }).tree;
   expect(text(exhausted)).toBe("Message preview unavailable.");
 });
 it("keeps loading while a read is genuinely in flight", () => {
-  const loading = setup({ ...base, status: "loading", canLoadMore: true });
+  const loading = setup({
+    ...base,
+    status: "loading",
+    canLoadMore: true,
+  }).tree;
   expect(text(loading)).toBe("Loading message…");
+});
+it("renders the exact target independently of bounded thread replies", () => {
+  const target = {
+    ...root,
+    id: "c".repeat(64),
+    content: "reply beyond bounded traversal",
+    threadRootId: root.id,
+  };
+  const result = setup(
+    {
+      ...base,
+      status: "ready",
+      root,
+      target,
+      targetStatus: "ready",
+    },
+    target.id,
+  );
+  expect(result.thread).toHaveBeenCalledWith("channel", target.id, {
+    exact: true,
+  });
+  expect(
+    elements(result.tree).some(
+      (element) => element.props.children === "reply beyond bounded traversal",
+    ),
+  ).toBe(true);
+});
+it("fails safely when an exact target timestamp is outside Date range", () => {
+  const target = { ...root, createdAt: 8_640_000_000_001 };
+  const result = setup({
+    ...base,
+    status: "ready",
+    root,
+    target,
+    targetStatus: "ready",
+  });
+  expect(text(result.tree)).toBe("Message preview unavailable.");
 });

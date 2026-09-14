@@ -261,7 +261,7 @@ for retry, rather than silently opening another page.
 Pages receive optional `navigation` in `PageProps`. Ordinary pages acknowledge a
 successful mount inside the render boundary. Pages declaring `handlesNavigation`
 acknowledge their domain presentation with `navigation.complete(...)`; Channels
-waits for its requested channel window. `navigation.resolve(target)` normalizes a
+waits for its requested channel window or exact-message reveal/focus. `navigation.resolve(target)` normalizes a
 pending default destination within the same visit, caller and original deadline;
 it does not start competing navigation. Normalization revokes the old request.
 
@@ -289,8 +289,9 @@ retain their community and use the recipient's viewer. Both pass through existin
 navigation admission and session ownership checks. Message targets open their
 verified thread, reveal the exact message after bounded history loading, and only
 then acknowledge navigation. Supplied root hints do not override verified events.
-Missing or unavailable messages report failure. Native OS deep-link and
-notification-click ingress remain outside this slice.
+Missing or unavailable messages report failure. Ingress adapters must reuse this
+validated target/completion lifecycle. Native OS deep-link and notification-click
+ingress remain outside this slice.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the

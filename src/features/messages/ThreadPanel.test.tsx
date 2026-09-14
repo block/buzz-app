@@ -1,3 +1,4 @@
+import { useReading } from "./use-reading";
 import { beforeEach, expect, it, vi } from "vitest";
 import { isValidElement, type ReactElement, type ReactNode } from "react";
 import { ThreadPanel } from "./ThreadPanel";
@@ -7,10 +8,12 @@ import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import type { ChannelMessage } from "../relay/contracts";
-import type { PageNavigation } from "../navigation/service";
 
 // Shallow production-boundary checks. These invoke returned handlers and effect
 // lifetimes; they do not claim browser layout, focus, or React StrictMode validation.
+// Reading geometry/dwell has its own real-hook boundary suite. This fixture
+// deliberately supplies only the DOM shape needed for positioning.
+vi.mock("./use-reading", () => ({ useReading: vi.fn() }));
 const hooks = vi.hoisted(() => ({
   refs: [] as { current: unknown }[],
   ref: 0,
@@ -137,7 +140,7 @@ function setup() {
     media: () => undefined,
   } as unknown as RelaySession;
   const close = vi.fn();
-  function render(navigation?: PageNavigation) {
+  function render() {
     hooks.ref = hooks.index = hooks.effect = 0;
     const scoped = ThreadPanel({
       session,
@@ -147,7 +150,6 @@ function setup() {
       messageId: row.id,
       close,
       onOpenLink: () => false,
-      navigation,
     });
     return (
       scoped.type as (
@@ -195,24 +197,6 @@ it("allocates only in the committed effect and disposes each owned view across e
   h.unmount();
   expect(h.view.dispose).toHaveBeenCalledTimes(2);
 });
-it("navigation retry allocates a fresh reader without presenting stale results", () => {
-  const h = setup();
-  const navigation = linkedNavigation();
-  h.render(navigation);
-  h.effects();
-  h.render(navigation);
-  h.effects();
-  expect(h.thread).toHaveBeenCalledTimes(1);
-  const retry = { ...navigation, signal: new AbortController().signal };
-  const pending = h.render(retry);
-  expect(
-    elements(pending).some((e) => e.props.children === "Loading thread…"),
-  ).toBe(true);
-  h.effects();
-  expect(h.view.dispose).toHaveBeenCalledTimes(1);
-  expect(h.thread).toHaveBeenCalledTimes(2);
-  expect(h.view.refresh).toHaveBeenCalledTimes(2);
-});
 it("allocation failure exposes an effective retry rather than leaving a spinner", () => {
   const h = setup();
   h.thread.mockImplementationOnce(() => {
@@ -245,7 +229,14 @@ it("loads history automatically with error-only retry and no routine history con
   hooks.effects = [];
   hooks.refs = [];
   hooks.states = [];
+  vi.mocked(useReading).mockClear();
   const tree = render();
+  expect(useReading).toHaveBeenCalledWith({
+    session: h.session,
+    channelId: "channel",
+    scroller: expect.objectContaining({ current: null }),
+    settled: expect.objectContaining({ current: false }),
+  });
   h.effects();
   expect(h.ensure).toHaveBeenCalledExactlyOnceWith(
     [row.authorId],
@@ -374,13 +365,13 @@ it("the actual message reply button opens that message and retains the trigger f
   expect(open).toHaveBeenCalledExactlyOnceWith(row.id);
 });
 
-function messagesHarness(navigation?: PageNavigation) {
+function messagesHarness() {
   const h = setup();
   h.render();
   h.effects();
   const child = elements(h.render()).find((e) => typeof e.type === "function");
   if (!child) throw new Error("Missing thread messages");
-  const props = { ...child.props, navigation };
+  const props = child.props;
   const component = child.type as (
     props: Record<string, unknown>,
   ) => ReactElement;
@@ -389,10 +380,6 @@ function messagesHarness(navigation?: PageNavigation) {
   hooks.states = [];
   let scrollTop = 0;
   const element = {
-    querySelector: vi.fn<
-      () => { getBoundingClientRect(): { top: number; height: number } } | null
-    >(() => null),
-    getBoundingClientRect: () => ({ top: 100 }),
     clientHeight: 600,
     scrollHeight: 4000,
     get scrollTop() {
@@ -443,67 +430,6 @@ function messagesHarness(navigation?: PageNavigation) {
     },
   };
 }
-
-function linkedNavigation() {
-  return {
-    entryId: "linked",
-    target: {
-      version: 1,
-      kind: "conversation",
-      scope: { viewer: "b".repeat(64), communityOrigin: "https://example.com" },
-      channelId: "channel",
-      messageId: row.id,
-    },
-    signal: new AbortController().signal,
-    complete: vi.fn(() => true),
-    resolve: vi.fn(() => true),
-    forSession: vi.fn(),
-  } satisfies PageNavigation;
-}
-it("waits for bounded history then reveals and acknowledges the exact linked message once", () => {
-  const navigation = linkedNavigation();
-  const h = messagesHarness(navigation);
-  h.element.querySelector.mockReturnValue({
-    getBoundingClientRect: () => ({ top: 1600, height: 60 }),
-  });
-  h.snapshot.canLoadMore = true;
-  h.render();
-  h.effects();
-  expect(navigation.complete).not.toHaveBeenCalled();
-  expect(h.element.scrollTop).toBe(0);
-  h.snapshot.canLoadMore = false;
-  h.render();
-  h.effects();
-  expect(h.element.querySelector).toHaveBeenCalledWith(
-    `[data-message-id="${row.id}"]`,
-  );
-  expect(h.element.scrollTop).toBe(1230);
-  expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
-    status: "opened",
-  });
-  h.element.scrollHeight = 4800;
-  h.render();
-  h.effects();
-  expect(h.element.scrollTop).toBe(1230);
-  expect(navigation.complete).toHaveBeenCalledTimes(1);
-});
-it("does not acknowledge missing or cancelled linked targets as opened", () => {
-  const navigation = linkedNavigation();
-  const h = messagesHarness(navigation);
-  h.render();
-  h.effects();
-  expect(navigation.complete).toHaveBeenCalledExactlyOnceWith({
-    status: "failed",
-    reason: "not-found",
-  });
-  const aborted = new AbortController();
-  aborted.abort();
-  const cancelled = { ...linkedNavigation(), signal: aborted.signal };
-  const next = messagesHarness(cancelled);
-  next.render();
-  next.effects();
-  expect(cancelled.complete).not.toHaveBeenCalled();
-});
 it("positions after successful history loading, then follows live replies without another read", () => {
   const h = messagesHarness();
   h.snapshot.status = "loading";

@@ -124,8 +124,6 @@
 }
 .text[data-single-emoji] {
   --inline-emoji-size: calc(42px * var(--buzz-text-scale, 1));
-  display: flex;
-  align-items: flex-start;
   min-height: calc(48px * var(--buzz-text-scale, 1));
   margin-top: 4px;
   font-size: calc(42px * var(--buzz-text-scale, 1));
@@ -141,6 +139,8 @@
 }
 .reactions {
   display: flex;
+  flex-wrap: wrap;
+  align-items: center;
   gap: 4px;
   margin-top: 6px;
 }
@@ -419,6 +419,9 @@
 .mentionRecipients code {
   font-size: calc(10px * var(--buzz-text-scale, 1));
 }
+.text[data-single-emoji] img {
+  vertical-align: top;
+}
 .text[data-single-emoji] {
   margin: 4px 0 0;
 }
@@ -617,7 +620,7 @@ button.avatar:focus-visible,
   color: var(--text-muted);
   font-size: calc(10px * var(--buzz-text-scale, 1));
 }
-.membershipAvatar img {
+.membershipAvatars .membershipAvatar img {
   position: absolute;
   inset: 0;
   width: 100%;

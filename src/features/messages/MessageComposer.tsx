@@ -11,7 +11,7 @@ import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
-import { isUnicodeEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
+import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
 import {
   mentionDraft,
   editMentionDraft,
@@ -244,7 +244,7 @@ function Composer({
     return (
       typeof edit.text === "string" &&
       insert(
-        `${edit.text}${isUnicodeEmojiOnly(edit.text) ? "" : " "}`,
+        `${edit.text}${isEmojiOnly(edit.text, emojiCatalog.entries) ? "" : " "}`,
         undefined,
         query,
       )

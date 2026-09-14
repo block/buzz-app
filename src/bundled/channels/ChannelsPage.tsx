@@ -214,6 +214,10 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.messageId
       : undefined;
+  const requestedThread =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.threadRootId
+      : undefined;
   const currentId = current?.id;
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
@@ -238,6 +242,7 @@ function ChannelWorkspace({
       setExactOpening({
         request: navigation,
         inTimeline:
+          requestedThread !== requestedMessage &&
           window.status === "ready" &&
           window.freshness !== "cached" &&
           window.rows.some(
@@ -248,7 +253,7 @@ function ChannelWorkspace({
     const stop = queries.channels.subscribeWindow(currentId, choose);
     choose();
     return stop;
-  }, [navigation, requestedMessage, currentId, queries]);
+  }, [navigation, requestedMessage, requestedThread, currentId, queries]);
   const exact = exactOpening?.request === navigation ? exactOpening : undefined;
   const showingThread = requestedMessage
     ? exact && !exact.inTimeline && current
@@ -295,11 +300,23 @@ function ChannelWorkspace({
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      if (requestedMessage) select(current.id);
-      setThread({ channelId: current.id, messageId });
+      if (navigator && viewer) {
+        setThread(undefined);
+        void navigator.open({
+          version: 1,
+          kind: "conversation",
+          channelId: current.id,
+          messageId,
+          threadRootId: messageId,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        });
+      } else setThread({ channelId: current.id, messageId });
       open(undefined);
     },
-    [current, open, requestedMessage, select],
+    [current, navigator, viewer, scope, open],
   );
   const closeThread = () => {
     if (showingThread?.navigation && current) select(current.id);
@@ -333,6 +350,7 @@ function ChannelWorkspace({
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
+        if (showingThread?.navigation) select(current.id);
         setThread(undefined);
         open({
           channelId: current.id,
@@ -343,7 +361,7 @@ function ChannelWorkspace({
       }
       return false;
     },
-    [panels, current, open],
+    [panels, current, open, showingThread, select],
   );
   const panelActive = () => {
     const connection = relay.snapshot();

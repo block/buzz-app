@@ -86,7 +86,7 @@ export function messageLinkParts(
   const parts: LinkPart[] = [];
   let offset = 0;
   for (const match of content.matchAll(
-    /(?<!\\)\[((?:\\[^\r\n]|[^[\]\\\r\n])+)\]\\?\(|<(?:https?|buzz):\/\/[^\s<>"`]+>|(?:https?|buzz):\/\/[^\s<>"`]+/g,
+    /(?<!\\)\[((?:\\[^\r\n]|[^[\]\\\r\n])+)\]\\?\(|<(?:https?|buzz):\/\/[^\s<>"`]+>|(?:https?|buzz):\/\/[^\s<>"`]+/gi,
   )) {
     if (match.index < offset) continue;
     if (match[1] !== undefined) {

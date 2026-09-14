@@ -27,6 +27,17 @@ it("does not turn malformed Buzz addresses into links", () => {
   ).toBe(content);
 });
 
+it("recognizes bare and wrapped URL schemes case-insensitively", () => {
+  const urls = ["BUZZ://channel/general", "HTTPS://example.com/docs"];
+  for (const url of urls) {
+    for (const text of [url, `<${url}>`]) {
+      const parts = messageLinkParts(`See ${text}.`);
+      expect(parts.filter((part) => part.url)).toEqual([{ text: url, url }]);
+      expect(parts.map((part) => part.text).join("")).toBe(`See ${url}.`);
+    }
+  }
+});
+
 it("removes only paired autolink brackets and preserves surrounding punctuation", () => {
   const parts = messageLinkParts(
     "See <https://drive.google.com/file/d/example>, then <https://example.com/path?q=hello!>.",

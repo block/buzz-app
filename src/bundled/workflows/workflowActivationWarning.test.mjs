@@ -27,73 +27,18 @@ test("does not warn when a message trigger is narrowed", () => {
   );
 });
 
-test("warns for hourly-or-faster interval schedules with concrete copy", () => {
-  assert.equal(
-    getWorkflowActivationWarning(
-      workflowYaml("  on: schedule\n  interval: 15m"),
-    )?.description,
-    "It is scheduled to run every 15 minutes. Review the schedule before turning it on.",
-  );
-  assert.equal(
-    getWorkflowActivationWarning(
-      workflowYaml("  on: schedule\n  interval: 2h"),
-    ),
-    null,
-  );
-});
-
-test("warns for clear hourly-or-faster cron schedules", () => {
-  for (const cron of ["*/5 * * * *", "0 */5 * * * *", "0 */5 * * * * *"]) {
-    assert.equal(
-      getWorkflowActivationWarning(
-        workflowYaml(`  on: schedule\n  cron: "${cron}"`),
-      )?.description,
-      "It is scheduled to run every 5 minutes. Review the schedule before turning it on.",
-    );
-  }
-  assert.equal(
-    getWorkflowActivationWarning(
-      workflowYaml('  on: schedule\n  cron: "*/10 * * * * *"'),
-    )?.description,
-    "It is scheduled to run multiple times a minute. Review the schedule before turning it on.",
-  );
-  assert.equal(
-    getWorkflowActivationWarning(
-      workflowYaml('  on: schedule\n  cron: "0 9 * * *"'),
-    ),
-    null,
-  );
-});
-
-test("warns for stepped, ranged, and listed hourly cron schedules", () => {
-  for (const cron of [
-    "0 0 */1 * * *",
-    "0 0 * * * *",
-    "0 0 0-23 * * *",
-    "0 0 0-11,12-23 * * *",
-    "0 0 */1 * * * *",
+test("warns on schedule activation without interpreting its cadence", () => {
+  for (const schedule of [
+    "interval: 15m",
+    "interval: 2h",
+    'cron: "*/5 * * * *"',
+    'cron: "0 9 * * *"',
   ]) {
     assert.equal(
       getWorkflowActivationWarning(
-        workflowYaml(`  on: schedule\n  cron: "${cron}"`),
-      )?.description,
-      "It is scheduled to run every hour. Review the schedule before turning it on.",
-      cron,
-    );
-  }
-  assert.equal(
-    getWorkflowActivationWarning(
-      workflowYaml('  on: schedule\n  cron: "*/5 0-23 * * *"'),
-    )?.description,
-    "It is scheduled to run every 5 minutes. Review the schedule before turning it on.",
-  );
-  for (const cron of ["0 */3 * * *", "0 0 0,12 * * *", "0 0 8-17 * * *"]) {
-    assert.equal(
-      getWorkflowActivationWarning(
-        workflowYaml(`  on: schedule\n  cron: "${cron}"`),
-      ),
-      null,
-      cron,
+        workflowYaml(`  on: schedule\n  ${schedule}`),
+      )?.title,
+      "Enable this scheduled workflow?",
     );
   }
 });

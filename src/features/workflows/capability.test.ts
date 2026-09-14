@@ -52,9 +52,7 @@ function setup() {
     outbox: outbox.outbox,
     local: outbox.local,
     host: {
-      lifecycleVersion: 1,
       runs: async () => ({ runs: [], next: null }),
-      approvals: async () => ({ approvals: [] }),
     },
     canAccess: () => allowed,
   });
@@ -145,7 +143,7 @@ it.each([
     );
   },
 );
-it("lost receipt plus echo stays unknown; same signed retry and dismiss preserve operation identity", async () => {
+it("lost receipt plus echo stays unknown; dismissal never repeats the command", async () => {
   const h = setup();
   const operation = h.capability.trigger(h.definition);
   await flush();
@@ -159,16 +157,10 @@ it("lost receipt plus echo stays unknown; same signed retry and dismiss preserve
     delivery: "seen",
     outcome: "unknown",
   });
-  h.capability.operations.retry(operation);
-  await flush();
-  expect(h.publish).toHaveBeenCalledTimes(2);
-  expect(h.sign).toHaveBeenCalledTimes(1);
-  expect(h.publish.mock.calls[1]?.[0]).toEqual(event);
-  h.settle("duplicate: already processed");
-  await flush();
-  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
   await h.capability.operations.dismiss(operation);
   expect(h.capability.operations.snapshot()).toEqual([]);
+  expect(h.publish).toHaveBeenCalledTimes(1);
+  expect(h.sign).toHaveBeenCalledTimes(1);
 });
 it("explicit rejection is rejected, not unknown; revocation fences late receipts without discarding durable intent", async () => {
   const h = setup();
@@ -205,4 +197,134 @@ it("webhook saves are blocked through raw YAML; stale/legacy deletion receipt ne
   h.settle(`response:${JSON.stringify({ workflow_id: id, deleted: true })}`);
   await flush();
   expect(h.capability.operations.snapshot()[1]?.outcome).toBe("succeeded");
+});
+
+it.each([true, false])(
+  "fresh exact saved configuration resolves a lost save receipt without replay (echo=%s)",
+  async (echo) => {
+    const h = setup();
+    const operation = h.capability.save({
+      channelId,
+      yaml,
+      existing: h.definition,
+    });
+    await flush();
+    const event = h.publish.mock.calls[0]?.[0];
+    if (!event) throw new Error("missing publication");
+    if (echo) h.outbox.observe([event]);
+    h.reject(new Error("lost receipt"));
+    await flush();
+    expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
+    h.read.mockResolvedValue([event]);
+    const view = h.capability.definitions(channelId);
+    expect(h.read).not.toHaveBeenCalled();
+    await view.refresh();
+    expect(h.read).toHaveBeenCalledWith(
+      [{ kinds: [30620], "#h": [channelId], limit: 100 }],
+      expect.objectContaining({ fresh: true }),
+    );
+    expect(view.snapshot()).toMatchObject({
+      status: "ready",
+      data: { items: [{ revision: operation }] },
+    });
+    expect(h.capability.operations.snapshot()[0]).toMatchObject({
+      eventId: operation,
+      outcome: "succeeded",
+    });
+    expect(h.capability.operations.snapshot()[0]?.error).toBeUndefined();
+    expect(h.sign).toHaveBeenCalledTimes(1);
+    expect(h.publish).toHaveBeenCalledTimes(1);
+  },
+);
+it.each([
+  "revision",
+  "owner",
+  "channel",
+  "workflow",
+  "newer-head",
+  "read-failure",
+  "revoked",
+  "disposed",
+])(
+  "fresh read does not resolve an unknown save on %s mismatch or lost interest",
+  async (caseName) => {
+    const h = setup();
+    h.capability.save({ channelId, yaml, existing: h.definition });
+    await flush();
+    const event = h.publish.mock.calls[0]?.[0];
+    if (!event) throw new Error("missing publication");
+    h.reject(new Error("lost receipt"));
+    await flush();
+    const view = h.capability.definitions(channelId);
+    let row = event;
+    if (caseName === "revision") row = { ...event, id: "f".repeat(64) };
+    if (caseName === "owner") row = { ...event, pubkey: "f".repeat(64) };
+    if (caseName === "channel" || caseName === "workflow")
+      row = {
+        ...event,
+        tags: event.tags.map((tag) =>
+          tag[0] === (caseName === "channel" ? "h" : "d")
+            ? [tag[0], runId]
+            : tag,
+        ),
+      };
+    let resolve!: (events: RelayEvent[]) => void;
+    h.read.mockImplementationOnce(
+      () =>
+        new Promise<RelayEvent[]>((done) => {
+          resolve = done;
+        }),
+    );
+    const reading = view.refresh();
+    await flush();
+    if (caseName === "revoked") h.revoke();
+    if (caseName === "disposed") view.dispose();
+    resolve(
+      caseName === "newer-head"
+        ? [
+            event,
+            { ...event, id: "f".repeat(64), created_at: event.created_at + 1 },
+          ]
+        : caseName === "read-failure"
+          ? [{ ...event, kind: 9 }]
+          : [row],
+    );
+    await reading;
+    expect(
+      h.capability.operations
+        .snapshot()
+        .some((op) => op.outcome === "succeeded"),
+    ).toBe(false);
+    expect(h.publish).toHaveBeenCalledTimes(1);
+  },
+);
+it("fresh saved configuration never resolves an unknown manual run", async () => {
+  const h = setup();
+  h.capability.trigger(h.definition);
+  await flush();
+  h.reject(new Error("lost receipt"));
+  await flush();
+  const event = h.publish.mock.calls[0]?.[0];
+  if (!event) throw new Error("missing publication");
+  h.read.mockResolvedValue([{ ...event, kind: 30620, content: yaml }]);
+  await h.capability.definitions(channelId).refresh();
+  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
+});
+
+it("dismissal cannot unlock an active echoed command", async () => {
+  const h = setup();
+  const operation = h.capability.trigger(h.definition);
+  await flush();
+  const event = h.publish.mock.calls[0]?.[0];
+  if (!event) throw new Error("missing publication");
+  h.outbox.observe([event]);
+  await expect(h.capability.operations.dismiss(operation)).rejects.toThrow(
+    "still being delivered",
+  );
+  expect(h.capability.operations.snapshot()[0]?.eventId).toBe(operation);
+  h.settle(`response:${JSON.stringify({ run_id: runId })}`);
+  await flush();
+  expect(h.capability.operations.snapshot()[0]?.outcome).toBe("succeeded");
+  await h.capability.operations.dismiss(operation);
+  expect(h.capability.operations.snapshot()).toEqual([]);
 });

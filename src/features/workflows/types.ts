@@ -57,16 +57,6 @@ export type WorkflowRunPage = Readonly<{
   runs: readonly WorkflowRun[];
   next: WorkflowRunCursor | null;
 }>;
-export type WorkflowApproval = Readonly<{
-  /** Hashed reference, NEVER an actionable approval token. */
-  reference: string;
-  runId: string;
-  stepId: string;
-  status: "pending" | "granted" | "denied" | "expired";
-  note: string | null;
-  createdAt: number;
-}>;
-
 /** Delivery evidence and domain outcome are deliberately separate. No secret here. */
 export type WorkflowOperation = Readonly<{
   eventId: string;
@@ -76,8 +66,6 @@ export type WorkflowOperation = Readonly<{
   outcome: "pending" | "succeeded" | "rejected" | "unknown";
   error?: string;
   runId?: string;
-  /** A secret can be consumed once, never journaled or automatically copied. */
-  secretAvailable: boolean;
 }>;
 
 /** Host availability, NOT per-row permission; the relay remains authoritative. */
@@ -86,9 +74,7 @@ export type WorkflowAvailability = Readonly<{
   history: boolean;
   save: boolean;
   trigger: boolean;
-  /** Requires the repaired relay lifecycle contract, not merely kind-5 support. */
   delete: boolean;
-  webhookSecrets: boolean;
 }>;
 
 /** Bundled UI contract. No socket, signer, arbitrary HTTP, scheduler or approval writes. */
@@ -99,10 +85,6 @@ export interface WorkflowCapability {
     workflow: WorkflowReference,
     cursor?: WorkflowRunCursor,
   ): WorkflowView<WorkflowRunPage>;
-  approvals(
-    workflow: WorkflowReference,
-    runId: string,
-  ): WorkflowView<readonly WorkflowApproval[]>;
   /** Synchronous local intent ID; follow operations for delivery and domain completion.
    * Existing definitions preserve author/channel/id and use their signed revision.
    * New definitions get a new UUID. YAML mode uses the same host restrictions.
@@ -119,12 +101,6 @@ export interface WorkflowCapability {
   operations: Readonly<{
     snapshot(): readonly WorkflowOperation[];
     subscribe(listener: () => void): () => void;
-    /** Exact signed replay only; never creates a new event or recovers a lost receipt. */
-    retry(eventId: string): void;
     dismiss(eventId: string): Promise<void>;
   }>;
-  /** Consume in response to explicit reveal; caller must clear display on scope/access loss.
-   * Returns undefined after consumption, clear-cache, access revocation or disposal.
-   */
-  takeWebhookSecret(eventId: string): string | undefined;
 }

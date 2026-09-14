@@ -449,17 +449,8 @@ export function createOutbox(
       return event.id;
     },
     retry(id: string) {
-      const retained = completed.peek(id);
-      const item =
-        find(id) ??
-        (retained && awaitsReceipt(retained.event) ? retained : undefined);
+      const item = find(id);
       if (!closed && item && !attempts.has(id)) {
-        if (!find(id)) {
-          if (snapshot.length >= MAX_PENDING)
-            throw new Error("Too many outstanding operations");
-          completed.delete(id);
-          snapshot = Object.freeze([...snapshot, item]);
-        }
         replace({ ...item, delivery: "sending", error: undefined });
         schedule(id, undefined, item.delivery);
       }

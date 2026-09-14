@@ -32,7 +32,7 @@ function setup() {
   );
   const owner = createRelaySession({
     ...wire.transport,
-    workflows: { runs, approvals: async () => ({ approvals: [] }) },
+    workflows: { runs },
     subscribe(callbacks) {
       incoming = callbacks.receive;
       return { update() {}, retry() {}, dispose() {} };
@@ -154,22 +154,31 @@ it("a loading observer can revoke without leaving a wedged pending read", async 
   await fresh;
   expect(history.snapshot().status).toBe("ready");
 });
-it("old host keeps every workflow command unavailable, even through direct session outbox", async () => {
-  const wire = scriptedTransport(viewer.pubkey, relay.pubkey),
-    sign = vi.fn(async (template: Parameters<typeof signed>[1]) =>
-      signed(viewer, template),
-    );
+it("existing backend permits workflow commands without lifecycle metadata while retaining session access and shape guards", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let incoming!: (events: readonly RelayEvent[]) => void;
+  const sign = vi.fn(async (template: Parameters<typeof signed>[1]) =>
+    signed(viewer, template),
+  );
+  const publish = vi.fn(async () => "");
   const owner = createRelaySession(
-    { ...wire.transport, writer: { sign, publish: async () => "" } },
     {
-      outboxStorage: { load: async () => [], save: async () => {} },
+      ...wire.transport,
+      writer: { kinds: [9, 30620, 46020, 5], sign, publish },
+      workflows: { runs: async () => ({ runs: [], next: null }) },
+      subscribe(callbacks) {
+        incoming = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
     },
+    { outboxStorage: { load: async () => [], save: async () => {} } },
   );
   owners.push(owner);
+  incoming([roster(relay, channelId, [viewer.pubkey], 1)]);
   expect(owner.session.workflows.availability).toMatchObject({
-    save: false,
-    delete: false,
-    trigger: false,
+    save: true,
+    delete: true,
+    trigger: true,
   });
   const workflow = {
     ...reference,
@@ -177,10 +186,35 @@ it("old host keeps every workflow command unavailable, even through direct sessi
     revision: definition.id,
     createdAt: 10,
   };
+  const operation = owner.session.workflows.trigger(workflow);
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+  await vi.waitFor(() =>
+    expect(owner.session.workflows.operations.snapshot()[0]).toMatchObject({
+      eventId: operation,
+      outcome: "unknown",
+    }),
+  );
+  expect(sign).toHaveBeenCalledTimes(1);
+  const invalid = owner.session.outbox?.send({
+    kind: 46020,
+    tags: [
+      ["h", channelId],
+      ["d", "not-a-uuid"],
+    ],
+    content: "",
+  });
+  await vi.waitFor(() =>
+    expect(
+      owner.session.outbox?.snapshot().find((row) => row.event.id === invalid)
+        ?.delivery,
+    ).toBe("failed"),
+  );
+  expect(sign).toHaveBeenCalledTimes(1);
+  incoming([roster(relay, channelId, [], 2)]);
   expect(() => owner.session.workflows.trigger(workflow)).toThrow(
     "unavailable",
   );
-  owner.session.outbox?.send({
+  const denied = owner.session.outbox?.send({
     kind: 46020,
     tags: [
       ["h", channelId],
@@ -189,7 +223,74 @@ it("old host keeps every workflow command unavailable, even through direct sessi
     content: "",
   });
   await vi.waitFor(() =>
-    expect(owner.session.outbox?.snapshot()[0]?.delivery).toBe("failed"),
+    expect(
+      owner.session.outbox?.snapshot().find((row) => row.event.id === denied)
+        ?.delivery,
+    ).toBe("failed"),
   );
-  expect(sign).not.toHaveBeenCalled();
+  expect(sign).toHaveBeenCalledTimes(1);
+  expect(publish).toHaveBeenCalledTimes(1);
+});
+
+it("session fresh definition read resolves a lost save, while ordinary echo does not", async () => {
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let incoming!: (events: readonly RelayEvent[]) => void;
+  let reject!: (error: Error) => void;
+  let published: RelayEvent | undefined;
+  const sign = vi.fn(async (template: Parameters<typeof signed>[1]) =>
+    signed(viewer, template),
+  );
+  const publish = vi.fn((event: RelayEvent) => {
+    published = event;
+    return new Promise<string>((_resolve, fail) => {
+      reject = fail;
+    });
+  });
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: { kinds: [30620], sign, publish },
+      workflows: { runs: async () => ({ runs: [], next: null }) },
+      subscribe(callbacks) {
+        incoming = callbacks.receive;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    },
+    { outboxStorage: { load: async () => [], save: async () => {} } },
+  );
+  owners.push(owner);
+  incoming([roster(relay, channelId, [viewer.pubkey], 1)]);
+  const workflows = owner.session.workflows;
+  const op = workflows.save({
+    channelId,
+    yaml: "name: Saved\nenabled: false\ntrigger:\n  on: message_posted\nsteps:\n  - id: wait\n    action: delay\n    duration: 1s\n",
+  });
+  await vi.waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+  if (!published) throw new Error("missing signed event");
+  incoming([published]);
+  reject(new Error("lost receipt"));
+  await vi.waitFor(() =>
+    expect(workflows.operations.snapshot()[0]).toMatchObject({
+      eventId: op,
+      outcome: "unknown",
+      delivery: "seen",
+    }),
+  );
+  // Settle the existing outbox confirmation read; it is not task-level recovery.
+  await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+  wire.next().respond([published]);
+  const view = workflows.definitions(channelId);
+  expect(workflows.operations.snapshot()[0]?.outcome).toBe("unknown");
+  const loading = view.refresh();
+  await vi.waitFor(() => expect(wire.pending).toHaveLength(1));
+  const request = wire.next();
+  expect(request.filters).toEqual([
+    { kinds: [30620], "#h": [channelId], limit: 100 },
+  ]);
+  request.respond([published]);
+  await loading;
+  expect(view.snapshot().data.items[0]?.revision).toBe(op);
+  expect(workflows.operations.snapshot()[0]?.outcome).toBe("succeeded");
+  expect(sign).toHaveBeenCalledTimes(1);
+  expect(publish).toHaveBeenCalledTimes(1);
 });

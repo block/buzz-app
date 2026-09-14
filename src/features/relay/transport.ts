@@ -1,12 +1,4 @@
-import {
-  isWorkflowOperation,
-  validateWorkflowEvent,
-} from "../workflows/protocol";
-import {
-  discoverWorkflowLifecycle,
-  workflowLifecycleVersion,
-} from "../workflows/compatibility";
-import { workflowHost, workflowReadPath } from "../workflows/http";
+import { workflowHost } from "../workflows/http";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
 import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
@@ -160,7 +152,6 @@ export async function connectBrokerTransport(
     archiveAuthority?: unknown;
     writeKinds?: number[];
     workflowReads?: boolean;
-    workflowInfo?: unknown;
     relayUrl?: string;
     live?: boolean;
     sidebarPreferences?: boolean;
@@ -198,20 +189,14 @@ export async function connectBrokerTransport(
       : {}),
     ...(session.workflowReads === true
       ? {
-          workflows: workflowHost(
-            (route, body, signal) =>
-              fetch(`${endpoint}/${route}`, {
-                method: "POST",
-                credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(body),
-                signal,
-              }),
-            workflowLifecycleVersion(
-              session.workflowInfo,
-              session.relayUrl ?? "",
-              session.relayAuthor,
-            ),
+          workflows: workflowHost((route, body, signal) =>
+            fetch(`${endpoint}/${route}`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+              signal,
+            }),
           ),
         }
       : {}),
@@ -334,15 +319,7 @@ export async function connectBrokerTransport(
               const result = await fetch(`${endpoint}/sign`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: {
-                  "Content-Type": "application/json",
-                  ...(template.kind !== 9
-                    ? {
-                        "X-Buzz-Workflow-Authority":
-                          session.relayAuthor as string,
-                      }
-                    : {}),
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(template),
                 signal,
               });
@@ -356,15 +333,7 @@ export async function connectBrokerTransport(
               const result = await fetch(`${endpoint}/publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: {
-                  "Content-Type": "application/json",
-                  ...(event.kind !== 9
-                    ? {
-                        "X-Buzz-Workflow-Authority":
-                          session.relayAuthor as string,
-                      }
-                    : {}),
-                },
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(event),
                 signal,
               });
@@ -423,27 +392,8 @@ export async function connectSignedTransport(
 ): Promise<ReadTransport> {
   const viewer = await signer.getPublicKey();
   httpOrigin = relayOrigin(httpOrigin);
-  const lifecycleVersion = await discoverWorkflowLifecycle(
-    httpOrigin,
-    relayAuthor,
-  );
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
-  async function checkWorkflow(event: EventTemplate, signal: AbortSignal) {
-    signal.throwIfAborted();
-    if (!isWorkflowOperation(event)) return;
-    if (
-      (await discoverWorkflowLifecycle(httpOrigin, relayAuthor, signal)) !== 1
-    )
-      throw new PublishRejected(
-        "Reliable workflow writes are unavailable on this relay",
-      );
-    signal.throwIfAborted();
-    validateWorkflowEvent({ ...event, id: "", pubkey: viewer }, viewer, {
-      delete: true,
-      webhookSecrets: false,
-    });
-  }
   return {
     profiling,
     subscribe: (callbacks) => {
@@ -474,38 +424,15 @@ export async function connectSignedTransport(
         },
       };
     },
-    workflows: workflowHost(
-      (route, body, signal) =>
-        signedRequest(
-          signer,
-          `${httpOrigin}${workflowReadPath(route, body)}`,
-          undefined,
-          signal,
-          profiling,
-          route,
-          principal().api,
-          "foreground",
-          "GET",
-        ),
-      lifecycleVersion,
-    ),
     scope: httpOrigin,
     viewer,
     relayAuthor,
     media: (url) => mediaUrl(url, undefined, httpOrigin),
     writer: {
-      async sign(event, signal) {
-        await checkWorkflow(event, signal);
-        return signer.signEvent(event);
-      },
+      sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
-        await checkWorkflow(event, signal);
-        if (isWorkflowOperation(event) && event.pubkey !== viewer)
-          throw new PublishRejected(
-            "Workflow signer does not match this session",
-          );
-        return acceptPublish(
-          await signedRequest(
+        await acceptPublish(
+          await signedPost(
             signer,
             `${httpOrigin}/events`,
             event,
@@ -523,7 +450,7 @@ export async function connectSignedTransport(
       },
     },
     async query(filters, signal, requestId = "read", priority = "foreground") {
-      const result = await signedRequest(
+      const result = await signedPost(
         signer,
         `${httpOrigin}/query`,
         filters,
@@ -552,7 +479,7 @@ export async function connectSignedTransport(
   };
 }
 
-async function signedRequest(
+async function signedPost(
   signer: Signer,
   url: string,
   value: unknown,
@@ -561,20 +488,13 @@ async function signedRequest(
   id: string,
   admission: Parameters<typeof admittedApiRequest>[0],
   priority: "foreground" | "background" = "foreground",
-  method: "POST" | "GET" = "POST",
 ) {
   signal?.throwIfAborted();
   return admission.prepare(async () => {
-    const body = method === "POST" ? JSON.stringify(value) : undefined;
-    const payload =
-      body === undefined
-        ? undefined
-        : hex(
-            await crypto.subtle.digest(
-              "SHA-256",
-              new TextEncoder().encode(body),
-            ),
-          );
+    const body = JSON.stringify(value);
+    const payload = hex(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(body)),
+    );
     if (signal?.aborted) throw signal.reason;
     const auth = await profiling.measureAsync("http.auth", id, () =>
       signer.signEvent({
@@ -583,8 +503,8 @@ async function signedRequest(
         content: "",
         tags: [
           ["u", url],
-          ["method", method],
-          ...(payload === undefined ? [] : [["payload", payload]]),
+          ["method", "POST"],
+          ["payload", payload],
           ["nonce", crypto.randomUUID()],
         ],
       }),
@@ -605,13 +525,12 @@ async function signedRequest(
             );
           return profiling.measureAsync("http.fetch", id, () =>
             fetch(url, {
-              method,
-              redirect: "error",
+              method: "POST",
               headers: {
                 Authorization: `Nostr ${btoa(JSON.stringify(auth))}`,
                 "Content-Type": "application/json",
               },
-              ...(body === undefined ? {} : { body }),
+              body,
               signal: signal ?? null,
             }),
           );

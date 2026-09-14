@@ -5,7 +5,6 @@ import type {
   WorkflowReference,
   WorkflowRunCursor,
   WorkflowRunPage,
-  WorkflowApproval,
 } from "./types.ts";
 
 export const WORKFLOW_KINDS = [30620, 46020, 5] as const;
@@ -109,11 +108,7 @@ export function workflowYaml(text: string) {
   };
 }
 /** Shared session/broker signing boundary. Only canonical workflow operations, never generic kind 5. */
-export function validateWorkflowEvent(
-  event: EventData,
-  viewer: string,
-  options: { delete: boolean; webhookSecrets: boolean },
-) {
+export function validateWorkflowEvent(event: EventData, viewer: string) {
   if (
     typeof event.content !== "string" ||
     !Number.isSafeInteger(event.created_at) ||
@@ -142,8 +137,6 @@ export function validateWorkflowEvent(
     event.tags.some((tag) => !allowed.includes(tag[0] ?? ""))
   )
     throw new Error("Unsupported workflow command tag");
-  if (event.kind === 5 && !options.delete)
-    throw new Error("Reliable workflow deletion is unavailable on this relay");
   if (event.kind !== 30620 && event.content !== "")
     throw new Error("Workflow command content must be empty");
   if (event.kind === 30620) {
@@ -152,7 +145,7 @@ export function validateWorkflowEvent(
     );
     if (revisions.length && !HEX.test(one(event, "expected-revision")))
       throw new Error("Invalid expected workflow revision");
-    if (workflowYaml(event.content).webhook && !options.webhookSecrets)
+    if (workflowYaml(event.content).webhook)
       throw new Error("Webhook saves require secure one-time-secret handling");
   } else if (event.tags.some(([name]) => name === "expected-revision"))
     throw new Error("Unexpected workflow revision tag");
@@ -167,11 +160,6 @@ export function runsPath(id: string, cursor?: WorkflowRunCursor) {
     query.set("before_id", cursor.beforeId);
   }
   return `/workflows/${id}/runs?${query}`;
-}
-export function approvalsPath(id: string, runId: string) {
-  if (!UUID.test(id) || !UUID.test(runId))
-    throw new Error("Invalid workflow/run ID");
-  return `/workflows/${id}/runs/${runId}/approvals`;
 }
 function validateCursor(cursor: WorkflowRunCursor) {
   if (
@@ -247,43 +235,4 @@ export function parseRuns(raw: unknown, workflowId: string): WorkflowRunPage {
     validateCursor(next);
   }
   return Object.freeze({ runs: Object.freeze(runs), next });
-}
-export function parseApprovals(
-  raw: unknown,
-  workflowId: string,
-  runId: string,
-): readonly WorkflowApproval[] {
-  if (
-    !record(raw) ||
-    !Array.isArray(raw.approvals) ||
-    raw.approvals.length > 1000
-  )
-    throw new Error("Invalid workflow approvals response");
-  return Object.freeze(
-    raw.approvals.map((row) => {
-      if (
-        !record(row) ||
-        row.workflow_id !== workflowId ||
-        row.run_id !== runId ||
-        typeof row.approval_ref !== "string" ||
-        !HEX.test(row.approval_ref) ||
-        typeof row.step_id !== "string" ||
-        row.step_id.length > 256 ||
-        !["pending", "granted", "denied", "expired"].includes(
-          String(row.status),
-        ) ||
-        !nullableText(row.note) ||
-        !number(row.created_at)
-      )
-        throw new Error("Invalid workflow approval row");
-      return Object.freeze({
-        reference: row.approval_ref,
-        runId,
-        stepId: row.step_id,
-        status: row.status as WorkflowApproval["status"],
-        note: row.note,
-        createdAt: row.created_at,
-      });
-    }),
-  );
 }

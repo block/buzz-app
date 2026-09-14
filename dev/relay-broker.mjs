@@ -1,10 +1,9 @@
-import { workflowLifecycleVersion } from "../src/features/workflows/compatibility.ts";
 import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,
 } from "../src/features/workflows/protocol.ts";
 import {
-  workflowReadPath,
+  workflowRunsPath,
   workflowReadText,
 } from "../src/features/workflows/http.ts";
 import { readReceiptText } from "../src/features/relay/receipt.ts";
@@ -175,17 +174,14 @@ function loadIdentity(authorizedViewer) {
   }
   return decoded.data;
 }
-async function relayAuthority(fetch, relay, signal) {
+async function relayAuthority(fetch, relay) {
   const response = await fetch(relay, {
     headers: { Accept: "application/nostr+json" },
     redirect: "error",
-    signal: AbortSignal.any([
-      ...(signal ? [signal] : []),
-      AbortSignal.timeout(10000),
-    ]),
+    signal: AbortSignal.timeout(10000),
   });
   if (!response.ok) throw new Error("Relay identity discovery failed");
-  const nip11 = JSON.parse(await workflowReadText(response));
+  const nip11 = await response.json();
   if (!nip11 || typeof nip11 !== "object" || Array.isArray(nip11))
     throw new Error("Relay did not advertise its identity");
   const author = nip11.self ?? nip11.pubkey;
@@ -193,15 +189,6 @@ async function relayAuthority(fetch, relay, signal) {
     throw new Error("Relay did not advertise its identity");
   return {
     relayAuthor: author,
-    ...(workflowLifecycleVersion(nip11, relay, author) === 1
-      ? {
-          workflowInfo: {
-            self: nip11.self,
-            supported_extensions: ["buzz-workflows"],
-            workflows: { lifecycle: 1, host: new URL(relay).host },
-          },
-        }
-      : {}),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -367,8 +354,7 @@ export function relayBrokerPlugin({
         )
           return json(res, 403, { error: "Origin rejected" });
         const url = new URL(req.url, origin);
-        // Own the request before any awaited discovery/body read. A close that
-        // already happened cannot be recovered by a listener at dispatch time.
+        // Own cancellation before awaiting the request body, signing or dispatch.
         const cancel = new AbortController();
         const release = () => cancel.abort();
         res.once("close", release);
@@ -532,19 +518,11 @@ export function relayBrokerPlugin({
             }
           }
           if (route === "/api/relay/session" && req.method === "GET") {
-            const discovered = await authority(fetchUpstream, relay);
             return json(res, 200, {
               viewer,
-              ...discovered,
+              ...(await getAuthority(relay)),
               relayUrl: relay,
-              writeKinds:
-                workflowLifecycleVersion(
-                  discovered.workflowInfo,
-                  relay,
-                  discovered.relayAuthor,
-                ) === 1
-                  ? [9, ...WORKFLOW_KINDS]
-                  : [9],
+              writeKinds: [9, ...WORKFLOW_KINDS],
               workflowReads: true,
               sidebarPreferences: true,
               readState: true,
@@ -757,7 +735,6 @@ export function relayBrokerPlugin({
               "/api/relay/accept-policy",
               "/api/relay/gifs",
               "/api/relay/workflow-runs",
-              "/api/relay/workflow-approvals",
             ].includes(route) ||
             req.method !== "POST"
           )
@@ -775,17 +752,9 @@ export function relayBrokerPlugin({
             return json(res, 400, { error: "Filter body is not JSON" });
           }
           let workflowPath;
-          if (
-            [
-              "/api/relay/workflow-runs",
-              "/api/relay/workflow-approvals",
-            ].includes(route)
-          ) {
+          if (route === "/api/relay/workflow-runs") {
             try {
-              workflowPath = workflowReadPath(
-                route.slice("/api/relay/".length),
-                filters,
-              );
+              workflowPath = workflowRunsPath(filters);
             } catch {
               return json(res, 400, {
                 error: "Invalid workflow read",
@@ -892,31 +861,9 @@ export function relayBrokerPlugin({
           if (signing || publishing) {
             if (filters?.kind !== 9) {
               try {
-                // This is a connection pin, not an authorization token. Each
-                // caller retains its own identity across other tabs/reconnects.
-                const expected = req.headers["x-buzz-workflow-authority"];
-                if (
-                  typeof expected !== "string" ||
-                  !/^[0-9a-f]{64}$/.test(expected)
-                )
-                  throw new Error("Workflow connection authority missing");
-                const discovered = await authority(
-                  fetchUpstream,
-                  relay,
-                  cancel.signal,
-                );
-                if (
-                  workflowLifecycleVersion(
-                    discovered.workflowInfo,
-                    relay,
-                    expected,
-                  ) !== 1
-                )
-                  throw new Error("Workflow lifecycle unsupported");
                 validateWorkflowEvent(
                   { ...filters, pubkey: signing ? viewer : filters.pubkey },
                   viewer,
-                  { delete: true, webhookSecrets: false },
                 );
               } catch {
                 cancel.signal.throwIfAborted();
@@ -927,8 +874,7 @@ export function relayBrokerPlugin({
               }
             } else if (!validMessageTemplate(filters))
               return json(res, 400, { error: "Message rejected" });
-            // A fixture/adapter may finish discovery despite abort. Never turn
-            // that late result into a signature or a newly admitted publication.
+            // Never sign or publish after the requesting browser has left.
             cancel.signal.throwIfAborted();
             if (signing) {
               const started = performance.now();

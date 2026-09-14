@@ -187,29 +187,21 @@ it("bounds receipt bytes while streaming before JSON decoding", async () => {
   );
 });
 
-it("seen commands can retry the exact signed event and dismiss without losing observation evidence", async () => {
+it("seen commands can dismiss retained receipts without another publication", async () => {
   const h = setup();
   const id = h.send();
   await flush();
   h.observe([h.published()]);
   h.reject(new Error("lost"));
   await flush();
-  const original = h.published();
   expect(h.outbox.snapshot()).toEqual([]);
-  h.outbox.retry(id);
-  await flush();
-  expect(h.sign).toHaveBeenCalledTimes(1);
-  expect(h.publish).toHaveBeenCalledTimes(2);
-  expect(h.published()).toEqual(original);
-  h.reject(new PublishRejected("response:{secret:PRIVATE}"));
-  await flush();
   expect(h.local.snapshot()[0]?.delivery).toBe("seen");
-  expect(JSON.stringify(h.saved())).not.toContain("PRIVATE");
   await h.outbox.dismiss(id);
   expect(h.local.snapshot()).toEqual([]);
   expect(h.saved()).toEqual([]);
+  expect(h.publish).toHaveBeenCalledTimes(1);
 });
-it("rejection text never journals command secrets; successful seen retry stays seen", async () => {
+it("rejection text never journals command secrets; successful retry stays seen", async () => {
   const h = setup();
   const id = h.send();
   await flush();
@@ -221,10 +213,6 @@ it("rejection text never journals command secrets; successful seen retry stays s
   await flush();
   h.observe([h.published()]);
   h.settle("response:{}");
-  await flush();
-  h.outbox.retry(id);
-  await flush();
-  h.settle("duplicate:");
   await flush();
   expect(h.local.snapshot()[0]?.delivery).toBe("seen");
   expect(h.outbox.snapshot()).toEqual([]);

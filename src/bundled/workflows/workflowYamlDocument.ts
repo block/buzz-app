@@ -56,30 +56,6 @@ export function readWorkflowDocumentFields(
   };
 }
 
-/** What the dialog header renders for a definition, in a single parse. */
-export type WorkflowHeaderState = {
-  /** Whether the name can be edited and the enabled toggle can be written. */
-  canEdit: boolean;
-  enabled: boolean;
-  name: string;
-};
-
-/**
- * Derives the header presentation from the working definition, falling back to
- * the saved workflow only for what the document itself does not supply.
- */
-export function readWorkflowHeaderState(
-  yaml: string,
-  fallback: { enabled: boolean; name: string | undefined },
-): WorkflowHeaderState {
-  const fields = readWorkflowDocumentFields(yaml);
-  return {
-    canEdit: fields.editable,
-    enabled: fields.editable ? fields.enabled !== false : fallback.enabled,
-    name: fields.name?.trim() || (fallback.name?.trim() ?? ""),
-  };
-}
-
 /** Writes `name` into the definition, preserving unrelated YAML nodes (not byte-exact formatting). */
 export function yamlWithWorkflowName(
   yaml: string,

@@ -61,9 +61,3 @@ it("production reader priority reaches actual signed fetch admission", async () 
     r.dispose();
   }
 });
-
-// These are transport/admission tests; the real metadata seam is exercised in compatibility.test.ts.
-vi.mock("../workflows/compatibility", async (original) => ({
-  ...(await original<typeof import("../workflows/compatibility")>()),
-  discoverWorkflowLifecycle: async () => undefined,
-}));

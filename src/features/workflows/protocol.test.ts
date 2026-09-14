@@ -3,7 +3,6 @@ import {
   isWorkflowOperation,
   validateWorkflowEvent,
   parseRuns,
-  parseApprovals,
   workflowYaml,
 } from "./protocol";
 const owner = "a".repeat(64),
@@ -23,9 +22,11 @@ const base = {
   content: yaml,
 };
 it("strict authoring boundary rejects malformed coordinates/tags and webhook raw bypass, without taking generic deletions", () => {
-  expect(
-    validateWorkflowEvent(base, owner, { delete: true, webhookSecrets: false }),
-  ).toEqual({ id, owner, channelId: id });
+  expect(validateWorkflowEvent(base, owner)).toEqual({
+    id,
+    owner,
+    channelId: id,
+  });
   for (const event of [
     { ...base, pubkey: "c".repeat(64) },
     {
@@ -42,12 +43,7 @@ it("strict authoring boundary rejects malformed coordinates/tags and webhook raw
     { ...base, kind: 46020 },
     { ...base, created_at: Infinity },
   ])
-    expect(() =>
-      validateWorkflowEvent(event, owner, {
-        delete: true,
-        webhookSecrets: false,
-      }),
-    ).toThrow();
+    expect(() => validateWorkflowEvent(event, owner)).toThrow();
   expect(isWorkflowOperation({ kind: 5, tags: [["e", "b".repeat(64)]] })).toBe(
     false,
   );
@@ -66,9 +62,8 @@ it("strict authoring boundary rejects malformed coordinates/tags and webhook raw
         ],
       },
       owner,
-      { delete: false, webhookSecrets: false },
     ),
-  ).toThrow("deletion");
+  ).not.toThrow();
 });
 it("YAML remains unchanged and malformed input/duplicate steps are rejected", () => {
   expect(workflowYaml(yaml)).toMatchObject({ enabled: false });
@@ -94,16 +89,15 @@ it("legacy omitted enabled and explicit toggles cross the real event boundary un
     const content = yaml.replace("enabled: false\n", line);
     const event = { ...base, content };
     expect(workflowYaml(content).enabled).toBe(enabled);
-    expect(
-      validateWorkflowEvent(event, owner, {
-        delete: false,
-        webhookSecrets: false,
-      }),
-    ).toEqual({ id, owner, channelId: id });
+    expect(validateWorkflowEvent(event, owner)).toEqual({
+      id,
+      owner,
+      channelId: id,
+    });
     expect(event.content).toBe(content);
   }
 });
-it("run/approval rows require matching identities and preserve exact cursor precision", () => {
+it("run rows require matching identities and preserve exact cursor precision", () => {
   const row = {
     id: runId,
     workflow_id: id,
@@ -128,19 +122,4 @@ it("run/approval rows require matching identities and preserve exact cursor prec
   ]) {
     expect(() => parseRuns(value, id)).toThrow();
   }
-  const approval = {
-    workflow_id: id,
-    run_id: runId,
-    approval_ref: owner,
-    step_id: "a",
-    status: "pending",
-    created_at: 1,
-    note: null,
-  };
-  expect(
-    parseApprovals({ approvals: [approval] }, id, runId)[0]?.reference,
-  ).toBe(owner);
-  expect(() =>
-    parseApprovals({ approvals: [{ ...approval, run_id: id }] }, id, runId),
-  ).toThrow();
 });

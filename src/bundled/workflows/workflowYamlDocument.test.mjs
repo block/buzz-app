@@ -3,24 +3,9 @@ import { test } from "vitest";
 
 import {
   readWorkflowDocumentFields,
-  readWorkflowHeaderState,
   yamlWithWorkflowEnabled,
   yamlWithWorkflowName,
 } from "./workflowYamlDocument.ts";
-
-/** The name the dialog header would render for `yaml`. */
-function headerName(yaml, fallbackName) {
-  return readWorkflowHeaderState(yaml, { enabled: true, name: fallbackName })
-    .name;
-}
-
-/** The enabled state the dialog header would render for `yaml`. */
-function headerEnabled(yaml, fallbackEnabled) {
-  return readWorkflowHeaderState(yaml, {
-    enabled: fallbackEnabled,
-    name: undefined,
-  }).enabled;
-}
 
 // A step that has just been added from the builder carries no message text yet,
 // so the definition fails full form validation while the user is still on the
@@ -40,7 +25,7 @@ test("reads the name of a definition whose steps are still incomplete", () => {
     name: "mock-horse-battery",
   });
   assert.equal(
-    headerName(INCOMPLETE_STEP_YAML, undefined),
+    readWorkflowDocumentFields(INCOMPLETE_STEP_YAML).name,
     "mock-horse-battery",
   );
 });
@@ -56,24 +41,7 @@ test("treats an empty definition as an editable blank name", () => {
     enabled: null,
     name: null,
   });
-  assert.equal(headerName("", undefined), "");
-});
-
-test("falls back to the saved name only when the document has none", () => {
-  assert.equal(headerName("", "Saved name"), "Saved name");
-  assert.equal(
-    headerName("name: ''\ntrigger:\n  on: webhook\n", "Saved name"),
-    "Saved name",
-  );
-  assert.equal(
-    headerName(INCOMPLETE_STEP_YAML, "Saved name"),
-    "mock-horse-battery",
-  );
-});
-
-test("trims the rendered name and the saved fallback", () => {
-  assert.equal(headerName('name: "  spaced  "\n', undefined), "spaced");
-  assert.equal(headerName("", "  saved  "), "saved");
+  assert.equal(readWorkflowDocumentFields("").name, null);
 });
 
 test("marks unparseable or non-map documents as uneditable", () => {
@@ -93,60 +61,60 @@ test("marks unparseable or non-map documents as uneditable", () => {
 
 test("ignores a non-string name rather than rendering it", () => {
   assert.equal(readWorkflowDocumentFields("name: 42\n").name, null);
-  assert.equal(headerName("name: 42\n", "Saved name"), "Saved name");
 });
 
-test("keeps the header editable while a step is still incomplete", () => {
-  assert.deepEqual(
-    readWorkflowHeaderState(INCOMPLETE_STEP_YAML, {
-      enabled: true,
-      name: "Saved name",
-    }),
-    { canEdit: true, enabled: true, name: "mock-horse-battery" },
-  );
+test("enabled is explicit or absent; incomplete steps do not block header edits", () => {
+  assert.equal(readWorkflowDocumentFields(INCOMPLETE_STEP_YAML).editable, true);
+  assert.equal(readWorkflowDocumentFields(INCOMPLETE_STEP_YAML).enabled, null);
   assert.equal(
-    readWorkflowHeaderState("name: [unclosed\n", {
-      enabled: false,
-      name: "Saved name",
-    }).canEdit,
+    readWorkflowDocumentFields(`enabled: false\n${INCOMPLETE_STEP_YAML}`)
+      .enabled,
     false,
   );
-});
-
-test("derives enabled from the document, defaulting to enabled", () => {
-  assert.equal(headerEnabled(INCOMPLETE_STEP_YAML, false), true);
-  assert.equal(
-    headerEnabled(`enabled: false\n${INCOMPLETE_STEP_YAML}`, true),
-    false,
-  );
-  // Only an unreadable document may fall back to the saved value.
-  assert.equal(headerEnabled("- just\n- a list\n", false), false);
-  assert.equal(headerEnabled("- just\n- a list\n", true), true);
 });
 
 test("writes the name back without disturbing the rest of the document", () => {
   const next = yamlWithWorkflowName(INCOMPLETE_STEP_YAML, "renamed");
-  assert.equal(headerName(next, undefined), "renamed");
+  assert.equal(readWorkflowDocumentFields(next).name, "renamed");
   assert.match(next, /action: send_message/);
   assert.match(next, /on: message_posted/);
 });
 
 test("seeds a definition when naming an empty document", () => {
   const next = yamlWithWorkflowName("", "fresh");
-  assert.equal(headerName(next, undefined), "fresh");
+  assert.equal(readWorkflowDocumentFields(next).name, "fresh");
   assert.match(next, /trigger:/);
 });
 
 test("adds and removes the enabled key without touching the name", () => {
   const disabled = yamlWithWorkflowEnabled(INCOMPLETE_STEP_YAML, false);
   assert.match(disabled, /enabled: false/);
-  assert.equal(headerName(disabled, undefined), "mock-horse-battery");
+  assert.equal(readWorkflowDocumentFields(disabled).name, "mock-horse-battery");
 
   const reEnabled = yamlWithWorkflowEnabled(disabled, true);
   assert.doesNotMatch(reEnabled, /enabled:/);
-  assert.equal(headerName(reEnabled, undefined), "mock-horse-battery");
+  assert.equal(
+    readWorkflowDocumentFields(reEnabled).name,
+    "mock-horse-battery",
+  );
 });
 
 test("naming a new document cannot activate it", () => {
-  assert.equal(headerEnabled(yamlWithWorkflowName("", "Fresh"), true), false);
+  assert.equal(
+    readWorkflowDocumentFields(yamlWithWorkflowName("", "Fresh")).enabled,
+    false,
+  );
+});
+
+test("header edits preserve advanced YAML and comments without form ownership", () => {
+  const yaml =
+    "# keep\nname: Advanced\ntrigger: {on: schedule, cron: '0 9 * * *'}\nsteps: [{id: call, action: call_webhook, url: 'https://example.com', headers: {X-Custom: keep}}]\nfuture: untouched\n";
+  const renamed = yamlWithWorkflowName(yaml, "Renamed");
+  const disabled = yamlWithWorkflowEnabled(renamed, false);
+  for (const source of [renamed, disabled]) {
+    assert.match(source, /# keep/);
+    assert.match(source, /X-Custom: keep/);
+    assert.match(source, /future: untouched/);
+    assert.match(source, /on: schedule/);
+  }
 });

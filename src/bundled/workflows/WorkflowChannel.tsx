@@ -136,6 +136,15 @@ export function WorkflowChannel({
       setError(null);
     }
   }, [snapshot?.status]);
+  const dismiss = async (eventId: string) => {
+    await capability.operations.dismiss(eventId);
+    if (submission.current === eventId) submission.current = null;
+    setDraft((current) => {
+      if (current?.operationId !== eventId) return current;
+      const { operationId: _, ...retained } = current;
+      return retained;
+    });
+  };
   const save = () => {
     if (
       !draft ||
@@ -229,16 +238,16 @@ export function WorkflowChannel({
     blocked = "Saving is unavailable from this host.";
   else if (unresolvedWrite && !draft?.operationId)
     blocked =
-      "An operation for this workflow is unresolved. Review its retained identity below; do not submit a replacement.";
+      "Check the saved configuration or review the unresolved request in Recent activity before continuing.";
   else if (draft?.operationId)
     blocked =
       operation?.outcome === "succeeded"
         ? operation.action === "delete"
-          ? "Deletion completed. Close this draft; the configuration list is being refreshed."
-          : "Save completed; waiting for a readback of this exact signed revision. A different head must be reviewed before editing again."
+          ? "Deletion request accepted, not verified runtime deletion. The configuration may remain visible. Review Recent activity to continue."
+          : "Configuration saved; waiting for a readback of this exact revision. Check saved configuration or review the current version in Recent activity."
         : operation?.outcome === "rejected"
-          ? "Save rejected. Your draft is retained; review the error before retrying."
-          : "This operation has not been resolved. Your draft and operation identity are retained.";
+          ? "Request rejected. Your draft is retained; review the error before continuing."
+          : "Your draft is retained. Check the saved configuration or review the request in Recent activity to continue.";
   if (!snapshot) return <p role="status">Reading configurations…</p>;
   return (
     <section aria-label={`Workflows in ${channelName}`}>
@@ -262,8 +271,9 @@ export function WorkflowChannel({
         </Button>
       </div>
       <p className="text-body-sm text-secondary">
-        Configured state is not runtime health. Historical configurations may no
-        longer have a runtime workflow.
+        Configured activation may differ from the existing backend’s runtime
+        state. Saving a disabled configuration does not confirm that automatic
+        runs have stopped or cancel work already running.
       </p>
       {snapshot.status === "loading" && (
         <p role="status">Reading configurations…</p>
@@ -326,14 +336,15 @@ export function WorkflowChannel({
               <Button onClick={() => select("close")}>Close editor</Button>
             </div>
             {draft.original && (
-              <>
+              <details>
+                <summary>Configuration details</summary>
                 <p className="text-mono-sm workflow-key">
                   Owner: {draft.original.owner}
                 </p>
                 <p className="text-mono-sm workflow-key">
                   Revision: {draft.original.revision}
                 </p>
-              </>
+              </details>
             )}
             {readonly && (
               <p className="text-secondary">
@@ -344,6 +355,7 @@ export function WorkflowChannel({
             <WorkflowEditor
               key={draft.original?.revision ?? "new"}
               yaml={draft.yaml}
+              initialYaml={draft.original?.yaml}
               onChange={(yaml) => setDraft({ ...draft, yaml })}
               onSave={save}
               readOnly={readonly}
@@ -409,8 +421,7 @@ export function WorkflowChannel({
             )}
             {draft.original && !capability.availability.delete && !readonly && (
               <p className="text-body-sm text-secondary">
-                Delete is unavailable until the relay proves support for
-                consistent workflow deletion.
+                Delete requests are unavailable from this host.
               </p>
             )}
             {draft.original && readRuns && (
@@ -422,16 +433,22 @@ export function WorkflowChannel({
             )}
             {confirmDelete && (
               <ConfirmAction
-                title="Delete this workflow?"
-                description="This removes the runtime workflow and its run history. Deletion is not complete until the host reports a verified outcome."
-                action="Delete workflow"
+                title="Request deletion of this workflow?"
+                description="The existing backend may retain a visible saved configuration. An accepted request does not confirm runtime deletion or cancellation of work already running. Submit this deletion request?"
+                action="Request deletion"
                 onConfirm={remove}
                 onCancel={() => setConfirmDelete(false)}
               />
             )}
           </div>
         )}
-      <WorkflowOperations capability={capability} operations={ownOperations} />
+      <WorkflowOperations
+        operations={ownOperations}
+        definitions={snapshot.status === "ready" ? snapshot.data.items : []}
+        onCheckSaved={refresh}
+        onReviewSaved={select}
+        onDismiss={dismiss}
+      />
       {pendingSelection &&
         snapshot.status !== "idle" &&
         snapshot.status !== "unavailable" && (

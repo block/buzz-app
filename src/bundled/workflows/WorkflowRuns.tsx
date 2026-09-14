@@ -49,7 +49,6 @@ function RunPage({
       [capability, workflow, cursor],
     ),
   );
-  const [approvalRun, setApprovalRun] = useState<string | null>(null);
   if (!snapshot) return <p role="status">Reading runs…</p>;
   return (
     <section aria-label="Workflow runs" className="workflow-runs">
@@ -87,7 +86,6 @@ function RunPage({
             <strong>{run.status.replaceAll("_", " ")}</strong> ·{" "}
             {new Date(run.createdAt * 1000).toISOString()}
           </p>
-          <p className="text-mono-sm workflow-key">{run.id}</p>
           <p className="text-body-sm text-secondary">
             Current step: {run.currentStep}
           </p>
@@ -97,28 +95,12 @@ function RunPage({
             </p>
           )}
           <details>
-            <summary>Execution trace</summary>
+            <summary>Run details and trace</summary>
+            <p className="text-mono-sm workflow-key">Run ID: {run.id}</p>
             <pre className="text-mono workflow-trace">
               {JSON.stringify(run.trace, null, 2)}
             </pre>
           </details>
-          <Button
-            size="compact"
-            onClick={() =>
-              setApprovalRun(approvalRun === run.id ? null : run.id)
-            }
-          >
-            {approvalRun === run.id ? "Hide approvals" : "Read approvals"}
-          </Button>
-          {approvalRun === run.id && (
-            <section aria-label="Approval history (read-only)">
-              <ApprovalRows
-                capability={capability}
-                workflow={workflow}
-                runId={run.id}
-              />
-            </section>
-          )}
         </article>
       ))}
       <div className="workflow-toolbar">
@@ -136,51 +118,5 @@ function RunPage({
         )}
       </div>
     </section>
-  );
-}
-function ApprovalRows({
-  capability,
-  workflow,
-  runId,
-}: {
-  capability: WorkflowCapability;
-  workflow: WorkflowReference;
-  runId: string;
-}) {
-  const { snapshot, refresh } = useWorkflowView(
-    useCallback(
-      () => capability.approvals(workflow, runId),
-      [capability, workflow, runId],
-    ),
-  );
-  if (!snapshot) return <p role="status">Reading approvals…</p>;
-  return (
-    <div>
-      {snapshot.status === "ready" ? (
-        snapshot.data.length ? (
-          <ul>
-            {snapshot.data.map((row) => (
-              <li key={row.reference}>
-                {row.stepId}: {row.status}
-                {row.note ? ` — ${row.note}` : ""}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No approval history returned.</p>
-        )
-      ) : (
-        <p role="status">
-          {snapshot.error ?? `Approval history: ${snapshot.status}.`}
-        </p>
-      )}
-      <Button
-        size="compact"
-        disabled={snapshot.status === "loading"}
-        onClick={() => void refresh()}
-      >
-        Refresh approvals
-      </Button>
-    </div>
   );
 }

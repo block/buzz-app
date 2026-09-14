@@ -1,86 +1,32 @@
 // Adapted from block/buzz desktop workflow helpers at b9392d9d.
 import { stringify as yamlStringify, parse as yamlParse } from "yaml";
 
-import { cronExpressionError } from "./cronExpression";
 import {
   formatDurationSeconds,
   parseDurationSeconds,
 } from "./workflowDuration";
 
-export const TRIGGER_TYPES = [
-  "message_posted",
-  "reaction_added",
-  "diff_posted",
-  "webhook",
-  "schedule",
-] as const;
+export const TRIGGER_TYPES = ["message_posted", "reaction_added"] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
 
-export function supportsMessageTextCondition(
-  triggerType: TriggerType,
-): boolean {
-  return triggerType === "message_posted" || triggerType === "diff_posted";
-}
-
-export const SELECTABLE_TRIGGER_TYPES = [
-  "message_posted",
-  "reaction_added",
-  "diff_posted",
-  "webhook",
-  "schedule",
-] as const satisfies readonly TriggerType[];
-
-export const ACTION_TYPES = [
-  "delay",
-  "send_message",
-  "send_dm",
-  "call_webhook",
-  "request_approval",
-  "add_reaction",
-  "set_channel_topic",
-] as const;
+export const ACTION_TYPES = ["delay", "send_message"] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
-
-export const SELECTABLE_ACTION_TYPES = [
-  "send_message",
-  "delay",
-  "call_webhook",
-] as const satisfies readonly ActionType[];
 
 export type TriggerConfig = {
   on: TriggerType;
   filter?: string | undefined;
   emoji?: string | undefined;
-  cron?: string | undefined;
-  interval?: string | undefined;
-};
-
-export type HeaderFormState = {
-  id: string;
-  key: string;
-  value: string;
 };
 
 export type StepFormState = {
   id: string;
   name?: string | undefined;
   action: ActionType;
-  condition?: string | undefined;
   timeoutSecs?: string | undefined;
   duration?: string | undefined;
   text?: string | undefined;
   channel?: string | undefined;
   replyInThread?: boolean | undefined;
-  to?: string | undefined;
-  url?: string | undefined;
-  method?: string | undefined;
-  headers?: HeaderFormState[] | undefined;
-  body?: string | undefined;
-  emoji?: string | undefined;
-  topic?: string | undefined;
-  from?: string | undefined;
-  message?: string | undefined;
-  timeout?: string | undefined;
 };
 
 export type WorkflowFormState = {
@@ -99,53 +45,10 @@ export const DEFAULT_FORM_STATE: WorkflowFormState = {
   steps: [],
 };
 
-export const TRIGGER_LABELS: Record<TriggerType, string> = {
-  message_posted: "Message Posted",
-  reaction_added: "Reaction Added",
-  diff_posted: "Diff Posted",
-  webhook: "Webhook",
-  schedule: "Schedule",
-};
-
 export const ACTION_LABELS: Record<ActionType, string> = {
   delay: "Delay",
   send_message: "Send Message",
-  send_dm: "Send DM",
-  call_webhook: "Call Webhook",
-  request_approval: "Request Approval",
-  add_reaction: "Add Reaction",
-  set_channel_topic: "Set Channel Topic",
 };
-
-function toHeaderRows(
-  headers: unknown,
-  stepId: string,
-): HeaderFormState[] | undefined {
-  if (!headers || typeof headers !== "object" || Array.isArray(headers)) {
-    return undefined;
-  }
-
-  const rows = Object.entries(headers).map(([key, value], index) => ({
-    id: `${stepId}_header_${index + 1}`,
-    key,
-    value: typeof value === "string" ? value : String(value),
-  }));
-
-  return rows.length > 0 ? rows : undefined;
-}
-
-function headersToRecord(
-  headers: HeaderFormState[] | undefined,
-): Record<string, string> | undefined {
-  if (!headers) return undefined;
-
-  const entries = headers
-    .map(({ key, value }) => [key.trim(), value] as const)
-    .filter(([key]) => key.length > 0);
-
-  if (entries.length === 0) return undefined;
-  return Object.fromEntries(entries);
-}
 
 function parseTimeoutSecs(timeoutSecs: string | undefined): number | undefined {
   if (!timeoutSecs) return undefined;
@@ -156,7 +59,6 @@ function parseTimeoutSecs(timeoutSecs: string | undefined): number | undefined {
 function actionFieldsForStep(step: StepFormState): Record<string, unknown> {
   const fields: Record<string, unknown> = {};
   if (step.name?.trim()) fields.name = step.name.trim();
-  if (step.condition?.trim()) fields.if = step.condition.trim();
   const timeoutSecs = parseTimeoutSecs(step.timeoutSecs);
   if (timeoutSecs !== undefined) fields.timeout_secs = timeoutSecs;
 
@@ -169,75 +71,15 @@ function actionFieldsForStep(step: StepFormState): Record<string, unknown> {
       if (step.channel) fields.channel = step.channel;
       if (step.replyInThread) fields.reply_in_thread = true;
       break;
-    case "send_dm":
-      if (step.to) fields.to = step.to;
-      if (step.text) fields.text = step.text;
-      break;
-    case "call_webhook":
-      if (step.url) fields.url = step.url;
-      fields.method = step.method || "POST";
-      {
-        const headers = headersToRecord(step.headers);
-        if (headers) fields.headers = headers;
-      }
-      if (step.body) fields.body = step.body;
-      break;
-    case "request_approval":
-      if (step.from) fields.from = step.from;
-      if (step.message) fields.message = step.message;
-      if (step.timeout) fields.timeout = step.timeout;
-      break;
-    case "add_reaction":
-      if (step.emoji) fields.emoji = step.emoji;
-      break;
-    case "set_channel_topic":
-      if (step.topic) fields.topic = step.topic;
-      break;
   }
   return fields;
 }
 
-export function isThreadReplyEligibleTrigger(trigger: TriggerType): boolean {
-  return trigger !== "webhook" && trigger !== "schedule";
-}
-
-export function withTriggerType(
-  state: WorkflowFormState,
-  triggerType: TriggerType,
-): WorkflowFormState {
-  return {
-    ...state,
-    trigger: { on: triggerType },
-    // Clear threaded-reply state on every step, not just send_message ones:
-    // a hidden `replyInThread` on a step whose action was changed away from
-    // send_message would otherwise resurrect when the action is switched back.
-    steps: isThreadReplyEligibleTrigger(triggerType)
-      ? state.steps
-      : state.steps.map((step) =>
-          step.replyInThread ? { ...step, replyInThread: false } : step,
-        ),
-  };
-}
-
 export function formStateToYaml(state: WorkflowFormState): string {
   const trigger: Record<string, unknown> = { on: state.trigger.on };
-  if (
-    (state.trigger.on === "message_posted" ||
-      state.trigger.on === "diff_posted" ||
-      state.trigger.on === "reaction_added") &&
-    state.trigger.filter
-  ) {
-    trigger.filter = state.trigger.filter;
-  }
+  if (state.trigger.filter) trigger.filter = state.trigger.filter;
   if (state.trigger.on === "reaction_added" && state.trigger.emoji) {
     trigger.emoji = state.trigger.emoji;
-  }
-  if (state.trigger.on === "schedule") {
-    if (state.trigger.cron) {
-      trigger.cron = state.trigger.cron;
-    } else if (state.trigger.interval) {
-      trigger.interval = state.trigger.interval;
-    }
   }
 
   const steps = state.steps.map((step) => ({
@@ -286,9 +128,6 @@ const TOP_LEVEL_KEYS = new Set([
 const TRIGGER_KEYS: Record<TriggerType, ReadonlySet<string>> = {
   message_posted: new Set(["on", "filter"]),
   reaction_added: new Set(["on", "emoji", "filter"]),
-  diff_posted: new Set(["on", "filter"]),
-  webhook: new Set(["on"]),
-  schedule: new Set(["on", "cron", "interval"]),
 };
 const COMMON_STEP_KEYS = ["id", "name", "action", "if", "timeout_secs"];
 const ACTION_STEP_KEYS: Record<ActionType, ReadonlySet<string>> = {
@@ -299,42 +138,15 @@ const ACTION_STEP_KEYS: Record<ActionType, ReadonlySet<string>> = {
     "channel",
     "reply_in_thread",
   ]),
-  send_dm: new Set([...COMMON_STEP_KEYS, "to", "text"]),
-  call_webhook: new Set([
-    ...COMMON_STEP_KEYS,
-    "url",
-    "method",
-    "headers",
-    "body",
-  ]),
-  request_approval: new Set([
-    ...COMMON_STEP_KEYS,
-    "from",
-    "message",
-    "timeout",
-  ]),
-  add_reaction: new Set([...COMMON_STEP_KEYS, "emoji"]),
-  set_channel_topic: new Set([...COMMON_STEP_KEYS, "topic"]),
 };
 const REQUIRED_ACTION_STRING_KEYS: Record<ActionType, readonly string[]> = {
   delay: ["duration"],
   send_message: ["text"],
-  send_dm: ["to", "text"],
-  call_webhook: ["url"],
-  request_approval: ["from", "message"],
-  add_reaction: ["emoji"],
-  set_channel_topic: ["topic"],
 };
 const OPTIONAL_ACTION_STRING_KEYS: Record<ActionType, readonly string[]> = {
   delay: [],
   send_message: ["channel"],
-  send_dm: [],
-  call_webhook: ["method", "body"],
-  request_approval: ["timeout"],
-  add_reaction: [],
-  set_channel_topic: [],
 };
-const WEBHOOK_METHODS = new Set(["POST", "GET", "PUT", "PATCH", "DELETE"]);
 const STEP_ID_PATTERN_STRICT = /^[A-Za-z0-9_]{1,64}$/;
 
 type UnknownRecord = Record<string, unknown>;
@@ -432,45 +244,14 @@ export function yamlToFormState(
         error: `Unsupported ${triggerOn} trigger field "${triggerUnknown}" — use the YAML editor`,
       };
     }
-    for (const key of ["filter", "emoji", "cron", "interval"] as const) {
+    for (const key of ["filter", "emoji"] as const) {
       const error = optionalOwnedStringError(rawTrigger, key, `trigger.${key}`);
-      if (error) {
-        return {
-          ok: false,
-          error:
-            triggerOn === "schedule" && !error.includes("YAML editor")
-              ? `${error} — use the YAML editor`
-              : error,
-        };
-      }
-    }
-    if (triggerOn === "schedule") {
-      const hasCron = rawTrigger.cron !== undefined;
-      const hasInterval = rawTrigger.interval !== undefined;
-      if (hasCron === hasInterval) {
-        return {
-          ok: false,
-          error: hasCron
-            ? "Schedule triggers cannot specify both cron and interval — use the YAML editor"
-            : "Schedule triggers require either cron or interval — use the YAML editor",
-        };
-      }
-      if (typeof rawTrigger.cron === "string") {
-        const error = cronExpressionError(rawTrigger.cron);
-        if (error) {
-          return {
-            ok: false,
-            error: `Unsupported cron expression: ${error} Use the YAML editor`,
-          };
-        }
-      }
+      if (error) return { ok: false, error };
     }
     const trigger: TriggerConfig = {
       on: triggerOn,
       filter: rawTrigger.filter as string | undefined,
       emoji: rawTrigger.emoji as string | undefined,
-      cron: rawTrigger.cron as string | undefined,
-      interval: rawTrigger.interval as string | undefined,
     };
 
     if (!Array.isArray(parsed.steps)) {
@@ -563,52 +344,11 @@ export function yamlToFormState(
         );
         if (error) return { ok: false, error };
       }
-      if (
-        action === "call_webhook" &&
-        step.method !== undefined &&
-        !WEBHOOK_METHODS.has(step.method as string)
-      ) {
-        return {
-          ok: false,
-          error: `Unsupported webhook method "${String(step.method)}" — use the YAML editor`,
-        };
-      }
-      if (step.headers !== undefined) {
-        const headers = objectRecord(step.headers);
-        if (
-          !headers ||
-          Object.keys(headers).length === 0 ||
-          Object.values(headers).some((header) => typeof header !== "string")
-        ) {
-          return {
-            ok: false,
-            error:
-              "Webhook headers must be a non-empty object containing string values",
-          };
-        }
-        const unsafeHeader = Object.keys(headers).find(
-          (key) => key.length === 0 || key.trim() !== key,
-        );
-        if (unsafeHeader !== undefined) {
-          return {
-            ok: false,
-            error:
-              "Webhook header names cannot be empty or have surrounding whitespace in Form mode",
-          };
-        }
-      }
-
       if (step.reply_in_thread !== undefined) {
         if (typeof step.reply_in_thread !== "boolean") {
           return {
             ok: false,
             error: `Step ${number} reply_in_thread must be a boolean — use the YAML editor`,
-          };
-        }
-        if (step.reply_in_thread && !isThreadReplyEligibleTrigger(triggerOn)) {
-          return {
-            ok: false,
-            error: `reply_in_thread is not supported for ${triggerOn} triggers — use the YAML editor`,
           };
         }
       }
@@ -625,16 +365,6 @@ export function yamlToFormState(
         text: step.text as string | undefined,
         channel: step.channel as string | undefined,
         replyInThread: step.reply_in_thread === true,
-        to: step.to as string | undefined,
-        url: step.url as string | undefined,
-        method: step.method as string | undefined,
-        headers: toHeaderRows(step.headers, step.id),
-        body: step.body as string | undefined,
-        emoji: step.emoji as string | undefined,
-        topic: step.topic as string | undefined,
-        from: step.from as string | undefined,
-        message: step.message as string | undefined,
-        timeout: step.timeout as string | undefined,
       });
     }
 

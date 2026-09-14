@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "../../../tests/browser/vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 import { parse as parseYaml } from "yaml";
@@ -240,6 +240,14 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await expect(button("Save workflow")).toBeEnabled();
   await expect(enabled).toBeChecked();
   await expect(reply).toBeChecked();
+  await page
+    .getByLabel("Message text", { exact: true })
+    .fill("Ordinary enabled edit");
+  await button("Save workflow").click();
+  await expect.poll(saves).toBe(2);
+  await expect(dialog).toHaveCount(0);
+  await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await expect(button("Save workflow")).toBeEnabled();
   await name.focus();
   await page.keyboard.press(tab);
   await expect(enabled).toBeFocused();
@@ -250,7 +258,7 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await expect(reply).not.toBeChecked();
   await focusByTab(button("Save workflow"));
   await page.keyboard.press("Enter");
-  await expect.poll(saves).toBe(2);
+  await expect.poll(saves).toBe(3);
   await expect(dialog).toHaveCount(0);
   expect((await savedYaml()).enabled).toBe(false);
   expect((await savedYaml()).steps[0].reply_in_thread).not.toBe(true);
@@ -258,10 +266,15 @@ test("keyboard switches feed enabled-save confirmation and disabled readback", a
   await expect(enabled).toBeEnabled();
   await expect(enabled).not.toBeChecked();
   await expect(reply).not.toBeChecked();
+  await enabled.click();
+  await button("Save workflow").click();
+  await expect(dialog).toContainText("It will run for every new message");
+  expect(await saves()).toBe(3);
+  await page.keyboard.press("Escape");
   expect(errors).toEqual([]);
 });
 
-test("history reads are lazy, paged by exact cursor and released; unknown operations never get a replacement ID", async ({
+test("history stays lazy and paged; acknowledging an unknown run never repeats it", async ({
   page,
 }) => {
   await page.goto(url);
@@ -270,19 +283,6 @@ test("history reads are lazy, paged by exact cursor and released; unknown operat
   expect(await page.evaluate(() => window.workflowFixture.calls.runs)).toBe(0);
   await button("Read runs").click();
   await expect(page.getByText("Current step: 1")).toBeVisible();
-  expect(
-    await page.evaluate(() => window.workflowFixture.calls.approvals),
-  ).toBe(0);
-  await button("Read approvals").click();
-  await expect(
-    page.getByText("notify: granted — Fixture decision"),
-  ).toBeVisible();
-  await button("Hide approvals").click();
-  expect(
-    await page.evaluate(() =>
-      window.workflowFixture.approvalViews.every((view) => view.disposed()),
-    ),
-  ).toBe(true);
   await button("Older runs").click();
   await expect(page.getByText("No runs returned on this page.")).toBeVisible();
   expect(await page.evaluate(() => window.workflowFixture.runCursor())).toEqual(
@@ -307,18 +307,28 @@ test("history reads are lazy, paged by exact cursor and released; unknown operat
   await button("Run now").click();
   await button("Unknown operation").click();
   await expect(button("Run now")).toBeDisabled();
+  await expect(page.getByText(/The run may have started/)).toBeVisible();
   const id = await page.evaluate(
     () =>
       window.workflowFixture.capability.operations.snapshot().at(-1).eventId,
-  );
-  await button("Retry same signed operation").click();
-  expect(await page.evaluate(() => window.workflowFixture.calls.retry)).toEqual(
-    [id],
   );
   await button("Close editor").click();
   await button("Message helper").click();
   await expect(button("Run now")).toBeDisabled();
   await expect(button("Save workflow")).toBeDisabled();
+  expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
+    1,
+  );
+  await button("Dismiss notice").click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "does not undo, cancel or repeat",
+  );
+  await button("Dismiss notice and continue").click();
+  await expect(button("Run now")).toBeEnabled();
+  await expect(button("Save workflow")).toBeEnabled();
+  expect(
+    await page.evaluate(() => window.workflowFixture.calls.dismiss),
+  ).toEqual([id]);
   expect(await page.evaluate(() => window.workflowFixture.calls.trigger)).toBe(
     1,
   );
@@ -393,4 +403,184 @@ test("real session page under StrictMode fences community changes, warns for dir
     "Revoked private text",
   );
   expect(errors).toEqual([]);
+});
+
+test("a lost save response can be checked and adopted without resubmitting", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Message helper").click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Saved without response");
+  await button("Save workflow").click();
+  await page.evaluate(() => {
+    window.workflowFixture.saveOnServer();
+    window.workflowFixture.finish("unknown");
+  });
+  await expect(button("Save workflow")).toBeDisabled();
+  await button("Check saved configuration").click();
+  await expect(button("Save workflow")).toBeEnabled();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "Saved without response",
+  );
+  expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(1);
+  await page
+    .getByLabel("Message text", { exact: true })
+    .fill("Edit after recovery");
+  await button("Save workflow").click();
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.calls.save))
+    .toBe(2);
+});
+
+test("different-head recovery needs explicit review; failed dismissal keeps the draft locked", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Message helper").click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Retained local draft");
+  await button("Save workflow").click();
+  await page.evaluate(() => {
+    window.workflowFixture.saveOnServer(false);
+    window.workflowFixture.finish("unknown");
+  });
+  await button("Check saved configuration").click();
+  await expect(button("Save workflow")).toBeDisabled();
+  await expect(button("Review current configuration")).toBeVisible();
+  await button("Dismiss notice").click();
+  await page.keyboard.press("Escape");
+  await expect(button("Save workflow")).toBeDisabled();
+  expect(
+    await page.evaluate(() => window.workflowFixture.calls.dismiss),
+  ).toEqual([]);
+  await page.evaluate(() =>
+    window.workflowFixture.setDismissError("Fixture dismissal failed"),
+  );
+  await button("Dismiss notice").click();
+  await button("Dismiss notice and continue").click();
+  await expect(page.getByRole("alert")).toHaveText("Fixture dismissal failed");
+  await page.keyboard.press("Escape");
+  await expect(button("Save workflow")).toBeDisabled();
+  await page.evaluate(() => window.workflowFixture.setDismissError());
+  await button("Dismiss notice").click();
+  await button("Dismiss notice and continue").click();
+  await expect(button("Save workflow")).toBeEnabled();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "Retained local draft",
+  );
+  expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(1);
+  await button("Save workflow").click();
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.calls.save))
+    .toBe(2);
+});
+
+test("optimistic dismissal keeps confirmation mounted until persistence settles", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Message helper").click();
+  await page.getByLabel("Workflow name", { exact: true }).fill("Kept draft");
+  await button("Save workflow").click();
+  await page.evaluate(() => window.workflowFixture.finish("unknown"));
+  const operationId = await page.evaluate(
+    () => window.workflowFixture.capability.operations.snapshot()[0].eventId,
+  );
+  const dialog = page.getByRole("alertdialog", {
+    name: "Dismiss this notice?",
+  });
+  for (const fail of [true, false]) {
+    await page.evaluate((fail) => {
+      window.workflowFixture.setDismissError(
+        fail ? "Journal unavailable" : undefined,
+      );
+      window.workflowFixture.holdDismiss();
+    }, fail);
+    await button("Dismiss notice").click();
+    try {
+      await button("Dismiss notice and continue").click();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              window.workflowFixture.capability.operations.snapshot().length,
+          ),
+        )
+        .toBe(0);
+      await expect(dialog).toBeVisible();
+      await expect(button("Dismissing…")).toBeDisabled();
+      await expect(button("Keep editing")).toBeDisabled();
+      await page.keyboard.press("Escape");
+      await expect(dialog).toBeVisible();
+      // The modal must keep navigation/submission inaccessible during the gap.
+      await expect(button("Close editor")).toHaveCount(0);
+      await expect(button("New workflow")).toHaveCount(0);
+      expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(
+        1,
+      );
+    } finally {
+      await page.evaluate(() => window.workflowFixture.releaseDismiss());
+    }
+    if (fail) {
+      await expect(dialog.getByRole("alert")).toHaveText("Journal unavailable");
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            window.workflowFixture.capability.operations
+              .snapshot()
+              .map((op) => op.eventId),
+          ),
+        )
+        .toEqual([operationId]);
+      await page.keyboard.press("Escape");
+      await expect(button("Save workflow")).toBeDisabled();
+      await expect(
+        page.getByLabel("Workflow name", { exact: true }),
+      ).toHaveValue("Kept draft");
+    } else {
+      await expect(dialog).toHaveCount(0);
+      await expect(button("Save workflow")).toBeEnabled();
+      await expect(
+        page.getByLabel("Workflow name", { exact: true }),
+      ).toHaveValue("Kept draft");
+    }
+  }
+  expect(
+    await page.evaluate(() => window.workflowFixture.calls.dismiss),
+  ).toEqual([operationId, operationId]);
+  expect(await page.evaluate(() => window.workflowFixture.calls.save)).toBe(1);
+  await button("Save workflow").click();
+  await expect
+    .poll(() => page.evaluate(() => window.workflowFixture.calls.save))
+    .toBe(2);
+});
+
+test("legacy deletion is a request, not verified runtime removal", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Message helper").click();
+  await button("Delete workflow").click();
+  await expect(page.getByRole("alertdialog")).toContainText(
+    "does not confirm runtime deletion",
+  );
+  await button("Request deletion").click();
+  await page.evaluate(() => window.workflowFixture.finish("succeeded"));
+  await expect(
+    page.getByText(/Deletion request accepted\. The saved configuration/),
+  ).toBeVisible();
+  await expect(button("Message helper")).toBeVisible();
+  await button("Dismiss notice").click();
+  await button("Dismiss notice and continue").click();
+  await expect(button("Save workflow")).toBeEnabled();
+  expect(await page.evaluate(() => window.workflowFixture.calls.delete)).toBe(
+    1,
+  );
 });

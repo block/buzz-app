@@ -5,7 +5,6 @@ import type {
   WorkflowView,
   WorkflowRun,
   WorkflowRunCursor,
-  WorkflowApproval,
   WorkflowDefinitions,
 } from "../../features/workflows/types";
 
@@ -105,11 +104,9 @@ export function createWorkflowFixture() {
     delete: 0,
     trigger: 0,
     runs: 0,
-    approvals: 0,
-    retry: [] as string[],
+    dismiss: [] as string[],
   };
   const runViews: { disposed(): boolean }[] = [];
-  const approvalViews: { disposed(): boolean }[] = [];
   let runCursor: WorkflowRunCursor | undefined;
   const publish = (next: readonly WorkflowOperation[]) => {
     operations = next;
@@ -128,11 +125,14 @@ export function createWorkflowFixture() {
         action,
         delivery: "sending",
         outcome: "pending",
-        secretAvailable: false,
       },
     ]);
     return eventId;
   };
+  let savedOnServer: WorkflowDefinition | undefined;
+  let dismissError: string | undefined;
+  let dismissGate: Promise<void> | undefined;
+  let releaseDismiss: (() => void) | undefined;
   const capability: WorkflowCapability = {
     availability: {
       definitions: true,
@@ -140,13 +140,32 @@ export function createWorkflowFixture() {
       save: true,
       trigger: true,
       delete: true,
-      webhookSecrets: false,
     },
     definitions: () => {
       const owned = fixtureView(definitionState.data);
       owned.update(definitionState);
       definitionViews.push(owned);
-      return owned.view;
+      return {
+        ...owned.view,
+        async refresh() {
+          if (savedOnServer && definitionState.status !== "unavailable") {
+            definitions.update({
+              status: "ready",
+              data: { items: [savedOnServer], partial: false },
+            });
+            publish(
+              operations.map((operation) =>
+                operation.action === "save" &&
+                operation.outcome === "unknown" &&
+                operation.eventId === savedOnServer?.revision
+                  ? { ...operation, outcome: "succeeded" }
+                  : operation,
+              ),
+            );
+          }
+          await owned.view.refresh();
+        },
+      };
     },
     runs: (_workflow, cursor) => {
       calls.runs++;
@@ -156,21 +175,6 @@ export function createWorkflowFixture() {
         next: cursor ? null : fixtureCursor,
       });
       runViews.push(next);
-      return next.view;
-    },
-    approvals: () => {
-      calls.approvals++;
-      const next = fixtureView<readonly WorkflowApproval[]>([
-        {
-          reference: "cc".repeat(32),
-          runId: fixtureRun.id,
-          stepId: "notify",
-          status: "granted",
-          note: "Fixture decision",
-          createdAt: 1_789_224_000,
-        },
-      ]);
-      approvalViews.push(next);
       return next.view;
     },
     save(input) {
@@ -201,13 +205,27 @@ export function createWorkflowFixture() {
           listeners.delete(listener);
         };
       },
-      retry(id) {
-        calls.retry.push(id);
+      async dismiss(id) {
+        calls.dismiss.push(id);
+        if (
+          operations.some(
+            (operation) =>
+              operation.eventId === id && operation.outcome === "pending",
+          )
+        )
+          throw new Error("Still pending");
+        const previous = operations.find(
+          (operation) => operation.eventId === id,
+        );
+        // Match the outbox: remove/notify before persistence, restore on failure.
+        publish(operations.filter((operation) => operation.eventId !== id));
+        await dismissGate;
+        if (dismissError) {
+          if (previous && definitionState.status !== "unavailable")
+            publish([...operations, previous]);
+          throw new Error(dismissError);
+        }
       },
-      async dismiss() {},
-    },
-    takeWebhookSecret() {
-      return undefined;
     },
   };
   return {
@@ -217,7 +235,30 @@ export function createWorkflowFixture() {
     input: () => savedInput,
     runCursor: () => runCursor,
     runViews,
-    approvalViews,
+    setDismissError: (message?: string) => {
+      dismissError = message;
+    },
+    holdDismiss() {
+      dismissGate = new Promise((resolve) => {
+        releaseDismiss = resolve;
+      });
+    },
+    releaseDismiss() {
+      releaseDismiss?.();
+      dismissGate = undefined;
+      releaseDismiss = undefined;
+    },
+    saveOnServer(exact = true) {
+      const operation = operations.at(-1);
+      if (operation?.action !== "save" || !savedInput)
+        throw new Error("No save");
+      savedOnServer = {
+        ...fixtureDefinition,
+        ...operation.workflow,
+        yaml: savedInput.yaml,
+        revision: exact ? operation.eventId : "bb".repeat(32),
+      };
+    },
     finish(outcome: WorkflowOperation["outcome"], exact = true) {
       const operation = operations.at(-1);
       if (!operation) throw new Error("No operation");
@@ -242,11 +283,7 @@ export function createWorkflowFixture() {
           },
         });
       }
-      if (outcome === "succeeded" && operation.action === "delete")
-        definitions.update({
-          status: "ready",
-          data: { partial: false, items: [] },
-        });
+      // Legacy deletion accepts the request without removing the signed definition.
       publish(
         operations.map((item) =>
           item.eventId === operation.eventId

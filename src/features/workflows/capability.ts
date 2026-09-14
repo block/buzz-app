@@ -12,7 +12,6 @@ import type {
 import {
   definition,
   isWorkflowOperation,
-  parseApprovals,
   parseRuns,
   record,
   validateReference,
@@ -49,14 +48,12 @@ export function createWorkflows({
   };
   const results = new Map<string, Result>();
   const receiptInterest = new Set<string>();
-  // Webhook save/reveal stays unavailable until the explicit UI secret lifetime is integrated.
   const availability = Object.freeze({
     definitions: !!reader,
     history: !!host,
-    save: host?.lifecycleVersion === 1 && !!outbox?.supports(30620),
-    trigger: host?.lifecycleVersion === 1 && !!outbox?.supports(46020),
-    delete: host?.lifecycleVersion === 1 && !!outbox?.supports(5),
-    webhookSecrets: false,
+    save: !!host && !!outbox?.supports(30620),
+    trigger: !!host && !!outbox?.supports(46020),
+    delete: !!host && !!outbox?.supports(5),
   });
   let operations: readonly WorkflowOperation[] = Object.freeze([]);
   function rebuild() {
@@ -82,6 +79,10 @@ export function createWorkflows({
                   : item.delivery === "failed"
                     ? "rejected"
                     : "unknown");
+              const error =
+                result?.outcome === "succeeded"
+                  ? undefined
+                  : (result?.error ?? item.error);
               return [
                 Object.freeze({
                   eventId: item.event.id,
@@ -94,11 +95,8 @@ export function createWorkflows({
                         : "trigger",
                   delivery: item.delivery,
                   outcome,
-                  secretAvailable: false,
                   ...(result?.runId ? { runId: result.runId } : {}),
-                  ...((result?.error ?? item.error) !== undefined
-                    ? { error: (result?.error ?? item.error) as string }
-                    : {}),
+                  ...(error !== undefined ? { error } : {}),
                 }),
               ];
             })
@@ -122,6 +120,7 @@ export function createWorkflows({
     available: boolean,
     empty: T,
     load: (signal: AbortSignal) => Promise<T>,
+    accept?: (data: T) => void,
   ): WorkflowView<T> {
     if (!UUID.test(channelId)) throw new Error("Invalid workflow channel");
     if (views.size >= 16)
@@ -203,6 +202,7 @@ export function createWorkflows({
             )
               return;
             snapshot = Object.freeze({ status: "ready", data });
+            accept?.(data);
             emit();
           })
           .catch(() => {
@@ -242,7 +242,7 @@ export function createWorkflows({
           ? availability.trigger
           : availability.delete;
     if (!enabled)
-      throw new Error("Reliable workflow writes are unavailable on this relay");
+      throw new Error("Workflow writes are unavailable on this connection");
   }
   function send(
     kind: 30620 | 46020 | 5,
@@ -263,7 +263,6 @@ export function createWorkflows({
     validateWorkflowEvent(
       { ...input, pubkey: viewer, id: "", created_at: 0 },
       viewer,
-      availability,
     );
     if (!outbox) throw new Error("Workflow publishing unavailable");
     if (receiptInterest.size >= 256)
@@ -307,6 +306,29 @@ export function createWorkflows({
             partial: events.length >= 100,
           });
         },
+        ({ items }) => {
+          // Only a fresh, verified exact configuration head resolves an unknown
+          // save. An echo, another revision, or run history cannot do so.
+          let changed = false;
+          for (const op of operations) {
+            if (
+              op.action !== "save" ||
+              op.outcome !== "unknown" ||
+              !items.some(
+                (row) =>
+                  row.revision === op.eventId &&
+                  row.owner === op.workflow.owner &&
+                  row.channelId === op.workflow.channelId &&
+                  row.id === op.workflow.id,
+              )
+            )
+              continue;
+            results.set(op.eventId, { outcome: "succeeded" });
+            receiptInterest.delete(op.eventId);
+            changed = true;
+          }
+          if (changed) rebuild();
+        },
       );
     },
     runs(workflow, cursor) {
@@ -320,22 +342,6 @@ export function createWorkflows({
           return parseRuns(
             await host.runs(workflow.id, cursor, signal),
             workflow.id,
-          );
-        },
-      );
-    },
-    approvals(workflow, runId) {
-      assertAccess(workflow);
-      return view(
-        workflow.channelId,
-        !!host,
-        Object.freeze([]),
-        async (signal) => {
-          if (!host) throw new Error("Workflow history unavailable");
-          return parseApprovals(
-            await host.approvals(workflow.id, runId, signal),
-            workflow.id,
-            runId,
           );
         },
       );
@@ -364,32 +370,26 @@ export function createWorkflows({
           listeners.delete(listener);
         };
       },
-      retry(id) {
-        const op = operations.find((row) => row.eventId === id);
-        if (!op || op.outcome === "succeeded" || op.delivery === "sending")
-          return;
-        assertAccess(op.workflow);
-        receiptInterest.add(id);
-        results.delete(id);
-        outbox?.retry(id);
-      },
       async dismiss(id) {
         await outbox?.dismiss(id);
+        // The outbox cannot dismiss an active attempt, including one already
+        // echoed by the relay. Do not tell the editor it may unlock that intent.
+        if (local?.snapshot().some((item) => item.event.id === id))
+          throw new Error(
+            "Command is still being delivered; wait before dismissing it",
+          );
         results.delete(id);
         receiptInterest.delete(id);
         rebuild();
       },
     }),
-    takeWebhookSecret() {
-      return undefined;
-    },
   });
   return {
     capability,
     validate(event: EventData) {
       if (!isWorkflowOperation(event)) return;
       assertOperation(event.kind);
-      const reference = validateWorkflowEvent(event, viewer, availability);
+      const reference = validateWorkflowEvent(event, viewer);
       assertAccess(reference);
     },
     receipt(event: EventData, message: string | undefined) {
@@ -424,11 +424,7 @@ export function createWorkflows({
               UUID.test(value.run_id)
             )
               result = { outcome: "succeeded", runId: value.run_id };
-            else if (
-              event.kind === 5 &&
-              host?.lifecycleVersion === 1 &&
-              value.deleted === true
-            )
+            else if (event.kind === 5 && value.deleted === true)
               result = { outcome: "succeeded" };
           }
         }

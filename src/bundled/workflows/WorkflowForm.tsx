@@ -7,7 +7,6 @@ import { formWithStep } from "./editor-model";
 import {
   ACTION_LABELS,
   nextStepId,
-  withTriggerType,
   type WorkflowFormState,
 } from "./workflowFormTypes";
 
@@ -48,7 +47,7 @@ export function WorkflowForm({
             !disabled &&
             (value === "message_posted" || value === "reaction_added")
           )
-            onChange(withTriggerType(state, value));
+            onChange({ ...state, trigger: { on: value } });
         }}
       />
       {state.trigger.on === "reaction_added" && (
@@ -63,19 +62,23 @@ export function WorkflowForm({
           />
         </label>
       )}
-      <label htmlFor={`${id}-3`} className="workflow-field">
-        Trigger condition (optional)
-        <Input
-          id={`${id}-3`}
-          value={state.trigger.filter ?? ""}
-          onValueChange={(filter) =>
-            onChange({ ...state, trigger: { ...state.trigger, filter } })
-          }
-        />
-        <span className="text-body-sm text-secondary">
-          An evalexpr expression; leave empty to match every event of this type.
-        </span>
-      </label>
+      <details>
+        <summary>Trigger options</summary>
+        <label htmlFor={`${id}-3`} className="workflow-field">
+          Trigger condition (optional)
+          <Input
+            id={`${id}-3`}
+            value={state.trigger.filter ?? ""}
+            onValueChange={(filter) =>
+              onChange({ ...state, trigger: { ...state.trigger, filter } })
+            }
+          />
+          <span className="text-body-sm text-secondary">
+            An evalexpr expression; leave empty to match every event of this
+            type.
+          </span>
+        </label>
+      </details>
       <ol className="workflow-steps">
         {state.steps.map((step, index) => (
           <li key={step.id} className="workflow-step">
@@ -96,22 +99,12 @@ export function WorkflowForm({
                 Remove step {index + 1}
               </Button>
             </div>
-            <p className="text-mono-sm text-secondary">{step.id}</p>
-            <label htmlFor={`${id}-4${step.id}`} className="workflow-field">
-              Step name (optional)
-              <Input
-                id={`${id}-4${step.id}`}
-                value={step.name ?? ""}
-                onValueChange={(name) =>
-                  onChange(formWithStep(state, step.id, { name }))
-                }
-              />
-            </label>
             {step.action === "send_message" ? (
               <>
-                <label className="workflow-field">
-                  Message text
+                <div className="workflow-field">
+                  <label htmlFor={`${id}-text-${step.id}`}>Message text</label>
                   <textarea
+                    id={`${id}-text-${step.id}`}
                     value={step.text ?? ""}
                     rows={3}
                     autoCapitalize="off"
@@ -123,21 +116,7 @@ export function WorkflowForm({
                       )
                     }
                   />
-                </label>
-                <label htmlFor={`${id}-5${step.id}`} className="workflow-field">
-                  Destination channel UUID (optional)
-                  <Input
-                    id={`${id}-5${step.id}`}
-                    value={step.channel ?? ""}
-                    onValueChange={(channel) =>
-                      onChange(formWithStep(state, step.id, { channel }))
-                    }
-                  />
-                  <span className="text-body-sm text-secondary">
-                    Blank uses this workflow’s channel. The relay checks
-                    destination access.
-                  </span>
-                </label>
+                </div>
                 <Switch
                   label="Reply in the triggering thread"
                   checked={step.replyInThread === true}
@@ -160,17 +139,47 @@ export function WorkflowForm({
                 />
               </label>
             )}
-            <label htmlFor={`${id}-7${step.id}`} className="workflow-field">
-              Step timeout (optional)
-              <Input
-                id={`${id}-7${step.id}`}
-                value={step.timeoutSecs ?? ""}
-                placeholder="30s"
-                onValueChange={(timeoutSecs) =>
-                  onChange(formWithStep(state, step.id, { timeoutSecs }))
-                }
-              />
-            </label>
+            <details>
+              <summary>Step options</summary>
+              <p className="text-mono-sm text-secondary">{step.id}</p>
+              <label htmlFor={`${id}-4${step.id}`} className="workflow-field">
+                Step name (optional)
+                <Input
+                  id={`${id}-4${step.id}`}
+                  value={step.name ?? ""}
+                  onValueChange={(name) =>
+                    onChange(formWithStep(state, step.id, { name }))
+                  }
+                />
+              </label>
+              {step.action === "send_message" && (
+                <label htmlFor={`${id}-5${step.id}`} className="workflow-field">
+                  Destination channel UUID (optional)
+                  <Input
+                    id={`${id}-5${step.id}`}
+                    value={step.channel ?? ""}
+                    onValueChange={(channel) =>
+                      onChange(formWithStep(state, step.id, { channel }))
+                    }
+                  />
+                  <span className="text-body-sm text-secondary">
+                    Blank uses this workflow’s channel. The relay checks
+                    destination access.
+                  </span>
+                </label>
+              )}
+              <label htmlFor={`${id}-7${step.id}`} className="workflow-field">
+                Step timeout (optional)
+                <Input
+                  id={`${id}-7${step.id}`}
+                  value={step.timeoutSecs ?? ""}
+                  placeholder="30s"
+                  onValueChange={(timeoutSecs) =>
+                    onChange(formWithStep(state, step.id, { timeoutSecs }))
+                  }
+                />
+              </label>{" "}
+            </details>
           </li>
         ))}
       </ol>

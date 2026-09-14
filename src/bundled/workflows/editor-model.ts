@@ -5,27 +5,8 @@ import type {
 } from "../../features/workflows/types";
 import { yamlToFormState, type WorkflowFormState } from "./workflowFormTypes";
 
-export const EDITOR_TRIGGERS = ["message_posted", "reaction_added"] as const;
-export const EDITOR_ACTIONS = ["send_message", "delay"] as const;
-
-/** A smaller visual menu must not silently take ownership of advanced YAML. */
-export function visualForm(yaml: string): ReturnType<typeof yamlToFormState> {
-  const parsed = yamlToFormState(yaml);
-  if (!parsed.ok) return parsed;
-  if (
-    !EDITOR_TRIGGERS.some((on) => on === parsed.state.trigger.on) ||
-    parsed.state.steps.some(
-      (step) => !EDITOR_ACTIONS.some((action) => action === step.action),
-    )
-  ) {
-    return {
-      ok: false,
-      error:
-        "This definition uses advanced triggers or actions. Keep editing its original YAML.",
-    };
-  }
-  return parsed;
-}
+/** The form parser owns only the two triggers and two actions this UI edits. */
+export const visualForm = yamlToFormState;
 
 /** Draft shape validation is not relay authorization or a promise of execution. */
 export function draftError(yaml: string): string | null {

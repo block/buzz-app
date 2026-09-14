@@ -16,6 +16,7 @@ import {
 
 export function WorkflowEditor({
   yaml,
+  initialYaml,
   onChange,
   onSave,
   readOnly = false,
@@ -24,6 +25,7 @@ export function WorkflowEditor({
   locked = false,
 }: {
   yaml: string;
+  initialYaml?: string | undefined;
   onChange: (yaml: string) => void;
   onSave: () => void;
   readOnly?: boolean;
@@ -74,7 +76,10 @@ export function WorkflowEditor({
   const warning = getWorkflowActivationWarning(yaml);
   const submit = () => {
     if (readOnly || busy || locked || unavailable || error) return;
-    if (fields.enabled !== false) setActivating(true);
+    const wasEnabled =
+      initialYaml !== undefined &&
+      readWorkflowDocumentFields(initialYaml).enabled !== false;
+    if (fields.enabled !== false && !wasEnabled && warning) setActivating(true);
     else onSave();
   };
   return (

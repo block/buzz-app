@@ -72,11 +72,11 @@ test("foundation proposals are independent, local, and usable in both modes", as
     if (await theme.count()) await theme.click();
     await expect(proposal.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "14px",
+      "16px",
     );
     await expect(proposal.locator(".alignment-project")).toHaveCSS(
       "row-gap",
-      "16px",
+      "32px",
     );
     const neutral = await current
       .locator("[data-status]")
@@ -90,31 +90,31 @@ test("foundation proposals are independent, local, and usable in both modes", as
     );
     await expect(proposal.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "14px",
+      "16px",
     );
     await expect(proposal.locator(".alignment-project")).toHaveCSS(
       "row-gap",
-      "16px",
+      "32px",
     );
     await reading.focus();
     await page.keyboard.press("Space");
     await expect(reading).toBeChecked();
     await expect(proposal.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "16px",
+      "20px",
     );
     await spacing.click();
     await expect(proposal.locator(".alignment-project")).toHaveCSS(
       "row-gap",
-      "32px",
+      "64px",
     );
     await expect(current.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "14px",
+      "16px",
     );
     await expect(current.locator(".alignment-project")).toHaveCSS(
       "row-gap",
-      "16px",
+      "32px",
     );
     await expect(current.locator("[data-status]")).toHaveCSS("color", neutral);
 

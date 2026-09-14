@@ -100,13 +100,24 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(
       page.getByRole("switch", { name: "Enable Channels" }),
     ).toBeVisible();
+    const settingsRegion = page.getByRole("region", {
+      name: "Settings",
+      exact: true,
+    });
+    await expect(settingsRegion).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
+    await expect(settingsRegion).toHaveCSS("border-radius", "24px");
+    const frame = await settingsRegion.boundingBox();
+    expect(frame.height).toBeGreaterThan(700);
     const navigation = await sections.boundingBox();
     const content = await pluginContent.boundingBox();
     expect(navigation).not.toBeNull();
     expect(content).not.toBeNull();
     if (width === 1280) {
       expect(navigation.x + navigation.width).toBeLessThan(content.x);
-      expect(Math.abs(navigation.y - content.y)).toBeLessThan(2);
+      expect(content.y - frame.y).toBe(25);
     } else {
       expect(navigation.y + navigation.height).toBeLessThan(content.y);
       expect(

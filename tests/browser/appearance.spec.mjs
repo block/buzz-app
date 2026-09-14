@@ -51,7 +51,7 @@ test("Appearance changes and restores both modes, native keyboard controls, dial
   ).toBe("rgb(255, 255, 255)");
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
-    "rgb(26, 26, 26)",
+    "rgb(16, 16, 16)",
   );
   expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
     "dark",
@@ -308,7 +308,24 @@ test("shared type and spacing reach Home and the real message timeline", async (
   await open(page, app);
   const history = page.getByRole("region", { name: "Channel message history" });
   const message = history.locator("[data-message-id] p").first();
-  await expect(message).toHaveCSS("font-size", "16px");
-  await expect(message).toHaveCSS("line-height", "24px");
+  await expect(message).toHaveCSS("font-size", "14px");
+  // WebKit exposes the fractional product of the shared 14px × 1.42857 role.
+  await expect
+    .poll(async () =>
+      message.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).lineHeight),
+      ),
+    )
+    .toBeCloseTo(20, 3);
   await expect(history).toHaveCSS("padding-left", "24px");
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  await expect(
+    sidebar.getByRole("button", { name: "Alpha", exact: true }),
+  ).toHaveCSS("font-size", "14px");
+  await expect(sidebar.locator("..")).toHaveCSS("column-gap", "4px");
+  const back = button(page, "Go back").locator("svg");
+  await expect(button(page, "Find a page").locator("svg")).toHaveCSS(
+    "width",
+    await back.evaluate((element) => getComputedStyle(element).width),
+  );
 });

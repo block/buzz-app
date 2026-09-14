@@ -448,6 +448,9 @@
 .plainText {
   white-space: pre-wrap;
 }
+.text p {
+  line-height: inherit;
+}
 .text > :first-child:not([data-single-emoji]) {
   margin-top: 0;
 }

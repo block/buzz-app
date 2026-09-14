@@ -325,35 +325,38 @@ test("editable composer renders links and mentions while preserving source and n
     }
 
     // A compact label still copies, edits, and sends the full destination.
-    const longUrl = `https://figma.com/design/${"a".repeat(80)}?node-id=1119-21207`;
-    await input.fill("");
-    await input.fill(longUrl);
-    await expect(input.locator("[data-link-kind=figma]")).toHaveText(
-      `${longUrl.slice(0, 44)}…`,
-    );
-    const longCopy = await input.evaluate((el) => {
-      el.setSelectionRange(0, el.value.length);
-      const clipboardData = new DataTransfer();
-      el.dispatchEvent(
-        new ClipboardEvent("copy", {
-          bubbles: true,
-          cancelable: true,
-          clipboardData,
-        }),
+    const longUrl =
+      "https://www.figma.com/design/example/Builderlab-—-Branding?node-id=1119-21207";
+    for (const source of [longUrl, `[${longUrl}](${longUrl})`]) {
+      await input.fill("");
+      await input.fill(source);
+      await expect(input.locator("[data-link-kind=figma]")).toHaveText(
+        `${longUrl.slice(0, 44)}…`,
       );
-      return clipboardData.getData("text/plain");
-    });
-    expect(longCopy).toBe(longUrl);
-    await page.keyboard.press("ArrowRight");
-    await page.keyboard.press("Backspace");
-    await expect(input).toHaveJSProperty("value", longUrl.slice(0, -1));
-    await expect(input.locator("[data-source]")).toHaveCount(0);
-    await input.fill("");
-    await input.fill(longUrl);
-    await page.keyboard.press("Enter");
-    expect(
-      (await page.evaluate(() => window.linkComposerFixture.sent)).at(-1),
-    ).toEqual({ text: longUrl, mentions: [] });
+      const longCopy = await input.evaluate((el) => {
+        el.setSelectionRange(0, el.value.length);
+        const clipboardData = new DataTransfer();
+        el.dispatchEvent(
+          new ClipboardEvent("copy", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+        return clipboardData.getData("text/plain");
+      });
+      expect(longCopy).toBe(source);
+      await page.keyboard.press("ArrowRight");
+      await page.keyboard.press("Backspace");
+      await expect(input).toHaveJSProperty("value", source.slice(0, -1));
+      await expect(input.locator("[data-source]")).toHaveCount(0);
+      await input.fill("");
+      await input.fill(source);
+      await page.keyboard.press("Enter");
+      expect(
+        (await page.evaluate(() => window.linkComposerFixture.sent)).at(-1),
+      ).toEqual({ text: source, mentions: [] });
+    }
 
     // Undo restores the pre-edit caret, including edits before rendered tokens.
     await input.fill("ABC");

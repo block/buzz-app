@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { targetLink } from "../../features/navigation/targets";
-import { InlineLink, linkKind } from "./InlineLink";
+import { InlineLink, LinkLabel, linkKind } from "./InlineLink";
+import {
+  LinkLabelContext,
+  LinkContentContext,
+} from "../../features/conversation/LinkLabelContext";
 
 it("identifies exact GitHub hosts, ordinary websites, and valid Buzz locators", () => {
   expect(linkKind("https://github.com/block/buzz")).toBe("github");
@@ -120,6 +124,20 @@ it("preserves authored labels on long URLs", () => {
   );
   expect(markup.replace(/<[^>]+>/g, "")).toBe(label);
   expect(markup).toContain(`href="${href}"`);
+});
+
+it("truncates a Unicode URL when Markdown encodes its destination", () => {
+  const label =
+    "https://www.figma.com/design/example/Builderlab-—-Branding?node-id=1119-21207";
+  const href = new URL(label).href;
+  const markup = renderToStaticMarkup(
+    <LinkLabelContext value={label}>
+      <LinkContentContext value={[label]}>
+        <LinkLabel href={href} />
+      </LinkContentContext>
+    </LinkLabelContext>,
+  );
+  expect(markup.replace(/<[^>]+>/g, "")).toBe(`${label.slice(0, 44)}…`);
 });
 
 it.each([

@@ -228,6 +228,7 @@ function ChannelWorkspace({
     if (
       !navigation ||
       !requestedMessage ||
+      requestedThread === requestedMessage ||
       !currentId ||
       navigation.signal.aborted
     )
@@ -255,14 +256,29 @@ function ChannelWorkspace({
     choose();
     return stop;
   }, [navigation, requestedMessage, requestedThread, currentId, queries]);
-  const exact = exactOpening?.request === navigation ? exactOpening : undefined;
-  const showingThread = requestedMessage
+  const exact =
+    navigation && requestedMessage && requestedThread === requestedMessage
+      ? { request: navigation, inTimeline: false }
+      : exactOpening?.request === navigation
+        ? exactOpening
+        : undefined;
+  type ShowingThread = {
+    channelId: string;
+    messageId: string;
+    navigation?: PageNavigation | undefined;
+  };
+  const priorRoutedThread = useRef<ShowingThread | undefined>(undefined);
+  let showingThread: ShowingThread | undefined = requestedMessage
     ? exact && !exact.inTimeline && current
       ? { channelId: current.id, messageId: requestedMessage, navigation }
       : undefined
     : thread && thread.channelId === current?.id
       ? { ...thread, navigation: undefined }
       : undefined;
+  if (showingThread?.navigation) priorRoutedThread.current = showingThread;
+  else if (!navigation || (requestedMessage && !exact))
+    showingThread = priorRoutedThread.current;
+  else priorRoutedThread.current = undefined;
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
   }, [thread, showingThread]);
@@ -632,7 +648,6 @@ function ChannelWorkspace({
           {showingThread && (
             <ThreadPanel
               extensions={extensions}
-              key={`${showingThread.channelId}:${showingThread.messageId}`}
               session={queries}
               scope={scope}
               channelName={current?.name ?? ""}

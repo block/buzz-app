@@ -36,16 +36,42 @@ export type ThreadPanelProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeButton.current?.focus();
+  }, []);
   return (
-    <OwnedThreadPanel
-      key={messageViewKey(
-        props.session,
-        props.scope,
-        props.channelId,
-        props.messageId,
-      )}
-      {...props}
-    />
+    <aside
+      className={styles.thread}
+      aria-label="Thread"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          props.close();
+        }
+      }}
+    >
+      <header className={styles.heading}>
+        <strong>Thread</strong>
+        <button
+          ref={closeButton}
+          type="button"
+          aria-label="Close thread"
+          onClick={props.close}
+        >
+          <X size={18} aria-hidden="true" />
+        </button>
+      </header>
+      <OwnedThreadPanel
+        key={messageViewKey(
+          props.session,
+          props.scope,
+          props.channelId,
+          props.messageId,
+        )}
+        {...props}
+      />
+    </aside>
   );
 }
 function OwnedThreadPanel({
@@ -56,17 +82,12 @@ function OwnedThreadPanel({
   channelId,
   messageId,
   navigation,
-  close,
   onOpenLink,
   canOpenLink,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    closeButton.current?.focus();
-  }, []);
   // Allocate in the effect, not render/useMemo: StrictMode must not leak owned views.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery after view allocation fails.
   useEffect(() => {
@@ -92,57 +113,30 @@ function OwnedThreadPanel({
       navigation?.complete({ status: "failed", reason: "unavailable" });
     }
   }, [session, channelId, messageId, attempt, navigation]);
-  return (
-    <aside
-      className={styles.thread}
-      aria-label="Thread"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-          close();
-        }
-      }}
-    >
-      <header className={styles.heading}>
-        <strong>Thread</strong>
-        <button
-          ref={closeButton}
-          type="button"
-          aria-label="Close thread"
-          onClick={close}
-        >
-          <X size={18} aria-hidden="true" />
-        </button>
-      </header>
-      {error ? (
-        <div className={styles.empty} role="alert">
-          <p>{error}</p>
-          <button
-            type="button"
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Retry thread
-          </button>
-        </div>
-      ) : view ? (
-        <ThreadMessages
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          channelName={channelName}
-          view={view}
-          navigation={navigation}
-          messageId={messageId}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
-        />
-      ) : (
-        <p className={styles.empty} role="status">
-          Loading thread…
-        </p>
-      )}
-    </aside>
+  return error ? (
+    <div className={styles.empty} role="alert">
+      <p>{error}</p>
+      <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+        Retry thread
+      </button>
+    </div>
+  ) : view ? (
+    <ThreadMessages
+      extensions={extensions}
+      session={session}
+      scope={scope}
+      channelId={channelId}
+      channelName={channelName}
+      view={view}
+      navigation={navigation}
+      messageId={messageId}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+    />
+  ) : (
+    <p className={styles.empty} role="status">
+      Loading thread…
+    </p>
   );
 }
 function ThreadMessages({

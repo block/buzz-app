@@ -31,6 +31,12 @@ test("Back restores each thread visit before the previous channel", async ({
 
   await page.goBack();
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
+  const threadPanel = await panel.elementHandle();
   await page.goBack();
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
+  expect(
+    await threadPanel.evaluate(
+      (node) => node === document.querySelector('aside[aria-label="Thread"]'),
+    ),
+  ).toBe(true);
 });

@@ -1,6 +1,12 @@
 import { useReading } from "./use-reading";
 import { beforeEach, expect, it, vi } from "vitest";
-import { isValidElement, type ReactElement, type ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { ThreadPanel } from "./ThreadPanel";
 import { MessageRow } from "./MessageRow";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -151,11 +157,17 @@ function setup() {
       close,
       onOpenLink: () => false,
     });
-    return (
-      scoped.type as (
-        props: typeof scoped.props,
-      ) => ReactElement<{ onKeyDown(event: unknown): void }>
-    )(scoped.props);
+    const children = Children.map(scoped.props.children, (child) => {
+      if (!isValidElement(child) || typeof child.type !== "function")
+        return child;
+      const Component = child.type as (
+        props: typeof child.props,
+      ) => ReactElement;
+      return Component(child.props);
+    });
+    return cloneElement(scoped, {}, children) as ReactElement<{
+      onKeyDown(event: unknown): void;
+    }>;
   }
   const effects = () => {
     for (const effect of hooks.pending.splice(0)) effect();

@@ -717,7 +717,10 @@ it("admits signed typing only on its authenticated channel route, without extra 
   await h.first.receive(["EVENT", requests[3]?.[1], event]);
   expect(h.callbacks.receive).not.toHaveBeenCalled();
   await h.first.receive(["EVENT", route[1], event]);
-  expect(h.callbacks.receive).toHaveBeenCalledExactlyOnceWith([event]);
+  expect(h.callbacks.receive).toHaveBeenCalledExactlyOnceWith([event], {
+    channelId: "a",
+    phase: "replay",
+  });
   await h.first.receive([
     "EVENT",
     route[1],

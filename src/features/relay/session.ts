@@ -993,7 +993,13 @@ export function createRelaySession(
           events.filter((event) => event.kind === 20002),
           true,
         );
-      if (closed || epoch !== accessEpoch || !candidates.size || !provenance?.channelId) return;
+      if (
+        closed ||
+        epoch !== accessEpoch ||
+        !candidates.size ||
+        !provenance?.channelId
+      )
+        return;
       const delivered = new Set<string>();
       const incoming: readonly IncomingMessage[] = Object.freeze(
         visible.flatMap((event) => {

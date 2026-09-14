@@ -207,3 +207,69 @@ it("refreshing a finite kind-20002 view neither retains nor activates typing", a
     owner.dispose();
   }
 });
+
+it.each(["none", "cache", "access", "dispose"] as const)(
+  "preserves incoming notifications alongside typing and fences reentrant %s",
+  async (transition) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_800_000_000_000);
+    const viewer = keypair(),
+      relay = keypair(),
+      agent = keypair(),
+      peer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
+    let clearing: Promise<void> | undefined;
+    try {
+      live.state({ status: "connected", routes: [] });
+      live.receive([roster(relay, "a", [viewer.pubkey])]);
+      const incoming = vi.fn();
+      owner.session.subscribeIncoming(incoming);
+      owner.session.typing.subscribe(() => {
+        if (!owner.session.typing.snapshot().length) return;
+        if (transition === "cache") clearing = owner.clearCache();
+        else if (transition === "access")
+          live.receive([roster(relay, "a", [], 1_800_000_001)]);
+        else if (transition === "dispose") owner.dispose();
+      });
+      const message = signed(peer, {
+        kind: 9,
+        content: "fixture",
+        created_at: 1_800_000_000,
+        tags: [["h", "a"]],
+      });
+      const pulse = signed(agent, {
+        kind: 20002,
+        content: "",
+        created_at: 1_800_000_000,
+        tags: [["h", "a"]],
+      });
+      live.receive([message, pulse], { phase: "live", channelId: "a" });
+      await clearing;
+      if (transition === "none") {
+        expect(owner.session.typing.snapshot()).toHaveLength(1);
+        expect(incoming).toHaveBeenCalledExactlyOnceWith([
+          expect.objectContaining({
+            messageId: message.id,
+            authorId: peer.pubkey,
+          }),
+        ]);
+        live.receive([pulse], { phase: "live", channelId: "a" });
+        expect(incoming).toHaveBeenCalledTimes(1);
+      } else {
+        expect(owner.session.typing.snapshot()).toEqual([]);
+        expect(incoming).not.toHaveBeenCalled();
+      }
+    } finally {
+      owner.dispose();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);

@@ -418,7 +418,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await expect(selectedParty).not.toHaveAttribute("aria-selected", "true");
   await expect(hoveredParty).toHaveCSS(
     "background-color",
-    "rgb(245, 245, 246)",
+    "rgb(232, 232, 232)",
   );
   const partyList = page.getByRole("listbox", {
     name: "Emoji suggestions",

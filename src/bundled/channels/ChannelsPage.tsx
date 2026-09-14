@@ -5,6 +5,7 @@ import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
+  memo,
   useCallback,
   useEffect,
   useLayoutEffect,
@@ -295,7 +296,7 @@ function ChannelWorkspace({
   }, [opened, panel, open]);
   const openThread = useCallback(
     (messageId: string) => {
-      if (!current) return;
+      if (!currentId) return;
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -305,7 +306,7 @@ function ChannelWorkspace({
         void navigator.open({
           version: 1,
           kind: "conversation",
-          channelId: current.id,
+          channelId: currentId,
           messageId,
           threadRootId: messageId,
           scope: {
@@ -313,10 +314,10 @@ function ChannelWorkspace({
             communityOrigin: scope.slice(0, -(viewer.length + 1)),
           },
         });
-      } else setThread({ channelId: current.id, messageId });
+      } else setThread({ channelId: currentId, messageId });
       open(undefined);
     },
-    [current, navigator, viewer, scope, open],
+    [currentId, navigator, viewer, scope, open],
   );
   const closeThread = () => {
     if (showingThread?.navigation && current) select(current.id);
@@ -342,18 +343,29 @@ function ChannelWorkspace({
       }),
     [available],
   );
+  const linkContext = useRef({
+    channelId: currentId,
+    routedThread: !!showingThread?.navigation,
+  });
+  useLayoutEffect(() => {
+    linkContext.current = {
+      channelId: currentId,
+      routedThread: !!showingThread?.navigation,
+    };
+  }, [currentId, showingThread?.navigation]);
   const openLink = useCallback(
     (url: string) => {
       const candidate = panels.resolve(url);
-      if (current && candidate) {
+      const context = linkContext.current;
+      if (context.channelId && candidate) {
         panelTrigger.current =
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
-        if (showingThread?.navigation) select(current.id);
+        if (context.routedThread) select(context.channelId);
         setThread(undefined);
         open({
-          channelId: current.id,
+          channelId: context.channelId,
           panel: candidate,
           target: url,
         });
@@ -361,7 +373,7 @@ function ChannelWorkspace({
       }
       return false;
     },
-    [panels, current, open, showingThread, select],
+    [panels, open, select],
   );
   const panelActive = () => {
     const connection = relay.snapshot();
@@ -589,8 +601,9 @@ function ChannelWorkspace({
             queries={queries}
             scope={scope}
             channelId={current.id}
-            navigation={navigation}
-            exactInTimeline={exact?.inTimeline ?? false}
+            navigation={
+              !requestedMessage || exact?.inTimeline ? navigation : undefined
+            }
             onOpenLink={openLink}
             canOpenLink={canOpenLink}
             onOpenThread={openThread}
@@ -653,7 +666,7 @@ function ChannelWorkspace({
   );
 }
 
-function ChannelBody({
+const ChannelBody = memo(function ChannelBody({
   viewer,
   extensions,
   scope,
@@ -664,7 +677,6 @@ function ChannelBody({
   revealMessageId,
   onOpenThread,
   navigation,
-  exactInTimeline,
 }: {
   extensions?: ConversationExtensions | undefined;
   scope: string;
@@ -672,7 +684,6 @@ function ChannelBody({
   viewer?: string | undefined;
   channelId: string;
   navigation?: PageNavigation | undefined;
-  exactInTimeline: boolean;
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
@@ -721,7 +732,7 @@ function ChannelBody({
       canOpenLink={canOpenLink}
       onOpenThread={onOpenThread}
       revealMessageId={revealMessageId}
-      navigation={exactInTimeline ? navigation : undefined}
+      navigation={navigation}
     />
   );
-}
+});

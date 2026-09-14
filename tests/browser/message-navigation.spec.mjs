@@ -465,7 +465,10 @@ liveTest(
     release();
     await expect(region.getByText("Loading thread…")).toHaveCount(0);
     await expect(composer).toBeFocused();
-    await expect(composer).toHaveValue("Preserve my thread draft");
+    await expect(composer).toHaveJSProperty(
+      "value",
+      "Preserve my thread draft",
+    );
     expect(await region.evaluate((element) => element.scrollTop)).toBeCloseTo(
       before,
       0,

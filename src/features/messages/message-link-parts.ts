@@ -48,6 +48,7 @@ export function messageLinkParts(
     label: string,
     url: string,
   ) => void,
+  onLink?: (start: number, end: number, url: string) => void,
 ): LinkPart[] {
   const parts: LinkPart[] = [];
   let offset = 0;
@@ -74,6 +75,7 @@ export function messageLinkParts(
       parts.push({ text: content.slice(offset, match.index) });
       parts.push({ text: label, label, url });
       onLabeledLink?.(match.index, closing.end, label, url);
+      onLink?.(match.index, closing.end, url);
       offset = closing.end;
       continue;
     }
@@ -82,6 +84,11 @@ export function messageLinkParts(
     const candidate = wrapped ? match[0].slice(1, -1) : match[0];
     const url = wrapped ? candidate : candidate.replace(/[.,;:!?)\]}]+$/, "");
     if (validUrl(url)) {
+      onLink?.(
+        match.index,
+        match.index + (wrapped ? match[0].length : url.length),
+        url,
+      );
       parts.push({ text: url, url });
       if (!wrapped) parts.push({ text: candidate.slice(url.length) });
     } else {

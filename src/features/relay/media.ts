@@ -1,6 +1,4 @@
-import { ByteLru } from "./budget";
-/** The Save-Data preference (Network Information API) opts out of speculative
- * media traffic. Demand fetches still happen; only warming is disabled. */
+import { relayDebug } from "./debug";
 export function saveData(): boolean {
   try {
     const connection = (
@@ -32,18 +30,18 @@ export function wasIntended(url: string): boolean {
   }
   return true;
 }
-/** Small decoded-avatar hot set. Never warms originals/attachments that this renderer doesn't display.
- * Natural dimensions account for decoded pixels, not compressed transfer bytes. */
-export function createMediaPreparation({
-  maxBytes = 16 * 1024 * 1024,
-  maxEntries = 64,
-} = {}) {
-  const images = new ByteLru<HTMLImageElement>(maxEntries, maxBytes);
+/** Avatar request warming, the react-native-web Image model: fetch and
+ * decode() into detached images, then retain nothing. The browser's own HTTP
+ * and decoded-image caches serve the real <img> mounts. Never warms
+ * originals/attachments that this renderer doesn't display. */
+export function createMediaPreparation() {
   const pending = new Set<string>();
   let queue: string[] = [];
   let disposed = false;
   const active = new Set<HTMLImageElement>();
   const cancellations = new Map<HTMLImageElement, () => void>();
+  const startedAt = new Map<string, number>();
+  let decoded = 0;
   let prefetched = 0;
   function pump() {
     if (disposed || typeof Image === "undefined") return;
@@ -53,7 +51,7 @@ export function createMediaPreparation({
       const image = new Image();
       active.add(image);
       let finished = false;
-      const finish = () => {
+      const finish = (outcome: string) => {
         if (finished) return;
         finished = true;
         clearTimeout(timeout);
@@ -61,32 +59,41 @@ export function createMediaPreparation({
         active.delete(image);
         cancellations.delete(image);
         pending.delete(url);
+        relayDebug(
+          "avatar",
+          outcome,
+          url.slice(-28),
+          `${Date.now() - (startedAt.get(url) ?? Date.now())}ms`,
+        );
+        startedAt.delete(url);
         pump();
       };
       const timeout = setTimeout(() => {
         image.src = "";
-        finish();
+        finish("timeout");
       }, 10000);
-      cancellations.set(image, finish);
-      image.onerror = finish;
+      cancellations.set(image, () => finish("cancelled"));
+      image.onerror = () => finish("error");
       image.onload = () => {
         // Do not explicitly decode enormous originals just to prepare an avatar.
-        const bytes = image.naturalWidth * image.naturalHeight * 4;
-        if (bytes > maxBytes / 2) {
-          finish();
+        if (image.naturalWidth * image.naturalHeight * 4 > 8 * 1024 * 1024) {
+          finish(`too-large ${image.naturalWidth}x${image.naturalHeight}`);
           return;
         }
         void image
           .decode()
           .then(
             () => {
-              if (!disposed) images.set(url, image, bytes);
+              decoded++;
             },
             () => {},
           )
-          .finally(finish);
+          .finally(() =>
+            finish(`ok ${image.naturalWidth}x${image.naturalHeight}`),
+          );
       };
       image.referrerPolicy = "no-referrer";
+      startedAt.set(url, Date.now());
       image.src = url;
     }
   }
@@ -98,7 +105,7 @@ export function createMediaPreparation({
       queue = [];
       for (const url of [...new Set(urls)].slice(0, 24)) {
         markIntended(url);
-        if (images.get(url) || pending.has(url)) continue;
+        if (pending.has(url)) continue;
         pending.add(url);
         queue.push(url);
       }
@@ -110,8 +117,7 @@ export function createMediaPreparation({
       if (disposed || saveData() || typeof Image === "undefined") return;
       for (const url of [...new Set(urls)]) {
         markIntended(url);
-        if (images.get(url) || pending.has(url) || queue.includes(url))
-          continue;
+        if (pending.has(url) || queue.includes(url)) continue;
         if (queue.length >= 48) break;
         pending.add(url);
         queue.push(url);
@@ -120,15 +126,14 @@ export function createMediaPreparation({
       pump();
     },
     stats: () => ({
-      ...images.stats(),
       active: active.size,
       queued: queue.length,
       prefetched,
+      decoded,
     }),
     dispose() {
       disposed = true;
       queue = [];
-      images.clear();
       for (const image of active) {
         image.src = "";
         cancellations.get(image)?.();

@@ -18,6 +18,7 @@ import { parseWindow, windowFilter, type WindowCursor } from "./window";
 import { ByteLru, byteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
 import { createMediaPreparation, saveData } from "./media";
+import { relayDebug } from "./debug";
 
 type Listener = () => void;
 type WindowState = {
@@ -74,7 +75,7 @@ export function createChannelStore(
     | (RelayReader & {
         viewer: string;
         relayAuthor: string;
-        media(url: string): string | undefined;
+        media(url: string, size?: "small"): string | undefined;
         revokeAccess(commit: () => void): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
@@ -322,6 +323,7 @@ export function createChannelStore(
     mediaIntents.unshift(channelId);
     mediaIntents.length = Math.min(3, mediaIntents.length);
     const urls = mediaIntents.flatMap(avatarUrlsFor);
+    relayDebug("media prepare", channelId.slice(0, 8), `${urls.length} urls`);
     media.prepare(urls);
   }
   /** Background head reads warm request-level avatars without displacing the
@@ -334,7 +336,7 @@ export function createChannelStore(
     const authors = rows.slice(-12).reverse().flatMap(rowProfileIds);
     return authors.flatMap((author) => {
       const picture = directory.queries.snapshot().get(author)?.picture;
-      const url = picture && transport?.media(picture);
+      const url = picture && transport?.media(picture, "small");
       return url ? [url] : [];
     });
   }
@@ -343,7 +345,9 @@ export function createChannelStore(
     warmChannelId?: string,
   ) {
     try {
-      await directory.ensure(rows.flatMap(rowProfileIds), "background");
+      const ids = rows.flatMap(rowProfileIds);
+      relayDebug("profiles warm", ids.length, "ids");
+      await directory.ensure(ids, "background");
       if (!disposed && intent) prepareMedia(intent);
       // Profiles are the prerequisite for resolving a channel's avatar URLs.
       if (!disposed && warmChannelId) prepareWarmMedia(warmChannelId);
@@ -421,6 +425,7 @@ export function createChannelStore(
     priority: Priority,
   ): Promise<Head> {
     const generation = epoch;
+    const startedAt = now();
     const accessVersion = accessVersions.get(channelId) ?? 0;
     const controller = new AbortController();
     controllers.add(controller);
@@ -458,6 +463,7 @@ export function createChannelStore(
       )
         throw new Error("Channel head exceeds the read budget");
     } catch (error) {
+      relayDebug("head failed", channelId.slice(0, 8), describe(error));
       if (
         !disposed &&
         generation === epoch &&
@@ -469,6 +475,11 @@ export function createChannelStore(
     } finally {
       controllers.delete(controller);
     }
+    relayDebug(
+      "head",
+      channelId.slice(0, 8),
+      `${head.rows.length} rows ${now() - startedAt}ms ${priority}`,
+    );
     heads.set(channelId, head);
     setList(list);
     // Durable message warmth must not wait behind optional name enrichment.
@@ -992,12 +1003,31 @@ export function createChannelStore(
       intent = channelId;
       const head = heads.get(channelId);
       if (head) prepareMedia(channelId);
-      if (saveData()) return;
       if (
+        saveData() ||
         preparing ||
         (head && !head.cached && now() - head.savedAt < FRESH_FOR)
-      )
+      ) {
+        relayDebug(
+          "prepare skip",
+          channelId.slice(0, 8),
+          saveData()
+            ? "save-data"
+            : preparing
+              ? "in-flight"
+              : head
+                ? head.cached
+                  ? "cached-head"
+                  : "fresh-head"
+                : "no-head",
+        );
         return;
+      }
+      relayDebug(
+        "prepare fetch",
+        channelId.slice(0, 8),
+        head ? (head.cached ? "cached-head" : "stale-head") : "no-head",
+      );
       // One speculative head, no backlog from crossing sidebar rows. Keep it
       // foreground so selecting this same request cannot inherit a host-side
       // background wait; the other reader slots remain available for demand.

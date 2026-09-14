@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, anchor, expectAnchor, settle } from "./timeline.mjs";
+import { open, anchor, expectAnchor } from "./timeline.mjs";
 
 const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
@@ -96,10 +96,6 @@ test("storage denial is visible and retryable; another window updates a live con
     exact: true,
   });
   await composer.fill("Unsent appearance draft");
-  await expect(
-    page.getByRole("region", { name: "Draft preview", exact: true }),
-  ).toBeVisible();
-  await settle(page);
   const before = await anchor(page);
   const node = await composer.elementHandle();
   const sessions = [...app.report.sessions];

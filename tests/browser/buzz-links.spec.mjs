@@ -210,14 +210,12 @@ test("unavailable messages fail honestly and legacy links still open when Links 
     .uncheck();
   await button(page, "Messages").first().click();
   await row.locator("a").first().click();
-  const panel = page.getByRole("complementary", {
-    name: "Thread",
-    exact: true,
-  });
-  await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
+  const targetRow = page.locator(`[data-message-id="${target.id}"]`);
+  await expect(targetRow).toBeFocused();
+  await expect(targetRow).toBeInViewport();
   await expect.poll(async () => (await state(page)).status).toBe("opened");
-  // The deliberately wrong hint must not select a different root.
-  await button(page, "Close thread").click();
+  // The deliberately wrong hint must not select a different root or force a
+  // visible root out of the ordinary timeline.
   await row.locator("a").nth(1).click();
   await expect(button(page, "Retry navigation")).toBeVisible();
   expect((await state(page)).status).toBe("failed");

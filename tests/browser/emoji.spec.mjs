@@ -710,8 +710,18 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await draft().fill(":broken: :nosource:");
     await expect(draft()).toContainText(":broken: :nosource:");
     await expect(draft()).not.toHaveCSS("color", "rgba(0, 0, 0, 0)");
-    await draft().fill(`:party: ${"long text ".repeat(80)}`);
+    const longDraft = `:party: ${"long text ".repeat(160)}`;
+    await draft().fill(longDraft);
+    await expect(draft()).toHaveJSProperty("value", longDraft);
+    await expect(draft()).toContainText("long text long text");
     await expect(draft().locator("img")).toHaveCount(1);
+    await expect
+      .poll(() =>
+        draft().evaluate(
+          (element) => element.scrollHeight - element.clientHeight,
+        ),
+      )
+      .toBeGreaterThan(0);
     await draft().evaluate((element) => {
       element.scrollTop = element.scrollHeight;
     });

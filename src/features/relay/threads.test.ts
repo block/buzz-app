@@ -45,7 +45,7 @@ function seeded() {
   return { ...h, view: h.session.thread("a", root.id) };
 }
 
-it("seeds a thread root synchronously from its retained channel window", async () => {
+it("seeds a thread root and observed replies synchronously from retained session data", async () => {
   const h = setup();
   h.traffic.receive([roster(relay, "a", [viewer.pubkey])]);
   h.session.channels.ensure("a");
@@ -57,9 +57,14 @@ it("seeds a thread root synchronously from its retained channel window", async (
   expect(h.session.channels.window("a").rows.map((row) => row.id)).toEqual([
     root.id,
   ]);
+  const observedReply = reply("Observed reply", 2);
+  h.traffic.receive([observedReply]);
 
   const view = h.session.thread("a", root.id);
   expect(view.snapshot().root?.id).toBe(root.id);
+  expect(view.snapshot().replies.map((row) => row.id)).toEqual([
+    observedReply.id,
+  ]);
 });
 
 it("resolves canonical marked ancestry, never arbitrary references or a lone root", () => {

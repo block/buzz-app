@@ -664,8 +664,7 @@ export function createRelaySession(
         notify,
       });
       threads.add(thread);
-      if (options?.exact)
-        thread.receive(recent.entries().map(([, item]) => item.event));
+      thread.receive(recent.entries().map(([, item]) => item.event));
       observations.add(thread.receive);
       const unsubscribe = localViews?.subscribe(thread.changed);
       const dispose = () => {

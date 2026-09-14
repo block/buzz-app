@@ -91,6 +91,10 @@ export function EditableInput({
       },
       selectionStart: { configurable: true, get: () => selection().start },
       selectionEnd: { configurable: true, get: () => selection().end },
+      selectionDirection: {
+        configurable: true,
+        get: () => (selection().backward ? "backward" : "forward"),
+      },
       disabled: {
         configurable: true,
         get: () => root.getAttribute("aria-disabled") === "true",
@@ -337,6 +341,12 @@ export function EditableInput({
         Math.min(root.value.length, selection.end),
         selection.backward,
       );
+    if (
+      root?.hasAttribute("data-single-emoji") &&
+      root.selectionStart === root.value.length &&
+      root.selectionEnd === root.value.length
+    )
+      root.scrollTop = Math.max(0, root.scrollHeight - root.clientHeight);
   }, [hosts]);
 
   function insertText(text: string, inputType = "insertFromPaste") {

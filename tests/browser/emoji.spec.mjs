@@ -221,7 +221,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await page.keyboard.press("ControlOrMeta+c");
     await draft().fill("");
     await page.keyboard.press("ControlOrMeta+v");
-    await expect(draft()).toHaveValue(":party:");
+    await expect(draft()).toHaveJSProperty("value", ":party:");
     // One Shift+Left selects one rendered custom emoji, not its trailing colon.
     await draft().press("Shift+ArrowLeft");
     expect(
@@ -232,7 +232,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await page.keyboard.press("ControlOrMeta+c");
     await draft().fill("");
     await page.keyboard.press("ControlOrMeta+v");
-    await expect(draft()).toHaveValue(":party:");
+    await expect(draft()).toHaveJSProperty("value", ":party:");
     await draft().fill(":party::party:");
     const selectedDraftText = () =>
       draft().evaluate((element) =>
@@ -262,7 +262,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await draft().press("Shift+ArrowLeft");
     expect(await selectedDraftText()).toBe(":party:");
     await draft().press("Backspace");
-    await expect(draft()).toHaveValue("hello");
+    await expect(draft()).toHaveJSProperty("value", "hello");
     // Visible source text and unavailable emoji retain ordinary character selection.
     for (const literal of [":unknown:", ":nosource:"]) {
       await draft().fill(literal);
@@ -273,7 +273,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       main.style.width = "300px";
     });
     await draft().fill(Array(24).fill(":party:").join(" "));
-    const largeCustom = page.locator('[class*="composerCustomEmojiGroup"]');
+    const largeCustom = draft();
     await expect(largeCustom.locator("img")).toHaveCount(24);
     await expect(largeCustom.locator("img").last()).toHaveCSS("width", "42px");
     expect(

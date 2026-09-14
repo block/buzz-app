@@ -88,8 +88,9 @@ export function RichComposerInput({
     directory.agents,
   ))
     add(reference.start, reference.end, undefined, true);
+  const renderableEmoji = emoji.filter((entry) => !!session.media(entry.url));
   const shortcodes = new Set(
-    emoji.map((entry) => entry.shortcode.toLowerCase()),
+    renderableEmoji.map((entry) => entry.shortcode.toLowerCase()),
   );
   for (const match of draft.text.matchAll(/:([a-z0-9_-]{1,64}):/gi))
     if (shortcodes.has(match[1]?.toLowerCase() ?? ""))
@@ -109,7 +110,7 @@ export function RichComposerInput({
             channelId,
             content: draft.text.slice(start, end),
             mentions: mention ? [mention] : [],
-            emoji,
+            emoji: renderableEmoji,
             participants: [],
             attachments: [],
             reactions: [],

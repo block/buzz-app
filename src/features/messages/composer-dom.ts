@@ -3,6 +3,7 @@ export type ComposerInputElement = HTMLDivElement & {
   value: string;
   selectionStart: number;
   selectionEnd: number;
+  selectionDirection: "forward" | "backward" | "none";
   disabled: boolean;
   readOnly: boolean;
   setSelectionRange(start: number, end: number, direction?: string): void;

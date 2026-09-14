@@ -11,7 +11,13 @@ import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
 import styles from "./Messages.module.css";
 import { messageViewKey } from "./view-key";
-import { isEmojiOnly, usesLargeEmojiPresentation } from "./emoji-size";
+import { extendEmojiSelection } from "./emoji-selection";
+import {
+  customEmojiOnlySpans,
+  isEmojiOnly,
+  leadingCustomEmojiSpans,
+  usesLargeEmojiPresentation,
+} from "./emoji-size";
 import {
   mentionDraft,
   editMentionDraft,
@@ -118,6 +124,16 @@ function Composer({
     session.emoji.subscribe,
     session.emoji.snapshot,
     session.emoji.snapshot,
+  );
+  const customEmojiOnly = customEmojiOnlySpans(draft, emojiCatalog.entries);
+  const customEmojiSpans = (
+    customEmojiOnly.length
+      ? customEmojiOnly
+      : leadingCustomEmojiSpans(draft, emojiCatalog.entries).spans
+  ).filter(({ emoji }) => !!session.media(emoji.url));
+  const largeEmojiDraft = usesLargeEmojiPresentation(
+    draft,
+    emojiCatalog.entries,
   );
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
@@ -327,9 +343,7 @@ function Composer({
           extensions={extensions}
           emoji={emojiCatalog.entries}
           onUndo={undo}
-          data-single-emoji={
-            usesLargeEmojiPresentation(draft, emojiCatalog.entries) || undefined
-          }
+          data-single-emoji={largeEmojiDraft || undefined}
           maxLength={16000}
           placeholder={label}
           onFocus={() => completion.observe(true)}
@@ -375,6 +389,27 @@ function Composer({
               ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
             ) {
               completion.invalidate();
+              if (
+                customEmojiSpans.length &&
+                !event.altKey &&
+                !event.ctrlKey &&
+                !event.metaKey &&
+                (event.key === "ArrowLeft" || event.key === "ArrowRight")
+              ) {
+                const next = extendEmojiSelection(
+                  customEmojiSpans,
+                  event.currentTarget,
+                  event.key,
+                );
+                if (next) {
+                  event.preventDefault();
+                  event.currentTarget.setSelectionRange(
+                    next.start,
+                    next.end,
+                    next.direction,
+                  );
+                }
+              }
               return;
             }
             if (completion.keys.current?.(event)) return;

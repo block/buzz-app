@@ -356,8 +356,8 @@ export function createOutbox(
                   : failedDelivery(attempt),
           error: awaitsReceipt(latest.event)
             ? publishing && !(error instanceof PublishRejected)
-              ? "Workflow delivery could not be confirmed; retain this operation to retry."
-              : "Workflow command rejected; retain the draft and refresh before retrying."
+              ? "Workflow delivery could not be confirmed; inspect recent activity before submitting another command."
+              : "Workflow command rejected; retain the draft and refresh the saved configuration."
             : `${
                 attempt.previousDelivery === "unknown" ||
                 attempt.previousDelivery === "accepted"

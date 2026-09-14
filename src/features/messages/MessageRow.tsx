@@ -1,3 +1,7 @@
+import { IconCornerUpLeft } from "@tabler/icons-react";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { memo, useCallback, useSyncExternalStore } from "react";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
@@ -22,6 +26,9 @@ const emptyChannelList = () => EMPTY_CHANNEL_LIST;
 
 export type MessageRowProps = {
   row: ChannelMessage;
+  viewer?: string | undefined;
+  continuation?: boolean;
+  groupEnd?: boolean;
   session?: RelaySession | undefined;
   scope?: string | undefined;
   unread?: UnreadCapability | undefined;
@@ -38,6 +45,9 @@ export type MessageRowProps = {
 
 export const MessageRow = memo(function MessageRow({
   row,
+  viewer,
+  continuation = false,
+  groupEnd = true,
   session,
   scope,
   unread,
@@ -51,6 +61,9 @@ export const MessageRow = memo(function MessageRow({
   onOpenThread,
   participantProfiles,
 }: MessageRowProps) {
+  const outgoing = !!viewer && row.authorId === viewer;
+  const canOpenThread =
+    onOpenThread && (!row.delivery || row.delivery === "seen");
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -73,7 +86,6 @@ export const MessageRow = memo(function MessageRow({
   const picture = profile?.picture ? media(profile.picture) : undefined;
   const target = profileTarget(row.authorId);
   const clickable = target && canOpenLink?.(target);
-  const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
   const canReact = !!(
     extensions &&
@@ -84,7 +96,7 @@ export const MessageRow = memo(function MessageRow({
       ?.archived
   );
   return (
-    <div data-message-id={row.id}>
+    <div data-message-id={row.id} data-buzz-ui="">
       {day && (
         <div className={styles.day}>
           <span>
@@ -96,160 +108,203 @@ export const MessageRow = memo(function MessageRow({
           </span>
         </div>
       )}
-      <div className={styles.message}>
-        <AvatarTag
-          className={styles.avatar}
-          {...(clickable
-            ? {
-                type: "button" as const,
-                "aria-label": `View ${name} profile`,
-                onClick: (event: import("react").MouseEvent<HTMLElement>) => {
-                  event.currentTarget.focus();
-                  onOpenLink(target);
-                },
-              }
-            : {})}
-        >
-          {picture ? (
-            <img src={picture} alt="" loading="lazy" />
-          ) : (
-            name.slice(0, 2).toUpperCase()
-          )}
-        </AvatarTag>
+      <div
+        className={`${styles.message} ${continuation && !day ? styles.continuation : ""}`}
+        data-bubble-direction={outgoing ? "outgoing" : "incoming"}
+      >
+        {!outgoing && <div className={styles.avatarSpace} />}
         <div className={styles.messageBody}>
-          <div className={styles.byline}>
-            <strong>{name}</strong>
-            <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
+          <div className={continuation && !day ? styles.srOnly : styles.byline}>
+            <strong className={outgoing ? styles.srOnly : undefined}>
+              {outgoing ? "You" : name}
+            </strong>
+            <time
+              className={styles.timestamp}
+              dateTime={new Date(row.createdAt * 1000).toISOString()}
+            >
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",
                 minute: "2-digit",
               })}
             </time>
           </div>
-          <MessageMarkdown
-            row={row}
-            extensions={extensions}
-            media={media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            participantProfiles={participantProfiles}
-            largeEmoji={emojiOnly}
-          />
-          <DeliveryNotice row={row} retry={retry} />
-          {row.attachments.map((attachment) => {
-            const url = safeMessageUrl(attachment.url);
-            if (!url) return null;
-            const source = media(url);
-            return attachment.video || !source ? (
-              <a
-                className={styles.attachment}
-                key={url}
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {attachment.video ? "Video attachment" : "Image attachment"} ↗
-              </a>
-            ) : (
-              <AttachmentImage
-                key={url}
-                attachment={attachment}
-                url={url}
-                source={source}
+          <div className={styles.bubbleAnchor}>
+            {row.content && (
+              <MessageMarkdown
+                row={row}
+                extensions={extensions}
+                media={media}
                 onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
+                participantProfiles={participantProfiles}
+                largeEmoji={emojiOnly}
               />
-            );
-          })}
+            )}
+            {row.attachments.length > 0 && (
+              <div className={styles.attachments}>
+                {row.attachments.map((attachment) => {
+                  const url = safeMessageUrl(attachment.url);
+                  if (!url) return null;
+                  const source = media(url);
+                  return attachment.video || !source ? (
+                    <a
+                      className={styles.attachment}
+                      key={url}
+                      href={url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      {attachment.video
+                        ? "Video attachment"
+                        : "Image attachment"}{" "}
+                      ↗
+                    </a>
+                  ) : (
+                    <AttachmentImage
+                      key={url}
+                      attachment={attachment}
+                      url={url}
+                      source={source}
+                      onOpenLink={onOpenLink}
+                    />
+                  );
+                })}
+              </div>
+            )}
+            {!outgoing && groupEnd && (
+              <div className={styles.avatar}>
+                {clickable ? (
+                  <IconButton
+                    size="toolbar"
+                    shape="round"
+                    aria-label={`View ${name} profile`}
+                    onClick={(event) => {
+                      event.currentTarget.focus();
+                      onOpenLink(target);
+                    }}
+                    icon={
+                      <Avatar
+                        src={picture ?? null}
+                        alt={name}
+                        fallback={name}
+                      />
+                    }
+                  />
+                ) : (
+                  <Avatar src={picture ?? null} alt={name} fallback={name} />
+                )}
+              </div>
+            )}
+            {(canOpenThread || canReact) && (
+              <fieldset
+                className={styles.bubbleActions}
+                aria-label="Message actions"
+              >
+                {canReact && extensions && session && scope && (
+                  <ReactionTool
+                    registry={extensions.tools}
+                    session={session}
+                    scope={scope}
+                    messageId={row.id}
+                    disabled={
+                      !!row.delivery &&
+                      !["accepted", "seen"].includes(row.delivery)
+                    }
+                  />
+                )}
+                {canOpenThread && (
+                  <IconButton
+                    size="compact"
+                    shape="round"
+                    icon={<IconCornerUpLeft size={16} aria-hidden="true" />}
+                    aria-label="Reply in thread"
+                    title="Reply in thread"
+                    onClick={(event) => {
+                      event.currentTarget.focus();
+                      onOpenThread(row.id);
+                    }}
+                  />
+                )}
+              </fieldset>
+            )}
+          </div>
           {row.reactions.length > 0 && (
             <div className={styles.reactions}>
-              {row.reactions.map((reaction) => (
-                <span key={JSON.stringify(reaction)}>
-                  {extensions ? (
-                    <InlineText
-                      registry={extensions.inline}
-                      content={{
-                        text: reaction.content,
-                        message: row,
-                        reaction,
-                      }}
-                      media={media}
-                    />
-                  ) : (
-                    reaction.content
-                  )}
-                </span>
-              ))}
-              {canReact && extensions && session && scope && (
-                <ReactionTool
-                  registry={extensions.tools}
-                  session={session}
-                  scope={scope}
-                  messageId={row.id}
-                  disabled={
-                    !!row.delivery &&
-                    !["accepted", "seen"].includes(row.delivery)
-                  }
-                />
-              )}
+              <div className={styles.reactionChips}>
+                {row.reactions.map((reaction) => (
+                  <span key={JSON.stringify(reaction)}>
+                    {extensions ? (
+                      <InlineText
+                        registry={extensions.inline}
+                        content={{
+                          text: reaction.content,
+                          message: row,
+                          reaction,
+                        }}
+                        media={media}
+                      />
+                    ) : (
+                      reaction.content
+                    )}
+                  </span>
+                ))}
+              </div>
             </div>
           )}
+          <DeliveryNotice row={row} retry={retry} />
           {row.replyCount > 0 && onOpenThread && (
-            <button
-              type="button"
-              className={styles.replies}
-              aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
-              onClick={(event) => {
-                event.currentTarget.focus();
-                onOpenThread(row.id);
-              }}
-            >
-              {row.participants.length > 0 && (
-                <span className={styles.threadAvatars} aria-hidden="true">
-                  {row.participants.slice(0, 3).map((id) => {
-                    const participant = participantProfiles?.get(id);
-                    const name = participant?.name ?? id.slice(0, 10);
-                    const picture = participant?.picture
-                      ? media(participant.picture)
-                      : undefined;
-                    return (
-                      <span
-                        key={id}
-                        className={styles.threadAvatar}
-                        title={name}
-                      >
-                        {name.slice(0, 2).toUpperCase()}
-                        {picture && (
-                          <img
-                            key={picture}
-                            src={picture}
-                            alt=""
-                            loading="lazy"
-                            onError={(event) => {
-                              event.currentTarget.hidden = true;
-                            }}
+            <div className={styles.replies}>
+              <Button
+                variant="ghost"
+                size="compact"
+                aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+                onClick={(event) => {
+                  event.currentTarget.focus();
+                  onOpenThread(row.id);
+                }}
+              >
+                {row.participants.length > 0 && (
+                  <span className={styles.threadAvatars} aria-hidden="true">
+                    {row.participants.slice(0, 3).map((id) => {
+                      const participant = participantProfiles?.get(id);
+                      const name = participant?.name ?? id.slice(0, 10);
+                      const picture = participant?.picture
+                        ? media(participant.picture)
+                        : undefined;
+                      return (
+                        <span
+                          key={id}
+                          className={styles.threadAvatar}
+                          title={name}
+                        >
+                          <Avatar
+                            src={picture ?? null}
+                            alt={name}
+                            fallback={name}
+                            size="small"
                           />
-                        )}
+                        </span>
+                      );
+                    })}
+                    {row.participants.length > 3 && (
+                      <span className={styles.threadAvatar}>
+                        +{row.participants.length - 3}
                       </span>
-                    );
-                  })}
-                  {row.participants.length > 3 && (
-                    <span className={styles.threadAvatar}>
-                      +{row.participants.length - 3}
-                    </span>
-                  )}
+                    )}
+                  </span>
+                )}
+                <span>
+                  {row.replyCount} {row.replyCount === 1 ? "reply" : "replies"}
                 </span>
-              )}
-              <span>
-                {row.replyCount} {row.replyCount === 1 ? "reply" : "replies"}
-              </span>
-              {unreadLabel && (
-                <span
-                  className={styles.threadUnread}
-                  aria-hidden="true"
-                  title={unreadLabel}
-                />
-              )}
-            </button>
+                {unreadLabel && (
+                  <span
+                    className={styles.threadUnread}
+                    aria-hidden="true"
+                    title={unreadLabel}
+                  />
+                )}
+              </Button>
+            </div>
           )}
         </div>
       </div>

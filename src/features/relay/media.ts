@@ -1,4 +1,5 @@
 import { ByteLru } from "./budget";
+import { relayDebug } from "./debug";
 /** Small decoded-avatar hot set. Never warms originals/attachments that this renderer doesn't display.
  * Natural dimensions account for decoded pixels, not compressed transfer bytes. */
 export function createMediaPreparation({
@@ -11,6 +12,7 @@ export function createMediaPreparation({
   let disposed = false;
   const active = new Set<HTMLImageElement>();
   const cancellations = new Map<HTMLImageElement, () => void>();
+  const startedAt = new Map<string, number>();
   function pump() {
     if (disposed || typeof Image === "undefined") return;
     while (active.size < 2 && queue.length) {
@@ -19,7 +21,7 @@ export function createMediaPreparation({
       const image = new Image();
       active.add(image);
       let finished = false;
-      const finish = () => {
+      const finish = (outcome: string) => {
         if (finished) return;
         finished = true;
         clearTimeout(timeout);
@@ -27,19 +29,26 @@ export function createMediaPreparation({
         active.delete(image);
         cancellations.delete(image);
         pending.delete(url);
+        relayDebug(
+          "avatar",
+          outcome,
+          url.slice(-28),
+          `${Date.now() - (startedAt.get(url) ?? Date.now())}ms`,
+        );
+        startedAt.delete(url);
         pump();
       };
       const timeout = setTimeout(() => {
         image.src = "";
-        finish();
+        finish("timeout");
       }, 10000);
-      cancellations.set(image, finish);
-      image.onerror = finish;
+      cancellations.set(image, () => finish("cancelled"));
+      image.onerror = () => finish("error");
       image.onload = () => {
         // Do not explicitly decode enormous originals just to prepare an avatar.
         const bytes = image.naturalWidth * image.naturalHeight * 4;
         if (bytes > maxBytes / 2) {
-          finish();
+          finish(`too-large ${image.naturalWidth}x${image.naturalHeight}`);
           return;
         }
         void image
@@ -50,9 +59,12 @@ export function createMediaPreparation({
             },
             () => {},
           )
-          .finally(finish);
+          .finally(() =>
+            finish(`ok ${image.naturalWidth}x${image.naturalHeight}`),
+          );
       };
       image.referrerPolicy = "no-referrer";
+      startedAt.set(url, Date.now());
       image.src = url;
     }
   }
@@ -67,6 +79,11 @@ export function createMediaPreparation({
         pending.add(url);
         queue.push(url);
       }
+      relayDebug(
+        "avatar queue",
+        queue.length,
+        `of ${urls.length} (active ${active.size})`,
+      );
       pump();
     },
     stats: () => ({

@@ -1,4 +1,6 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createWorkflows } from "../workflows/capability";
+import { isWorkflowOperation } from "../workflows/protocol";
 import {
   createRelayReader,
   type ReadOptions,
@@ -104,6 +106,11 @@ export function createRelaySession(
             ...writer,
             async sign(template, signal) {
               validateMentionEvent(template);
+              workflows.validate({
+                ...template,
+                id: "",
+                pubkey: transport.viewer,
+              });
               return writer.sign(template, signal);
             },
           },
@@ -118,17 +125,34 @@ export function createRelaySession(
             profiling,
             notifyListener: notify,
             onAccepted: (event) => confirm(event),
-            preparePublish: prepareMentionPublication,
+            needsReceipt: isWorkflowOperation,
+            onReceipt: (event, message) => workflows.receipt(event, message),
+            preparePublish: async (event, signal) => {
+              workflows.validate(event);
+              const checkMentions = await prepareMentionPublication(
+                event,
+                signal,
+              );
+              return () => {
+                workflows.validate(event);
+                checkMentions?.();
+              };
+            },
           },
         )
       : undefined;
   const rawLocal = () => writes?.local.snapshot() ?? [];
+  let retainedChannelEvent: (id: string) => RelayEvent | undefined = () =>
+    undefined;
   function retainedThreadEvent(id: string) {
     for (const thread of threads) {
       if (!canAccess(thread.channelId)) continue;
       const event = thread.event(id);
       if (event) return event;
     }
+  }
+  function retainedEvent(id: string) {
+    return retainedThreadEvent(id) ?? retainedChannelEvent(id);
   }
   function visibility(events: readonly EventData[] = []) {
     const evidence = new Map(
@@ -139,12 +163,12 @@ export function createRelaySession(
     );
     return eventVisibility(
       canAccess,
-      // Retained thread targets survive shared-cache eviction. They are evidence,
+      // Retained view targets survive shared-cache eviction. They are evidence,
       // not an access grant: eventVisibility still checks every referenced target.
       (id) =>
         evidence.get(id) ??
         recent.peek(id)?.event ??
-        retainedThreadEvent(id) ??
+        retainedEvent(id) ??
         unread.event(id),
     );
   }
@@ -177,6 +201,7 @@ export function createRelaySession(
       agentLibrary.clear();
       activity.clear();
       archives.clear();
+      workflows.clear();
       for (const purge of views.values()) purge();
       commit();
       unread.purge();
@@ -312,7 +337,7 @@ export function createRelaySession(
           read: (filters, settings) => readVerified(filters, settings, false),
           viewer: transport.viewer,
           relayAuthor: transport.relayAuthor,
-          media: (url) => transport.media(url),
+          media: (url, size) => transport.media(url, size),
           revokeAccess,
           visible: (events) => events.filter(visibility(events)),
           restored: (events) => unread.accept(events),
@@ -329,6 +354,16 @@ export function createRelaySession(
     },
   );
   canAccess = channels.canAccess;
+  retainedChannelEvent = channels.retainedEvent;
+  const workflows = createWorkflows({
+    reader: transport ? verified : undefined,
+    viewer: transport?.viewer ?? "",
+    outbox: writes?.outbox,
+    local: localViews,
+    host: transport?.workflows,
+    canAccess: (channelId) => canAccess(channelId),
+    notify,
+  });
   const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
   const reads = createReadState({
     viewer: transport?.viewer ?? "",
@@ -598,7 +633,8 @@ export function createRelaySession(
       transport?.viewer,
       (id) =>
         local().find((item) => item.event.id === id)?.event ??
-        recent.peek(id)?.event,
+        recent.peek(id)?.event ??
+        retainedEvent(id),
       emoji.tags,
       validateMentions,
     ),
@@ -650,15 +686,14 @@ export function createRelaySession(
           : verified,
         exact: options?.exact ?? false,
         admit: options?.exact ? (events) => accept(events, false) : undefined,
-        seed: recent.peek(messageId)?.event,
+        seed: recent.peek(messageId)?.event ?? retainedEvent(messageId),
         local: localViews,
         canAccess: () => !closed && canAccess(channelId),
         visible: (events) => events.filter(visibility(events)),
         notify,
       });
       threads.add(thread);
-      if (options?.exact)
-        thread.receive(recent.entries().map(([, item]) => item.event));
+      thread.receive(recent.entries().map(([, item]) => item.event));
       observations.add(thread.receive);
       const unsubscribe = localViews?.subscribe(thread.changed);
       const dispose = () => {
@@ -675,9 +710,10 @@ export function createRelaySession(
     profiles: profiles.queries,
     emoji: emoji.queries,
     agentLibrary: agentLibrary.queries,
+    workflows: workflows.capability,
     agentActivity: activity.queries,
     archives: archives.queries,
-    media: (url: string) => transport?.media(url),
+    media: (url: string, size?: "small") => transport?.media(url, size),
     /** A plugin may request writes from this same interface when the host supports them. */
     outbox: writes?.outbox,
     async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
@@ -1006,6 +1042,7 @@ export function createRelaySession(
         requests.invalidate();
         agentLibrary.clear();
         archives.clear();
+        workflows.interrupt();
         channels.staleHeads();
         unread.stale();
       }
@@ -1071,6 +1108,7 @@ export function createRelaySession(
       emoji.clear();
       agentLibrary.clear();
       archives.clear();
+      workflows.clear();
       await channels.clearCache();
       publishLive();
     },
@@ -1092,6 +1130,7 @@ export function createRelaySession(
       channels.dispose();
       profiles.dispose();
       emoji.dispose();
+      workflows.dispose();
       agentLibrary.dispose();
       archives.dispose();
     },

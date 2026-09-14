@@ -18,6 +18,38 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 23,
 };
+it.each([
+  ["😀 🙏 👏 😄", [], true],
+  ["😀".repeat(40), [], true],
+  [
+    ":party: ".repeat(24),
+    [{ shortcode: "party", url: "https://emoji.test/party.png" }],
+    true,
+  ],
+  [
+    ":party: 😀 :party: 😀",
+    [{ shortcode: "party", url: "https://emoji.test/party.png" }],
+    true,
+  ],
+  ["😀 🙏 👏 😄 hello", [], false],
+  [":unknown: 😀", [], false],
+  ["  \n  ", [], false],
+] as const)(
+  "keeps emoji-only message size independent of count: %s",
+  (content, emoji, large) => {
+    const html = renderToStaticMarkup(
+      <MessageRow
+        row={{ ...row, content, emoji }}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+    expect(html.includes('data-single-emoji="true"')).toBe(large);
+  },
+);
 function render(
   patch: Partial<UnreadSnapshot>,
   replies = 23,
@@ -286,4 +318,26 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
   expect(html).toContain("Image attachment");
   expect(html).not.toContain("<canvas");
   expect(html).not.toContain("<img");
+});
+
+it("requests a small profile image without downsizing message attachments", () => {
+  const media = vi.fn((url: string) => url);
+  renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          { url: "https://image.test/attachment.png", video: false },
+        ],
+      }}
+      profile={{ name: "Author", picture: "https://image.test/avatar.png" }}
+      media={media}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+
+  expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
+  expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
 });

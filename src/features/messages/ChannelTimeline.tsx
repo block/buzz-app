@@ -75,7 +75,7 @@ export type ChannelTimelineProps = {
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   navigation?: PageNavigation | undefined;
-  onOpenThread?(messageId: string): void;
+  onOpenThread?(messageId: string, threadRootId: string): void;
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
@@ -487,6 +487,8 @@ function Timeline({
               <MessageRow
                 key={row.id}
                 row={row}
+                session={queries}
+                scope={scope}
                 unread={queries.unread}
                 extensions={extensions}
                 profile={profiles.get(row.authorId)}

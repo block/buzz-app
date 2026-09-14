@@ -17,7 +17,7 @@ import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
 import { ByteLru, byteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
-import { createMediaPreparation } from "./media";
+import { createMediaPreparation, saveData } from "./media";
 import { relayDebug } from "./debug";
 
 type Listener = () => void;
@@ -73,7 +73,7 @@ export function createChannelStore(
     | (RelayReader & {
         viewer: string;
         relayAuthor: string;
-        media(url: string): string | undefined;
+        media(url: string, size?: "small"): string | undefined;
         revokeAccess(commit: () => void): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
@@ -324,7 +324,7 @@ export function createChannelStore(
       const authors = rows.slice(-12).reverse().flatMap(rowProfileIds);
       return authors.flatMap((author) => {
         const picture = directory.queries.snapshot().get(author)?.picture;
-        const url = picture && transport?.media(picture);
+        const url = picture && transport?.media(picture, "small");
         return url ? [url] : [];
       });
     });
@@ -932,19 +932,22 @@ export function createChannelStore(
       const head = heads.get(channelId);
       if (head) prepareMedia(channelId);
       if (
+        saveData() ||
         preparing ||
         (head && !head.cached && now() - head.savedAt < FRESH_FOR)
       ) {
         relayDebug(
           "prepare skip",
           channelId.slice(0, 8),
-          preparing
-            ? "in-flight"
-            : head
-              ? head.cached
-                ? "cached-head"
-                : "fresh-head"
-              : "no-head",
+          saveData()
+            ? "save-data"
+            : preparing
+              ? "in-flight"
+              : head
+                ? head.cached
+                  ? "cached-head"
+                  : "fresh-head"
+                : "no-head",
         );
         return;
       }
@@ -1308,6 +1311,13 @@ export function createChannelStore(
       });
     },
     retainedChannels: () => [...windows.keys()],
+    retainedEvent(id: string) {
+      for (const state of windows.values()) {
+        if (!authorized(state.channelId)) continue;
+        const event = state.events.find((candidate) => candidate.id === id);
+        if (event) return event;
+      }
+    },
     demandedChannels: () => [
       ...new Set([
         ...(current && windows.has(current) ? [current] : []),

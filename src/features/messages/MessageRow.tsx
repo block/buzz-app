@@ -10,23 +10,38 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
+import { ReactionTool } from "../conversation/ReactionTool";
+import type { RelaySession } from "../relay/session";
+
+const emptySubscribe = () => () => {};
+const EMPTY_CHANNEL_LIST = Object.freeze({
+  status: "unavailable" as const,
+  channels: Object.freeze([]),
+});
+const emptyChannelList = () => EMPTY_CHANNEL_LIST;
 
 export type MessageRowProps = {
   row: ChannelMessage;
+  session?: RelaySession | undefined;
+  scope?: string | undefined;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
-  media(url: string): string | undefined;
+  media(url: string, size?: "small"): string | undefined;
   onOpenLink(url: string): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
-  onOpenThread?: ((messageId: string) => void) | undefined;
+  onOpenThread?:
+    | ((messageId: string, threadRootId: string) => void)
+    | undefined;
 };
 
 export const MessageRow = memo(function MessageRow({
   row,
+  session,
+  scope,
   unread,
   extensions,
   profile,
@@ -43,6 +58,11 @@ export const MessageRow = memo(function MessageRow({
     row.channelId,
     row.threadRootId ?? row.id,
   );
+  const channelList = useSyncExternalStore(
+    session?.channels.subscribeList ?? emptySubscribe,
+    session?.channels.list ?? emptyChannelList,
+    session?.channels.list ?? emptyChannelList,
+  );
   const unreadLabel =
     threadUnread?.manual === "local-only"
       ? "Thread marked unread on this device only"
@@ -52,11 +72,21 @@ export const MessageRow = memo(function MessageRow({
           ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
           : undefined;
   const name = profile?.name ?? row.authorId.slice(0, 10);
-  const picture = profile?.picture ? media(profile.picture) : undefined;
+  const picture = profile?.picture
+    ? media(profile.picture, "small")
+    : undefined;
   const target = profileTarget(row.authorId);
   const clickable = target && canOpenLink?.(target);
   const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
+  const canReact = !!(
+    extensions &&
+    session &&
+    scope &&
+    session.outbox?.supports(7) &&
+    !channelList.channels.find((channel) => channel.id === row.channelId)
+      ?.archived
+  );
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -153,6 +183,18 @@ export const MessageRow = memo(function MessageRow({
                   )}
                 </span>
               ))}
+              {canReact && extensions && session && scope && (
+                <ReactionTool
+                  registry={extensions.tools}
+                  session={session}
+                  scope={scope}
+                  messageId={row.id}
+                  disabled={
+                    !!row.delivery &&
+                    !["accepted", "seen"].includes(row.delivery)
+                  }
+                />
+              )}
             </div>
           )}
           {row.replyCount > 0 && onOpenThread && (
@@ -162,7 +204,7 @@ export const MessageRow = memo(function MessageRow({
               aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               onClick={(event) => {
                 event.currentTarget.focus();
-                onOpenThread(row.id);
+                onOpenThread(row.id, row.threadRootId ?? row.id);
               }}
             >
               {row.participants.length > 0 && (
@@ -171,7 +213,7 @@ export const MessageRow = memo(function MessageRow({
                     const participant = participantProfiles?.get(id);
                     const name = participant?.name ?? id.slice(0, 10);
                     const picture = participant?.picture
-                      ? media(participant.picture)
+                      ? media(participant.picture, "small")
                       : undefined;
                     return (
                       <span

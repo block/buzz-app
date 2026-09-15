@@ -15,27 +15,21 @@ import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerTool,
   ComposerToolProps,
+  InlineRenderer,
 } from "../conversation/contracts";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
-import type { CustomEmoji } from "../relay/emoji";
+import { emojiMatches, type CustomEmoji } from "../relay/emoji";
+import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
+import type { ComposerInputElement } from "./composer-dom";
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
 
-let style: HTMLStyleElement;
 beforeEach(() => {
   localStorage.clear();
-  // jsdom does not lay out the emoji mirror. Give its bookkeeping a finite line
-  // height; actual wrapping, dimensions and caret placement stay in Playwright.
-  style = document.createElement("style");
-  style.textContent = "textarea { line-height: 48px; }";
-  document.head.append(style);
 });
-afterEach(() => {
-  cleanup();
-  style.remove();
-});
+afterEach(cleanup);
 
 function mount(options: Partial<MessageComposerProps> = {}) {
   let commands: ComposerToolProps;
@@ -73,8 +67,12 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     send: vi.fn<RelaySession["messages"]["send"]>(() => "channel-id"),
     reply: vi.fn<RelaySession["messages"]["reply"]>(() => "reply-id"),
   };
+  const typing: ReturnType<RelaySession["typing"]["snapshot"]> = [];
+  const profiles = new Map();
   const session = {
     messages,
+    typing: { snapshot: () => typing, subscribe: () => () => {} },
+    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
     emoji: {
       snapshot: () => emoji,
       subscribe(listener: () => void) {
@@ -90,6 +88,24 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     outbox: { supports: () => true },
   } as unknown as RelaySession;
   const onSend = vi.fn();
+  const inline: readonly Contribution<InlineRenderer>[] = [
+    {
+      id: "emoji",
+      key: "test/emoji",
+      pluginId: "test",
+      revision: "1",
+      title: "Emoji",
+      matches: ({ text, message }) => [
+        ...emojiMatches(text, message.emoji ?? []),
+      ],
+      component: ({ text, content, media }) => {
+        const entry = content.message.emoji?.find(
+          (entry) => `:${entry.shortcode}:` === text.toLowerCase(),
+        );
+        return entry ? <CustomEmojiImage emoji={entry} media={media} /> : text;
+      },
+    },
+  ];
   let props: MessageComposerProps = {
     session,
     onSend,
@@ -98,7 +114,7 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     channelName: "General",
     extensions: {
       tools: { snapshot: () => tools, subscribe: () => () => {} },
-      inline: { snapshot: () => [], subscribe: () => () => {} },
+      inline: { snapshot: () => inline, subscribe: () => () => {} },
     },
     ...options,
   };
@@ -106,7 +122,7 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     reactStrictMode: true,
   });
   const input = () =>
-    within(view.container).getByRole<HTMLTextAreaElement>("textbox");
+    within(view.container).getByRole<ComposerInputElement>("textbox");
   return {
     ...view,
     input,
@@ -128,6 +144,7 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     },
     fill(text: string) {
       fireEvent.input(input(), { target: { value: text } });
+      input().setSelectionRange(text.length, text.length);
     },
     submit() {
       fireEvent.submit(within(view.container).getByRole("form"));
@@ -206,13 +223,14 @@ it("labels simultaneous composers independently and prevents disabled or unsuppo
   const channel = mount();
   const thread = mount({ threadRootId: "root" });
   expect(screen.getByLabelText("Message #General")).toBe(channel.input());
-  expect(
-    screen.getByLabelText("Reply to thread", { selector: "textarea" }),
-  ).toBe(thread.input());
+  expect(screen.getByRole("textbox", { name: "Reply to thread" })).toBe(
+    thread.input(),
+  );
   expect(thread.input().id).not.toBe(channel.input().id);
   thread.fill("retain me");
   thread.retarget({ disabled: true });
-  expect(thread.input()).toBeDisabled();
+  expect(thread.input()).toHaveAttribute("aria-disabled", "true");
+  expect(thread.input()).toHaveAttribute("contenteditable", "false");
   await thread.user.click(
     within(thread.container).getByRole("button", { name: "Send message" }),
   );
@@ -237,13 +255,13 @@ it("labels simultaneous composers independently and prevents disabled or unsuppo
 it("subscribes to emoji changes and releases the subscription when unmounted", () => {
   const h = mount();
   h.fill(":party:");
-  expect(h.input()).not.toHaveAttribute("data-custom-emoji-only");
+  expect(h.input().querySelectorAll("img")).toHaveLength(0);
   expect(h.emojiListeners.size).toBe(1);
   expect(h.session.emoji.ensure).toHaveBeenCalled();
   h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
-  expect(h.input()).toHaveAttribute("data-custom-emoji-only", "true");
+  expect(h.input().querySelectorAll("img")).toHaveLength(1);
   h.setEmoji([]);
-  expect(h.input()).not.toHaveAttribute("data-custom-emoji-only");
+  expect(h.input().querySelectorAll("img")).toHaveLength(0);
   h.unmount();
   expect(h.emojiListeners.size).toBe(0);
 });
@@ -373,7 +391,7 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
     expect(h.commands().insertText(":party:")).toBe(true);
   });
   expect(h.input()).toHaveValue(":party:");
-  expect(h.input()).toHaveAttribute("data-custom-emoji-only", "true");
+  expect(h.input()).toHaveAttribute("data-single-emoji", "true");
   act(() => {
     expect(h.commands().insertText(":party:")).toBe(true);
   });
@@ -391,8 +409,8 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
   const h = mount();
   h.setEmoji([{ shortcode: "bufo", url: "https://emoji.test/bufo.png" }]);
   h.fill(":bufo:lakjsdlkjflakjsdf");
-  expect(h.input()).not.toHaveAttribute("data-custom-emoji-only");
-  expect(h.input()).toHaveAttribute("data-leading-custom-emoji", "true");
+  expect(h.input()).not.toHaveAttribute("data-single-emoji");
+  expect(h.input()).toHaveValue(":bufo:lakjsdlkjflakjsdf");
   expect(h.container.querySelectorAll("img")).toHaveLength(1);
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(

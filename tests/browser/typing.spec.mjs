@@ -95,6 +95,13 @@ for (const scope of ["channel", "thread"]) {
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
+    if (scope === "thread") {
+      // Opening can race the final signed fixture replies under parallel load.
+      // Establish the bottom-reading precondition with real browser input before
+      // capturing geometry; the assertions below verify typing keeps it there.
+      await history.hover();
+      await page.mouse.wheel(0, Math.max(1, await gap()));
+    }
     await expect.poll(gap).toBeLessThan(2);
     expect(
       await history.evaluate((el) => el.scrollHeight - el.clientHeight),

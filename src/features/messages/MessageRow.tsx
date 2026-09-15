@@ -1,4 +1,5 @@
 import { memo, useCallback, useSyncExternalStore } from "react";
+import { PresenceIndicator } from "../presence/react";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
@@ -125,6 +126,12 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.messageBody}>
           <div className={styles.byline}>
             <strong>{name}</strong>
+            {session && (
+              <PresenceIndicator
+                presence={session.presence}
+                pubkey={row.authorId}
+              />
+            )}
             <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",

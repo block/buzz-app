@@ -524,10 +524,10 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
 
   // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
   // not a Settings row: reach the toggle with real input, not scrollIntoView.
-  // Settings now scrolls its detail pane inside the solid container.
+  // Narrow Settings scrolls navigation and details together inside the container.
   const settingsPage = page
-    .getByRole("region", { name: "Plugins", exact: true })
-    .locator("../..");
+    .getByRole("region", { name: "Settings", exact: true })
+    .locator(":scope > div");
   await expect(enabled).not.toBeInViewport();
   const viewport = await box(settingsPage);
   await page.mouse.move(

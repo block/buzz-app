@@ -45,8 +45,14 @@
 
 @container (max-width: 36rem) {
   .layout {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(0, 1fr);
+    /* Let wrapped navigation scroll away instead of shrinking the details
+       to nothing in a short window or at large text sizes. */
+    display: block;
+    overflow-y: auto;
+  }
+  .sidebar,
+  .detail {
+    overflow-y: visible;
   }
   .sidebar {
     border-right: 0;

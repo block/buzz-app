@@ -1,4 +1,5 @@
 .popup {
+  --completion-highlight: var(--neutral-3);
   position: fixed;
   display: flex;
   flex-direction: column;
@@ -11,6 +12,11 @@
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-sm);
+}
+:root[data-color-mode="dark"] .popup {
+  /* The dark panel already uses neutral-3. Both completion layouts need
+     a distinct fill while keyboard focus remains in the textarea. */
+  --completion-highlight: var(--neutral-5);
 }
 .list {
   max-height: 280px;
@@ -28,12 +34,11 @@
   cursor: pointer;
 }
 .option[aria-selected="true"] {
-  background: var(--surface-hover);
+  background: var(--completion-highlight);
 }
 .popup[data-compact] {
   --completion-container-radius: var(--radius-card);
   --completion-inset: var(--space-1h);
-  --completion-highlight: var(--neutral-3);
   border-radius: var(--completion-container-radius);
 }
 .popup[data-compact] .option {

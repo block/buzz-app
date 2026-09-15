@@ -73,14 +73,25 @@ test("Playwright aggregation sums results without confusing runner elapsed time"
             file: "a.spec.mjs",
             title: "uneven",
             tests: [
-              { results: [{ status: "passed", duration: 13 }] },
-              { results: [{ status: "failed", duration: 41 }] },
+              {
+                projectName: "chromium-measurements",
+                results: [{ status: "passed", duration: 13 }],
+              },
+              {
+                projectName: "webkit-measurements",
+                results: [{ status: "failed", duration: 41 }],
+              },
             ],
           },
           {
             file: "b.spec.mjs",
             title: "small",
-            tests: [{ results: [{ status: "passed", duration: 7 }] }],
+            tests: [
+              {
+                projectName: "",
+                results: [{ status: "passed", duration: 7 }],
+              },
+            ],
           },
         ],
       },
@@ -96,6 +107,34 @@ test("Playwright aggregation sums results without confusing runner elapsed time"
   assert.equal(report.testDurationMs, 61);
   assert.equal(report.slowestFiles[0].durationMs, 54);
   assert.equal(report.complete, false);
+  assert.deepEqual(JSON.parse(JSON.stringify(report)).slowestTests, [
+    {
+      name: "uneven",
+      projectName: "webkit-measurements",
+      file: "a.spec.mjs",
+      durationMs: 41,
+    },
+    {
+      name: "uneven",
+      projectName: "chromium-measurements",
+      file: "a.spec.mjs",
+      durationMs: 13,
+    },
+    {
+      name: "small",
+      projectName: "",
+      file: "b.spec.mjs",
+      durationMs: 7,
+    },
+  ]);
+  const summary = formatSummary("Measurements", report, 50);
+  assert.ok(
+    summary.includes("| [webkit-measurements] uneven | a.spec.mjs | 41 ms |"),
+  );
+  assert.ok(
+    summary.includes("| [chromium-measurements] uneven | a.spec.mjs | 13 ms |"),
+  );
+  assert.ok(summary.includes("| small | b.spec.mjs | 7 ms |"));
 });
 
 test("summary escapes runner content and labels missing reports incomplete", () => {
@@ -227,7 +266,7 @@ test("built-in Vitest and Playwright JSON reporters retain their expected shape"
 
     writeFileSync(
       playwrightConfig,
-      `export default { testDir: ${JSON.stringify(directory)}, testMatch: '**/*.spec.mjs', outputDir: ${JSON.stringify(join(directory, "output"))} };\n`,
+      `export default { testDir: ${JSON.stringify(directory)}, testMatch: '**/*.spec.mjs', outputDir: ${JSON.stringify(join(directory, "output"))}, projects: [{ name: 'chromium-measurements' }, { name: 'webkit-measurements' }] };\n`,
     );
     writeFileSync(
       playwrightTest,
@@ -254,11 +293,18 @@ test("built-in Vitest and Playwright JSON reporters retain their expected shape"
     );
     assert.equal(playwright.complete, true);
     assert.deepEqual(playwright.counts, {
-      total: 2,
-      passed: 1,
+      total: 4,
+      passed: 2,
       failed: 0,
-      skipped: 1,
+      skipped: 2,
     });
+    assert.deepEqual(
+      playwright.slowestTests
+        .filter((entry) => entry.name === "pass")
+        .map((entry) => entry.projectName)
+        .sort(),
+      ["chromium-measurements", "webkit-measurements"],
+    );
     assert.ok(Number.isFinite(playwright.testDurationMs));
     assert.ok(playwright.slowestTests.length > 0);
     assert.ok(playwright.slowestFiles.length > 0);

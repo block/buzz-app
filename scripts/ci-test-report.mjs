@@ -90,7 +90,12 @@ export function parsePlaywright(report) {
         (sum, result) => sum + finite(result.duration, "test duration"),
         0,
       );
-      tests.push({ name: spec.title, file: spec.file, durationMs });
+      tests.push({
+        name: spec.title,
+        projectName: entry.projectName,
+        file: spec.file,
+        durationMs,
+      });
       fileCosts.set(spec.file, (fileCosts.get(spec.file) ?? 0) + durationMs);
     }
   }
@@ -148,7 +153,7 @@ export function formatSummary(title, report, elapsedMs, error) {
       "| --- | --- | ---: |",
       ...costs.map(
         (cost) =>
-          `| ${escapeCell(cost.name ?? cost.file)} | ${escapeCell(cost.name ? cost.file : "—")} | ${duration(cost.durationMs)} |`,
+          `| ${escapeCell(cost.projectName ? `[${cost.projectName}] ${cost.name}` : (cost.name ?? cost.file))} | ${escapeCell(cost.name ? cost.file : "—")} | ${duration(cost.durationMs)} |`,
       ),
       "",
     );

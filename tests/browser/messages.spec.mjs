@@ -5,6 +5,85 @@ import { fileURLToPath } from "node:url";
 
 // Independent source consumer proves safe ordinary-prop reuse, with real React,
 // thread reader and durable outbox. No developer env, broker, credentials or relay.
+test("media review hands off the thread draft, contains focus and keeps narrow controls reachable", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    const address = server.httpServer.address();
+    await page.goto(
+      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
+    );
+    const thread = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const draft = thread.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await draft.fill("Draft handoff");
+    const trigger = page.getByRole("button", {
+      name: "Review image",
+      exact: true,
+    });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Image viewer" });
+    await expect(dialog).toBeVisible();
+    await expect(thread).toHaveCount(0);
+    const reviewDraft = dialog.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await expect(reviewDraft).toHaveText("Draft handoff");
+    await page.setViewportSize({ width: 320, height: 720 });
+    await expect(
+      dialog.getByRole("button", { name: "Next image" }),
+    ).toBeInViewport();
+    await expect(
+      dialog.getByRole("link", { name: "Download image" }),
+    ).toBeInViewport();
+    await dialog
+      .getByRole("link", { name: "Open image attachment" })
+      .last()
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(1);
+    await expect(
+      dialog.getByRole("region", { name: "Media comments" }),
+    ).toBeVisible();
+    const activeDraft = dialog.getByRole("textbox", {
+      name: "Reply to thread",
+      exact: true,
+    });
+    await activeDraft.press("Enter");
+    await expect(activeDraft).toHaveText("");
+    const close = dialog.getByRole("button", {
+      name: "Close fullscreen viewer",
+    });
+    await close.focus();
+    await page.keyboard.press("Shift+Tab");
+    await expect(dialog.locator(":focus")).toHaveCount(1);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await expect(
+      page
+        .getByRole("complementary", { name: "Thread", exact: true })
+        .getByRole("textbox", { name: "Reply to thread", exact: true }),
+    ).toHaveText("");
+  } finally {
+    await server.close();
+  }
+});
+
 test("shared thread UI auto-loads, follows live replies, retries and isolates retargeted drafts", async ({
   page,
 }) => {
@@ -268,6 +347,71 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       await expect(literal).toHaveCSS("white-space", "pre-wrap");
     }
     expect(errors).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("exact reply media keeps its selected attachment and canonical thread", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    const address = server.httpServer.address();
+    await page.goto(
+      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
+    );
+    await page.evaluate(() => window.messagesFixture.activate());
+    await page
+      .getByRole("button", { name: "Review exact reply image" })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Image viewer" });
+    await expect(dialog).toBeVisible();
+    const comments = dialog.getByRole("region", { name: "Media comments" });
+    await expect(comments).toContainText("Reply with image");
+    const addReaction = comments.getByRole("button", {
+      name: "Add reaction",
+      exact: true,
+    });
+    await expect(addReaction).toBeVisible();
+    await addReaction.click();
+    await page.getByRole("button", { name: "👍", exact: true }).last().click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.publications.length),
+      )
+      .toBe(1);
+    const reaction = await page.evaluate(
+      () => window.messagesFixture.report.publications[0],
+    );
+    expect(reaction.kind).toBe(7);
+    const exactReplyId = await page.evaluate(
+      () => window.messagesFixture.report.exactReplyId,
+    );
+    expect(reaction.tags).toContainEqual(["e", exactReplyId]);
+    const draft = dialog.getByRole("textbox", { name: "Reply to thread" });
+    await draft.fill("Canonical exact feedback");
+    await draft.press("Enter");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.messagesFixture.report.publications.length),
+      )
+      .toBe(2);
+    const publication = await page.evaluate(
+      () => window.messagesFixture.report.publications[1],
+    );
+    const rootId = await page.evaluate(
+      () => window.messagesFixture.report.rootId,
+    );
+    expect(publication.tags).toContainEqual(["e", rootId, "", "reply"]);
   } finally {
     await server.close();
   }

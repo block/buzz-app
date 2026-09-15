@@ -279,6 +279,16 @@ function IconButtonSpecimen() {
 function AvatarSpecimen() {
   return (
     <div className="component-specimen-stack">
+      <SpecimenGroup label="Identity shape: circles for humans, rounded rectangles for agents">
+        <div className="component-specimen-row">
+          <Specimen prop='shape="circle" · human'>
+            <Avatar alt="Alex Lee" fallback="Alex" shape="circle" />
+          </Specimen>
+          <Specimen prop='shape="rounded" · agent'>
+            <Avatar alt="Brain" fallback="Brain" shape="rounded" />
+          </Specimen>
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Sizes">
         <div className="component-specimen-row">
           <Specimen prop='size="small"'>
@@ -820,6 +830,7 @@ function InlineChipSpecimen() {
 
 function SwitchSpecimen() {
   const [checked, setChecked] = useState(false);
+  const [busyChecked, setBusyChecked] = useState(true);
   return (
     <div className="component-specimen-stack">
       <Switch
@@ -829,6 +840,16 @@ function SwitchSpecimen() {
       />
       <Switch checked label="Show agent activity" />
       <Switch disabled label="Show agent activity" />
+      <div className="component-specimen-row">
+        <span className="text-body">Plugin enabled (saving)</span>
+        <Switch
+          checked={busyChecked}
+          onCheckedChange={setBusyChecked}
+          readOnly
+          aria-disabled="true"
+          aria-label="Enable busy plugin"
+        />
+      </div>
     </div>
   );
 }

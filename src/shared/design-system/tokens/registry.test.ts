@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 import { describe, expect, it } from "vitest";
 
-import { PALETTE, RAMPS, ROLE_GROUPS } from "./registry";
+import { PALETTE, RAMPS, ROLE_GROUPS, TYPE_RAMPS } from "./registry";
 
 /**
  * `tokens.css` as text.
@@ -139,4 +139,26 @@ describe("token registry — colour namespaces do not collide", () => {
     );
     expect(roles.filter((role) => !registered.has(role))).toEqual([]);
   });
+});
+
+// Block UI eff76616, with the product-directed Buzz xsmall override to 12px.
+it("keeps xsmall semantic while sharing the 12px size step", () => {
+  const sizes = [12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 56, 72, 96];
+  const ramp = TYPE_RAMPS.find((ramp) => ramp.id === "size");
+  expect(ramp?.steps.map((step) => step.step)).toEqual(sizes);
+  const css = readFileSync(
+    new URL("../styles/typography.css", import.meta.url),
+    "utf8",
+  );
+  for (const size of sizes) {
+    expect(css).toContain(
+      `--type-size-${size}: calc(var(--type-rem) * ${size / 16});`,
+    );
+  }
+  expect(css).toContain("--type-xsmall-size: var(--type-size-12);");
+  expect(css).not.toContain("--type-size-10:");
+  for (const role of ["mono", "mono-sm", "mono-lg"]) {
+    expect(css).toContain(`--text-${role}: var(--type-xsmall-size);`);
+    expect(css).toContain(`--text-${role}--line-height: calc(16 / 12);`);
+  }
 });

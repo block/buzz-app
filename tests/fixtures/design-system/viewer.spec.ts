@@ -403,3 +403,76 @@ test("a stale or renamed link explains itself instead of rendering blank", async
   }
   expect(failures).toEqual([]);
 });
+
+test("switch labels activate the control and busy switches preserve focus", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/switch`);
+  const control = page
+    .getByRole("switch", { name: "Show agent activity" })
+    .first();
+  await expect(control).not.toBeChecked();
+  await page
+    .locator("label")
+    .filter({ hasText: "Show agent activity" })
+    .first()
+    .click();
+  await expect(control).toBeChecked();
+  const busy = page.getByRole("switch", { name: "Enable busy plugin" });
+  await expect(busy).toHaveAttribute("aria-disabled", "true");
+  await busy.focus();
+  await expect(busy).toBeFocused();
+  for (const key of ["Space", "Enter"]) {
+    await page.keyboard.press(key);
+    await expect(busy).toBeChecked();
+    await expect(busy).toBeFocused();
+  }
+  await busy.click({ force: true });
+  await expect(busy).toBeChecked();
+});
+
+test("avatar specimens preserve human and agent identity shapes in both modes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  for (const mode of ["light", "dark"]) {
+    const change = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await change.count()) await change.click();
+    await expect(
+      page.getByRole("img", { name: "Brain", exact: true }),
+    ).toHaveCSS("border-radius", "10px");
+    const human = page.getByRole("img", { name: "Alex Lee", exact: true });
+    expect(
+      await human.evaluate(
+        (element) =>
+          parseFloat(getComputedStyle(element).borderTopLeftRadius) >=
+          element.clientWidth / 2,
+      ),
+    ).toBe(true);
+    const sizes = page.getByRole("img", { name: "Morgan Martin", exact: true });
+    for (const [index, size] of [24, 32, 40].entries()) {
+      await expect(sizes.nth(index)).toHaveCSS("width", `${size}px`);
+    }
+  }
+});
+
+test("typography shows the size ramp and renders xsmall mono details", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/typography`);
+  for (const size of [12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 56, 72, 96]) {
+    await expect(page.getByText(`size.${size}`, { exact: true })).toBeVisible();
+  }
+  const samples = page.getByText("createChannel(name, members)", {
+    exact: true,
+  });
+  await expect(samples).toHaveCount(3);
+  for (const sample of await samples.all()) {
+    await expect(sample).toHaveCSS("font-size", "12px");
+    await expect(sample).toHaveCSS("line-height", "16px");
+    await expect(sample).toHaveCSS("font-family", /JetBrains Mono/);
+  }
+  await expect(
+    page.getByRole("link", { name: "Typography source specification" }),
+  ).toHaveAttribute("href", /eff766161ba8aaee3258ca107f0d904dd542c708/);
+});

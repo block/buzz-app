@@ -133,7 +133,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   const emojiContentHeight = (
     await page.locator("em-emoji-picker").boundingBox()
   ).height;
-  const sharedSearchIcon = picker.locator(":scope > svg.lucide-search");
+  const sharedSearchIcon = picker.locator(":scope > svg.tabler-icon-search");
   const sharedSearchIconNode = await sharedSearchIcon.elementHandle();
   const emojiSearchIconPosition = await sharedSearchIcon.boundingBox();
   expect(emojiSearchIconPosition.x - emojiSearchPosition.x).toBeCloseTo(8, 1);
@@ -243,11 +243,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveAttribute("autocapitalize", "off");
   await expect(sharedSearchIcon).toHaveAttribute("viewBox", "0 0 24 24");
   await expect(sharedSearchIcon).toHaveAttribute("stroke-width", "2");
-  await expect(sharedSearchIcon.locator("path")).toHaveAttribute(
-    "d",
-    "m21 21-4.34-4.34",
-  );
-  await expect(sharedSearchIcon.locator("circle")).toHaveAttribute("r", "8");
+  await expect(sharedSearchIcon).toHaveAttribute("aria-hidden", "true");
   expect(await sharedSearchIconNode.evaluate((node) => node.isConnected)).toBe(
     true,
   );
@@ -360,16 +356,13 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(clear).toHaveCSS("height", "16px");
   await expect(clear).toHaveCSS("color", "rgb(82, 82, 82)");
   await expect(clearIcon).toHaveAttribute("viewBox", "0 0 24 24");
-  await expect(clearIcon).toHaveClass(/lucide-circle-x/);
-  await expect(clearIcon.locator("circle")).toHaveCSS(
+  await expect(clearIcon).toHaveClass(/tabler-icon-circle-x-filled/);
+  await expect(clearIcon).toHaveAttribute("aria-hidden", "true");
+  await expect(clearIcon.locator("path").last()).toHaveCSS(
     "fill",
     "rgb(82, 82, 82)",
   );
-  await expect(clearIcon.locator("circle")).toHaveCSS("stroke", "none");
-  await expect(clearIcon.locator("path").first()).toHaveCSS(
-    "stroke",
-    "rgb(240, 240, 240)",
-  );
+  await expect(clearIcon).toHaveAttribute("stroke", "none");
   const filledSearchPosition = await search.boundingBox();
   const clearIconPosition = await clearIcon.boundingBox();
   expect(

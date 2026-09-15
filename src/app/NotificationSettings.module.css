@@ -1,0 +1,15 @@
+.root [role="switch"] {
+  flex-shrink: 0;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.actions > button {
+  height: auto;
+  min-height: var(--size-control);
+  padding-block: var(--space-2);
+}

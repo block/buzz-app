@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  ExternalLink,
-  GitPullRequest,
-  CircleDot,
-  GitCommitHorizontal,
-  FolderGit2,
-} from "lucide-react";
+  IconExternalLink as ExternalLink,
+  IconGitPullRequest as GitPullRequest,
+  IconCircleDot as CircleDot,
+  IconGitCommit as GitCommitHorizontal,
+  IconFolderCode as FolderGit2,
+} from "@tabler/icons-react";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
@@ -77,7 +77,7 @@ function ObjectPanel({
     <div className={styles.root}>
       <div className={styles.identity}>
         <span className={styles.icon}>
-          <Icon size={22} />
+          <Icon size={22} aria-hidden="true" />
         </span>
         <div>
           <small>{reference.repository}</small>
@@ -92,7 +92,7 @@ function ObjectPanel({
         target="_blank"
         rel="noreferrer"
       >
-        Open on GitHub <ExternalLink size={14} />
+        Open on GitHub <ExternalLink size={14} aria-hidden="true" />
       </a>
       {result === undefined ? (
         <p role="status">Loading from GitHub…</p>

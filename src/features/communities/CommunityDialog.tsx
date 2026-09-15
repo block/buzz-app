@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { IconX as X } from "@tabler/icons-react";
 import {
   communityRequest,
   inspectProfile,
@@ -171,7 +171,7 @@ export function CommunityDialog({
             disabled={busy}
             onClick={close}
           >
-            <X size={20} />
+            <X size={20} aria-hidden="true" />
           </button>
         </header>
         {mode === "join" && step !== "destination" && destination && (

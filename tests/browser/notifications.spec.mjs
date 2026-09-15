@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import { end, open, settle } from "./timeline.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 
 test.use({
@@ -348,6 +348,17 @@ for (const kind of ["mention", "thread reply"]) {
         ),
       )
       .toBe(false);
+    if (!root) {
+      // Fractional reflow must not leave the last row clipped at maximum scroll.
+      await row.evaluate((element) => {
+        element.style.paddingBottom = "0.5px";
+      });
+      for (const width of [1440, 640]) {
+        await page.setViewportSize({ width, height: 950 });
+        await end(page);
+        await expect(row).toBeInViewport({ ratio: 1 });
+      }
+    }
   });
 }
 

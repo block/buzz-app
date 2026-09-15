@@ -52,7 +52,7 @@ for (const mode of ["light", "dark"]) {
           ? await selected.locator("small").textContent()
           : null;
       await input.press("Tab");
-      await expect(input).toHaveValue(replacement);
+      await expect(input).toHaveJSProperty("value", replacement);
       await expect(input).toBeFocused();
       await expect(popup).toHaveCount(0);
       if (kind === "mention") {

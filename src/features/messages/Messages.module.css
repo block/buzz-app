@@ -660,7 +660,7 @@ button.avatar:focus-visible,
 
 .typing {
   color: var(--text-muted);
-  font-size: calc(12px * var(--buzz-text-scale, 1));
+  font-size: var(--text-caption);
   line-height: 1.5;
   height: 1lh;
   flex-shrink: 0;

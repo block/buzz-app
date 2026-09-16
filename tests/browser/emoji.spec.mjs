@@ -53,7 +53,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBeVisible();
     const sentSingleEmoji = page.locator("p[data-single-emoji]");
     await expect(sentSingleEmoji).toHaveCSS("font-size", "42px");
-    await expect(sentSingleEmoji).toHaveCSS("margin-top", "4px");
+    await expect(sentSingleEmoji).toHaveCSS("margin-top", "0px");
     await expect(sentSingleEmoji.locator('img[alt=":party:"]')).toHaveCSS(
       "width",
       "42px",
@@ -64,14 +64,16 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     );
     expect(
       await sentSingleEmoji.evaluate((message) => {
-        const byline = message.previousElementSibling;
+        const byline = message
+          .closest("[data-message-id]")
+          .querySelector("time").parentElement;
         const emoji = message.querySelector("img");
         return (
           emoji.getBoundingClientRect().top -
           byline.getBoundingClientRect().bottom
         );
       }),
-    ).toBeCloseTo(4, 1);
+    ).toBeCloseTo(14, 1);
     await expect(
       page.getByRole("link", { name: "https://example.test/:party" }),
     ).toHaveAttribute("href", "https://example.test/:party");

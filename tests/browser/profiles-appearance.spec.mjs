@@ -1,6 +1,8 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+test.use({ readState: true });
+
 for (const mode of ["light", "dark"]) {
   test(`Profiles uses shared styles and host keyboard focus in ${mode} mode`, async ({
     page,
@@ -16,23 +18,31 @@ for (const mode of ["light", "dark"]) {
     const history = page.getByRole("region", {
       name: "Channel message history",
     });
-    const messageId = await history.evaluate((element) => {
-      const bounds = element.getBoundingClientRect();
-      const avatar = Array.from(
-        element.querySelectorAll(
-          'button[aria-label="View Fixture Reader profile"]',
-        ),
-      ).find((button) => {
-        const rect = button.getBoundingClientRect();
-        return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
-      });
-      if (!avatar) throw new Error("No fully visible profile avatar");
-      return avatar.closest("[data-message-id]").dataset.messageId;
-    });
+    let messageId;
+    await expect
+      .poll(
+        async () => {
+          messageId = await history.evaluate((element) => {
+            const bounds = element.getBoundingClientRect();
+            const avatar = Array.from(
+              element.querySelectorAll(
+                'button[aria-label="View Alice Fixture profile"]',
+              ),
+            ).find((button) => {
+              const rect = button.getBoundingClientRect();
+              return rect.top >= bounds.top && rect.bottom <= bounds.bottom;
+            });
+            return avatar?.closest("[data-message-id]").dataset.messageId;
+          });
+          return messageId;
+        },
+        { message: "profile name and group-final avatar are visible" },
+      )
+      .toBeTruthy();
     const avatar = history
       .locator(`[data-message-id="${messageId}"]`)
       .getByRole("button", {
-        name: "View Fixture Reader profile",
+        name: "View Alice Fixture profile",
         exact: true,
       });
     await expect(avatar).toBeInViewport({ ratio: 1 });
@@ -55,7 +65,7 @@ for (const mode of ["light", "dark"]) {
     );
     await expect(region).toHaveCSS("font-size", "16px");
     await expect(
-      panel.getByRole("heading", { name: "Fixture Reader", exact: true }),
+      panel.getByRole("heading", { name: "Alice Fixture", exact: true }),
     ).toHaveCSS("font-size", "24px");
     await expect(key).toHaveCSS("font-size", "13px");
     await expect(key).toHaveCSS("font-family", /JetBrains Mono/);

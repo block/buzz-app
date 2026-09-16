@@ -587,6 +587,19 @@ it("captures the mounted message at cleanup and restores that anchor after resiz
     anchor: { id: "last", y: 42 },
   });
 });
+it("captures a reading anchor when visible rows mount after the last scroll event", () => {
+  const mounted: { id: string; y: number }[] = [];
+  const h = setup({ mounted });
+  h.scroll();
+  // Virtual rows commit after the scroll handler, without another scroll event.
+  mounted.push({ id: "last", y: 42 });
+  h.unmount();
+  expect(h.saved()).toEqual({
+    offset: 2388,
+    bottom: false,
+    anchor: { id: "last", y: 42 },
+  });
+});
 it("resize-generated scroll retains the restored message when its paragraph no longer fits", () => {
   const mounted = [{ id: "last", y: 42 }];
   const h = setup({ mounted });
@@ -784,6 +797,32 @@ it.each([false, true])(
     h.unmount();
   },
 );
+it.each([false, true])(
+  "initial measurement preserves bottom intent before input, with previous scroll=%s",
+  (previous) => {
+    const h = setup();
+    if (previous) {
+      h.element.scrollTop = h.element.scrollHeight - h.element.clientHeight;
+      h.dispatchScroll();
+    }
+    // WebKit may deliver an intermediate programmatic offset before the final
+    // end-scroll correction, even when no reader has touched the timeline.
+    h.element.scrollTop = 1281;
+    h.dispatchScroll();
+    h.handle.scrollToIndex.mockClear();
+    h.measureRows();
+    expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+      align: "end",
+    });
+    // The very first real gesture still takes ownership immediately.
+    h.scroll();
+    h.handle.scrollToIndex.mockClear();
+    h.measureRows();
+    expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
+    h.unmount();
+    expect(h.saved().bottom).toBe(false);
+  },
+);
 it("late measurements do not convert reading-anchor restoration to bottom follow", () => {
   const h = setup({ mounted: [{ id: "last", y: 42 }] });
   h.scroll();
@@ -794,6 +833,32 @@ it("late measurements do not convert reading-anchor restoration to bottom follow
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
   h.unmount();
 });
+it.each([
+  { gesture: false, anchor: { id: "last", y: 42 } },
+  { gesture: true, anchor: { id: "last", y: 42 } },
+  { gesture: false, anchor: undefined },
+  { gesture: true, anchor: undefined },
+])(
+  "cold extent clamping preserves restored reading until a real bottom gesture: %j",
+  ({ gesture, anchor }) => {
+    const h = setup({
+      initial: { offset: 80851, bottom: false, anchor },
+      mounted: [{ id: "last", y: 42 }],
+    });
+    // Cold geometry temporarily ends at the restored offset, then grows.
+    h.element.scrollHeight = h.element.scrollTop + h.element.clientHeight;
+    h.dispatchScroll();
+    h.element.scrollHeight += 650;
+    h.dispatchScroll();
+    if (gesture) {
+      h.element.scrollTop = h.element.scrollHeight - h.element.clientHeight;
+      h.scroll();
+    }
+    h.unmount();
+    expect(h.saved().bottom).toBe(gesture);
+    expect(h.saved().anchor).toEqual({ id: "last", y: 42 });
+  },
+);
 it("prepending retires the preceding bottom-reflow observer and its queued frame", () => {
   const h = setup();
   h.element.scrollTop = 3038;

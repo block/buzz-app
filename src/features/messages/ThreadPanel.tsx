@@ -16,6 +16,7 @@ import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { MessageRow } from "./MessageRow";
+import { continuesMessage, startsMessageDay } from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
 import { useReading } from "./use-reading";
@@ -24,6 +25,7 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 
 export type ThreadPanelProps = {
+  viewer?: string | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -84,6 +86,7 @@ function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
   );
 }
 function OwnedThreadPanel({
+  viewer,
   session,
   extensions,
   scope,
@@ -140,6 +143,7 @@ function OwnedThreadPanel({
       channelId={channelId}
       channelName={channelName}
       view={view}
+      viewer={viewer}
       navigation={navigation}
       messageId={messageId}
       onOpenLink={onOpenLink}
@@ -152,6 +156,7 @@ function OwnedThreadPanel({
   );
 }
 function ThreadMessages({
+  viewer,
   session,
   extensions,
   scope,
@@ -169,6 +174,7 @@ function ThreadMessages({
   channelId: string;
   channelName: string;
   view: ThreadView;
+  viewer?: string | undefined;
   messageId: string;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
@@ -324,6 +330,7 @@ function ThreadMessages({
         {snapshot.root ? (
           <MessageRow
             extensions={extensions}
+            viewer={viewer}
             session={session}
             scope={scope}
             row={snapshot.root}
@@ -345,10 +352,16 @@ function ThreadMessages({
           {snapshot.replies.length === 1 ? "reply shown" : "replies shown"}
         </div>
         <ol>
-          {snapshot.replies.map((row) => (
+          {snapshot.replies.map((row, index) => (
             <li key={row.id}>
               <MessageRow
                 extensions={extensions}
+                viewer={viewer}
+                continuation={continuesMessage(
+                  snapshot.replies[index - 1],
+                  row,
+                )}
+                groupEnd={!continuesMessage(row, snapshot.replies[index + 1])}
                 session={session}
                 scope={scope}
                 row={row}
@@ -357,7 +370,7 @@ function ThreadMessages({
                 media={session.media}
                 onOpenLink={onOpenLink}
                 canOpenLink={canOpenLink}
-                day={false}
+                day={startsMessageDay(snapshot.replies[index - 1], row)}
                 retry={session.messages.retry}
               />
             </li>

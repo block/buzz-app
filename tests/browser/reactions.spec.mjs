@@ -27,15 +27,46 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html?reactions`,
     );
-    const plus = page.getByRole("button", {
+    const messages = page.locator("[data-message-id]");
+    await expect(messages).toHaveCount(6);
+    for (const row of await messages.all()) {
+      const toolbar = row.getByRole("group", { name: "Message actions" });
+      await expect(
+        toolbar.getByRole("button", { name: "Add reaction", exact: true }),
+      ).toHaveCount(1);
+      await expect(
+        toolbar.getByRole("button", { name: "Reply in thread", exact: true }),
+      ).toHaveCount(1);
+    }
+    const message = messages.first();
+    const plus = message.getByRole("button", {
       name: "Add reaction",
       exact: true,
     });
-    // Only one fixture message has reactions; the others must have no action.
-    await expect(plus).toHaveCount(1);
+    const actions = message.getByRole("group", { name: "Message actions" });
+    await expect(
+      actions.getByRole("button", { name: "Add reaction", exact: true }),
+    ).toHaveCount(1);
+    const reply = actions.getByRole("button", {
+      name: "Reply in thread",
+      exact: true,
+    });
+    for (const width of [390, 1440]) {
+      await page.setViewportSize({ width, height: 950 });
+      await message.hover();
+      await reply.hover();
+      const plusBox = await plus.boundingBox();
+      const replyBox = await reply.boundingBox();
+      expect(plusBox).not.toBeNull();
+      expect(replyBox).not.toBeNull();
+      expect(plusBox.x + plusBox.width).toBeCloseTo(replyBox.x, 1);
+      expect(plusBox.y).toBeCloseTo(replyBox.y, 1);
+    }
     await plus.click();
     const search = page.locator('em-emoji-picker input[type="search"]');
     await expect(search).toBeVisible();
+    await page.mouse.move(0, 0);
+    await expect(actions).toHaveCSS("opacity", "1");
     const padding = await search.evaluate((input) => {
       const field = input.getBoundingClientRect();
       const picker = input
@@ -115,6 +146,8 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     );
     expect(boundaryEvents.every(({ kind }) => kind === 7)).toBe(true);
     await page.evaluate(() => window.emojiFixture.rejectReaction());
+    // Archiving remounted the action and cleared focus; reveal the hover toolbar again.
+    await message.hover();
     await plus.click();
     await page
       .locator("em-emoji-picker button")
@@ -123,6 +156,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       .click();
     const retry = page.getByRole("button", { name: "Retry reaction" });
     await expect(retry).toBeVisible();
+    await expect(retry).toBeInViewport();
     await page.evaluate(() => window.emojiFixture.remount());
     await expect(retry).toBeVisible();
     await retry.click();
@@ -132,6 +166,29 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
         page.evaluate(() => window.emojiFixture.report.publications.length),
       )
       .toBe(5);
+    // Add the first reaction to a message that has no existing reactions.
+    const unreacted = messages.nth(1);
+    const targetId = await unreacted.getAttribute("data-message-id");
+    await unreacted.hover();
+    await unreacted
+      .getByRole("button", { name: "Add reaction", exact: true })
+      .click();
+    await page.locator('em-emoji-picker input[type="search"]').fill("party");
+    await page
+      .locator("em-emoji-picker button")
+      .filter({ has: page.locator('img[src*="1.png"]') })
+      .first()
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.publications.length),
+      )
+      .toBe(6);
+    const firstReaction = await page.evaluate(
+      () => window.emojiFixture.report.publications.at(-1).event,
+    );
+    expect(firstReaction.kind).toBe(7);
+    expect(firstReaction.tags).toContainEqual(["e", targetId]);
     expect(errors).toEqual([]);
   } finally {
     await server.close();

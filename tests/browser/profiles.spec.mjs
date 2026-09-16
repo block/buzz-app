@@ -16,16 +16,16 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
     .getByRole("complementary", { name: "Profile", exact: true })
     .locator("code");
   const avatar = page.getByRole("button", {
-    name: "View Viewer profile",
+    name: "View Author profile",
     exact: true,
   });
   await expect(avatar).toHaveCount(1);
   await avatar.focus();
   await avatar.press("Enter");
-  await expect(key).toHaveText(npubs.viewer);
-  const portrait = panel.getByRole("img", { name: "Viewer avatar" });
+  await expect(key).toHaveText(npubs.author);
+  const portrait = panel.getByRole("img", { name: "Author avatar" });
   await expect(portrait).toBeVisible();
-  const name = panel.getByRole("heading", { name: "Viewer", exact: true });
+  const name = panel.getByRole("heading", { name: "Author", exact: true });
   const portraitWidth = await portrait.evaluate(
     (element) => element.getBoundingClientRect().width,
   );
@@ -73,7 +73,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await panel.getByRole("button", { name: "Copy npub" }).click();
   await expect(panel.getByRole("status")).toHaveText("Public key copied.");
   expect(await page.evaluate(() => window.profileCopies)).toEqual([
-    npubs.viewer,
+    npubs.author,
   ]);
   await page.evaluate(() => {
     navigator.clipboard.writeText = async () => {
@@ -84,7 +84,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   await expect(panel.getByRole("status")).toHaveText(
     "Could not copy. Select the public key above to copy it.",
   );
-  await expect(key).toHaveText(npubs.viewer);
+  await expect(key).toHaveText(npubs.author);
   await page.getByRole("region", { name: "Profile details" }).press("Escape");
   await expect(panel).toHaveCount(0);
   await expect(avatar).toBeFocused();
@@ -177,7 +177,7 @@ test("contextual panel callbacks retire with opening, channel, contribution and 
 }) => {
   await page.goto("/tests/fixtures/profiles.html?context-probe");
   const avatar = page.getByRole("button", {
-    name: "View Viewer profile",
+    name: "View Author profile",
     exact: true,
   });
   const panel = page.getByRole("complementary", {

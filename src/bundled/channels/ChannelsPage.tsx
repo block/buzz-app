@@ -678,6 +678,7 @@ function ChannelWorkspace({
             <ThreadPanel
               extensions={extensions}
               session={queries}
+              viewer={viewer}
               scope={scope}
               channelName={current?.name ?? ""}
               channelId={showingThread.channelId}

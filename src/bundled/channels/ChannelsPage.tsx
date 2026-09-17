@@ -38,6 +38,7 @@ import {
 } from "../../shared/design-system/icons/index";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
+import type { ChannelSummary } from "../../features/relay/contracts";
 import {
   useChannelList,
   useChannelWindow,
@@ -59,6 +60,17 @@ import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { useSidebarView } from "./useSidebarView";
 import { sidebarSections } from "./sidebar-sections";
+import {
+  ContextMenuRoot,
+  MenuGroup,
+  MenuGroupLabel,
+  MenuIcon,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuSeparator,
+} from "../../shared/design-system/ui/Menu";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
@@ -228,6 +240,21 @@ function ChannelWorkspace({
     [navigate],
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
+  const [rowMenu, setRowMenu] = useState<{
+    channel: ChannelSummary;
+    sectionId?: string;
+    anchor?: HTMLElement;
+  }>();
+  const rowMenuGeneration = useRef(0);
+  const [groupWrite, setGroupWrite] = useState<{
+    channelId: string;
+    pending: boolean;
+    error?: string;
+  }>();
+  const [rowFocus, setRowFocus] = useState<{
+    channelId: string;
+    sectionKey: string;
+  }>();
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const sidebar = useSidebarView(
     scope,
@@ -721,6 +748,77 @@ function ChannelWorkspace({
     [scope, viewer, current, showingThread],
   );
   const drawer = useChannelPanels(panels, drawerContext);
+  const closeRowMenu = useCallback(() => {
+    rowMenuGeneration.current++;
+    setRowMenu(undefined);
+    setGroupWrite(undefined);
+  }, []);
+  useLayoutEffect(() => {
+    if (!rowFocus) return;
+    const destination = sidebar.list.current?.querySelector<HTMLElement>(
+      `[data-sidebar-section="${CSS.escape(rowFocus.sectionKey)}"]`,
+    );
+    const link = destination?.querySelector<HTMLButtonElement>(
+      `[data-channel-id="${CSS.escape(rowFocus.channelId)}"]`,
+    );
+    link?.focus({ preventScroll: true });
+    setRowFocus(undefined);
+  }, [rowFocus, sidebar.list]);
+  const openRowMenu = useCallback(
+    (channel: ChannelSummary, sectionId?: string, anchor?: HTMLElement) => {
+      rowMenuGeneration.current++;
+      setGroupWrite(undefined);
+      setRowMenu({
+        channel,
+        ...(sectionId ? { sectionId } : {}),
+        ...(anchor ? { anchor } : {}),
+      });
+    },
+    [],
+  );
+  const assignGroup = async (channelId: string, sectionId?: string) => {
+    const generation = rowMenuGeneration.current;
+    setGroupWrite({ channelId, pending: true });
+    try {
+      await preferences.assign(channelId, sectionId);
+      if (generation !== rowMenuGeneration.current) return;
+      const sectionKey = sectionId ? `group:${sectionId}` : "channels";
+      sidebar.toggle(sectionKey, true);
+      setRowFocus({ channelId, sectionKey });
+      closeRowMenu();
+    } catch (error) {
+      if (generation !== rowMenuGeneration.current) return;
+      setGroupWrite({
+        channelId,
+        pending: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+  const setChannelStar = async (channelId: string, starred: boolean) => {
+    const generation = rowMenuGeneration.current;
+    setGroupWrite({ channelId, pending: true });
+    try {
+      await preferences.setStar(channelId, starred);
+      if (generation !== rowMenuGeneration.current) return;
+      const sectionId = preferences.data?.assignments[channelId];
+      const sectionKey = starred
+        ? "starred"
+        : preferences.data?.sections.some((group) => group.id === sectionId)
+          ? `group:${sectionId}`
+          : "channels";
+      sidebar.toggle(sectionKey, true);
+      setRowFocus({ channelId, sectionKey });
+      closeRowMenu();
+    } catch (error) {
+      if (generation !== rowMenuGeneration.current) return;
+      setGroupWrite({
+        channelId,
+        pending: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
@@ -732,6 +830,7 @@ function ChannelWorkspace({
               <details
                 key={section.key}
                 className={styles.channelSection}
+                data-sidebar-section={section.key}
                 open={!sidebar.collapsed.includes(section.key)}
               >
                 {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
@@ -756,9 +855,31 @@ function ChannelWorkspace({
                     sessions?.some((child) => child.id === current?.id)
                       ? current?.id
                       : undefined;
-                  return (
+                  const currentSectionId = section.key.startsWith("group:")
+                    ? section.key.slice("group:".length)
+                    : undefined;
+                  const movable =
+                    preferences.writable &&
+                    section.key !== "starred" &&
+                    channel.channelType !== "dm" &&
+                    channel.channelType !== "forum" &&
+                    !!preferences.data?.sections.length;
+                  const starrable =
+                    preferences.starWritable &&
+                    !!preferences.data &&
+                    channel.channelType !== "dm" &&
+                    channel.channelType !== "forum";
+                  const starred = section.key === "starred";
+                  const menuOpen =
+                    (movable || starrable) &&
+                    rowMenu?.channel.id === channel.id &&
+                    rowMenu.sectionId === currentSectionId;
+                  const channelItem = (
                     <ChannelSidebarItem
                       key={channel.id}
+                      menuEnabled={movable || starrable}
+                      sectionId={currentSectionId}
+                      onOpenMenu={openRowMenu}
                       channel={channel}
                       session={queries}
                       working={workingChannels.has(channel.id)}
@@ -774,6 +895,95 @@ function ChannelWorkspace({
                       onNewSession={startSession}
                       onOpenThread={openActivityThread}
                     />
+                  );
+                  if (!movable && !starrable) return channelItem;
+                  return (
+                    <ContextMenuRoot
+                      key={channel.id}
+                      open={menuOpen}
+                      onOpenChange={(open) => {
+                        if (open) openRowMenu(channel, currentSectionId);
+                        else if (menuOpen) closeRowMenu();
+                      }}
+                    >
+                      {channelItem}
+                      <MenuPopup
+                        aria-label={`Actions for ${channel.name}`}
+                        anchor={menuOpen ? rowMenu.anchor : undefined}
+                        finalFocus={() =>
+                          sidebar.list.current?.querySelector<HTMLButtonElement>(
+                            `[data-channel-id="${CSS.escape(channel.id)}"]`,
+                          ) ?? false
+                        }
+                      >
+                        {starrable && (
+                          <MenuItem
+                            closeOnClick={false}
+                            disabled={
+                              groupWrite?.channelId === channel.id &&
+                              groupWrite.pending
+                            }
+                            onClick={() =>
+                              void setChannelStar(channel.id, !starred)
+                            }
+                          >
+                            {starred ? "Unstar" : "Star"}
+                          </MenuItem>
+                        )}
+                        {movable && (
+                          <>
+                            {starrable && <MenuSeparator />}
+                            <MenuGroup>
+                              <MenuGroupLabel>Move to group</MenuGroupLabel>
+                            </MenuGroup>
+                            <MenuRadioGroup
+                              value={currentSectionId ?? ""}
+                              onValueChange={(sectionId) =>
+                                void assignGroup(channel.id, sectionId)
+                              }
+                              disabled={
+                                groupWrite?.channelId === channel.id &&
+                                groupWrite.pending
+                              }
+                            >
+                              {preferences.data?.sections.map((group) => (
+                                <MenuRadioItem
+                                  key={group.id}
+                                  value={group.id}
+                                  closeOnClick={false}
+                                >
+                                  {group.icon && (
+                                    <MenuIcon>{group.icon}</MenuIcon>
+                                  )}
+                                  {group.name}
+                                </MenuRadioItem>
+                              ))}
+                            </MenuRadioGroup>
+                            {currentSectionId && (
+                              <>
+                                <MenuSeparator />
+                                <MenuItem
+                                  closeOnClick={false}
+                                  disabled={
+                                    groupWrite?.channelId === channel.id &&
+                                    groupWrite.pending
+                                  }
+                                  onClick={() => void assignGroup(channel.id)}
+                                >
+                                  Remove from group
+                                </MenuItem>
+                              </>
+                            )}
+                          </>
+                        )}
+                        {groupWrite?.channelId === channel.id &&
+                          groupWrite.pending && <p role="status">Saving…</p>}
+                        {groupWrite?.channelId === channel.id &&
+                          groupWrite.error && (
+                            <p role="alert">{groupWrite.error}</p>
+                          )}
+                      </MenuPopup>
+                    </ContextMenuRoot>
                   );
                 })}
               </details>

@@ -1,4 +1,5 @@
 import { memo } from "react";
+import { ContextMenuTrigger } from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -28,7 +29,17 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onSelect,
   onNewSession,
   onOpenThread,
+  menuEnabled,
+  sectionId,
+  onOpenMenu,
 }: {
+  menuEnabled?: boolean;
+  sectionId?: string | undefined;
+  onOpenMenu?: (
+    channel: ChannelSummary,
+    sectionId?: string,
+    anchor?: HTMLElement,
+  ) => void;
   channel: ChannelSummary;
   session: RelaySession;
   working: boolean;
@@ -75,7 +86,24 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
           channelId={channel.id}
           channelName={channel.name}
           onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
-          trigger={trigger}
+          trigger={
+            menuEnabled ? (
+              <ContextMenuTrigger
+                render={trigger}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "ContextMenu" ||
+                    (event.shiftKey && event.key === "F10")
+                  ) {
+                    event.preventDefault();
+                    onOpenMenu?.(channel, sectionId, event.currentTarget);
+                  }
+                }}
+              />
+            ) : (
+              trigger
+            )
+          }
         />
       )}
       selected={selected}

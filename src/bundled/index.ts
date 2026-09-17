@@ -20,6 +20,8 @@ import projectsManifest from "./projects/manifest.json";
 import * as projects from "./projects";
 import workflowsManifest from "./workflows/manifest.json";
 import * as workflows from "./workflows";
+import meshManifest from "./mesh/manifest.json";
+import * as mesh from "./mesh";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
@@ -37,4 +39,5 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...projectsManifest, apiVersion: 1 }, module: projects },
   { manifest: { ...agentsManifest, apiVersion: 1 }, module: agents },
   { manifest: { ...workflowsManifest, apiVersion: 1 }, module: workflows },
+  { manifest: { ...meshManifest, apiVersion: 1 }, module: mesh },
 ];

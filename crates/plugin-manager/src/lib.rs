@@ -73,6 +73,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("agents manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
             .expect("workflows manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/mesh/manifest.json"))
+            .expect("mesh manifest"),
     ]
 }
 fn is_bundled(id: &str) -> bool {

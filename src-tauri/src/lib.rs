@@ -1,5 +1,7 @@
+mod mesh;
 mod notifications;
 mod terminal;
+use mesh::{mesh_start, mesh_status, mesh_stop, Mesh};
 use notifications::{notification_show, Notifications};
 use tauri::Manager as _;
 use terminal::{
@@ -159,11 +161,15 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .manage(Imports::default())
+        .manage(Mesh::default())
         .manage(Terminals::default())
         .manage(Notifications::default())
         .manage(PluginManager(Manager::from_env()))
         .invoke_handler(tauri::generate_handler![
             notification_show,
+            mesh_start,
+            mesh_stop,
+            mesh_status,
             terminal_create_owner,
             terminal_spawn,
             terminal_read,
@@ -184,6 +190,7 @@ pub fn run() {
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                app.state::<Mesh>().shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");
                 }

@@ -20,6 +20,8 @@ tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 uuid = { version = "1", features = ["v4"] }
 url = "2"
+tokio = { version = "1", features = ["sync", "time"] }
+mesh-llm-sdk = { git = "https://github.com/Mesh-LLM/mesh-llm.git", tag = "v0.76.0-rc7", package = "mesh-llm-sdk", default-features = false, features = ["client", "serving"] }
 
 [target.'cfg(unix)'.dependencies]
 portable-pty = "0.9"

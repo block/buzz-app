@@ -807,18 +807,50 @@ export const test = base.extend({
                 },
               }
             : {}),
-          ...(readState
+          ...(readState || savedSidebar
             ? {
-                discovery: (community) => ({
-                  self: getPublicKey(relayKey),
-                  read_state_snapshot: {
-                    version: 1,
-                    community_id: communityIds[community],
-                    max_events: 4096,
-                    max_bytes: 8388608,
-                  },
-                }),
-                acceptPublication: acceptReadPublication,
+                ...(readState
+                  ? {
+                      discovery: (community) => ({
+                        self: getPublicKey(relayKey),
+                        read_state_snapshot: {
+                          version: 1,
+                          community_id: communityIds[community],
+                          max_events: 4096,
+                          max_bytes: 8388608,
+                        },
+                      }),
+                    }
+                  : {}),
+                acceptPublication: (community, event) => {
+                  expect(verifyEvent(event)).toBe(true);
+                  expect(event.pubkey).toBe(viewer);
+                  expect(event.kind).toBe(30078);
+                  const coordinate = event.tags.find(
+                    ([key]) => key === "d",
+                  )?.[1];
+                  if (
+                    ["channel-sections", "channel-stars"].includes(coordinate)
+                  ) {
+                    expect(event.tags).toContainEqual(["t", coordinate]);
+                    const blob = JSON.parse(
+                      nip44.v2.decrypt(
+                        event.content,
+                        nip44.v2.utils.getConversationKey(userKey, viewer),
+                      ),
+                    );
+                    readEvents.get(community).set(coordinate, event);
+                    report.sidebarPublications ??= [];
+                    report.sidebarPublications.push({
+                      community,
+                      coordinate,
+                      event,
+                      blob,
+                    });
+                    return;
+                  }
+                  acceptReadPublication(community, event);
+                },
               }
             : {}),
         })
@@ -1239,10 +1271,26 @@ export const test = base.extend({
         observerFailures.splice(match, 1);
         return true;
       };
+      // The Star retry journey injects one specific failed host request. Match
+      // that exact URL once, not every 502 or every console error in the test.
+      const starFailures = [...(report.sidebarStarFailures ?? [])];
+      const injectedStarFailure = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 502/.test(
+            message,
+          )
+        )
+          return false;
+        const match = starFailures.indexOf(consoleLocations.get(index));
+        if (match < 0) return false;
+        starFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
           (message, index) =>
             !retiredConsole(message, index) &&
+            !injectedStarFailure(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")

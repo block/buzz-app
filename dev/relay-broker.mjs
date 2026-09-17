@@ -2,6 +2,10 @@ import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
+  assertSidebarStarIntent,
+  mutateSidebarStar,
+} from "./sidebar-stars.mjs";
+import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,
 } from "../src/features/workflows/protocol.ts";
@@ -25,6 +29,8 @@ import {
 import { readAgentLibrary } from "./agent-library.mjs";
 import {
   decodeSidebarPreferences,
+  assertSidebarAssignmentIntent,
+  mutateSidebarAssignment,
   SIDEBAR_REQUEST_BYTES,
   SIDEBAR_UPLOAD_MS,
   SIDEBAR_UPLOAD_SLOTS,
@@ -65,6 +71,7 @@ const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
   MAX_MEDIA_BYTES = 20 * 1024 * 1024,
+  SIDEBAR_HEAD_BYTES = SIDEBAR_REQUEST_BYTES + 4096,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -366,6 +373,27 @@ export function relayBrokerPlugin({
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
+      const readSidebarHead = async (response, label = "group") => {
+        if (!response.body)
+          throw new Error(`Sidebar ${label} response missing`);
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder("utf-8", { fatal: true });
+        let bytes = 0,
+          text = "";
+        try {
+          while (true) {
+            const { value, done } = await reader.read();
+            if (done) return JSON.parse(text + decoder.decode());
+            bytes += value.byteLength;
+            if (bytes > SIDEBAR_HEAD_BYTES)
+              throw new Error(`Sidebar ${label} response exceeds capacity`);
+            text += decoder.decode(value, { stream: true });
+          }
+        } finally {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
+        }
+      };
       // Discovery is lazy and independent for each community; unavailable relays never block startup.
       const registered = new Map(Object.entries(aliases));
       const authorities = new Map();
@@ -410,6 +438,7 @@ export function relayBrokerPlugin({
       let sidebarUploads = 0;
       let attachmentUploads = 0;
       let libraryRead;
+      const sidebarMutations = new Map();
       const streams = new Map();
       const admissions = createHostAdmission();
       server.httpServer?.once("close", () => {
@@ -596,6 +625,149 @@ export function relayBrokerPlugin({
               sidebarUploads--;
             }
           }
+          if (
+            [
+              "/api/relay/sidebar-assignment",
+              "/api/relay/sidebar-star",
+            ].includes(route) &&
+            req.method === "POST"
+          ) {
+            const starring = route === "/api/relay/sidebar-star";
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 2048)
+                return json(res, 413, {
+                  error: `Sidebar preference intent is too large`,
+                });
+            }
+            let intent;
+            try {
+              intent = JSON.parse(raw);
+              if (starring) assertSidebarStarIntent(intent);
+              else assertSidebarAssignmentIntent(intent);
+            } catch {
+              return json(res, 400, {
+                error: `Invalid sidebar preference intent`,
+              });
+            }
+            const request = new AbortController();
+            const close = () => request.abort();
+            res.once("close", close);
+            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
+            const mutation = previous
+              .catch(() => {})
+              .then(async () => {
+                request.signal.throwIfAborted();
+                const filter = [
+                  {
+                    kinds: [30078],
+                    authors: [viewer],
+                    "#d": [starring ? "channel-stars" : "channel-sections"],
+                    limit: 1,
+                  },
+                ];
+                const lane = admissions(relay, viewer).api;
+                const requestSignal = AbortSignal.any([
+                  request.signal,
+                  AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                ]);
+                const dispatch = (path, body) =>
+                  admittedApiRequest(
+                    lane,
+                    () => {
+                      requestSignal.throwIfAborted();
+                      const value = JSON.stringify(body);
+                      const auth = finalizeEvent(
+                        {
+                          kind: 27235,
+                          created_at: Math.floor(Date.now() / 1000),
+                          content: "",
+                          tags: [
+                            ["u", `${relay}${path}`],
+                            ["method", "POST"],
+                            [
+                              "payload",
+                              createHash("sha256").update(value).digest("hex"),
+                            ],
+                            ["nonce", randomBytes(16).toString("hex")],
+                          ],
+                        },
+                        key,
+                      );
+                      return fetchUpstream(`${relay}${path}`, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization:
+                            "Nostr " +
+                            Buffer.from(JSON.stringify(auth)).toString(
+                              "base64",
+                            ),
+                        },
+                        body: value,
+                        redirect: "error",
+                        signal: requestSignal,
+                      });
+                    },
+                    requestSignal,
+                  );
+                const readHead = async () => {
+                  const response = await dispatch("/query", filter);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar preference query failed (${response.status})`,
+                    );
+                  return readSidebarHead(response);
+                };
+                const publishEvent = async (event) => {
+                  const response = await dispatch("/events", event);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar preference publish failed (${response.status})`,
+                    );
+                  const receipt = await readSidebarHead(
+                    response,
+                    "publication",
+                  );
+                  if (
+                    receipt.event_id !== event.id ||
+                    receipt.accepted !== true
+                  )
+                    throw new Error(
+                      "Sidebar preference publication was not accepted",
+                    );
+                };
+                return (starring ? mutateSidebarStar : mutateSidebarAssignment)(
+                  intent,
+                  key,
+                  readHead,
+                  publishEvent,
+                );
+              });
+            sidebarMutations.set(relay, mutation);
+            try {
+              return json(res, 200, await mutation);
+            } catch (error) {
+              if (error instanceof ApiPaused)
+                return json(res, 429, {
+                  error: error.message,
+                  sent: false,
+                  paused: true,
+                  retryAfterMs: error.retryAfterMs,
+                });
+              return json(res, 502, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : `Sidebar preference failed`,
+              });
+            } finally {
+              res.off("close", close);
+              if (sidebarMutations.get(relay) === mutation)
+                sidebarMutations.delete(relay);
+            }
+          }
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
               // Share concurrent reads, never retain the local snapshot after completion.
@@ -628,6 +800,8 @@ export function relayBrokerPlugin({
               attachmentUploads: true,
               sidebarPreferences: true,
               readState: true,
+              sidebarPreferenceWrites: true,
+              sidebarStarWrites: true,
               agentLibrary: true,
               live: true,
               presence: true,

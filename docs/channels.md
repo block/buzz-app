@@ -105,8 +105,31 @@ intermediate write. If the second write fails, the channel remains Starred and a
 explicit retry finishes the move; a reload reflects whatever reached the relay.
 This is ordered two-record persistence, not an atomic multi-device move. A prior
 assignment may remain stored while starred but is never used as an Unstar target.
-Forums/DMs, group CRUD/reorder and independent sorting are outside this slice.
+Forums/DMs assignment and group CRUD/reorder remain outside these actions.
 Hosts without the write capabilities retain the read-only projection.
+
+Each section (Starred, saved groups, Channels, Forums and DMs) defaults to A–Z
+and has an independent Recent choice in its shared **More actions → Sort** menu.
+The session owns verified activity, not the page: Recent starts purpose-bound
+background reads in batches of at most 128 channels for kinds 9, 40002, 45001 and
+45003. Failed reads retain the last good projection; authoritative empty results
+clear unchanged values, while newer verified live activity cannot roll back.
+Unknown activity sorts last, with name/ID ties. Cache/access clearing, disconnect
+and disposal fence pending results. These reads do not grant channel access or
+populate timeline history, and no roster activity read starts for A–Z alone.
+Forum kinds share the existing live channel route and its capacity limits; no
+extra subscriptions are created. Restart an already-running development broker
+to load that expanded filter. Channels beyond live capacity refresh recency when
+the roster demand changes or the session reconnects, not via a polling loop.
+
+The encrypted `channel-sort` coordinate uses built-in keys or `section:<id>`;
+A–Z removes an override. The host verifies/decrypts the current head, preserves
+unrelated raw entries, publishes only a changed intent, and re-reads to confirm.
+The session applies sort choices optimistically and serializes writes with the
+other preference commands. Failure rolls back only that intent, preserving newer
+pending choices and unrelated preferences; the open menu offers explicit retry.
+The same whole-record/multi-device limitations above apply. Hosts without the
+sort writer retain read-only ordering. Native-adapter parity is not added here.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They are saved on page exit and restored before paint when the roster and groups

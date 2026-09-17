@@ -38,6 +38,7 @@ export const test = base.extend({
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
+  sortingSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
@@ -66,6 +67,7 @@ export const test = base.extend({
       sessionParents,
       sidebarUnread,
       savedSidebar,
+      sortingSidebar,
       expectedPageFailure,
       largeSidebar,
       dmLabels,
@@ -143,8 +145,9 @@ export const test = base.extend({
       : dmLabels
         ? ["dm-peer"]
         : [];
+    const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const rosterIds = [
-      ...new Set([...channels, ...dmIds, ...Object.values(sessionParents)]),
+      ...new Set([...channels, ...dmIds, ...sortingIds, ...Object.values(sessionParents)]),
     ];
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
@@ -166,6 +169,7 @@ export const test = base.extend({
               channels: { alpha: { starred: true, updatedAt: 1 } },
             },
           ],
+          ["channel-sort", { version: 1, groups: {} }],
         ]) {
           records.set(
             coordinate,
@@ -206,6 +210,17 @@ export const test = base.extend({
     const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    for (const community of ["primary", "secondary"])
+      for (const [index, id] of sortingIds.entries())
+        histories.set(`${community}/${id}`, [
+          sign(
+            9,
+            [["h", id]],
+            `Activity in ${id}`,
+            userKey,
+            1700000200 + index,
+          ),
+        ]);
     const targetEvents = [];
     let searchTarget;
     if (openSearch) {
@@ -830,7 +845,11 @@ export const test = base.extend({
                     ([key]) => key === "d",
                   )?.[1];
                   if (
-                    ["channel-sections", "channel-stars"].includes(coordinate)
+                    [
+                      "channel-sections",
+                      "channel-stars",
+                      "channel-sort",
+                    ].includes(coordinate)
                   ) {
                     expect(event.tags).toContainEqual(["t", coordinate]);
                     const blob = JSON.parse(
@@ -964,7 +983,7 @@ export const test = base.extend({
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
         expect(body.length).toBeGreaterThan(0);
-        expect(body.length).toBeLessThanOrEqual(2);
+        expect(body.length).toBeLessThanOrEqual(3);
         const filter = body[0];
         const result = [
           ...new Map(
@@ -1273,7 +1292,10 @@ export const test = base.extend({
       };
       // The Star retry journey injects one specific failed host request. Match
       // that exact URL once, not every 502 or every console error in the test.
-      const starFailures = [...(report.sidebarStarFailures ?? [])];
+      const starFailures = [
+        ...(report.sidebarStarFailures ?? []),
+        ...(report.sidebarSortFailures ?? []),
+      ];
       const injectedStarFailure = (message, index) => {
         if (
           !/^Failed to load resource: the server responded with a status of 502/.test(

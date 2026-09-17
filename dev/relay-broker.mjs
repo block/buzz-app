@@ -1,6 +1,7 @@
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
+import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import {
   assertSidebarStarIntent,
   mutateSidebarStar,
@@ -309,6 +310,29 @@ export function validAgentEnrollment(event) {
         typeof tag[1] === "string" &&
         Object.hasOwn(validators, tag[0]) &&
         validators[tag[0]].test(tag[1]),
+    )
+  );
+}
+export function validChannelActivityFilters(filters) {
+  return (
+    Array.isArray(filters) &&
+    filters.length >= 1 &&
+    filters.length <= 128 &&
+    filters.every(
+      (filter) =>
+        filter &&
+        typeof filter === "object" &&
+        filter.limit === 1 &&
+        Array.isArray(filter.kinds) &&
+        filter.kinds.length === 4 &&
+        [9, 40002, 45001, 45003].every((kind) => filter.kinds.includes(kind)) &&
+        Array.isArray(filter["#h"]) &&
+        filter["#h"].length === 1 &&
+        typeof filter["#h"][0] === "string" &&
+        /^[a-zA-Z0-9_-]{1,128}$/.test(filter["#h"][0]) &&
+        Object.keys(filter).every((key) =>
+          ["kinds", "#h", "limit"].includes(key),
+        ),
     )
   );
 }
@@ -629,14 +653,16 @@ export function relayBrokerPlugin({
             [
               "/api/relay/sidebar-assignment",
               "/api/relay/sidebar-star",
+              "/api/relay/sidebar-sort",
             ].includes(route) &&
             req.method === "POST"
           ) {
+            const sorting = route === "/api/relay/sidebar-sort";
             const starring = route === "/api/relay/sidebar-star";
             let raw = "";
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > 2048)
+              if (Buffer.byteLength(raw) > (sorting ? 32 * 1024 : 2048))
                 return json(res, 413, {
                   error: `Sidebar preference intent is too large`,
                 });
@@ -644,7 +670,8 @@ export function relayBrokerPlugin({
             let intent;
             try {
               intent = JSON.parse(raw);
-              if (starring) assertSidebarStarIntent(intent);
+              if (sorting) assertSidebarSortIntent(intent);
+              else if (starring) assertSidebarStarIntent(intent);
               else assertSidebarAssignmentIntent(intent);
             } catch {
               return json(res, 400, {
@@ -663,7 +690,13 @@ export function relayBrokerPlugin({
                   {
                     kinds: [30078],
                     authors: [viewer],
-                    "#d": [starring ? "channel-stars" : "channel-sections"],
+                    "#d": [
+                      sorting
+                        ? "channel-sort"
+                        : starring
+                          ? "channel-stars"
+                          : "channel-sections",
+                    ],
                     limit: 1,
                   },
                 ];
@@ -738,6 +771,15 @@ export function relayBrokerPlugin({
                       "Sidebar preference publication was not accepted",
                     );
                 };
+                if (sorting)
+                  return {
+                    groups: await mutateSidebarSort(
+                      intent,
+                      key,
+                      readHead,
+                      publishEvent,
+                    ),
+                  };
                 return (starring ? mutateSidebarStar : mutateSidebarAssignment)(
                   intent,
                   key,
@@ -802,6 +844,8 @@ export function relayBrokerPlugin({
               readState: true,
               sidebarPreferenceWrites: true,
               sidebarStarWrites: true,
+              sidebarSortWrites: true,
+              channelActivity: true,
               agentLibrary: true,
               live: true,
               presence: true,
@@ -1210,6 +1254,7 @@ export function relayBrokerPlugin({
             ![
               "/api/relay/query",
               "/api/relay/presence-snapshot",
+              "/api/relay/channel-activity",
               "/api/relay/sign",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
@@ -1272,6 +1317,9 @@ export function relayBrokerPlugin({
               });
             }
           }
+          const channelActivity = route === "/api/relay/channel-activity";
+          if (channelActivity && !validChannelActivityFilters(filters))
+            return json(res, 400, { error: "Activity filter rejected" });
           const profile = route === "/api/relay/profile";
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
@@ -1426,6 +1474,7 @@ export function relayBrokerPlugin({
             !workflowPath &&
             !readPublishing &&
             !snapshot &&
+            !channelActivity &&
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
@@ -1556,8 +1605,9 @@ export function relayBrokerPlugin({
                   lane,
                   request,
                   requestSignal,
-                  route === "/api/relay/query" &&
-                    req.headers["x-buzz-read-priority"] === "background"
+                  channelActivity ||
+                    (route === "/api/relay/query" &&
+                      req.headers["x-buzz-read-priority"] === "background")
                     ? "background"
                     : "foreground",
                 );

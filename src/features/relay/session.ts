@@ -29,6 +29,7 @@ import { createUnread } from "./unread";
 import type { IncomingListener, IncomingMessage } from "./incoming";
 import { objectBody } from "./body";
 import { readSidebarPreferences } from "./sidebar-preferences";
+import { createChannelActivity } from "./channel-activity";
 import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
@@ -318,6 +319,8 @@ export function createRelaySession(
       emoji.clear();
       activity.clear();
       presence.clear();
+      channelActivity.clear();
+      activityRosterKey = undefined;
       archives.clear();
       workflows.clear();
       for (const purge of views.values()) purge();
@@ -502,6 +505,13 @@ export function createRelaySession(
     transport?.archiveAuthority,
     notify,
   );
+  const channelActivity = createChannelActivity(
+    transport?.channelActivity
+      ? (ids, signal) =>
+          transport.channelActivity?.(ids, signal) ?? Promise.resolve([])
+      : undefined,
+    notify,
+  );
   const channels = createChannelStore(
     transport
       ? {
@@ -535,6 +545,43 @@ export function createRelaySession(
     canAccess: (channelId) => channels.canParticipate(channelId),
     notify,
   });
+  let sourceChannelList = channels.queries.list();
+  let activityChannelList = sourceChannelList;
+  let channelActivityRevision = channelActivity.revision();
+  const channelQueries = Object.freeze({
+    ...channels.queries,
+    list() {
+      const snapshot = channels.queries.list();
+      const activityRevision = channelActivity.revision();
+      if (
+        snapshot === sourceChannelList &&
+        activityRevision === channelActivityRevision
+      )
+        return activityChannelList;
+      sourceChannelList = snapshot;
+      channelActivityRevision = activityRevision;
+      const projected = snapshot.channels.map((channel) => {
+        const lastActivityAt = channelActivity.last(channel.id);
+        return lastActivityAt === undefined
+          ? channel
+          : Object.freeze({ ...channel, lastActivityAt });
+      });
+      activityChannelList = projected.every(
+        (channel, index) => channel === snapshot.channels[index],
+      )
+        ? snapshot
+        : Object.freeze({ ...snapshot, channels: Object.freeze(projected) });
+      return activityChannelList;
+    },
+    subscribeList(listener: () => void) {
+      const offChannels = channels.queries.subscribeList(listener);
+      const offActivity = channelActivity.subscribe(listener);
+      return () => {
+        offChannels();
+        offActivity();
+      };
+    },
+  });
   const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
   const reads = createReadState({
     viewer: transport?.viewer ?? "",
@@ -551,7 +598,7 @@ export function createRelaySession(
   });
   const unread = createUnread({
     reads,
-    channels: channels.queries,
+    channels: channelQueries,
     // Repair owns evidence only, not timeline/history ingestion. The shared
     // scheduler and verified transport stay shared; unread fences access epochs.
     reader: requests.reader,
@@ -819,6 +866,22 @@ export function createRelaySession(
             )
         : undefined;
     })(),
+    (() => {
+      const write = transport?.writeSidebarSort;
+      return write
+        ? (group, mode, sectionIds, signal) =>
+            write(
+              group,
+              mode,
+              sectionIds,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
     notify,
   );
   const workSessions = createWorkSessions(
@@ -1040,7 +1103,7 @@ export function createRelaySession(
       views.set(dispose, thread.purge);
       return { ...thread.view, dispose };
     },
-    channels: channels.queries,
+    channels: channelQueries,
     names: identityNames,
     profiles: profiles.queries,
     emoji: emoji.queries,
@@ -1399,6 +1462,13 @@ export function createRelaySession(
           events.filter((event) => event.pubkey !== transport.viewer),
         );
       if (
+        !closed &&
+        epoch === accessEpoch &&
+        generation === liveGeneration &&
+        liveSnapshot.status === "connected"
+      )
+        channelActivity.accept(visible);
+      if (
         closed ||
         epoch !== accessEpoch ||
         !candidates.size ||
@@ -1441,6 +1511,8 @@ export function createRelaySession(
         liveSnapshot.status === "connected"
       ) {
         liveGeneration++;
+        channelActivity.cancel();
+        activityRosterKey = undefined;
         catchups.clear();
         catchupQueue.clear();
         requests.invalidate();
@@ -1491,6 +1563,8 @@ export function createRelaySession(
             timers.delete(timer);
             if (!closed) {
               agentLibrary.reconnect();
+              activityRosterKey = undefined;
+              refreshChannelActivity();
               emoji.reconnect();
               unread.reconnect();
               for (const refresh of refreshers) void refresh();
@@ -1520,8 +1594,35 @@ export function createRelaySession(
       if (!closed) channels.denyChannel(channelId, new Error(reason));
     },
   });
+  let activityRosterKey: string | undefined;
+  const refreshChannelActivity = () => {
+    if (
+      closed ||
+      !transport?.channelActivity ||
+      !Object.values(
+        sidebarPreferences.queries.snapshot().data?.sort ?? {},
+      ).includes("recent")
+    )
+      return;
+    const roster = channels.queries.list();
+    if (roster.status !== "ready") return;
+    const ids = roster.channels.map((channel) => channel.id).sort();
+    const key = ids.join("\0");
+    if (key === activityRosterKey) return;
+    activityRosterKey = key;
+    void channelActivity.refresh(ids).catch(() => {
+      if (activityRosterKey === key) activityRosterKey = undefined;
+    });
+  };
+  const stopActivityRoster = channels.queries.subscribeList(
+    refreshChannelActivity,
+  );
+  const stopActivityPreferences = sidebarPreferences.queries.subscribe(
+    refreshChannelActivity,
+  );
   const stopInterests = channels.queries.subscribeList(updateInterests);
   updateInterests();
+  refreshChannelActivity();
 
   return {
     session,
@@ -1531,6 +1632,8 @@ export function createRelaySession(
       cacheClearEpoch++;
       activity.clear();
       presence.clear();
+      channelActivity.clear();
+      activityRosterKey = undefined;
       typing.clear();
       sidebarPreferences.clear();
       // New windows must not yield to or receive errors from retired owners.
@@ -1554,6 +1657,9 @@ export function createRelaySession(
       lifetime.abort();
       activity.dispose();
       presence.dispose();
+      channelActivity.dispose();
+      stopActivityRoster();
+      stopActivityPreferences();
       sidebarPreferences.dispose();
       stopInterests();
       stopWarmPreferences();

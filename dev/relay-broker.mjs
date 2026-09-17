@@ -7,6 +7,7 @@ import {
 import { prepareMedia } from "./media-preparation.mjs";
 import { readProjectGit } from "./project-git.mjs";
 import { parseGitRead } from "../src/features/projects/git.ts";
+import { validateLifecycleTemplate } from "../src/features/relay/channel-lifecycle-protocol.ts";
 import {
   prepareChannelKit,
   decodeChannelKit,
@@ -896,6 +897,7 @@ export function relayBrokerPlugin({
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
+              channelLifecycle: true,
               workflowReads: true,
               projectGit: true,
               attachmentUploads: true,
@@ -1353,6 +1355,8 @@ export function relayBrokerPlugin({
               "/api/relay/agent-memories",
               "/api/relay/presence-snapshot",
               "/api/relay/sign",
+              "/api/relay/channel-lifecycle-sign",
+              "/api/relay/channel-lifecycle-publish",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
               "/api/relay/channel-kit-prepare",
@@ -1611,10 +1615,26 @@ export function relayBrokerPlugin({
               sent: false,
             });
           const timings = [];
-          const signing = route === "/api/relay/sign";
-          const publishing = route === "/api/relay/publish";
+          const lifecycle =
+            route === "/api/relay/channel-lifecycle-sign" ||
+            route === "/api/relay/channel-lifecycle-publish";
+          const signing =
+            route === "/api/relay/sign" ||
+            route === "/api/relay/channel-lifecycle-sign";
+          const publishing =
+            route === "/api/relay/publish" ||
+            route === "/api/relay/channel-lifecycle-publish";
           if (signing || publishing) {
-            if ([9000, 9007].includes(filters?.kind)) {
+            if (lifecycle) {
+              try {
+                validateLifecycleTemplate(filters);
+              } catch {
+                return json(res, 400, {
+                  error: "Invalid channel lifecycle command",
+                  sent: false,
+                });
+              }
+            } else if ([9000, 9007].includes(filters?.kind)) {
               const enrollment = validAgentEnrollment(filters);
               const authority = await getAuthority(relay);
               if (

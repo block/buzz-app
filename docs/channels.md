@@ -72,6 +72,41 @@ late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. There is no new disk cache or automatic cross-device sync.
 
+The browser/development host exposes narrow **assign/remove group** and
+**Star/Unstar** commands. Each re-reads the viewer's signed encrypted coordinate,
+changes only the requested entry, publishes through the shared relay admission
+lane, then re-reads to confirm the requested state. Unrelated fields and explicit
+unstar tombstones are retained. Invalid/unreadable/over-budget heads fail closed;
+only a successful absent-head read can seed a coordinate. Same-host writes are
+serialized per relay. This is confirmed whole-record replacement, not atomic
+cross-device merging, a durable pending outbox, or automatic retry: simultaneous
+writers on different hosts can still race. Failure retains the last fully confirmed UI
+placement and offers an explicit retry; a failed confirmation may follow a
+publication that reached the relay.
+
+The session preference owner serializes local commands and fences refreshes,
+caller cancellation, cache clear and disposal. `session.ts` only composes host
+capabilities with session lifetime and a bounded deadline. Cache clear cancels
+pending work but cannot retract a publication already accepted by the relay.
+Stream rows expose these actions by right-click/long-press, Shift+F10 or the
+Context Menu key. Menus remain open during saving and failed-save retry; confirmed
+relocation expands the destination and restores focus by channel identity. Starred
+is a built-in group pinned first, offered alongside saved groups in one "Move to…"
+chooser. Placement is exclusive. "Remove from Starred" and "Remove from [group]"
+return to Channels, never to a remembered group. Moving out of Starred directly
+into a saved group is supported.
+
+The legacy format still stores stars and assignments separately. The preference
+owner confirms the requested assignment (or its removal) **before** clearing Star;
+removal always checks the fresh assignment head, not just the cached projection.
+Only the complete move updates local placement, and refreshes cannot expose an
+intermediate write. If the second write fails, the channel remains Starred and an
+explicit retry finishes the move; a reload reflects whatever reached the relay.
+This is ordered two-record persistence, not an atomic multi-device move. A prior
+assignment may remain stored while starred but is never used as an Unstar target.
+Forums/DMs, group CRUD/reorder and independent sorting are outside this slice.
+Hosts without the write capabilities retain the read-only projection.
+
 Search, collapsed section keys and sidebar scroll remain separate, scoped view
 intent. They are saved on page exit and restored before paint when the roster and
 groups are available; navigation history does not own them. The saved-groups

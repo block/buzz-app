@@ -1,7 +1,8 @@
+import "../styles/avatar-shape.css";
 import { Avatar as BaseAvatar } from "@base-ui/react/avatar";
 import { useEffect, useState } from "react";
 
-type AvatarSize = "small" | "default" | "large";
+type AvatarSize = "small" | "default" | "large" | "fill";
 type ImageStatus = "loading" | "loaded" | "failed";
 
 function AvatarArtwork({ src, fallback }: { src: string; fallback: string }) {
@@ -36,11 +37,13 @@ export function Avatar({
   alt,
   fallback,
   size = "default",
+  shape = "circle",
 }: {
   src?: string | null;
   alt: string;
   fallback: string;
   size?: AvatarSize;
+  shape?: "circle" | "squircle";
 }) {
   const initial = fallback.slice(0, 1).toUpperCase();
   return (
@@ -48,6 +51,7 @@ export function Avatar({
       data-buzz-ui=""
       className="buzz-avatar"
       data-size={size}
+      data-avatar-shape={shape}
       role="img"
       aria-label={alt}
     >

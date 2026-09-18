@@ -302,6 +302,21 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <SpecimenGroup label="Agent shape (proposed)">
+        <div className="component-specimen-row">
+          <Specimen prop='shape="squircle"'>
+            <Avatar
+              src={avatarUrl}
+              alt="Agent artwork"
+              fallback="Agent"
+              shape="squircle"
+            />
+          </Specimen>
+          <Specimen prop='shape="squircle", no src'>
+            <Avatar alt="Agent fallback" fallback="Agent" shape="squircle" />
+          </Specimen>
+        </div>
+      </SpecimenGroup>
       {/* No `src`, so the fallback initial shows. Same three sizes, because a
           fallback has to hold the ramp as well as an image does. */}
       <SpecimenGroup label="Fallback, with no src">
@@ -325,6 +340,16 @@ function AvatarSpecimen() {
             fallback="Morgan"
           />
         </Specimen>
+      </SpecimenGroup>
+      <SpecimenGroup label="Fill an owning layout box">
+        <div className="size-40 overflow-hidden rounded-2xl">
+          <Avatar
+            src={avatarUrl}
+            alt="Morgan Martin"
+            fallback="Morgan"
+            size="fill"
+          />
+        </div>
       </SpecimenGroup>
     </div>
   );

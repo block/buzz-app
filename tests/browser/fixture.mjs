@@ -27,6 +27,7 @@ export const test = base.extend({
   productionBroker: [false, { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
+  threadUnreadMentions: [false, { option: true }],
   exactMessages: [false, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
@@ -35,6 +36,7 @@ export const test = base.extend({
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
+  historyCounts: [{ alpha: historySize, beta: 80 }, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -47,6 +49,7 @@ export const test = base.extend({
       productionBroker,
       readState,
       threadUnread,
+      threadUnreadMentions,
       exactMessages,
       sidebarUnread,
       savedSidebar,
@@ -55,6 +58,7 @@ export const test = base.extend({
       dmLabels,
       tallMessages,
       membershipActivity,
+      historyCounts,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -63,6 +67,7 @@ export const test = base.extend({
     testInfo,
   ) => {
     const relayKey = generateSecretKey();
+    const typingKeys = [generateSecretKey(), generateSecretKey()];
     const userKey = generateSecretKey();
     const viewer = getPublicKey(userKey);
     const membershipKeys = membershipActivity
@@ -155,23 +160,25 @@ export const test = base.extend({
     }
     const hiddenChannels = new Set();
     const streams = new Map();
+    // Tall histories leave room above the older-page prefetch threshold, even
+    // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
+    const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
         histories.set(
           `${community}/${channel}`,
-          Array.from(
-            { length: channel === "alpha" ? historySize : 80 },
-            (_, i) =>
-              sign(
-                9,
-                [["h", channel]],
-                `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 3 : 1))}`,
-                readState ? peerKey : userKey,
-                1700000100 + i,
-              ),
+          Array.from({ length: historyCounts[channel] }, (_, i) =>
+            sign(
+              9,
+              [["h", channel]],
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 4 : 1))}`,
+              readState ? peerKey : userKey,
+              1700000100 + i,
+            ),
           ),
         );
+    const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
     const targetEvents = [];
@@ -252,6 +259,7 @@ export const test = base.extend({
             [
               ["h", "alpha"],
               ["e", root.id.toUpperCase(), "", "reply"],
+              ...(threadUnreadMentions && index === 1 ? [["p", viewer]] : []),
             ],
             `Unread reply ${index}`,
             peerKey,
@@ -337,6 +345,7 @@ export const test = base.extend({
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,
         },
+        signedHistory: { counts: historyCounts, durationMs: historyDurationMs },
         largeSidebar,
         readState,
         sidebarUnread,
@@ -424,6 +433,7 @@ export const test = base.extend({
                 [],
                 JSON.stringify({
                   name: key === membershipKeys[0] ? "Pinky" : "Brain",
+                  ...(key === membershipKeys[1] ? { is_agent: true } : {}),
                 }),
                 key,
               ),
@@ -742,6 +752,7 @@ export const test = base.extend({
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
+                  agentLibrary: () => [],
                   ...(readState
                     ? {}
                     : {
@@ -874,6 +885,26 @@ export const test = base.extend({
         omitChannel(id) {
           expect(rosterIds).toContain(id);
           rosterIds.splice(rosterIds.indexOf(id), 1);
+        },
+        // Signed upstream-only simulations: never a browser publication or live relay.
+        activity({
+          channel = "alpha",
+          root,
+          author = 0,
+          kind = 20002,
+          age = 0,
+        } = {}) {
+          if (!relay)
+            throw new Error("Typing fixture requires production broker");
+          const event = sign(
+            kind,
+            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
+            kind === 20002 ? "" : "Fixture completion",
+            typingKeys[author],
+            Math.floor(Date.now() / 1000) - age,
+          );
+          relay.publish("primary", event);
+          return event;
         },
         edit(community, channel, target, content) {
           const event = sign(

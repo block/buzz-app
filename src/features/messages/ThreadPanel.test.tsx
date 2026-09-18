@@ -1,7 +1,16 @@
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useReading } from "./use-reading";
 import { beforeEach, expect, it, vi } from "vitest";
-import { isValidElement, type ReactElement, type ReactNode } from "react";
+import {
+  Children,
+  cloneElement,
+  isValidElement,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import { ThreadPanel } from "./ThreadPanel";
+import { createAgentLibrary } from "../agents/library";
 import { MessageRow } from "./MessageRow";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { MessageComposer } from "./MessageComposer";
@@ -89,12 +98,18 @@ beforeEach(() =>
 function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
   if (Array.isArray(node)) return node.flatMap(elements);
   if (!isValidElement<Record<string, unknown>>(node)) return [];
-  return [node, ...elements(node.props.children as ReactNode)];
+  return [
+    node,
+    ...elements(node.props.children as ReactNode),
+    ...(node.type === PanelHeader
+      ? elements(node.props.actions as ReactNode)
+      : []),
+  ];
 }
 function button(tree: ReactNode, label: string) {
   const found = elements(tree).find(
     (e) =>
-      e.type === "button" &&
+      (e.type === "button" || e.type === IconButton) &&
       (e.props.children === label || e.props["aria-label"] === label),
   );
   expect(found, label).toBeDefined();
@@ -134,6 +149,7 @@ function setup() {
   const session = {
     thread,
     profiles: { ensure },
+    agentLibrary: createAgentLibrary(undefined).queries,
     messages: { retry: vi.fn() },
     // Geometry fixtures are read-only; reading behavior has its own boundary tests.
     unread: { sync: () => ({ capability: "unsupported" }) },
@@ -151,11 +167,17 @@ function setup() {
       close,
       onOpenLink: () => false,
     });
-    return (
-      scoped.type as (
-        props: typeof scoped.props,
-      ) => ReactElement<{ onKeyDown(event: unknown): void }>
-    )(scoped.props);
+    const children = Children.map(scoped.props.children, (child) => {
+      if (!isValidElement(child) || typeof child.type !== "function")
+        return child;
+      const Component = child.type as (
+        props: typeof child.props,
+      ) => ReactElement;
+      return Component(child.props);
+    });
+    return cloneElement(scoped, {}, children) as ReactElement<{
+      onKeyDown(event: unknown): void;
+    }>;
   }
   const effects = () => {
     for (const effect of hooks.pending.splice(0)) effect();
@@ -217,7 +239,9 @@ it("loads history automatically with error-only retry and no routine history con
   h.render();
   h.effects();
   const panel = h.render();
-  const child = elements(panel).find((e) => typeof e.type === "function");
+  const child = elements(panel).find(
+    (e) => typeof e.type === "function" && e.props.view === h.view,
+  );
   if (!child) throw new Error("Missing thread messages");
   const renderMessages = child.type as (
     props: Record<string, unknown>,
@@ -344,7 +368,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
   });
 });
 
-it("the actual message reply button opens that message and retains the trigger focus target", () => {
+it("the actual message reply button opens its selected message and canonical thread root while retaining the trigger focus target", () => {
   const open = vi.fn(),
     focus = vi.fn();
   const tree = MessageRow({
@@ -362,14 +386,32 @@ it("the actual message reply button opens that message and retains the trigger f
     ) => void
   )({ currentTarget: { focus } });
   expect(focus).toHaveBeenCalledTimes(1);
-  expect(open).toHaveBeenCalledExactlyOnceWith(row.id);
+  expect(open).toHaveBeenCalledExactlyOnceWith(row.id, row.id);
+
+  const nested = MessageRow({
+    row: { ...row, id: "b".repeat(64), threadRootId: row.id },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+    onOpenThread: open,
+  });
+  (
+    button(nested, "View thread: 2 replies").props.onClick as (
+      event: unknown,
+    ) => void
+  )({ currentTarget: { focus } });
+  expect(open).toHaveBeenLastCalledWith("b".repeat(64), row.id);
 });
 
 function messagesHarness() {
   const h = setup();
   h.render();
   h.effects();
-  const child = elements(h.render()).find((e) => typeof e.type === "function");
+  const child = elements(h.render()).find(
+    (e) => typeof e.type === "function" && e.props.view === h.view,
+  );
   if (!child) throw new Error("Missing thread messages");
   const props = child.props;
   const component = child.type as (
@@ -497,6 +539,15 @@ it("uses the resolved root with the shared composer and reveals an own send even
     channelName: "General",
     threadRootId: "resolved-root",
   });
+  const rootRow = elements(h.tree()).find(
+    (element) =>
+      element.type === MessageRow &&
+      (element.props.row as ChannelMessage).id === "resolved-root",
+  );
+  expect(rootRow?.props).toMatchObject({
+    session: h.session,
+    scope: "scope",
+  });
   expect(elements(h.tree()).some((e) => e.type === "footer")).toBe(false);
   h.scroll(500);
   if (!composer) throw new Error("Missing composer");
@@ -511,7 +562,11 @@ it("uses the resolved root with the shared composer and reveals an own send even
       e.type === MessageRow &&
       (e.props.row as ChannelMessage).id === "own-reply",
   );
-  expect(reply?.props.retry).toBe(h.session.messages.retry);
+  expect(reply?.props).toMatchObject({
+    session: h.session,
+    scope: "scope",
+    retry: h.session.messages.retry,
+  });
   h.snapshot.root = undefined;
   h.render();
   expect(elements(h.tree()).some((e) => e.type === MessageComposer)).toBe(

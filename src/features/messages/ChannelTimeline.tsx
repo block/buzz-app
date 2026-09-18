@@ -15,6 +15,7 @@ import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 
 const EDGE_HEIGHT = 56;
 type ReadingPosition = {
@@ -75,7 +76,7 @@ export type ChannelTimelineProps = {
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   navigation?: PageNavigation | undefined;
-  onOpenThread?(messageId: string): void;
+  onOpenThread?(messageId: string, threadRootId: string): void;
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
@@ -107,6 +108,7 @@ function Timeline({
   const restoredAnchor = useRef<string | undefined>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
   const profiles = useRowProfiles(queries.profiles, window.rows);
+  const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
   const signature = useMemo(
     () => geometrySignature(window.rows, profiles),
@@ -481,18 +483,20 @@ function Timeline({
                 profiles={profiles}
                 viewer={viewer}
                 media={queries.media}
+                agentPubkeys={agentPubkeys}
                 day={day}
               />
             ) : (
               <MessageRow
-                key={row.id}
-                row={row}
                 session={queries}
                 scope={scope}
+                key={row.id}
+                row={row}
                 unread={queries.unread}
                 extensions={extensions}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
                 media={queries.media}
                 onOpenLink={onOpenLink}
                 canOpenLink={canOpenLink}

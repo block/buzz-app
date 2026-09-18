@@ -46,13 +46,8 @@ export function PanelLaunchers({
       </PageTab>
     ));
 }
-export function LauncherIcon({
-  src,
-  size = "size-7",
-}: {
-  src: string;
-  size?: string;
-}) {
+/** Launcher icons are sized by `.shell-icon`; `size` is for use inside a tab. */
+export function LauncherIcon({ src, size }: { src: string; size?: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
     <PanelRight size={18} aria-hidden="true" />
@@ -60,7 +55,7 @@ export function LauncherIcon({
     <img
       src={src}
       alt=""
-      className={`${size} object-contain`}
+      className={size ? `${size} object-contain` : "object-contain"}
       onError={() => setFailed(true)}
     />
   );

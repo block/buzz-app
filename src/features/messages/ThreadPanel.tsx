@@ -1,4 +1,6 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useCallback,
   useEffect,
@@ -20,6 +22,7 @@ import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -37,14 +40,47 @@ export type ThreadPanelProps = {
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   return (
-    <OwnedThreadPanel
-      key={messageViewKey(
-        props.session,
-        props.scope,
-        props.channelId,
-        props.messageId,
-      )}
-      {...props}
+    <aside
+      className={styles.thread}
+      aria-label="Thread"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          props.close();
+        }
+      }}
+    >
+      <ThreadHeader close={props.close} />
+      <OwnedThreadPanel
+        key={messageViewKey(
+          props.session,
+          props.scope,
+          props.channelId,
+          props.messageId,
+        )}
+        {...props}
+      />
+    </aside>
+  );
+}
+function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeButton.current?.focus();
+  }, []);
+  return (
+    <PanelHeader
+      variant="compact"
+      title="Thread"
+      actions={
+        <IconButton
+          ref={closeButton}
+          size="toolbar"
+          aria-label="Close thread"
+          onClick={close}
+          icon={<X size={18} aria-hidden="true" />}
+        />
+      }
     />
   );
 }
@@ -56,23 +92,21 @@ function OwnedThreadPanel({
   channelId,
   messageId,
   navigation,
-  close,
   onOpenLink,
   canOpenLink,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    closeButton.current?.focus();
-  }, []);
   // Allocate in the effect, not render/useMemo: StrictMode must not leak owned views.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery after view allocation fails.
   useEffect(() => {
     try {
       if (navigation?.signal.aborted) return;
-      const owned = navigation
+      const exact =
+        navigation?.target.kind === "conversation" &&
+        navigation.target.threadRootId !== messageId;
+      const owned = exact
         ? session.thread(channelId, messageId, { exact: true })
         : session.thread(channelId, messageId);
       const cancel = () => {
@@ -92,57 +126,30 @@ function OwnedThreadPanel({
       navigation?.complete({ status: "failed", reason: "unavailable" });
     }
   }, [session, channelId, messageId, attempt, navigation]);
-  return (
-    <aside
-      className={styles.thread}
-      aria-label="Thread"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-          close();
-        }
-      }}
-    >
-      <header className={styles.heading}>
-        <strong>Thread</strong>
-        <button
-          ref={closeButton}
-          type="button"
-          aria-label="Close thread"
-          onClick={close}
-        >
-          <X size={18} aria-hidden="true" />
-        </button>
-      </header>
-      {error ? (
-        <div className={styles.empty} role="alert">
-          <p>{error}</p>
-          <button
-            type="button"
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Retry thread
-          </button>
-        </div>
-      ) : view ? (
-        <ThreadMessages
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          channelName={channelName}
-          view={view}
-          navigation={navigation}
-          messageId={messageId}
-          onOpenLink={onOpenLink}
-          canOpenLink={canOpenLink}
-        />
-      ) : (
-        <p className={styles.empty} role="status">
-          Loading thread…
-        </p>
-      )}
-    </aside>
+  return error ? (
+    <div className={styles.empty} role="alert">
+      <p>{error}</p>
+      <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+        Retry thread
+      </button>
+    </div>
+  ) : view ? (
+    <ThreadMessages
+      extensions={extensions}
+      session={session}
+      scope={scope}
+      channelId={channelId}
+      channelName={channelName}
+      view={view}
+      navigation={navigation}
+      messageId={messageId}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+    />
+  ) : (
+    <p className={styles.empty} role="status">
+      Loading thread…
+    </p>
   );
 }
 function ThreadMessages({
@@ -190,6 +197,7 @@ function ThreadMessages({
         .catch(() => {});
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, rows);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
@@ -212,23 +220,29 @@ function ThreadMessages({
   const prepareTarget = useCallback(() => {
     follow.current = false;
   }, []);
+  const rootTarget =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.threadRootId === messageId;
   const revealed = useMessageReveal({
     scroller,
     settled: positioned,
     messageId,
     signal: navigation?.signal,
-    ready:
-      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+    ready: rootTarget
+      ? snapshot.root?.id === messageId
+      : snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
   });
   useEffect(() => {
     if (!navigation || navigation.signal.aborted) return;
-    if (snapshot.targetStatus === "unavailable")
+    if (rootTarget && snapshot.status === "error")
+      navigation.complete({ status: "failed", reason: "unavailable" });
+    else if (snapshot.targetStatus === "unavailable")
       navigation.complete({ status: "failed", reason: "not-found" });
     else if (snapshot.targetStatus === "error")
       navigation.complete({ status: "failed", reason: "unavailable" });
-  }, [navigation, snapshot.targetStatus]);
+  }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
@@ -312,11 +326,12 @@ function ThreadMessages({
         {snapshot.root ? (
           <MessageRow
             extensions={extensions}
-            row={snapshot.root}
             session={session}
             scope={scope}
+            row={snapshot.root}
             profile={profiles.get(snapshot.root.authorId)}
             participantProfiles={profiles}
+            agentPubkeys={agentPubkeys}
             media={session.media}
             onOpenLink={onOpenLink}
             canOpenLink={canOpenLink}
@@ -337,11 +352,12 @@ function ThreadMessages({
             <li key={row.id}>
               <MessageRow
                 extensions={extensions}
-                row={row}
                 session={session}
                 scope={scope}
+                row={row}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
                 media={session.media}
                 onOpenLink={onOpenLink}
                 canOpenLink={canOpenLink}

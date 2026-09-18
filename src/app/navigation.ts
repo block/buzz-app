@@ -14,6 +14,7 @@ import type { OpenFailure } from "../features/navigation/controller";
 import { windowPages } from "../features/windows/service";
 import { followSavedCommunity } from "../features/windows/follow";
 import { orderPages } from "./shell/presentation";
+import { developerMode } from "./Settings";
 
 const channelsKey = "buzz.channels/channels";
 export function useAppNavigation(services: AppServices) {
@@ -97,7 +98,8 @@ export function useAppNavigation(services: AppServices) {
     target.section &&
     !["profile", "plugins", "appearance", "notifications"].includes(
       target.section,
-    )
+    ) &&
+    !(developerMode && target.section === "developer")
   )
     failure = "unavailable";
   const owner = useMemo(

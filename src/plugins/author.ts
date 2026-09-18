@@ -23,6 +23,7 @@ export type {
   InlineContent,
   InlineRange,
   InlineRenderer,
+  LinkRenderer,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
 
@@ -36,6 +37,8 @@ export type {
 export type {
   UnreadCapability,
   UnreadSnapshot,
+  ThreadActivityItem,
+  ThreadActivitySnapshot,
   ReadingHandle,
 } from "../features/relay/unread";
 export type { ReadTarget } from "../features/relay/read-state-model";

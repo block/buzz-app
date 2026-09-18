@@ -398,6 +398,51 @@ are injected local fixtures, so these integration tests cannot post to the live 
 incremental status updates, deletion after restart and partition isolation.
 
 
+### Repeatable thread-read profile
+
+The app-local `ThreadPanel.profile.test.tsx` mounts the real panel over the real
+session and broker HTTP client, with signed synthetic loopback responses. The
+fixture uses the same `prepared`/`warm` options as `service.ts`, explicit memory
+storage, and a completed authorization/head-warming barrier. It observes the
+panel's own paging and profile effects rather than driving those operations on
+its behalf. Composer emoji demand and reading dwell are excluded.
+
+```sh
+# Choose a new output path for every run; existing artifacts are never overwritten.
+BUZZ_ENGINE_PROFILE_OUT=/tmp/thread-before.json BUZZ_ENGINE_PROFILE_SAMPLES=7 \
+  bin/pnpm exec vitest run src/features/messages/ThreadPanel.profile.test.tsx
+# Make the bounded engine change, leaving the harness/fixture/dependencies unchanged.
+BUZZ_ENGINE_PROFILE_OUT=/tmp/thread-after.json BUZZ_ENGINE_PROFILE_SAMPLES=7 \
+  bin/pnpm exec vitest run src/features/messages/ThreadPanel.profile.test.tsx
+```
+
+Each measurement run discards two warmups, then captures cold/reopen pairs for
+128 replies and eight authors. Artifacts include source hashes, fixture/harness
+and lock hashes, runtime/host metadata, request traces, work counts, CPU time,
+engine completion and jsdom DOM completion. Before comparing, require matching
+workload, compatibility, warmup/sample counts and request/work shapes. Inspect
+source hashes to attribute the difference to the intended edit. Alternate
+before/after controls when host load varies; do not infer UI speedup from a
+verification-stage reduction. Without the output variable, the ordinary test
+suite runs one correctness pair and writes no artifact.
+
+For a separate diagnostic run, also set
+`BUZZ_ENGINE_CPU_OUT=/tmp/thread.cpuprofile`. Profiling affects timing; compare
+profiled runs only with profiled runs. `read.verify` includes JSON parsing and
+cooperative batch yields, not just signature CPU. These development-React/jsdom
+measurements prove neither startup nor browser paint, native performance, actual
+IndexedDB durability or live relay latency.
+
+The HTTP verifier retains at most 2,048 event-ID/signature pairs per transport
+using the existing byte-bounded LRU. A hit requires fresh envelope validation,
+a fresh hash of signed fields and the exact previously verified signature. It
+still returns newly owned frozen data and performs every HTTP read and access
+check. It is not an event/query cache or authorization proof; WebSocket and other
+`eventDto` callers remain uncached. `event-proof.test.ts` covers tampering,
+connection isolation, eviction and actual HTTP wiring. `events.ts` also belongs
+to the dev broker's native-config import graph: new runtime imports there must
+retain explicit extensions and pass `dev/vite-config.test.mjs`.
+
 ### Upstream connections
 
 The dev broker uses a long-lived connection pool (60 s keep-alive) with cached
@@ -475,3 +520,24 @@ Exhausted attempts, unsupported pauses, other route/connection failures and
 unfinished finite roster/head failures still show a warning and recovery action.
 This presentation policy does not increase quotas or guarantee that another
 client sharing the account cannot cause a refusal.
+
+## Receive-only typing
+
+Typing indicators show recent activity from another participant in the current
+channel or thread. They identify the signer, including agents; they do not imply
+online presence, ongoing agent execution, or a promise of an answer.
+
+The session owns this temporary state through `session.typing`. Shared conversation
+composers use the same indicator so channel and thread views agree about who is
+active and where. Names reuse already loaded profiles; displaying activity does
+not start extra reads or connections.
+
+A message clears its author's preceding activity in that conversation. Brief
+post-message suppression prevents late activity from immediately bringing the
+indicator back; otherwise silence lets it expire. Only current live activity can
+activate it, never fetched history. Losing access, disconnecting, clearing the
+cache or replacing the session clears it too, so stale activity cannot carry into
+another conversation or account.
+
+Typing stays out of message history, unread counts and persistent storage. This
+is receive-only: opening or using a composer does not publish typing activity.

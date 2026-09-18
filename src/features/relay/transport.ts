@@ -1,3 +1,6 @@
+import { workflowHost } from "../workflows/http";
+import type { WorkflowHost } from "../workflows/host";
+import { readReceiptText } from "./receipt";
 import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
 import {
   parseReadSnapshot,
@@ -25,15 +28,25 @@ import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
-import { eventDto, type ReadFilter, type RelayEvent } from "./events";
+import {
+  createEventVerifier,
+  eventDto,
+  type ReadFilter,
+  type RelayEvent,
+} from "./events";
 
 /** Relay connection. Implementations verify signatures; callers never see raw JSON. */
 export interface RelayWriter {
   readonly kinds?: readonly number[];
   sign(event: EventTemplate, signal: AbortSignal): Promise<RelayEvent>;
-  publish(event: RelayEvent, signal: AbortSignal): Promise<void>;
+  /** Accepted receipt text is ephemeral; callers must never journal it. */
+  publish(
+    event: RelayEvent,
+    signal: AbortSignal,
+  ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  readonly workflows?: WorkflowHost;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
   /** Host-projected local library; display only, never relay authority. */
@@ -67,15 +80,22 @@ export interface ReadTransport {
     priority?: "foreground" | "background",
   ): Promise<RelayEvent[]>;
   /** Display URL for a media URL, or undefined when this transport cannot fetch it. */
-  media(url: string): string | undefined;
+  media(url: string, size?: "small"): string | undefined;
 }
 /** Third-party https images load directly; relay-hosted media needs a signed read. */
 export function mediaUrl(
   url: string,
   relayProxy: ((url: string) => string) | undefined,
   relayOrigin: string | undefined,
+  size?: "small",
 ): string | undefined {
-  if (url.startsWith(`${relayOrigin}/media/`)) return relayProxy?.(url);
+  if (url.startsWith(`${relayOrigin}/media/`)) {
+    const media =
+      size === "small"
+        ? url.replace(/\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$/, "/$1.thumb.jpg")
+        : url;
+    return relayProxy?.(media);
+  }
   return /^https:\/\//.test(url) ? url : undefined;
 }
 export interface Signer {
@@ -85,6 +105,7 @@ export interface Signer {
 
 async function parseEvents(
   raw: unknown,
+  verify: (value: unknown) => RelayEvent,
   signal?: AbortSignal,
 ): Promise<RelayEvent[]> {
   if (!Array.isArray(raw))
@@ -97,7 +118,7 @@ async function parseEvents(
   // head/profile responses cannot monopolize input and foreground rendering.
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
-    events.push(...raw.slice(index, index + 12).map(eventDto));
+    events.push(...raw.slice(index, index + 12).map(verify));
     if (index + 12 < raw.length) await yieldToHost();
   }
   return events;
@@ -133,6 +154,7 @@ export async function connectBrokerTransport(
   if (community) await registerBrokerCommunity(community, signal, base);
   const endpoint = `${base}/api/relay${community ? `/${encodeURIComponent(community)}` : ""}`;
   const profiling = createRelayProfiler();
+  const verify = createEventVerifier();
   const response = await fetch(`${endpoint}/session`, {
     credentials: "same-origin",
     signal: signal ?? null,
@@ -143,6 +165,7 @@ export async function connectBrokerTransport(
     relayAuthor?: unknown;
     archiveAuthority?: unknown;
     writeKinds?: number[];
+    workflowReads?: boolean;
     relayUrl?: string;
     live?: boolean;
     sidebarPreferences?: boolean;
@@ -177,6 +200,19 @@ export async function connectBrokerTransport(
     relayAuthor: session.relayAuthor,
     ...(typeof session.archiveAuthority === "string"
       ? { archiveAuthority: session.archiveAuthority }
+      : {}),
+    ...(session.workflowReads === true
+      ? {
+          workflows: workflowHost((route, body, signal) =>
+            fetch(`${endpoint}/${route}`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+              signal,
+            }),
+          ),
+        }
       : {}),
     ...(session.agentLibrary
       ? {
@@ -316,16 +352,17 @@ export async function connectBrokerTransport(
                 signal,
               });
               recordServerTiming(result, profiling, event.id);
-              await acceptPublish(result, event.id);
+              return acceptPublish(result, event.id);
             },
           },
         }
       : {}),
-    media: (url) =>
+    media: (url, size) =>
       mediaUrl(
         url,
         (target) => `${endpoint}/media?url=${encodeURIComponent(target)}`,
         session.relayUrl,
+        size,
       ),
     async query(filters, signal, requestId = "read", priority = "foreground") {
       const result = await fetch(`${endpoint}/query`, {
@@ -351,7 +388,7 @@ export async function connectBrokerTransport(
       }
       recordServerTiming(result, profiling, requestId);
       return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), signal),
+        parseEvents(await result.json(), verify, signal),
       );
     },
   };
@@ -372,6 +409,7 @@ export async function connectSignedTransport(
   httpOrigin = relayOrigin(httpOrigin);
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
+  const verify = createEventVerifier();
   return {
     profiling,
     subscribe: (callbacks) => {
@@ -405,7 +443,7 @@ export async function connectSignedTransport(
     scope: httpOrigin,
     viewer,
     relayAuthor,
-    media: (url) => mediaUrl(url, undefined, httpOrigin),
+    media: (url, size) => mediaUrl(url, undefined, httpOrigin, size),
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
@@ -451,7 +489,7 @@ export async function connectSignedTransport(
       }
       recordServerTiming(result, profiling, requestId);
       return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), signal),
+        parseEvents(await result.json(), verify, signal),
       );
     },
   };
@@ -537,7 +575,8 @@ async function acceptPublish(response: Response, id: string) {
       `Relay delivery could not be confirmed (${response.status})`,
     );
   }
-  const result = (await response.json()) as {
+  const text = await readReceiptText(response);
+  const result = JSON.parse(text) as {
     accepted?: unknown;
     event_id?: unknown;
     message?: unknown;
@@ -550,6 +589,7 @@ async function acceptPublish(response: Response, id: string) {
         ? result.message
         : "Relay rejected the message",
     );
+  return typeof result.message === "string" ? result.message : "";
 }
 
 function recordServerTiming(

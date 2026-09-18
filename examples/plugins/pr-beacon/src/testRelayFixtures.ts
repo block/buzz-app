@@ -5,6 +5,65 @@ import type { RelayData } from "./relayTypes";
 // only exercise a handful of members (agentLibrary, channels, messages,
 // thread), so this stubs just those and casts through `unknown` rather than
 // implementing the full interface.
+// Controllable fixture for agentLibrary: starts however the test asks (idle
+// by default, matching the real host's cold-start behavior) and only moves
+// to "ready" once the test calls deliver(), notifying subscribers the same
+// way a real async load would.
+export function createFakeAgentLibrary(
+  overrides: {
+    identities?: { pubkey: string; name: string }[];
+    status?: "idle" | "loading" | "ready" | "error" | "unavailable";
+  } = {},
+) {
+  // useSyncExternalStore requires getSnapshot to return a stable reference
+  // when nothing changed, or React re-renders forever; this object is only
+  // replaced when state actually transitions.
+  let snapshot: {
+    definitions: never[];
+    identities: { pubkey: string; name: string }[];
+    status: "idle" | "loading" | "ready" | "error" | "unavailable";
+    error: string | undefined;
+  } = {
+    definitions: [],
+    identities: overrides.identities ?? [],
+    status: overrides.status ?? "idle",
+    error: undefined,
+  };
+  const listeners = new Set<() => void>();
+  function notify() {
+    for (const listener of listeners) listener();
+  }
+  const api = {
+    snapshot: () => snapshot,
+    refresh: async () => {
+      snapshot = { ...snapshot, status: "loading" };
+      notify();
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  return {
+    api,
+    deliver(next: { pubkey: string; name: string }[]) {
+      snapshot = {
+        ...snapshot,
+        identities: next,
+        status: "ready",
+        error: undefined,
+      };
+      notify();
+    },
+    fail(message: string) {
+      snapshot = { ...snapshot, status: "error", error: message };
+      notify();
+    },
+    getStatus: () => snapshot.status,
+    subscriberCount: () => listeners.size,
+  };
+}
+
 export function createFakeSession(
   overrides: {
     identities?: { pubkey: string; name: string }[];
@@ -15,20 +74,15 @@ export function createFakeSession(
       mentions?: readonly string[],
     ) => string;
     thread?: (channelId: string, messageId: string) => unknown;
+    agentLibrary?: ReturnType<typeof createFakeAgentLibrary>["api"];
   } = {},
 ) {
   const identities = overrides.identities ?? [];
   const channels = overrides.channels ?? [];
   return {
-    agentLibrary: {
-      snapshot: () => ({
-        definitions: [],
-        identities,
-        status: "ready" as const,
-      }),
-      refresh: async () => {},
-      subscribe: () => () => {},
-    },
+    agentLibrary:
+      overrides.agentLibrary ??
+      createFakeAgentLibrary({ identities, status: "ready" }).api,
     channels: {
       list: () => ({ status: "ready" as const, channels }),
       subscribeList: () => () => {},

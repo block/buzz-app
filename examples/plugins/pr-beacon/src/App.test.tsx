@@ -6,7 +6,11 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createApp } from "./App";
 import { createPreferencesStore } from "./preferences";
-import { createFakeRelay } from "./testRelayFixtures";
+import {
+  createFakeAgentLibrary,
+  createFakeRelay,
+  createFakeSession,
+} from "./testRelayFixtures";
 import { createTokenStore } from "./tokenStore";
 
 function jsonResponse(body: unknown) {
@@ -345,5 +349,83 @@ describe("App background polling", () => {
       await vi.advanceTimersByTimeAsync(60_000);
     });
     expect(callCount).toBe(3);
+  });
+});
+
+describe("App agent summary settings", () => {
+  it("loads agent identities on cold start instead of leaving the picker permanently empty", async () => {
+    const tokenStore = createTokenStore();
+    tokenStore.setToken("test-token");
+    const preferencesStore = createPreferencesStore();
+    const agentLibrary = createFakeAgentLibrary();
+    const session = createFakeSession({
+      agentLibrary: agentLibrary.api,
+      channels: [{ id: "channel-1", name: "eng-reviews" }],
+    });
+    const relay = createFakeRelay({ session });
+    const App = createApp(React as never, tokenStore, preferencesStore, relay);
+
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    // Cold start: the library begins idle, so a load must be kicked off
+    // rather than leaving the picker at "None selected" forever.
+    expect(screen.getByText(/Loading agents/i)).toBeInTheDocument();
+    expect(agentLibrary.getStatus()).toBe("loading");
+
+    await act(async () => {
+      agentLibrary.deliver([{ pubkey: "agent-pubkey", name: "Review Bot" }]);
+    });
+
+    expect(
+      screen.getByRole("option", { name: "Review Bot" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Loading agents/i)).not.toBeInTheDocument();
+  });
+
+  it("shows a retryable error instead of silently staying empty when the load fails", async () => {
+    const tokenStore = createTokenStore();
+    tokenStore.setToken("test-token");
+    const preferencesStore = createPreferencesStore();
+    const agentLibrary = createFakeAgentLibrary();
+    const session = createFakeSession({ agentLibrary: agentLibrary.api });
+    const relay = createFakeRelay({ session });
+    const App = createApp(React as never, tokenStore, preferencesStore, relay);
+
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    await act(async () => {
+      agentLibrary.fail("network unreachable");
+    });
+    expect(
+      screen.getByText(/Could not load agents: network unreachable/i),
+    ).toBeInTheDocument();
+
+    // Retrying calls refresh() directly; it does not loop on its own.
+    await userEvent.click(screen.getByRole("button", { name: "Retry" }));
+    expect(agentLibrary.getStatus()).toBe("loading");
+  });
+
+  it("unsubscribes from the agent library on unmount", async () => {
+    const tokenStore = createTokenStore();
+    tokenStore.setToken("test-token");
+    const preferencesStore = createPreferencesStore();
+    const agentLibrary = createFakeAgentLibrary();
+    const session = createFakeSession({ agentLibrary: agentLibrary.api });
+    const relay = createFakeRelay({ session });
+    const App = createApp(React as never, tokenStore, preferencesStore, relay);
+
+    const { unmount } = render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    expect(agentLibrary.subscriberCount()).toBeGreaterThan(0);
+
+    unmount();
+    expect(agentLibrary.subscriberCount()).toBe(0);
+
+    // A late delivery after unmount must not throw.
+    expect(() =>
+      agentLibrary.deliver([{ pubkey: "agent-pubkey", name: "Review Bot" }]),
+    ).not.toThrow();
   });
 });

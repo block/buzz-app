@@ -8,7 +8,11 @@ import {
   fetchReviewRequests,
 } from "./github";
 import type { PreferencesStore } from "./preferences";
-import type { AgentSummarySelection, RelayData } from "./relayTypes";
+import type {
+  AgentSummarySelection,
+  RelayData,
+  RelaySession,
+} from "./relayTypes";
 import type { TokenStore } from "./tokenStore";
 import type {
   OwnPullRequest,
@@ -74,6 +78,17 @@ function useRelaySnapshot(React: ReactRuntime, relay: RelayData) {
   );
 }
 
+function useAgentLibrarySnapshot(
+  React: ReactRuntime,
+  agentLibrary: RelaySession["agentLibrary"],
+) {
+  return React.useSyncExternalStore(
+    agentLibrary.subscribe,
+    agentLibrary.snapshot,
+    agentLibrary.snapshot,
+  );
+}
+
 export function createApp(
   React: ReactRuntime,
   tokenStore: TokenStore,
@@ -89,10 +104,24 @@ export function createApp(
     onChangeSelection: (next: AgentSummarySelection) => void;
   }) {
     const session = props.relaySnapshot.session;
-    const agentLibrarySnapshot = session.agentLibrary.snapshot();
+    const agentLibrarySnapshot = useAgentLibrarySnapshot(
+      React,
+      session.agentLibrary,
+    );
     const channelListSnapshot = session.channels.list();
     const agentPubkey = props.selection?.agentPubkey ?? "";
     const channelId = props.selection?.channelId ?? "";
+
+    // Agent identities load asynchronously. Kick off a load whenever the
+    // library hasn't started one on this session yet; the status-gated
+    // dependency means this only fires once per idle state, never repeats
+    // while loading/ready/error/unavailable, and re-fires on a fresh session
+    // (relay reconnect) whose library starts idle again.
+    React.useEffect(() => {
+      if (agentLibrarySnapshot.status === "idle") {
+        session.agentLibrary.refresh();
+      }
+    }, [session, agentLibrarySnapshot.status]);
 
     return (
       <section aria-label="AI summary agent">
@@ -102,6 +131,24 @@ export function createApp(
           diff for a summary posts it as a normal channel message — every other
           member of that channel can read it too.
         </p>
+        {agentLibrarySnapshot.status === "loading" && <p>Loading agents…</p>}
+        {agentLibrarySnapshot.status === "error" && (
+          <p role="alert">
+            Could not load agents
+            {agentLibrarySnapshot.error
+              ? `: ${agentLibrarySnapshot.error}`
+              : "."}{" "}
+            <button
+              type="button"
+              onClick={() => session.agentLibrary.refresh()}
+            >
+              Retry
+            </button>
+          </p>
+        )}
+        {agentLibrarySnapshot.status === "unavailable" && (
+          <p role="alert">Agents are unavailable in this Buzz build.</p>
+        )}
         <div>
           <label>
             Summary agent

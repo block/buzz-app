@@ -1086,15 +1086,29 @@ function useRelaySnapshot(React, relay) {
     relay.snapshot,
   );
 }
+function useAgentLibrarySnapshot(React, agentLibrary) {
+  return React.useSyncExternalStore(
+    agentLibrary.subscribe,
+    agentLibrary.snapshot,
+    agentLibrary.snapshot,
+  );
+}
 function createApp(React, tokenStore, preferencesStore, relay) {
   const SettingsPanel = createSettingsPanel(React);
   const PullRequestDetailView = createPullRequestDetailView(React);
   function AgentSummarySettings(props) {
     const session = props.relaySnapshot.session;
-    const agentLibrarySnapshot = session.agentLibrary.snapshot();
+    const agentLibrarySnapshot = useAgentLibrarySnapshot(
+      React,
+      session.agentLibrary,
+    );
     const channelListSnapshot = session.channels.list();
     const agentPubkey = props.selection?.agentPubkey ?? "";
     const channelId = props.selection?.channelId ?? "";
+    React.useEffect(() => {
+      if (agentLibrarySnapshot.status === "idle")
+        session.agentLibrary.refresh();
+    }, [session, agentLibrarySnapshot.status]);
     return /* @__PURE__ */ React.createElement(
       "section",
       { "aria-label": "AI summary agent" },
@@ -1104,6 +1118,30 @@ function createApp(React, tokenStore, preferencesStore, relay) {
         null,
         "Pick an existing Buzz agent and a channel it's a member of. Sending a diff for a summary posts it as a normal channel message — every other member of that channel can read it too.",
       ),
+      agentLibrarySnapshot.status === "loading" &&
+        /* @__PURE__ */ React.createElement("p", null, "Loading agents…"),
+      agentLibrarySnapshot.status === "error" &&
+        /* @__PURE__ */ React.createElement(
+          "p",
+          { role: "alert" },
+          "Could not load agents",
+          agentLibrarySnapshot.error ? `: ${agentLibrarySnapshot.error}` : ".",
+          " ",
+          /* @__PURE__ */ React.createElement(
+            "button",
+            {
+              type: "button",
+              onClick: () => session.agentLibrary.refresh(),
+            },
+            "Retry",
+          ),
+        ),
+      agentLibrarySnapshot.status === "unavailable" &&
+        /* @__PURE__ */ React.createElement(
+          "p",
+          { role: "alert" },
+          "Agents are unavailable in this Buzz build.",
+        ),
       /* @__PURE__ */ React.createElement(
         "div",
         null,

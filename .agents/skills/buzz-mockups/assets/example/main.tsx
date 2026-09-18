@@ -47,32 +47,21 @@ const session = {
   media: () => undefined,
   messages: { send: noSend, reply: noSend },
 } as unknown as React.ComponentProps<typeof MessageComposer>["session"];
-const pages = [
-  {
-    key: "buzz.channels/channels",
-    id: "channels",
-    title: "Messages",
-    pluginId: "buzz.channels",
-    revision: "1",
-    component: () => null,
-    layout: "workspace",
-  },
-  {
-    key: "buzz.projects/projects",
-    id: "projects",
-    title: "Projects",
-    pluginId: "buzz.projects",
-    revision: "1",
-    component: () => null,
-    layout: "workspace",
-  },
-] as React.ComponentProps<typeof AppShell>["pages"];
-const people = new Map([
-  ["alex", { name: "Alex" }],
-  ["jamie", { name: "Jamie" }],
-  ["sol", { name: "Sol" }],
-  ["casey", { name: "Casey" }],
-]);
+const pages = ["channels", "projects"].map((id) => ({
+  key: `buzz.${id}/${id}`,
+  id,
+  title: id === "channels" ? "Messages" : "Projects",
+  pluginId: `buzz.${id}`,
+  revision: "1",
+  component: () => null,
+  layout: "workspace" as const,
+}));
+const people = new Map(
+  ["Alex", "Jamie", "Sol", "Casey"].map((name) => [
+    name.toLowerCase(),
+    { name },
+  ]),
+);
 const task = "Avoid the unmute sound when ending a muted voice call";
 function row(id: string, who: string, text: string, time: string, replies = 0) {
   return {
@@ -128,11 +117,9 @@ function Message({
   );
 }
 function Composer({
-  channel = "general",
   thread = true,
   label,
 }: {
-  channel?: string;
   thread?: boolean;
   label: string;
 }) {
@@ -142,28 +129,19 @@ function Composer({
       <MessageComposer
         session={session}
         scope="presentation-fixture-only"
-        channelId={channel}
-        channelName={channel}
+        channelId="general"
+        channelName="general"
         {...(thread ? { threadRootId: "demo-thread" } : {})}
       />
     </div>
   );
 }
-function Pill({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return <span className={`pill ${className}`}>{children}</span>;
-}
 function Status() {
   return (
-    <Pill className="progress">
+    <span className="pill progress">
       <span className="status-dot" />
       In progress
-    </Pill>
+    </span>
   );
 }
 function TaskCard({ open }: { open: () => void }) {
@@ -174,7 +152,7 @@ function TaskCard({ open }: { open: () => void }) {
           <ListTodo size={15} />
           Task
         </span>
-        <Pill>No project</Pill>
+        <span className="pill">No project</span>
       </div>
       <button type="button" className="task-title" onClick={open}>
         {task}
@@ -182,23 +160,16 @@ function TaskCard({ open }: { open: () => void }) {
       </button>
       <div className="card-bottom">
         <Status />
-        <Pill>Sol · Agent</Pill>
+        <span className="pill">Sol · Agent</span>
       </div>
     </section>
-  );
-}
-function SourceMessages() {
-  return (
-    <>
-      <Message data={root} thread />
-      <Message data={agree} thread />
-    </>
   );
 }
 function TaskHistory({ open }: { open: () => void }) {
   return (
     <>
-      <SourceMessages />
+      <Message data={root} thread />
+      <Message data={agree} thread />
       <Message
         data={row(
           "investigate",
@@ -286,7 +257,7 @@ function App() {
                   <button
                     type="button"
                     className="root-task-link"
-                    onClick={() => choose()}
+                    onClick={choose}
                   >
                     <ListTodo size={14} />
                     {task}
@@ -308,13 +279,13 @@ function App() {
                     <summary aria-label="Thread actions">
                       <MoreHorizontal size={18} />
                     </summary>
-                    <button type="button" onClick={() => choose()}>
+                    <button type="button" onClick={choose}>
                       Open task
                     </button>
                   </details>
                 </div>
                 <div className="timeline">
-                  <TaskHistory open={() => choose()} />
+                  <TaskHistory open={choose} />
                 </div>
                 <Composer label="Reply in the task thread · Visible in #general" />
               </section>

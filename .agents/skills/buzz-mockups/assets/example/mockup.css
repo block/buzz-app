@@ -4,6 +4,8 @@
    are imported from Buzz and retain their own styles and behavior. */
 :root {
   --radius-card: 24px;
+  --task-accent: #7560a2;
+  --task-tint: #f4f0fa;
 }
 body {
   margin: 0;
@@ -22,6 +24,8 @@ body {
   min-height: 0;
 }
 .surface {
+  display: flex;
+  flex-direction: column;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-card);
@@ -29,12 +33,6 @@ body {
   overflow: hidden;
   min-width: 0;
   min-height: 0;
-}
-.column {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  min-width: 0;
 }
 .split {
   display: grid;
@@ -57,10 +55,6 @@ body {
   gap: 8px;
   font-size: 0.875rem;
   font-weight: 600;
-}
-.bar > span {
-  font-size: 0.7rem;
-  color: var(--text-muted);
 }
 .thread-task-header > div > span {
   font-size: 0.7rem;
@@ -121,11 +115,12 @@ body {
   align-items: center;
 }
 .task-card {
-  border: 1px solid #dfe6d9;
+  border: 1px solid var(--border);
   border-radius: 14px;
   padding: 14px 17px;
   margin: 0 0 20px 44px;
-  background: #f8faf6;
+  background: var(--surface);
+  box-shadow: inset 0 3px 0 var(--task-accent);
 }
 .task-card button.task-title {
   border: 0;
@@ -210,10 +205,6 @@ body {
   max-width: 1000px;
 }
 
-:root {
-  --task-accent: #7560a2;
-  --task-tint: #f4f0fa;
-}
 [data-color-mode="dark"] {
   --task-accent: #b4a1df;
   --task-tint: #30283e;
@@ -226,11 +217,6 @@ body {
 .task-card > .card-meta > span:not(.pill) {
   color: var(--task-accent);
   font-weight: 600;
-}
-.task-card {
-  border-color: var(--border);
-  background: var(--surface);
-  box-shadow: inset 0 3px 0 var(--task-accent);
 }
 @media (max-width: 900px) {
   .fixture-layout {

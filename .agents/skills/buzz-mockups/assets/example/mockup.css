@@ -21,9 +21,6 @@ body {
   height: 100%;
   min-height: 0;
 }
-.fixture-layout.without-sidebar {
-  display: block;
-}
 .surface {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -109,10 +106,6 @@ body {
   border-radius: 50%;
   width: 9px;
   height: 9px;
-}
-.pill.pr {
-  background: var(--success-surface);
-  color: var(--success);
 }
 .card-meta {
   display: flex;
@@ -215,27 +208,6 @@ body {
   color: var(--text-muted);
   margin: 4px 0 0;
   max-width: 1000px;
-}
-.presentation-footer label {
-  font-size: 0.62rem;
-  text-transform: uppercase;
-  letter-spacing: 0.07em;
-  color: var(--text-muted);
-  width: 235px;
-  flex-shrink: 0;
-}
-.presentation-footer select {
-  display: block;
-  width: 100%;
-  font-size: 0.74rem;
-  letter-spacing: 0;
-  text-transform: none;
-  border: 1px solid #ced8c7;
-  border-radius: 9px;
-  padding: 7px;
-  margin-top: 4px;
-  background: white;
-  color: var(--text);
 }
 
 :root {

@@ -1,5 +1,6 @@
 import type React from "react";
 import { createRoot } from "react-dom/client";
+import { useKeyboardFocusVisibility } from "@buzz/shared/design-system/useKeyboardFocusVisibility";
 import {
   Hash,
   Search,
@@ -165,13 +166,7 @@ function Status() {
     </Pill>
   );
 }
-function TaskCard({
-  open,
-  project = false,
-}: {
-  open: () => void;
-  project?: boolean;
-}) {
+function TaskCard({ open }: { open: () => void }) {
   return (
     <section className="task-card">
       <div className="card-meta">
@@ -179,7 +174,7 @@ function TaskCard({
           <ListTodo size={15} />
           Task
         </span>
-        <Pill>{project ? "Buzz Voice" : "No project"}</Pill>
+        <Pill>No project</Pill>
       </div>
       <button type="button" className="task-title" onClick={open}>
         {task}
@@ -200,13 +195,7 @@ function SourceMessages() {
     </>
   );
 }
-function TaskHistory({
-  open,
-  showCard = true,
-}: {
-  open: () => void;
-  showCard?: boolean;
-}) {
+function TaskHistory({ open }: { open: () => void }) {
   return (
     <>
       <SourceMessages />
@@ -223,18 +212,12 @@ function TaskHistory({
         <ListTodo size={14} />
         Sol created this task<span>10:07</span>
       </div>
-      {showCard && <TaskCard open={open} />}
+      <TaskCard open={open} />
       <Message data={acknowledge} thread />
     </>
   );
 }
-function Sidebar({
-  scene,
-  choose,
-}: {
-  scene: number;
-  choose: (n: number) => void;
-}) {
+function Sidebar({ choose }: { choose: () => void }) {
   return (
     <aside
       className={`${channelStyles.sidebar} ${channelStyles.channelList}`}
@@ -246,33 +229,24 @@ function Sidebar({
       </div>
       <details className={channelStyles.channelSection} open>
         <summary>Channels</summary>
-        {["general", "buzz-voice", "buzz-repository", "quiet-call-ending"]
-          .filter((n) => scene === 3 || n !== "quiet-call-ending")
-          .map((name) => (
-            <button
-              type="button"
-              key={name}
-              aria-current={
-                (
-                  scene === 3
-                    ? name === "quiet-call-ending"
-                    : name === "general"
-                )
-                  ? "page"
-                  : undefined
-              }
-              onClick={() => choose(name === "quiet-call-ending" ? 3 : 1)}
-            >
-              <Hash size={17} />
-              <span>{name}</span>
-            </button>
-          ))}
+        {["general", "buzz-voice", "buzz-repository"].map((name) => (
+          <button
+            type="button"
+            key={name}
+            aria-current={name === "general" ? "page" : undefined}
+            onClick={choose}
+          >
+            <Hash size={17} />
+            <span>{name}</span>
+          </button>
+        ))}
       </details>
     </aside>
   );
 }
 
 function App() {
+  useKeyboardFocusVisibility();
   const choose = () =>
     document
       .querySelector(".thread-task-header")
@@ -289,7 +263,7 @@ function App() {
           tone="lime"
         >
           <div className="fixture-layout">
-            <Sidebar scene={1} choose={choose} />
+            <Sidebar choose={choose} />
             <div className="split">
               <section className="surface column">
                 <div className="bar">

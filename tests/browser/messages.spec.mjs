@@ -352,6 +352,95 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
   }
 });
 
+// Browser-only: real hit testing must reject suggestions painted behind the modal.
+// DOM visibility alone cannot prove the listbox is visible or pointer-accessible.
+test("media review completions stay visible and preserve modal keyboard ownership", async ({
+  page,
+}) => {
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+  await server.listen();
+  try {
+    const address = server.httpServer.address();
+    await page.goto(
+      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
+    );
+    await page.evaluate(() => window.messagesFixture.activate());
+    const trigger = page.getByRole("button", {
+      name: "Review image",
+      exact: true,
+    });
+    await trigger.click();
+    const dialog = page.getByRole("dialog", { name: "Image viewer" });
+    const input = dialog.getByRole("textbox", { name: "Reply to thread" });
+    const topmost = (option) =>
+      option.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return element.contains(
+          document.elementFromPoint(
+            rect.x + rect.width / 2,
+            rect.y + rect.height / 2,
+          ),
+        );
+      });
+    for (const width of [1440, 320]) {
+      await page.setViewportSize({ width, height: 950 });
+      await input.fill("@Fixture");
+      const mention = page
+        .getByRole("listbox", {
+          name: "Mention suggestions",
+        })
+        .getByRole("option")
+        .first();
+      await expect(mention).toContainText("Fixture Reader");
+      await expect.poll(() => topmost(mention)).toBe(true);
+      await mention.click();
+      await expect(input).toHaveJSProperty("value", "@Fixture Reader ");
+      await expect(input).toBeFocused();
+      await expect(
+        dialog.getByRole("region", {
+          name: "Notification recipients",
+        }),
+      ).toContainText("Fixture Reader");
+      for (const key of ["Enter", "Tab"]) {
+        await input.fill(":smile");
+        const emoji = page
+          .getByRole("listbox", {
+            name: "Emoji suggestions",
+          })
+          .getByRole("option")
+          .first();
+        await expect(emoji).toContainText(":smile:");
+        await expect.poll(() => topmost(emoji)).toBe(true);
+        await input.press(key);
+        await expect(input).toHaveJSProperty("value", "😄");
+        await expect(input).toBeFocused();
+        await expect(page.getByRole("listbox")).toHaveCount(0);
+      }
+    }
+    await input.fill(":smile");
+    await expect(page.getByRole("option").first()).toBeVisible();
+    await input.press("Escape");
+    await expect(page.getByRole("listbox")).toHaveCount(0);
+    await expect(dialog).toBeVisible();
+    await expect(input).toBeFocused();
+    await input.press("Escape");
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    expect(
+      await page.evaluate(() => window.messagesFixture.report.publications),
+    ).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
 test("exact reply media keeps its selected attachment and canonical thread", async ({
   page,
 }) => {

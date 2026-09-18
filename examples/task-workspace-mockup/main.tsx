@@ -36,10 +36,14 @@ const communities = {
   select: () => {},
 } as unknown as React.ComponentProps<typeof AppShell>["communities"];
 const emptyEmoji = { status: "ready", entries: [] };
+const emptyTyping = Object.freeze([]);
+const emptyProfiles = new Map();
 const noSend = () => {
   throw new Error("Presentation only. No messages are sent.");
 };
 const session = {
+  typing: { subscribe: noop, snapshot: () => emptyTyping },
+  profiles: { subscribe: noop, snapshot: () => emptyProfiles },
   emoji: {
     subscribe: noop,
     snapshot: () => emptyEmoji,

@@ -82,7 +82,7 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await page.emulateMedia({ reducedMotion: "no-preference" });
 
   await firstEntry.hover();
-  const tooltip = page.getByRole("tooltip");
+  const tooltip = page.getByRole("tooltip").filter({ hasText: first });
   await expect(tooltip).toContainText(
     "1 working turn(s) in this channel, including threads.",
   );
@@ -92,7 +92,13 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
   await page.keyboard.press("Escape");
   await expect(tooltip).toHaveCount(0);
   await page.mouse.move(0, 0);
+  // Establish a starting point, then leave and re-enter using actual keyboard
+  // input. focus() alone neither clears Escape dismissal nor proves :focus-visible.
   await firstEntry.focus();
+  await page.keyboard.press("Tab");
+  await expect(firstEntry).not.toBeFocused();
+  await page.keyboard.press("Shift+Tab");
+  await expect(firstEntry).toBeFocused();
   await expect(tooltip).toContainText(first);
   await expect(firstEntry).toHaveAccessibleDescription(/Owner-only activity/);
   await firstEntry.press("Enter");

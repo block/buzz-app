@@ -31,6 +31,7 @@ export type MessageRowProps = {
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
+  agentPubkeys?: ReadonlySet<string> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string, size?: "small"): string | undefined;
   onOpenLink(url: string): boolean;
@@ -71,6 +72,7 @@ export const MessageRow = memo(function MessageRow({
   onMediaPlayback,
   onMediaTime,
   onOpenMediaReview,
+  agentPubkeys,
 }: MessageRowProps) {
   const directory = useReferenceDirectory(session, row.mentions.length > 0);
   const threadUnread = useThreadUnread(
@@ -125,7 +127,7 @@ export const MessageRow = memo(function MessageRow({
       )}
       <div className={styles.message}>
         <AvatarTag
-          className={styles.avatar}
+          className={styles.avatarButton}
           {...(clickable
             ? {
                 type: "button" as const,
@@ -137,11 +139,20 @@ export const MessageRow = memo(function MessageRow({
               }
             : {})}
         >
-          {picture ? (
-            <img src={picture} alt="" loading="lazy" />
-          ) : (
-            name.slice(0, 2).toUpperCase()
-          )}
+          <span
+            className={styles.avatar}
+            data-avatar-shape={
+              row.agentEnvelope || agentPubkeys?.has(row.authorId)
+                ? "squircle"
+                : "circle"
+            }
+          >
+            {picture ? (
+              <img src={picture} alt="" loading="lazy" />
+            ) : (
+              name.slice(0, 2).toUpperCase()
+            )}
+          </span>
         </AvatarTag>
         <div className={styles.messageBody}>
           <div className={styles.byline}>
@@ -274,26 +285,36 @@ export const MessageRow = memo(function MessageRow({
                       <span
                         key={id}
                         className={styles.threadAvatar}
+                        data-avatar-shape={
+                          agentPubkeys?.has(id) ? "squircle" : "circle"
+                        }
                         title={name}
                       >
-                        {name.slice(0, 2).toUpperCase()}
-                        {picture && (
-                          <img
-                            key={picture}
-                            src={picture}
-                            alt=""
-                            loading="lazy"
-                            onError={(event) => {
-                              event.currentTarget.hidden = true;
-                            }}
-                          />
-                        )}
+                        <span className={styles.insetAvatarArtwork}>
+                          {name.slice(0, 2).toUpperCase()}
+                          {picture && (
+                            <img
+                              key={picture}
+                              src={picture}
+                              alt=""
+                              loading="lazy"
+                              onError={(event) => {
+                                event.currentTarget.hidden = true;
+                              }}
+                            />
+                          )}
+                        </span>
                       </span>
                     );
                   })}
                   {row.participants.length > 3 && (
-                    <span className={styles.threadAvatar}>
-                      +{row.participants.length - 3}
+                    <span
+                      className={styles.threadAvatar}
+                      data-avatar-shape="circle"
+                    >
+                      <span className={styles.insetAvatarArtwork}>
+                        +{row.participants.length - 3}
+                      </span>
                     </span>
                   )}
                 </span>

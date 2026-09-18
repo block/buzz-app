@@ -177,7 +177,10 @@ const owner = createRelaySession({
           metadata(relay, "two", "Two"),
         ];
       if (filter.kinds?.includes(0))
-        return [profile(viewer, { name: "Fixture Reader" })];
+        return [
+          profile(viewer, { name: "Fixture Reader" }),
+          profile(agent, { name: "Agent Fixture" }),
+        ].filter((event) => filter.authors?.includes(event.pubkey));
       if (filter.ids)
         return events.filter((event) => filter.ids?.includes(event.id));
       if (filter["#e"] && filter.kinds?.includes(7))

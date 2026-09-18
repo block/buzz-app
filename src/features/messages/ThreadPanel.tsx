@@ -25,6 +25,7 @@ import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
 import type { MediaPlayback } from "./MediaAttachment";
 import { formatMediaTime } from "./media-timecode";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -208,6 +209,7 @@ function ThreadMessages({
         .catch(() => {});
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, rows);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
@@ -360,6 +362,7 @@ function ThreadMessages({
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
+              agentPubkeys={agentPubkeys}
               media={session.media}
               onOpenLink={onOpenLink}
               canOpenLink={canOpenLink}
@@ -406,6 +409,7 @@ function ThreadMessages({
                 row={row}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
                 media={session.media}
                 onOpenLink={onOpenLink}
                 canOpenLink={canOpenLink}

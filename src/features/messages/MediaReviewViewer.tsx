@@ -13,6 +13,7 @@ import type { Attachment } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 import { MessageComposer } from "./MessageComposer";
 import { ImageReviewStage } from "./ImageReviewStage";
 import { MessageRow } from "./MessageRow";
@@ -359,6 +360,7 @@ function ReviewComments({
   selectAttachment(attachment: Attachment, initialTime: number): void;
 }) {
   const profiles = useRowProfiles(session.profiles, replies);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const authors = [...new Set(replies.map((row) => row.authorId))]
     .sort()
     .join(":");
@@ -382,6 +384,7 @@ function ReviewComments({
           session={session}
           scope={scope}
           profile={profiles.get(row.authorId)}
+          agentPubkeys={agentPubkeys}
           media={session.media}
           onOpenLink={() => false}
           day={false}

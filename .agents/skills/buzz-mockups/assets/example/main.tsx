@@ -6,6 +6,8 @@ import {
 } from "@buzz/features/messages/MessageRow";
 import "@fontsource-variable/inter/wght.css";
 import "@buzz/shared/styles/globals.css";
+import { Button } from "@buzz/shared/design-system/ui/Button";
+import { useKeyboardFocusVisibility } from "@buzz/shared/design-system/useKeyboardFocusVisibility";
 
 const message = {
   id: "mockup-message",
@@ -25,10 +27,15 @@ const noMedia = () => undefined;
 const noNavigation = () => true;
 
 function Mockup() {
+  useKeyboardFocusVisibility();
   const [threadOpen, setThreadOpen] = useState(false);
   return (
-    <main style={{ maxWidth: "48rem", margin: "2rem auto", padding: "1rem" }}>
-      <h1>Conversation mockup</h1>
+    <main
+      data-buzz-ui=""
+      className="text-body"
+      style={{ maxWidth: "48rem", margin: "2rem auto", padding: "1rem" }}
+    >
+      <h1 className="text-heading">Conversation mockup</h1>
       <p>Fake data, real Buzz message UI. Open the reply to try the flow.</p>
       <MessageRow
         row={message}
@@ -41,9 +48,7 @@ function Mockup() {
       />
       {threadOpen && (
         <section aria-label="Thread">
-          <button type="button" onClick={() => setThreadOpen(false)}>
-            Close thread
-          </button>
+          <Button onClick={() => setThreadOpen(false)}>Close thread</Button>
           <MessageRow
             row={{
               ...message,

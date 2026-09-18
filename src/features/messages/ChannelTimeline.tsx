@@ -6,7 +6,7 @@ import type { RelaySession } from "../relay/session";
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
-import type { ChannelWindow } from "../relay/contracts";
+import type { Attachment, ChannelWindow } from "../relay/contracts";
 import { useRowProfiles } from "../relay/react";
 import { geometryFor, geometrySignature } from "./geometry";
 import { readView, writeView } from "../../shared/view-state";
@@ -15,6 +15,7 @@ import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 
 const EDGE_HEIGHT = 56;
 type ReadingPosition = {
@@ -76,6 +77,11 @@ export type ChannelTimelineProps = {
   revealMessageId?: string | undefined;
   navigation?: PageNavigation | undefined;
   onOpenThread?(messageId: string, threadRootId: string): void;
+  onOpenMediaReview?(
+    messageId: string,
+    attachment: Attachment,
+    seconds: number,
+  ): void;
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
@@ -99,6 +105,7 @@ function Timeline({
   revealMessageId,
   navigation,
   onOpenThread,
+  onOpenMediaReview,
 }: ChannelTimelineProps) {
   const [initialPosition] = useState(() =>
     readView<ReadingPosition | null>(scope, `scroll:${channelId}`, null),
@@ -107,6 +114,7 @@ function Timeline({
   const restoredAnchor = useRef<string | undefined>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
   const profiles = useRowProfiles(queries.profiles, window.rows);
+  const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
   const signature = useMemo(
     () => geometrySignature(window.rows, profiles),
@@ -481,6 +489,7 @@ function Timeline({
                 profiles={profiles}
                 viewer={viewer}
                 media={queries.media}
+                agentPubkeys={agentPubkeys}
                 day={day}
               />
             ) : (
@@ -493,10 +502,12 @@ function Timeline({
                 extensions={extensions}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
                 media={queries.media}
                 onOpenLink={onOpenLink}
                 canOpenLink={canOpenLink}
                 onOpenThread={onOpenThread}
+                {...(onOpenMediaReview ? { onOpenMediaReview } : {})}
                 retry={queries.outbox?.retry}
                 day={day}
               />

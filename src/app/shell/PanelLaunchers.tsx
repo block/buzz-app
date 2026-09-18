@@ -55,6 +55,8 @@ export function LauncherIcon({ src, size }: { src: string; size?: string }) {
     <img
       src={src}
       alt=""
+      // Images are natively draggable; that would hijack the tab's pointer drag.
+      draggable={false}
       className={size ? `${size} object-contain` : "object-contain"}
       onError={() => setFailed(true)}
     />

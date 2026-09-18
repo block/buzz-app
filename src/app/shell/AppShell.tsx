@@ -51,6 +51,10 @@ export function AppShell({
   const ordered = orderPages(pages);
   const tabsHere = ordered.length + panelTabs.length;
   const fillsWorkspace = workspace || selected === "settings";
+  // A hovering tab highlights where it would land: launcher panels return to
+  // main's launcher row; everything else joins the tab strip.
+  const hovering = layout.dropTarget?.tab;
+  const landsInLaunchers = !!hovering && main && hovering.startsWith("panel:");
   return (
     <div
       data-shell-tone={tone}
@@ -84,7 +88,7 @@ export function AppShell({
         <nav
           aria-label="Pages"
           className="shell-pages"
-          data-drop-target={layout.dropTarget || undefined}
+          data-drop-target={(!!hovering && !landsInLaunchers) || undefined}
         >
           {main && (
             <button
@@ -135,14 +139,19 @@ export function AppShell({
           })}
         </nav>
         <div className="shell-actions" data-tauri-drag-region>
-          {main && launchers}
-          {main && <PageSearch pages={pages} onSelect={onSelect} />}
           {main && (
-            <ProfileButton
-              communities={communities}
-              settingsSelected={selected === "settings"}
-              onSettings={() => onSelect("settings")}
-            />
+            <div
+              className="shell-actions-group"
+              data-drop-target={landsInLaunchers || undefined}
+            >
+              {launchers}
+              <PageSearch pages={pages} onSelect={onSelect} />
+              <ProfileButton
+                communities={communities}
+                settingsSelected={selected === "settings"}
+                onSettings={() => onSelect("settings")}
+              />
+            </div>
           )}
         </div>
       </header>

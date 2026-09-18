@@ -131,7 +131,6 @@ it("web is the single main window without move or close", () => {
   expect(host.snapshot()).toEqual({
     status: "ready",
     layout: { windows: [] },
-    dropTarget: false,
   });
   expect(host.moveTab).toBeUndefined();
   expect(host.dropTab).toBeUndefined();
@@ -150,7 +149,6 @@ it("loads the desktop layout, follows broadcasts, and stops listening on dispose
   expect(host.snapshot()).toEqual({
     status: "ready",
     layout,
-    dropTarget: false,
   });
   expect(listener).toHaveBeenCalledTimes(1);
   api.emit({ windows: [] });
@@ -183,23 +181,28 @@ it("loads the desktop layout, follows broadcasts, and stops listening on dispose
   api.activate(42);
   expect(host.snapshot().activate?.seq).toBe(2);
   expect(listener).toHaveBeenCalledTimes(7);
-  // Drop-target hover is a flag on the snapshot; repeats and junk are ignored.
-  expect(host.snapshot().dropTarget).toBe(false);
-  api.hover(true);
-  api.hover(true);
+  // The hovering tab rides the snapshot; repeats and junk are ignored.
+  expect(host.snapshot().dropTarget).toBeUndefined();
+  api.hover({ tab: "panel:buzz.bestie/companion" });
+  api.hover({ tab: "panel:buzz.bestie/companion" });
   api.hover("yes");
-  expect(host.snapshot().dropTarget).toBe(true);
+  api.hover({ tab: 7 });
+  api.hover({});
+  expect(host.snapshot().dropTarget).toEqual({
+    tab: "panel:buzz.bestie/companion",
+  });
   expect(listener).toHaveBeenCalledTimes(8);
   api.emit(layout);
-  expect(host.snapshot().dropTarget).toBe(true);
-  api.hover(false);
-  expect(host.snapshot().dropTarget).toBe(false);
+  expect(host.snapshot().dropTarget?.tab).toBe("panel:buzz.bestie/companion");
+  api.hover({ tab: null });
+  api.hover({ tab: null });
+  expect(host.snapshot().dropTarget).toBeUndefined();
   expect(listener).toHaveBeenCalledTimes(10);
   host.dispose();
   expect(unlisten).toHaveBeenCalledTimes(3);
   api.emit(layout);
   api.activate("buzz.projects/projects");
-  api.hover(true);
+  api.hover({ tab: "buzz.agents/agents" });
   expect(listener).toHaveBeenCalledTimes(10);
 });
 
@@ -215,10 +218,27 @@ it("drag moves wait for begin, keep only the latest point, and never outlive end
     dragEnd: vi.fn(async () => {}),
   };
   const drag = createTabDrag(transport);
-  drag.begin("Messages", 10, 10);
+  const spec = {
+    title: "Messages",
+    width: 120,
+    height: 32,
+    background: "",
+    color: "",
+    font: "",
+    padding: "",
+    gap: "",
+    radius: "",
+    shadow: "",
+  };
+  drag.begin("buzz.channels/channels", spec, 10, 10);
   drag.move(20, 20);
   drag.move(30, 30);
-  expect(transport.dragBegin).toHaveBeenCalledWith("Messages", 10, 10);
+  expect(transport.dragBegin).toHaveBeenCalledWith(
+    "buzz.channels/channels",
+    spec,
+    10,
+    10,
+  );
   expect(transport.dragMove).not.toHaveBeenCalled();
   gates.shift()?.(); // begin settles
   await settled();
@@ -236,7 +256,7 @@ it("drag moves wait for begin, keep only the latest point, and never outlive end
   expect(transport.dragMove).toHaveBeenCalledTimes(2);
   expect(transport.dragEnd).toHaveBeenCalledOnce();
   // A stale begin settling after end must not revive a move.
-  drag.begin("Agents", 1, 1);
+  drag.begin("buzz.agents/agents", { ...spec, title: "Agents" }, 1, 1);
   drag.move(2, 2);
   drag.end();
   gates.shift()?.();
@@ -252,7 +272,6 @@ it("fails open as a single window when the layout cannot be read", async () => {
   expect(host.snapshot()).toEqual({
     status: "ready",
     layout: { windows: [] },
-    dropTarget: false,
   });
   host.dispose();
 });

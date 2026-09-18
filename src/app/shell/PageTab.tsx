@@ -2,6 +2,7 @@ import type React from "react";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import {
+  type GhostSpec,
   type WindowHost,
   type WindowLayout,
   MAIN_WINDOW,
@@ -55,6 +56,62 @@ export function releasedInStrip(
     point.y >= header.top &&
     point.y < header.bottom
   );
+}
+
+/**
+ * What the native pill needs to look exactly like `tab`: its size, its icon
+ * markup and the resolved styles of a selected tab, read from the live DOM so
+ * the ghost follows the theme without mirroring tokens.
+ */
+export function ghostSpec(
+  tab: HTMLElement,
+  title: string,
+  rect: { width: number; height: number },
+): GhostSpec {
+  const own = getComputedStyle(tab);
+  // Unselected tabs are transparent and launchers are translucent glass that
+  // relies on a backdrop the floating pill does not have; both lift with the
+  // opaque selected-tab surface.
+  const selected = translucent(own.backgroundColor)
+    ? tab.ownerDocument.querySelector<HTMLElement>(
+        '.shell-tab[aria-current="page"]',
+      )
+    : undefined;
+  const icon = tab.querySelector<SVGElement | HTMLImageElement>(
+    ":scope > svg, :scope > img",
+  );
+  return {
+    title: tab.classList.contains("shell-icon") ? "" : title,
+    ...(icon
+      ? { icon: icon.outerHTML, iconSize: getComputedStyle(icon).width }
+      : {}),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+    background: selected
+      ? getComputedStyle(selected).backgroundColor
+      : own.backgroundColor,
+    color: own.color,
+    font: own.font,
+    padding: own.padding,
+    gap: own.gap,
+    radius: own.borderRadius,
+    shadow: own.boxShadow,
+  };
+}
+
+/** Whether a computed CSS color has any transparency (`transparent`, rgba/color alpha < 1). */
+export function translucent(color: string): boolean {
+  if (color === "transparent" || color === "") return true;
+  // Alpha is the 4th comma component (rgba/hsla) or follows a slash (color()/modern syntax).
+  const alpha =
+    /\/\s*([\d.]+%?)\s*\)$/.exec(color) ??
+    /^[a-z]+\((?:[^,()]+,){3}\s*([\d.]+%?)\s*\)$/i.exec(color);
+  const raw = alpha?.[1];
+  if (raw === undefined) return false;
+  const value = raw.endsWith("%")
+    ? Number(raw.slice(0, -1)) / 100
+    : Number(raw);
+  return value < 1;
 }
 
 /**
@@ -140,11 +197,36 @@ export function PageTab({
   // leave a webview, but macOS keeps delivering pointer moves and the release
   // to the window where the press began, so Rust can resolve the drop point and
   // move the native ghost that stays visible beyond this window's edge.
-  const drag = useRef<{ x: number; y: number; active: boolean }>(undefined);
+  const drag = useRef<{
+    x: number;
+    y: number;
+    active: boolean;
+    /** Pointer offset inside the tab, so the pill moves as the tab itself. */
+    grab: { x: number; y: number };
+  }>(undefined);
   const dragged = useRef(false);
+  // While lifted the tab's slot stays but the tab itself is the native pill.
+  const [lifted, setLifted] = useState(false);
   const endDrag = () => {
     if (drag.current?.active) windows.drag?.end();
     drag.current = undefined;
+    setLifted(false);
+  };
+  const lift = (event: React.PointerEvent<HTMLButtonElement>) => {
+    const tab = event.currentTarget;
+    const rect = tab.getBoundingClientRect();
+    const grab = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+    // Client-to-screen translation at this instant, whatever the window chrome.
+    const dx = event.screenX - event.clientX;
+    const dy = event.screenY - event.clientY;
+    windows.drag?.begin(
+      tabKey,
+      ghostSpec(tab, name, rect),
+      rect.left + dx,
+      rect.top + dy,
+    );
+    setLifted(true);
+    return grab;
   };
   return (
     <>
@@ -158,6 +240,10 @@ export function PageTab({
         aria-expanded={expanded}
         aria-haspopup={targets.length ? "menu" : undefined}
         aria-controls={open ? id : undefined}
+        data-lifted={lifted || undefined}
+        // Native drag-and-drop of any child (images, selected text) would take
+        // the gesture away from the pointer-based tab drag.
+        onDragStart={(event) => event.preventDefault()}
         onClick={(event) => {
           if (dragged.current) {
             dragged.current = false;
@@ -173,7 +259,12 @@ export function PageTab({
         }}
         onPointerDown={(event) => {
           if (!windows.dropTab || event.button !== 0) return;
-          drag.current = { x: event.clientX, y: event.clientY, active: false };
+          drag.current = {
+            x: event.clientX,
+            y: event.clientY,
+            active: false,
+            grab: { x: 0, y: 0 },
+          };
           event.currentTarget.setPointerCapture(event.pointerId);
         }}
         onPointerMove={(event) => {
@@ -186,8 +277,12 @@ export function PageTab({
               return;
             state.active = true;
             setAnchor(undefined);
-            windows.drag?.begin(name, event.screenX, event.screenY);
-          } else windows.drag?.move(event.screenX, event.screenY);
+            state.grab = lift(event);
+          } else
+            windows.drag?.move(
+              event.screenX - state.grab.x,
+              event.screenY - state.grab.y,
+            );
         }}
         onPointerUp={(event) => {
           const state = drag.current;
@@ -210,13 +305,16 @@ export function PageTab({
             })
           ) {
             windows.drag?.end();
+            setLifted(false);
             return;
           }
           setError(undefined);
+          // A successful drop unmounts this tab here; only failure puts it back.
           windows
             .dropTab?.(tabKey, event.screenX, event.screenY)
             .catch((reason) => {
               windows.drag?.end();
+              setLifted(false);
               report(reason);
             });
         }}

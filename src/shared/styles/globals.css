@@ -212,15 +212,34 @@
       box-shadow 120ms ease-out,
       background-color 120ms ease-out;
   }
-  /* A tab dragged from another window is hovering this one. */
-  .shell-pages[data-drop-target] {
+  /* Tabs move with pointer events; their contents must not start a native drag. */
+  .shell-tab > *,
+  .shell-icon > * {
+    -webkit-user-drag: none;
+    user-select: none;
+  }
+  /* A tab being dragged has left its slot for the native pill; the slot waits. */
+  .shell-tab[data-lifted],
+  .shell-icon[data-lifted] {
+    opacity: 0;
+  }
+  .shell-actions {
+    @apply flex items-center justify-end;
+  }
+  .shell-actions-group {
+    @apply flex items-center gap-2 rounded-full;
+    transition:
+      box-shadow 120ms ease-out,
+      background-color 120ms ease-out;
+  }
+  /* A tab dragged from another window is hovering this one: the strip for
+     pages, the launcher row for a panel returning to main. */
+  .shell-pages[data-drop-target],
+  .shell-actions-group[data-drop-target] {
     @apply bg-surface/70;
     box-shadow:
       0 0 0 2px var(--focus),
       0 0 0 6px color-mix(in srgb, var(--focus) 25%, transparent);
-  }
-  .shell-actions {
-    @apply flex items-center justify-end gap-2;
   }
   @media (max-width: 700px) {
     .shell-header {

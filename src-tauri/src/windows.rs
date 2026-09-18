@@ -159,6 +159,15 @@ pub(crate) struct Windows {
     layout: Mutex<Layout>,
     /// The window currently under a dragged tab, told to show itself as the drop target.
     drop_target: Mutex<Option<String>>,
+    /// The tab key being dragged, so a hovered window knows where it would land.
+    dragging: Mutex<Option<String>>,
+}
+
+/// Payload of `DROP_TARGET`: the dragged tab, or `None` when the drag leaves.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct DropTarget<'a> {
+    tab: Option<&'a str>,
 }
 
 impl Windows {
@@ -175,6 +184,12 @@ impl Windows {
             path,
             layout: Mutex::new(layout),
             drop_target: Mutex::new(None),
+            dragging: Mutex::new(None),
+        }
+    }
+    fn set_dragging(&self, tab: Option<String>) {
+        if let Ok(mut current) = self.dragging.lock() {
+            *current = tab;
         }
     }
     /// Point the drop-target highlight at `next`; only changes are broadcast.
@@ -186,10 +201,17 @@ impl Windows {
             return;
         }
         if let Some(previous) = current.take() {
-            let _ = app.emit_to(&previous, DROP_TARGET, false);
+            let _ = app.emit_to(&previous, DROP_TARGET, DropTarget { tab: None });
         }
         if let Some(label) = &next {
-            let _ = app.emit_to(label, DROP_TARGET, true);
+            let dragging = self.dragging.lock().ok().and_then(|d| d.clone());
+            let _ = app.emit_to(
+                label,
+                DROP_TARGET,
+                DropTarget {
+                    tab: dragging.as_deref(),
+                },
+            );
         }
         *current = next;
     }
@@ -343,25 +365,40 @@ pub(crate) async fn windows_move_tab(
 /// vanish at the source window's edge; this always-on-top window is reused
 /// across drags and never receives cursor events or focus.
 const GHOST: &str = "drag-ghost";
-const GHOST_OFFSET: (f64, f64) = (14.0, 14.0);
+/// Transparent margin around the pill for its shadow; `public/drag-ghost.html` pads the same.
+const GHOST_PAD: f64 = 16.0;
+const GHOST_SPEC_MAX: usize = 16 * 1024;
 
-fn ghost(app: &tauri::AppHandle, title: &str) -> tauri::Result<tauri::WebviewWindow> {
+/// The lifted tab's geometry; the rest of the spec is passed through to the page.
+#[derive(Deserialize)]
+struct GhostSize {
+    width: f64,
+    height: f64,
+}
+
+fn ghost(
+    app: &tauri::AppHandle,
+    spec: &str,
+    size: &GhostSize,
+) -> tauri::Result<tauri::WebviewWindow> {
+    let outer =
+        tauri::LogicalSize::new(size.width + 2.0 * GHOST_PAD, size.height + 2.0 * GHOST_PAD);
     if let Some(window) = app.get_webview_window(GHOST) {
-        // The nonce makes every show a hashchange, so the ghost re-reads the
-        // title and the appearance even when the same tab is dragged again.
+        // The nonce makes every show a hashchange, so the page re-renders even
+        // when the same tab is dragged again.
         static SHOWN: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let nonce = SHOWN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         window.eval(format!(
             "location.hash = {}",
-            serde_json::to_string(&format!("#title={}&n={nonce}", encode(title)))
-                .unwrap_or_default()
+            serde_json::to_string(&format!("#spec={}&n={nonce}", encode(spec))).unwrap_or_default()
         ))?;
+        window.set_size(outer)?;
         return Ok(window);
     }
-    let url = format!("drag-ghost.html?title={}", encode(title));
+    let url = format!("drag-ghost.html?spec={}", encode(spec));
     let builder = tauri::WebviewWindowBuilder::new(app, GHOST, tauri::WebviewUrl::App(url.into()))
         .title("Dragging tab")
-        .inner_size(180.0, 44.0)
+        .inner_size(outer.width, outer.height)
         .decorations(false)
         .resizable(false)
         .always_on_top(true)
@@ -380,8 +417,9 @@ fn encode(value: &str) -> String {
     url::form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
 
+/// `x, y` is the pill's top-left corner; the window starts one pad earlier.
 fn ghost_position(x: f64, y: f64) -> tauri::LogicalPosition<f64> {
-    tauri::LogicalPosition::new(x + GHOST_OFFSET.0, y + GHOST_OFFSET.1)
+    tauri::LogicalPosition::new(x - GHOST_PAD, y - GHOST_PAD)
 }
 
 fn hide_ghost(app: &tauri::AppHandle) {
@@ -393,14 +431,23 @@ fn hide_ghost(app: &tauri::AppHandle) {
 #[tauri::command]
 pub(crate) async fn windows_drag_begin(
     app: tauri::AppHandle,
-    title: String,
+    state: tauri::State<'_, Windows>,
+    tab_key: String,
+    spec: String,
     x: f64,
     y: f64,
 ) -> Result<(), String> {
-    if title.chars().count() > 120 || !x.is_finite() || !y.is_finite() {
+    valid_page_key(&tab_key)?;
+    if spec.len() > GHOST_SPEC_MAX || !x.is_finite() || !y.is_finite() {
         return Err("Invalid drag".into());
     }
-    let window = ghost(&app, title.trim()).map_err(|e| e.to_string())?;
+    state.set_dragging(Some(tab_key));
+    let size: GhostSize = serde_json::from_str(&spec).map_err(|_| "Invalid drag")?;
+    let sane = |v: f64| (1.0..=2000.0).contains(&v);
+    if !sane(size.width) || !sane(size.height) {
+        return Err("Invalid drag".into());
+    }
+    let window = ghost(&app, &spec, &size).map_err(|e| e.to_string())?;
     window
         .set_position(ghost_position(x, y))
         .and_then(|()| window.show())
@@ -433,6 +480,7 @@ pub(crate) async fn windows_drag_end(
     state: tauri::State<'_, Windows>,
 ) -> Result<(), String> {
     state.set_drop_target(&app, None);
+    state.set_dragging(None);
     hide_ghost(&app);
     Ok(())
 }
@@ -471,6 +519,7 @@ pub(crate) async fn windows_drop_tab(
     y: f64,
 ) -> Result<Layout, String> {
     state.set_drop_target(&app, None);
+    state.set_dragging(None);
     hide_ghost(&app);
     if !x.is_finite() || !y.is_finite() {
         return Err("Invalid drop point".into());

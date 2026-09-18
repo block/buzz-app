@@ -21,8 +21,8 @@ export type WindowSnapshot = Readonly<{
   layout: WindowLayout;
   /** The tab most recently moved into this window; `seq` distinguishes repeats. */
   activate?: Readonly<{ key: string; seq: number }>;
-  /** A tab dragged from another window is hovering this one. */
-  dropTarget: boolean;
+  /** The tab dragged from another window that is hovering this one, if any. */
+  dropTarget?: Readonly<{ tab: string }>;
 }>;
 /** `main`, `new`, or the label of an open detached window. */
 export type WindowDestination = string;
@@ -33,18 +33,45 @@ export type WindowTransport = Readonly<{
   listen(listener: (layout: unknown) => void): Promise<() => void>;
   /** A tab moved into this window; it should become the selected tab. */
   activation(listener: (tabKey: unknown) => void): Promise<() => void>;
-  dropTarget(listener: (hovering: unknown) => void): Promise<() => void>;
+  dropTarget(listener: (payload: unknown) => void): Promise<() => void>;
   moveTab(pageKey: string, destination: WindowDestination): Promise<unknown>;
   dropTab(pageKey: string, x: number, y: number): Promise<unknown>;
-  dragBegin(title: string, x: number, y: number): Promise<void>;
+  dragBegin(
+    tabKey: string,
+    spec: GhostSpec,
+    x: number,
+    y: number,
+  ): Promise<void>;
   dragMove(x: number, y: number): Promise<void>;
   dragEnd(): Promise<void>;
   close(): Promise<void>;
 }>;
 
-/** Native drag ghost that stays visible outside this window. Screen coordinates. */
+/** Appearance of the native pill: the lifted tab's size, icon and resolved styles. */
+export type GhostSpec = Readonly<{
+  title: string;
+  /** Serialized `<svg>`/`<img>` from the tab; the ghost page renders nothing else. */
+  icon?: string;
+  /** Rendered icon box (CSS length), since the ghost lacks the tab's stylesheet. */
+  iconSize?: string;
+  width: number;
+  height: number;
+  background: string;
+  color: string;
+  font: string;
+  padding: string;
+  gap: string;
+  radius: string;
+  /** The tab's own box-shadow (glass rims); the ghost adds its drop shadow. */
+  shadow: string;
+}>;
+
+/**
+ * Native drag ghost that stays visible outside this window. Coordinates are
+ * the pill's top-left corner on the logical screen.
+ */
 export type TabDrag = Readonly<{
-  begin(title: string, x: number, y: number): void;
+  begin(tabKey: string, spec: GhostSpec, x: number, y: number): void;
   move(x: number, y: number): void;
   end(): void;
 }>;
@@ -151,7 +178,13 @@ export function tauriWindowTransport(): WindowTransport {
     moveTab: (pageKey, destination) =>
       invoke("windows_move_tab", { pageKey, destination }),
     dropTab: (pageKey, x, y) => invoke("windows_drop_tab", { pageKey, x, y }),
-    dragBegin: (title, x, y) => invoke("windows_drag_begin", { title, x, y }),
+    dragBegin: (tabKey, spec, x, y) =>
+      invoke("windows_drag_begin", {
+        tabKey,
+        spec: JSON.stringify(spec),
+        x,
+        y,
+      }),
     dragMove: (x, y) => invoke("windows_drag_move", { x, y }),
     dragEnd: () => invoke("windows_drag_end"),
     close: () => current.close(),
@@ -181,11 +214,11 @@ export function createTabDrag(
       });
   };
   return {
-    begin(title, x, y) {
+    begin(tabKey, spec, x, y) {
       const current = ++session;
       pending = undefined;
       inflight = transport
-        .dragBegin(title, x, y)
+        .dragBegin(tabKey, spec, x, y)
         .catch(() => {})
         .then(() => {
           inflight = undefined;
@@ -214,7 +247,6 @@ export function createWindowHost(
   let snapshot: WindowSnapshot = Object.freeze({
     status: transport ? "loading" : "ready",
     layout: EMPTY,
-    dropTarget: false,
   });
   let disposed = false;
   const stops: (() => void)[] = [];
@@ -238,10 +270,21 @@ export function createWindowHost(
     snapshot = Object.freeze({ ...snapshot, activate: { key, seq: ++seq } });
     notify();
   };
-  const hover = (hovering: unknown) => {
-    if (disposed || typeof hovering !== "boolean") return;
-    if (snapshot.dropTarget === hovering) return;
-    snapshot = Object.freeze({ ...snapshot, dropTarget: hovering });
+  const hover = (payload: unknown) => {
+    if (
+      disposed ||
+      !payload ||
+      typeof payload !== "object" ||
+      !("tab" in payload)
+    )
+      return;
+    const tab = payload.tab;
+    if (tab !== null && typeof tab !== "string") return;
+    if ((snapshot.dropTarget?.tab ?? null) === tab) return;
+    const { dropTarget: _, ...rest } = snapshot;
+    snapshot = Object.freeze(
+      tab === null ? rest : { ...rest, dropTarget: Object.freeze({ tab }) },
+    );
     notify();
   };
   const track = (subscription: Promise<() => void>) =>

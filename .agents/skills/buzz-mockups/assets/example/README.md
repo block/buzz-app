@@ -18,6 +18,6 @@ bin/pnpm exec tsc -p .agents/skills/buzz-mockups/assets/example/tsconfig.json
 bin/pnpm exec vite build --config .agents/skills/buzz-mockups/assets/example/vite.config.mjs
 ```
 
-Build output goes to this example's ignored `dist/`. The Vite config resolves Buzz source from the working directory, so commands must run from the repo root.
+Build output goes to this example's ignored `dist/`.
 
-To expand the example, copy it into a task-specific folder and adjust its TypeScript config paths. Keep interactions offline; if adding service fixtures, subscription snapshots must remain stable until their data changes.
+To expand the example, copy it into a task-specific folder and adjust the source paths in its Vite and TypeScript configs. Keep interactions offline; if adding service fixtures, subscription snapshots must remain stable until their data changes.

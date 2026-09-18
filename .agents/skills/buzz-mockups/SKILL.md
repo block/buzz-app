@@ -7,4 +7,4 @@ Exploring a user flow doesn’t require running the whole Buzz app. A simple bro
 
 Interactions can use local state, and any services a component needs can be stubbed out. The underlying feature doesn’t need to exist yet.
 
-Optional: [runnable example and setup notes](assets/example/README.md), using a real message component with fake data and a local thread toggle.
+Optional: [runnable example and setup notes](assets/example/README.md), showing a channel and task thread using real Buzz components and fake data.

@@ -1,6 +1,6 @@
 # Runnable Buzz mockup
 
-[main.tsx](main.tsx) renders the real `MessageRow` with a typed fixture and a local thread toggle. No session is supplied: optional services use the component's own fallback behavior. Media and external navigation are disabled.
+[main.tsx](main.tsx) assembles the real `AppShell`, `MessageRow`, and `MessageComposer` around a channel and task thread. Close and reopen the thread or toggle the task status; those interactions use local state. Composers are disabled, and read-only service fixtures replace the backend. The task card and layout are custom mockup UI.
 
 ## Run
 

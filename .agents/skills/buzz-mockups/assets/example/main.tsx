@@ -22,7 +22,7 @@ const message = {
 
 // Deliberately do not resolve remote media or navigate out of this mockup.
 const noMedia = () => undefined;
-const noNavigation = () => false;
+const noNavigation = () => true;
 
 function Mockup() {
   const [threadOpen, setThreadOpen] = useState(false);

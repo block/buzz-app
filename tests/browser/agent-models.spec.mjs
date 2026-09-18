@@ -20,8 +20,9 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     );
     await page
       .getByRole("article", { name: "Agent Fixture agent", exact: true })
-      .getByRole("button", { name: "Edit", exact: true })
+      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     const editor = page.getByRole("dialog", {
       name: "Edit agent",
       exact: true,
@@ -77,8 +78,9 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
       .click();
     await page
       .getByRole("article", { name: "Agent Fixture agent", exact: true })
-      .getByRole("button", { name: "Edit", exact: true })
+      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     await editor.getByText("Advanced model settings", { exact: true }).click();
     await expect(model).toHaveValue("catalog.schema.real-model");
     await editor.getByRole("button", { name: "Refresh models" }).click();
@@ -182,8 +184,9 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
       .toBeGreaterThan(before);
     await page
       .getByRole("article", { name: "Agent Fixture agent", exact: true })
-      .getByRole("button", { name: "Edit", exact: true })
+      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     await expect(search).toHaveValue("catalog.schema.real-model");
     expect(
       await page.evaluate(

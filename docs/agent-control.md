@@ -16,7 +16,7 @@ configuration and persistent native settings. Coordinate the native rebuild/rela
 quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
-Open **Agents → card → Edit**. The existing cards, artwork and identity grouping
+Open **Agents → card’s three-dot menu → Edit**. The existing cards, artwork and identity grouping
 remain; a card with multiple imported destinations asks which exact key/destination
 to edit. A library-only card requires explicit import under **Manage local agents**;
 Edit never imports or writes the old library. Native-only agents remain editable

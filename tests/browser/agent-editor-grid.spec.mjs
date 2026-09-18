@@ -33,12 +33,33 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       exact: true,
     });
     await expect(
-      card.getByRole("button", { name: "Edit", exact: true }),
+      card.getByRole("button", {
+        name: "Actions for Fixture agent",
+        exact: true,
+      }),
     ).toBeVisible();
+    const actions = card.getByRole("button", {
+      name: "Actions for Fixture agent",
+      exact: true,
+    });
+    const bounds = await card.boundingBox();
+    const button = await actions.boundingBox();
+    expect(button.y - bounds.y).toBeLessThan(16);
+    expect(bounds.x + bounds.width - button.x - button.width).toBeLessThan(16);
+    await expect(
+      card.getByRole("button", { name: "Edit", exact: true }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: test.info().outputPath("agents-grid-light.png"),
     });
-    await card.getByRole("button", { name: "Edit", exact: true }).click();
+    await actions.focus();
+    await actions.press("ArrowDown");
+    await expect(
+      page.getByRole("menuitem", { name: "Edit", exact: true }),
+    ).toBeFocused();
+    await page
+      .getByRole("menuitem", { name: "Edit", exact: true })
+      .press("Enter");
     const dialog = page.getByRole("dialog", {
       name: "Edit agent",
       exact: true,
@@ -78,9 +99,15 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     await expect(dialog.getByRole("status")).toContainText("Saved.");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(
-      card.getByRole("button", { name: "Edit", exact: true }),
+      card.getByRole("button", {
+        name: "Actions for Fixture agent",
+        exact: true,
+      }),
     ).toBeFocused();
-    await card.getByRole("button", { name: "Edit", exact: true }).click();
+    await card
+      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     await dialog
       .getByRole("button", { name: "Browse models", exact: true })
       .click();
@@ -181,7 +208,10 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     await page.mouse.click(5, 5);
     await expect(environment).toHaveValue("synthetic-draft-only");
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
-    await card.getByRole("button", { name: "Edit", exact: true }).click();
+    await card
+      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
     await dialog.getByText("Advanced", { exact: true }).click();
     await expect(environment).toHaveValue("");
     await dialog

@@ -15,11 +15,13 @@ async function showManagement(page) {
 }
 async function openEditor(page, name = "Fixture agent") {
   const dialog = page.getByRole("dialog", { name: "Edit agent", exact: true });
-  if (!(await dialog.count()))
+  if (!(await dialog.count())) {
     await page
       .getByRole("article", { name: `Agent ${name}`, exact: true })
-      .getByRole("button", { name: "Edit", exact: true })
+      .getByRole("button", { name: `Actions for ${name}`, exact: true })
       .click();
+    await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
+  }
   for (const name of [
     "Runtime and identity",
     "Advanced",
@@ -203,9 +205,12 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       .click();
     await showManagement(page);
     await expect(panel.getByText(/This browser cannot run/)).toBeVisible();
+    await panel
+      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
+      .click();
     await expect(
-      panel.getByRole("button", { name: "Edit", exact: true }).first(),
-    ).toBeDisabled();
+      page.getByRole("menuitem", { name: "Edit", exact: true }),
+    ).toHaveAttribute("aria-disabled", "true");
     expect(errors).toEqual([]);
   } finally {
     await server.close();

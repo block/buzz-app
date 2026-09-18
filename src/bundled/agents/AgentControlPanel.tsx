@@ -53,8 +53,23 @@ export function AgentControlPanel({
     <section
       data-buzz-ui=""
       aria-label="Local agent controls"
-      className="agent-controls min-w-0 space-y-5 pt-4 text-body text-primary"
+      className="agent-controls min-w-0 space-y-5 text-body text-primary"
     >
+      {children ? (
+        children(state, edit)
+      ) : (
+        <div className="agent-grid">
+          {state.data?.agents.map((agent) => (
+            <AgentCard
+              key={agent.id}
+              name={agent.name}
+              identities={[agent]}
+              editable={[agent]}
+              onEdit={edit}
+            />
+          ))}
+        </div>
+      )}
       <details className="space-y-4">
         <summary className="cursor-pointer text-body-sm text-secondary">
           Manage local agents
@@ -119,21 +134,6 @@ export function AgentControlPanel({
           </>
         )}
       </details>
-      {children ? (
-        children(state, edit)
-      ) : (
-        <div className="agent-grid">
-          {state.data?.agents.map((agent) => (
-            <AgentCard
-              key={agent.id}
-              name={agent.name}
-              identities={[agent]}
-              editable={[agent]}
-              onEdit={edit}
-            />
-          ))}
-        </div>
-      )}
       {editing && (
         <AgentEditor
           key={editing.id}

@@ -102,12 +102,14 @@ it("requires exact native destination selection and never imports from Edit", as
   const card = await screen.findByRole("article", {
     name: "Agent Library card",
   });
-  fireEvent.click(within(card).getByText("Edit identity…"));
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Library card" }),
+  );
   expect(
-    within(card).getByRole("button", { name: /wss:\/\/relay.example.test/ }),
+    await screen.findByRole("menuitem", { name: /wss:\/\/relay.example.test/ }),
   ).toHaveTextContent(f.agent.pubkey);
   fireEvent.click(
-    within(card).getByRole("button", { name: /wss:\/\/second.example/ }),
+    await screen.findByRole("menuitem", { name: /wss:\/\/second.example/ }),
   );
   const dialog = screen.getByRole("dialog", { name: "Edit agent" });
   fireEvent.change(within(dialog).getByLabelText("Name"), {
@@ -126,9 +128,15 @@ it("requires exact native destination selection and never imports from Edit", as
   const unimported = screen.getByRole("article", {
     name: "Agent Not imported",
   });
-  expect(
-    within(unimported).getByRole("button", { name: "Edit" }),
-  ).toBeDisabled();
+  fireEvent.click(
+    within(unimported).getByRole("button", {
+      name: "Actions for Not imported",
+    }),
+  );
+  expect(await screen.findByRole("menuitem", { name: "Edit" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(f.calls.some((call) => call.action === "import")).toBe(false);
 });
 for (const mode of ["disconnected", "unavailable", "error", "archived"]) {
@@ -139,7 +147,10 @@ for (const mode of ["disconnected", "unavailable", "error", "archived"]) {
     });
     const card = cards[0];
     if (!card) throw Error("Native fallback card missing");
-    fireEvent.click(within(card).getByRole("button", { name: "Edit" }));
+    fireEvent.click(
+      within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
     expect(screen.getByRole("dialog", { name: "Edit agent" })).toBeVisible();
     expect(f.calls.some((call) => call.action === "import")).toBe(false);
   });
@@ -176,9 +187,13 @@ for (const mode of ["absolute", "saved-override", "draft-override"]) {
     const card = await screen.findByRole("article", {
       name: "Agent Library card",
     });
-    fireEvent.click(within(card).getByText("Edit identity…"));
     fireEvent.click(
-      within(card).getByRole("button", { name: /wss:\/\/relay.example.test/ }),
+      within(card).getByRole("button", { name: "Actions for Library card" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("menuitem", {
+        name: /wss:\/\/relay.example.test/,
+      }),
     );
     const dialog = screen.getByRole("dialog", { name: "Edit agent" });
     if (mode === "draft-override") {

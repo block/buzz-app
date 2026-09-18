@@ -9,12 +9,15 @@ import {
 import { MessageRow, type MessageRowProps } from "../messages/MessageRow";
 import type {
   ComposerTool,
+  ComposerAccessory,
   ComposerCompletion,
   InlineRenderer,
   ContributionReader,
 } from "./contracts";
 
 export type Conversation = {
+  accessories: ContributionReader<ComposerAccessory>;
+  registerAccessory(accessory: ComposerAccessory): void;
   tools: ContributionReader<ComposerTool>;
   registerTool(tool: ComposerTool): void;
   completions: ContributionReader<ComposerCompletion>;
@@ -31,7 +34,9 @@ declare module "@deepseek-ai/cordis" {
     conversation: Conversation;
   }
 }
-function validate(value: ComposerTool | InlineRenderer | ComposerCompletion) {
+function validate(
+  value: ComposerTool | InlineRenderer | ComposerCompletion | ComposerAccessory,
+) {
   if (
     !value ||
     !/^[a-z0-9][a-z0-9._-]*$/.test(value.id) ||
@@ -45,6 +50,8 @@ function validate(value: ComposerTool | InlineRenderer | ComposerCompletion) {
 }
 export class ConversationService extends Service implements Conversation {
   readonly tools;
+  readonly accessories;
+  private readonly accessoryEntries;
   readonly completions;
   private readonly completionEntries;
   readonly inline;
@@ -52,6 +59,12 @@ export class ConversationService extends Service implements Conversation {
   private readonly inlineEntries;
   constructor(ctx: Context) {
     super(ctx, "conversation");
+    const accessories = createContributions<ComposerAccessory>(ctx);
+    this.accessoryEntries = accessories;
+    this.accessories = {
+      snapshot: accessories.snapshot,
+      subscribe: accessories.subscribe,
+    };
     const tools = createContributions<ComposerTool>(ctx);
     const completions = createContributions<ComposerCompletion>(ctx);
     this.completionEntries = completions;
@@ -64,6 +77,10 @@ export class ConversationService extends Service implements Conversation {
     this.inlineEntries = inline;
     this.tools = { snapshot: tools.snapshot, subscribe: tools.subscribe };
     this.inline = { snapshot: inline.snapshot, subscribe: inline.subscribe };
+  }
+  registerAccessory(value: ComposerAccessory) {
+    validate(value);
+    this.accessoryEntries.register(this.ctx, value);
   }
   registerTool(value: ComposerTool) {
     validate(value);

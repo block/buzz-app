@@ -238,7 +238,7 @@ export function createRelaySession(
     )
       channels.acceptDiscovery(events);
     const visible = events
-      .filter((event) => event.kind !== OBSERVER_KIND)
+      .filter((event) => ![OBSERVER_KIND, 20002].includes(event.kind))
       .filter(visibility(events));
     const epoch = accessEpoch;
     profiling.measure(
@@ -895,6 +895,9 @@ export function createRelaySession(
       )
         refreshRoster();
       accept(events);
+      activity.channelEvents(
+        events.filter((event) => event.pubkey !== transport.viewer),
+      );
     },
     state(snapshot) {
       if (closed) return;

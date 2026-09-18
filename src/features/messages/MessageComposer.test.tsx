@@ -161,7 +161,11 @@ function mount(
       ref.current.setSelectionRange(text.length, text.length);
     },
     submit() {
-      (render().props.onSubmit as (e: unknown) => void)({
+      const form = elements(render()).find(
+        (element) => element.type === "form",
+      );
+      if (!form) throw new Error("No composer form");
+      (form.props.onSubmit as (e: unknown) => void)({
         preventDefault() {},
       });
     },

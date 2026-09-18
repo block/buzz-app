@@ -292,6 +292,8 @@ function ThreadMessages({
           channelId={channelId}
           channelName={channelName}
           threadRootId={snapshot.root.id}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
           onSend={(id) => {
             positioned.current = true;
             follow.current = true;

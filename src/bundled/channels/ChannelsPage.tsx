@@ -147,6 +147,19 @@ function ChannelWorkspace({
   panels: Panels;
 }) {
   const list = useChannelList(queries.channels);
+  const activity = useSyncExternalStore(
+    queries.agentActivity.subscribe,
+    queries.agentActivity.snapshot,
+    queries.agentActivity.snapshot,
+  );
+  const workingChannels = new Set([
+    ...activity.turns
+      .filter((turn) => turn.state === "working")
+      .map((turn) => turn.channelId),
+    ...activity.typing
+      .filter((entry) => !entry.threadRootId)
+      .map((entry) => entry.channelId),
+  ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
     if (list.status === "ready") void queries.unread.ensure();
@@ -284,6 +297,15 @@ function ChannelWorkspace({
   );
   const openLink = useCallback(
     (url: string) => {
+      const connection = relay.snapshot();
+      if (
+        !mounted.current ||
+        channel.current !== current?.id ||
+        connection.status !== "ready" ||
+        connection.session !== queries ||
+        navigation?.signal.aborted
+      )
+        return false;
       const candidate = panels.resolve(url);
       if (current && candidate) {
         panelTrigger.current =
@@ -300,7 +322,7 @@ function ChannelWorkspace({
       }
       return false;
     },
-    [panels, current, open],
+    [panels, current, open, relay, queries, navigation],
   );
   const panelActive = () => {
     const connection = relay.snapshot();
@@ -410,6 +432,14 @@ function ChannelWorkspace({
                   >
                     <Icon size={17} />
                     <span>{channel.name}</span>
+                    {workingChannels.has(channel.id) && (
+                      <span
+                        className={styles.working}
+                        role="img"
+                        aria-label="Agent working"
+                        title="Agent working in this channel"
+                      />
+                    )}
                     <UnreadBadge session={queries} channelId={channel.id} />
                   </button>
                 );
@@ -547,6 +577,8 @@ function ChannelWorkspace({
             scope={scope}
             channelId={current.id}
             channelName={current.name}
+            onOpenLink={openLink}
+            canOpenLink={canOpenLink}
             onSend={(id) => setSent({ channelId: current.id, id })}
           />
         )}

@@ -42,15 +42,20 @@ impl Connection for Arc<Fake> {
         filter: Option<DatabricksModelFilter>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<Vec<buzz_agent::catalog::ModelEntry>, String>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<Vec<buzz_agent::catalog::ModelEntry>, AgentError>,
+                > + Send
                 + '_,
         >,
     > {
         Box::pin(async move {
             self.catalogs.fetch_add(1, Ordering::SeqCst);
             match self.failure.load(Ordering::SeqCst) {
-                2 => return Err("Synthetic catalog rejected".into()),
+                1 => return Err(AgentError::LlmAuth("Synthetic auth rejected".into())),
+                2 => return Err(AgentError::Llm("Synthetic catalog rejected".into())),
+                6 if self.connects.load(Ordering::SeqCst) == 0 => {
+                    return Err(AgentError::LlmAuth("No cached token".into()))
+                }
                 3 => return Ok(vec![]),
                 4 => {
                     return Ok(vec![buzz_agent::catalog::ModelEntry {
@@ -125,6 +130,11 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let mut connect = req.clone();
     connect["action"] = json!("connect");
     call(connect.clone()).unwrap();
+    assert_eq!(fake.connects.load(Ordering::SeqCst), 0); // cached discovery does not sign in
+    fake.failure.store(6, Ordering::SeqCst);
+    assert!(call(req.clone()).is_err()); // Refresh must stay headless
+    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
+    call(connect.clone()).unwrap();
     assert_eq!(fake.connects.load(Ordering::SeqCst), 1);
     fake.failure.store(1, Ordering::SeqCst);
     assert!(call(connect.clone()).is_err());
@@ -198,6 +208,47 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     )
     .is_err());
 }
+#[test]
+fn native_discovery_preserves_absolute_harness_and_saved_or_draft_provider_overrides() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    let call = |req: Value| {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":req}),
+        )
+    };
+    let mut req = request(dir.path(), &id, "connect");
+    req["edit"]["harness"]["command"] = json!("/fixture/bin/buzz-agent");
+    call(req.clone()).unwrap();
+    req["edit"]["harness"]["provider"] = json!("selector-other");
+    req["edit"]["environment"] = json!({"BUZZ_AGENT_PROVIDER":"databricks_v2"});
+    call(req.clone()).unwrap();
+    invoke(
+        &view,
+        "agent_control_save",
+        json!({"id":id,"expectedRevision":1,"edit":req["edit"]}),
+    )
+    .unwrap();
+    req["expectedRevision"] = json!(2);
+    req["edit"]["environment"] = json!({}); // saved native override remains authoritative
+    call(req.clone()).unwrap();
+    let opens = fake.opened.lock().unwrap().len();
+    req["edit"]["environment"] = json!({"BUZZ_AGENT_PROVIDER":null});
+    assert!(call(req).is_err()); // effective unsupported provider never reaches auth
+    assert_eq!(fake.opened.lock().unwrap().len(), opens);
+    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
+}
+
 #[test]
 fn runtime_factory_no_ambient_auth_on_construction_or_empty_headless_refresh() {
     struct NoBrowser;

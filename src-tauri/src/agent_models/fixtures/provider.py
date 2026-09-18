@@ -20,7 +20,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         with lock:
             state['requests'].append([self.path, self.headers.get('Authorization')])
             log.write_text(json.dumps(state))
-        if self.headers.get('Authorization') != 'Bearer synthetic-'+str(state['grants']):
+        rejected = len(sys.argv) > 2 and sys.argv[2] == 'catalog-rejection' and self.headers.get('Authorization') == 'Bearer synthetic-1'
+        if rejected or self.headers.get('Authorization') != 'Bearer synthetic-'+str(state['grants']):
             return self.send(401, {'error':'synthetic rejection'})
         if self.path.startswith('/api/ai-gateway/v2/endpoints'):
             return self.send(200, {'endpoints':[{'name':'synthetic-model'}]})
@@ -31,6 +32,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             form = urllib.parse.parse_qs(raw.decode())
             assert form['client_id'] == ['databricks-cli']
             assert form['grant_type'][0] in ['authorization_code', 'refresh_token']
+            if len(sys.argv) > 2 and sys.argv[2] == 'catalog-rejection' and form['grant_type'] == ['refresh_token']:
+                return self.send(400, {'error': 'invalid_grant'})
             with lock:
                 state['grants'] += 1
                 state['requests'].append(['grant', form['grant_type'][0]])

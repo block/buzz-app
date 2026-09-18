@@ -3,6 +3,7 @@
 use buzz_agent::{
     auth::{BrowserOpener, PkceOAuthConfig, PkceOAuthTokenSource},
     config::{Config, DatabricksModelFilter, Provider},
+    AgentError,
 };
 use buzz_agent_controller::connection::{oauth_root, origin};
 use buzz_agent_controller::AgentEdit;
@@ -310,8 +311,9 @@ trait Connection: Send + Sync {
         filter: Option<DatabricksModelFilter>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<Vec<buzz_agent::catalog::ModelEntry>, String>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<Vec<buzz_agent::catalog::ModelEntry>, AgentError>,
+                > + Send
                 + '_,
         >,
     >;
@@ -375,7 +377,7 @@ impl Connection for RuntimeConnection {
             self.auth
                 .interactive_login()
                 .await
-                .map_err(|_| "Sign-in was not completed. Cancel or retry Connect explicitly".into())
+                .map_err(|_| "Sign-in was not completed. Choose Retry models when ready".into())
         })
     }
     fn models(
@@ -383,8 +385,9 @@ impl Connection for RuntimeConnection {
         filter: Option<DatabricksModelFilter>,
     ) -> std::pin::Pin<
         Box<
-            dyn std::future::Future<Output = Result<Vec<buzz_agent::catalog::ModelEntry>, String>>
-                + Send
+            dyn std::future::Future<
+                    Output = Result<Vec<buzz_agent::catalog::ModelEntry>, AgentError>,
+                > + Send
                 + '_,
         >,
     > {
@@ -396,7 +399,6 @@ impl Connection for RuntimeConnection {
                 filter,
             );
             buzz_agent::discover_databricks_models_with_cache_dir(&config, Some(&self.cache)).await
-                .map_err(|_| "Models unavailable. Check the workspace/filter or explicitly reconnect if authentication expired".into())
         })
     }
 }
@@ -409,11 +411,23 @@ async fn execute(
     factory: Arc<dyn Factory>,
     opener: Arc<dyn BrowserOpener>,
 ) -> Result<Catalog, String> {
-    let connection = factory.open(&workspace, &cache, opener)?;
-    if action == Operation::Connect {
-        connection.connect().await?;
+    let connection = factory.open(&workspace, &cache, opener.clone())?;
+    // The picker is user intent to discover models, not a mandatory login ceremony.
+    // Reuse/refresh cached credentials first; unrelated failures must never open SSO.
+    let entries = match connection.models(filter.clone()).await {
+        Err(AgentError::LlmAuth(_)) if action == Operation::Connect => {
+            // Discovery may have invalidated a rejected token on disk. Reopen after
+            // that verdict rather than retaining a pre-discovery in-memory token.
+            let connection = factory.open(&workspace, &cache, opener)?;
+            connection.connect().await?;
+            connection.models(filter).await
+        }
+        result => result,
     }
-    let entries = connection.models(filter).await?;
+    .map_err(|error| match error {
+        AgentError::LlmAuth(_) => "Sign-in required. Choose Retry models to sign in".to_owned(),
+        _ => "Models unavailable. Check the workspace, filter or network and retry".to_owned(),
+    })?;
     if entries.len() > 10_000
         || entries.iter().any(|m| {
             m.id.len() > 512

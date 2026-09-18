@@ -2,6 +2,36 @@ import { test, expect } from "@playwright/test";
 import { createServer } from "vite";
 import config from "../fixtures/agent-control.vite.mjs";
 
+async function closeEditor(page) {
+  const dialog = page.getByRole("dialog", { name: "Edit agent", exact: true });
+  if (await dialog.count())
+    await dialog.getByRole("button", { name: "Close editor" }).click();
+}
+async function showManagement(page) {
+  await closeEditor(page);
+  const summary = page.getByText("Manage local agents", { exact: true });
+  if (!(await summary.evaluate((el) => el.parentElement.open)))
+    await summary.click();
+}
+async function openEditor(page, name = "Fixture agent") {
+  const dialog = page.getByRole("dialog", { name: "Edit agent", exact: true });
+  if (!(await dialog.count()))
+    await page
+      .getByRole("article", { name: `Agent ${name}`, exact: true })
+      .getByRole("button", { name: "Edit", exact: true })
+      .click();
+  for (const name of [
+    "Runtime and identity",
+    "Advanced",
+    "Advanced model settings",
+  ]) {
+    const summary = dialog.getByText(name, { exact: true });
+    if (!(await summary.evaluate((el) => el.parentElement.open)))
+      await summary.click();
+  }
+  return dialog;
+}
+
 test("local controls preserve drafts, confirm operations and distinguish disabled from sleeping", async ({
   page,
 }) => {
@@ -18,8 +48,11 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
     );
-    const panel = page.getByRole("region", { name: "Local agent controls" });
-    const editor = panel.getByRole("article", { name: "Manage Fixture agent" });
+    const panel = page.getByRole("region", {
+      name: "Local agent controls",
+      includeHidden: true,
+    });
+    const editor = await openEditor(page);
     await expect(
       editor.getByText("Process running · relay readiness unverified", {
         exact: true,
@@ -31,27 +64,24 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await expect(
       editor.getByText("ab".repeat(32), { exact: true }),
     ).toBeVisible();
+
     await editor
-      .locator("summary")
-      .filter({ hasText: "Edit agent and harness" })
-      .click();
-    await editor
-      .getByRole("textbox", { name: "System prompt", exact: true })
+      .getByRole("textbox", { name: "Agent instructions", exact: true })
       .fill("My unsaved prompt");
-    await panel.getByRole("button", { name: "Refresh status" }).click();
+    await page.evaluate(() => window.agentControlFixture.control.refresh());
     await expect(
-      editor.getByRole("textbox", { name: "System prompt", exact: true }),
+      editor.getByRole("textbox", { name: "Agent instructions", exact: true }),
     ).toHaveValue("My unsaved prompt");
-    await page.getByRole("button", { name: "Reject saves" }).click();
+    await page.evaluate(() => window.agentControlFixture.failSave(true));
     await editor.getByRole("button", { name: "Save changes" }).click();
-    await expect(panel.getByRole("alert").first()).toContainText(
+    await expect(editor.getByRole("alert").first()).toContainText(
       "Could not confirm",
     );
     await expect(
-      editor.getByRole("textbox", { name: "System prompt", exact: true }),
+      editor.getByRole("textbox", { name: "Agent instructions", exact: true }),
     ).toHaveValue("My unsaved prompt");
-    await page.getByRole("button", { name: "Allow saves" }).click();
-    await panel.getByRole("button", { name: "Retry status" }).click();
+    await page.evaluate(() => window.agentControlFixture.failSave(false));
+    await page.evaluate(() => window.agentControlFixture.control.refresh());
     await editor
       .getByLabel("Replacement for EXAMPLE_TOKEN")
       .fill("fixture-only-value");
@@ -81,9 +111,12 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       editor.getByText(/Saved revision 2 · Running revision 2/),
     ).toBeVisible();
     await editor
-      .getByRole("textbox", { name: "System prompt", exact: true })
+      .getByRole("textbox", { name: "Agent instructions", exact: true })
       .fill("Keep this conflict draft");
-    await page.getByRole("button", { name: "Simulate newer revision" }).click();
+    await page.evaluate(async () => {
+      window.agentControlFixture.agent.revision++;
+      await window.agentControlFixture.control.refresh();
+    });
     await expect(editor.getByRole("alert")).toContainText(
       "newer saved revision",
     );
@@ -91,11 +124,11 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       editor.getByRole("button", { name: "Save changes" }),
     ).toBeDisabled();
     await expect(
-      editor.getByRole("textbox", { name: "System prompt", exact: true }),
+      editor.getByRole("textbox", { name: "Agent instructions", exact: true }),
     ).toHaveValue("Keep this conflict draft");
     await editor.getByRole("button", { name: "Discard changes" }).click();
     await expect(
-      editor.getByRole("textbox", { name: "System prompt", exact: true }),
+      editor.getByRole("textbox", { name: "Agent instructions", exact: true }),
     ).toHaveValue("My unsaved prompt");
     await editor.getByRole("button", { name: "Stop", exact: true }).click();
     await expect(
@@ -106,9 +139,11 @@ test("local controls preserve drafts, confirm operations and distinguish disable
         (call) => call.action !== "snapshot",
       ),
     );
+    await closeEditor(page);
     await page
       .getByRole("button", { name: "Toggle page", exact: true })
       .click();
+    await closeEditor(page);
     await page
       .getByRole("button", { name: "Toggle page", exact: true })
       .click();
@@ -119,6 +154,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
         ),
       ),
     ).toEqual(before);
+    await showManagement(page);
     await panel.getByText("Import from old Buzz", { exact: true }).click();
     await panel.getByLabel("Development Buzz", { exact: true }).check();
     await panel
@@ -137,10 +173,12 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await panel
       .getByRole("button", { name: "Import selected identities" })
       .click();
-    await expect(panel.getByRole("article")).toHaveCount(2);
-    await expect(
-      panel.getByText("Disabled · mentions will not wake this agent"),
-    ).toHaveCount(2);
+    await expect(panel.getByRole("article")).toHaveCount(3);
+    expect(
+      await page.evaluate(() =>
+        window.agentControlFixture.data.agents.every((a) => !a.enabled),
+      ),
+    ).toBe(true);
     await page.screenshot({
       path: test.info().outputPath("agent-controls-light.png"),
       fullPage: true,
@@ -163,8 +201,11 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await page
       .getByRole("button", { name: "Toggle browser-only mode" })
       .click();
+    await showManagement(page);
     await expect(panel.getByText(/This browser cannot run/)).toBeVisible();
-    await expect(panel.getByRole("button")).toHaveCount(0);
+    await expect(
+      panel.getByRole("button", { name: "Edit", exact: true }).first(),
+    ).toBeDisabled();
     expect(errors).toEqual([]);
   } finally {
     await server.close();
@@ -186,15 +227,17 @@ for (const previouslyStopped of [false, true]) {
       await page.goto(
         `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
       );
-      const panel = page.getByRole("region", { name: "Local agent controls" });
-      const editor = panel.getByRole("article", {
-        name: "Manage Fixture agent",
+      const panel = page.getByRole("region", {
+        name: "Local agent controls",
+        includeHidden: true,
       });
+      const editor = await openEditor(page);
       const stop = editor.getByRole("button", { name: "Stop", exact: true });
       if (previouslyStopped) {
         await stop.click();
         await expect(stop).toBeDisabled();
       }
+      await showManagement(page);
       await panel.getByText("Import from old Buzz", { exact: true }).click();
       await panel
         .getByLabel("Destination community", { exact: true })
@@ -203,10 +246,7 @@ for (const previouslyStopped of [false, true]) {
         .getByRole("button", { name: "Preview selected library" })
         .click();
       await panel.getByRole("checkbox").check();
-      await editor
-        .locator("summary")
-        .filter({ hasText: "Edit agent and harness" })
-        .click();
+      await openEditor(page);
       await page.evaluate(() => {
         const fixture = window.agentControlFixture;
         const { snapshot, action } = fixture.host;
@@ -224,8 +264,8 @@ for (const previouslyStopped of [false, true]) {
         fixture.restoreStore = () =>
           Object.assign(fixture.host, { snapshot, action });
       });
-      await panel.getByRole("button", { name: "Refresh status" }).click();
-      await expect(panel.getByRole("alert")).toContainText("Could not refresh");
+      await page.evaluate(() => window.agentControlFixture.control.refresh());
+      await expect(page.getByRole("alert")).toContainText("Could not refresh");
       await expect(stop).toBeEnabled();
       if (previouslyStopped)
         await expect(
@@ -235,7 +275,7 @@ for (const previouslyStopped of [false, true]) {
         editor.getByRole("button", { name: "Restart", exact: true }),
       ).toBeDisabled();
       await editor
-        .getByRole("textbox", { name: "System prompt", exact: true })
+        .getByRole("textbox", { name: "Agent instructions", exact: true })
         .fill("Keep my recovery draft");
       await expect(
         editor.getByRole("button", { name: "Save changes", exact: true }),
@@ -245,24 +285,24 @@ for (const previouslyStopped of [false, true]) {
         "Import selected identities",
       ]) {
         await expect(
-          panel.getByRole("button", { name, exact: true }),
+          panel.getByRole("button", { name, exact: true, includeHidden: true }),
         ).toBeDisabled();
       }
-      await panel.getByRole("button", { name: "Retry status" }).click();
-      await expect(panel.getByRole("alert")).toContainText("Could not refresh");
+      await page.evaluate(() => window.agentControlFixture.control.refresh());
+      await expect(page.getByRole("alert")).toContainText("Could not refresh");
       const before = await page.evaluate(() =>
         window.agentControlFixture.calls.filter(
           (call) => call.action !== "snapshot",
         ),
       );
       await stop.click();
-      await expect(panel.getByRole("alert")).toContainText(
+      await expect(page.getByRole("alert")).toContainText(
         "could not persist disabled settings",
       );
-      await expect(panel.getByRole("alert")).toContainText("Could not confirm");
+      await expect(page.getByRole("alert")).toContainText("Could not confirm");
       await expect(
         panel.getByText("Showing the last host snapshot", { exact: false }),
-      ).toBeVisible();
+      ).toContainText("unconfirmed");
       if (!previouslyStopped) {
         await expect(
           editor.getByText("Enabled · starts with buzz-app", { exact: true }),
@@ -277,7 +317,10 @@ for (const previouslyStopped of [false, true]) {
         ).toHaveCount(0);
       }
       await expect(
-        editor.getByRole("textbox", { name: "System prompt", exact: true }),
+        editor.getByRole("textbox", {
+          name: "Agent instructions",
+          exact: true,
+        }),
       ).toHaveValue("Keep my recovery draft");
       await expect(
         editor.getByRole("button", { name: "Save changes" }),
@@ -296,7 +339,7 @@ for (const previouslyStopped of [false, true]) {
       // Repairing the host does not implicitly retry. A second explicit Stop can recover.
       await page.evaluate(() => window.agentControlFixture.restoreStore());
       await stop.click();
-      await expect(panel.getByRole("alert")).toHaveCount(0);
+      await expect(page.getByRole("alert")).toHaveCount(0);
       await expect(
         editor.getByText("Disabled · mentions will not wake this agent"),
       ).toBeVisible();
@@ -333,19 +376,25 @@ test("native editing checkpoint blocks launch and credential import while retain
       fixture.agent.enabled = true;
       await fixture.control.refresh();
     });
-    const panel = page.getByRole("region", { name: "Local agent controls" });
+    const panel = page.getByRole("region", {
+      name: "Local agent controls",
+      includeHidden: true,
+    });
+    await showManagement(page);
     await expect(
       panel.getByText("Execution blocked by native host"),
     ).toBeVisible();
+    const editor = await openEditor(page);
     await expect(
-      panel.getByRole("button", { name: "Start", exact: true }),
+      editor.getByRole("button", { name: "Start", exact: true }),
     ).toBeDisabled();
     await expect(
-      panel.getByRole("button", { name: "Restart", exact: true }),
+      editor.getByRole("button", { name: "Restart", exact: true }),
     ).toBeDisabled();
     await expect(
-      panel.getByRole("button", { name: "Stop", exact: true }),
+      editor.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
+    await showManagement(page);
     await panel.getByText("Import from old Buzz", { exact: true }).click();
     await expect(
       panel.getByText(/Import is disabled in this integration checkpoint/),
@@ -360,9 +409,10 @@ test("native editing checkpoint blocks launch and credential import while retain
     await expect(
       panel.getByRole("button", { name: "Import selected identities" }),
     ).toBeDisabled();
-    await panel.getByRole("button", { name: "Stop", exact: true }).click();
+    await openEditor(page);
+    await editor.getByRole("button", { name: "Stop", exact: true }).click();
     await expect(
-      panel.getByText("Disabled · mentions will not wake this agent"),
+      editor.getByText("Disabled · mentions will not wake this agent"),
     ).toBeVisible();
     expect(
       await page.evaluate(() =>
@@ -390,12 +440,8 @@ test("native-supplied harness choices preserve current values and save only expl
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
     );
-    const panel = page.getByRole("region", { name: "Local agent controls" });
-    const editor = panel.getByRole("article");
-    await editor
-      .locator("summary")
-      .filter({ hasText: "Edit agent and harness" })
-      .click();
+    const editor = await openEditor(page);
+
     const harness = editor.getByRole("combobox", {
       name: "Harness",
       exact: true,
@@ -408,9 +454,12 @@ test("native-supplied harness choices preserve current values and save only expl
       name: "Executable",
       exact: true,
     });
-    const model = editor.getByRole("textbox", { name: "Model", exact: true });
+    const model = editor.getByRole("textbox", {
+      name: "Model ID (custom or blank)",
+      exact: true,
+    });
     const prompt = editor.getByRole("textbox", {
-      name: "System prompt",
+      name: "Agent instructions",
       exact: true,
     });
     const save = editor.getByRole("button", { name: "Save changes" });
@@ -453,17 +502,17 @@ test("native-supplied harness choices preserve current values and save only expl
       },
       environment: {},
     });
-    await panel.getByRole("button", { name: "Refresh status" }).click();
+    await page.evaluate(() => window.agentControlFixture.control.refresh());
+    await closeEditor(page);
     await page
       .getByRole("button", { name: "Toggle page", exact: true })
       .click();
+    await closeEditor(page);
     await page
       .getByRole("button", { name: "Toggle page", exact: true })
       .click();
-    await editor
-      .locator("summary")
-      .filter({ hasText: "Edit agent and harness" })
-      .click();
+
+    await openEditor(page);
     await expect(harness.locator("option:checked")).toHaveText("Buzz Agent");
     await expect(provider.locator("option:checked")).toHaveText(
       "Databricks v2",
@@ -496,11 +545,14 @@ test("native-supplied harness choices preserve current values and save only expl
       .getByLabel("Custom provider", { exact: true })
       .fill("unknown-provider");
     await model.fill("unknown-model");
-    await panel.getByRole("button", { name: "Refresh status" }).click();
+    await page.evaluate(() => window.agentControlFixture.control.refresh());
     await expect(
       editor.getByLabel("Custom provider", { exact: true }),
     ).toHaveValue("unknown-provider");
-    await page.getByRole("button", { name: "Simulate newer revision" }).click();
+    await page.evaluate(async () => {
+      window.agentControlFixture.agent.revision++;
+      await window.agentControlFixture.control.refresh();
+    });
     await expect(save).toBeDisabled();
     await editor.getByRole("button", { name: "Discard changes" }).click();
     await expect(model).toHaveValue("");
@@ -525,9 +577,7 @@ test("native-supplied harness choices preserve current values and save only expl
       .getByLabel("Custom provider", { exact: true })
       .fill("unknown-provider");
     await model.fill("unknown-model");
-    await editor
-      .getByText("Advanced: executable and arguments", { exact: true })
-      .click();
+
     const args = ["--custom", "literal space", 'quoted "value"'];
     await editor
       .getByRole("textbox", { name: "Arguments (JSON array)", exact: true })
@@ -555,10 +605,7 @@ test("native-supplied harness choices preserve current values and save only expl
       fullPage: true,
     });
     await expect(
-      editor.getByText(/Saved environment overrides take precedence/),
-    ).toBeVisible();
-    await expect(
-      editor.getByText(/Choices configure saved settings/),
+      editor.getByText(/Environment overrides take precedence/),
     ).toBeVisible();
   } finally {
     await server.close();
@@ -579,8 +626,7 @@ test("editor renders host choices rather than its own catalog, and tolerates an 
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
     );
-    const panel = page.getByRole("region", { name: "Local agent controls" });
-    const editor = panel.getByRole("article");
+    const editor = await openEditor(page);
     await page.evaluate(async () => {
       const f = window.agentControlFixture;
       f.data.harnessOptions = [
@@ -592,10 +638,7 @@ test("editor renders host choices rather than its own catalog, and tolerates an 
       ];
       await f.control.refresh();
     });
-    await editor
-      .locator("summary")
-      .filter({ hasText: "Edit agent and harness" })
-      .click();
+
     const harness = editor.getByRole("combobox", {
       name: "Harness",
       exact: true,
@@ -650,7 +693,7 @@ for (const launch of ["start", "restart"]) {
           `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
         );
         await expect(
-          page.getByRole("article", { name: "Manage Fixture agent" }),
+          page.getByRole("article", { name: "Agent Fixture agent" }),
         ).toBeVisible();
         await page.evaluate(
           async ({ launch, lateFailure }) => {
@@ -660,6 +703,7 @@ for (const launch of ["start", "restart"]) {
             f.data.agents.push({
               ...structuredClone(f.agent),
               id: "other",
+              pubkey: "bc".repeat(32),
               name: "Other running agent",
               enabled: true,
               status: "running",
@@ -688,20 +732,13 @@ for (const launch of ["start", "restart"]) {
           },
           { launch, lateFailure },
         );
-        const first = page.getByRole("article", {
-          name: "Manage Fixture agent",
-        });
-        const other = page.getByRole("article", {
-          name: "Manage Other running agent",
-        });
+        const first = await openEditor(page);
+        const other = first; // one dialog; target changes only via exact card selection
         const firstStop = first.getByRole("button", {
           name: "Stop",
           exact: true,
         });
-        const otherStop = other.getByRole("button", {
-          name: "Stop",
-          exact: true,
-        });
+        const otherStop = firstStop;
         await first
           .getByRole("button", {
             name: launch === "start" ? "Start" : "Restart",
@@ -712,6 +749,8 @@ for (const launch of ["start", "restart"]) {
           .poll(() => page.evaluate(() => typeof window.releaseLaunch))
           .toBe("function");
         await expect(firstStop).toBeEnabled(); // even the previously stopped row
+        await closeEditor(page);
+        await openEditor(page, "Other running agent");
         await expect(otherStop).toBeEnabled();
         await expect(
           other.getByRole("button", { name: "Restart", exact: true }),
@@ -733,6 +772,8 @@ for (const launch of ["start", "restart"]) {
         await expect(
           other.getByText("Disabled · mentions will not wake this agent"),
         ).toBeVisible();
+        await closeEditor(page);
+        await openEditor(page);
         await expect(firstStop).toBeEnabled();
         // Then cancel the pending launch via the real button/projection as well.
         await firstStop.click();
@@ -767,6 +808,8 @@ for (const launch of ["start", "restart"]) {
         await expect(
           first.getByText("Disabled · mentions will not wake this agent"),
         ).toBeVisible();
+        await closeEditor(page);
+        await openEditor(page, "Other running agent");
         await expect(
           other.getByText("Disabled · mentions will not wake this agent"),
         ).toBeVisible();
@@ -797,7 +840,11 @@ for (const changed of ["destination", "source"]) {
       await page.goto(
         `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
       );
-      const panel = page.getByRole("region", { name: "Local agent controls" });
+      const panel = page.getByRole("region", {
+        name: "Local agent controls",
+        includeHidden: true,
+      });
+      await showManagement(page);
       await panel.getByText("Import from old Buzz", { exact: true }).click();
       const destination = panel.getByLabel("Destination community", {
         exact: true,
@@ -897,7 +944,11 @@ test("rejected import preview keeps inputs and recovers through Retry status", a
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
     );
-    const panel = page.getByRole("region", { name: "Local agent controls" });
+    const panel = page.getByRole("region", {
+      name: "Local agent controls",
+      includeHidden: true,
+    });
+    await showManagement(page);
     await panel.getByText("Import from old Buzz", { exact: true }).click();
     const destination = panel.getByLabel("Destination community", {
       exact: true,
@@ -917,12 +968,12 @@ test("rejected import preview keeps inputs and recovers through Retry status", a
       };
     });
     await preview.click();
-    await expect(panel.getByRole("alert")).toContainText(
+    await expect(page.getByRole("alert")).toContainText(
       "Choose a secure community origin",
     );
     await expect(destination).toHaveValue("ws://not-supported.example");
     await expect(preview).toBeDisabled();
-    await panel.getByRole("button", { name: "Retry status" }).click();
+    await page.evaluate(() => window.agentControlFixture.control.refresh());
     await expect(destination).toBeEnabled();
     await page.evaluate(() => window.agentControlFixture.restorePreview());
     await destination.fill("wss://corrected.example");

@@ -1,6 +1,11 @@
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
-import { AgentControlPanel } from "../../src/bundled/agents/AgentControlPanel";
+import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
+import { createRelaySession } from "../../src/features/relay/session";
+import type {
+  RelayData,
+  RelaySnapshot,
+} from "../../src/features/relay/service";
 import { createAgentControl } from "../../src/features/agents/control";
 import { controlFixture } from "../../src/features/agents/control-testing";
 import { Button } from "../../src/shared/design-system/ui/Button";
@@ -42,6 +47,43 @@ fixture.host.models = {
   },
 };
 const control = createAgentControl(fixture.host);
+const session = createRelaySession({
+  viewer: "de".repeat(32),
+  relayAuthor: "ef".repeat(32),
+  scope: "wss://relay.example.test",
+  async readAgentLibrary() {
+    return {
+      definitions: [
+        { id: "fixture", name: fixture.agent.name },
+        { id: "unlinked", name: "Library only" },
+      ],
+      identities: [
+        {
+          pubkey: fixture.agent.pubkey,
+          name: fixture.agent.name,
+          definitionId: "fixture",
+        },
+      ],
+    };
+  },
+  async query() {
+    return [];
+  },
+  media: () => undefined,
+});
+const relaySnapshot: RelaySnapshot = {
+  status: "ready",
+  scope: "fixture",
+  generation: 1,
+  session: session.session,
+};
+const relay: RelayData = {
+  snapshot: () => relaySnapshot,
+  subscribe: () => () => {},
+  retry() {},
+  disconnect() {},
+  clearCache: async () => {},
+};
 Object.assign(window, {
   agentModelsFixture: {
     calls: modelCalls,
@@ -112,7 +154,8 @@ function Fixture() {
         </div>
       </header>
       {shown && (
-        <AgentControlPanel
+        <AgentsPage
+          relay={relay}
           key={browser ? "browser" : "native"}
           control={browser ? unavailable : control}
         />

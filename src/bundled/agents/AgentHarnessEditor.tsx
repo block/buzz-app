@@ -27,42 +27,18 @@ export function AgentHarnessEditor({
   const harness = options.find((option) => option.command === draft.command);
   return (
     <div className="space-y-4">
-      <ConfigChoice
-        label="Harness"
-        customLabel="Custom executable / current value"
-        inputLabel="Executable"
-        value={draft.command}
-        options={options.map(({ command, label }) => ({
-          value: command,
-          label,
-        }))}
-        onChange={(command) => onChange({ command })}
-      />
-      <p className="text-body-sm text-secondary">
-        Choices configure saved settings; they do not install or launch a
-        harness. The executable runs with your account’s access when execution
-        is available.
-      </p>
-      <details className="space-y-3">
-        <summary className="cursor-pointer text-body-sm text-secondary">
-          Advanced: executable and arguments
-        </summary>
-        <p className="break-all font-mono text-mono">{draft.command}</p>
-        <label className="agent-control-field">
-          Arguments (JSON array)
-          <textarea
-            rows={3}
-            value={draft.args}
-            spellCheck={false}
-            onChange={(event) => onChange({ args: event.target.value })}
-          />
-        </label>
-        <p className="text-body-sm text-secondary">
-          Arguments are passed literally, not through a shell. Choosing a
-          harness keeps existing arguments; review them before saving.
-        </p>
-      </details>
       <div className="grid gap-4 sm:grid-cols-2">
+        <ConfigChoice
+          label="Harness"
+          customLabel="Custom executable / current value"
+          inputLabel="Executable"
+          value={draft.command}
+          options={options.map(({ command, label }) => ({
+            value: command,
+            label,
+          }))}
+          onChange={(command) => onChange({ command })}
+        />
         <ConfigChoice
           label="Provider"
           customLabel="Custom provider / current value"
@@ -83,12 +59,6 @@ export function AgentHarnessEditor({
         defaults={defaults}
         onChange={onChange}
       />
-      <p className="text-body-sm text-secondary">
-        Saved environment overrides take precedence over Model and Provider:
-        BUZZ_AGENT_MODEL / BUZZ_AGENT_PROVIDER for buzz-agent, GOOSE_MODEL /
-        GOOSE_PROVIDER for Goose. Blank selectors do not clear those overrides.
-        ACP uses the same effective model.
-      </p>
     </div>
   );
 }

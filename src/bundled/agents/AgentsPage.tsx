@@ -1,11 +1,13 @@
-import type { AgentControl } from "../../features/agents/control";
+import type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+} from "../../features/agents/control";
+import { AgentCard } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
-import { IconRefresh, IconUsers } from "@tabler/icons-react";
+import { IconRefresh } from "@tabler/icons-react";
 import { Button } from "../../shared/design-system/ui/Button";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
-import { avatarSource } from "../../shared/avatar-source";
 import {
   groupAgentLibrary,
   type AgentLibrary,
@@ -23,46 +25,84 @@ export function AgentsPage({
   control?: AgentControl;
 }) {
   const connection = useRelayConnection(relay);
+  const disconnected = (
+    <div className="mt-6 space-y-3 text-body">
+      <p>
+        {connection.status === "connecting"
+          ? "Connecting to your community…"
+          : "Connect to a community to browse your agents."}
+      </p>
+      {connection.status === "error" && (
+        <Button onClick={() => relay.retry()}>Retry connection</Button>
+      )}
+    </div>
+  );
   return (
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Agents">
         <div className="h-full min-h-0 overflow-auto p-panel-inset text-body">
           <h1 className="m-0 text-title text-primary">Agents</h1>
-          {control && (
-            <div className="mt-6">
-              <AgentControlPanel control={control} />
-            </div>
+          {control ? (
+            <AgentControlPanel control={control}>
+              {(state, edit) =>
+                connection.status === "ready" ? (
+                  <MyAgents
+                    key={`${connection.scope}:${connection.generation}`}
+                    session={connection.session}
+                    state={state}
+                    onEdit={edit}
+                  />
+                ) : (
+                  <>
+                    {disconnected}
+                    <LocalAgents state={state} onEdit={edit} />
+                  </>
+                )
+              }
+            </AgentControlPanel>
+          ) : connection.status === "ready" ? (
+            <MyAgents
+              key={`${connection.scope}:${connection.generation}`}
+              session={connection.session}
+            />
+          ) : (
+            disconnected
           )}
-          <details className="mt-6" open={!control}>
-            <summary className="cursor-pointer text-body font-semibold">
-              Old Buzz library (read-only)
-            </summary>
-            {connection.status === "ready" ? (
-              <MyAgents
-                key={`${connection.scope}:${connection.generation}`}
-                session={connection.session}
-              />
-            ) : (
-              <div className="mt-6">
-                <p className="text-body">
-                  {connection.status === "connecting"
-                    ? "Connecting to your community…"
-                    : "Connect to a community to browse your agents."}
-                </p>
-                {connection.status === "error" && (
-                  <Button onClick={() => relay.retry()}>
-                    Retry connection
-                  </Button>
-                )}
-              </div>
-            )}
-          </details>
         </div>
       </FullPageSurface>
     </div>
   );
 }
-function MyAgents({ session }: { session: RelaySession }) {
+function LocalAgents({
+  state,
+  onEdit,
+}: {
+  state: AgentControlState;
+  onEdit(agent: AgentView, avatar?: string): void;
+}) {
+  return (
+    <div className="agent-grid">
+      {state.data?.agents.map((agent) => (
+        <AgentCard
+          key={agent.id}
+          name={agent.name}
+          identities={[agent]}
+          editable={[agent]}
+          onEdit={onEdit}
+        />
+      ))}
+    </div>
+  );
+}
+function MyAgents({
+  session,
+  state,
+  onEdit,
+}: {
+  session: RelaySession;
+  state?: AgentControlState;
+  onEdit?(agent: AgentView, avatar?: string): void;
+}) {
   const library = session.agentLibrary;
   const archives = session.archives;
   const snapshot = useSyncExternalStore(
@@ -88,6 +128,17 @@ function MyAgents({ session }: { session: RelaySession }) {
     (key) => archives.state(key) === "archived",
   );
   const loading = snapshot.status === "loading";
+  const native = state?.data?.agents ?? [];
+  const linked = new Set(
+    [...groups.flatMap((group) => group.identities), ...custom, ...unknown].map(
+      (identity) => identity.pubkey,
+    ),
+  );
+  const local = native.filter((agent) => !linked.has(agent.pubkey));
+  const edits = (identities: AgentLibrary["identities"]) =>
+    native.filter((agent) =>
+      identities.some((identity) => identity.pubkey === agent.pubkey),
+    );
   return (
     <div className="mx-auto mt-2 max-w-6xl space-y-section-gap">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -123,6 +174,9 @@ function MyAgents({ session }: { session: RelaySession }) {
           {snapshot.error}
         </p>
       )}
+      {snapshot.status !== "ready" && state && onEdit && (
+        <LocalAgents state={state} onEdit={onEdit} />
+      )}
       {snapshot.status === "ready" && (
         <>
           <section aria-label="My agents" className="space-y-3">
@@ -145,6 +199,8 @@ function MyAgents({ session }: { session: RelaySession }) {
                   avatar={group.avatar ?? group.identities[0]?.avatar}
                   identities={group.identities}
                   session={session}
+                  editable={edits(group.identities)}
+                  onEdit={onEdit}
                 />
               ))}
             </div>
@@ -160,6 +216,8 @@ function MyAgents({ session }: { session: RelaySession }) {
                     avatar={identity.avatar}
                     identities={[identity]}
                     session={session}
+                    editable={edits([identity])}
+                    onEdit={onEdit}
                   />
                 ))}
               </div>
@@ -176,6 +234,8 @@ function MyAgents({ session }: { session: RelaySession }) {
                     avatar={identity.avatar}
                     identities={[identity]}
                     session={session}
+                    editable={edits([identity])}
+                    onEdit={onEdit}
                   />
                 ))}
               </div>
@@ -187,6 +247,22 @@ function MyAgents({ session }: { session: RelaySession }) {
               this does not grant channel access.
             </p>
           )}
+          {!!local.length && (
+            <section aria-label="Local agents" className="space-y-3">
+              <h2 className="text-heading">Local agents</h2>
+              <div className="agent-grid">
+                {local.map((agent) => (
+                  <AgentCard
+                    key={agent.id}
+                    name={agent.name}
+                    identities={[agent]}
+                    editable={[agent]}
+                    onEdit={onEdit}
+                  />
+                ))}
+              </div>
+            </section>
+          )}
           <p className="border-t border-primary pt-4 text-body-sm text-secondary">
             Mention existing members with @ in a channel or thread. This is your
             current Buzz library, read-only; keep Buzz running for replies.
@@ -194,68 +270,5 @@ function MyAgents({ session }: { session: RelaySession }) {
         </>
       )}
     </div>
-  );
-}
-function AgentCard({
-  name,
-  avatar,
-  identities,
-  session,
-}: {
-  name: string;
-  avatar?: string | undefined;
-  identities: AgentLibrary["identities"];
-  session: RelaySession;
-}) {
-  const source = avatarSource(avatar);
-  const picture = source?.startsWith("data:")
-    ? source
-    : source
-      ? session.media(source, "small")
-      : undefined;
-  return (
-    <article className="flex min-w-0 flex-col rounded-2xl border border-primary p-4">
-      <div className="flex min-h-36 flex-1 items-center justify-center py-5">
-        <Avatar alt={name} fallback={name} src={picture ?? null} size="large" />
-      </div>
-      <h3 className="m-0 truncate text-label" title={name}>
-        {name}
-      </h3>
-      {identities.length ? (
-        <Accordion
-          items={[
-            {
-              value: "identities",
-              title: (
-                <span className="flex items-center gap-2">
-                  <IconUsers size={16} stroke={2} aria-hidden="true" />
-                  <span className="sr-only">{name}: </span>
-                  {identities.length}{" "}
-                  {identities.length === 1 ? "identity" : "identities"}
-                </span>
-              ),
-              content: (
-                <ul className="mt-2 space-y-3 border-t border-primary pt-3">
-                  {identities.map((identity) => (
-                    <li key={identity.pubkey}>
-                      <span className="font-semibold text-primary">
-                        {identity.name}
-                      </span>
-                      <p className="m-0 mt-1 select-all break-all text-mono-sm">
-                        {identity.pubkey}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              ),
-            },
-          ]}
-        />
-      ) : (
-        <p className="m-0 mt-1 text-body-sm text-secondary">
-          No linked identity
-        </p>
-      )}
-    </article>
   );
 }

@@ -198,3 +198,97 @@ async fn connect_catalog_actual_worker_inference_401_refresh_and_restart_share_c
     let state: Value = serde_json::from_slice(&std::fs::read(&log).unwrap()).unwrap();
     assert_eq!(state["inferences"], 3);
 }
+
+// Same production execute + immutable engine; only HTTP origin validation is
+// relaxed for the owned loopback provider. No app, worker or real browser opens.
+#[tokio::test]
+async fn discovery_rejected_locally_fresh_token_reopens_auth_before_login() {
+    struct LoopbackFactory;
+    impl Factory for LoopbackFactory {
+        fn open(
+            &self,
+            workspace: &str,
+            cache: &std::path::Path,
+            opener: Arc<dyn BrowserOpener>,
+        ) -> Result<Box<dyn Connection>, String> {
+            assert!(workspace.starts_with("http://127.0.0.1:"));
+            Ok(Box::new(RuntimeConnection::new(
+                workspace.into(),
+                cache,
+                opener,
+            )?))
+        }
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("provider.json");
+    let mut server = Owned(
+        Command::new("/usr/bin/python3")
+            .arg(concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/src/agent_models/fixtures/provider.py"
+            ))
+            .arg(&log)
+            .arg("catalog-rejection")
+            .env_clear()
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap(),
+    );
+    let mut origin = String::new();
+    BufReader::new(server.0.stdout.take().unwrap())
+        .read_line(&mut origin)
+        .unwrap();
+    let workspace = origin.trim().to_owned();
+    let cache = oauth_root(&dir.path().join("app")).unwrap();
+    let opener = Arc::new(Callback(AtomicUsize::new(0)));
+    let connection = RuntimeConnection::new(workspace.clone(), &cache, opener.clone()).unwrap();
+    tokio::time::timeout(Duration::from_secs(8), connection.connect())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(opener.0.load(Ordering::SeqCst), 1);
+    // The provider issued a one-hour token; it is fresh locally but rejects its
+    // catalog requests AND its refresh grant. execute must replace cached auth.
+    let result = tokio::time::timeout(
+        Duration::from_secs(8),
+        execute(
+            Operation::Connect,
+            workspace.clone(),
+            None,
+            cache.clone(),
+            false,
+            Arc::new(LoopbackFactory),
+            opener.clone(),
+        ),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(result.models[0].id, "synthetic-model");
+    assert_eq!(opener.0.load(Ordering::SeqCst), 2);
+    // A subsequent picker request and headless Refresh both reuse the new cache.
+    for action in [Operation::Connect, Operation::Refresh] {
+        let result = execute(
+            action,
+            workspace.clone(),
+            None,
+            cache.clone(),
+            false,
+            Arc::new(LoopbackFactory),
+            opener.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.models[0].id, "synthetic-model");
+    }
+    assert_eq!(opener.0.load(Ordering::SeqCst), 2);
+    let trace: Value = serde_json::from_slice(&std::fs::read(log).unwrap()).unwrap();
+    assert_eq!(trace["grants"], 2);
+    assert!(trace["requests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|entry| entry[1] == "Bearer synthetic-1"));
+}

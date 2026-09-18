@@ -1,6 +1,6 @@
 # Runnable Buzz mockup
 
-[main.tsx](main.tsx) assembles the real `AppShell`, `MessageRow`, and `MessageComposer` around a channel and task thread. Close and reopen the thread or toggle the task status; those interactions use local state. Composers are disabled, and read-only service fixtures replace the backend. The task card and layout are custom mockup UI.
+[main.tsx](main.tsx) assembles the real `AppShell`, `MessageRow`, and `MessageComposer` around a channel and task thread. This is one scene, not a working app: service fixtures replace the backend, and sending is blocked. The task card and layout are custom mockup UI.
 
 ## Run
 

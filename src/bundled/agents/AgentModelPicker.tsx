@@ -1,5 +1,5 @@
 import { Combobox } from "@base-ui/react/combobox";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import type {
   AgentControl,
   ControlSnapshot,
@@ -23,6 +23,7 @@ export function AgentModelPicker({
   defaults: ControlSnapshot["databricksDefaults"];
   onChange(patch: Partial<AgentDraft>): void;
 }) {
+  const searchId = useId();
   const host = draft.databricks?.host ?? defaults?.host ?? "";
   const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
   const [catalog, setCatalog] = useState<{
@@ -205,15 +206,17 @@ export function AgentModelPicker({
           <div className="buzz-select">
             <Combobox.Root<ModelCatalog["models"][number]>
               items={fresh.models}
-              value={null}
+              value={
+                fresh.models.find((model) => model.id === draft.model) ?? null
+              }
               itemToStringLabel={(model) => `${model.name} — ${model.id}`}
               onValueChange={(model) => {
                 if (model) onChange({ model: model.id });
               }}
             >
-              <Combobox.Label>Search available models</Combobox.Label>
+              <label htmlFor={searchId}>Search available models</label>
               <Combobox.Input
-                aria-label="Search available models"
+                id={searchId}
                 placeholder="Search name or model ID"
                 className="agent-model-search"
               />

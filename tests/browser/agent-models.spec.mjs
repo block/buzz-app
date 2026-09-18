@@ -39,10 +39,46 @@ test("explicit model search preserves custom drafts and fences cancellation/cont
     const search = editor.getByRole("combobox", {
       name: "Search available models",
     });
-    await search.fill("Friendly");
+    await editor.getByRole("button", { name: "Browse models" }).click();
     await page.getByRole("option", { name: /Friendly Model/ }).click();
     await expect(model).toHaveValue("catalog.schema.real-model");
+    await expect(search).toHaveValue(
+      "Friendly Model — catalog.schema.real-model",
+    );
+    await editor.getByRole("button", { name: "Save changes" }).click();
+    await expect(
+      editor.getByText("Saved. Running work was not restarted."),
+    ).toBeVisible();
+    expect(
+      await page.evaluate(() => window.agentControlFixture.agent.harness.model),
+    ).toBe("catalog.schema.real-model");
+    await page
+      .getByRole("button", { name: "Toggle page", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "Toggle page", exact: true })
+      .click();
+    await editor
+      .locator("summary")
+      .filter({ hasText: "Edit agent and harness" })
+      .click();
+    await expect(model).toHaveValue("catalog.schema.real-model");
+    await editor
+      .getByText("Connect and search Databricks v2 models", { exact: true })
+      .click();
+    await editor.getByRole("button", { name: "Refresh models" }).click();
+    await expect(search).toHaveValue(
+      "Friendly Model — catalog.schema.real-model",
+    );
+    await search.fill("Other");
+    await search.press("Escape");
+    await expect(model).toHaveValue("catalog.schema.real-model");
+    await search.click();
+    await page.getByRole("option", { name: /Other Model/ }).click();
+    await expect(model).toHaveValue("endpoint-two");
+    await expect(search).toHaveValue("Other Model — endpoint-two");
     await model.fill("");
+    await expect(search).toHaveValue("");
     await editor.getByRole("button", { name: "Refresh models" }).click();
     await expect(editor.getByRole("status")).toContainText("Models loaded");
     await expect(model).toHaveValue("");

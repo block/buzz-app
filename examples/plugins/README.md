@@ -8,6 +8,7 @@ All example plugins live here with `manifest.json` and prebuilt `plugin.js` file
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+K /
   Control+Shift+K increments through the injected host service. Requires `shortcuts`.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.
+- `browser`: opens HTTP(S) links in a Buzz-owned window through the desktop browser capability. Existing matching panels take precedence; the web application keeps ordinary link behavior.
 
 ## Try the offline playgrounds
 

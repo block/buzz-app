@@ -338,13 +338,18 @@ checksum = "72f5acc6cb2ba439de613abc23857ec3d78374d8ed5ac84e9d11336e87da8649"
 name = "buzz-foundation"
 version = "0.0.0"
 dependencies = [
+ "block2",
  "buzzodz-plugins",
  "futures-lite",
  "gtk",
  "libc",
  "mac-notification-sys",
+ "objc2",
+ "objc2-foundation",
+ "objc2-web-kit",
  "portable-pty",
  "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
@@ -352,6 +357,10 @@ dependencies = [
  "tauri-winrt-notification",
  "url",
  "uuid",
+ "webkit2gtk",
+ "webview2-com",
+ "windows-core 0.61.2",
+ "wry",
  "zbus",
 ]
 

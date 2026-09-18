@@ -43,6 +43,7 @@ plugins/                installation, lifecycle, contribution ownership
 features/pages/         page contract and host rendering
 features/panels/        target resolution, launcher contract and reusable card/frame
 features/shortcuts/     in-app binding dispatch, focus rules and plugin ownership
+features/browser/       desktop browser capability; native guest and controls owned by host
 features/relay/         shared channel data, queries, profiles and durable delivery
 features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
@@ -427,6 +428,10 @@ capabilities, destination-bound asynchronous work and cancellation; accepted
 material belongs to the draft, not the optional tool. Add these contracts against
 real workflows rather than declaring the toolbar a universal editor API.
 
+
+## Desktop browser
+
+Plugins can use the host-matched [`browser` capability](browser.md) to open HTTP(S) links in a Buzz-owned native window. The [external Browser example](../examples/plugins/browser/README.md) consumes that capability through the existing panel contract. The web application reports it unavailable. Website content has a separate native view without Buzz IPC; external plugin code remains trusted same-process code.
 
 ## In-app keyboard shortcuts
 

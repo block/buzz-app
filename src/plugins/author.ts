@@ -1,6 +1,7 @@
 // FOUNDATION: Type-only author entry. Runtime capabilities come from injected ctx.
 export type { PluginManifest, PluginModule } from "./api";
 export type { Context } from "@deepseek-ai/cordis";
+export type { Browser, BrowserOpenResult } from "../features/browser/api";
 export type { Page, Pages } from "../features/pages/service";
 export type {
   Panel,

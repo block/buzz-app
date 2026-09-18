@@ -1,5 +1,9 @@
+mod browser;
+#[cfg(test)]
+mod browser_permissions_tests;
 mod notifications;
 mod terminal;
+use browser::{browser_action, browser_navigate, browser_open, browser_status};
 use notifications::{notification_show, Notifications};
 use tauri::Manager as _;
 use terminal::{
@@ -178,9 +182,13 @@ pub fn run() {
             plugin_catalog,
             plugin_change,
             plugin_module,
-            plugin_recover
+            plugin_recover,
+            browser_open,
+            browser_navigate,
+            browser_action,
+            browser_status
         ])
-        .build(tauri::generate_context!())
+        .build(app_context())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
@@ -189,4 +197,8 @@ pub fn run() {
                 }
             }
         });
+}
+
+fn app_context<R: tauri::Runtime>() -> tauri::Context<R> {
+    tauri::generate_context!()
 }

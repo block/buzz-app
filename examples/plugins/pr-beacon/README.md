@@ -7,6 +7,11 @@ built from public GitHub REST/GraphQL API documentation.
 
 ## What's implemented
 
+- **Responsive review workspace** — grouped queues, readable diffs, and separate
+  summary and approval controls. Follows Buzz's light/dark preference and text
+  size. Plugin-scoped styles are embedded in the JavaScript bundle; no separate
+  stylesheet or host UI imports are required.
+
 - **Review requests** — your open, requested-review pull requests, split into
   a **Highlighted** section (VIP authors or watched labels) and an ordinary
   **Review requests** section.

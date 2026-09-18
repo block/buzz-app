@@ -28,15 +28,19 @@ export function createSettingsPanel(React: ReactRuntime) {
     );
 
     return (
-      <section aria-label="PR Beacon settings">
-        <h2>Settings</h2>
+      <section className="beacon-settings" aria-label="PR Beacon settings">
+        <h2 className="beacon-group-title">Connections & preferences</h2>
         {props.saveError && (
           <p role="alert">
             Couldn't save your preferences: {props.saveError}. Changes apply for
             this session but won't persist across reload.
           </p>
         )}
-        <div>
+        <div className="beacon-card beacon-settings-card">
+          <div className="beacon-section-heading">
+            <h3>GitHub connection</h3>
+            <span className="beacon-badge">Session only</span>
+          </div>
           <p>
             GitHub personal access token. Kept in memory for this session only —
             never saved to disk, never logged. You'll re-enter it each time you
@@ -66,11 +70,17 @@ export function createSettingsPanel(React: ReactRuntime) {
                   onChange={(event) => setTokenInput(event.target.value)}
                 />
               </label>
-              <button type="submit">Use token</button>
+              <button className="beacon-primary" type="submit">
+                Use token
+              </button>
             </form>
           )}
         </div>
-        <div>
+        <div className="beacon-card beacon-settings-card">
+          <h3>Review priorities</h3>
+          <p className="beacon-muted">
+            Highlight requests from these people or with these labels.
+          </p>
           <label>
             VIP GitHub usernames (comma-separated)
             <input
@@ -85,8 +95,6 @@ export function createSettingsPanel(React: ReactRuntime) {
               }
             />
           </label>
-        </div>
-        <div>
           <label>
             Watched labels (comma-separated)
             <input
@@ -102,8 +110,9 @@ export function createSettingsPanel(React: ReactRuntime) {
             />
           </label>
         </div>
-        <div>
-          <label>
+        <div className="beacon-card beacon-settings-card">
+          <h3>Refresh</h3>
+          <label className="beacon-checkbox">
             <input
               type="checkbox"
               checked={props.preferences.pollingEnabled}

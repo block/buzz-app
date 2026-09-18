@@ -372,155 +372,249 @@ export function createPullRequestDetailView(React: ReactRuntime) {
     if (!detail || !files) return <p>Loading…</p>;
 
     return (
-      <section aria-label={`Pull request #${pullRequest.number}`}>
-        <h2>{detail.title}</h2>
-        <p>
-          {detail.repository} #{detail.number} by {detail.author} —{" "}
-          {detail.headRefName} → {detail.baseRefName}
-        </p>
-        <section aria-label="Agent summary">
-          <h3>Agent summary</h3>
-          {!summarySelection && (
-            <p>
-              Pick a summary agent and channel in Settings to send this diff for
-              a summary. There's no built-in AI provider — this posts the diff
-              as a message to an existing Buzz agent you choose.
-            </p>
-          )}
-          {summarySelection &&
-            (() => {
-              const agentName =
-                relaySnapshot.session.agentLibrary
-                  .snapshot()
-                  .identities.find(
-                    (identity) =>
-                      identity.pubkey === summarySelection.agentPubkey,
-                  )?.name ?? summarySelection.agentPubkey;
-              const channelName =
-                relaySnapshot.session.channels
-                  .list()
-                  .channels.find(
-                    (channel) => channel.id === summarySelection.channelId,
-                  )?.name ?? summarySelection.channelId;
-              const canSend = Boolean(summaryRequest?.hasUsableDiff);
-              return (
-                <div>
-                  <p>
-                    Sends this pull request's title, URL, base/head commits, and
-                    diff to <strong>{agentName}</strong> in{" "}
-                    <strong>{channelName}</strong>. Every member of that channel
-                    can read the diff you send.
-                  </p>
-                  {summaryRequest?.hasUsableDiff && (
-                    <p>
-                      Will include {summaryRequest.includedFiles.length} changed
-                      file(s).{" "}
-                      {summaryRequest.omittedFiles.length > 0 &&
-                        `${summaryRequest.omittedFiles.length} file(s) omitted: ${summaryRequest.omittedFiles.join(", ")}.`}{" "}
-                      {summaryRequest.truncated &&
-                        "This summary will be partial coverage, not the complete diff."}
+      <section
+        className="beacon-detail"
+        aria-label={`Pull request #${pullRequest.number}`}
+      >
+        <header className="beacon-detail-header">
+          <p className="beacon-eyebrow">
+            {detail.repository} <span>#{detail.number}</span>
+          </p>
+          <h2>{detail.title}</h2>
+          <div className="beacon-detail-meta">
+            <span>
+              by <strong>{detail.author}</strong>
+            </span>
+            <span className="beacon-branches">
+              <code>{detail.headRefName}</code>
+              <span aria-hidden="true">→</span>
+              <code>{detail.baseRefName}</code>
+            </span>
+          </div>
+        </header>
+        <div className="beacon-review-grid">
+          <section
+            className="beacon-card beacon-summary"
+            aria-label="Agent summary"
+          >
+            <div className="beacon-section-heading">
+              <h3>Agent summary</h3>
+              <span className="beacon-badge beacon-accent">Buzz agent</span>
+            </div>
+            {!summarySelection && (
+              <p>
+                Pick a summary agent and channel in Settings to send this diff
+                for a summary. There's no built-in AI provider — this posts the
+                diff as a message to an existing Buzz agent you choose.
+              </p>
+            )}
+            {summarySelection &&
+              (() => {
+                const agentName =
+                  relaySnapshot.session.agentLibrary
+                    .snapshot()
+                    .identities.find(
+                      (identity) =>
+                        identity.pubkey === summarySelection.agentPubkey,
+                    )?.name ?? summarySelection.agentPubkey;
+                const channelName =
+                  relaySnapshot.session.channels
+                    .list()
+                    .channels.find(
+                      (channel) => channel.id === summarySelection.channelId,
+                    )?.name ?? summarySelection.channelId;
+                const canSend = Boolean(summaryRequest?.hasUsableDiff);
+                return (
+                  <div>
+                    <p className="beacon-sharing">
+                      Sends this pull request's title, URL, base/head commits,
+                      and diff to <strong>{agentName}</strong> in{" "}
+                      <strong>{channelName}</strong>. Every member of that
+                      channel can read the diff you send.
                     </p>
-                  )}
-                  {summaryRequest && !summaryRequest.hasUsableDiff && (
-                    <p role="alert">
-                      No diff is available to send (every changed file was
-                      binary, too large, or otherwise had no patch).
-                    </p>
-                  )}
-                  {agentSummaryState.kind === "idle" && (
-                    <button
-                      type="button"
-                      onClick={handleSendToAgent}
-                      disabled={!canSend}
-                    >
-                      Send diff to agent
-                    </button>
-                  )}
-                  {agentSummaryState.kind === "sending" && <p>Sending…</p>}
-                  {agentSummaryState.kind === "waiting" && (
-                    <p>Waiting for {agentName} to reply…</p>
-                  )}
-                  {agentSummaryState.kind === "replied" && (
-                    <div>
-                      <pre style={{ whiteSpace: "pre-wrap" }}>
-                        {agentSummaryState.content}
-                      </pre>
-                      <p>
-                        {agentName} doesn't signal when it's done — this is the
-                        latest reply seen; more may still arrive.
+                    {summaryRequest?.hasUsableDiff && (
+                      <p className="beacon-coverage">
+                        Will include {summaryRequest.includedFiles.length}{" "}
+                        changed file(s).{" "}
+                        {summaryRequest.omittedFiles.length > 0 &&
+                          `${summaryRequest.omittedFiles.length} file(s) omitted: ${summaryRequest.omittedFiles.join(", ")}.`}{" "}
+                        {summaryRequest.truncated &&
+                          "This summary will be partial coverage, not the complete diff."}
                       </p>
-                    </div>
-                  )}
-                  {agentSummaryState.kind === "timed-out" && (
-                    <p role="alert">
-                      {agentName} hasn't replied yet.{" "}
+                    )}
+                    {summaryRequest && !summaryRequest.hasUsableDiff && (
+                      <p role="alert">
+                        No diff is available to send (every changed file was
+                        binary, too large, or otherwise had no patch).
+                      </p>
+                    )}
+                    {agentSummaryState.kind === "idle" && (
                       <button
+                        className="beacon-primary"
                         type="button"
                         onClick={handleSendToAgent}
                         disabled={!canSend}
                       >
-                        Send again
+                        Send diff to agent
                       </button>
-                    </p>
-                  )}
-                  {agentSummaryState.kind === "error" && (
-                    <p role="alert">{agentSummaryState.message}</p>
-                  )}
-                </div>
-              );
-            })()}
-        </section>
-        <section aria-label="Changed files">
-          {filesTruncated && (
-            <p role="alert">
-              This pull request changed more files than can be shown here. Open
-              it on GitHub to see the complete diff before approving.
-            </p>
-          )}
-          {files.map((file) => (
-            <details key={file.filename}>
-              <summary>
-                {file.filename} (+{file.additions}/−{file.deletions})
-              </summary>
-              <pre>{file.patch ?? "Binary or too large to display."}</pre>
-            </details>
-          ))}
-        </section>
-        <section aria-label="Approve">
-          {approveState.kind === "idle" && (
-            <button type="button" onClick={handleApprove}>
-              Approve {detail.headSha.slice(0, 7)}
-            </button>
-          )}
-          {approveState.kind === "approving" && <p>Submitting approval…</p>}
-          {approveState.kind === "approved" && <p>Approved.</p>}
-          {approveState.kind === "stale" && (
-            <p role="alert">
-              The pull request changed since you viewed this diff. Reopen it to
-              review the new commit before approving.
-            </p>
-          )}
-          {approveState.kind === "uncertain" && (
-            <div role="alert">
-              <p>
-                {approveState.message ??
-                  "GitHub didn't confirm whether the approval went through. Check before retrying — don't submit a second approval blind."}
+                    )}
+                    {agentSummaryState.kind === "sending" && <p>Sending…</p>}
+                    {agentSummaryState.kind === "waiting" && (
+                      <p>Waiting for {agentName} to reply…</p>
+                    )}
+                    {agentSummaryState.kind === "replied" && (
+                      <div className="beacon-reply">
+                        <span className="beacon-eyebrow">
+                          Latest agent reply
+                        </span>
+                        <pre>{agentSummaryState.content}</pre>
+                        <p className="beacon-reply-note">
+                          {agentName} doesn't signal when it's done — this is
+                          the latest reply seen; more may still arrive.
+                        </p>
+                      </div>
+                    )}
+                    {agentSummaryState.kind === "timed-out" && (
+                      <p role="alert">
+                        {agentName} hasn't replied yet.{" "}
+                        <button
+                          type="button"
+                          onClick={handleSendToAgent}
+                          disabled={!canSend}
+                        >
+                          Send again
+                        </button>
+                      </p>
+                    )}
+                    {agentSummaryState.kind === "error" && (
+                      <p role="alert">{agentSummaryState.message}</p>
+                    )}
+                  </div>
+                );
+              })()}
+          </section>
+          <section className="beacon-files" aria-label="Changed files">
+            <div className="beacon-section-heading">
+              <h3>
+                Changed files{" "}
+                <span className="beacon-count">{files.length}</span>
+              </h3>
+              <span className="beacon-diff-totals">
+                <span className="beacon-added">
+                  +{files.reduce((total, file) => total + file.additions, 0)}
+                </span>
+                <span className="beacon-removed">
+                  −{files.reduce((total, file) => total + file.deletions, 0)}
+                </span>
+              </span>
+            </div>
+            {filesTruncated && (
+              <p role="alert">
+                This pull request changed more files than can be shown here.
+                Open it on GitHub to see the complete diff before approving.
               </p>
-              <button type="button" onClick={handleCheckStatus}>
-                Check status
-              </button>
+            )}
+            {files.map((file) => (
+              <details className="beacon-file" key={file.filename}>
+                <summary>
+                  <span className="beacon-filename">{file.filename}</span>
+                  <span className="beacon-file-stats">
+                    (<span className="beacon-added">+{file.additions}</span>/
+                    <span className="beacon-removed">−{file.deletions}</span>)
+                  </span>
+                </summary>
+                {file.patch ? (
+                  <pre className="beacon-diff">
+                    <code>
+                      {Array.from(
+                        file.patch.matchAll(/[^\n]+\n?|\n/g),
+                        (match) => (
+                          <span
+                            key={match.index}
+                            className={
+                              match[0].startsWith("+")
+                                ? "beacon-diff-add"
+                                : match[0].startsWith("-")
+                                  ? "beacon-diff-remove"
+                                  : match[0].startsWith("@@")
+                                    ? "beacon-diff-hunk"
+                                    : undefined
+                            }
+                          >
+                            {match[0].replace(/\n$/, "")}
+                          </span>
+                        ),
+                      )}
+                    </code>
+                  </pre>
+                ) : (
+                  <p className="beacon-no-patch">
+                    Binary or too large to display.
+                  </p>
+                )}
+              </details>
+            ))}
+          </section>
+          <section className="beacon-card beacon-approval" aria-label="Approve">
+            <h3>Your review</h3>
+            <p className="beacon-muted">
+              Review the changes before approving this commit.
+            </p>
+            <div className="beacon-commit">
+              <span>Head commit</span>
+              <code>{detail.headSha.slice(0, 7)}</code>
             </div>
-          )}
-          {approveState.kind === "checking" && <p>Checking…</p>}
-          {approveState.kind === "confirmed-not-approved" && (
-            <div role="alert">
-              <p>No approval from you was found on this commit.</p>
-              <button type="button" onClick={handleApprove}>
-                Retry approve
+            {approveState.kind === "idle" && (
+              <button
+                className="beacon-primary"
+                type="button"
+                onClick={handleApprove}
+              >
+                Approve {detail.headSha.slice(0, 7)}
               </button>
-            </div>
-          )}
-        </section>
+            )}
+            {approveState.kind === "approving" && <p>Submitting approval…</p>}
+            {approveState.kind === "approved" && (
+              <p className="beacon-approved" role="status">
+                Approved.
+              </p>
+            )}
+            {approveState.kind === "stale" && (
+              <p role="alert">
+                The pull request changed since you viewed this diff. Reopen it
+                to review the new commit before approving.
+              </p>
+            )}
+            {approveState.kind === "uncertain" && (
+              <div role="alert">
+                <p>
+                  {approveState.message ??
+                    "GitHub didn't confirm whether the approval went through. Check before retrying — don't submit a second approval blind."}
+                </p>
+                <button type="button" onClick={handleCheckStatus}>
+                  Check status
+                </button>
+              </div>
+            )}
+            {approveState.kind === "checking" && <p>Checking…</p>}
+            {approveState.kind === "confirmed-not-approved" && (
+              <div role="alert">
+                <p>No approval from you was found on this commit.</p>
+                <button
+                  className="beacon-primary"
+                  type="button"
+                  onClick={handleApprove}
+                >
+                  Retry approve
+                </button>
+              </div>
+            )}
+            <p className="beacon-approval-note">
+              GitHub's current head is checked again before submitting. Agent
+              replies never submit approvals.
+            </p>
+          </section>
+        </div>
       </section>
     );
   };

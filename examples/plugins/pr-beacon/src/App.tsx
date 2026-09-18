@@ -1,4 +1,5 @@
 import type { Context } from "@buzz/author";
+import { beaconStyles } from "./styles";
 import { classifyOwnPullRequest, isHighlighted } from "./classify";
 import { createPullRequestDetailView } from "./PullRequestDetailView";
 import { createSettingsPanel } from "./SettingsPanel";
@@ -124,8 +125,14 @@ export function createApp(
     }, [session, agentLibrarySnapshot.status]);
 
     return (
-      <section aria-label="AI summary agent">
-        <h3>AI summary agent</h3>
+      <section
+        className="beacon-card beacon-settings-card"
+        aria-label="AI summary agent"
+      >
+        <div className="beacon-section-heading">
+          <h3>AI summary agent</h3>
+          <span className="beacon-badge">Buzz agent</span>
+        </div>
         <p>
           Pick an existing Buzz agent and a channel it's a member of. Sending a
           diff for a summary posts it as a normal channel message — every other
@@ -264,6 +271,55 @@ export function createApp(
     return { state, refresh: () => setReloadKey((key) => key + 1) };
   }
 
+  function PullRequestRow(props: {
+    item: PullRequestSummary;
+    onSelect: (item: PullRequestSummary) => void;
+    onHide?: () => void;
+    status?: OwnPullRequestStatus;
+  }) {
+    const { item } = props;
+    return (
+      <li className="beacon-pr-row">
+        <span className="beacon-pr-symbol" aria-hidden="true">
+          ↗
+        </span>
+        <button
+          className="beacon-pr-link"
+          type="button"
+          aria-label={`${item.repository} #${item.number} — ${item.title} (${item.author})`}
+          onClick={() => props.onSelect(item)}
+        >
+          <span className="beacon-pr-title">{item.title}</span>
+          <span className="beacon-pr-meta">
+            <span>{item.repository}</span>
+            <span>#{item.number}</span>
+            <span>by {item.author}</span>
+          </span>
+        </button>
+        <span className="beacon-row-labels">
+          {props.status && (
+            <span className={`beacon-badge beacon-status-${props.status}`}>
+              {OWN_STATUS_LABELS[props.status]}
+            </span>
+          )}
+          {item.isDraft && !props.status && (
+            <span className="beacon-badge">Draft</span>
+          )}
+          {item.labels.map((label) => (
+            <span className="beacon-badge" key={label}>
+              {label}
+            </span>
+          ))}
+        </span>
+        {props.onHide && (
+          <button className="beacon-quiet" type="button" onClick={props.onHide}>
+            Hide
+          </button>
+        )}
+      </li>
+    );
+  }
+
   function ReviewQueue(props: {
     token: string;
     vipLogins: string[];
@@ -310,14 +366,21 @@ export function createApp(
     );
 
     return (
-      <div>
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={state.status === "loading"}
-        >
-          Refresh
-        </button>
+      <div className="beacon-inbox">
+        <div className="beacon-toolbar">
+          <p className="beacon-muted">
+            {state.status === "ready"
+              ? `${visible.length} open request${visible.length === 1 ? "" : "s"} for your review`
+              : "Your review inbox"}
+          </p>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={state.status === "loading"}
+          >
+            Refresh
+          </button>
+        </div>
         {state.status === "loading" && <p>Loading review requests…</p>}
         {state.status === "error" && <p role="alert">{state.message}</p>}
         {state.status === "ready" && (
@@ -332,48 +395,39 @@ export function createApp(
             {visible.length === 0 && <p>No open review requests.</p>}
             {highlighted.length > 0 && (
               <section aria-label="Highlighted review requests">
-                <h3>Highlighted</h3>
-                <ul>
+                <h3 className="beacon-group-title">Highlighted</h3>
+                <ul className="beacon-pr-list">
                   {highlighted.map((item) => (
-                    <li key={item.url}>
-                      <button
-                        type="button"
-                        onClick={() => props.onSelect(item)}
-                      >
-                        {item.repository} #{item.number} — {item.title} (
-                        {item.author})
-                      </button>
-                      <button type="button" onClick={() => hide(item.url)}>
-                        Hide
-                      </button>
-                    </li>
+                    <PullRequestRow
+                      key={item.url}
+                      item={item}
+                      onSelect={props.onSelect}
+                      onHide={() => hide(item.url)}
+                    />
                   ))}
                 </ul>
               </section>
             )}
             {ordinary.length > 0 && (
               <section aria-label="Review requests">
-                <h3>Review requests</h3>
-                <ul>
+                <h3 className="beacon-group-title">Review requests</h3>
+                <ul className="beacon-pr-list">
                   {ordinary.map((item) => (
-                    <li key={item.url}>
-                      <button
-                        type="button"
-                        onClick={() => props.onSelect(item)}
-                      >
-                        {item.repository} #{item.number} — {item.title} (
-                        {item.author})
-                      </button>
-                      <button type="button" onClick={() => hide(item.url)}>
-                        Hide
-                      </button>
-                    </li>
+                    <PullRequestRow
+                      key={item.url}
+                      item={item}
+                      onSelect={props.onSelect}
+                      onHide={() => hide(item.url)}
+                    />
                   ))}
                 </ul>
               </section>
             )}
             {hidden.length > 0 && (
-              <details aria-label={`Hidden review requests (${hidden.length})`}>
+              <details
+                className="beacon-hidden"
+                aria-label={`Hidden review requests (${hidden.length})`}
+              >
                 <summary>Hidden review requests ({hidden.length})</summary>
                 <ul>
                   {hidden.map((item) => (
@@ -414,14 +468,21 @@ export function createApp(
     }
 
     return (
-      <div>
-        <button
-          type="button"
-          onClick={refresh}
-          disabled={state.status === "loading"}
-        >
-          Refresh
-        </button>
+      <div className="beacon-inbox">
+        <div className="beacon-toolbar">
+          <p className="beacon-muted">
+            {state.status === "ready"
+              ? `${state.items.length} open pull request${state.items.length === 1 ? "" : "s"}`
+              : "Your open pull requests"}
+          </p>
+          <button
+            type="button"
+            onClick={refresh}
+            disabled={state.status === "loading"}
+          >
+            Refresh
+          </button>
+        </div>
         {state.status === "loading" && <p>Loading your pull requests…</p>}
         {state.status === "error" && <p role="alert">{state.message}</p>}
         {state.status === "ready" && (
@@ -439,17 +500,17 @@ export function createApp(
                 if (!items?.length) return null;
                 return (
                   <section key={status} aria-label={OWN_STATUS_LABELS[status]}>
-                    <h3>{OWN_STATUS_LABELS[status]}</h3>
-                    <ul>
+                    <h3 className="beacon-group-title">
+                      {OWN_STATUS_LABELS[status]}
+                    </h3>
+                    <ul className="beacon-pr-list">
                       {items.map((item) => (
-                        <li key={item.url}>
-                          <button
-                            type="button"
-                            onClick={() => props.onSelect(item)}
-                          >
-                            {item.repository} #{item.number} — {item.title}
-                          </button>
-                        </li>
+                        <PullRequestRow
+                          key={item.url}
+                          item={item}
+                          onSelect={props.onSelect}
+                          status={status}
+                        />
                       ))}
                     </ul>
                   </section>
@@ -487,87 +548,134 @@ export function createApp(
 
     if (selected && token)
       return (
-        <section aria-label="PR Beacon">
-          <button type="button" onClick={() => setSelected(null)}>
-            Back
-          </button>
-          <PullRequestDetailView
-            token={token}
-            pullRequest={selected}
-            relay={relay}
-            relaySnapshot={relaySnapshot}
-            summarySelection={summarySelection}
-          />
+        <section className="pr-beacon" aria-label="PR Beacon">
+          <style>{beaconStyles}</style>
+          <div className="beacon-workspace">
+            <div className="beacon-backbar">
+              <button
+                className="beacon-quiet"
+                type="button"
+                onClick={() => setSelected(null)}
+              >
+                Back
+              </button>
+              <span aria-hidden="true">/</span>
+              <span>PR Beacon</span>
+            </div>
+            <PullRequestDetailView
+              token={token}
+              pullRequest={selected}
+              relay={relay}
+              relaySnapshot={relaySnapshot}
+              summarySelection={summarySelection}
+            />
+          </div>
         </section>
       );
 
     return (
-      <section aria-label="PR Beacon" style={{ padding: 24 }}>
-        <h1>PR Beacon</h1>
-        <nav>
-          <button
-            type="button"
-            onClick={() => setTab("review")}
-            disabled={!token}
-          >
-            Review requests
-          </button>
-          <button type="button" onClick={() => setTab("own")} disabled={!token}>
-            Your pull requests
-          </button>
-          <button type="button" onClick={() => setTab("settings")}>
-            Settings
-          </button>
-        </nav>
-        {tab === "settings" && (
-          <SettingsPanel
-            hasToken={Boolean(token)}
-            onSubmitToken={(next) => {
-              tokenStore.setToken(next);
-              setTab("review");
-            }}
-            onClearToken={() => tokenStore.setToken(null)}
-            preferences={preferences}
-            onChangePreferences={preferencesStore.setPreferences}
-            saveError={preferencesSaveError}
-          />
-        )}
-        {tab === "settings" && (
-          <AgentSummarySettings
-            relaySnapshot={relaySnapshot}
-            selection={summarySelection}
-            onChangeSelection={setSummarySelection}
-          />
-        )}
-        {tab === "review" &&
-          (token ? (
-            <ReviewQueue
-              token={token}
-              vipLogins={preferences.vipLogins}
-              watchedLabels={preferences.watchedLabels}
-              hiddenReviewRequestUrls={preferences.hiddenReviewRequestUrls}
-              pollingEnabled={preferences.pollingEnabled}
-              onHiddenReviewRequestUrlsChange={(next) =>
-                preferencesStore.setPreferences({
-                  ...preferences,
-                  hiddenReviewRequestUrls: next,
-                })
-              }
-              onSelect={setSelected}
+      <section className="pr-beacon" aria-label="PR Beacon">
+        <style>{beaconStyles}</style>
+        <div className="beacon-workspace">
+          <header className="beacon-header">
+            <span className="beacon-mark" aria-hidden="true">
+              <svg
+                aria-hidden="true"
+                width="24"
+                height="24"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+              >
+                <circle cx="7" cy="5" r="2" />
+                <circle cx="7" cy="19" r="2" />
+                <circle cx="17" cy="19" r="2" />
+                <path d="M7 7v10M17 17V9a4 4 0 0 0-4-4h-1m2-2-2 2 2 2" />
+              </svg>
+            </span>
+            <div>
+              <h1>PR Beacon</h1>
+              <p className="beacon-muted">
+                Review requests, changes, and agent summaries.
+              </p>
+            </div>
+          </header>
+          <nav className="beacon-tabs" aria-label="PR Beacon sections">
+            <button
+              type="button"
+              onClick={() => setTab("review")}
+              aria-current={tab === "review" ? "page" : undefined}
+              disabled={!token}
+            >
+              Review requests
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("own")}
+              aria-current={tab === "own" ? "page" : undefined}
+              disabled={!token}
+            >
+              Your pull requests
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab("settings")}
+              aria-current={tab === "settings" ? "page" : undefined}
+            >
+              Settings
+            </button>
+          </nav>
+          {tab === "settings" && (
+            <SettingsPanel
+              hasToken={Boolean(token)}
+              onSubmitToken={(next) => {
+                tokenStore.setToken(next);
+                setTab("review");
+              }}
+              onClearToken={() => tokenStore.setToken(null)}
+              preferences={preferences}
+              onChangePreferences={preferencesStore.setPreferences}
+              saveError={preferencesSaveError}
             />
-          ) : (
-            <p>Add a GitHub token in Settings to see your review requests.</p>
-          ))}
-        {tab === "own" &&
-          (token ? (
-            <OwnPullRequests
-              token={token}
-              pollingEnabled={preferences.pollingEnabled}
-              onSelect={setSelected}
+          )}
+          {tab === "settings" && (
+            <AgentSummarySettings
+              relaySnapshot={relaySnapshot}
+              selection={summarySelection}
+              onChangeSelection={setSummarySelection}
             />
-          ) : (
-            <p>Add a GitHub token in Settings to see your pull requests.</p>
-          ))}
+          )}
+          {tab === "review" &&
+            (token ? (
+              <ReviewQueue
+                token={token}
+                vipLogins={preferences.vipLogins}
+                watchedLabels={preferences.watchedLabels}
+                hiddenReviewRequestUrls={preferences.hiddenReviewRequestUrls}
+                pollingEnabled={preferences.pollingEnabled}
+                onHiddenReviewRequestUrlsChange={(next) =>
+                  preferencesStore.setPreferences({
+                    ...preferences,
+                    hiddenReviewRequestUrls: next,
+                  })
+                }
+                onSelect={setSelected}
+              />
+            ) : (
+              <p>Add a GitHub token in Settings to see your review requests.</p>
+            ))}
+          {tab === "own" &&
+            (token ? (
+              <OwnPullRequests
+                token={token}
+                pollingEnabled={preferences.pollingEnabled}
+                onSelect={setSelected}
+              />
+            ) : (
+              <p>Add a GitHub token in Settings to see your pull requests.</p>
+            ))}
+        </div>
       </section>
     );
   };

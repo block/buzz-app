@@ -1,83 +1,79 @@
-import { beforeEach, expect, it, vi } from "vitest";
-import type { ReactElement } from "react";
+// @vitest-environment jsdom
+import { afterEach, expect, it, vi } from "vitest";
+import { act, cleanup, render } from "@testing-library/react";
+import { useLayoutEffect } from "react";
 import type { ComposerAccessoryProps, ComposerAccessory } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import { ComposerAccessories } from "./ComposerAccessories";
 import type { RelaySession } from "../relay/session";
 
-// Invoke actual contribution command wrappers with controlled layout lifetimes.
-// Browser coverage owns DOM focus, tooltip interaction and panel placement.
-const hooks = vi.hoisted(() => ({
-  refs: [] as { current: unknown }[],
-  index: 0,
-  state: undefined as unknown,
-  effects: [] as (() => undefined | (() => void))[],
-}));
-vi.mock("react", async (original) => ({
-  ...(await original<typeof import("react")>()),
-  useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
-    snapshot(),
-  useRef: (value: unknown) => {
-    const index = hooks.index++;
-    hooks.refs[index] ??= { current: value };
-    return hooks.refs[index];
-  },
-  useLayoutEffect: (effect: () => undefined | (() => void)) =>
-    hooks.effects.push(effect),
-  useState: () => [
-    hooks.state,
-    (next: unknown) => {
-      hooks.state = next;
-    },
-  ],
-}));
-beforeEach(() => {
-  hooks.refs = [];
-  hooks.index = 0;
-  hooks.state = undefined;
-  hooks.effects = [];
-});
+afterEach(cleanup);
+
 it("revokes navigation after contribution removal, replacement and composer unmount", () => {
+  let commands!: ComposerAccessoryProps;
+  function Accessory(props: ComposerAccessoryProps) {
+    useLayoutEffect(() => {
+      commands = props;
+    });
+    return null;
+  }
   const entry: Contribution<ComposerAccessory> = {
     id: "activity",
     key: "test:activity",
     pluginId: "test",
     revision: "one",
     title: "Activity",
-    component: () => null,
+    component: Accessory,
   };
   let entries = [entry];
-  const registry = { snapshot: () => entries, subscribe: () => () => {} };
+  const listeners = new Set<() => void>();
+  const registry = {
+    snapshot: () => entries,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+  };
+  const publish = () =>
+    act(() => {
+      for (const listener of listeners) listener();
+    });
   const open = vi.fn(() => true);
   const canOpen = vi.fn(() => true);
-  const props = {
-    registry,
-    session: {} as RelaySession,
-    scope: "scope",
-    channelId: "channel",
-    open,
-    canOpen,
-  };
-  const boundaries = ComposerAccessories(props);
-  const owned = boundaries[0]?.props.children as ReactElement;
-  const render = () => {
-    hooks.index = 0;
-    return (
-      owned.type as (props: unknown) => ReactElement<ComposerAccessoryProps>
-    )(owned.props);
-  };
-  render();
-  const cleanups = hooks.effects.splice(0).map((effect) => effect());
-  const commands = render().props;
-  expect(commands.open("target")).toBe(true);
+  const view = render(
+    <ComposerAccessories
+      registry={registry}
+      session={{} as RelaySession}
+      scope="scope"
+      channelId="channel"
+      open={open}
+      canOpen={canOpen}
+    />,
+    { reactStrictMode: true },
+  );
+  const original = commands;
+  expect(original.open("target")).toBe(true);
+  expect(original.canOpen("target")).toBe(true);
   entries = [];
-  expect(commands.open("target")).toBe(false);
-  expect(commands.canOpen("target")).toBe(false);
-  entries = [{ ...entry }];
-  expect(commands.open("target")).toBe(false);
+  // Registry invalidation must reject saved commands even before React commits.
+  expect(original.open("target")).toBe(false);
+  expect(original.canOpen("target")).toBe(false);
+  publish();
   entries = [entry];
-  for (const cleanup of cleanups) cleanup?.();
-  expect(commands.open("target")).toBe(false);
-  expect(commands.canOpen("target")).toBe(false);
-  expect(open).toHaveBeenCalledTimes(1);
+  publish();
+  const restored = commands;
+  expect(original.open("target")).toBe(false);
+  expect(restored.open("target")).toBe(true);
+  entries = [{ ...entry, revision: "two" }];
+  expect(restored.open("target")).toBe(false);
+  expect(restored.canOpen("target")).toBe(false);
+  publish();
+  const replacement = commands;
+  expect(replacement.open("target")).toBe(true);
+  view.unmount();
+  expect(replacement.open("target")).toBe(false);
+  expect(replacement.canOpen("target")).toBe(false);
+  expect(listeners.size).toBe(0);
+  expect(open).toHaveBeenCalledTimes(3);
+  expect(canOpen).toHaveBeenCalledTimes(1);
 });

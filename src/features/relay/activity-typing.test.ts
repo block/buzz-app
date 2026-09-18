@@ -1,4 +1,6 @@
-import { expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
+
+afterEach(() => vi.useRealTimers());
 import { createRelaySession } from "./session";
 import type { LiveCallbacks } from "./live";
 import { keypair, roster, scriptedTransport, signed } from "./testing";
@@ -69,6 +71,9 @@ it("live typing is owner-recognized and self-suppressed, bypasses history/read v
     expect(
       owner.session.agentActivity.snapshot().typing.map((entry) => entry.agent),
     ).toEqual([agent.pubkey]);
+    expect(owner.session.typing.snapshot()).toMatchObject([
+      { pubkey: agent.pubkey },
+    ]);
     expect(view.snapshot().events).toEqual([]);
     expect(JSON.stringify(owner.session.channels.window("a"))).not.toContain(
       make().id,
@@ -98,3 +103,87 @@ it("live typing is owner-recognized and self-suppressed, bypasses history/read v
     owner.dispose();
   }
 });
+
+// Both projections consume the same live delivery, but public typing listeners
+// may synchronously retire that delivery before the owner-only consumer runs.
+it.each(["cache", "dispose", "access", "reconnect"] as const)(
+  "fences owner-only activity after a shared typing subscriber triggers %s",
+  async (transition) => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_800_000_000_000);
+    const viewer = keypair(),
+      relay = keypair(),
+      agent = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    let generation = 0;
+    const owner = createRelaySession({
+      ...wire.transport,
+      agentActivity: true,
+      subscribe(callbacks) {
+        live = callbacks;
+        return {
+          update() {},
+          retry() {},
+          dispose() {},
+          observe(next) {
+            generation = next ?? 0;
+          },
+        };
+      },
+    });
+    const connected = () =>
+      live.state({
+        status: "connected",
+        routes: [{ id: "observer", status: "live", replay: "unknown" }],
+      });
+    let clearing: Promise<void> | undefined;
+    try {
+      live.receive([
+        roster(relay, "a", [viewer.pubkey]),
+        roster(relay, "b", [viewer.pubkey]),
+      ]);
+      owner.session.agentActivity.activate();
+      connected();
+      live.observer?.(
+        {
+          id: agent.pubkey,
+          agent: agent.pubkey,
+          createdAt: 1_800_000_000,
+          plaintext: JSON.stringify({ kind: "telemetry", channelId: "a" }),
+        },
+        generation,
+      );
+      expect(owner.session.agentActivity.snapshot().records).toHaveLength(1);
+      let transitioned = false;
+      const listener = vi.fn(() => {
+        if (transitioned || !owner.session.typing.snapshot().length) return;
+        transitioned = true;
+        if (transition === "cache") clearing = owner.clearCache();
+        else if (transition === "dispose") owner.dispose();
+        else if (transition === "access")
+          live.receive([roster(relay, "b", [], 1_800_000_001)]);
+        else {
+          live.state({ status: "retrying", routes: [] });
+          connected();
+        }
+      });
+      owner.session.typing.subscribe(listener);
+      live.receive([
+        signed(agent, {
+          kind: 20002,
+          content: "",
+          created_at: 1_800_000_000,
+          tags: [["h", "a"]],
+        }),
+      ]);
+      await clearing;
+      expect(transitioned).toBe(true);
+      expect(owner.session.typing.snapshot()).toEqual([]);
+      expect(owner.session.agentActivity.snapshot().typing).toEqual([]);
+    } finally {
+      owner.dispose();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);

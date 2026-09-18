@@ -27,6 +27,8 @@ export const test = base.extend({
   productionBroker: [false, { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
+  threadUnreadMentions: [false, { option: true }],
+  exactMessages: [false, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -34,6 +36,7 @@ export const test = base.extend({
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
+  historyCounts: [{ alpha: historySize, beta: 80 }, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -46,6 +49,8 @@ export const test = base.extend({
       productionBroker,
       readState,
       threadUnread,
+      threadUnreadMentions,
+      exactMessages,
       sidebarUnread,
       savedSidebar,
       expectedPageFailure,
@@ -53,6 +58,7 @@ export const test = base.extend({
       dmLabels,
       tallMessages,
       membershipActivity,
+      historyCounts,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -61,6 +67,7 @@ export const test = base.extend({
     testInfo,
   ) => {
     const relayKey = generateSecretKey();
+    const typingKeys = [generateSecretKey(), generateSecretKey()];
     const userKey = generateSecretKey();
     const viewer = getPublicKey(userKey);
     const membershipKeys = membershipActivity
@@ -85,7 +92,8 @@ export const test = base.extend({
         forged ? userKey : relayKey,
         time,
       );
-    const peerKey = dmLabels || readState ? generateSecretKey() : undefined;
+    const peerKey =
+      dmLabels || readState || exactMessages ? generateSecretKey() : undefined;
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
@@ -152,25 +160,69 @@ export const test = base.extend({
     }
     const hiddenChannels = new Set();
     const streams = new Map();
+    // Tall histories leave room above the older-page prefetch threshold, even
+    // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
+    const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
         histories.set(
           `${community}/${channel}`,
-          Array.from(
-            { length: channel === "alpha" ? historySize : 80 },
-            (_, i) =>
-              sign(
-                9,
-                [["h", channel]],
-                `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 3 : 1))}`,
-                readState ? peerKey : userKey,
-                1700000100 + i,
-              ),
+          Array.from({ length: historyCounts[channel] }, (_, i) =>
+            sign(
+              9,
+              [["h", channel]],
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 4 : 1))}`,
+              readState ? peerKey : userKey,
+              1700000100 + i,
+            ),
           ),
         );
+    const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    const targetEvents = [];
+    let exact;
+    if (exactMessages) {
+      const root = histories.get("primary/alpha")[2];
+      const replies = Array.from({ length: 80 }, (_, i) =>
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", root.id, "", "reply"],
+            ["p", getPublicKey(peerKey)],
+          ],
+          `Old thread reply ${i} · Hello @Alice Fixture`,
+          userKey,
+          root.created_at + i + 1,
+        ),
+      );
+      const target = replies.at(-1);
+      const edit = sign(
+        40003,
+        [["e", target.id]],
+        "**Exact reply edited** · Hello @Alice Fixture",
+        userKey,
+        target.created_at + 1,
+      );
+      const reaction = sign(
+        7,
+        [["e", target.id]],
+        "+",
+        userKey,
+        target.created_at + 2,
+      );
+      const deletion = sign(
+        5,
+        [["e", reaction.id]],
+        "",
+        userKey,
+        target.created_at + 3,
+      );
+      targetEvents.push(...replies, edit, reaction, deletion);
+      exact = { root, target, replies, edit, reaction, deletion };
+    }
     if (membershipActivity) {
       const history = histories.get("primary/alpha");
       history.push(
@@ -186,7 +238,9 @@ export const test = base.extend({
     }
     // Opt-in upstream thread evidence: no client cache/read-state injection.
     // Uppercase signed references exercise canonical thread/unread parity.
-    const threadReplies = new Map();
+    const threadReplies = new Map(
+      exact ? [[exact.root.id, exact.replies]] : [],
+    );
     const threadSummaries = [];
     if (threadUnread) {
       const history = histories.get("primary/alpha");
@@ -205,6 +259,7 @@ export const test = base.extend({
             [
               ["h", "alpha"],
               ["e", root.id.toUpperCase(), "", "reply"],
+              ...(threadUnreadMentions && index === 1 ? [["p", viewer]] : []),
             ],
             `Unread reply ${index}`,
             peerKey,
@@ -290,6 +345,7 @@ export const test = base.extend({
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,
         },
+        signedHistory: { counts: historyCounts, durationMs: historyDurationMs },
         largeSidebar,
         readState,
         sidebarUnread,
@@ -392,12 +448,51 @@ export const test = base.extend({
               ]
             : []),
         ];
-      if (threadUnread && filter.ids)
-        return [...histories.values()]
-          .flat()
-          .filter((event) => filter.ids.includes(event.id));
-      if (threadUnread && filter.depth_limit)
-        return (threadReplies.get(filter["#e"]?.[0]) ?? [])
+      if (filter.ids)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.ids.includes(event.id) &&
+              (!filter["#h"] ||
+                event.tags.some(
+                  ([key, value]) => key === "h" && filter["#h"].includes(value),
+                )),
+          )
+          .slice(0, filter.limit);
+      if (
+        filter["#e"] &&
+        filter.kinds?.every((kind) => [5, 7, 9005, 39005, 40003].includes(kind))
+      )
+        return (community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([key, value]) => key === "e" && filter["#e"].includes(value),
+              ),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      if (filter.depth_limit) {
+        const rootId = filter["#e"]?.[0];
+        const candidates = [
+          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
+        ].filter((event) => {
+          const refs = event.tags.filter(([key]) => key === "e");
+          const root =
+            refs.find((tag) => tag[3] === "root") ??
+            refs.find((tag) => tag[3] === "reply");
+          return root?.[1]?.toLowerCase() === rootId;
+        });
+        const rows = [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
           .filter(
             (event) =>
               filter.thread_cursor === undefined ||
@@ -405,7 +500,29 @@ export const test = base.extend({
               (event.created_at === filter.thread_cursor &&
                 event.id > filter.thread_cursor_id),
           )
+          .toSorted(
+            (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+          )
           .slice(0, filter.limit);
+        const ids = new Set(rows.map((event) => event.id));
+        const aux = [];
+        if (filter.include_aux && community === "primary")
+          for (let hop = 0; hop < 2; hop++)
+            for (const event of targetEvents) {
+              if (
+                ids.has(event.id) ||
+                ![5, 7, 9005, 39005, 40003].includes(event.kind)
+              )
+                continue;
+              if (
+                event.tags.some(([key, value]) => key === "e" && ids.has(value))
+              ) {
+                aux.push(event);
+                ids.add(event.id);
+              }
+            }
+        return [...rows, ...aux];
+      }
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&
@@ -581,10 +698,19 @@ export const test = base.extend({
           throw new Error(
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
-        expect(body).toHaveLength(1);
+        expect(body.length).toBeGreaterThan(0);
+        expect(body.length).toBeLessThanOrEqual(2);
         const filter = body[0];
-        report.queries.push({ community, filter });
-        const result = answer(community, filter);
+        const result = [
+          ...new Map(
+            body
+              .flatMap((filter) => {
+                report.queries.push({ community, filter });
+                return answer(community, filter);
+              })
+              .map((event) => [event.id, event]),
+          ).values(),
+        ];
         if (filter.until !== undefined) {
           pending.push({
             community,
@@ -625,6 +751,7 @@ export const test = base.extend({
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
+                  agentLibrary: () => [],
                   ...(readState
                     ? {}
                     : {
@@ -701,6 +828,7 @@ export const test = base.extend({
         report,
         pending,
         histories,
+        exact,
         membership(
           type,
           targetIndex,
@@ -757,6 +885,26 @@ export const test = base.extend({
           expect(rosterIds).toContain(id);
           rosterIds.splice(rosterIds.indexOf(id), 1);
         },
+        // Signed upstream-only simulations: never a browser publication or live relay.
+        activity({
+          channel = "alpha",
+          root,
+          author = 0,
+          kind = 20002,
+          age = 0,
+        } = {}) {
+          if (!relay)
+            throw new Error("Typing fixture requires production broker");
+          const event = sign(
+            kind,
+            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
+            kind === 20002 ? "" : "Fixture completion",
+            typingKeys[author],
+            Math.floor(Date.now() / 1000) - age,
+          );
+          relay.publish("primary", event);
+          return event;
+        },
         edit(community, channel, target, content) {
           const event = sign(
             40003,
@@ -781,6 +929,20 @@ export const test = base.extend({
               client.write(`data: ${JSON.stringify(event)}\n\n`);
           }
           return event;
+        },
+        deleteTarget() {
+          const event = sign(
+            5,
+            [
+              ["h", "alpha"],
+              ["e", exact.target.id],
+            ],
+            "",
+            userKey,
+            exact.target.created_at + 100,
+          );
+          targetEvents.push(event);
+          relay.publish("primary", event);
         },
         reply(rootId, own = false) {
           const replies = threadReplies.get(rootId);

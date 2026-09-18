@@ -237,7 +237,7 @@ There is no agent-global sequence gate: producer sequences reset, skip and inter
 ### Try with an existing owner account
 
 Use the [README's public-pin/Keychain setup](../README.md#relay-channels) and run
-`bin/just web` (or `bin/just desktop`, not both). Open http://localhost:1430, choose
+`bin/just web` (or `bin/just desktop`). Open the printed Local URL, choose
 the agent's community and open a channel. Keep the existing Buzz runner
 active, with telemetry publication enabled on the agent, then give it work. This
 app does not start agents or turn publishing on. No records may mean publishing
@@ -310,7 +310,20 @@ left edge, and the last row sits 4px above it. Working dots gently pulse unless
 reduced motion is requested; unknown status remains static. Browser regressions
 cover these presentation contracts in both engines.
 
-This evidence applies to the feature snapshot based on `a67102a`, not an
-integration with newer main. The final integration scan and reconciliation with
-main's subsequently added shared typing capability remain outstanding. Packaged
-native activity without the development broker remains unsupported.
+The 2026-09-18 integration incorporates main `125b5ca` while retaining its rich
+composer, routed-thread navigation, sidebar activity popover and public typing
+indicator. Public typing and owner-only activity remain independent projections;
+an owner's typing agent can appear in both. The receive path rechecks session
+access/generation after shared typing subscribers run, before admitting activity.
+
+On `65213eb` plus the resolved main integration, all 1,576 Vitest tests (150 files)
+passed. Both engines passed the shared typing/layout cases (22), then the activity,
+Buzz-link and thread-history cases (20) after fixing internal activity targets
+being swallowed by the broader `buzz:` navigation classifier. Existing activity
+cases failed before that fix in both engines. Accessory lifetime coverage now
+mounts real React in StrictMode rather than mocking hooks.
+
+These are targeted integration checks, not a completed `just scan`. The earlier
+scan was interrupted during browser tests; broader hosted CI, DCO and required
+review remain separate gates. Packaged native activity without the development
+broker remains unsupported.

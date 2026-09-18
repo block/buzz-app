@@ -6,9 +6,36 @@ import {
   type Contribution,
 } from "../../plugins/contributions";
 
+export type PanelContext = Readonly<{
+  /** Originating conversation, not a claim of thread-level scope or access. */
+  channelId: string;
+  canOpen(target: string): boolean;
+  /** Replace this panel through its host. False after this opening is retired. */
+  open(target: string): boolean;
+}>;
+/** Public presentation context, not authentication or a live selection service. */
+export type ChannelPanelContext = Readonly<{
+  scope: string;
+  channelId: string;
+  channelName: string;
+  viewer: string;
+  relayUrl: string;
+  threadId?: string;
+}>;
+export type ChannelLauncherProps = {
+  context: ChannelPanelContext;
+  pressed: boolean;
+  /** Toggles this exact contribution in the page-owned bottom drawer. */
+  toggle(target: string): void;
+  /** False after this page binding or exact contribution is retired. */
+  available(): boolean;
+};
 export type PanelProps = {
+  /** Supplied only by a channel presentation; sessions decide when to capture it. */
+  channelContext?: ChannelPanelContext | undefined;
   close(): void;
   target: string;
+  context?: PanelContext | undefined;
 };
 export type Panel = Readonly<{
   id: string;
@@ -16,6 +43,8 @@ export type Panel = Readonly<{
   matches: (url: string) => boolean;
   // Optional host launcher; placement stays with the current page or host fallback.
   launcher?: Readonly<{ icon: string; target: string }>;
+  // Optional channel-header launcher. The page supplies context and owns placement.
+  channelLauncher?: ComponentType<ChannelLauncherProps>;
   component: ComponentType<PanelProps>;
 }>;
 export type RegisteredPanel = Contribution<Panel>;
@@ -67,6 +96,11 @@ export class PanelsService extends Service implements Panels {
     ) {
       throw new Error("A panel launcher needs an icon and target string");
     }
+    if (
+      panel.channelLauncher !== undefined &&
+      typeof panel.channelLauncher !== "function"
+    )
+      throw new Error("A channel launcher needs a component");
     this.panels.register(this.ctx, {
       ...panel,
       ...(panel.launcher && { launcher: Object.freeze({ ...panel.launcher }) }),

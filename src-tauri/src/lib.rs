@@ -1,5 +1,7 @@
 mod agent_models;
 mod agents;
+mod notifications;
+mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 use agents::{
     agent_control_action, agent_control_import_commit, agent_control_import_preview,
@@ -9,10 +11,15 @@ use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
 };
+use notifications::{notification_show, Notifications};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::Manager as _;
 use tauri_plugin_dialog::DialogExt;
+use terminal::{
+    terminal_close, terminal_close_owner, terminal_create_owner, terminal_read, terminal_resize,
+    terminal_spawn, terminal_write, Terminals,
+};
 
 #[derive(Clone, Default)]
 struct Imports(Arc<Mutex<Option<PreparedImport>>>);
@@ -170,7 +177,15 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_control_import_commit,
         agent_models_begin,
         agent_models_cancel,
-        agent_models_run
+        agent_models_run,
+        notification_show,
+        terminal_create_owner,
+        terminal_spawn,
+        terminal_read,
+        terminal_write,
+        terminal_resize,
+        terminal_close,
+        terminal_close_owner
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -217,6 +232,8 @@ pub fn run() {
             Ok(())
         })
         .manage(Imports::default())
+        .manage(Terminals::default())
+        .manage(Notifications::default())
         .manage(PluginManager(Manager::from_env()))
         .invoke_handler(commands())
         .build(tauri::generate_context!())
@@ -230,6 +247,9 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::RunEvent::Exit) {
+                if let Err(error) = app.state::<Terminals>().shutdown() {
+                    eprintln!("Terminal shutdown failed: {error}");
+                }
                 app.state::<ModelHost>().shutdown();
                 if app.state::<AgentHost>().shutdown().is_err() {
                     eprintln!("Native agent shutdown could not be confirmed");

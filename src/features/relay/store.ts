@@ -1,3 +1,4 @@
+import { channelRowKind, rowProfileIds, messagePreview } from "./membership";
 import type { Outbox } from "./outbox";
 import { MessageProjection } from "./message-projection";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
@@ -16,7 +17,8 @@ import type { ProfileDirectory } from "./profile-directory";
 import { parseWindow, windowFilter, type WindowCursor } from "./window";
 import { ByteLru, byteSize } from "./budget";
 import type { HeadPersistence, SavedHead } from "./persistence";
-import { createMediaPreparation } from "./media";
+import { createMediaPreparation, saveData } from "./media";
+import { relayDebug } from "./debug";
 
 type Listener = () => void;
 type WindowState = {
@@ -43,6 +45,8 @@ export type ChannelStoreOptions = {
   maxWindows?: number;
   unavailableReason?: string;
   prepared?: boolean;
+  /** Warm every roster channel's head in the background before it is opened. */
+  warm?: boolean;
   persistence?: HeadPersistence;
   maxHeadBytes?: number;
   maxHeads?: number;
@@ -71,7 +75,7 @@ export function createChannelStore(
     | (RelayReader & {
         viewer: string;
         relayAuthor: string;
-        media(url: string): string | undefined;
+        media(url: string, size?: "small"): string | undefined;
         revokeAccess(commit: () => void): void;
         visible(events: readonly RelayEvent[]): readonly RelayEvent[];
         /** Reverified, authorized disk evidence, before any restored rows become observable. */
@@ -136,6 +140,7 @@ export function createChannelStore(
   const mediaIntents: string[] = [];
   let hydration: Promise<void> | undefined;
   let preparing = false;
+  let warming = false;
   const notify = (listeners: Iterable<Listener> | undefined) => {
     for (const listener of listeners ?? []) notifyListener(listener);
   };
@@ -152,9 +157,9 @@ export function createChannelStore(
     );
     const channels = next.channels.map((channel) => {
       const preview =
-        windows.get(channel.id)?.snapshot.rows.at(-1)?.content ??
+        messagePreview(windows.get(channel.id)?.snapshot.rows) ??
         tails.peek(channel.id)?.preview ??
-        heads.peek(channel.id)?.rows.at(-1)?.content;
+        messagePreview(heads.peek(channel.id)?.rows);
       const old = previous.get(channel.id);
       return old &&
         old.name === channel.name &&
@@ -230,10 +235,10 @@ export function createChannelStore(
       )
     )
       return;
-    const previousPreview = state.snapshot.rows.at(-1)?.content;
+    const previousPreview = messagePreview(state.snapshot.rows);
     state.snapshot = Object.freeze(next);
     notify(windowListeners.get(state.channelId));
-    if (previousPreview !== rows.at(-1)?.content) setList(list);
+    if (previousPreview !== messagePreview(rows)) setList(list);
   }
   const idleWindows = new Map<string, ChannelWindow>();
   function idleWindow(channelId: string): ChannelWindow {
@@ -317,31 +322,35 @@ export function createChannelStore(
     if (previous >= 0) mediaIntents.splice(previous, 1);
     mediaIntents.unshift(channelId);
     mediaIntents.length = Math.min(3, mediaIntents.length);
-    const urls = mediaIntents.flatMap((id) => {
-      const rows = heads.peek(id)?.rows ?? windows.get(id)?.snapshot.rows ?? [];
-      const authors = rows
-        .slice(-12)
-        .reverse()
-        .flatMap((row) => [row.authorId, ...row.participants]);
-      return authors.flatMap((author) => {
-        const picture = directory.queries.snapshot().get(author)?.picture;
-        const url = picture && transport?.media(picture);
-        return url ? [url] : [];
-      });
-    });
+    const urls = mediaIntents.flatMap(avatarUrlsFor);
+    relayDebug("media prepare", channelId.slice(0, 8), `${urls.length} urls`);
     media.prepare(urls);
   }
-  async function fetchProfiles(rows: readonly ChannelMessage[]) {
+  /** Background head reads warm request-level avatars without displacing the
+   * focused channel's intent window. */
+  function prepareWarmMedia(channelId: string) {
+    media.warm(avatarUrlsFor(channelId));
+  }
+  function avatarUrlsFor(id: string): string[] {
+    const rows = heads.peek(id)?.rows ?? windows.get(id)?.snapshot.rows ?? [];
+    const authors = rows.slice(-12).reverse().flatMap(rowProfileIds);
+    return authors.flatMap((author) => {
+      const picture = directory.queries.snapshot().get(author)?.picture;
+      const url = picture && transport?.media(picture, "small");
+      return url ? [url] : [];
+    });
+  }
+  async function fetchProfiles(
+    rows: readonly ChannelMessage[],
+    warmChannelId?: string,
+  ) {
     try {
-      await directory.ensure(
-        rows.flatMap((row) => [
-          row.authorId,
-          ...row.mentions,
-          ...row.participants,
-        ]),
-        "background",
-      );
+      const ids = rows.flatMap(rowProfileIds);
+      relayDebug("profiles warm", ids.length, "ids");
+      await directory.ensure(ids, "background");
       if (!disposed && intent) prepareMedia(intent);
+      // Profiles are the prerequisite for resolving a channel's avatar URLs.
+      if (!disposed && warmChannelId) prepareWarmMedia(warmChannelId);
     } catch {
       // Names are optional for channel rendering. Missing profiles remain retryable.
     }
@@ -363,13 +372,7 @@ export function createChannelStore(
       heads.peek(channelId) !== head
     )
       return;
-    const authors = new Set(
-      head.rows.flatMap((row) => [
-        row.authorId,
-        ...row.mentions,
-        ...row.participants,
-      ]),
-    );
+    const authors = new Set(head.rows.flatMap(rowProfileIds));
     const profiles = [...authors].flatMap((id) => {
       const event = directory.event(id);
       return event ? [event] : [];
@@ -422,6 +425,7 @@ export function createChannelStore(
     priority: Priority,
   ): Promise<Head> {
     const generation = epoch;
+    const startedAt = now();
     const accessVersion = accessVersions.get(channelId) ?? 0;
     const controller = new AbortController();
     controllers.add(controller);
@@ -459,6 +463,7 @@ export function createChannelStore(
       )
         throw new Error("Channel head exceeds the read budget");
     } catch (error) {
+      relayDebug("head failed", channelId.slice(0, 8), describe(error));
       if (
         !disposed &&
         generation === epoch &&
@@ -470,12 +475,20 @@ export function createChannelStore(
     } finally {
       controllers.delete(controller);
     }
+    relayDebug(
+      "head",
+      channelId.slice(0, 8),
+      `${head.rows.length} rows ${now() - startedAt}ms ${priority}`,
+    );
     heads.set(channelId, head);
     setList(list);
     // Durable message warmth must not wait behind optional name enrichment.
     const savedProfiles =
       generation === epoch ? save(channelId, head) : undefined;
-    void fetchProfiles(head.rows).then(() => {
+    void fetchProfiles(
+      head.rows,
+      priority === "background" && intent !== channelId ? channelId : undefined,
+    ).then(() => {
       if (generation === epoch) save(channelId, head, savedProfiles);
     });
     if (intent === channelId) prepareMedia(channelId);
@@ -856,6 +869,9 @@ export function createChannelStore(
   async function clearCache() {
     epoch++;
     hydration = undefined;
+    warmCandidates.clear();
+    warmEligible.clear();
+    warmPreferred = [];
     media.dispose();
     media = createMediaPreparation();
     for (const controller of controllers) controller.abort();
@@ -863,6 +879,51 @@ export function createChannelStore(
     heads.clear();
     tails.clear();
     await persistence?.clear().catch(() => {});
+  }
+  /** One background head read at a time; warm never competes with demand reads
+   * for foreground slots and is dropped wholesale when the session resets. */
+  let warmPreferred: readonly string[] = [];
+  const warmCandidates = new Set<string>();
+  // Eligibility outlives head-cache retention. Consuming a candidate (including
+  // failure or yielding to demand) must not requeue it on the next preview update.
+  let warmEligible = new Set<string>();
+  function nextWarmId(): string | undefined {
+    for (const channelId of warmPreferred)
+      if (warmCandidates.has(channelId)) return channelId;
+    let best: string | undefined;
+    let bestSavedAt = -1;
+    for (const channelId of warmCandidates) {
+      const savedAt = heads.peek(channelId)?.savedAt ?? 0;
+      if (savedAt > bestSavedAt) {
+        best = channelId;
+        bestSavedAt = savedAt;
+      }
+    }
+    return best;
+  }
+  async function drainWarm() {
+    if (warming || saveData()) return;
+    warming = true;
+    try {
+      while (warmCandidates.size) {
+        const generation = epoch;
+        const channelId = nextWarmId();
+        if (!channelId) break;
+        warmCandidates.delete(channelId);
+        if (disposed || generation !== epoch) {
+          warmCandidates.clear();
+          warmPreferred = [];
+          return;
+        }
+        if (!transport || !authorized(channelId)) continue;
+        if (windows.has(channelId)) continue; // An open channel is demand-owned.
+        const head = heads.peek(channelId);
+        if (head && !head.cached && now() - head.savedAt < FRESH_FOR) continue;
+        await requestHead(channelId, "background").catch(() => {});
+      }
+    } finally {
+      warming = false;
+    }
   }
   const queries: ChannelQueries = Object.freeze({
     list: () => list,
@@ -884,6 +945,24 @@ export function createChannelStore(
     },
     refreshList() {
       void discover(true);
+    },
+    /** Background roster warm. The caller supplies preferred ids (e.g. starred);
+     * the rest follow by recency of their retained head, never-fetched last. */
+    warm(preferred: readonly string[]) {
+      if (disposed || !transport || list.status !== "ready") return;
+      const starred = new Set(preferred);
+      warmPreferred = preferred;
+      const eligible = new Set(
+        list.channels
+          .filter((channel) => !channel.archived || starred.has(channel.id))
+          .map((channel) => channel.id),
+      );
+      for (const id of warmCandidates)
+        if (!eligible.has(id)) warmCandidates.delete(id);
+      for (const id of eligible)
+        if (!warmEligible.has(id)) warmCandidates.add(id);
+      warmEligible = eligible;
+      void drainWarm();
     },
     ensure(channelId: string) {
       if (disposed || !transport || !authorized(channelId)) return;
@@ -936,10 +1015,30 @@ export function createChannelStore(
       const head = heads.get(channelId);
       if (head) prepareMedia(channelId);
       if (
+        saveData() ||
         preparing ||
         (head && !head.cached && now() - head.savedAt < FRESH_FOR)
-      )
+      ) {
+        relayDebug(
+          "prepare skip",
+          channelId.slice(0, 8),
+          saveData()
+            ? "save-data"
+            : preparing
+              ? "in-flight"
+              : head
+                ? head.cached
+                  ? "cached-head"
+                  : "fresh-head"
+                : "no-head",
+        );
         return;
+      }
+      relayDebug(
+        "prepare fetch",
+        channelId.slice(0, 8),
+        head ? (head.cached ? "cached-head" : "stale-head") : "no-head",
+      );
       // One speculative head, no backlog from crossing sidebar rows. Keep it
       // foreground so selecting this same request cannot inherit a host-side
       // background wait; the other reader slots remain available for demand.
@@ -1055,13 +1154,15 @@ export function createChannelStore(
         .slice(0, 256);
       const preview = windows.has(channelId)
         ? tails.peek(channelId)?.preview
-        : foldMessages(channelId, transport.relayAuthor, [
-            ...new Map(
-              [...(heads.peek(channelId)?.events ?? []), ...retained].map(
-                (event) => [event.id, event],
-              ),
-            ).values(),
-          ]).at(-1)?.content;
+        : messagePreview(
+            foldMessages(channelId, transport.relayAuthor, [
+              ...new Map(
+                [...(heads.peek(channelId)?.events ?? []), ...retained].map(
+                  (event) => [event.id, event],
+                ),
+              ).values(),
+            ]),
+          );
       tails.set(channelId, { events: retained, preview });
     }
     for (const state of windows.values()) {
@@ -1071,7 +1172,7 @@ export function createChannelStore(
       const incoming = events.filter(
         (event) =>
           !ids.has(event.id) &&
-          [9, 40002, 40003, 5, 9005, 7, 39005].includes(event.kind) &&
+          [9, 40002, 40099, 40003, 5, 9005, 7, 39005].includes(event.kind) &&
           event.tags.some(
             (tag) =>
               (tag[0] === "h" && tag[1] === state.channelId) ||
@@ -1087,14 +1188,13 @@ export function createChannelStore(
       if (
         byteSize(retained) > maxHistoryBytes ||
         retained.filter(
-          (event) => [9, 40002].includes(event.kind) && !localIds.has(event.id),
+          (event) => channelRowKind(event.kind) && !localIds.has(event.id),
         ).length > maxHistoryRows
       ) {
         limited = true;
         const newest = retained
           .filter(
-            (event) =>
-              [9, 40002].includes(event.kind) && !localIds.has(event.id),
+            (event) => channelRowKind(event.kind) && !localIds.has(event.id),
           )
           .sort(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
@@ -1104,7 +1204,7 @@ export function createChannelStore(
         retained = retained.filter(
           (event) =>
             keep.has(event.id) ||
-            (![9, 40002].includes(event.kind) &&
+            (!channelRowKind(event.kind) &&
               event.tags.some(
                 (tag) => tag[0] === "e" && keep.has(tag[1] ?? ""),
               )),
@@ -1129,7 +1229,7 @@ export function createChannelStore(
       if (tail && state)
         tails.set(channelId, {
           ...tail,
-          preview: state.snapshot.rows.at(-1)?.content,
+          preview: messagePreview(state.snapshot.rows),
         });
     }
     setList(list);
@@ -1142,6 +1242,11 @@ export function createChannelStore(
     const hadHydration = hydration !== undefined;
     epoch++;
     hydration = undefined;
+    for (const id of warmEligible)
+      if (!authorized(id)) {
+        warmEligible.delete(id);
+        warmCandidates.delete(id);
+      }
     media.dispose();
     media = createMediaPreparation();
     for (const controller of controllers) controller.abort();
@@ -1166,10 +1271,12 @@ export function createChannelStore(
       const events = visible(tail.events);
       tails.set(id, {
         events,
-        preview: foldMessages(id, transport.relayAuthor, [
-          ...(heads.peek(id)?.events ?? []),
-          ...events,
-        ]).at(-1)?.content,
+        preview: messagePreview(
+          foldMessages(id, transport.relayAuthor, [
+            ...(heads.peek(id)?.events ?? []),
+            ...events,
+          ]),
+        ),
       });
     }
     for (const state of [...windows.values()]) {
@@ -1292,6 +1399,13 @@ export function createChannelStore(
       });
     },
     retainedChannels: () => [...windows.keys()],
+    retainedEvent(id: string) {
+      for (const state of windows.values()) {
+        if (!authorized(state.channelId)) continue;
+        const event = state.events.find((candidate) => candidate.id === id);
+        if (event) return event;
+      }
+    },
     demandedChannels: () => [
       ...new Set([
         ...(current && windows.has(current) ? [current] : []),

@@ -1,11 +1,15 @@
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
-import { StrictMode, useState } from "react";
+import { StrictMode, useLayoutEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { bundledPlugins } from "../../src/bundled";
-import { PanelsService } from "../../src/features/panels/service";
+import {
+  PanelsService,
+  type PanelContext,
+  type PanelProps,
+} from "../../src/features/panels/service";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import { createRelaySession } from "../../src/features/relay/session";
 import type {
@@ -35,10 +39,16 @@ const reply = message(viewer, "one", "Thread @Pinky", 12, [
   ["e", root.id, "", "reply"],
   ["p", pinky.pubkey],
 ]);
-const report = { profileReads: [] as string[][], publications: 0 };
+const picture = "https://images.test/avatar.png";
+const pictureFixture = "/tests/fixtures/design-system/assets/avatar.png";
+const report = {
+  profileReads: [] as string[][],
+  media: [] as [string, "small" | undefined][],
+  publications: 0,
+};
 let failMissing = true;
 const data = [
-  profile(viewer, { name: "Viewer", about: "Human profile" }),
+  profile(viewer, { name: "Viewer", about: "Human profile", picture }),
   profile(mic, { name: "Mic", about: "Mic biography" }),
   profile(pinky, { name: "Pinky", about: "Agent profile" }),
 ];
@@ -46,7 +56,10 @@ function session() {
   return createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: authority.pubkey,
-    media: () => undefined,
+    media: (url, size) => {
+      report.media.push([url, size]);
+      return url === picture ? pictureFixture : url;
+    },
     async query(filters) {
       return filters.flatMap((filter) => {
         if (filter.kinds?.includes(39002))
@@ -122,15 +135,51 @@ const relay: RelayData = {
 };
 const context = new Context();
 context.provide("relay", relay);
+const contexts: PanelContext[] = [];
+function ContextProbe({ context }: PanelProps) {
+  useLayoutEffect(() => {
+    if (context && contexts.at(-1) !== context) contexts.push(context);
+  }, [context]);
+  return <p>Context probe</p>;
+}
+const probing = new URLSearchParams(location.search).has("context-probe");
 const manager = createPluginManager(context, {
-  bundled: bundledPlugins.filter(
-    ({ manifest }) => manifest.id === "buzz.profiles",
-  ),
+  bundled: probing
+    ? [
+        {
+          manifest: {
+            id: "context.probe",
+            name: "Context probe",
+            apiVersion: 1,
+          },
+          module: {
+            inject: ["panels"],
+            apply(ctx) {
+              ctx.panels.register({
+                id: "probe",
+                title: "Context probe",
+                matches: (target) => target.startsWith("nostr:"),
+                component: ContextProbe,
+              });
+            },
+          },
+        },
+      ]
+    : bundledPlugins.filter(({ manifest }) => manifest.id === "buzz.profiles"),
 });
 const panels = new PanelsService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    contexts,
+    targets: {
+      viewer: profileTarget(viewer.pubkey),
+      mic: profileTarget(mic.pubkey),
+    },
+    disconnect() {
+      snapshot = { ...snapshot, status: "disconnected" };
+      for (const listener of listeners) listener();
+    },
     npubs: Object.fromEntries(
       Object.entries({ viewer, mic, pinky, missing }).map(([name, key]) => [
         name,

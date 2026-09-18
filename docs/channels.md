@@ -97,7 +97,8 @@ The port retains the prepared-store implementation and its behavior tests:
   Selecting an already-queued catch-up promotes that existing read without adding
   a request or resetting its deadline.
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
-  and a bounded avatar preparation cache. Signature verification yields in batches.
+  and request-warmed avatars (fetched and decoded, nothing retained; disabled
+  under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
   expiry. Cached events are reverified only after fresh roster authorization.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
@@ -133,6 +134,26 @@ recovery constraints, not a new shared-session API or a guarantee of general
 profile retry after every cache clear/network failure. See [browser coverage and
 limits](browser-testing.md#dm-label-recovery).
 
+## Membership activity
+
+Channel history and the existing live route include relay-signed kind-40099
+`member_joined`, `member_left` and `member_removed` summaries. Only recognized,
+channel-scoped payloads from the connected relay become activity rows; malformed,
+unknown and other authors' summaries are not rendered as JSON. These events do not
+grant/revoke access: the existing signed roster remains authoritative.
+
+The timeline groups adjacent arrivals/departures into compact avatar-and-text rows.
+Messages, local-day changes and gaps over an hour break groups; removals by different
+actors stay separate. Same-adder additions use “added by you” for the viewer;
+mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
+IDs, pagination cursors and retention budgets remain per event. Profiles reuse the
+shared background directory/cache, and reading anchors can resolve a member of a
+group. Activity has no message actions, thread, unread evidence or chat preview.
+
+An already-running development broker needs a coordinated restart to load the
+expanded live filter; frontend hot reload alone changes only the history/rendering
+path. No native or relay changes are required.
+
 ## Viewing threads
 
 Click a message's reply count to open its root and replies in the right column.
@@ -157,7 +178,8 @@ The footer reuses `MessageComposer` and sends direct replies to the resolved roo
 through `session.messages.reply`. Channel and thread drafts are separate and survive
 reconnection; failed replies remain inline with the shared retry action. Read-only
 connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. There is no jump-to-specific-reply navigation yet.
+not expose a composer. Exact navigation can retain and focus a selected reply
+beyond the traversal range; it does not extend that range or promise complete history.
 
 Replies use ascending timestamp/event-ID order, including nested replies. Retry
 appears only after a failed read; there is no routine Refresh control. Names are
@@ -239,6 +261,33 @@ Retry while leaving Unicode available and retaining drafts. Only one picker owns
 Emoji Mart's global dictionary at a time; scoped custom IDs and disposal prevent
 old community entries leaking into search or Frequent. Historical messages and
 existing reactions keep their signed emoji URLs after catalog changes.
+Emoji-only messages stay at the large 42px size regardless of count; normal text
+returns the message to its usual size. Long runs wrap instead of shrinking.
+Selecting and copying custom emoji preserves their `:shortcode:` in plain text,
+along with surrounding text and line breaks. Pasting into a community with that
+emoji available resolves the shortcode through its existing composer catalog.
+In the composer, Shift+Left/Right selects each rendered custom emoji as one unit,
+preserving its full shortcode for copying, replacement and deletion. Reversing
+direction shrinks the selection by one emoji. Visible shortcode text and emoji
+that cannot be rendered retain ordinary text selection.
+Custom emoji autocomplete adds no trailing space. The native caret uses the
+regular composer text size while the emoji preview remains large.
+
+Message and thread reaction rows have a Lucide smile-plus button after existing
+reactions. Messages without reactions do not show it. The Emoji plugin supplies
+the emoji-only picker
+through its optional conversation tool `reactionComponent`; the shared message
+row owns publication. The picker opens outside the scrolling list, closes on
+selection or Escape, and returns focus to the plus button. Failed or unconfirmed
+reaction delivery offers Retry reaction through the same outbox. Read-only
+connections and archived channels do not expose the action.
+
+The composer shows its GIF tab as soon as relay support is confirmed. Unsupported
+results are retried when the picker reopens; the broker caches confirmed support
+without retaining negative discovery results. Pickers
+without tabs use a search radius equal to the container radius minus the 10px
+inset; tabbed pickers keep the smaller 8px search radius.
+
 Emoji uploads and management remain in the existing community workflow.
 
 See [the shared catalog/send contract](relay-queries.md#community-emoji). The local
@@ -254,3 +303,41 @@ after dwell; no automatic channel-prefix advance hides unseen siblings. Conversa
 options exposes local-only manual unread, explicit mark-through and sync recovery.
 Older synchronized hints may expire under bounded retention. Synced manual-unread
 and OS notifications are not enabled by this feature.
+
+
+### Attachment layout and scrolling
+
+Image attachments reserve their preview geometry before loading and across virtualized
+row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
+and 320px tall without upscaling. Missing/invalid dimensions use a stable 360:320 frame
+that shrinks with the available width; the image is contained without cropping or
+upscaling. Unknown-size images may therefore have empty space in the frame. Loading,
+failure, or retry does not resize it or force an above-bottom reader to the newest row.
+Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
+that same frame when it intersects the viewport. No thumbnail is fetched. The
+preview is removed entirely (including behind transparency) only after the lazy
+original decodes; failure retains the preview. Missing/invalid hashes or canvas
+failures keep the existing background. Syntax validation bounds hashes to 166
+base83 characters / 9×9 components; folding does no pixel work. Preview work is
+per-mounted-image and uncached, visibility-gated even in nonvirtualized threads.
+Without IntersectionObserver, only the ordinary placeholder/original is used.
+This favors bounded visible work over instant offscreen previews on scrolling.
+`tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
+bottom following, reading anchors and narrow layout in Chromium and WebKit.
+
+## Opening an exact message
+
+Message-addressed conversations reuse the normal timeline and thread panel. A
+verified, loaded top-level target is revealed in the timeline. An off-window
+message opens as the root in the existing thread panel; a reply opens there with
+its actual root and bounded surrounding replies. No around-message channel query
+or separate detail screen is added. The presentation choice stays fixed for that
+navigation attempt; exact reads do not insert isolated old rows into channel history.
+
+Navigation completes only after the exact folded target is visible and focused.
+Reclick/Back reveals again; live/profile updates do not steal focus. The shared
+rows preserve Markdown, profile links, composers and background enrichment.
+Opening never marks read directly: the ordinary focus/visibility/dwell hook applies.
+Missing/deleted targets, access loss and failed reads expose failure/retry instead
+of channel-head success. An accessible reply remains visible when its root is
+unavailable, without a thread composer. See [the evidence contract](relay-queries.md#exact-message-navigation).

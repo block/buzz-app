@@ -1,31 +1,48 @@
 import { memo, useCallback, useSyncExternalStore } from "react";
+import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { profileTarget } from "../profiles/target";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
+import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
+import { ReactionTool } from "../conversation/ReactionTool";
+
+const emptySubscribe = () => () => {};
+const EMPTY_CHANNEL_LIST = Object.freeze({
+  status: "unavailable" as const,
+  channels: Object.freeze([]),
+});
+const emptyChannelList = () => EMPTY_CHANNEL_LIST;
 
 export type MessageRowProps = {
   row: ChannelMessage;
+  session?: RelaySession | undefined;
+  scope?: string | undefined;
   unread?: UnreadCapability | undefined;
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
-  media(url: string): string | undefined;
+  media(url: string, size?: "small"): string | undefined;
   onOpenLink(url: string): boolean;
   day: boolean;
   retry: ((id: string) => void) | undefined;
-  onOpenThread?: ((messageId: string) => void) | undefined;
+  onOpenThread?:
+    | ((messageId: string, threadRootId: string) => void)
+    | undefined;
 };
 
 export const MessageRow = memo(function MessageRow({
   row,
+  session,
+  scope,
   unread,
   extensions,
   profile,
@@ -37,10 +54,16 @@ export const MessageRow = memo(function MessageRow({
   onOpenThread,
   participantProfiles,
 }: MessageRowProps) {
+  const directory = useReferenceDirectory(session, row.mentions.length > 0);
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
     row.threadRootId ?? row.id,
+  );
+  const channelList = useSyncExternalStore(
+    session?.channels.subscribeList ?? emptySubscribe,
+    session?.channels.list ?? emptyChannelList,
+    session?.channels.list ?? emptyChannelList,
   );
   const unreadLabel =
     threadUnread?.manual === "local-only"
@@ -51,11 +74,21 @@ export const MessageRow = memo(function MessageRow({
           ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
           : undefined;
   const name = profile?.name ?? row.authorId.slice(0, 10);
-  const picture = profile?.picture ? media(profile.picture) : undefined;
+  const picture = profile?.picture
+    ? media(profile.picture, "small")
+    : undefined;
   const target = profileTarget(row.authorId);
   const clickable = target && canOpenLink?.(target);
   const AvatarTag = clickable ? "button" : "div";
   const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
+  const canReact = !!(
+    extensions &&
+    session &&
+    scope &&
+    session.outbox?.supports(7) &&
+    !channelList.channels.find((channel) => channel.id === row.channelId)
+      ?.archived
+  );
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -100,6 +133,9 @@ export const MessageRow = memo(function MessageRow({
             </time>
           </div>
           <MessageMarkdown
+            directory={directory}
+            session={session}
+            scope={scope}
             row={row}
             extensions={extensions}
             media={media}
@@ -124,25 +160,13 @@ export const MessageRow = memo(function MessageRow({
                 {attachment.video ? "Video attachment" : "Image attachment"} ↗
               </a>
             ) : (
-              <a
-                className={styles.attachmentImage}
+              <AttachmentImage
                 key={url}
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-                aria-label="Open image attachment"
-                onClick={(event) => {
-                  if (
-                    !event.metaKey &&
-                    !event.ctrlKey &&
-                    !event.shiftKey &&
-                    onOpenLink(url)
-                  )
-                    event.preventDefault();
-                }}
-              >
-                <img src={source} alt="" loading="lazy" />
-              </a>
+                attachment={attachment}
+                url={url}
+                source={source}
+                onOpenLink={onOpenLink}
+              />
             );
           })}
           {row.reactions.length > 0 && (
@@ -164,6 +188,18 @@ export const MessageRow = memo(function MessageRow({
                   )}
                 </span>
               ))}
+              {canReact && extensions && session && scope && (
+                <ReactionTool
+                  registry={extensions.tools}
+                  session={session}
+                  scope={scope}
+                  messageId={row.id}
+                  disabled={
+                    !!row.delivery &&
+                    !["accepted", "seen"].includes(row.delivery)
+                  }
+                />
+              )}
             </div>
           )}
           {row.replyCount > 0 && onOpenThread && (
@@ -173,7 +209,7 @@ export const MessageRow = memo(function MessageRow({
               aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               onClick={(event) => {
                 event.currentTarget.focus();
-                onOpenThread(row.id);
+                onOpenThread(row.id, row.threadRootId ?? row.id);
               }}
             >
               {row.participants.length > 0 && (
@@ -182,7 +218,7 @@ export const MessageRow = memo(function MessageRow({
                     const participant = participantProfiles?.get(id);
                     const name = participant?.name ?? id.slice(0, 10);
                     const picture = participant?.picture
-                      ? media(participant.picture)
+                      ? media(participant.picture, "small")
                       : undefined;
                     return (
                       <span

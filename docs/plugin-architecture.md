@@ -75,8 +75,15 @@ contribution when its Cordis scope ends.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher
-wins; a throwing matcher is skipped. Panels receive `{ target, close }`, without
-channel-specific props. A plugin that needs shared data declares `relay` in its
+wins; a throwing matcher is skipped. Panels receive `{ target, close }` plus
+optional host context. A conversation host may supply
+`context: { channelId, canOpen, open }` for contextual panel-to-panel actions.
+`canOpen` is advisory active-target availability; `open` re-resolves at click time
+and returns false after the originating opening, channel, session or host
+presentation retires. This is not a global navigation API or an access grant.
+Channel-header launchers use the separate public `channelContext` metadata
+contract described below; launcher/fallback panels need not have either context.
+A plugin that needs shared data declares `relay` in its
 injection list and passes those capabilities to its components using a closure,
 just as the bundled Channels page does. The conversation preview adds only the two demonstrated component surfaces.
 
@@ -85,12 +92,31 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions and Profiles. Projects
+The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent execution remain future shared capabilities.
+
+### Channel-header launchers
+
+A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
+Channels renders these in its conversation header with public `context`, `pressed`,
+`available()` and `toggle(target)`. The page owns a single bottom drawer; a launcher
+selects its **exact active contribution**, not target matching. `available()` and
+`toggle()` are revoked when the mounted context or contribution is retired. Optional
+`PanelProps.channelContext` carries the current displayed public context to a channel
+panel; ordinary link/host panels do not supply it. It is presentation metadata, not
+signing authority. Plugins decide when to capture it into their own work.
+
+Channels keeps layout and channel/thread selection. The Terminal plugin binds its
+mounted launcher into the existing shortcut dispatcher, and owns sessions separately
+from drawer mounts. No global selected-channel store, extra shortcut listener or
+host companion change is required. Disabling/replacing a contribution closes its
+drawer, and re-enabling starts closed. See [Terminal](terminal.md) for native support,
+session behavior and validation limits. This is a host-matched preview addition,
+not cross-version capability negotiation.
 
 ### Top-bar launchers and the companion slot
 
@@ -242,7 +268,7 @@ for retry, rather than silently opening another page.
 Pages receive optional `navigation` in `PageProps`. Ordinary pages acknowledge a
 successful mount inside the render boundary. Pages declaring `handlesNavigation`
 acknowledge their domain presentation with `navigation.complete(...)`; Channels
-waits for its requested channel window. `navigation.resolve(target)` normalizes a
+waits for its requested channel window or exact-message reveal/focus. `navigation.resolve(target)` normalizes a
 pending default destination within the same visit, caller and original deadline;
 it does not start competing navigation. Normalization revokes the old request.
 
@@ -262,18 +288,56 @@ into versioned route parameters. These are host-matched preview types through
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 `targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
-sender's viewer; `bindSharedTarget` pins it for an admitted recipient. **This slice
-does not install native OS deep-link or notification-click ingress, migrate legacy
-Buzz links, or locate/reveal older messages and threads.** Message-addressed
-conversation targets explicitly fail as unsupported rather than claiming success
-at the channel head. Those ingresses/reveal adapters must use the same validated
-target and completion lifecycle when implemented.
+sender's viewer; `bindSharedTarget` pins it for an admitted recipient. Messages also
+recognize legacy `buzz://channel/<id>` and
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>` links. Legacy links
+use the receiving conversation's community and viewer; shared versioned links
+retain their community and use the recipient's viewer. Both pass through existing
+navigation admission and session ownership checks. Message targets open their
+verified thread, reveal the exact message after bounded history loading, and only
+then acknowledge navigation. Supplied root hints do not override verified events.
+Missing or unavailable messages report failure. Ingress adapters must reuse this
+validated target/completion lifecycle. Native OS deep-link and notification-click
+ingress remain outside this slice.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the
 mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
+
+`registerLink({ id, title, matches, className?, component })` contributes optional
+presentation for links already recognized by messages. The host retains the anchor,
+destination, new-tab/modifier behavior and panel activation. Components receive
+`{ url }` and render non-interactive inline content inside that anchor. They must
+not nest links or buttons. The first active matching renderer wins; throwing
+matchers are skipped. A render failure or plugin removal restores the ordinary
+link, including its styling. Registration follows the existing plugin lifetime.
+
+The bundled Links plugin uses blue text, a blue fill only on hover, 2px padding
+4px corners, and service icons for GitHub, Google Drive, Figma, Notion, Slack,
+Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets and
+Slides use distinct file-type icons; unknown websites use a globe. Host matching
+does not fetch metadata or infer a service from names in paths or query strings.
+It does not fetch titles. Messages currently recognize
+credential-free HTTPS and supported Buzz links. Markdown labels preserve their
+formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
+autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
+to Channel, Message or Thread when that name is unavailable in the current community;
+the full destination remains on the anchor. Buzz activation stays inside the host,
+including modifier/middle clicks, even when the optional Links plugin is disabled.
+Unsupported Buzz formats remain plain text. The host-matched author preview exports `LinkRenderer`; older hosts do not
+provide `registerLink`.
+
+Message hover/focus previews are host-owned. The entire card is a keyboard-accessible
+link to the same destination, routed through the same host navigation handler. Opening a preview allocates the current
+session's bounded thread reader; closing disposes it. The reader supplies verified
+message content, author and timestamp and preserves edit/deletion/access handling.
+Previewing never acknowledges reading or switches community. The host offers a
+resolved label to the bundled presentation via `LinkLabelContext`; no author API
+contract or relay protocol changes are required. Known channel references and
+unambiguous signed person/agent mentions share the inline hover styling. Names in
+ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` components. Generated
@@ -291,6 +355,15 @@ same `registerTool` contract. No page imports their implementations. Optional nu
 `order` (default zero, lower first; ties by contribution key) keeps visual and
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
 `-10` to retain its position before default-order tools such as Emoji.
+
+Links, channel references, selected mentions and custom emoji render through shared
+message components directly in the editable draft. Display tokens retain the exact authored source;
+copying and sending preserve that source. Arrow keys and deletion open adjacent
+links for ordinary text editing. Partially deleting a link keeps it plain during
+the editing session; double-click selects the link and triple-click selects its
+whole paragraph. The host owns source offsets, plain-text paste, composition, undo and
+selected recipient metadata. Token renderers are display-only while editing.
+Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })` and `focus` commands.
 Mention insertion atomically records visible text and exact notification intent;

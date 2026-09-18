@@ -2,7 +2,12 @@
 export type { PluginManifest, PluginModule } from "./api";
 export type { Context } from "@deepseek-ai/cordis";
 export type { Page, Pages } from "../features/pages/service";
-export type { Panel, Panels } from "../features/panels/service";
+export type {
+  Panel,
+  Panels,
+  ChannelPanelContext,
+  ChannelLauncherProps,
+} from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
 export type {
   ComposerObservation,
@@ -18,6 +23,7 @@ export type {
   InlineContent,
   InlineRange,
   InlineRenderer,
+  LinkRenderer,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
 
@@ -31,6 +37,8 @@ export type {
 export type {
   UnreadCapability,
   UnreadSnapshot,
+  ThreadActivityItem,
+  ThreadActivitySnapshot,
   ReadingHandle,
 } from "../features/relay/unread";
 export type { ReadTarget } from "../features/relay/read-state-model";
@@ -52,6 +60,12 @@ export type {
   JsonValue,
 } from "../features/navigation/targets";
 export type { PageNavigation } from "../features/navigation/service";
+
+export type {
+  Notifications,
+  NotificationInput,
+  NotificationCategoryDescriptor,
+} from "../features/notifications/service";
 
 export type {
   AgentControl,

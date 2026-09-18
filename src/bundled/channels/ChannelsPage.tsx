@@ -1,11 +1,19 @@
+import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
+import {
+  buzzLinkTarget,
+  isBuzzLink,
+} from "../../features/navigation/buzz-links";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
+import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
+  memo,
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -27,7 +35,7 @@ import {
   useChannelWindow,
   useRelayConnection,
 } from "../../features/relay/react";
-import type { Panels } from "../../features/panels/service";
+import type { Panels, RegisteredPanel } from "../../features/panels/service";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
@@ -62,15 +70,7 @@ export function ChannelsPage({
   const sessionNavigation = navigation?.forSession(relay, session);
   useEffect(() => {
     if (!navigation || !sessionNavigation) return;
-    if (
-      navigation.target.kind === "conversation" &&
-      navigation.target.messageId
-    )
-      sessionNavigation.complete({ status: "failed", reason: "unavailable" });
-    else if (
-      session.status === "disconnected" &&
-      navigation.target.kind === "page"
-    )
+    if (session.status === "disconnected" && navigation.target.kind === "page")
       sessionNavigation.complete({ status: "opened" });
     else if (session.status === "error")
       sessionNavigation.complete({ status: "failed", reason: "unavailable" });
@@ -111,6 +111,7 @@ export function ChannelsPage({
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
           queries={session.session}
+          relay={relay}
           navigation={sessionNavigation}
           navigator={navigator}
           viewer={session.viewer}
@@ -125,6 +126,7 @@ export function ChannelsPage({
 function ChannelWorkspace({
   extensions,
   queries,
+  relay,
   panels,
   scope,
   companion,
@@ -139,6 +141,7 @@ function ChannelWorkspace({
   navigator?: Navigation | undefined;
   viewer?: string | undefined;
   queries: RelaySession;
+  relay: RelayData;
   panels: Panels;
 }) {
   const list = useChannelList(queries.channels);
@@ -154,25 +157,35 @@ function ChannelWorkspace({
   const [selected, setSelected] = useState<string | undefined>(() =>
     readView(scope, "selected-channel", undefined),
   );
-  const select = (id: string) => {
-    if (navigator && viewer) {
-      void navigator.open({
-        version: 1,
-        kind: "conversation",
-        channelId: id,
-        scope: {
-          viewer,
-          communityOrigin: scope.slice(0, -(viewer.length + 1)),
-        },
-      });
-    }
-    setSelected(id);
-    writeView(scope, "selected-channel", id);
-  };
+  const navigate = useCallback(
+    (id: string) => {
+      setSelected(id);
+      writeView(scope, "selected-channel", id);
+      if (navigator && viewer) {
+        void navigator.open({
+          version: 1,
+          kind: "conversation",
+          channelId: id,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        });
+      }
+    },
+    [navigator, viewer, scope],
+  );
   const [thread, setThread] = useState<{
     channelId: string;
     messageId: string;
   }>();
+  const select = useCallback(
+    (id: string) => {
+      navigate(id);
+      setThread(undefined);
+    },
+    [navigate],
+  );
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const sidebar = useSidebarView(
@@ -210,48 +223,177 @@ function ChannelWorkspace({
       });
     }
   }, [requestedChannel, current, list.status, navigation, viewer, scope]);
-  const showingThread = thread?.channelId === current?.id ? thread : undefined;
+  const requestedMessage =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined;
+  const requestedThread =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.threadRootId
+      : undefined;
+  const currentId = current?.id;
+  const [exactOpening, setExactOpening] = useState<{
+    request: PageNavigation;
+    inTimeline: boolean;
+  }>();
+  useEffect(() => {
+    if (
+      !navigation ||
+      !requestedMessage ||
+      requestedThread === requestedMessage ||
+      !currentId ||
+      navigation.signal.aborted
+    )
+      return;
+    let selected = false;
+    const choose = () => {
+      if (selected || navigation.signal.aborted) return;
+      const window = queries.channels.window(currentId);
+      if (window.status === "idle" || window.status === "loading") return;
+      selected = true;
+      // Freeze the presentation for this attempt. An isolated lookup or later
+      // live event must not move an already-opened thread into the timeline.
+      setExactOpening({
+        request: navigation,
+        inTimeline:
+          requestedThread !== requestedMessage &&
+          window.status === "ready" &&
+          window.freshness !== "cached" &&
+          window.rows.some(
+            (row) => row.id === requestedMessage && !row.threadRootId,
+          ),
+      });
+    };
+    const stop = queries.channels.subscribeWindow(currentId, choose);
+    choose();
+    return stop;
+  }, [navigation, requestedMessage, requestedThread, currentId, queries]);
+  const exact =
+    navigation && requestedMessage && requestedThread === requestedMessage
+      ? { request: navigation, inTimeline: false }
+      : exactOpening?.request === navigation
+        ? exactOpening
+        : undefined;
+  type ShowingThread = {
+    channelId: string;
+    messageId: string;
+    navigation?: PageNavigation | undefined;
+  };
+  const priorRoutedThread = useRef<ShowingThread | undefined>(undefined);
+  let showingThread: ShowingThread | undefined = requestedMessage
+    ? exact && !exact.inTimeline && current
+      ? { channelId: current.id, messageId: requestedMessage, navigation }
+      : undefined
+    : thread && thread.channelId === current?.id
+      ? { ...thread, navigation: undefined }
+      : undefined;
+  if (showingThread?.navigation) priorRoutedThread.current = showingThread;
+  else if (!showingThread && (!navigation || (requestedMessage && !exact)))
+    showingThread = priorRoutedThread.current;
+  else priorRoutedThread.current = undefined;
   useEffect(() => {
     if (thread && !showingThread) setThread(undefined);
   }, [thread, showingThread]);
+  type Opening = { channelId: string; panel: RegisteredPanel; target: string };
+  const [opened, setOpened] = useState<Opening>();
+  const opening = useRef<Opening | undefined>(undefined);
+  const open = useCallback((next: Opening | undefined) => {
+    // Retire callbacks synchronously, before React commits the next opening.
+    opening.current = next;
+    setOpened(next);
+  }, []);
+  const panel =
+    opened &&
+    opened.channelId === current?.id &&
+    available.includes(opened.panel)
+      ? opened.panel
+      : undefined;
+  const mounted = useRef(false);
+  const channel = useRef(current?.id);
+  useLayoutEffect(() => {
+    channel.current = current?.id;
+  }, [current?.id]);
+  useLayoutEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (opened && !panel) open(undefined);
+  }, [opened, panel, open]);
   const openThread = useCallback(
-    (messageId: string) => {
-      if (!current) return;
+    (messageId: string, threadRootId: string) => {
+      if (!currentId) return;
+      const target = navigator?.snapshot().entry.target;
+      if (
+        target?.kind === "conversation" &&
+        target.channelId === currentId &&
+        target.messageId === messageId &&
+        target.threadRootId === threadRootId
+      )
+        return;
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
           : null;
-      setThread({ channelId: current.id, messageId });
+      if (navigator && viewer) {
+        setThread(undefined);
+        void navigator.open({
+          version: 1,
+          kind: "conversation",
+          channelId: currentId,
+          messageId,
+          threadRootId,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        });
+      } else setThread({ channelId: currentId, messageId });
       open(undefined);
     },
-    [current],
+    [currentId, navigator, viewer, scope, open],
   );
-  const closeThread = useCallback(() => {
+  const openActivityThread = useCallback(
+    (channelId: string, rootId: string) => {
+      threadTrigger.current =
+        sidebar.list.current?.querySelector<HTMLElement>(
+          `[data-channel-id="${CSS.escape(channelId)}"]`,
+        ) ?? null;
+      if (navigator && viewer) {
+        setThread(undefined);
+        void navigator.open({
+          version: 1,
+          kind: "conversation",
+          channelId,
+          messageId: rootId,
+          threadRootId: rootId,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        });
+      } else {
+        navigate(channelId);
+        setThread({ channelId, messageId: rootId });
+      }
+      open(undefined);
+    },
+    [navigate, navigator, viewer, scope, sidebar.list, open],
+  );
+  const closeThread = () => {
+    if (showingThread?.navigation && current) select(current.id);
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
-  }, []);
-  const [opened, open] = useState<{
-    channelId: string;
-    key: string;
-    revision: string;
-    target: string;
-  }>();
-  const panel =
-    opened?.channelId === current?.id
-      ? available.find(
-          (panel) =>
-            panel.key === opened?.key && panel.revision === opened.revision,
-        )
-      : undefined;
-  useEffect(() => {
-    if (opened && !panel) open(undefined);
-  }, [opened, panel]);
+  };
   const panelTrigger = useRef<HTMLElement | null>(null);
   const close = useCallback(() => {
     open(undefined);
-    if (panelTrigger.current?.isConnected) panelTrigger.current.focus();
+    if (panelTrigger.current?.isConnected)
+      panelTrigger.current.focus({ preventScroll: true });
     else if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
-  }, []);
+  }, [open]);
   // Availability follows active contributions; dispatch still re-resolves at click time.
   const canOpenLink = useCallback(
     (target: string) =>
@@ -264,27 +406,102 @@ function ChannelWorkspace({
       }),
     [available],
   );
+  const linkContext = useRef({
+    channelId: currentId,
+    routedThread: !!showingThread?.navigation,
+  });
+  useLayoutEffect(() => {
+    linkContext.current = {
+      channelId: currentId,
+      routedThread: !!showingThread?.navigation,
+    };
+  }, [currentId, showingThread?.navigation]);
   const openLink = useCallback(
     (url: string) => {
+      if (isBuzzLink(url)) {
+        if (!navigator || !viewer) return false;
+        const target = buzzLinkTarget(url, {
+          viewer,
+          communityOrigin: scope.slice(0, -(viewer.length + 1)),
+        });
+        if (!target) return false;
+        if (target.kind === "conversation" && target.messageId)
+          threadTrigger.current =
+            document.activeElement instanceof HTMLElement
+              ? document.activeElement
+              : null;
+        setThread(undefined);
+        open(undefined);
+        void navigator.open(target);
+        return true;
+      }
       const candidate = panels.resolve(url);
-      if (current && candidate) {
+      const context = linkContext.current;
+      if (context.channelId && candidate) {
         panelTrigger.current =
           document.activeElement instanceof HTMLElement
             ? document.activeElement
             : null;
+        if (context.routedThread) select(context.channelId);
         setThread(undefined);
         open({
-          channelId: current.id,
-          key: candidate.key,
-          revision: candidate.revision,
+          channelId: context.channelId,
+          panel: candidate,
           target: url,
         });
         return true;
       }
       return false;
     },
-    [panels, current],
+    [panels, open, select, navigator, viewer, scope],
   );
+  const panelActive = () => {
+    const connection = relay.snapshot();
+    return !!(
+      mounted.current &&
+      opened &&
+      panel &&
+      opening.current === opened &&
+      channel.current === opened.channelId &&
+      panels.snapshot().includes(panel) &&
+      connection.status === "ready" &&
+      connection.session === queries &&
+      !navigation?.signal.aborted
+    );
+  };
+  const panelContext =
+    opened && panel
+      ? {
+          channelId: opened.channelId,
+          canOpen: (target: string) => !!panels.resolve(target),
+          open: (target: string) => {
+            if (!panelActive()) return false;
+            const next = panels.resolve(target);
+            if (!next) return false;
+            // Keep the original conversation trigger for close/focus restoration.
+            open({ channelId: opened.channelId, panel: next, target });
+            return true;
+          },
+        }
+      : undefined;
+  const drawerContext = useMemo(
+    () =>
+      current && viewer
+        ? {
+            scope,
+            viewer,
+            channelId: current.id,
+            channelName: current.name,
+            relayUrl: scope
+              .slice(0, -(viewer.length + 1))
+              .replace(/^https:/, "wss:")
+              .replace(/^http:/, "ws:"),
+            ...(showingThread && { threadId: showingThread.messageId }),
+          }
+        : undefined,
+    [scope, viewer, current, showingThread],
+  );
+  const drawer = useChannelPanels(panels, drawerContext);
   const visible = useMemo(
     () =>
       channels.filter((channel) =>
@@ -330,24 +547,41 @@ function ChannelWorkspace({
                       : MessageCircle
                     : Hash;
                 return (
-                  <button
+                  <ChannelActivityPopover
                     key={channel.id}
-                    type="button"
-                    title={channel.name}
-                    data-channel-id={channel.id}
-                    aria-current={
-                      current?.id === channel.id ? "page" : undefined
+                    session={queries}
+                    channelId={channel.id}
+                    channelName={channel.name}
+                    onOpenThread={(item) =>
+                      openActivityThread(item.channelId, item.rootId)
                     }
-                    onPointerEnter={() =>
-                      queries.channels.prepare?.(channel.id)
+                    trigger={
+                      <button
+                        type="button"
+                        title={channel.name}
+                        data-channel-id={channel.id}
+                        data-channel-type={channel.channelType}
+                        aria-current={
+                          current?.id === channel.id ? "page" : undefined
+                        }
+                        onPointerEnter={() =>
+                          queries.channels.prepare?.(channel.id)
+                        }
+                        onFocus={() => queries.channels.prepare?.(channel.id)}
+                        onClick={() => select(channel.id)}
+                      >
+                        <Icon size={17} />
+                        <span className={styles.channelLabel}>
+                          {channel.name}
+                        </span>
+                        <UnreadBadge
+                          session={queries}
+                          channelId={channel.id}
+                          dm={channel.channelType === "dm"}
+                        />
+                      </button>
                     }
-                    onFocus={() => queries.channels.prepare?.(channel.id)}
-                    onClick={() => select(channel.id)}
-                  >
-                    <Icon size={17} />
-                    <span>{channel.name}</span>
-                    <UnreadBadge session={queries} channelId={channel.id} />
-                  </button>
+                  />
                 );
               })}
             </details>
@@ -391,6 +625,7 @@ function ChannelWorkspace({
             )}
             <strong>{current?.name ?? "Channels"}</strong>
           </div>
+          {drawer.launchers}
           <details className={styles.diagnostics}>
             <summary
               aria-label="Conversation options"
@@ -457,12 +692,15 @@ function ChannelWorkspace({
         />
         {current ? (
           <ChannelBody
+            viewer={viewer}
             extensions={extensions}
             key={current.id}
             queries={queries}
             scope={scope}
             channelId={current.id}
-            navigation={navigation}
+            navigation={
+              !requestedMessage || exact?.inTimeline ? navigation : undefined
+            }
             onOpenLink={openLink}
             canOpenLink={canOpenLink}
             onOpenThread={openThread}
@@ -484,18 +722,19 @@ function ChannelWorkspace({
             onSend={(id) => setSent({ channelId: current.id, id })}
           />
         )}
+        {drawer.content}
       </article>
       {(panel || showingThread || companion) && (
         <div className={styles.panelStack}>
           {showingThread && (
             <ThreadPanel
               extensions={extensions}
-              key={`${showingThread.channelId}:${showingThread.messageId}`}
               session={queries}
               scope={scope}
               channelName={current?.name ?? ""}
               channelId={showingThread.channelId}
               messageId={showingThread.messageId}
+              navigation={showingThread.navigation}
               close={closeThread}
               onOpenLink={openLink}
               canOpenLink={canOpenLink}
@@ -507,6 +746,7 @@ function ChannelWorkspace({
               key="target"
               panel={panel}
               target={opened.target}
+              context={panelContext}
               close={close}
               closeLabel="Close channel panel"
             />
@@ -522,7 +762,8 @@ function ChannelWorkspace({
   );
 }
 
-function ChannelBody({
+const ChannelBody = memo(function ChannelBody({
+  viewer,
   extensions,
   scope,
   queries,
@@ -536,12 +777,13 @@ function ChannelBody({
   extensions?: ConversationExtensions | undefined;
   scope: string;
   queries: RelaySession;
+  viewer?: string | undefined;
   channelId: string;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
-  onOpenThread(messageId: string): void;
+  onOpenThread(messageId: string, threadRootId: string): void;
 }) {
   const window = useChannelWindow(queries.channels, channelId);
   useEffect(() => {
@@ -576,6 +818,7 @@ function ChannelBody({
     );
   return (
     <ChannelTimeline
+      viewer={viewer}
       extensions={extensions}
       scope={scope}
       channelId={channelId}
@@ -585,6 +828,7 @@ function ChannelBody({
       canOpenLink={canOpenLink}
       onOpenThread={onOpenThread}
       revealMessageId={revealMessageId}
+      navigation={navigation}
     />
   );
-}
+});

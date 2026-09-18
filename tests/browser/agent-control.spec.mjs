@@ -150,7 +150,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await panel.getByRole("button", { name: "Refresh status" }).blur();
     await expect(
       panel.getByRole("button", { name: "Refresh status" }),
-    ).toHaveCSS("background-color", "rgb(22, 22, 22)");
+    ).toHaveCSS("background-color", "rgb(16, 16, 16)");
     await page.screenshot({
       path: test.info().outputPath("agent-controls-dark-narrow.png"),
       fullPage: true,

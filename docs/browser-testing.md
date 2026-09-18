@@ -62,11 +62,25 @@ isolation and one invocation to preserve both engines' evidence.
 
 Compiled frontend assets are worker-scoped, split by `developmentReact` and
 `pluginFixtures`, and removed when that worker ends. They are never reused across
-invocations. Every test still gets a fresh preview server/port, ephemeral signing
-keys, signed histories, relay state and browser context/storage. Evidence records
-the worker and its build time; worker restarts rebuild rather than reuse stale assets.
+invocations. Every built-app test still gets a fresh preview server/port, ephemeral
+signing keys, signed histories, relay state and browser context/storage. Evidence records
+the worker and its build time, plus history counts and signing time; worker
+restarts rebuild rather than reuse stale assets.
 
-Results go to ignored `test-results/browser/`: each test writes `evidence.json`
+Declare `historyCounts` with `test.use` for built-app tests that do not need large
+histories, for example `{ alpha: 1, beta: 0 }`. Counts apply per community. Keep
+pagination, anchor and measurement datasets unchanged unless their behavior is
+revalidated at the new size. The legacy large default remains for unaudited cases;
+new tests should explicitly choose their data rather than inherit it accidentally.
+
+Source-only diagnostic pages can import `test` and `expect` from
+`source-fixture.mjs` and navigate to `/tests/fixtures/example.html`. That fixture
+shares a stateless Vite server and its isolated optimizer cache per worker, with
+fresh browser contexts/storage for every test. Do not use it for custom mutable
+server middleware or a different Vite configuration. The existing `vite-server.mjs`
+helper keeps independently configured servers' caches isolated.
+
+Results go to ignored `test-results/browser/`: each built-app test writes `evidence.json`
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
 measurements. Failure screenshots and traces are retained too. The next invocation
 replaces that output; copy artifacts before a rerun if you need to compare them.
@@ -246,9 +260,42 @@ Measured geometry stays in memory, with the unchanged three-entry / 256KiB
 signature limits in `src/features/messages/geometry.ts`.
 
 Panel opening/closing and viewport resizing preserve bottom intent or the visible
-reading anchor. A new input gesture supersedes a queued restoration. The layout
+reading anchor. Restoration-generated scrolls retain that message while its row
+intersects the viewport, even when narrower wrapping makes its paragraph too tall
+to fit wholly. A new input gesture or local-send navigation releases that preference;
+missing/offscreen rows use ordinary visible-anchor selection. A new input gesture
+also supersedes a queued restoration. The layout
 journey also checks separate cards, independent panel scrolling, window-centered
 tabs, community-dialog focus, and widths down to 390px.
+
+Closing a link panel returns focus to its still-mounted trigger without scrolling
+that link into view. The layout journey observes the native focus call's scroll
+delta as well as the final reading anchor: a transient focus jump must not be
+hidden by a successful later virtualizer correction. The test explicitly moves
+focus into the panel before closing; removing focus restoration must also fail.
+
+Resize journeys use the existing tall-message fixture and assert no older-page
+requests plus a reading position outside prefetch. The ordinary fixture holds
+cursor responses for explicit paging tests; accidentally entering that path is not
+valid resize setup. `upper()` establishes above-bottom reading with at most four
+real wheel gestures, requiring progress and settled distance >400px. It does not
+measure exact wheel displacement. Partial-input and blocked-input controls guard
+that setup; same-ID/Y <4px and bottom <4px assertions remain unchanged. Anchor
+capture prefers a whole paragraph, falling back to the first intersecting row
+when tall messages leave only clipped paragraphs. A deterministic helper control
+covers that geometry, whole-paragraph preference, offscreen rejection, and rejection
+of an actual anchor displacement. No retries
+or additional WebKit exclusions are used. The underlying Linux WebKit single-wheel
+shortfall remains unattributed; this setup change does not fix or explain it.
+
+`image-scroll.spec.mjs` separately holds image responses while real wheel input
+establishes its reading/bottom setup. Traversal ends at the observed settled target,
+not a fixed gesture count: virtualizer remeasurement and native input may apply
+only part of a requested displacement. Every gesture must make directional
+progress that remains after settling, and the existing test deadline bounds the
+operation. A 400px partial-input control requires more than eight gestures; blocked
+input must fail on its first gesture. Once image responses are released, no
+corrective scrolling is allowed during the strict image/anchor assertions.
 
 These checks do not persist measured geometry or guarantee smoothness. A live edit
 to a partly clipped, still-visible row can move the following visible messages:
@@ -324,3 +371,13 @@ focused visible dwell, non-reading opening/composer focus, individual markers,
 encrypted publication/readback, reload, cancellation and local manual-unread.
 The reload control holds network content so verified disk-restore wiring is required.
 This is not a deployed-relay, native signer or cross-device integration test.
+
+## Fixture server isolation
+
+Concurrent Vite fixture servers must own separate optimizer caches. Use
+`tests/browser/vite-server.mjs` for new fixtures; its `close()` releases the owned
+cache. The existing emoji and conversation fixtures retain their explicitly owned
+temporary caches. Do not share Vite's default `node_modules/.vite`: another server
+can invalidate dependency imports and leave a blank fixture with a 504
+`Outdated Optimize Dep`. Keep import failures visible; retries or longer UI waits
+do not repair module loading.

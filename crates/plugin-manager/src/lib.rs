@@ -47,8 +47,16 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/agent-activity/manifest.json"
+        ))
+        .expect("agent activity manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/terminal/manifest.json"))
+            .expect("terminal manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/profiles/manifest.json"))
             .expect("valid bundled Profiles manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/links/manifest.json"))
+            .expect("links manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/mentions/manifest.json"))
             .expect("mentions manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/emoji/manifest.json"))
@@ -63,6 +71,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("projects manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/agents/manifest.json"))
             .expect("agents manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/workflows/manifest.json"))
+            .expect("workflows manifest"),
     ]
 }
 fn is_bundled(id: &str) -> bool {

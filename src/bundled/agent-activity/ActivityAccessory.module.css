@@ -2,7 +2,7 @@
   min-width: 0;
   flex-shrink: 0;
   /* Leave 4px before the composer's 12px top margin. */
-  margin: 12px 16px -8px;
+  margin: var(--space-3) var(--space-4) calc(-1 * var(--space-2));
   background: var(--bg-panel);
 }
 .agents {
@@ -18,12 +18,12 @@
   flex-shrink: 0;
   justify-content: flex-start;
   padding-left: 0;
-  gap: 8px;
+  gap: var(--space-2);
   text-align: left;
 }
 .name {
   max-width: 40%;
-  font-weight: 600;
+  font-weight: var(--type-weight-medium);
 }
 .name,
 .status {
@@ -51,7 +51,7 @@
 }
 .summary {
   max-width: min(320px, calc(100vw - 32px));
-  padding: 12px;
+  padding: var(--space-3);
   border-radius: var(--radius-control);
   background: var(--bg-panel);
   border: 1px solid var(--border-primary);
@@ -61,6 +61,6 @@
 @media (max-width: 650px) {
   .root {
     /* The narrow composer has an 8px top margin. */
-    margin: 8px 12px -4px;
+    margin: var(--space-2) var(--space-3) calc(-1 * var(--space-1));
   }
 }

@@ -26,13 +26,14 @@ export function App({ services }: { services: AppServices }) {
   const home = route.target.kind === "home" && windows.isMain;
   const settings = route.target.kind === "settings" && windows.isMain;
   const layout = useSyncExternalStore(windows.subscribe, windows.snapshot);
-  // Launcher panels follow the window layout too: launchers in main, tabs elsewhere.
+  // Launcher panels follow the window layout too and sit in every window's
+  // launcher row. A detached window without pages shows one of them full-size.
   const panels = windowPanels(layout.layout, windows.label, launcher.available);
   const [panelChoice, setPanelChoice] = useState<string>();
-  const panelTab = windows.isMain
-    ? undefined
-    : (panels.find((panel) => panelTabKey(panel) === panelChoice) ??
-      (route.pages.length === 0 ? panels[0] : undefined));
+  const fullPanelMode = !windows.isMain && route.pages.length === 0;
+  const panelTab = fullPanelMode
+    ? (panels.find((panel) => panelTabKey(panel) === panelChoice) ?? panels[0])
+    : undefined;
   // A detached window keeps its shell when its tabs leave; it never shows Home.
   const emptyWindow =
     !windows.isMain &&
@@ -49,14 +50,14 @@ export function App({ services }: { services: AppServices }) {
     route.select(key);
   };
   // A tab moved here from another window becomes the selected tab, once this
-  // window's layout shows it. Main keeps launcher panels as launchers.
+  // window's layout shows it. A panel only "selects" where it fills the window.
   const activate = layout.activate;
   const activated = useRef(0);
   useEffect(() => {
     if (!activate || activate.seq === activated.current) return;
     const key = activate.key;
     const present = key.startsWith("panel:")
-      ? !windows.isMain && panels.some((panel) => panelTabKey(panel) === key)
+      ? fullPanelMode && panels.some((panel) => panelTabKey(panel) === key)
       : route.pages.some((page) => page.key === key);
     if (!present) return;
     activated.current = activate.seq;
@@ -110,8 +111,12 @@ export function App({ services }: { services: AppServices }) {
       launchers={
         <PanelLaunchers
           panels={panels}
-          selected={selectedPanel}
-          launch={launcher.launch}
+          selected={panelTab ?? selectedPanel}
+          launch={(panel, trigger) =>
+            fullPanelMode
+              ? setPanelChoice(panelTabKey(panel))
+              : launcher.launch(panel, trigger)
+          }
           windows={windows}
           layout={layout.layout}
           tabsHere={route.pages.length + panels.length}
@@ -119,7 +124,7 @@ export function App({ services }: { services: AppServices }) {
       }
       companion={pageOwnsCompanion ? undefined : companion}
       pages={startup === "ready" ? route.pages : []}
-      panelTabs={windows.isMain || startup !== "ready" ? [] : panels}
+      panelCount={panels.length}
       selected={panelTab ? panelTabKey(panelTab) : route.selected}
       onSelect={select}
       tone={panelTab ? shellPresentation.home.tone : presentation.tone}

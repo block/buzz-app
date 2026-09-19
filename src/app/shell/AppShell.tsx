@@ -2,14 +2,12 @@ import { type ReactNode, useSyncExternalStore } from "react";
 import { House } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
-import type { RegisteredPanel } from "../../features/panels/service";
 import type { Communities } from "../../features/communities/service";
-import { type WindowHost, panelTabKey } from "../../features/windows/service";
+import type { WindowHost } from "../../features/windows/service";
 import { CommunitySwitcher } from "../../features/communities/CommunitySwitcher";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch } from "./PageSearch";
 import { PageTab } from "./PageTab";
-import { LauncherIcon } from "./PanelLaunchers";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 
@@ -17,7 +15,7 @@ const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
 
 export function AppShell({
   pages,
-  panelTabs = [],
+  panelCount = 0,
   selected,
   onSelect,
   tone,
@@ -31,8 +29,8 @@ export function AppShell({
   children,
 }: {
   pages: readonly RegisteredPage[];
-  /** Launcher panels shown as tabs (detached windows only). */
-  panelTabs?: readonly RegisteredPanel[];
+  /** Launcher panels living in this window; they count as tabs for move targets. */
+  panelCount?: number;
   selected: string;
   onSelect: (key: string) => void;
   tone: string;
@@ -49,12 +47,12 @@ export function AppShell({
   // Detached windows carry only the tab strip; community, Settings and profile stay in main.
   const main = windows.isMain;
   const ordered = orderPages(pages);
-  const tabsHere = ordered.length + panelTabs.length;
+  const tabsHere = ordered.length + panelCount;
   const fillsWorkspace = workspace || selected === "settings";
-  // A hovering tab highlights where it would land: launcher panels return to
-  // main's launcher row; everything else joins the tab strip.
+  // A hovering tab highlights where it would land: launcher panels join the
+  // launcher row; pages join the tab strip.
   const hovering = layout.dropTarget?.tab;
-  const landsInLaunchers = !!hovering && main && hovering.startsWith("panel:");
+  const landsInLaunchers = !!hovering && hovering.startsWith("panel:");
   return (
     <div
       data-shell-tone={tone}
@@ -119,40 +117,22 @@ export function AppShell({
               </PageTab>
             );
           })}
-          {panelTabs.map((panel) => {
-            const key = panelTabKey(panel);
-            return (
-              <PageTab
-                key={key}
-                tabKey={key}
-                name={panel.title}
-                selected={selected === key}
-                onSelect={() => onSelect(key)}
-                windows={windows}
-                layout={layout.layout}
-                tabsHere={tabsHere}
-              >
-                <LauncherIcon src={panel.launcher?.icon ?? ""} size="size-4" />
-                {panel.title}
-              </PageTab>
-            );
-          })}
         </nav>
         <div className="shell-actions" data-tauri-drag-region>
-          {main && (
-            <div
-              className="shell-actions-group"
-              data-drop-target={landsInLaunchers || undefined}
-            >
-              {launchers}
-              <PageSearch pages={pages} onSelect={onSelect} />
+          <div
+            className="shell-actions-group"
+            data-drop-target={landsInLaunchers || undefined}
+          >
+            {launchers}
+            {main && <PageSearch pages={pages} onSelect={onSelect} />}
+            {main && (
               <ProfileButton
                 communities={communities}
                 settingsSelected={selected === "settings"}
                 onSettings={() => onSelect("settings")}
               />
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </header>
       <div className="flex min-h-0 flex-1">

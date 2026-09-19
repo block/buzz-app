@@ -46,8 +46,8 @@ export function PanelLaunchers({
       </PageTab>
     ));
 }
-/** Launcher icons are sized by `.shell-icon`; `size` is for use inside a tab. */
-export function LauncherIcon({ src, size }: { src: string; size?: string }) {
+/** Sized by `.shell-icon`. */
+export function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
     <PanelRight size={18} aria-hidden="true" />
@@ -57,7 +57,7 @@ export function LauncherIcon({ src, size }: { src: string; size?: string }) {
       alt=""
       // Images are natively draggable; that would hijack the tab's pointer drag.
       draggable={false}
-      className={size ? `${size} object-contain` : "object-contain"}
+      className="object-contain"
       onError={() => setFailed(true)}
     />
   );

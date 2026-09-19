@@ -80,11 +80,13 @@ always-on-top pill (`drag-ghost`, `public/drag-ghost.html`, transparent via
 `macOSPrivateApi`) follows the pointer across the whole screen; it ignores the
 cursor and never takes focus. The destination window is focused and the moved
 tab becomes its selected tab. Right-click for **Move to new
-window**, **Move to main window** or **Move to Window N**. A launcher panel
-becomes a full tab in a detached window (`panel:<key>`); its close action
-returns it to main. A page lives in exactly one window at a time; Home and
-Settings stay in `main`, so detached windows carry only the navigation arrows and
-the tab strip and follow the community selected in `main`. Rust owns the layout
+window**, **Move to main window** or **Move to Window N**. Launcher panels
+(`panel:<key>`) live in the launcher row on the right of whichever window holds
+them and open as the companion card there; a detached window without pages shows
+its panel full-size, and that view's close returns the panel to main. A page
+lives in exactly one window at a time; Home and Settings stay in `main`, so
+detached windows carry only the navigation arrows, the tab strip and their
+launchers, and follow the community selected in `main`. Rust owns the layout
 (`src-tauri/src/windows.rs`, persisted per profile in `windows.json`) and creates,
 restores and closes the windows; each webview runs the full app and shows the
 pages assigned to its label (`src/features/windows/`). Closing a detached window

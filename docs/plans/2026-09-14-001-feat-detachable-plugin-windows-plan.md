@@ -45,8 +45,11 @@ the main window.
 - Guard rails the owner asked for: nothing fires or publishes twice; no window
   shows stale or missing data it could have had.
 - Launcher panels (Bestie, Agent Activity) detach like pages under a
-  `panel:<key>` tab: a launcher in main, a full tab in a detached window, and a
-  panel's own close returns it to main. Target-bound panels (GitHub, Profile,
+  `panel:<key>` tab but always sit in a window's launcher row (right side);
+  a detached window without pages shows the panel full-size, and that view's
+  close returns it to main. *(revised 2026-09-18: user-directed — a panel
+  dropped on a detached window landed in the strip instead of the right.)*
+  Target-bound panels (GitHub, Profile,
   Terminal drawer) stay with the page that opens them.
   *(session-settled: user-directed 2026-09-14 — "should also be possible to
   detach the bestie from everything".)*

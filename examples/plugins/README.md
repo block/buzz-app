@@ -4,6 +4,9 @@ All example plugins live here with `manifest.json` and prebuilt `plugin.js` file
 
 - `composer-lab`: test page for shared composer/message UI; adds no global tools. Requires the
   matching host conversation capability; sending posts to the selected channel.
+- `handoff-board`: local task handoff queue between a person and an agent, backed by
+  browser `localStorage`; no host runtime import. Requires `shortcuts`, `pages`,
+  `panels`, and `navigation`.
 - `counter` and `notes`: offline playgrounds.
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+K /
   Control+Shift+K increments through the injected host service. Requires `shortcuts`.

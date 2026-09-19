@@ -8,6 +8,10 @@ All example plugins live here with `manifest.json` and prebuilt `plugin.js` file
 - `shortcut-counter`: offline keyboard-shortcut consumer; Command+Shift+K /
   Control+Shift+K increments through the injected host service. Requires `shortcuts`.
 - `broken-page`: intentionally fails when its page renders to exercise error handling.
+- `pr-beacon`: standalone plugin reimplementing portable PR Beacon behavior
+  (review requests, own-PR status, PR diff, user-triggered approve) against
+  the public GitHub API with a user-supplied, memory-only token; see its own
+  README for scope and known limitations.
 
 ## Try the offline playgrounds
 

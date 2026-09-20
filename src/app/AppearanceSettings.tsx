@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { Moon, Sun } from "lucide-react";
+import { MoonIcon, SunIcon } from "../shared/design-system/icons/index";
 import type { Appearance } from "../shared/theme/service";
 
 /** Native radios provide one Tab stop and standard arrow-key selection. */
@@ -29,8 +29,8 @@ export function AppearanceSettings({ appearance }: { appearance: Appearance }) {
           <div className="grid gap-3 @min-[24rem]:grid-cols-2">
             {(
               [
-                ["light", "Light", Sun],
-                ["dark", "Dark", Moon],
+                ["light", "Light", SunIcon],
+                ["dark", "Dark", MoonIcon],
               ] as const
             ).map(([value, label, Icon]) => (
               <label

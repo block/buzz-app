@@ -48,7 +48,10 @@ export function SessionAgentControl({
       value={value || implicit || ""}
       onChange={onChange}
       disabled={disabled}
-      allowed={channel?.parentChannelId ? (parent?.members ?? []) : undefined}
+      sessionMembers={channel?.members ?? []}
+      parentMembers={
+        channel?.parentChannelId ? (parent?.members ?? []) : undefined
+      }
       parentName={parent?.name}
       emptyLabel="Automatic / @mentions"
     />

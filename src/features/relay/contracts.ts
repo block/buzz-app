@@ -20,11 +20,11 @@ export type ChannelSummary = Readonly<{
   participants?: readonly string[];
 }>;
 export type Profile = Readonly<{
-  /** Agent identity advertised by signed kind-0 NIP-OA metadata; not ownership authority. */
-  isAgent?: true;
   name: string;
   picture?: string;
   about?: string;
+  /** Self-declared display hint, not proof of ownership, membership or authority. */
+  isAgent?: true;
 }>;
 export type Attachment = Readonly<{
   url: string;
@@ -32,6 +32,8 @@ export type Attachment = Readonly<{
   dimensions?: Readonly<{ width: number; height: number }>;
   /** Validated message-carried BlurHash; decoded locally only for presentation. */
   blurhash?: string;
+  /** Signed video poster or media thumbnail URL. */
+  previewUrl?: string;
 }>;
 /** Relay-authored membership activity, not a membership grant or user message. */
 export type MembershipChange = Readonly<{
@@ -48,6 +50,8 @@ export type ChannelMessage = Readonly<{
   /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
   createdAt: number;
   content: string;
+  /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
+  agentEnvelope?: true;
   membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;

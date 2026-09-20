@@ -654,7 +654,9 @@ it.each(
       );
       await view.user.click(
         await screen.findByRole("menuitemradio", {
-          name: parent ? "Honey — adds to channel" : "Honey",
+          name: parent
+            ? "Honey — adds to session and channel"
+            : "Honey — adds to session",
         }),
       );
     }

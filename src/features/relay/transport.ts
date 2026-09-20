@@ -28,7 +28,12 @@ import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
-import { eventDto, type ReadFilter, type RelayEvent } from "./events";
+import {
+  createEventVerifier,
+  eventDto,
+  type ReadFilter,
+  type RelayEvent,
+} from "./events";
 
 /** Relay connection. Implementations verify signatures; callers never see raw JSON. */
 export interface RelayWriter {
@@ -101,6 +106,7 @@ export interface Signer {
 
 async function parseEvents(
   raw: unknown,
+  verify: (value: unknown) => RelayEvent,
   signal?: AbortSignal,
 ): Promise<RelayEvent[]> {
   if (!Array.isArray(raw))
@@ -113,7 +119,7 @@ async function parseEvents(
   // head/profile responses cannot monopolize input and foreground rendering.
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
-    events.push(...raw.slice(index, index + 12).map(eventDto));
+    events.push(...raw.slice(index, index + 12).map(verify));
     if (index + 12 < raw.length) await yieldToHost();
   }
   return events;
@@ -149,6 +155,7 @@ export async function connectBrokerTransport(
   if (community) await registerBrokerCommunity(community, signal, base);
   const endpoint = `${base}/api/relay${community ? `/${encodeURIComponent(community)}` : ""}`;
   const profiling = createRelayProfiler();
+  const verify = createEventVerifier();
   const response = await fetch(`${endpoint}/session`, {
     credentials: "same-origin",
     signal: signal ?? null,
@@ -180,13 +187,21 @@ export async function connectBrokerTransport(
       "invalid-response",
       "Relay broker session is malformed",
     );
+  let traffic: LiveSubscription | undefined;
+  const publicationHeaders = () => ({
+    "Content-Type": "application/json",
+    // Matched development frontend/host: publication requires the existing owner.
+    "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
+  });
   return {
     profiling,
     agentActivity: session.agentActivity === true && session.live === true,
     ...(session.live
       ? {
-          subscribe: (callbacks: LiveCallbacks) =>
-            subscribeBrokerTraffic(endpoint, callbacks),
+          subscribe: (callbacks: LiveCallbacks) => {
+            traffic = subscribeBrokerTraffic(endpoint, callbacks);
+            return traffic;
+          },
         }
       : {}),
     ...(session.relayUrl ? { scope: session.relayUrl } : {}),
@@ -277,7 +292,7 @@ export async function connectBrokerTransport(
               const response = await fetch(`${endpoint}/read-state-publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: publicationHeaders(),
                 body: JSON.stringify(event),
                 signal,
               });
@@ -341,7 +356,7 @@ export async function connectBrokerTransport(
               const result = await fetch(`${endpoint}/publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: publicationHeaders(),
                 body: JSON.stringify(event),
                 signal,
               });
@@ -382,7 +397,7 @@ export async function connectBrokerTransport(
       }
       recordServerTiming(result, profiling, requestId);
       return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), signal),
+        parseEvents(await result.json(), verify, signal),
       );
     },
   };
@@ -403,6 +418,7 @@ export async function connectSignedTransport(
   httpOrigin = relayOrigin(httpOrigin);
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
+  const verify = createEventVerifier();
   return {
     profiling,
     subscribe: (callbacks) => {
@@ -482,7 +498,7 @@ export async function connectSignedTransport(
       }
       recordServerTiming(result, profiling, requestId);
       return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), signal),
+        parseEvents(await result.json(), verify, signal),
       );
     },
   };
@@ -519,8 +535,8 @@ async function signedPost(
       }),
     );
     if (signal?.aborted) throw signal.reason;
-    // Preparation retains this principal. Only actual fetch starts consume pacing
-    // credit, and admission rechecks any pause learned during asynchronous signing.
+    // Preparation retains this principal. Dispatch rechecks capacity and any
+    // server pause learned during asynchronous signing.
     const queued = profiling.start("http.admission", id);
     try {
       return await admittedApiRequest(

@@ -10,8 +10,9 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { X } from "lucide-react";
+import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
+import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
@@ -22,6 +23,9 @@ import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
+import type { MediaPlayback } from "./MediaAttachment";
+import { formatMediaTime } from "./media-timecode";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -34,6 +38,11 @@ export type ThreadPanelProps = {
   navigation?: PageNavigation | undefined;
   close(): void;
   onOpenLink(url: string): boolean;
+  onOpenMediaReview?(
+    messageId: string,
+    attachment: ChannelMessage["attachments"][number],
+    seconds: number,
+  ): void;
   canOpenLink?: ((target: string) => boolean) | undefined;
 };
 
@@ -78,7 +87,7 @@ function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
           size="toolbar"
           aria-label="Close thread"
           onClick={close}
-          icon={<X size={18} aria-hidden="true" />}
+          icon={<XIcon size={18} aria-hidden="true" />}
         />
       }
     />
@@ -93,6 +102,7 @@ function OwnedThreadPanel({
   messageId,
   navigation,
   onOpenLink,
+  onOpenMediaReview,
   canOpenLink,
   sessionConversation,
 }: ThreadPanelProps) {
@@ -146,6 +156,7 @@ function OwnedThreadPanel({
       navigation={navigation}
       messageId={messageId}
       onOpenLink={onOpenLink}
+      onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
     />
   ) : (
@@ -160,10 +171,11 @@ function ThreadMessages({
   scope,
   channelId,
   channelName,
+  messageId,
   view,
   navigation,
-  messageId,
   onOpenLink,
+  onOpenMediaReview,
   canOpenLink,
   sessionConversation,
 }: {
@@ -173,10 +185,11 @@ function ThreadMessages({
   scope: string;
   channelId: string;
   channelName: string;
-  view: ThreadView;
   messageId: string;
+  view: ThreadView;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
+  onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
   canOpenLink?: ((target: string) => boolean) | undefined;
 }) {
   const snapshot = useSyncExternalStore(
@@ -201,6 +214,7 @@ function ThreadMessages({
         .catch(() => {});
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, rows);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
@@ -248,6 +262,24 @@ function ThreadMessages({
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
+  const [mediaPlayback, setMediaPlayback] = useState<MediaPlayback>();
+  const [mediaCommentTime, setMediaCommentTime] = useState<number>();
+  const [mediaSeek, setMediaSeek] = useState<{
+    seconds: number;
+    request: number;
+  }>();
+  const rootId = snapshot.root?.id;
+  const openRootMedia = useCallback(
+    (
+      _rowId: string,
+      attachment: ChannelMessage["attachments"][number],
+      seconds: number,
+    ) => {
+      if (rootId) onOpenMediaReview?.(_rowId, attachment, seconds);
+    },
+    [rootId, onOpenMediaReview],
+  );
+  const videoAttachment = snapshot.root?.attachments.find((item) => item.video);
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.
   useEffect(() => {
@@ -327,19 +359,42 @@ function ThreadMessages({
         tabIndex={0}
       >
         {snapshot.root ? (
-          <MessageRow
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            row={snapshot.root}
-            profile={profiles.get(snapshot.root.authorId)}
-            participantProfiles={profiles}
-            media={session.media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            day={false}
-            retry={session.messages.retry}
-          />
+          <>
+            <MessageRow
+              extensions={extensions}
+              session={session}
+              scope={scope}
+              row={snapshot.root}
+              profile={profiles.get(snapshot.root.authorId)}
+              participantProfiles={profiles}
+              agentPubkeys={agentPubkeys}
+              media={session.media}
+              onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
+              day={false}
+              retry={session.messages.retry}
+              mediaMode="thread"
+              {...(mediaSeek
+                ? {
+                    mediaSeekTo: mediaSeek.seconds,
+                    mediaSeekRequest: mediaSeek.request,
+                  }
+                : {})}
+              onMediaPlayback={setMediaPlayback}
+              {...(onOpenMediaReview
+                ? { onOpenMediaReview: openRootMedia }
+                : {})}
+            />
+            {videoAttachment && mediaPlayback && (
+              <button
+                type="button"
+                className={styles.mediaCommentAction}
+                onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
+              >
+                Comment at {formatMediaTime(mediaPlayback.seconds)}
+              </button>
+            )}
+          </>
         ) : (
           snapshot.status !== "loading" && (
             <p className={styles.empty}>Original message unavailable.</p>
@@ -359,11 +414,24 @@ function ThreadMessages({
                 row={row}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
                 media={session.media}
                 onOpenLink={onOpenLink}
                 canOpenLink={canOpenLink}
                 day={false}
                 retry={session.messages.retry}
+                {...(videoAttachment
+                  ? {
+                      onMediaTime: (seconds: number) =>
+                        setMediaSeek((current) => ({
+                          seconds,
+                          request: (current?.request ?? 0) + 1,
+                        })),
+                    }
+                  : {})}
+                {...(onOpenMediaReview && rootId
+                  ? { onOpenMediaReview: openRootMedia }
+                  : {})}
               />
             </li>
           ))}
@@ -397,6 +465,12 @@ function ThreadMessages({
           channelId={channelId}
           channelName={channelName}
           threadRootId={snapshot.root.id}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
+          {...(videoAttachment && mediaCommentTime !== undefined
+            ? { mediaTimeSeconds: mediaCommentTime }
+            : {})}
+          clearMediaTime={() => setMediaCommentTime(undefined)}
           onSend={(id) => {
             targetAnchor.current = undefined;
             positioned.current = true;

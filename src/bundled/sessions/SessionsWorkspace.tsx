@@ -8,6 +8,7 @@ export type SessionListItem = Readonly<{
   id: string;
   title: string;
   parentName?: string;
+  badge?: ReactNode;
 }>;
 
 export function SessionsWorkspace({
@@ -47,7 +48,10 @@ export function SessionsWorkspace({
                   <span>{session.parentName}</span>
                 </small>
               )}
-              <span>{session.title}</span>
+              <span className={styles.sessionRow}>
+                <span>{session.title}</span>
+                {session.badge}
+              </span>
             </button>
           ))}
           {listStatus ??

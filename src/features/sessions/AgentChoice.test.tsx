@@ -6,7 +6,7 @@ import { StrictMode } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { createAgentLibrary } from "../agents/library";
 import type { RelaySession } from "../relay/session";
-import { AgentChoice } from "./AgentChoice";
+import { AgentChoice, agentAdmission } from "./AgentChoice";
 
 afterEach(cleanup);
 
@@ -57,4 +57,16 @@ it("opens the avatar menu and changes the chosen agent without submitting", asyn
   expect(onSubmit).not.toHaveBeenCalled();
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
   library.dispose();
+});
+
+it("distinguishes session admission from parent-channel admission", () => {
+  const member = "a".repeat(64);
+  const outside = "b".repeat(64);
+  expect(agentAdmission(member, undefined, [member], [])).toBeUndefined();
+  expect(agentAdmission(outside, undefined, [member], [outside])).toBe(
+    "session",
+  );
+  expect(agentAdmission(outside, undefined, [member], [])).toBe(
+    "session-and-channel",
+  );
 });

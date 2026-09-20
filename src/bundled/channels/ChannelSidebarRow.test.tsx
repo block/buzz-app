@@ -24,6 +24,9 @@ function mount() {
         onToggle={(open) => setCollapsed(!open)}
         icon={<svg data-testid="channel-icon" />}
         badge={<span>3</span>}
+        childBadge={(channel) => (
+          <span data-testid={`${channel.id}-unread`}>Unread</span>
+        )}
         sessions={[
           {
             id: "child",
@@ -68,6 +71,7 @@ it("opens saved child sessions and retained drafts without a channel icon", asyn
   });
   expect(child).toHaveAttribute("aria-current", "page");
   expect(child.querySelector("svg")).toBeNull();
+  expect(screen.getByTestId("child-unread")).toBeInTheDocument();
   await user.click(child);
   expect(callbacks.onSelect).toHaveBeenCalledWith("child");
   await user.click(

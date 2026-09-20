@@ -3,6 +3,7 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/Avatar";
+import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { matchesMentionQuery } from "./mention-query";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
@@ -26,6 +27,7 @@ export function MentionCompletion({
     session.profiles.snapshot,
   );
   const agents = useAgentChoices(session, inviteAgents);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
   const parentAdmission =
     !!channel &&
@@ -105,6 +107,7 @@ export function MentionCompletion({
               "small",
             )}
             className="size-7 rounded-lg text-caption"
+            shape={agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"}
           />
         ),
         edit: { mention: recipient },
@@ -174,6 +177,7 @@ export function MentionCompletion({
     memberKey,
     parentAdmission,
     profiles,
+    agentPubkeys,
     query.query,
     publish,
     error,

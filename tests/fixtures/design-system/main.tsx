@@ -23,6 +23,7 @@ import { ColorTablePage } from "./ui/ColorTablePage";
 import { TypographyPage } from "./ui/TypographyPage";
 import { SpacingPage } from "./ui/SpacingPage";
 import { RadiusPage } from "./ui/RadiusPage";
+import { IconsPage } from "./ui/IconsPage";
 import { ElevationPage } from "./ui/ElevationPage";
 import { GlassPage } from "./ui/GlassPage";
 import { MotionPage } from "./ui/MotionPage";
@@ -71,6 +72,11 @@ const pages = [
     getParentRoute: () => design,
     path: "color/table",
     component: ColorTablePage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
+    path: "icons",
+    component: IconsPage,
   }),
   createRoute({
     getParentRoute: () => design,

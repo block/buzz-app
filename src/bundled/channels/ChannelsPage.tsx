@@ -14,6 +14,7 @@ import {
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
 import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
+import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
@@ -28,13 +29,13 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Hash,
-  Search,
-  MoreHorizontal,
-  PlugZap,
-  MessageCircle,
-  Users,
-} from "lucide-react";
+  HashIcon,
+  MagnifyingGlassIcon,
+  DotsThreeIcon,
+  PlugIcon,
+  ChatCircleIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons/index";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -51,6 +52,8 @@ import { LiveStatus } from "./LiveStatus";
 import { MessageComposer } from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
+import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
+import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
@@ -88,7 +91,7 @@ export function ChannelsPage({
         <PanelFrame companion={companion}>
           <div className={styles.connect}>
             <div className={styles.connectIcon}>
-              <PlugZap size={30} />
+              <PlugIcon size={30} />
             </div>
             <h1>Your channels, one conversation.</h1>
             <p>
@@ -152,6 +155,19 @@ function ChannelWorkspace({
   panels: Panels;
 }) {
   const list = useChannelList(queries.channels);
+  const activity = useSyncExternalStore(
+    queries.agentActivity.subscribe,
+    queries.agentActivity.snapshot,
+    queries.agentActivity.snapshot,
+  );
+  const workingChannels = new Set([
+    ...activity.turns
+      .filter((turn) => turn.state === "working")
+      .map((turn) => turn.channelId),
+    ...activity.typing
+      .filter((entry) => !entry.threadRootId)
+      .map((entry) => entry.channelId),
+  ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
     if (list.status === "ready") void queries.unread.ensure();
@@ -178,9 +194,10 @@ function ChannelWorkspace({
       return next;
     });
   };
-  const select = useCallback(
+  const navigate = useCallback(
     (id: string) => {
-      setDraftParent(undefined);
+      setSelected(id);
+      writeView(scope, "selected-channel", id);
       if (navigator && viewer) {
         void navigator.open({
           version: 1,
@@ -192,8 +209,6 @@ function ChannelWorkspace({
           },
         });
       }
-      setSelected(id);
-      writeView(scope, "selected-channel", id);
     },
     [navigator, viewer, scope],
   );
@@ -201,6 +216,14 @@ function ChannelWorkspace({
     channelId: string;
     messageId: string;
   }>();
+  const select = useCallback(
+    (id: string) => {
+      setDraftParent(undefined);
+      navigate(id);
+      setThread(undefined);
+    },
+    [navigate],
+  );
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
   const sidebar = useSidebarView(
@@ -422,6 +445,80 @@ function ChannelWorkspace({
     },
     [currentId, navigator, viewer, scope, open],
   );
+  const mediaReviewTrigger = useRef<HTMLElement | null>(null);
+  const [mediaReview, setMediaReview] = useState<{
+    channelId: string;
+    channelName: string;
+    messageId: string;
+    attachment: Attachment;
+    initialTime: number;
+    entryId?: string | undefined;
+  }>();
+  const showingMediaReview = mediaReviewForDestination(
+    mediaReview,
+    current?.id,
+    navigation?.entryId,
+  );
+  useEffect(() => {
+    if (mediaReview && !showingMediaReview) setMediaReview(undefined);
+  }, [mediaReview, showingMediaReview]);
+  const openMediaReview = useCallback(
+    (messageId: string, attachment: Attachment, initialTime: number) => {
+      if (!current) return;
+      mediaReviewTrigger.current =
+        document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+      setThread(undefined);
+      setMediaReview({
+        channelId: current.id,
+        channelName: current.name,
+        messageId,
+        attachment,
+        initialTime,
+        ...(navigation ? { entryId: navigation.entryId } : {}),
+      });
+    },
+    [current, navigation],
+  );
+  useEffect(() => {
+    if (
+      mediaReview &&
+      list.status === "ready" &&
+      list.coverage !== "partial" &&
+      !list.channels.some(
+        (channel) => channel.id === mediaReview.channelId && !channel.archived,
+      )
+    )
+      setMediaReview(undefined);
+  }, [mediaReview, list]);
+  const openActivityThread = useCallback(
+    (channelId: string, rootId: string) => {
+      threadTrigger.current =
+        sidebar.list.current?.querySelector<HTMLElement>(
+          `[data-channel-id="${CSS.escape(channelId)}"]`,
+        ) ?? null;
+      if (navigator && viewer) {
+        setThread(undefined);
+        void navigator.open({
+          version: 1,
+          kind: "conversation",
+          channelId,
+          messageId: rootId,
+          threadRootId: rootId,
+          scope: {
+            viewer,
+            communityOrigin: scope.slice(0, -(viewer.length + 1)),
+          },
+        });
+      } else {
+        navigate(channelId);
+        setThread({ channelId, messageId: rootId });
+      }
+      open(undefined);
+    },
+    [navigate, navigator, viewer, scope, sidebar.list, open],
+  );
   const closeThread = () => {
     if (showingThread?.navigation && current) select(current.id);
     setThread(undefined);
@@ -458,22 +555,33 @@ function ChannelWorkspace({
   }, [currentId, showingThread?.navigation]);
   const openLink = useCallback(
     (url: string) => {
-      if (isBuzzLink(url)) {
-        if (!navigator || !viewer) return false;
+      const connection = relay.snapshot();
+      if (
+        !mounted.current ||
+        channel.current !== current?.id ||
+        connection.status !== "ready" ||
+        connection.session !== queries ||
+        navigation?.signal.aborted
+      )
+        return false;
+      if (isBuzzLink(url) && navigator && viewer) {
         const target = buzzLinkTarget(url, {
           viewer,
           communityOrigin: scope.slice(0, -(viewer.length + 1)),
         });
-        if (!target) return false;
-        if (target.kind === "conversation" && target.messageId)
-          threadTrigger.current =
-            document.activeElement instanceof HTMLElement
-              ? document.activeElement
-              : null;
-        setThread(undefined);
-        open(undefined);
-        void navigator.open(target);
-        return true;
+        // Internal panel targets also use buzz:. Only routable links belong
+        // to the navigator; registered panels handle the remaining targets.
+        if (target) {
+          if (target.kind === "conversation" && target.messageId)
+            threadTrigger.current =
+              document.activeElement instanceof HTMLElement
+                ? document.activeElement
+                : null;
+          setThread(undefined);
+          open(undefined);
+          void navigator.open(target);
+          return true;
+        }
       }
       const candidate = panels.resolve(url);
       const context = linkContext.current;
@@ -493,7 +601,18 @@ function ChannelWorkspace({
       }
       return false;
     },
-    [panels, open, select, navigator, viewer, scope],
+    [
+      panels,
+      current,
+      open,
+      relay,
+      queries,
+      navigation,
+      select,
+      navigator,
+      viewer,
+      scope,
+    ],
   );
   const panelActive = () => {
     const connection = relay.snapshot();
@@ -561,7 +680,7 @@ function ChannelWorkspace({
     >
       <aside className={styles.sidebar} aria-label="Channel sidebar">
         <div className={styles.search}>
-          <Search size={17} />
+          <MagnifyingGlassIcon size={17} />
           <input
             aria-label="Search channels"
             placeholder="Search"
@@ -589,17 +708,42 @@ function ChannelWorkspace({
                 const Icon =
                   channel.channelType === "dm"
                     ? (channel.participants?.length ?? 0) > 1
-                      ? Users
-                      : MessageCircle
-                    : Hash;
+                      ? UsersIcon
+                      : ChatCircleIcon
+                    : HashIcon;
                 return (
                   <ChannelSidebarRow
                     key={channel.id}
                     channel={channel}
                     icon={<Icon size={17} />}
                     badge={
-                      <UnreadBadge session={queries} channelId={channel.id} />
+                      <>
+                        {workingChannels.has(channel.id) && (
+                          <span
+                            className={styles.working}
+                            role="img"
+                            aria-label="Agent working"
+                            title="Agent working in this channel"
+                          />
+                        )}
+                        <UnreadBadge
+                          session={queries}
+                          channelId={channel.id}
+                          dm={channel.channelType === "dm"}
+                        />
+                      </>
                     }
+                    wrapSelect={(trigger) => (
+                      <ChannelActivityPopover
+                        session={queries}
+                        channelId={channel.id}
+                        channelName={channel.name}
+                        onOpenThread={(item) =>
+                          openActivityThread(item.channelId, item.rootId)
+                        }
+                        trigger={trigger}
+                      />
+                    )}
                     selected={current?.id}
                     collapsed={sidebar.collapsed.includes(
                       `session-children:${channel.id}`,
@@ -615,6 +759,9 @@ function ChannelWorkspace({
                           .toLowerCase()
                           .includes(search.toLowerCase()) ||
                         child.name.toLowerCase().includes(search.toLowerCase()),
+                    )}
+                    childBadge={(child) => (
+                      <UnreadBadge session={queries} channelId={child.id} />
                     )}
                     onPrepare={(id) => queries.channels.prepare?.(id)}
                     onSelect={select}
@@ -685,9 +832,9 @@ function ChannelWorkspace({
               <header className={styles.heading}>
                 <div className={styles.channelTitle}>
                   {current?.channelType === "dm" ? (
-                    <MessageCircle size={20} />
+                    <ChatCircleIcon size={20} />
                   ) : (
-                    <Hash size={20} />
+                    <HashIcon size={20} />
                   )}
                   <strong>{current?.name ?? "Channels"}</strong>
                 </div>
@@ -697,7 +844,7 @@ function ChannelWorkspace({
                     aria-label="Conversation options"
                     title="Conversation options"
                   >
-                    <MoreHorizontal size={19} aria-hidden="true" />
+                    <DotsThreeIcon size={19} aria-hidden="true" />
                   </summary>
                   <div className={styles.diagnosticsMenu}>
                     <UnreadOptions session={queries} channelId={current?.id} />
@@ -797,6 +944,7 @@ function ChannelWorkspace({
                   onOpenLink={openLink}
                   canOpenLink={canOpenLink}
                   onOpenThread={flatSession ? undefined : openThread}
+                  onOpenMediaReview={openMediaReview}
                   revealMessageId={
                     sent?.channelId === current.id ? sent.id : undefined
                   }
@@ -813,6 +961,8 @@ function ChannelWorkspace({
                   scope={scope}
                   channelId={current.id}
                   channelName={current.name}
+                  onOpenLink={openLink}
+                  canOpenLink={canOpenLink}
                   label={
                     current.channelType === "session"
                       ? "Message this session"
@@ -829,7 +979,21 @@ function ChannelWorkspace({
           </>
         )}
       </article>
-      {(panel || showingThread || companion) && (
+      {showingMediaReview && (
+        <MediaReviewViewer
+          extensions={extensions}
+          attachment={showingMediaReview.attachment}
+          session={queries}
+          scope={scope}
+          channelId={showingMediaReview.channelId}
+          channelName={showingMediaReview.channelName}
+          messageId={showingMediaReview.messageId}
+          initialTime={showingMediaReview.initialTime}
+          restoreFocus={mediaReviewTrigger}
+          close={() => setMediaReview(undefined)}
+        />
+      )}
+      {!showingMediaReview && (panel || showingThread || companion) && (
         <div className={styles.panelStack}>
           {showingThread && (
             <ThreadPanel
@@ -843,6 +1007,7 @@ function ChannelWorkspace({
               navigation={showingThread.navigation}
               close={closeThread}
               onOpenLink={openLink}
+              onOpenMediaReview={openMediaReview}
               canOpenLink={canOpenLink}
             />
           )}
@@ -868,6 +1033,20 @@ function ChannelWorkspace({
   );
 }
 
+export function mediaReviewForDestination<
+  T extends { channelId: string; entryId?: string | undefined },
+>(
+  review: T | undefined,
+  channelId: string | undefined,
+  entryId: string | undefined,
+): T | undefined {
+  return review &&
+    review.channelId === channelId &&
+    (review.entryId === undefined || review.entryId === entryId)
+    ? review
+    : undefined;
+}
+
 const ChannelBody = memo(function ChannelBody({
   viewer,
   extensions,
@@ -878,6 +1057,7 @@ const ChannelBody = memo(function ChannelBody({
   canOpenLink,
   revealMessageId,
   onOpenThread,
+  onOpenMediaReview,
   navigation,
 }: {
   extensions?: ConversationExtensions | undefined;
@@ -892,6 +1072,11 @@ const ChannelBody = memo(function ChannelBody({
   onOpenThread?:
     | ((messageId: string, threadRootId: string) => void)
     | undefined;
+  onOpenMediaReview(
+    messageId: string,
+    attachment: Attachment,
+    seconds: number,
+  ): void;
 }) {
   const window = useChannelWindow(queries.channels, channelId);
   useEffect(() => {
@@ -935,6 +1120,7 @@ const ChannelBody = memo(function ChannelBody({
       onOpenLink={onOpenLink}
       canOpenLink={canOpenLink}
       {...(onOpenThread ? { onOpenThread } : {})}
+      onOpenMediaReview={onOpenMediaReview}
       revealMessageId={revealMessageId}
       navigation={navigation}
     />

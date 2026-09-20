@@ -1,9 +1,14 @@
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import { IconMessageCircle } from "@tabler/icons-react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
+import type { Navigation } from "../../features/navigation/controller";
+import {
+  buzzLinkTarget,
+  isBuzzLink,
+} from "../../features/navigation/buzz-links";
 import {
   useChannelList,
   useChannelWindow,
@@ -20,13 +25,16 @@ import {
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
 import styles from "../../features/sessions/Sessions.module.css";
+import { UnreadBadge } from "../channels/UnreadBadge";
 
 export function SessionsPage({
   relay,
   extensions,
+  navigator,
 }: {
   relay: RelayData;
   extensions: ConversationExtensions;
+  navigator?: Navigation | undefined;
 }) {
   const connection = useRelayConnection(relay);
   return connection.status === "ready" ? (
@@ -35,6 +43,7 @@ export function SessionsPage({
       session={connection.session}
       scope={connection.scope ?? ""}
       extensions={extensions}
+      navigator={navigator}
     />
   ) : (
     <section className={styles.empty} aria-label="Sessions">
@@ -61,10 +70,12 @@ function LiveSessions({
   session,
   scope,
   extensions,
+  navigator,
 }: {
   session: RelaySession;
   scope: string;
   extensions: ConversationExtensions;
+  navigator?: Navigation | undefined;
 }) {
   const list = useChannelList(session.channels);
   const [selected, setSelected] = useState(() => {
@@ -89,6 +100,7 @@ function LiveSessions({
       sessions={sessions.map((item) => ({
         id: item.id,
         title: item.name,
+        badge: <UnreadBadge session={session} channelId={item.id} />,
         ...(item.parentChannelId
           ? {
               parentName:
@@ -126,6 +138,7 @@ function LiveSessions({
           scope={scope}
           channel={selectedSession}
           extensions={extensions}
+          navigator={navigator}
           parentName={
             list.channels.find(
               (item) => item.id === selectedSession.parentChannelId,
@@ -152,16 +165,34 @@ function SessionWork({
   channel,
   extensions,
   parentName,
+  navigator,
 }: {
   session: RelaySession;
   scope: string;
   channel: ChannelSummary;
   extensions: ConversationExtensions;
   parentName?: string | undefined;
+  navigator?: Navigation | undefined;
 }) {
   const window = useChannelWindow(session.channels, channel.id);
   const [sent, setSent] = useState<string>();
-  const openLink = () => false;
+  const targetForLink = useCallback(
+    (url: string) => sessionLinkTarget(url, scope, session.viewer),
+    [scope, session.viewer],
+  );
+  const canOpenLink = useCallback(
+    (url: string) => !!navigator && !!targetForLink(url),
+    [navigator, targetForLink],
+  );
+  const openLink = useCallback(
+    (url: string) => {
+      const target = targetForLink(url);
+      if (!navigator || !target) return false;
+      void navigator.open(target);
+      return true;
+    },
+    [navigator, targetForLink],
+  );
   return (
     <div className={styles.work}>
       <SessionHeading channel={channel} parentName={parentName} />
@@ -203,8 +234,22 @@ function SessionWork({
           channelName={channel.name}
           label="Message this session"
           disabled={!!channel.archived || window.status !== "ready"}
+          onOpenLink={openLink}
+          canOpenLink={canOpenLink}
         />
       </SessionColumn>
     </div>
   );
+}
+
+export function sessionLinkTarget(
+  url: string,
+  scope: string,
+  viewer: string | undefined,
+): ReturnType<typeof buzzLinkTarget> {
+  if (!viewer || !isBuzzLink(url)) return null;
+  return buzzLinkTarget(url, {
+    viewer,
+    communityOrigin: scope.slice(0, -(viewer.length + 1)),
+  });
 }

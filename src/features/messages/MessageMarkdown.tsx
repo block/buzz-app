@@ -15,7 +15,7 @@ import {
   channelLinkLabel,
   emptyReferenceDirectory,
 } from "./ReferenceText";
-import { IconAt, IconRobot } from "@tabler/icons-react";
+import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import { profileKey } from "../profiles/target";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import Markdown, {
@@ -395,7 +395,7 @@ export function MessageMarkdown({
         typeof target === "string" &&
         (!interactive || clickable || agent)
       ) {
-        const Icon = agent ? IconRobot : IconAt;
+        const Icon = agent ? RobotIcon : AtIcon;
         const Mention = clickable ? "button" : "span";
         return (
           <Mention

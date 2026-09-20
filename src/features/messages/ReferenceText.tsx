@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore, type ReactNode } from "react";
-import { IconAt, IconRobot } from "@tabler/icons-react";
+import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import type { RelaySession } from "../relay/session";
 import type { Profile, ChannelSummary } from "../relay/contracts";
 import { messageReferences } from "./message-references";
@@ -109,7 +109,7 @@ export function ReferenceText({
         {renderText(text.slice(offset, reference.start))}
       </span>,
     );
-    const Icon = reference.kind === "agent" ? IconRobot : IconAt;
+    const Icon = reference.kind === "agent" ? RobotIcon : AtIcon;
     parts.push(
       reference.kind === "channel" ? (
         <MessageLink

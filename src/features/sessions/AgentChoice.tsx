@@ -7,12 +7,30 @@ import { avatarSource } from "../../shared/avatar-source";
 import completion from "../conversation/Completions.module.css";
 import styles from "./Sessions.module.css";
 
+export function agentAdmission(
+  pubkey: string,
+  allowed?: readonly string[] | undefined,
+  sessionMembers?: readonly string[] | undefined,
+  parentMembers?: readonly string[] | undefined,
+) {
+  if (sessionMembers === undefined)
+    return allowed !== undefined && !allowed.includes(pubkey)
+      ? ("channel" as const)
+      : undefined;
+  if (sessionMembers.includes(pubkey)) return undefined;
+  return parentMembers !== undefined && !parentMembers.includes(pubkey)
+    ? ("session-and-channel" as const)
+    : ("session" as const);
+}
+
 export function AgentChoice({
   session,
   value,
   onChange,
   disabled = false,
   allowed,
+  sessionMembers,
+  parentMembers,
   parentName,
   emptyLabel = "No agent selected",
   side = "top",
@@ -22,6 +40,8 @@ export function AgentChoice({
   onChange: (key: string) => void;
   disabled?: boolean;
   allowed?: readonly string[] | undefined;
+  sessionMembers?: readonly string[] | undefined;
+  parentMembers?: readonly string[] | undefined;
   parentName?: string | undefined;
   emptyLabel?: string;
   side?: "top" | "bottom";
@@ -106,8 +126,12 @@ export function AgentChoice({
                 </Menu.RadioItemIndicator>
               </Menu.RadioItem>
               {identities.map((agent) => {
-                const outside =
-                  allowed !== undefined && !allowed.includes(agent.pubkey);
+                const admission = agentAdmission(
+                  agent.pubkey,
+                  allowed,
+                  sessionMembers,
+                  parentMembers,
+                );
                 const duplicateName = agents.identities.some(
                   (other) =>
                     other.pubkey !== agent.pubkey && other.name === agent.name,
@@ -127,7 +151,13 @@ export function AgentChoice({
                     <span>
                       {agent.name}
                       {duplicateName ? ` · ${agent.pubkey.slice(0, 8)}` : ""}
-                      {outside ? " — adds to channel" : ""}
+                      {admission === "channel"
+                        ? " — adds to channel"
+                        : admission === "session-and-channel"
+                          ? " — adds to session and channel"
+                          : admission === "session"
+                            ? " — adds to session"
+                            : ""}
                     </span>
                     <Menu.RadioItemIndicator className={styles.agentCheck}>
                       <Check size={14} />
@@ -137,6 +167,7 @@ export function AgentChoice({
               })}
             </Menu.RadioGroup>
             {allowed !== undefined &&
+              sessionMembers === undefined &&
               agents.identities.some(
                 (agent) => !allowed.includes(agent.pubkey),
               ) && (
@@ -144,6 +175,33 @@ export function AgentChoice({
                   Adding an agent also adds it to{" "}
                   {parentName ?? "the parent channel"}, with access to its
                   history.
+                </p>
+              )}
+            {sessionMembers !== undefined &&
+              agents.identities.some(
+                (agent) =>
+                  agentAdmission(
+                    agent.pubkey,
+                    allowed,
+                    sessionMembers,
+                    parentMembers,
+                  ) !== undefined,
+              ) && (
+                <p>
+                  Adding an agent gives it access to this session’s history
+                  {parentMembers !== undefined &&
+                  agents.identities.some(
+                    (agent) =>
+                      agentAdmission(
+                        agent.pubkey,
+                        allowed,
+                        sessionMembers,
+                        parentMembers,
+                      ) === "session-and-channel",
+                  )
+                    ? ` and may add it to ${parentName ?? "the parent channel"}, with access to that channel’s history`
+                    : ""}
+                  .
                 </p>
               )}
             {agents.status === "loading" && (

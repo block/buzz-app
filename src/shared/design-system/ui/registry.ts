@@ -165,8 +165,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "tint",
       "chrome",
       "shape: control | round",
-      "compact: 16px artwork, 30px target, Tabler stroke 2",
-      "toolbar: 16px artwork, 32px target, Tabler stroke 2",
+      "compact: 16px artwork, 30px target, Phosphor artwork",
+      "toolbar: 16px artwork, 32px target, Phosphor artwork",
     ],
     status: "proposed",
     collection: "components",
@@ -178,9 +178,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "avatar",
     name: "Avatar",
-    purpose: "A person or agent identity image with a stable fallback.",
+    purpose:
+      "A person or agent identity image with a stable fallback. Circle by default; callers can select the proposed squircle shape from display-only agent evidence.",
     behavior: "Base UI Avatar",
-    variants: ["small", "default", "large", "fill"],
+    variants: ["small", "default", "large", "fill", "circle", "squircle"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

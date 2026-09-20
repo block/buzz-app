@@ -1,6 +1,7 @@
 import { assert, afterEach, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { GitHubPanel } from "./index";
+import { GitHubIssueIcon } from "../../shared/design-system/icons/index";
 import { loadGitHubDetails } from "./data";
 import { parseGitHubReference } from "./references";
 
@@ -9,6 +10,19 @@ const reference = parseGitHubReference(
   "https://github.com/block/buzz/pull/23#discussion_r1",
 );
 assert.exists(reference);
+it("keeps gateway icons decorative by default with an explicit named opt-in", () => {
+  const decorative = renderToStaticMarkup(<GitHubIssueIcon />);
+  expect(decorative).toContain('aria-hidden="true"');
+  expect(decorative).not.toContain("role=");
+
+  const meaningful = renderToStaticMarkup(
+    <GitHubIssueIcon aria-hidden={false} role="img" aria-label="Open issue" />,
+  );
+  expect(meaningful).toContain('aria-hidden="false"');
+  expect(meaningful).toContain('role="img"');
+  expect(meaningful).toContain('aria-label="Open issue"');
+});
+
 it("opens a target without a channel, even when no message window contains it", () => {
   const html = renderToStaticMarkup(
     <GitHubPanel target={reference.url} close={() => {}} />,

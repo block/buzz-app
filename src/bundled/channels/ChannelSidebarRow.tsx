@@ -1,4 +1,4 @@
-import { useId, useRef, type ReactNode } from "react";
+import { useId, useRef, type ReactElement, type ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
 import { ChevronDown, ChevronRight, MoreVertical } from "lucide-react";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -9,6 +9,8 @@ export function ChannelSidebarRow({
   channel,
   icon,
   badge,
+  childBadge,
+  wrapSelect,
   selected,
   sessions,
   draft,
@@ -22,6 +24,8 @@ export function ChannelSidebarRow({
   channel: ChannelSummary;
   icon: ReactNode;
   badge?: ReactNode;
+  childBadge?: ((channel: ChannelSummary) => ReactNode) | undefined;
+  wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
   sessions: readonly ChannelSummary[];
   draft: boolean;
@@ -40,6 +44,28 @@ export function ChannelSidebarRow({
     channel.channelType !== "dm" &&
     channel.channelType !== "session" &&
     !channel.archived;
+  const selectButton = (
+    <button
+      className={styles.select}
+      type="button"
+      title={channel.name}
+      data-channel-id={channel.id}
+      aria-current={
+        selected === channel.id && !draftSelected ? "page" : undefined
+      }
+      onPointerEnter={() => onPrepare(channel.id)}
+      onFocus={() => onPrepare(channel.id)}
+      onClick={() => onSelect(channel.id)}
+    >
+      {hasChildren ? (
+        <span className={styles.iconSpace} aria-hidden="true" />
+      ) : (
+        icon
+      )}
+      <span>{channel.name}</span>
+      {badge}
+    </button>
+  );
   return (
     <>
       <div
@@ -65,26 +91,7 @@ export function ChannelSidebarRow({
             />
           </button>
         )}
-        <button
-          className={styles.select}
-          type="button"
-          title={channel.name}
-          data-channel-id={channel.id}
-          aria-current={
-            selected === channel.id && !draftSelected ? "page" : undefined
-          }
-          onPointerEnter={() => onPrepare(channel.id)}
-          onFocus={() => onPrepare(channel.id)}
-          onClick={() => onSelect(channel.id)}
-        >
-          {hasChildren ? (
-            <span className={styles.iconSpace} aria-hidden="true" />
-          ) : (
-            icon
-          )}
-          <span>{channel.name}</span>
-          {badge}
-        </button>
+        {wrapSelect ? wrapSelect(selectButton) : selectButton}
         {canParent && (
           <Menu.Root
             onOpenChange={(open) => {
@@ -161,6 +168,7 @@ export function ChannelSidebarRow({
           >
             <span className={styles.iconSpace} aria-hidden="true" />
             <span>{child.name}</span>
+            {childBadge?.(child)}
           </button>
         ))}
       </div>

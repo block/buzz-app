@@ -78,6 +78,17 @@
   line-height: 1.4;
 }
 
+.sessionRow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+.sessionRow > span:first-child {
+  min-width: 0;
+}
+
 .history small,
 .listMessage {
   color: var(--text-muted);

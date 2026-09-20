@@ -1,5 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { FolderOpen, GitBranch } from "lucide-react";
+import {
+  FolderOpenIcon,
+  GitBranchIcon,
+} from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview } from "../plugins/types";
 
@@ -88,7 +91,7 @@ export function PluginImport({
           className="flex items-center gap-2"
           onClick={() => void load(imports.folder)}
         >
-          <FolderOpen aria-hidden="true" size={17} /> Load from folder
+          <FolderOpenIcon aria-hidden="true" size={17} /> Load from folder
         </button>
         <button
           type="button"
@@ -97,7 +100,7 @@ export function PluginImport({
           className="flex items-center gap-2"
           onClick={() => setGitForm(!gitForm)}
         >
-          <GitBranch aria-hidden="true" size={17} /> Load from Git
+          <GitBranchIcon aria-hidden="true" size={17} /> Load from Git
         </button>
       </div>
       {gitForm && (

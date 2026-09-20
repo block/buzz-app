@@ -1,6 +1,7 @@
 import { useAgentChoices } from "./use-agent-choices";
 import { Avatar } from "../../shared/Avatar";
-import { AtSign } from "lucide-react";
+import { useKnownAgentPubkeys } from "../../features/agents/use-known";
+import { AtIcon } from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useId,
@@ -43,6 +44,7 @@ export function MentionPicker({
     session.profiles.snapshot,
   );
   const agents = useAgentChoices(session, inviteAgents && open);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
   const parentAdmission =
     !!channel &&
@@ -106,7 +108,7 @@ export function MentionPicker({
           session.channels.ensureList();
         }}
       >
-        <AtSign size={20} aria-hidden="true" />
+        <AtIcon size={20} aria-hidden="true" />
       </button>
       {open && (
         <section
@@ -174,6 +176,9 @@ export function MentionPicker({
                     "small",
                   )}
                   className="size-8 rounded-lg text-caption"
+                  shape={
+                    agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                  }
                 />
                 <span className={styles.mentionLabel}>
                   <span>{recipient.name}</span>

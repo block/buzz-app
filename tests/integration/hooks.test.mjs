@@ -84,6 +84,35 @@ function fixture(t) {
   return { dir, sibling, run, git, write, read, install, commit };
 }
 
+test("both pre-push jobs receive the complete Git input without sharing a read cursor", (t) => {
+  const f = fixture(t);
+  // Keep the installed hook and production job configuration. Probe only the
+  // stdin contract at the child boundary, including input larger than one read.
+  f.write(
+    "scripts/check-push.mjs",
+    `import { readFileSync, writeFileSync } from "node:fs";
+writeFileSync(process.argv.includes("--design") ? "design-stdin" : "unit-stdin", readFileSync(0));
+`,
+  );
+  const refs =
+    `refs/heads/probe ${"a".repeat(40)} refs/heads/probe ${"0".repeat(40)}\n`.repeat(
+      1000,
+    );
+  const result = spawnSync(path.join(f.dir, ".githooks/pre-push"), [], {
+    cwd: f.dir,
+    env,
+    input: refs,
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+  for (const lane of ["design", "unit"])
+    assert.equal(
+      f.read(`${lane}-stdin`),
+      refs,
+      `${lane} lost or duplicated Git refs`,
+    );
+});
+
 test("installed hook formats without rewriting borrowed dependencies or other work", (t) => {
   const dependencies = () =>
     [".modules.yaml", "virtua/lib/index.js"].map((file) =>

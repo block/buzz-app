@@ -184,8 +184,10 @@ changes, source deletions, or a missing base run the full Vitest suite instead.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
 inputs, and the app composition test for source edits that its Vite loader hides
 from the import graph.
-A separate **design-system** job runs `design:typecheck` and `design:check` in
-parallel with types/unit tests. Source CSS/JS/TS, design viewer/guard files, shared
+A separate **design-system** job runs `design:typecheck` and `design:check` after
+types/unit tests. The jobs are serialized because pinned Lefthook 2.1.12 shares
+a mutable stdin reader: parallel consumers can lose Git refs and silently skip
+checks. Source CSS/JS/TS, design viewer/guard files, shared
 configuration/dependencies and hook-runner changes select this job; a missing base
 runs it conservatively. Its selection is independent of the unit-test skip, so
 CSS-only and viewer-only errors still block a push. Documentation-only and

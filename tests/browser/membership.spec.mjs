@@ -105,7 +105,12 @@ keyboardTest(
       .getByLabel("Pages")
       .getByRole("button", { name: "Messages", exact: true })
       .click();
-    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    // Unread evidence contributes to the accessible name; channel identity does not change.
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    await expect(alpha.getByRole("img")).toHaveAccessibleName(
+      /observed unread messages/,
+    );
+    await alpha.click();
     const feed = page.getByRole("region", { name: "Channel message history" });
     const distance = () =>
       feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);

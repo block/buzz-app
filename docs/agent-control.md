@@ -222,11 +222,14 @@ fixture the controls simulate native responses, not agent execution.
   correct the destination/source and preview again; never edit the old library to
   work around a destination error.
 - Operations are serialized except explicit recovery Stop during a pending
-  Start/Restart credential wait. Stop can reach the native fence for that identity
-  or another known running identity; only one Stop is admitted at a time. Other
-  writes remain blocked until the launch wait settles. Superseded launch success,
-  error and finalization cannot overwrite the newer Stop result or unlock its
-  pending operation. Old pre-write reads cannot overwrite newer command evidence. Failed reads/commands retain the last snapshot
+  Start/Restart or Import credential wait. Stop can reach the native fence for a
+  pending launch or another known enabled/running identity; only one Stop is
+  admitted at a time. Other writes remain blocked until both operations settle.
+  Superseded launch/import success, error and finalization cannot overwrite the
+  newer Stop result or unlock its pending operation. Stop does not cancel native
+  import: imported rows may still commit disabled and are recovered by a fresh
+  status read, never by replaying the superseded result.
+  Old pre-write reads cannot overwrite newer command evidence. Failed reads/commands retain the last snapshot
   and draft with explicit uncertainty. Start/Restart/Save/import require a fresh
   successful host read before retry. Explicit Stop is the only recovery exception:
   it remains available for identities in the retained snapshot, even if that stale

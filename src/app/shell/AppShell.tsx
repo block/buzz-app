@@ -111,6 +111,7 @@ export function AppShell({
                 windows={windows}
                 layout={layout.layout}
                 tabsHere={tabsHere}
+                detachable={layout.enabled}
               >
                 <Icon aria-hidden="true" size={15} strokeWidth={1.7} />
                 {label}

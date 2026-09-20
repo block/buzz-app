@@ -9,7 +9,7 @@ use terminal::{
 };
 use windows::{
     windows_drag_begin, windows_drag_end, windows_drag_move, windows_drop_tab, windows_layout,
-    windows_move_tab, Windows,
+    windows_move_tab, windows_reset, Windows,
 };
 
 use buzzodz_plugins::{
@@ -167,7 +167,10 @@ pub fn run() {
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(Notifications::default())
-        .manage(Windows::open(manager.as_ref().ok().map(Manager::root)))
+        .manage(Windows::open(
+            manager.as_ref().ok().map(Manager::root),
+            windows::plugin_enabled(manager.as_ref().ok()),
+        ))
         .manage(PluginManager(manager))
         .setup(|app| {
             windows::restore(app.handle());
@@ -186,6 +189,7 @@ pub fn run() {
             windows_drag_begin,
             windows_drag_move,
             windows_drag_end,
+            windows_reset,
             notification_show,
             terminal_create_owner,
             terminal_spawn,

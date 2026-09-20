@@ -69,8 +69,17 @@ the main window.
    and restored on launch. Positions/sizes: phase 3.
 6. Dragging a tab out of the strip creates a window; dropping it on another
    window's strip merges it there: phase 2.
-7. Plugin authors see no new API. A moved page remounts, exactly as it does on
-   a revision change today.
+7. Plugin authors see no new API for their pages. A moved page remounts,
+   exactly as it does on a revision change today.
+8. The feature appears in Settings → Plugins as **Windows**
+   (`buzz.windows`). *(revised 2026-09-20: user-directed.)* The windowing
+   runtime stays host-owned; the plugin is the switch, through a new
+   `ctx.windows` capability (`enable()`, layout snapshot). Disabling returns
+   every tab to main and closes detached windows; a disabled plugin at launch
+   discards the saved layout instead of restoring it. Considered and rejected:
+   moving the tab strip, page filtering and chrome into plugin extension points
+   (three new host contracts with one consumer) and an external plugin (needs
+   native code and capabilities).
 
 ### Non-goals
 
@@ -161,6 +170,21 @@ windows overlap (first hit wins).
 
 Deferred check: `screenX/Y` and Tauri `outer_position` agree on multi-display
 setups and on non-macOS platforms.
+
+### Phase 2b — Plugin switch (implemented 2026-09-20)
+
+`src/bundled/windows` (`buzz.windows`) with `inject = ["windows"]` and
+`ctx.effect(() => ctx.windows.enable())`. `WindowsService` in
+`src/features/windows/service.ts` is the Cordis capability over the existing
+`WindowHost`; the snapshot carries `enabled`, and `PageTab`/`PanelLaunchers`
+offer menus and drag only while enabled. The enable disposer calls
+`windows_reset` (Rust returns tabs and closes windows) unless the host itself is
+being disposed, so app quit never resets the layout. `Windows::open` takes the
+plugin's enabled flag from the profile catalog (`Manager::catalog`) and discards
+a saved layout while disabled. Deferred checks (desktop build): toggle off with
+two detached windows open; relaunch with the plugin disabled; re-enable and
+detach again; verify each detached window's own plugin runtime disables cleanly
+(its reset is a no-op after main's).
 
 ### Phase 3 — Restore positions and sizes
 

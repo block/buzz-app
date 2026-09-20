@@ -1,9 +1,11 @@
+import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
 import type { RegisteredPage } from "../pages/service";
 import type { RegisteredPanel } from "../panels/service";
 import {
   createTabDrag,
   createWindowHost,
+  WindowsService,
   panelTabKey,
   parseLayout,
   windowPages,
@@ -83,6 +85,7 @@ function transport(initial: unknown | (() => Promise<unknown>) = layout) {
     dragBegin: vi.fn(async () => {}),
     dragMove: vi.fn(async () => {}),
     dragEnd: vi.fn(async () => {}),
+    reset: vi.fn(async () => ({ windows: [] })),
     close: vi.fn(async () => {}),
     emit: (layout) => deliver?.(layout),
     activate: (key) => activate?.(key),
@@ -131,6 +134,7 @@ it("web is the single main window without move or close", () => {
   expect(host.snapshot()).toEqual({
     status: "ready",
     layout: { windows: [] },
+    enabled: false,
   });
   expect(host.moveTab).toBeUndefined();
   expect(host.dropTab).toBeUndefined();
@@ -149,6 +153,7 @@ it("loads the desktop layout, follows broadcasts, and stops listening on dispose
   expect(host.snapshot()).toEqual({
     status: "ready",
     layout,
+    enabled: false,
   });
   expect(listener).toHaveBeenCalledTimes(1);
   api.emit({ windows: [] });
@@ -265,6 +270,50 @@ it("drag moves wait for begin, keep only the latest point, and never outlive end
   expect(transport.dragEnd).toHaveBeenCalledTimes(2);
 });
 
+it("the plugin switch enables detaching; switching off resets the layout, teardown does not", async () => {
+  const { api } = transport();
+  const host = createWindowHost(api);
+  const listener = vi.fn();
+  host.subscribe(listener);
+  await settled();
+  expect(host.snapshot().enabled).toBe(false);
+  const release = host.enable();
+  const again = host.enable();
+  expect(host.snapshot().enabled).toBe(true);
+  expect(host.snapshot().layout).toEqual(layout);
+  expect(listener).toHaveBeenCalledTimes(2);
+  // One enabler leaving keeps the switch on; the disposer is idempotent.
+  release();
+  release();
+  expect(host.snapshot().enabled).toBe(true);
+  expect(api.reset).not.toHaveBeenCalled();
+  again();
+  expect(host.snapshot().enabled).toBe(false);
+  expect(api.reset).toHaveBeenCalledOnce();
+  await settled();
+  expect(host.snapshot().layout).toEqual({ windows: [] });
+  // App teardown disposes plugins after the host: no reset on quit.
+  const late = host.enable();
+  host.dispose();
+  late();
+  expect(api.reset).toHaveBeenCalledOnce();
+});
+
+it("the Cordis capability mirrors the host for plugins", () => {
+  const { api } = transport();
+  const host = createWindowHost(api);
+  const ctx = new Context();
+  new WindowsService(ctx, host);
+  expect(ctx.windows.label).toBe("tabs-1");
+  expect(ctx.windows.isMain).toBe(false);
+  expect(ctx.windows.snapshot()).toBe(host.snapshot());
+  const release = ctx.windows.enable();
+  expect(host.snapshot().enabled).toBe(true);
+  release();
+  expect(host.snapshot().enabled).toBe(false);
+  host.dispose();
+});
+
 it("fails open as a single window when the layout cannot be read", async () => {
   const { api } = transport(() => Promise.reject(new Error("ipc down")));
   const host = createWindowHost(api);
@@ -272,6 +321,7 @@ it("fails open as a single window when the layout cannot be read", async () => {
   expect(host.snapshot()).toEqual({
     status: "ready",
     layout: { windows: [] },
+    enabled: false,
   });
   host.dispose();
 });

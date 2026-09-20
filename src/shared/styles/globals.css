@@ -236,7 +236,7 @@
      pages, the launcher row for a panel returning to main. */
   .shell-pages[data-drop-target],
   .shell-actions-group[data-drop-target] {
-    @apply bg-surface/70;
+    @apply bg-surface;
     box-shadow:
       0 0 0 2px var(--focus),
       0 0 0 6px color-mix(in srgb, var(--focus) 25%, transparent);

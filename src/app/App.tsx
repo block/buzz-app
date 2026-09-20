@@ -120,6 +120,7 @@ export function App({ services }: { services: AppServices }) {
           windows={windows}
           layout={layout.layout}
           tabsHere={route.pages.length + panels.length}
+          detachable={layout.enabled}
         />
       }
       companion={pageOwnsCompanion ? undefined : companion}

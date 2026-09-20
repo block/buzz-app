@@ -73,7 +73,11 @@ See [Tauri window customization](https://v2.tauri.app/learn/window-customization
 
 ### Detached tab windows (desktop)
 
-Drag a page tab or a launcher (Bestie, Agent Activity) out of the strip to open
+The bundled **Windows** plugin (`buzz.windows`, Settings → Plugins)
+switches this on; off, tabs stay in main and any detached windows return their
+tabs and close. See [desktop tab windows](plugin-architecture.md#desktop-tab-windows)
+for the `ctx.windows` capability. Drag a page tab or a launcher (Bestie, Agent
+Activity) out of the strip to open
 it in a new window at the drop point, or onto another Buzz window to merge it
 there; releasing back in the strip cancels. While dragging, a native
 always-on-top pill (`drag-ghost`, `public/drag-ghost.html`, transparent via

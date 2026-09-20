@@ -446,6 +446,26 @@ material belongs to the draft, not the optional tool. Add these contracts agains
 real workflows rather than declaring the toolbar a universal editor API.
 
 
+## Desktop tab windows
+
+Detaching tabs into their own windows is a host capability
+([shell design](shell-design.md#detached-tab-windows-desktop)); the bundled
+**Windows** plugin (`buzz.windows`) is the switch that turns it on,
+so it appears in Settings → Plugins like any other bundled plugin. Its whole
+implementation is `ctx.effect(() => ctx.windows.enable())`: activation enables
+detaching for the window it runs in, and disposal (disable in Settings) switches
+it off and gathers every tab back into the main window. App teardown never
+resets the layout. On desktop launch, Rust reads the same plugin setting from
+the profile and skips restoring saved windows while the plugin is disabled.
+
+Plugins declaring `inject = ["windows"]` receive `ctx.windows`: `label`,
+`isMain`, `snapshot()`/`subscribe()` of the window layout (`enabled`, which
+tabs live in which detached window, the tab hovering as a drop target) and
+`enable()`. Every window runs a full plugin runtime, so a plugin instance sees
+the window it is rendered in. The type-only `@buzz/author` exports `Windows`,
+`WindowLayout` and `WindowSnapshot`. Moving tabs from plugin code is not part
+of this contract yet; the host's tab strip owns that interaction.
+
 ## In-app keyboard shortcuts
 
 The host composes one `ShortcutsService` in `app/services.ts`. Plugins declare

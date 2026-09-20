@@ -15,6 +15,7 @@ export function PanelLaunchers({
   windows,
   layout,
   tabsHere,
+  detachable,
 }: {
   panels: readonly RegisteredPanel[];
   selected: RegisteredPanel | undefined;
@@ -22,6 +23,7 @@ export function PanelLaunchers({
   windows: WindowHost;
   layout: WindowLayout;
   tabsHere: number;
+  detachable: boolean;
 }) {
   return panels
     .filter((panel) => panel.launcher)
@@ -38,6 +40,7 @@ export function PanelLaunchers({
         windows={windows}
         layout={layout}
         tabsHere={tabsHere}
+        detachable={detachable}
       >
         <LauncherIcon
           key={panel.launcher?.icon}

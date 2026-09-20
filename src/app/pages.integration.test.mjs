@@ -41,6 +41,16 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       services.conversation.links.snapshot()[0].pluginId,
       "buzz.links",
     );
+    // Detaching is switched on by the bundled Windows plugin through ctx.windows.
+    await vi.waitFor(() =>
+      assert.equal(services.windows.snapshot().enabled, true),
+    );
+    await services.plugins.change("disable", "buzz.windows");
+    assert.equal(services.windows.snapshot().enabled, false);
+    await services.plugins.change("enable", "buzz.windows");
+    await vi.waitFor(() =>
+      assert.equal(services.windows.snapshot().enabled, true),
+    );
     await services.plugins.change("disable", "buzz.links");
     assert.equal(services.conversation.links.snapshot().length, 0);
     await services.plugins.change("enable", "buzz.links");

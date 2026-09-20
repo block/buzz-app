@@ -1,6 +1,7 @@
 // Desktop tab windows. Rust owns the layout (which pages live in which window);
 // this reader mirrors it for one webview and filters the page registry to the
 // tabs assigned to this window's label. Web is always the single main window.
+import { Service, type Context } from "@deepseek-ai/cordis";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -19,6 +20,8 @@ export type WindowLayout = Readonly<{ windows: readonly TabWindow[] }>;
 export type WindowSnapshot = Readonly<{
   status: "loading" | "ready";
   layout: WindowLayout;
+  /** Detaching is switched on by the `buzz.windows` plugin; off, tabs stay put. */
+  enabled: boolean;
   /** The tab most recently moved into this window; `seq` distinguishes repeats. */
   activate?: Readonly<{ key: string; seq: number }>;
   /** The tab dragged from another window that is hovering this one, if any. */
@@ -44,6 +47,8 @@ export type WindowTransport = Readonly<{
   ): Promise<void>;
   dragMove(x: number, y: number): Promise<void>;
   dragEnd(): Promise<void>;
+  /** Return every tab to main and close detached windows. */
+  reset(): Promise<unknown>;
   close(): Promise<void>;
 }>;
 
@@ -88,8 +93,40 @@ export type WindowHost = Readonly<{
   drag?: TabDrag;
   /** Absent for the main window and on web. */
   close?: () => Promise<void>;
+  /**
+   * Switch detaching on for this window; the disposer switches it off and, on
+   * desktop, returns every tab to main. Host teardown never resets the layout.
+   */
+  enable(): () => void;
   dispose(): void;
 }>;
+
+/** Plugin-facing view of the window this plugin instance runs in. */
+export type Windows = Pick<
+  WindowHost,
+  "label" | "isMain" | "snapshot" | "subscribe" | "enable"
+>;
+declare module "@deepseek-ai/cordis" {
+  interface Context {
+    windows: Windows;
+  }
+}
+
+export class WindowsService extends Service implements Windows {
+  readonly label: string;
+  readonly isMain: boolean;
+  constructor(
+    ctx: Context,
+    private readonly host: WindowHost,
+  ) {
+    super(ctx, "windows");
+    this.label = host.label;
+    this.isMain = host.isMain;
+  }
+  snapshot = () => this.host.snapshot();
+  subscribe = (listener: () => void) => this.host.subscribe(listener);
+  enable = () => this.host.enable();
+}
 
 const EMPTY: WindowLayout = Object.freeze({ windows: Object.freeze([]) });
 
@@ -165,9 +202,17 @@ export function windowTitle(layout: WindowLayout, label: string): string {
 }
 
 export function tauriWindowTransport(): WindowTransport {
-  const current = getCurrentWindow();
+  // A partial Tauri runtime (IPC without window metadata, as browser fixtures
+  // provide) is treated as the main window rather than failing startup.
+  const current = (() => {
+    try {
+      return getCurrentWindow();
+    } catch {
+      return undefined;
+    }
+  })();
   return {
-    label: current.label,
+    label: current?.label ?? MAIN_WINDOW,
     layout: () => invoke("windows_layout"),
     listen: (listener) =>
       listen<unknown>(EVENT, (event) => listener(event.payload)),
@@ -187,7 +232,8 @@ export function tauriWindowTransport(): WindowTransport {
       }),
     dragMove: (x, y) => invoke("windows_drag_move", { x, y }),
     dragEnd: () => invoke("windows_drag_end"),
-    close: () => current.close(),
+    reset: () => invoke("windows_reset"),
+    close: () => current?.close() ?? Promise.resolve(),
   };
 }
 
@@ -247,6 +293,7 @@ export function createWindowHost(
   let snapshot: WindowSnapshot = Object.freeze({
     status: transport ? "loading" : "ready",
     layout: EMPTY,
+    enabled: false,
   });
   let disposed = false;
   const stops: (() => void)[] = [];
@@ -316,6 +363,12 @@ export function createWindowHost(
       });
   }
   const label = transport?.label ?? MAIN_WINDOW;
+  let enablers = 0;
+  const setEnabled = (enabled: boolean) => {
+    if (disposed || snapshot.enabled === enabled) return;
+    snapshot = Object.freeze({ ...snapshot, enabled });
+    notify();
+  };
   return {
     label,
     isMain: label === MAIN_WINDOW,
@@ -324,6 +377,24 @@ export function createWindowHost(
       listeners.add(listener);
       return () => {
         listeners.delete(listener);
+      };
+    },
+    enable() {
+      enablers += 1;
+      setEnabled(true);
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        enablers -= 1;
+        if (enablers > 0) return;
+        setEnabled(false);
+        // The plugin was switched off, not the app: gather every tab back into main.
+        if (transport && !disposed)
+          transport
+            .reset()
+            .then(accept)
+            .catch(() => {});
       };
     },
     ...(transport

@@ -11,6 +11,8 @@ use std::{
 use tauri::{Emitter as _, Manager as _};
 
 pub(crate) const MAIN: &str = "main";
+/// The bundled plugin that switches detaching on; see `src/bundled/windows`.
+const PLUGIN_ID: &str = "buzz.windows";
 const EVENT: &str = "buzz:windows";
 /// Sent to the destination window only, after the layout, naming the moved tab.
 const ACTIVATE: &str = "buzz:windows:activate";
@@ -146,6 +148,10 @@ impl Layout {
         change.closed = self.prune();
         Ok(change)
     }
+    /// Every tab back to `main`; returns the labels of the windows to close.
+    pub(crate) fn reset(&mut self) -> Vec<String> {
+        self.windows.drain(..).map(|w| w.label).collect()
+    }
     /// A closed detached window returns its tabs to `main`.
     pub(crate) fn remove_window(&mut self, label: &str) -> bool {
         let before = self.windows.len();
@@ -172,20 +178,32 @@ struct DropTarget<'a> {
 
 impl Windows {
     /// Without a profile directory the layout lives only for this process.
-    pub(crate) fn open(profile: Option<&Path>) -> Self {
+    /// With the `buzz.windows` plugin disabled, a saved layout is discarded so
+    /// no detached window is restored only to be closed again.
+    pub(crate) fn open(profile: Option<&Path>, enabled: bool) -> Self {
         let path = profile.map(|root| root.join(FILE));
-        let layout = path
+        let saved = path
             .as_deref()
             .and_then(|path| fs::read(path).ok())
             .and_then(|bytes| serde_json::from_slice::<Layout>(&bytes).ok())
             .unwrap_or_default()
             .sanitize();
-        Self {
+        let windows = Self {
             path,
-            layout: Mutex::new(layout),
+            layout: Mutex::new(Layout::default()),
             drop_target: Mutex::new(None),
             dragging: Mutex::new(None),
+        };
+        if enabled {
+            if let Ok(mut layout) = windows.layout.lock() {
+                *layout = saved;
+            }
+        } else if saved != Layout::default() {
+            if let Err(error) = windows.save(&Layout::default()) {
+                eprintln!("Window layout save failed: {error}");
+            }
         }
+        windows
     }
     fn set_dragging(&self, tab: Option<String>) {
         if let Ok(mut current) = self.dragging.lock() {
@@ -314,6 +332,37 @@ pub(crate) fn window_closing(app: &tauri::AppHandle, label: &str) {
 #[tauri::command]
 pub(crate) fn windows_layout(state: tauri::State<'_, Windows>) -> Layout {
     state.layout()
+}
+
+/// The `buzz.windows` plugin was switched off: gather every tab into main.
+#[tauri::command]
+pub(crate) async fn windows_reset(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, Windows>,
+) -> Result<Layout, String> {
+    let (closed, layout) = state.update(|layout| Ok(layout.reset()))?;
+    for label in &closed {
+        if let Some(window) = app.get_webview_window(label) {
+            let _ = window.close();
+        }
+    }
+    if !closed.is_empty() {
+        publish(&app, &layout);
+    }
+    Ok(layout)
+}
+
+/// Whether the desktop should detach tabs at all, per the profile's plugin settings.
+pub(crate) fn plugin_enabled(manager: Option<&buzzodz_plugins::Manager>) -> bool {
+    let Some(manager) = manager else { return true };
+    match manager.catalog() {
+        Ok(catalog) => catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == PLUGIN_ID)
+            .map_or(true, |plugin| plugin.enabled),
+        Err(_) => true,
+    }
 }
 
 fn apply_move(
@@ -614,21 +663,21 @@ mod tests {
     #[test]
     fn persists_and_restores_a_sanitized_layout() {
         let dir = temp_dir("persist");
-        let windows = Windows::open(Some(&dir));
+        let windows = Windows::open(Some(&dir), true);
         windows
             .update(|layout| layout.move_tab("buzz.channels/channels", "new"))
             .unwrap();
         windows
             .update(|layout| layout.move_tab("buzz.agents/agents", "tabs-1"))
             .unwrap();
-        let reopened = Windows::open(Some(&dir));
+        let reopened = Windows::open(Some(&dir), true);
         assert_eq!(reopened.layout(), windows.layout());
         fs::write(
             dir.join(FILE),
             r#"{"windows":[{"label":"tabs-3","tabs":["buzz.a/a","buzz.a/a"]},{"label":"bad","tabs":["buzz.b/b"]},{"label":"tabs-4","tabs":[]},{"label":"tabs-5","tabs":["buzz.a/a","home"]}]}"#,
         )
         .unwrap();
-        let repaired = Windows::open(Some(&dir)).layout();
+        let repaired = Windows::open(Some(&dir), true).layout();
         assert_eq!(
             repaired,
             Layout {
@@ -639,13 +688,38 @@ mod tests {
             }
         );
         fs::write(dir.join(FILE), "not json").unwrap();
-        assert_eq!(Windows::open(Some(&dir)).layout(), Layout::default());
+        assert_eq!(Windows::open(Some(&dir), true).layout(), Layout::default());
+        fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn a_disabled_plugin_discards_the_saved_layout_and_reset_gathers_tabs() {
+        let dir = temp_dir("disabled");
+        let windows = Windows::open(Some(&dir), true);
+        windows
+            .update(|layout| layout.move_tab("buzz.channels/channels", "new"))
+            .unwrap();
+        windows
+            .update(|layout| layout.move_tab("buzz.agents/agents", "new"))
+            .unwrap();
+        assert_eq!(windows.layout().windows.len(), 2);
+        let (closed, layout) = windows.update(|layout| Ok(layout.reset())).unwrap();
+        assert_eq!(closed, ["tabs-1", "tabs-2"]);
+        assert_eq!(layout, Layout::default());
+        assert_eq!(Windows::open(Some(&dir), true).layout(), Layout::default());
+        // A layout saved while enabled is dropped, and persisted as dropped, when
+        // the app launches with the plugin disabled.
+        windows
+            .update(|layout| layout.move_tab("buzz.channels/channels", "new"))
+            .unwrap();
+        assert_eq!(Windows::open(Some(&dir), false).layout(), Layout::default());
+        assert_eq!(Windows::open(Some(&dir), true).layout(), Layout::default());
         fs::remove_dir_all(dir).ok();
     }
 
     #[test]
     fn without_a_profile_the_layout_is_in_memory_only() {
-        let windows = Windows::open(None);
+        let windows = Windows::open(None, true);
         let (change, layout) = windows
             .update(|layout| layout.move_tab("buzz.channels/channels", "new"))
             .unwrap();

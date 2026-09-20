@@ -15,7 +15,7 @@ import { PagesService } from "../features/pages/service";
 import { bundledPlugins } from "../bundled";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
-import { createWindowHost } from "../features/windows/service";
+import { createWindowHost, WindowsService } from "../features/windows/service";
 
 export function createServices() {
   const appearance = createAppearance();
@@ -27,6 +27,8 @@ export function createServices() {
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const shortcuts = new ShortcutsService(ctx);
+  // Detaching is a host capability the bundled `buzz.windows` plugin switches on.
+  new WindowsService(ctx, windows);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const conversation = new ConversationService(ctx);

@@ -127,6 +127,7 @@ export function PageTab({
   windows,
   layout,
   tabsHere,
+  detachable,
   className = "shell-tab",
   label,
   expanded,
@@ -140,6 +141,8 @@ export function PageTab({
   windows: WindowHost;
   layout: WindowLayout;
   tabsHere: number;
+  /** Whether moving between windows is available (desktop with the plugin on). */
+  detachable: boolean;
   className?: string;
   label?: string;
   expanded?: boolean;
@@ -158,9 +161,10 @@ export function PageTab({
     const rect = trigger.current?.getBoundingClientRect();
     if (rect) setAnchor({ top: rect.bottom + 8, left: rect.left });
   };
-  const targets = windows.moveTab
-    ? moveTargets(layout, windows.label, tabsHere)
-    : [];
+  const targets =
+    detachable && windows.moveTab
+      ? moveTargets(layout, windows.label, tabsHere)
+      : [];
   useEffect(() => {
     if (!open) return;
     const dismiss = (event: Event) => {
@@ -258,7 +262,7 @@ export function PageTab({
           setOpen(true);
         }}
         onPointerDown={(event) => {
-          if (!windows.dropTab || event.button !== 0) return;
+          if (!detachable || !windows.dropTab || event.button !== 0) return;
           drag.current = {
             x: event.clientX,
             y: event.clientY,
@@ -338,7 +342,7 @@ export function PageTab({
                 type="button"
                 role="menuitem"
                 key={target.destination}
-                className="flex w-full items-center border-0 px-3 py-2 text-left text-sm hover:bg-soft"
+                className="flex w-full items-center border-0 px-3 py-2 text-left text-label-sm hover:bg-soft"
                 onClick={() => void move(target.destination)}
               >
                 {target.title}
@@ -351,7 +355,7 @@ export function PageTab({
         createPortal(
           <p
             role="alert"
-            className="error fixed top-16 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-line bg-surface px-3 py-2 text-xs shadow-surface"
+            className="error fixed top-16 left-1/2 z-50 -translate-x-1/2 rounded-xl border border-line bg-surface px-3 py-2 text-caption shadow-surface"
           >
             {error}
           </p>,

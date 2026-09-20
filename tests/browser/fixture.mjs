@@ -25,6 +25,7 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  actionProfile: [false, { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   threadUnreadMentions: [false, { option: true }],
@@ -47,6 +48,7 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      actionProfile,
       readState,
       threadUnread,
       threadUnreadMentions,
@@ -66,9 +68,13 @@ export const test = base.extend({
     use,
     testInfo,
   ) => {
-    const relayKey = generateSecretKey();
-    const typingKeys = [generateSecretKey(), generateSecretKey()];
-    const userKey = generateSecretKey();
+    const key = (seed) =>
+      actionProfile
+        ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
+        : generateSecretKey();
+    const relayKey = key(1);
+    const typingKeys = [key(2), key(3)];
+    const userKey = key(4);
     const viewer = getPublicKey(userKey);
     const membershipKeys = membershipActivity
       ? [generateSecretKey(), generateSecretKey()]
@@ -93,7 +99,9 @@ export const test = base.extend({
         time,
       );
     const peerKey =
-      dmLabels || readState || exactMessages ? generateSecretKey() : undefined;
+      dmLabels || readState || exactMessages || actionProfile
+        ? key(5)
+        : undefined;
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
@@ -325,6 +333,22 @@ export const test = base.extend({
             reply_count: 23,
             participants: [getPublicKey(peerKey)],
           }),
+        ),
+      );
+    }
+    if (actionProfile) {
+      const root = histories
+        .get("primary/alpha")
+        .find((row) => row.content === "Thread root 1");
+      targetEvents.push(
+        sign(
+          7,
+          [
+            ["h", "alpha"],
+            ["e", root.id],
+          ],
+          "👍",
+          peerKey,
         ),
       );
     }
@@ -566,6 +590,14 @@ export const test = base.extend({
       return filter.include_aux
         ? [
             ...events,
+            ...(actionProfile
+              ? targetEvents.filter((aux) =>
+                  aux.tags.some(
+                    ([k, id]) =>
+                      k === "e" && events.some((row) => row.id === id),
+                  ),
+                )
+              : []),
             ...threadSummaries.filter((summary) =>
               events.some((event) =>
                 summary.tags.some(
@@ -589,12 +621,60 @@ export const test = base.extend({
           ]
         : events;
     };
+    const acceptReadPublication = (community, event) => {
+      expect(verifyEvent(event)).toBe(true);
+      expect(event.pubkey).toBe(viewer);
+      expect(event.kind).toBe(30078);
+      expect(event.tags).toContainEqual(["t", "read-state"]);
+      const blob = JSON.parse(
+        nip44.v2.decrypt(
+          event.content,
+          nip44.v2.utils.getConversationKey(userKey, viewer),
+        ),
+      );
+      const coordinate = event.tags.find(([key]) => key === "d")?.[1];
+      expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
+      const previous = readEvents.get(community).get(coordinate);
+      if (
+        !previous ||
+        event.created_at > previous.created_at ||
+        (event.created_at === previous.created_at && event.id < previous.id)
+      )
+        readEvents.get(community).set(coordinate, event);
+      report.readPublications.push({ community, event, blob });
+    };
     const relay = productionBroker
       ? policyRelay({
           viewer,
           answer,
           report,
           pending,
+          ...(actionProfile
+            ? {
+                latencyMs: 40,
+                holdOlder: false,
+                acceptPublication: (community, event) => {
+                  expect(verifyEvent(event)).toBe(true);
+                  expect(event.pubkey).toBe(viewer);
+                  if (event.kind === 30078)
+                    return acceptReadPublication(community, event);
+                  expect([9, 7]).toContain(event.kind);
+                  const channel = event.tags.find(([k]) => k === "h")?.[1];
+                  const history = histories.get(`${community}/${channel}`);
+                  expect(history).toBeDefined();
+                  if (!history.some((row) => row.id === event.id))
+                    history.push(event);
+                  if (event.kind === 7) targetEvents.push(event);
+                  report.publications.push({
+                    community,
+                    event,
+                    at: performance.now(),
+                  });
+                  // No live echo in this measurement lane: observe the receipt
+                  // and finite-read reconciliation without echo cancellation.
+                },
+              }
+            : {}),
           ...(readState
             ? {
                 discovery: (community) => ({
@@ -606,31 +686,7 @@ export const test = base.extend({
                     max_bytes: 8388608,
                   },
                 }),
-                acceptPublication: (community, event) => {
-                  expect(verifyEvent(event)).toBe(true);
-                  expect(event.pubkey).toBe(viewer);
-                  expect(event.kind).toBe(30078);
-                  expect(event.tags).toContainEqual(["t", "read-state"]);
-                  const blob = JSON.parse(
-                    nip44.v2.decrypt(
-                      event.content,
-                      nip44.v2.utils.getConversationKey(userKey, viewer),
-                    ),
-                  );
-                  const coordinate = event.tags.find(
-                    ([key]) => key === "d",
-                  )?.[1];
-                  expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
-                  const previous = readEvents.get(community).get(coordinate);
-                  if (
-                    !previous ||
-                    event.created_at > previous.created_at ||
-                    (event.created_at === previous.created_at &&
-                      event.id < previous.id)
-                  )
-                    readEvents.get(community).set(coordinate, event);
-                  report.readPublications.push({ community, event, blob });
-                },
+                acceptPublication: acceptReadPublication,
               }
             : {}),
         })

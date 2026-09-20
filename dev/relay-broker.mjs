@@ -1,3 +1,4 @@
+import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,
@@ -6,7 +7,6 @@ import {
   workflowRunsPath,
   workflowReadText,
 } from "../src/features/workflows/http.ts";
-import { readReceiptText } from "../src/features/relay/receipt.ts";
 import { decodeAgentObserver } from "./agent-observer.mjs";
 import { observerGeneration } from "../src/features/agents/observer.ts";
 import {
@@ -563,23 +563,43 @@ export function relayBrokerPlugin({
             [
               "/api/relay/stream-retry",
               "/api/relay/stream-priority",
+              "/api/relay/stream-interests",
               "/api/relay/stream-observer",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
+            const updating = route === "/api/relay/stream-interests";
             let raw = "";
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > (prioritizing ? 9000 : 256))
+              if (
+                Buffer.byteLength(raw) >
+                (updating ? 300000 : prioritizing ? 9000 : 256)
+              )
                 return json(res, 413, { error: "Live control too large" });
             }
-            let streamId, priority, observer;
+            let streamId,
+              priority,
+              observer,
+              interests,
+              removed,
+              interestRevision;
             try {
               const body = JSON.parse(raw);
               streamId = body.streamId;
               if (observing) observer = observerGeneration(body.observer);
+              if (updating) {
+                interests = liveChannels(body.channels);
+                removed = liveChannels(body.removed ?? []);
+                interestRevision = body.interestRevision;
+                if (
+                  !Number.isSafeInteger(interestRevision) ||
+                  interestRevision < 0
+                )
+                  throw new Error("Invalid interest revision");
+              }
               if (prioritizing) {
                 liveChannels(body.channels);
                 if (body.channels.length > 64)
@@ -599,7 +619,20 @@ export function relayBrokerPlugin({
               return json(res, 404, {
                 error: "Live stream no longer available",
               });
-            if (prioritizing) stream.traffic.prioritize(priority);
+            if (updating) {
+              if (interestRevision <= stream.interestRevision)
+                return json(res, 409, { error: "Stale interest control" });
+              // Coalescing may hide a removal followed by re-add. Retire the old
+              // wire before stamping the new revision; unchanged routes survive.
+              if (removed.length) {
+                stream.traffic.update(
+                  stream.channels.filter((id) => !removed.includes(id)),
+                );
+              }
+              stream.interestRevision = interestRevision;
+              stream.channels = interests;
+              stream.traffic.update(interests);
+            } else if (prioritizing) stream.traffic.prioritize(priority);
             else if (observing) stream.traffic.observe(observer);
             else stream.traffic.retry();
             return json(res, 200, { accepted: true });
@@ -611,10 +644,16 @@ export function relayBrokerPlugin({
               if (Buffer.byteLength(raw) > 150000)
                 return json(res, 413, { error: "Live interests too large" });
             }
-            let channels, priority, observer;
+            let channels, priority, observer, interestRevision;
             try {
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
+              interestRevision = body.interestRevision ?? 0;
+              if (
+                !Number.isSafeInteger(interestRevision) ||
+                interestRevision < 0
+              )
+                throw new Error("Invalid interest revision");
               observer = observerGeneration(body.observer ?? null);
               liveChannels(body.priority ?? []);
               if (body.priority?.length > 64)
@@ -651,6 +690,51 @@ export function relayBrokerPlugin({
                 `${kind ? `event: ${kind}\n` : ""}data: ${JSON.stringify(value)}\n\n`,
               );
             };
+            // Coalesce setup progress, not invalidation: activity typing must see
+            // channels leave live before recovery or subsequent traffic. Drain sends
+            // the latest captured revision without a full roster for every EOSE.
+            let pendingState;
+            let lastStateStatus;
+            let lastObserverStatus;
+            let liveChannelIds = new Set();
+            const flushState = () => {
+              const state = pendingState;
+              pendingState = undefined;
+              if (state) write("state", state);
+            };
+            const writeState = (state) => {
+              const observerStatus = state.routes.find(
+                (route) => route.id === "observer",
+              )?.status;
+              const replaceable =
+                state.status === "connected" &&
+                lastStateStatus === "connected" &&
+                observerStatus === lastObserverStatus &&
+                !state.routes.some(
+                  (route) =>
+                    route.channelId &&
+                    route.status !== "live" &&
+                    liveChannelIds.has(route.channelId),
+                );
+              liveChannelIds = new Set(
+                state.routes
+                  .filter((route) => route.channelId && route.status === "live")
+                  .map((route) => route.channelId),
+              );
+              lastStateStatus = state.status;
+              lastObserverStatus = observerStatus;
+              pendingState = undefined;
+              if (replaceable && res.writableNeedDrain) pendingState = state;
+              else write("state", state);
+            };
+            res.on("drain", flushState);
+            const stream = {
+              relay,
+              channels,
+              interestRevision,
+              traffic: undefined,
+              close: undefined,
+            };
             const traffic = subscribeRelayTraffic(
               relay.replace(/^http/, "ws"),
               async (event) => finalizeEvent(event, key),
@@ -658,7 +742,11 @@ export function relayBrokerPlugin({
               {
                 receive: (events, provenance) => {
                   for (const event of events)
-                    write("traffic", { event, provenance });
+                    write("traffic", {
+                      event,
+                      provenance,
+                      interestRevision: stream.interestRevision,
+                    });
                 },
                 telemetry: (event, generation) => {
                   if (res.destroyed) return;
@@ -671,10 +759,22 @@ export function relayBrokerPlugin({
                     // Rejected telemetry cannot break chat or leak payloads in logs.
                   }
                 },
-                state: (state) => write("state", state),
-                established: (channelId) => write("established", { channelId }),
+                state: (state) =>
+                  writeState({
+                    ...state,
+                    interestRevision: stream.interestRevision,
+                  }),
+                established: (channelId) =>
+                  write("established", {
+                    channelId,
+                    interestRevision: stream.interestRevision,
+                  }),
                 denied: (channelId, reason) =>
-                  write("denied", { channelId, reason }),
+                  write("denied", {
+                    channelId,
+                    reason,
+                    interestRevision: stream.interestRevision,
+                  }),
               },
               socketFactory,
               principal.live,
@@ -692,12 +792,15 @@ export function relayBrokerPlugin({
               if (closed) return;
               closed = true;
               principal.streams--;
+              pendingState = undefined;
+              res.off("drain", flushState);
               traffic.dispose();
               clearInterval(keepAlive);
               streams.delete(streamId);
               res.destroy();
             };
-            streams.set(streamId, { relay, traffic, close });
+            Object.assign(stream, { traffic, close });
+            streams.set(streamId, stream);
             res.once("close", close);
             if (res.destroyed) close();
             return;
@@ -976,6 +1079,32 @@ export function relayBrokerPlugin({
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
+          if (publishing || readPublishing) {
+            const stream = streams.get(req.headers["x-buzz-live-id"]);
+            if (!stream || stream.relay !== relay)
+              return json(res, 503, {
+                error: "Publication socket unavailable",
+                sent: false,
+              });
+            try {
+              const message = await stream.traffic.publish(
+                filters,
+                cancel.signal,
+              );
+              return json(res, 200, {
+                accepted: true,
+                event_id: filters.id,
+                message,
+              });
+            } catch (error) {
+              return json(res, 503, {
+                error: "Socket publication could not be confirmed",
+                ...(error instanceof SocketRequestError && !error.sent
+                  ? { sent: false }
+                  : {}),
+              });
+            }
+          }
           if (route === "/api/relay/query")
             server.config.logger.info(
               `[relay-broker] query ${req.headers["x-buzz-read-priority"] === "background" ? "background" : "foreground"} ${JSON.stringify(filters).slice(0, 240)}`,
@@ -987,7 +1116,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || publishing || readPublishing
+              : profile
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -1075,9 +1204,7 @@ export function relayBrokerPlugin({
                 ? await readSnapshotText(response)
                 : workflowPath && response.ok
                   ? await workflowReadText(response)
-                  : publishing && response.ok
-                    ? await readReceiptText(response)
-                    : await response.text();
+                  : await response.text();
             // The relay's own service time separates server work from network time.
             const relayMs = Number(
               response.headers.get("x-envoy-upstream-service-time"),

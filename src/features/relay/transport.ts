@@ -186,13 +186,21 @@ export async function connectBrokerTransport(
       "invalid-response",
       "Relay broker session is malformed",
     );
+  let traffic: LiveSubscription | undefined;
+  const publicationHeaders = () => ({
+    "Content-Type": "application/json",
+    // Matched development frontend/host: publication requires the existing owner.
+    "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
+  });
   return {
     profiling,
     agentActivity: session.agentActivity === true && session.live === true,
     ...(session.live
       ? {
-          subscribe: (callbacks: LiveCallbacks) =>
-            subscribeBrokerTraffic(endpoint, callbacks),
+          subscribe: (callbacks: LiveCallbacks) => {
+            traffic = subscribeBrokerTraffic(endpoint, callbacks);
+            return traffic;
+          },
         }
       : {}),
     ...(session.relayUrl ? { scope: session.relayUrl } : {}),
@@ -283,7 +291,7 @@ export async function connectBrokerTransport(
               const response = await fetch(`${endpoint}/read-state-publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: publicationHeaders(),
                 body: JSON.stringify(event),
                 signal,
               });
@@ -347,7 +355,7 @@ export async function connectBrokerTransport(
               const result = await fetch(`${endpoint}/publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: publicationHeaders(),
                 body: JSON.stringify(event),
                 signal,
               });
@@ -526,8 +534,8 @@ async function signedPost(
       }),
     );
     if (signal?.aborted) throw signal.reason;
-    // Preparation retains this principal. Only actual fetch starts consume pacing
-    // credit, and admission rechecks any pause learned during asynchronous signing.
+    // Preparation retains this principal. Dispatch rechecks capacity and any
+    // server pause learned during asynchronous signing.
     const queued = profiling.start("http.admission", id);
     try {
       return await admittedApiRequest(

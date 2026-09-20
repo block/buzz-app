@@ -10,12 +10,36 @@ test("Back restores each thread visit before the previous channel", async ({
   const beta = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .locator('button[data-channel-id="beta"]');
+  // Live head catch-up can supply the same badge as the held unread batch.
+  // Gate that independent source too; request pacing is not a fixture barrier.
+  let releaseHead;
+  let sawHead;
+  const headHeld = new Promise((resolve) => {
+    releaseHead = resolve;
+  });
+  const headStarted = new Promise((resolve) => {
+    sawHead = resolve;
+  });
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.top_level && filter["#h"]?.includes("beta"))
+    ) {
+      sawHead();
+      await headHeld;
+    }
+    await route.continue().catch(() => {});
+  });
   app.relay.holdUnread();
   try {
     await open(page, app);
+    await headStarted;
     await expect.poll(() => app.report.unreadHolds.length).toBe(1);
     await expect(beta).toHaveAccessibleName("Beta");
   } finally {
+    releaseHead();
     app.relay.releaseUnread();
   }
   // Unread evidence changes the accessible name independently of navigation.

@@ -1,3 +1,4 @@
+import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { createServer } from "node:http";
 import { setTimeout as delay } from "node:timers/promises";
 import { expect, it, vi } from "vitest";
@@ -23,6 +24,7 @@ async function harness(
   const viewer = getPublicKey(key),
     calls = [],
     logs = [];
+  const socket = brokerSocket(() => "workflow-result");
   let handler;
   const server = createServer((req, res) => {
     if (!req.headers.origin) req.headers.origin = `http://${req.headers.host}`;
@@ -32,6 +34,7 @@ async function harness(
     relayUrl: "https://a.workflow.test",
     communityAliases: JSON.stringify({ secondary: "https://b.workflow.test" }),
     identity: () => key,
+    socketFactory: socket.factory,
     ...(metadata ? {} : { authority: async () => ({ relayAuthor: viewer }) }),
     upstreamFetch: async (url, init) => {
       if (init.headers.Accept === "application/nostr+json") {
@@ -71,6 +74,7 @@ async function harness(
     base,
     viewer,
     calls,
+    publications: socket.publications,
     logs,
     post: (route, body, headers = {}) =>
       fetch(`${base}/api/relay/${route}`, {
@@ -252,8 +256,10 @@ it("existing backend signs only canonical workflow sign/publish with exact own e
       message: "workflow-result",
     });
   }, existingBackend);
+  let live;
   try {
     const t = await connectBrokerTransport(h.base);
+    live = await openBrokerSocket(t);
     expect(t.writer.kinds).toEqual([7, 9, 30620, 46020, 5]);
     for (const input of [
       template(),
@@ -273,12 +279,12 @@ it("existing backend signs only canonical workflow sign/publish with exact own e
       expect(event.content).toBe(input.content);
       expect(event.tags).toEqual(input.tags);
       expect(await t.writer.publish(event, signal())).toBe("workflow-result");
-      expect(JSON.parse(h.calls.at(-1).init.body)).toEqual(
-        JSON.parse(JSON.stringify(event)),
-      );
+      expect(h.publications.at(-1)).toEqual(JSON.parse(JSON.stringify(event)));
     }
-    expect(h.calls).toHaveLength(3);
+    expect(h.publications).toHaveLength(3);
+    expect(h.calls).toHaveLength(0);
   } finally {
+    live?.dispose();
     await h.close();
   }
 });

@@ -1,3 +1,4 @@
+import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { createServer } from "node:http";
 import { createHash } from "node:crypto";
 import { afterEach, expect, it } from "vitest";
@@ -25,6 +26,10 @@ async function harness(discovered = true) {
     viewer = getPublicKey(key);
   let handler, response, published;
   const calls = [];
+  const socket = brokerSocket((event) => {
+    published = event;
+    return "";
+  });
   const server = createServer((req, res) => {
     req.headers.origin ??= `http://${req.headers.host}`;
     handler(req, res);
@@ -33,6 +38,7 @@ async function harness(discovered = true) {
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,
+    socketFactory: socket.factory,
     // Keep real NIP-11 discovery, signing, admission and broker routes. Only relay I/O is modeled.
     upstreamFetch: async (url, init) => {
       if (!init?.body)
@@ -105,6 +111,10 @@ async function harness(discovered = true) {
     key,
     viewer,
     transport,
+    async start() {
+      const live = await openBrokerSocket(transport);
+      disposals.push(() => live.dispose());
+    },
     reader: requests.reader,
     calls,
     envelope(events = []) {
@@ -144,11 +154,11 @@ it("real broker discovery -> reader snapshot and scoped encrypted signing/public
   expect(await h.transport.readState.decode([event], signal)).toEqual([
     { eventId: event.id, blob },
   ]);
+  await h.start();
   await h.transport.readState.publish(event, signal);
   expect(await h.reader.readStateSnapshot({ fresh: true })).toEqual([event]);
   expect(h.calls.map((call) => new URL(call.url).pathname)).toEqual([
     "/query",
-    "/events",
     "/query",
   ]);
   expect(h.calls[0].body).toEqual([

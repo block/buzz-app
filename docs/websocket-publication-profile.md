@@ -16,6 +16,11 @@ updated together. Finite reads/history/search, presence semantics, profile setup
 media and external/local services are not migrated by this PR. See the
 [transport contract](relay-queries.md#websocket-first-publication).
 
+**Measurement snapshot:** the action tables below were collected before the
+app disabled automatic roster warming. They describe the transport/admission
+slice, not the final combined candidate. The separate warming comparison is
+reported below; do not combine the two experiments into one speedup claim.
+
 ## Method (2026-09-20)
 
 - Base on both arms: `ac492a7b89734d9a0a90b816cac76b5ff83d5855`, including the
@@ -212,6 +217,68 @@ metadata strings and one fixture comment were corrected to state the receipt and
 visibility limits above; runtime, assertions and timing behavior did not change.
 Original local evidence retains its original metadata with an erratum. No raw
 session logs, real account data or local configuration are included in this PR.
+
+## Separate demand-driven startup comparison
+
+The app now passes `warm: false` while keeping `prepared: true`. This disables
+only automatic roster-wide head fetching (including the starred-first sweep).
+The warmer implementation, saved heads, hover/focus preparation, bounded avatar
+preparation, membership/unread owners and retained-window live catch-up remain.
+There is no new scheduler, settings toggle or environment flag. Restoring the
+internal option restores the old policy. First visits to uncached channels may
+wait longer, particularly on slow networks; they are not preloaded for offline use.
+
+A second experiment compared `7bd31cbe844f70b1d7ca795ba0325dbda40caccd` with
+that same transport runtime plus only the option/comment change. Both arms used
+the real built frontend/broker, fresh isolated browser storage, 130 modeled
+channels, 1,001 modeled DM participants and 40 ms modeled upstream service delay.
+A private build transform supplied the exact earlier service source for the
+control, without toggling the live worktree. Thirteen successful samples were
+retained: three per arm/engine except four WebKit-after samples. Samples were
+grouped, not randomized, on a machine also in use by a human.
+
+| Metric (median) | Chromium before → after | WebKit before → after |
+|---|---:|---:|
+| Startup head reads | 131 → 2 | 131 → 2 |
+| Startup finite broker requests | 153 → 23 | 153 → 23 |
+| Startup background settlement | 8,996 → 1,279 ms | 8,937 → 1,365 ms |
+| First Beta opening | 80 → 82 ms | 106 → 104 ms |
+| Return to Alpha | 25 → 25 ms | 47 → 72 ms |
+| Beta reopen | 24 → 24 ms | 47 → 44 ms |
+| Additional finite requests during five-second idle check | 0 → 0 | 0 → 0 |
+
+Settlement measures completion of startup work, **not first paint**. Opening is
+programmatic click to a geometrically visible matching row and next frame, not
+native paint. The old sweep evicted Beta from its 64-head cache before the first
+click, so both arms needed a new read. This does not measure a still-warm target
+or prove warming has no benefit for smaller rosters or earlier clicks. The slower
+WebKit return to Alpha is retained, not dismissed. Five quiet seconds do not
+establish long-session idle behavior. Profiles had no avatar URLs, so real avatar
+readiness and HTTP image-cache behavior remain unmeasured.
+
+The application-wiring regression uses 70 channels, discovery plus refresh,
+intent preparation, and opening the prepared result without a new read. It failed
+with the old option and passed with the new one. Seven complete service/prepared/
+warming/unread/preferences/live-session files passed 90 tests, with TypeScript
+and touched-file formatting checks; this is narrower than full CI acceptance.
+The temporary comparison harness and raw modeled results are retained locally,
+not installed as a normal CI journey. The earlier reproduction command above
+runs the transport profile, not this separate experiment.
+
+### Open acceptance issues
+
+An attended local trial reported faster browsing, but also a
+`read-state-publish` 503 whose cause remains unresolved. Later successful read
+logs contained no publication attempt and do not establish recovery. Diagnose
+that failure before asserting publication reliability.
+
+Hosted CI for the preceding `7bd31cb` snapshot failed: the proof-cache eviction
+unit test timed out; membership navigation timed out in both engines; the scroll
+measurement and two WebKit sidebar-unread cases failed assertions. These are
+unresolved observations, not established flakes or proof of a common cause.
+[Original run](https://github.com/block/buzz-app/actions/runs/35517695696).
+The option change does not claim to fix them. Fresh CI and disconnect/restart/
+quota acceptance remain required before merge.
 
 ## Local feedback checklist
 

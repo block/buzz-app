@@ -1,10 +1,11 @@
-# Local agent controller — implementation checkpoint
+# Local agent controller
 
-This crate backs the [connected native editing checkpoint](../../docs/agent-control.md),
-not a runnable replacement for old Buzz.
+This crate backs the [normal desktop agent workflow](../../docs/agent-control.md).
 It owns native configuration/import and listener process lifetime without Tauri,
 React, or the old desktop manager. The `Controller` must be called by one serialized
-native host owner; dropping a page is not dropping this controller.
+native host owner; dropping a page is not dropping this controller. Source and
+fixture validation do not establish live readiness; the attended handover remains
+required before replacing old Buzz.
 
 Implemented with isolated filesystem/credential/subprocess fixtures:
 
@@ -32,17 +33,20 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
 
 ## Known incomplete boundaries — do not claim live readiness
 
-- Tauri commands attach one app-owned controller for snapshots/save/Stop/preview,
-  but Start/Restart and credential import are gated off in the native host.
-  The macOS credential adapter compiles,
-  but its Security.framework calls have not run against any real or test Keychain.
-  Permission prompts, signing/ACL behavior and packaged custody remain unverified;
-  other platforms explicitly report unavailable rather than storing keys in files.
-- Runtime tools must come from this app's own independently packaged bundle; no
-  artifact download/build/pinning pipeline or packaged launch has been verified.
-- Cross-app/cross-profile exact-key exclusion is **not implemented**. The profile
-  file lock only excludes another controller using that same profile. Old Buzz
-  does not honor it. No live imports/starts should be exposed before this is closed.
+- Normal native startup enables Start/Restart and selected credential import when
+  the app's manifest-verified runtime resources are staged. The disposable editor
+  still gates execution/import off. Real macOS Keychain consent, signing/ACL
+  behavior and packaged custody remain unverified; other credential platforms
+  report unavailable rather than storing agent keys in files.
+- `scripts/build-agent-runtime.mjs` stages the immutable tools and hash manifest;
+  native startup and spawn validate them without an old-bundle/PATH fallback.
+  Synthetic bundled tests are separate opt-in checks, not evidence of a signed
+  package or live inference.
+- Cooperating new-app profiles hold an exact-key/canonical-community OS lock in
+  addition to the profile lock. Native refuses detected legacy owners, but old
+  Buzz does not honor these locks and can be relaunched later. Before a live Start,
+  agree on handover and stop old Buzz AND its listeners; there is no coexistence
+  guarantee.
 - The Unix-session cleanup handles ACP's ordinary new process groups. A descendant
   that explicitly starts another session can escape this containment. Host crash
   recovery and such detached tools require further ownership work. Windows is not

@@ -81,6 +81,7 @@ export interface AgentControlState {
   busy: boolean;
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
+  pendingImport?: boolean;
   stopping?: boolean;
   error: string | null;
 }
@@ -97,7 +98,11 @@ export interface AgentControl {
 
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
 export function canStopAgent(state: AgentControlState, id: string): boolean {
-  if (state.busy && (!state.pendingLaunch || state.stopping)) return false;
+  if (
+    state.busy &&
+    ((!state.pendingLaunch && !state.pendingImport) || state.stopping)
+  )
+    return false;
   const agent = state.data?.agents.find((candidate) => candidate.id === id);
   return (
     !!agent &&
@@ -167,6 +172,7 @@ export function createAgentControl(
     apply: (result: T) => void,
     allowRecoveryStop = false,
     launchId?: string,
+    importing = false,
   ): Promise<T> {
     if (!host || disposed) throw new Error(agentControlUnavailable);
     if (state.busy && !allowRecoveryStop)
@@ -180,6 +186,7 @@ export function createAgentControl(
       busy: true,
       error: null,
       ...(launchId ? { pendingLaunch: launchId } : {}),
+      ...(importing ? { pendingImport: true } : {}),
       stopping: allowRecoveryStop,
     });
     try {
@@ -198,12 +205,18 @@ export function createAgentControl(
         });
       throw new Error("Could not confirm the agent operation.");
     } finally {
-      // A superseded launch still owns its credential wait, but never the newer
-      // Stop's result/error/busy lane. Keep other writes blocked until it settles.
-      if (!disposed && launchId) {
-        update({ pendingLaunch: null, busy: !!state.stopping });
+      // A superseded credential wait still owns its busy lane, but never the
+      // newer Stop's result/error. Import may commit; refresh recovers its rows.
+      if (!disposed && (launchId || importing)) {
+        update({
+          ...(launchId ? { pendingLaunch: null } : { pendingImport: false }),
+          busy: !!state.stopping,
+        });
       } else if (current === generation) {
-        update({ stopping: false, busy: !!state.pendingLaunch });
+        update({
+          stopping: false,
+          busy: !!(state.pendingLaunch || state.pendingImport),
+        });
       }
     }
   }
@@ -233,7 +246,13 @@ export function createAgentControl(
         () => {},
       ),
     commitImport: (token, ids) =>
-      run((native) => native.commitImport(token, ids), ready),
+      run(
+        (native) => native.commitImport(token, ids),
+        ready,
+        false,
+        undefined,
+        true,
+      ),
     dispose() {
       disposed = true;
       models.dispose();

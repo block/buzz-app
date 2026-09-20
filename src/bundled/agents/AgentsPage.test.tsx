@@ -8,6 +8,7 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import { AgentsPage } from "./AgentsPage";
 import { createAgentControl } from "../../features/agents/control";
@@ -338,4 +339,100 @@ it("keeps everyday editing focused and preserves hidden harness settings on Save
   expect(
     within(dialog).getByLabelText("Provider", { exact: true }),
   ).toBeVisible();
+});
+
+it("credential import keeps real Stop controls reachable without trapping the editor", async () => {
+  let releaseImport!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    releaseImport = resolve;
+  });
+  const { f, control } = setup("ready", (fixture) => {
+    const commit = fixture.host.commitImport;
+    fixture.host.commitImport = async (...args) => {
+      await gate;
+      return commit(...args);
+    };
+    fixture.host.action = async (id, action) => {
+      fixture.calls.push({ action, payload: { id } });
+      const agent = fixture.data.agents.find((agent) => agent.id === id);
+      if (!agent) throw Error("Missing action target");
+      agent.enabled = action !== "stop";
+      agent.status = action === "stop" ? "stopped" : "running";
+      return structuredClone(fixture.data);
+    };
+  });
+  try {
+    const cards = await screen.findAllByRole("article", {
+      name: "Agent Fixture agent",
+    });
+    const [first, other] = cards;
+    if (!first || !other) throw Error("Missing managed cards");
+    fireEvent.click(screen.getByText("Add agent", { exact: true }));
+    fireEvent.change(screen.getByLabelText("Destination community"), {
+      target: { value: "wss://third.example" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Preview selected library" }),
+    );
+    fireEvent.click(
+      await screen.findByRole("checkbox", { name: /Fixture agent/ }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Import selected identities" }),
+    );
+    expect(control.snapshot().busy).toBe(true);
+    expect(within(first).getByRole("button", { name: "Stop" })).toBeEnabled();
+    fireEvent.click(
+      within(first).getByRole("button", { name: "Actions for Fixture agent" }),
+    );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+    const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+    fireEvent.click(
+      within(dialog).getByText("Runtime and identity", { exact: true }),
+    );
+    expect(within(dialog).getByRole("button", { name: "Stop" })).toBeEnabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Restart" }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Save changes" }),
+    ).toBeDisabled();
+    expect(
+      within(dialog).getByRole("button", { name: "Close editor" }),
+    ).toBeEnabled();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
+    await within(dialog).findByText(
+      "Disabled · mentions will not wake this agent",
+    );
+    fireEvent.click(
+      within(dialog).getByRole("button", { name: "Close editor" }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // Recovery for a different exact identity stays accessible behind the dialog.
+    fireEvent.click(within(other).getByRole("button", { name: "Stop" }));
+    await waitFor(() =>
+      expect(f.calls.filter((call) => call.action === "stop")).toEqual([
+        { action: "stop", payload: { id: "fixture-agent" } },
+        { action: "stop", payload: { id: "other-destination" } },
+      ]),
+    );
+    await act(async () => {
+      releaseImport();
+      await gate;
+    });
+    await waitFor(() => expect(control.snapshot().busy).toBe(false));
+    expect(
+      screen.queryByText("Imported, not started. Review settings, then Start."),
+    ).toBeNull();
+    await act(async () => control.refresh());
+    const imported = control
+      .snapshot()
+      .data?.agents.find((agent) => agent.id === "second-fixture");
+    expect(imported).toMatchObject({ enabled: false, status: "stopped" });
+  } finally {
+    await act(async () => {
+      releaseImport();
+      await gate;
+    });
+  }
 });

@@ -295,3 +295,115 @@ it("a superseded launch cannot erase Stop's failure or allow writes while it wai
   expect(control.snapshot().error).toBe(error);
   expect(control.snapshot().busy).toBe(false);
 });
+
+for (const importFirst of [false, true]) {
+  for (const rejectImport of [false, true]) {
+    for (const rejectStop of [false, true]) {
+      it(`pending import: ${importFirst ? "import" : "Stop"} settles first; import ${rejectImport ? "fails" : "succeeds"}, Stop ${rejectStop ? "fails" : "succeeds"}`, async () => {
+        const fixture = controlFixture();
+        const control = createAgentControl(fixture.host);
+        await control.refresh();
+        const before = structuredClone(fixture.data);
+        const imported = structuredClone(before);
+        const importedAgent = {
+          ...structuredClone(fixture.agent),
+          id: "imported",
+          enabled: false,
+          status: "stopped" as const,
+          runningRevision: null,
+        };
+        imported.agents.push(importedAgent);
+        const importGate = deferred<void>();
+        const stopGate = deferred<void>();
+        vi.spyOn(fixture.host, "commitImport").mockImplementation(async () => {
+          await importGate.promise;
+          if (rejectImport) throw "Import custody failed";
+          return imported;
+        });
+        const stopped = structuredClone(before);
+        const stoppedAgent = stopped.agents[0];
+        if (!stoppedAgent) throw Error("Missing Stop target");
+        Object.assign(stoppedAgent, {
+          enabled: false,
+          status: "stopped",
+          runningRevision: null,
+        });
+        const action = vi
+          .spyOn(fixture.host, "action")
+          .mockImplementation(async () => {
+            await stopGate.promise;
+            if (rejectStop) throw "Durable disable failed";
+            return stopped;
+          });
+        const importing = control
+          .commitImport("token", ["imported"])
+          .catch(() => {});
+        expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+        expect(canStopAgent(control.snapshot(), "unknown")).toBe(false);
+        const stopping = control
+          .action(fixture.agent.id, "stop")
+          .catch(() => {});
+        expect(action).toHaveBeenCalledExactlyOnceWith(
+          fixture.agent.id,
+          "stop",
+        );
+        expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(false);
+        await expect(control.action(fixture.agent.id, "stop")).rejects.toThrow(
+          "in progress",
+        );
+        if (importFirst) {
+          importGate.resolve();
+          await importing;
+          expect(control.snapshot().data).toEqual(before);
+          expect(control.snapshot().error).toBeNull();
+        } else {
+          stopGate.resolve();
+          await stopping;
+        }
+        expect(control.snapshot().busy).toBe(true);
+        for (const attempt of [
+          () => control.action(fixture.agent.id, "start"),
+          () => control.action(fixture.agent.id, "restart"),
+          () =>
+            control.save(
+              fixture.agent.id,
+              1,
+              agentEdit(agentDraft(fixture.agent)),
+            ),
+          () => control.previewImport("installed", "wss://chosen.example"),
+          () => control.commitImport("another", ["imported"]),
+        ])
+          await expect(attempt()).rejects.toThrow("in progress");
+        const read = vi.spyOn(fixture.host, "snapshot");
+        await control.refresh();
+        expect(read).not.toHaveBeenCalled();
+        if (importFirst) {
+          stopGate.resolve();
+          await stopping;
+        } else {
+          const evidence = control.snapshot();
+          importGate.resolve();
+          await importing;
+          expect(control.snapshot().data).toBe(evidence.data);
+          expect(control.snapshot().error).toBe(evidence.error);
+        }
+        expect(control.snapshot().busy).toBe(false);
+        expect(control.snapshot().data).toEqual(rejectStop ? before : stopped);
+        expect(control.snapshot().status).toBe(rejectStop ? "error" : "ready");
+        if (rejectStop) {
+          expect(control.snapshot().error).toContain("Durable disable failed");
+          expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+        }
+        // A superseded import may still commit. Only a fresh host read can merge
+        // its disabled rows with the newer Stop evidence; never replay its snapshot.
+        const latest = structuredClone(rejectStop ? before : stopped);
+        if (!rejectImport) latest.agents.push(importedAgent);
+        read.mockResolvedValue(latest);
+        await control.refresh();
+        expect(control.snapshot().data).toEqual(latest);
+        expect(control.snapshot().status).toBe("ready");
+        control.dispose();
+      });
+    }
+  }
+}

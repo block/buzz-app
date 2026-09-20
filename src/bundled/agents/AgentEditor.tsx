@@ -38,6 +38,8 @@ export function AgentEditor({
   const dirty = draft !== null;
   const stale = current.revision !== agent.revision;
   const blocked = state.busy || state.status !== "ready";
+  const canClose =
+    !state.busy || !!(state.pendingLaunch || state.pendingImport);
   const transitioning =
     agent.status === "starting" || agent.status === "stopping";
   const unapplied =
@@ -60,7 +62,7 @@ export function AgentEditor({
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open && !dirty && (!state.busy || state.pendingLaunch)) onClose();
+        if (!open && !dirty && canClose) onClose();
       }}
     >
       <Dialog.Portal>
@@ -73,7 +75,7 @@ export function AgentEditor({
             <Dialog.Title className="text-heading">Edit agent</Dialog.Title>
             <Button
               aria-label="Close editor"
-              disabled={state.busy && !state.pendingLaunch}
+              disabled={!canClose}
               onClick={onClose}
             >
               ×
@@ -292,7 +294,7 @@ export function AgentEditor({
                 >
                   Save changes
                 </Button>
-                <Button disabled={state.busy} onClick={onClose}>
+                <Button disabled={!canClose} onClick={onClose}>
                   Cancel
                 </Button>
                 {stale && (

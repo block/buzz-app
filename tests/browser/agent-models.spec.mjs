@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "./vite-server.mjs";
 import config from "../fixtures/agent-control.vite.mjs";
 
 test("on-demand model search preserves custom drafts and fences cancellation/context changes", async ({

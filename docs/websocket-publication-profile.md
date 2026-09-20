@@ -273,8 +273,8 @@ logs contained no publication attempt and do not establish recovery. Diagnose
 that failure before asserting publication reliability.
 
 Hosted CI for `7bd31cb` and `0669b62` exposed test/fixture failures, not a
-merge-ready result ([latest failing run](https://github.com/block/buzz-app/actions/runs/35520633342)).
-The subsequent CI-repair increment changes no production code:
+merge-ready result ([earlier failing run](https://github.com/block/buzz-app/actions/runs/35520633342)).
+The CI-repair increment at `57b40bb` changed no production code:
 
 - The proof-memo test fills opaque pressure entries in the real memo after one
   real verification, then verifies eviction, a newest hit and oldest re-verification.
@@ -293,11 +293,33 @@ Local Apple Silicon checks exercised all four affected browser files in both
 engines: 22 unchanged cases passed, then both thread-history cases passed after
 its final repair. The complete proof/prepared files passed 32 tests. No browser
 cases/engines, assertion budgets or retries were removed or relaxed. These are
-local results, not hosted equivalence or a full-suite claim. The earlier two
-Linux WebKit sidebar-unread failures did not recur in the current CI run or
-local reruns; their assertions are unchanged and their earlier cause remains
-unexplained. Fresh CI and disconnect/restart/quota acceptance remain required
-before merge.
+local results, not hosted equivalence or a full-suite claim.
+
+The [run at `57b40bb`](https://github.com/block/buzz-app/actions/runs/35521969212)
+failed two jobs: WebKit again missed Alpha's second finite-head catch-up in two
+sidebar-unread cases (100/102 shard cases passed), and a hook integration test
+reported a successful design lane without its expected guard output. Rust passed.
+The WebKit cause remains unresolved; the earlier non-recurrence was not closure.
+
+The next increment separates a verified hook repair from WebKit diagnostics:
+
+- Serialize the two existing pre-push jobs. Pinned Lefthook 2.1.12 shares a mutable
+  cached stdin reader across parallel consumers; corrupted or empty Git refs can
+  silently skip checks. An installed-hook regression compares the exact 116 KB
+  input received by each child. It failed against the old configuration and the
+  complete fixed hook file passed 32/32. Local wall/summed-test time increased
+  from 54.02/53.97 s to 61.98/61.94 s; the new probe costs 0.90 s. Previous hook
+  success summaries alone do not establish that both validation lanes ran.
+- Reuse the passive stream observer in sidebar-unread, retaining original-reader
+  read issuance/completion and up to 4 MiB/2048 records before teardown or UI
+  diagnostics. Completion metadata survives payload truncation; missing payload
+  in a truncated capture remains inconclusive. No extra read, tee, flush write,
+  delivery wait, assertion change or timeout increase. The shared scroll helper
+  is covered too. This gathers evidence, not a WebKit repair: instrumentation can
+  perturb timing, and local macOS passes do not establish Linux delivery.
+
+Fresh Linux evidence and full CI acceptance remain required. The separate live
+503 and attended disconnect/restart/quota checks also remain open before merge.
 
 ## Local feedback checklist
 

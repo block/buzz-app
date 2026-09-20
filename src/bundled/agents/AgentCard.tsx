@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useRef, type ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
 import { IconDots, IconUsers } from "@tabler/icons-react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -16,7 +16,9 @@ export function AgentCard({
   session,
   editable = [],
   onEdit,
+  children,
 }: {
+  children?: ReactNode;
   name: string;
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
@@ -102,7 +104,9 @@ export function AgentCard({
           </Menu.Root>
         </div>
       )}
-      <div className="flex min-h-36 flex-1 items-center justify-center py-5">
+      <div
+        className={`flex items-center justify-center py-5 ${children ? "min-h-20" : "min-h-36 flex-1"}`}
+      >
         <Avatar
           alt={name}
           fallback={name}
@@ -114,6 +118,7 @@ export function AgentCard({
       <h3 className="m-0 truncate text-label" title={name}>
         {name}
       </h3>
+      {children}
       {identities.length ? (
         <Accordion
           items={[

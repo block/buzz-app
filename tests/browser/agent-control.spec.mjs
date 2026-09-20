@@ -157,7 +157,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       ),
     ).toEqual(before);
     await showManagement(page);
-    await panel.getByText("Import from old Buzz", { exact: true }).click();
+    await panel.getByText("Add agent", { exact: true }).click();
     await panel.getByLabel("Development Buzz", { exact: true }).check();
     await panel
       .getByLabel("Destination community", { exact: true })
@@ -175,7 +175,8 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await panel
       .getByRole("button", { name: "Import selected identities" })
       .click();
-    await expect(panel.getByRole("article")).toHaveCount(3);
+    // Only the two managed identities belong here, not the library template.
+    await expect(panel.getByRole("article")).toHaveCount(2);
     expect(
       await page.evaluate(() =>
         window.agentControlFixture.data.agents.every((a) => !a.enabled),
@@ -205,12 +206,16 @@ test("local controls preserve drafts, confirm operations and distinguish disable
       .click();
     await showManagement(page);
     await expect(panel.getByText(/This browser cannot run/)).toBeVisible();
-    await panel
-      .getByRole("button", { name: "Actions for Fixture agent", exact: true })
-      .click();
+    // Library-only entries no longer pretend to be managed cards with Edit.
+    await expect(panel.getByText("Add agent", { exact: true })).toHaveCount(0);
+    const libraryCard = page.getByRole("article", {
+      name: "Agent Fixture agent",
+      exact: true,
+    });
+    await expect(libraryCard).toBeVisible();
     await expect(
-      page.getByRole("menuitem", { name: "Edit", exact: true }),
-    ).toHaveAttribute("aria-disabled", "true");
+      libraryCard.getByRole("button", { name: /Actions|Start|Edit/ }),
+    ).toHaveCount(0);
     expect(errors).toEqual([]);
   } finally {
     await server.close();
@@ -243,7 +248,7 @@ for (const previouslyStopped of [false, true]) {
         await expect(stop).toBeDisabled();
       }
       await showManagement(page);
-      await panel.getByText("Import from old Buzz", { exact: true }).click();
+      await panel.getByText("Add agent", { exact: true }).click();
       await panel
         .getByLabel("Destination community", { exact: true })
         .fill("wss://chosen.example");
@@ -387,7 +392,9 @@ test("native editing checkpoint blocks launch and credential import while retain
     });
     await showManagement(page);
     await expect(
-      panel.getByText("Execution blocked by native host"),
+      panel
+        .getByRole("region", { name: "My agents" })
+        .getByText("Execution blocked by native host"),
     ).toBeVisible();
     const editor = await openEditor(page);
     await expect(
@@ -400,7 +407,7 @@ test("native editing checkpoint blocks launch and credential import while retain
       editor.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
     await showManagement(page);
-    await panel.getByText("Import from old Buzz", { exact: true }).click();
+    await panel.getByText("Add agent", { exact: true }).click();
     await expect(
       panel.getByText(/Import is disabled in this integration checkpoint/),
     ).toBeVisible();
@@ -850,7 +857,7 @@ for (const changed of ["destination", "source"]) {
         includeHidden: true,
       });
       await showManagement(page);
-      await panel.getByText("Import from old Buzz", { exact: true }).click();
+      await panel.getByText("Add agent", { exact: true }).click();
       const destination = panel.getByLabel("Destination community", {
         exact: true,
       });
@@ -954,7 +961,7 @@ test("rejected import preview keeps inputs and recovers through Retry status", a
       includeHidden: true,
     });
     await showManagement(page);
-    await panel.getByText("Import from old Buzz", { exact: true }).click();
+    await panel.getByText("Add agent", { exact: true }).click();
     const destination = panel.getByLabel("Destination community", {
       exact: true,
     });

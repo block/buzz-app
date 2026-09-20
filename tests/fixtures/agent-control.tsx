@@ -1,4 +1,7 @@
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
+import { createNavigationController } from "../../src/features/navigation/controller";
+import { createMemoryHistory } from "../../src/features/navigation/history";
+import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { createRoot } from "react-dom/client";
 import { AgentsPage } from "../../src/bundled/agents/AgentsPage";
 import { createRelaySession } from "../../src/features/relay/session";
@@ -47,10 +50,22 @@ fixture.host.models = {
   },
 };
 const control = createAgentControl(fixture.host);
+const viewer = "de".repeat(32);
+const scope = `https://relay.example.test:${viewer}`;
+const channelId = "11111111-1111-4111-8111-111111111111";
 const session = createRelaySession({
   viewer: "de".repeat(32),
   relayAuthor: "ef".repeat(32),
-  scope: "wss://relay.example.test",
+  scope: "https://relay.example.test",
+  writer: {
+    kinds: [9],
+    async sign() {
+      throw new Error("This preview cannot sign or send messages.");
+    },
+    async publish() {
+      throw new Error("This preview cannot publish messages.");
+    },
+  },
   async readAgentLibrary() {
     return {
       definitions: [
@@ -66,14 +81,41 @@ const session = createRelaySession({
       ],
     };
   },
-  async query() {
+  async query(filters) {
+    if (filters.some((filter) => filter.kinds?.includes(39002)))
+      return [
+        {
+          id: "12".repeat(32),
+          pubkey: "ef".repeat(32),
+          kind: 39002,
+          created_at: 1,
+          content: "",
+          tags: [
+            ["d", channelId],
+            ["p", viewer],
+            ["p", fixture.agent.pubkey],
+          ],
+        },
+        {
+          id: "13".repeat(32),
+          pubkey: "ef".repeat(32),
+          kind: 39000,
+          created_at: 1,
+          content: JSON.stringify({ name: "shared-fixture" }),
+          tags: [
+            ["d", channelId],
+            ["t", "stream"],
+          ],
+        },
+      ];
     return [];
   },
   media: () => undefined,
 });
 const relaySnapshot: RelaySnapshot = {
   status: "ready",
-  scope: "fixture",
+  scope,
+  viewer,
   generation: 1,
   session: session.session,
 };
@@ -94,9 +136,23 @@ Object.assign(window, {
   },
 });
 Object.assign(window, { agentControlFixture: { ...fixture, control } });
+const navigationHost = createNavigationController(createMemoryHistory());
+navigationHost.complete(navigationHost.navigation.snapshot().attempt, {
+  status: "opened",
+});
+navigationHost.navigation.subscribe(() => {
+  const state = navigationHost.navigation.snapshot();
+  if (state.status === "opening")
+    navigationHost.complete(state.attempt, { status: "opened" });
+});
 function Fixture() {
   useKeyboardFocusVisibility();
   const [shown, setShown] = useState(true);
+  const route = useSyncExternalStore(
+    navigationHost.navigation.subscribe,
+    navigationHost.navigation.snapshot,
+  );
+  const inChannel = route.entry.target.kind === "conversation";
   const [failure, setFailure] = useState(false);
   const [browser, setBrowser] = useState(false);
   const [unavailable] = useState(() => createAgentControl(null));
@@ -153,12 +209,33 @@ function Fixture() {
           </Button>
         </div>
       </header>
-      {shown && (
-        <AgentsPage
-          relay={relay}
-          key={browser ? "browser" : "native"}
-          control={browser ? unavailable : control}
-        />
+      {shown && inChannel ? (
+        <section aria-label="Fixture channel" className="space-y-3 p-4">
+          <Button
+            onClick={() =>
+              void navigationHost.navigation.open({ version: 1, kind: "home" })
+            }
+          >
+            Back to Agents
+          </Button>
+          <h2>#shared-fixture · No publication transport</h2>
+          <MessageComposer
+            session={session.session}
+            scope={scope}
+            channelId={channelId}
+            channelName="shared-fixture"
+            disabled
+          />
+        </section>
+      ) : (
+        shown && (
+          <AgentsPage
+            relay={relay}
+            navigator={navigationHost.navigation}
+            key={browser ? "browser" : "native"}
+            control={browser ? unavailable : control}
+          />
+        )
       )}
     </main>
   );

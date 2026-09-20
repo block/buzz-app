@@ -1,26 +1,14 @@
 import { useState } from "react";
-import type {
-  AgentControl,
-  ControlSnapshot,
-} from "../../features/agents/control";
-import { AgentModelPicker } from "./AgentModelPicker";
+import type { ControlSnapshot } from "../../features/agents/control";
 import type { AgentDraft } from "./agent-edit";
 
 /** Choices come from the injected native snapshot, never a plugin runtime catalog. */
 export function AgentHarnessEditor({
   draft,
-  id,
-  savedRevision,
-  control,
-  defaults,
   options,
   onChange,
 }: {
   draft: AgentDraft;
-  id: string;
-  savedRevision: number;
-  control: AgentControl;
-  defaults: ControlSnapshot["databricksDefaults"];
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
@@ -51,14 +39,6 @@ export function AgentHarnessEditor({
           onChange={(provider) => onChange({ provider })}
         />
       </div>
-      <AgentModelPicker
-        savedRevision={savedRevision}
-        id={id}
-        draft={draft}
-        control={control}
-        defaults={defaults}
-        onChange={onChange}
-      />
     </div>
   );
 }

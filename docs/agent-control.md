@@ -2,7 +2,9 @@
 
 The real Agents page now receives one app-owned native capability. Native IPC uses
 persistent settings and the controller, not the in-memory editor fixture. The
-read-only old library remains the main grid; Edit targets an exact imported native identity and destination. **Normal native startup now enables
+managed identities are the main grid, one card per exact native identity and
+destination. Browser-only access keeps the read-only old library; native management
+shows only this app's managed agents. **Normal native startup now enables
 the local management loop when its immutable runtime resources are staged.** The
 disposable editor still blocks execution and credential import. The real-agent
 handover requires independent review and an attended trial; old Buzz still owns
@@ -16,15 +18,35 @@ configuration and persistent native settings. Coordinate the native rebuild/rela
 quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
 
-Open **Agents → card’s three-dot menu → Edit**. The existing cards, artwork and identity grouping
-remain; a card with multiple imported destinations asks which exact key/destination
-to edit. A library-only card requires explicit import under **Manage local agents**;
-Edit never imports or writes the old library. Native-only agents remain editable
-when the library is disconnected, unavailable or archived. New-agent creation is
-not implemented in this slice.
+Open **Agents → My agents** for imported identities, their destination community,
+process evidence and visible **Start / Stop**. **Edit** remains secondary in the
+card’s three-dot menu. Same-key identities at different destinations have separate
+cards; actions use native ID/revision, never the display name. Managed controls
+remain available when the old library is disconnected, unavailable or archived.
 
-The focused dialog contains Name, Agent instructions, Harness, Provider and Model.
-Workspace/arguments/write-only environment patches are under **Advanced**;
+**Add agent → Import from old Buzz** is the single native entry for adding agents.
+It explicitly previews and imports selected identities. Import focuses the first
+imported card and says **Imported, not started**. It does not start a listener,
+invite an agent or change the old library. There is no competing library grid in
+native management. New-agent creation is not implemented, and the Add entry says so.
+
+**Use in channel** is an optional composer shortcut, not a start action. In the
+agent’s currently connected community, choose an existing non-DM channel with
+known exact membership for both viewer and agent. The action appends that exact
+recipient to the scoped channel draft, preserving prose, existing recipients and
+thread drafts, then opens the conversation. Nothing sends automatically. Already
+selected recipients are not duplicated; unreadable/full drafts or storage errors
+block navigation with an explanation. Failed navigation leaves the prepared draft
+saved for explicit retry. The production Agents → Channels transition remounts the
+composer; no cross-window draft synchronization is introduced.
+
+An imported/disabled agent does not wake on mention. Start enables its listener;
+Stop disables future wake. Enabled idle-worker wake and startup restoration are
+runtime contracts, not proof that a listener can receive or reply. The attended
+handover below must still establish those behaviors with old Buzz stopped.
+
+The focused dialog contains Name, Agent instructions and Model.
+Harness, Provider, workspace, arguments and write-only environment patches are under **Advanced**;
 Start/Stop/Restart and exact identity are under **Runtime and identity**. Save uses
 native ID/revision and does not restart. Dirty drafts resist backdrop/Escape;
 explicit Cancel/Close discards. Page navigation/reload still discards page-local drafts.
@@ -425,3 +447,35 @@ app custody for retry but no enabled/configured agent. The previous strict-previ
 cache is neither migrated nor reused. Native UI, actual Keychain ACLs, production
 TLS/Databricks inference, live relay replies, forced native quit, signed packaging
 and other platforms remain unproven by the synthetic checks.
+
+
+## Managed-first UI feedback checkpoint (2026-09-19)
+
+The UI work continues in `brain-agent-controller` at base `8da3863`, not a second
+native app/worktree. Changes are frontend-only; no controller, credential or
+native lifecycle semantics changed. TypeScript and the focused mounted regressions
+passed, and Chromium/WebKit exercised lifecycle recovery, import fencing, library
+compatibility, model editing and real rich-composer draft restoration using the
+isolated fixture. These are synthetic results, not a live Donut reply.
+
+Remaining integration gates: independent changed-path review, full batch validation
+when agreed, native/package and attended live handover. No old-Buzz shutdown or
+native relaunch is implied by this checkpoint. Keep the old installation intact
+for rollback; never operate two owners of the same identity simultaneously.
+
+
+## Consolidated UX checkpoint (2026-09-20)
+
+The native page now has one **Add agent** disclosure using the existing importer,
+managed cards only, and the focused Name / Instructions / Model editor. Browser-only
+access retains read-only library browsing. No native/runtime ownership changed.
+The seven-file production cleanup removes more lines than it adds. Independent
+changed-slice source review found no blocker; this is not a cumulative native review.
+
+TypeScript and all 1,626 Vitest tests pass at `8da3863` plus this working UI state.
+The four agent browser files exercised 34 Chromium/WebKit checks: 32 passed in the
+initial run; the model-search test required opening the newly collapsed Advanced
+section and then passed in both engines. No assertions, engines or cases were removed.
+Screenshots of the grid and focused editor were inspected. This is synthetic
+regression evidence, not a real native sign-in/reply or a merged-main batch gate.
+Main integration, full scan and the attended native handover remain outstanding.

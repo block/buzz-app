@@ -85,32 +85,38 @@ function setup(
     disconnect() {},
     clearCache: async () => {},
   };
-  const control = createAgentControl(f.host);
+  const control = createAgentControl(mode === "browser" ? null : f.host);
   disposals.push(() => control.dispose());
   render(<AgentsPage relay={relay} control={control} />);
   return {
     f,
     read,
+    control,
     changeScope(scope: string, generation: number) {
       snapshot = { status: "ready", scope, generation, session };
       for (const listener of listeners) listener();
     },
   };
 }
-it("requires exact native destination selection and never imports from Edit", async () => {
+it("shows one managed card per exact destination and keeps unimported templates out of My agents", async () => {
   const { f } = setup();
-  const card = await screen.findByRole("article", {
-    name: "Agent Library card",
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
   });
-  fireEvent.click(
-    within(card).getByRole("button", { name: "Actions for Library card" }),
+  expect(cards).toHaveLength(2);
+  const card = cards.find((entry) =>
+    entry.textContent?.includes("wss://second.example"),
   );
+  if (!card) throw Error("Second destination missing");
   expect(
-    await screen.findByRole("menuitem", { name: /wss:\/\/relay.example.test/ }),
-  ).toHaveTextContent(f.agent.pubkey);
+    within(screen.getByRole("region", { name: "My agents" })).queryByText(
+      "Not imported",
+    ),
+  ).toBeNull();
   fireEvent.click(
-    await screen.findByRole("menuitem", { name: /wss:\/\/second.example/ }),
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
   const dialog = screen.getByRole("dialog", { name: "Edit agent" });
   fireEvent.change(within(dialog).getByLabelText("Name"), {
     target: { value: "Exact destination" },
@@ -119,24 +125,17 @@ it("requires exact native destination selection and never imports from Edit", as
   expect(f.calls.find((call) => call.action === "save")?.payload).toMatchObject(
     { id: "other-destination", expectedRevision: 7 },
   );
-  // Fake rejects this second revision; the draft remains until explicit Cancel.
+  // The synthetic host rejects this revision; failed save must retain the draft.
   await within(dialog).findByText(/Could not confirm/);
   expect(within(dialog).getByLabelText("Name")).toHaveValue(
     "Exact destination",
   );
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
-  const unimported = screen.getByRole("article", {
-    name: "Agent Not imported",
-  });
-  fireEvent.click(
-    within(unimported).getByRole("button", {
-      name: "Actions for Not imported",
-    }),
-  );
-  expect(await screen.findByRole("menuitem", { name: "Edit" })).toHaveAttribute(
-    "aria-disabled",
-    "true",
-  );
+  expect(
+    screen.queryByRole("article", { name: "Agent Not imported" }),
+  ).toBeNull();
+  expect(screen.queryByText("Old Buzz library", { exact: true })).toBeNull();
+  expect(screen.getByText("Add agent", { exact: true })).toBeVisible();
   expect(f.calls.some((call) => call.action === "import")).toBe(false);
 });
 for (const mode of ["disconnected", "unavailable", "error", "archived"]) {
@@ -157,7 +156,7 @@ for (const mode of ["disconnected", "unavailable", "error", "archived"]) {
 }
 it("remounts records for equal-generation community switches and session replacements", async () => {
   const f = setup();
-  await screen.findByRole("article", { name: "Agent Library card" });
+  await screen.findAllByRole("article", { name: "Agent Fixture agent" });
   expect(f.read).toHaveBeenCalledTimes(1);
   await act(async () => f.changeScope("B", 1));
   expect(f.read).toHaveBeenCalledTimes(2);
@@ -184,17 +183,17 @@ for (const mode of ["absolute", "saved-override", "draft-override"]) {
       });
       f.host.models = { begin: async () => 1, cancel: async () => {}, run };
     });
-    const card = await screen.findByRole("article", {
-      name: "Agent Library card",
+    const cards = await screen.findAllByRole("article", {
+      name: "Agent Fixture agent",
     });
-    fireEvent.click(
-      within(card).getByRole("button", { name: "Actions for Library card" }),
+    const card = cards.find((entry) =>
+      entry.textContent?.includes("wss://relay.example.test"),
     );
+    if (!card) throw Error("Primary destination missing");
     fireEvent.click(
-      await screen.findByRole("menuitem", {
-        name: /wss:\/\/relay.example.test/,
-      }),
+      within(card).getByRole("button", { name: "Actions for Fixture agent" }),
     );
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
     const dialog = screen.getByRole("dialog", { name: "Edit agent" });
     if (mode === "draft-override") {
       fireEvent.click(within(dialog).getByText("Advanced", { exact: true }));
@@ -235,3 +234,108 @@ for (const mode of ["absolute", "saved-override", "draft-override"]) {
     );
   });
 }
+
+it("keeps lifecycle controls visible and reports failure without disabling recovery Stop", async () => {
+  const { f, control } = setup();
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  expect(
+    within(card).getByText("Process running · relay readiness unverified"),
+  ).toBeVisible();
+  fireEvent.click(within(card).getByRole("button", { name: "Stop" }));
+  await within(card).findByRole("button", { name: "Start" });
+  expect(f.calls.at(-1)).toEqual({
+    action: "stop",
+    payload: { id: "fixture-agent" },
+  });
+  f.host.action = async () => {
+    throw "synthetic start failure";
+  };
+  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+  await screen.findByRole("button", { name: "Retry status" });
+  expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
+  expect(within(card).getByRole("button", { name: "Stop" })).toBeEnabled();
+  await act(async () => control.refresh());
+  expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled();
+  f.data.runtimeAvailable = false;
+  await act(async () => control.refresh());
+  expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
+  expect(
+    within(card).getByText(/bundled agent runtime is unavailable/),
+  ).toBeVisible();
+});
+it("focuses the imported managed identity without starting it", async () => {
+  const { f } = setup();
+  await screen.findAllByRole("article", { name: "Agent Fixture agent" });
+  fireEvent.click(screen.getByText("Add agent", { exact: true }));
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: "wss://third.example" },
+  });
+  fireEvent.click(
+    screen.getByRole("button", { name: "Preview selected library" }),
+  );
+  fireEvent.click(
+    await screen.findByRole("checkbox", { name: /Fixture agent/ }),
+  );
+  fireEvent.click(
+    screen.getByRole("button", { name: "Import selected identities" }),
+  );
+  const notice = await screen.findByText(
+    "Imported, not started. Review settings, then Start.",
+  );
+  const imported = notice.closest("article");
+  if (!imported) throw Error("Imported card missing");
+  expect(imported).toHaveTextContent("wss://third.example");
+  expect(notice.parentElement).toHaveFocus();
+  expect(within(imported).getByRole("button", { name: "Start" })).toBeEnabled();
+  expect(f.calls.some((call) => call.action === "start")).toBe(false);
+});
+
+it("keeps the read-only library available when native management is unavailable", async () => {
+  setup("browser");
+  const card = await screen.findByRole("article", {
+    name: "Agent Not imported",
+  });
+  expect(
+    within(card).queryByRole("button", { name: /Actions|Start|Edit/ }),
+  ).toBeNull();
+  expect(screen.queryByText("Add agent", { exact: true })).toBeNull();
+  expect(screen.getByText(/This browser cannot run/)).toBeVisible();
+});
+it("keeps everyday editing focused and preserves hidden harness settings on Save", async () => {
+  const { f } = setup();
+  const original = structuredClone(f.agent.harness);
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  expect(within(dialog).getByLabelText("Name")).toBeVisible();
+  expect(within(dialog).getByLabelText("Agent instructions")).toBeVisible();
+  expect(within(dialog).getByLabelText("Model", { exact: true })).toBeVisible();
+  expect(
+    within(dialog).getByLabelText("Harness", { exact: true }),
+  ).not.toBeVisible();
+  expect(
+    within(dialog).getByLabelText("Provider", { exact: true }),
+  ).not.toBeVisible();
+  fireEvent.change(within(dialog).getByLabelText("Agent instructions"), {
+    target: { value: "Focused everyday edit" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await within(dialog).findByText("Saved. Running work was not restarted.");
+  expect(f.agent.harness).toEqual(original);
+  fireEvent.click(within(dialog).getByText("Advanced", { exact: true }));
+  expect(
+    within(dialog).getByLabelText("Harness", { exact: true }),
+  ).toBeVisible();
+  expect(
+    within(dialog).getByLabelText("Provider", { exact: true }),
+  ).toBeVisible();
+});

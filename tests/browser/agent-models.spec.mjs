@@ -27,6 +27,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
       name: "Edit agent",
       exact: true,
     });
+    await editor.getByText("Advanced", { exact: true }).click();
     await editor
       .getByRole("combobox", { name: "Harness", exact: true })
       .selectOption({ label: "Buzz Agent" });

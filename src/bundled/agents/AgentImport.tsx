@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import type {
   AgentControl,
   AgentImportPreview,
+  AgentView,
   ImportSource,
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -10,10 +11,12 @@ export function AgentImport({
   control,
   disabled,
   commitAvailable = true,
+  onImported,
 }: {
   control: AgentControl;
   disabled: boolean;
   commitAvailable?: boolean;
+  onImported?: (agents: AgentView[]) => void;
 }) {
   const [source, setSource] = useState<ImportSource>("installed");
   const [destination, setDestination] = useState("");
@@ -29,15 +32,12 @@ export function AgentImport({
     setNotice(null);
   };
   return (
-    <details className="space-y-4">
-      <summary className="cursor-pointer text-body font-semibold">
-        Import from old Buzz
-      </summary>
+    <section aria-label="Import from old Buzz" className="space-y-4">
+      <h2 className="text-heading">Import from old Buzz</h2>
       <p className="text-body-sm text-secondary">
-        Preview reads only the selected library, without Keychain access. When
-        available, import preserves exact identities and leaves them disabled;
-        it does not enroll or start agents. Keep old Buzz running for replies
-        during this editing checkpoint.
+        Preview reads the selected library without accessing credentials. Import
+        copies the selected identities into this app and leaves them stopped.
+        Before starting them here, stop old Buzz and its agent listeners.
       </p>
       {!commitAvailable && (
         <p role="status">
@@ -147,7 +147,12 @@ export function AgentImport({
             onClick={() => {
               void control
                 .commitImport(preview.token, selected)
-                .then(() => {
+                .then((result) => {
+                  onImported?.(
+                    result.agents.filter((agent) =>
+                      selected.includes(agent.id),
+                    ),
+                  );
                   setPreview(null);
                   setSelected([]);
                   setNotice(
@@ -166,6 +171,6 @@ export function AgentImport({
           {notice}
         </p>
       )}
-    </details>
+    </section>
   );
 }

@@ -10,6 +10,7 @@ import {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
 import { AgentHarnessEditor } from "./AgentHarnessEditor";
+import { AgentModelPicker } from "./AgentModelPicker";
 import {
   agentDraft,
   agentEdit,
@@ -209,13 +210,12 @@ export function AgentEditor({
                     }
                   />
                 </label>
-                <AgentHarnessEditor
+                <AgentModelPicker
                   id={agent.id}
                   savedRevision={agent.revision}
                   control={control}
                   defaults={state.data?.databricksDefaults}
                   draft={current}
-                  options={state.data?.harnessOptions ?? []}
                   onChange={change}
                 />
               </fieldset>
@@ -223,6 +223,13 @@ export function AgentEditor({
                 <summary className="cursor-pointer text-body-sm">
                   Advanced
                 </summary>
+                <fieldset disabled={state.busy} className="min-w-0">
+                  <AgentHarnessEditor
+                    draft={current}
+                    options={state.data?.harnessOptions ?? []}
+                    onChange={change}
+                  />
+                </fieldset>
                 <label className="agent-control-field">
                   Workspace
                   <input

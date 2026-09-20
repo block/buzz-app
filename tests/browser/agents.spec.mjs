@@ -3,7 +3,7 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
-test("My agents reads the existing library with exact linked keys and session-safe retries", async ({
+test("Old Buzz library reads the existing library with exact linked keys and session-safe retries", async ({
   page,
 }) => {
   const server = await createServer({
@@ -22,7 +22,7 @@ test("My agents reads the existing library with exact linked keys and session-sa
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agents.html`,
     );
     const agents = page.getByRole("region", {
-      name: "My agents",
+      name: "Library templates",
       exact: true,
     });
     await expect(

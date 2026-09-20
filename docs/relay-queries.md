@@ -185,8 +185,9 @@ A storage failure prevents publishing. An explicit relay rejection becomes `fail
 a lost response or publish timeout becomes `unknown`, because it may have committed.
 A later rejected/failed retry cannot erase earlier `unknown` or `accepted` evidence;
 its error describes the retry, not proof the original event was unsent.
-Retries reuse the signed event and event ID, while HTTP authentication uses a fresh
-request-bound NIP-98 event. The relay's event-ID deduplication handles repeat delivery.
+Retries reuse the signed event and event ID. Live sessions use connection-bound
+NIP-42 authentication; the separate direct signed HTTP adapter uses a fresh request-bound
+NIP-98 event. Event-ID deduplication does not promise exactly-once command side effects.
 
 An accepted receipt becomes `accepted`; a verified read containing the ID becomes
 `seen`. Observation wins over a later failed/missing acknowledgement. The session
@@ -398,10 +399,101 @@ are injected local fixtures, so these integration tests cannot post to the live 
 incremental status updates, deletion after restart and partition isolation.
 
 
-### Upstream connections
+### Repeatable thread-read profile
 
-The dev broker uses a long-lived connection pool (60 s keep-alive) with cached
-DNS. Community discovery is lazy; production does not schedule periodic warm-up
+The app-local `ThreadPanel.profile.test.tsx` mounts the real panel over the real
+session and broker HTTP client, with signed synthetic loopback responses. The
+fixture uses the same `prepared`/`warm` options as `service.ts`, explicit memory
+storage, and a completed authorization/head-warming barrier. It observes the
+panel's own paging and profile effects rather than driving those operations on
+its behalf. Composer emoji demand and reading dwell are excluded.
+
+```sh
+# Choose a new output path for every run; existing artifacts are never overwritten.
+BUZZ_ENGINE_PROFILE_OUT=/tmp/thread-before.json BUZZ_ENGINE_PROFILE_SAMPLES=7 \
+  bin/pnpm exec vitest run src/features/messages/ThreadPanel.profile.test.tsx
+# Make the bounded engine change, leaving the harness/fixture/dependencies unchanged.
+BUZZ_ENGINE_PROFILE_OUT=/tmp/thread-after.json BUZZ_ENGINE_PROFILE_SAMPLES=7 \
+  bin/pnpm exec vitest run src/features/messages/ThreadPanel.profile.test.tsx
+```
+
+Each measurement run discards two warmups, then captures cold/reopen pairs for
+128 replies and eight authors. Artifacts include source hashes, fixture/harness
+and lock hashes, runtime/host metadata, request traces, work counts, CPU time,
+engine completion and jsdom DOM completion. Before comparing, require matching
+workload, compatibility, warmup/sample counts and request/work shapes. Inspect
+source hashes to attribute the difference to the intended edit. Alternate
+before/after controls when host load varies; do not infer UI speedup from a
+verification-stage reduction. Without the output variable, the ordinary test
+suite runs one correctness pair and writes no artifact.
+
+For a separate diagnostic run, also set
+`BUZZ_ENGINE_CPU_OUT=/tmp/thread.cpuprofile`. Profiling affects timing; compare
+profiled runs only with profiled runs. `read.verify` includes JSON parsing and
+cooperative batch yields, not just signature CPU. These development-React/jsdom
+measurements prove neither startup nor browser paint, native performance, actual
+IndexedDB durability or live relay latency.
+
+The HTTP verifier retains at most 2,048 event-ID/signature pairs per transport
+using the existing byte-bounded LRU. A hit requires fresh envelope validation,
+a fresh hash of signed fields and the exact previously verified signature. It
+still returns newly owned frozen data and performs every HTTP read and access
+check. It is not an event/query cache or authorization proof; WebSocket and other
+`eventDto` callers remain uncached. `event-proof.test.ts` covers tampering,
+connection isolation, eviction and actual HTTP wiring. `events.ts` also belongs
+to the dev broker's native-config import graph: new runtime imports there must
+retain explicit extensions and pass `dev/vite-config.test.mjs`.
+
+## WebSocket-first publication
+
+The matched development frontend/broker publishes signed events on its
+existing authenticated live socket once the session subscribes. This includes
+messages, reactions, workflow commands and purpose-bound encrypted read-state
+writes admitted by the existing broker. The host still validates signature,
+viewer, purpose, origin and community before sending. There is no second socket,
+outbox or reconnect replay. Publication and live REQ setup share WS admission;
+queued foreground publications precede bulk subscription setup.
+
+`socket-requests.ts` only correlates EVENT with its matching OK. It bounds pending
+IDs to 32, sent/in-flight events to three, outgoing frames to 64 KiB, and receipt
+text to 16 KiB. Its ten-second deadline includes queued/authentication time.
+Disconnect, cancellation or timeout after dispatch, throwing sends, malformed
+receipts and internal/unknown negative receipts remain uncertain. Only a proven
+unsent operation or documented validation/admission rejection proves non-delivery.
+NIP-01 rejection does not guarantee rollback of Buzz command side effects. Accepted
+command receipt text stays ephemeral; it is never journaled or replaced by an echo.
+
+### HTTP boundaries retained in this slice
+
+- **All finite reads**, including publication ID confirmation, roster authority,
+  search, channel windows, recursive threads and workflow history, retain their
+  current HTTP paths. EOSE is a stored-to-live transition, not a complete snapshot
+  certificate. Cutover requires truthful relay errors and equivalent bounds,
+  ordering, authorization and partial-failure behavior. The relay historical-query
+  EOSE-on-error repair alone does not certify search or specialized reads.
+- **Setup profile publication** retains its separate `/profile` HTTP route; profile
+  inspection remains read-only and allocates no socket. `/publish` and
+  `/read-state-publish` require the live owner: absent, reconnecting or disposed
+  owners never trigger upstream HTTP fallback. Missing identity is definite
+  non-delivery. Frontend and broker versions must match; old brokers are not a
+  supported compatibility path. The pre-existing direct signed adapter is unchanged.
+- **Browser to local host** still uses HTTP for signing, publication control and
+  SSE delivery. `X-Buzz-Live-ID` selects the existing owner, not upstream `/events`.
+  Private keys remain host-local.
+- Media, relay metadata, Git/external services and local OS capabilities keep their
+  appropriate existing protocols. Presence polling/lease semantics are not changed
+  by this publication slice; moving a periodic query onto WS would not make it reactive.
+
+`live.test.ts`, `broker-live.test.ts` and `dev/relay-broker-live.test.mjs` cover
+AUTH/OK correlation, admission, bounded failures, no replay, in-place interests,
+owner fencing, real broker/session-outbox reconciliation, workflow receipts and
+encrypted read-state publication with ephemeral keys and injected sockets. These
+are local protocol/integration fixtures, not deployed-relay or native acceptance.
+
+### Upstream HTTP connections
+
+For retained HTTP operations, the dev broker uses a long-lived connection pool
+(60 s keep-alive) with cached DNS. Community discovery is lazy; production does not schedule periodic warm-up
 requests. Connection reuse can avoid repeated DNS + TCP + TLS work, but does not
 guarantee a warm socket or stall-free sends. Connect attempts have a 2.5 s timeout
 and retry once for configured connect-phase errors only, before the request is
@@ -447,8 +539,16 @@ membership authority. Hints during an active read coalesce into one follow-up;
 a refused read retains the obligation without draining queued work. Live Retry
 retries failed/deferred work, not every successful refresh or healthy subscription.
 
-The outbound host owns separately paced WS and HTTP lanes for each canonical
-community/viewer. Browser POST replacement does not reset learned pauses; signed
+The outbound host owns WS and HTTP admission for each canonical community/viewer.
+Healthy requests have **no fixed inter-request delay**. WS admits up to three
+outstanding publications and four pending subscription setups; HTTP admits up to
+six requests awaiting response headers per principal (error normalization retains
+its slot). The broker's existing six-request guard additionally covers response
+bodies. Available slots start immediately; completion frees capacity without a timer. These concurrency bounds do not
+reserve relay quota: large startup bursts can still receive quota refusals.
+Explicit server cooldowns, reconnect backoff and operation deadlines remain;
+there is no proactive rate timer or token bucket. Browser POST replacement does
+not reset learned pauses; signed
 requests enter HTTP admission after asynchronous authentication, at actual fetch
 dispatch. Read/write priority and cancellation cross the reader/transport boundary.
 Long pauses surface recoverable errors rather than occupying queued-read deadlines.
@@ -457,11 +557,24 @@ budget: other processes/clients can still cause a refusal. Ambiguous publication
 outcomes retain their exact signed event and are never transparently re-signed.
 
 The browser broker streams SSE over POST with bounded interests and owner-scoped
-retry/priority controls. Retry preserves the existing upstream socket and healthy
-routes. An actual change of channel interests still replaces the bounded POST;
-that is distinct from retry and preserves the host's pacing/cooldown. Development
-HTTP/1 streaming uses a close-delimited response to avoid WebKit stranding trailing
-chunked frames until later traffic. This is not a new replay-completeness guarantee.
+retry/priority/interest controls. Retry and interest changes preserve the upstream
+socket and healthy unchanged routes, so they do not interrupt pending publications.
+Interest updates coalesce through `/stream-interests`; origin, community, owner and
+body limits apply (1,024 IDs each for final interests and pending removals, 300 KB
+combined control body). Pending removals preserve retirement of old wires even
+when coalescing hides an intermediate empty interest set. Local interest revisions
+fence delayed channel events, denials
+and establishment across remove/re-add, including changes during stream startup.
+This is local IPC metadata, not a new Nostr extension. An uncertain control outcome
+uses bounded reconnect with current interests; publications are not replayed.
+Under actual local response backpressure, the host coalesces replaceable route-state
+snapshots until `drain`, retaining only the latest captured interest revision.
+Connection, observer-liveness and channel live→non-live transitions remain ordered, as do actual traffic,
+establishment and denial events; the existing slow-client byte limit still applies.
+No timer or delay is added to upstream requests.
+Development HTTP/1 streaming uses a close-delimited response to avoid WebKit
+stranding trailing chunked frames until later traffic. This is not a new
+replay-completeness guarantee.
 
 
 ### User attention during recovery

@@ -33,6 +33,9 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .poll(() => agents.locator("img").evaluate((image) => image.naturalWidth))
       .toBeGreaterThan(0);
     await expect(agents.locator("img")).toHaveCSS("opacity", "1");
+    await expect(agents.locator("[data-avatar-shape]")).toHaveCount(2);
+    for (const avatar of await agents.locator("[data-avatar-shape]").all())
+      await expect(avatar).toHaveAttribute("data-avatar-shape", "squircle");
     await expect(
       agents.getByRole("img", { name: "A Brain", exact: true }),
     ).toHaveCount(2);

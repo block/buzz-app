@@ -1,3 +1,4 @@
+import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
   WORKFLOW_KINDS,
@@ -6,7 +7,6 @@ import {
   workflowRunsPath,
   workflowReadText,
 } from "../src/features/workflows/http.ts";
-import { readReceiptText } from "../src/features/relay/receipt.ts";
 import { decodeAgentObserver } from "./agent-observer.mjs";
 import { observerGeneration } from "../src/features/agents/observer.ts";
 import {
@@ -51,6 +51,7 @@ import {
 } from "../src/features/relay/http-admission.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
+import { Readable } from "node:stream";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
@@ -146,20 +147,48 @@ function loadIdentity(authorizedViewer) {
     throw new Error(
       "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See README.md#relay-channels.",
     );
+  // The installed Buzz desktop keeps its secrets blob in the OS credential
+  // store under service `buzz-desktop`, username `secrets`: the macOS Keychain,
+  // or the freedesktop secret service on Linux (read through libsecret's
+  // `secret-tool`). Both reads are the OS's own tools; there is no file or
+  // environment fallback on any platform.
+  const readers = {
+    darwin: {
+      command: "/usr/bin/security",
+      args: [
+        "find-generic-password",
+        "-s",
+        "buzz-desktop",
+        "-a",
+        "secrets",
+        "-w",
+      ],
+      failure: "Keychain read unavailable or declined; no credential fallback",
+    },
+    linux: {
+      command: "secret-tool",
+      args: ["lookup", "service", "buzz-desktop", "username", "secrets"],
+      failure:
+        "Secret service read unavailable (needs libsecret-tools, an unlocked keyring in this desktop session, and Buzz desktop signed in); no credential fallback",
+    },
+  };
+  const reader = readers[process.platform];
+  if (!reader)
+    throw new Error(
+      `Live identity is read from the OS credential store on macOS or Linux only (this is ${process.platform}); no credential fallback`,
+    );
   let raw;
   try {
-    raw = execFileSync(
-      "/usr/bin/security",
-      ["find-generic-password", "-s", "buzz-desktop", "-a", "secrets", "-w"],
-      { stdio: ["ignore", "pipe", "pipe"], timeout: 120000 },
-    )
+    raw = execFileSync(reader.command, reader.args, {
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 120000,
+    })
       .toString()
       .trim();
   } catch {
-    throw new Error(
-      "Keychain read unavailable or declined; no credential fallback",
-    );
+    throw new Error(reader.failure);
   }
+  if (!raw) throw new Error(reader.failure);
   let decoded;
   try {
     decoded = nip19.decode(JSON.parse(raw).identity);
@@ -562,23 +591,43 @@ export function relayBrokerPlugin({
             [
               "/api/relay/stream-retry",
               "/api/relay/stream-priority",
+              "/api/relay/stream-interests",
               "/api/relay/stream-observer",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
+            const updating = route === "/api/relay/stream-interests";
             let raw = "";
             for await (const part of req) {
               raw += part;
-              if (Buffer.byteLength(raw) > (prioritizing ? 9000 : 256))
+              if (
+                Buffer.byteLength(raw) >
+                (updating ? 300000 : prioritizing ? 9000 : 256)
+              )
                 return json(res, 413, { error: "Live control too large" });
             }
-            let streamId, priority, observer;
+            let streamId,
+              priority,
+              observer,
+              interests,
+              removed,
+              interestRevision;
             try {
               const body = JSON.parse(raw);
               streamId = body.streamId;
               if (observing) observer = observerGeneration(body.observer);
+              if (updating) {
+                interests = liveChannels(body.channels);
+                removed = liveChannels(body.removed ?? []);
+                interestRevision = body.interestRevision;
+                if (
+                  !Number.isSafeInteger(interestRevision) ||
+                  interestRevision < 0
+                )
+                  throw new Error("Invalid interest revision");
+              }
               if (prioritizing) {
                 liveChannels(body.channels);
                 if (body.channels.length > 64)
@@ -598,7 +647,20 @@ export function relayBrokerPlugin({
               return json(res, 404, {
                 error: "Live stream no longer available",
               });
-            if (prioritizing) stream.traffic.prioritize(priority);
+            if (updating) {
+              if (interestRevision <= stream.interestRevision)
+                return json(res, 409, { error: "Stale interest control" });
+              // Coalescing may hide a removal followed by re-add. Retire the old
+              // wire before stamping the new revision; unchanged routes survive.
+              if (removed.length) {
+                stream.traffic.update(
+                  stream.channels.filter((id) => !removed.includes(id)),
+                );
+              }
+              stream.interestRevision = interestRevision;
+              stream.channels = interests;
+              stream.traffic.update(interests);
+            } else if (prioritizing) stream.traffic.prioritize(priority);
             else if (observing) stream.traffic.observe(observer);
             else stream.traffic.retry();
             return json(res, 200, { accepted: true });
@@ -610,10 +672,16 @@ export function relayBrokerPlugin({
               if (Buffer.byteLength(raw) > 150000)
                 return json(res, 413, { error: "Live interests too large" });
             }
-            let channels, priority, observer;
+            let channels, priority, observer, interestRevision;
             try {
               const body = JSON.parse(raw);
               channels = liveChannels(body.channels);
+              interestRevision = body.interestRevision ?? 0;
+              if (
+                !Number.isSafeInteger(interestRevision) ||
+                interestRevision < 0
+              )
+                throw new Error("Invalid interest revision");
               observer = observerGeneration(body.observer ?? null);
               liveChannels(body.priority ?? []);
               if (body.priority?.length > 64)
@@ -650,6 +718,51 @@ export function relayBrokerPlugin({
                 `${kind ? `event: ${kind}\n` : ""}data: ${JSON.stringify(value)}\n\n`,
               );
             };
+            // Coalesce setup progress, not invalidation: activity typing must see
+            // channels leave live before recovery or subsequent traffic. Drain sends
+            // the latest captured revision without a full roster for every EOSE.
+            let pendingState;
+            let lastStateStatus;
+            let lastObserverStatus;
+            let liveChannelIds = new Set();
+            const flushState = () => {
+              const state = pendingState;
+              pendingState = undefined;
+              if (state) write("state", state);
+            };
+            const writeState = (state) => {
+              const observerStatus = state.routes.find(
+                (route) => route.id === "observer",
+              )?.status;
+              const replaceable =
+                state.status === "connected" &&
+                lastStateStatus === "connected" &&
+                observerStatus === lastObserverStatus &&
+                !state.routes.some(
+                  (route) =>
+                    route.channelId &&
+                    route.status !== "live" &&
+                    liveChannelIds.has(route.channelId),
+                );
+              liveChannelIds = new Set(
+                state.routes
+                  .filter((route) => route.channelId && route.status === "live")
+                  .map((route) => route.channelId),
+              );
+              lastStateStatus = state.status;
+              lastObserverStatus = observerStatus;
+              pendingState = undefined;
+              if (replaceable && res.writableNeedDrain) pendingState = state;
+              else write("state", state);
+            };
+            res.on("drain", flushState);
+            const stream = {
+              relay,
+              channels,
+              interestRevision,
+              traffic: undefined,
+              close: undefined,
+            };
             const traffic = subscribeRelayTraffic(
               relay.replace(/^http/, "ws"),
               async (event) => finalizeEvent(event, key),
@@ -657,7 +770,11 @@ export function relayBrokerPlugin({
               {
                 receive: (events, provenance) => {
                   for (const event of events)
-                    write("traffic", { event, provenance });
+                    write("traffic", {
+                      event,
+                      provenance,
+                      interestRevision: stream.interestRevision,
+                    });
                 },
                 telemetry: (event, generation) => {
                   if (res.destroyed) return;
@@ -670,10 +787,22 @@ export function relayBrokerPlugin({
                     // Rejected telemetry cannot break chat or leak payloads in logs.
                   }
                 },
-                state: (state) => write("state", state),
-                established: (channelId) => write("established", { channelId }),
+                state: (state) =>
+                  writeState({
+                    ...state,
+                    interestRevision: stream.interestRevision,
+                  }),
+                established: (channelId) =>
+                  write("established", {
+                    channelId,
+                    interestRevision: stream.interestRevision,
+                  }),
                 denied: (channelId, reason) =>
-                  write("denied", { channelId, reason }),
+                  write("denied", {
+                    channelId,
+                    reason,
+                    interestRevision: stream.interestRevision,
+                  }),
               },
               socketFactory,
               principal.live,
@@ -691,12 +820,15 @@ export function relayBrokerPlugin({
               if (closed) return;
               closed = true;
               principal.streams--;
+              pendingState = undefined;
+              res.off("drain", flushState);
               traffic.dispose();
               clearInterval(keepAlive);
               streams.delete(streamId);
               res.destroy();
             };
-            streams.set(streamId, { relay, traffic, close });
+            Object.assign(stream, { traffic, close });
+            streams.set(streamId, stream);
             res.once("close", close);
             if (res.destroyed) close();
             return;
@@ -724,11 +856,18 @@ export function relayBrokerPlugin({
               },
               key,
             );
+            const range = req.headers.range;
+            if (
+              range !== undefined &&
+              (typeof range !== "string" || !/^bytes=\d+-\d*$/.test(range))
+            )
+              return json(res, 416, { error: "Media range rejected" });
             const upstream = await fetchUpstream(target, {
               headers: {
                 Authorization:
                   "Nostr " +
                   Buffer.from(JSON.stringify(auth)).toString("base64url"),
+                ...(range ? { Range: range } : {}),
               },
               redirect: "error",
               signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
@@ -737,21 +876,51 @@ export function relayBrokerPlugin({
             if (!upstream.ok)
               return json(res, upstream.status, { error: "Media read failed" });
             const type = upstream.headers.get("content-type") ?? "";
-            if (!type.startsWith("image/"))
-              return json(res, 415, {
-                error: "Only image previews are proxied",
-              });
-            const bytes = Buffer.from(await upstream.arrayBuffer());
-            if (bytes.length > MAX_MEDIA_BYTES)
+            const image = type.startsWith("image/");
+            const video = type.startsWith("video/");
+            if (!image && !video)
+              return json(res, 415, { error: "Media type rejected" });
+            const length = Number(upstream.headers.get("content-length"));
+            if (
+              Number.isFinite(length) &&
+              length > MAX_MEDIA_BYTES &&
+              !(video && upstream.status === 206)
+            )
               return json(res, 413, { error: "Media budget exceeded" });
-            server.config.logger.info(
-              `[relay-broker] media ${target.pathname} ${bytes.length}B ${type} (${Date.now() - startedAt}ms)`,
-            );
-            res.writeHead(200, {
+            const headers = {
               "Content-Type": type,
               "Cache-Control": "private, max-age=3600",
               "X-Content-Type-Options": "nosniff",
-            });
+              ...(upstream.headers.get("content-length")
+                ? { "Content-Length": upstream.headers.get("content-length") }
+                : {}),
+              ...(upstream.headers.get("content-range")
+                ? { "Content-Range": upstream.headers.get("content-range") }
+                : {}),
+              ...(video
+                ? {
+                    "Accept-Ranges":
+                      upstream.headers.get("accept-ranges") ?? "bytes",
+                  }
+                : {}),
+            };
+            if (video) {
+              res.writeHead(upstream.status, headers);
+              if (!upstream.body) return res.end();
+              const stream = Readable.fromWeb(upstream.body);
+              // A range request may time out or be cancelled after headers. A
+              // piped Readable has no automatic error consumer; without this,
+              // Node treats the upstream abort as an uncaught process error and
+              // kills the live broker along with unrelated message traffic.
+              stream.once("error", () => res.destroy());
+              res.once("close", () => stream.destroy());
+              stream.pipe(res);
+              return;
+            }
+            const bytes = Buffer.from(await upstream.arrayBuffer());
+            if (bytes.length > MAX_MEDIA_BYTES)
+              return json(res, 413, { error: "Media budget exceeded" });
+            res.writeHead(200, headers);
             return res.end(bytes);
           }
           if (
@@ -938,6 +1107,32 @@ export function relayBrokerPlugin({
             !validFilters(filters)
           )
             return json(res, 400, { error: "Read filter rejected" });
+          if (publishing || readPublishing) {
+            const stream = streams.get(req.headers["x-buzz-live-id"]);
+            if (!stream || stream.relay !== relay)
+              return json(res, 503, {
+                error: "Publication socket unavailable",
+                sent: false,
+              });
+            try {
+              const message = await stream.traffic.publish(
+                filters,
+                cancel.signal,
+              );
+              return json(res, 200, {
+                accepted: true,
+                event_id: filters.id,
+                message,
+              });
+            } catch (error) {
+              return json(res, 503, {
+                error: "Socket publication could not be confirmed",
+                ...(error instanceof SocketRequestError && !error.sent
+                  ? { sent: false }
+                  : {}),
+              });
+            }
+          }
           if (route === "/api/relay/query")
             server.config.logger.info(
               `[relay-broker] query ${req.headers["x-buzz-read-priority"] === "background" ? "background" : "foreground"} ${JSON.stringify(filters).slice(0, 240)}`,
@@ -949,7 +1144,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile || publishing || readPublishing
+              : profile
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -1037,9 +1232,7 @@ export function relayBrokerPlugin({
                 ? await readSnapshotText(response)
                 : workflowPath && response.ok
                   ? await workflowReadText(response)
-                  : publishing && response.ok
-                    ? await readReceiptText(response)
-                    : await response.text();
+                  : await response.text();
             // The relay's own service time separates server work from network time.
             const relayMs = Number(
               response.headers.get("x-envoy-upstream-service-time"),

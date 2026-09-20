@@ -9,6 +9,7 @@ import {
   verifyEvent,
 } from "nostr-tools";
 import { writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -168,6 +169,7 @@ export const test = base.extend({
     }
     const hiddenChannels = new Set();
     const streams = new Map();
+    const streamOwners = new Map();
     // Tall histories leave room above the older-page prefetch threshold, even
     // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
@@ -388,6 +390,7 @@ export const test = base.extend({
       readPublications: [],
       sessions: [],
       streamConnections: [],
+      streamInterests: [],
       errors: [],
       consoleErrors: [],
       unexpected: [],
@@ -722,22 +725,52 @@ export const test = base.extend({
             live: true,
           });
         }
+        if (
+          ["stream-interests", "stream-priority", "stream-observer"].includes(
+            route,
+          )
+        ) {
+          const owner = streamOwners.get(body.streamId);
+          expect(owner?.community).toBe(community);
+          if (route === "stream-interests") {
+            expect(body.interestRevision).toBeGreaterThan(
+              owner.interestRevision,
+            );
+            owner.channels = body.channels;
+            owner.interestRevision = body.interestRevision;
+            report.streamInterests.push({ community, channels: body.channels });
+            owner.state();
+          }
+          return send(response, {});
+        }
         if (route === "stream") {
           // Match the production broker: WebKit can buffer trailing HTTP chunks.
           // Close-delimited SSE must deliver each append without a later write.
+          const streamId = randomBytes(16).toString("hex");
           response.useChunkedEncodingByDefault = false;
           response.writeHead(200, {
+            "X-Buzz-Live-ID": streamId,
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-store",
             Connection: "close",
           });
           response.flushHeaders();
-          response.write(
-            `event: state\ndata: ${JSON.stringify({ status: "connected", routes: body.channels.map((channelId) => ({ id: `channel:${channelId}`, channelId, status: "live", replay: "unknown" })) })}\n\n`,
-          );
+          const owner = {
+            community,
+            response,
+            channels: body.channels,
+            interestRevision: body.interestRevision,
+            state() {
+              response.write(
+                `event: state\ndata: ${JSON.stringify({ status: "connected", interestRevision: owner.interestRevision, routes: owner.channels.map((channelId) => ({ id: `channel:${channelId}`, channelId, status: "live", replay: "unknown" })) })}\n\n`,
+              );
+            },
+          };
+          streamOwners.set(streamId, owner);
+          owner.state();
           const clients = streams.get(community) ?? new Set();
           streams.set(community, clients);
-          clients.add(response);
+          clients.add(owner);
           report.streamConnections.push({ community, channels: body.channels });
           // The real broker pulses every 15s; the production reader expires
           // streams after 45s without bytes, even while history HTTP is active.
@@ -747,7 +780,8 @@ export const test = base.extend({
           );
           response.on("close", () => {
             clearInterval(heartbeat);
-            clients.delete(response);
+            clients.delete(owner);
+            streamOwners.delete(streamId);
           });
           return;
         }
@@ -906,7 +940,8 @@ export const test = base.extend({
           if (relay) relay.publish("primary", event);
           else
             for (const client of streams.get("primary") ?? [])
-              client.write(`data: ${JSON.stringify(event)}\n\n`);
+              if (client.channels.includes("alpha"))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           return event;
         },
         participants,
@@ -983,7 +1018,8 @@ export const test = base.extend({
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);
             for (const client of streams.get(community))
-              client.write(`data: ${JSON.stringify(event)}\n\n`);
+              if (client.channels.includes(channel))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           }
           return event;
         },
@@ -1033,7 +1069,8 @@ export const test = base.extend({
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);
             for (const client of streams.get(community))
-              client.write(`data: ${JSON.stringify(event)}\n\n`);
+              if (client.channels.includes(channel))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           }
           return event;
         },
@@ -1096,7 +1133,7 @@ export const test = base.extend({
       });
       await page.close();
       for (const clients of streams.values())
-        for (const response of clients) response.end();
+        for (const client of clients) client.response.end();
       if (server) {
         server.httpServer.closeAllConnections();
         await new Promise((resolve) => server.httpServer.close(resolve));

@@ -272,13 +272,32 @@ An attended local trial reported faster browsing, but also a
 logs contained no publication attempt and do not establish recovery. Diagnose
 that failure before asserting publication reliability.
 
-Hosted CI for the preceding `7bd31cb` snapshot failed: the proof-cache eviction
-unit test timed out; membership navigation timed out in both engines; the scroll
-measurement and two WebKit sidebar-unread cases failed assertions. These are
-unresolved observations, not established flakes or proof of a common cause.
-[Original run](https://github.com/block/buzz-app/actions/runs/35517695696).
-The option change does not claim to fix them. Fresh CI and disconnect/restart/
-quota acceptance remain required before merge.
+Hosted CI for `7bd31cb` and `0669b62` exposed test/fixture failures, not a
+merge-ready result ([latest failing run](https://github.com/block/buzz-app/actions/runs/35520633342)).
+The subsequent CI-repair increment changes no production code:
+
+- The proof-memo test fills opaque pressure entries in the real memo after one
+  real verification, then verifies eviction, a newest hit and oldest re-verification.
+  Its 2048-entry/byte bounds and real cryptographic verifier remain tested. Local
+  eviction-test time changed from 3817 ms to 5 ms; the custom 15 s timeout is gone.
+- The layout fixture now models in-place stream interests and filters delivery by
+  those interests. Scroll checks require one stream per community plus the exact
+  interest updates, with the existing live-receipt and anchor checks intact.
+- Membership navigation waits for unread evidence before selecting by channel ID,
+  rather than racing the unread badge's addition to the accessible name.
+- Thread-history setup explicitly focuses Beta to prepare it without navigation;
+  it no longer waits for the disabled automatic roster warming. Both held-read
+  barriers and the exact unread-name assertion remain.
+
+Local Apple Silicon checks exercised all four affected browser files in both
+engines: 22 unchanged cases passed, then both thread-history cases passed after
+its final repair. The complete proof/prepared files passed 32 tests. No browser
+cases/engines, assertion budgets or retries were removed or relaxed. These are
+local results, not hosted equivalence or a full-suite claim. The earlier two
+Linux WebKit sidebar-unread failures did not recur in the current CI run or
+local reruns; their assertions are unchanged and their earlier cause remains
+unexplained. Fresh CI and disconnect/restart/quota acceptance remain required
+before merge.
 
 ## Local feedback checklist
 

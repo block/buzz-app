@@ -3,6 +3,7 @@ import { getEventHash, verifyEvent, verifiedSymbol } from "nostr-tools";
 import { createEventVerifier, eventDto } from "./events";
 import { connectBrokerTransport, connectSignedTransport } from "./transport";
 import { keypair, signed } from "./testing";
+import { ByteLru } from "./budget";
 
 // Count the actual dependency verifier; never replace its cryptographic result.
 vi.mock("nostr-tools", async (original) => {
@@ -107,17 +108,31 @@ it("a different valid signature for the same event ID earns a new proof", () => 
 });
 
 it("evicts the oldest proof at the fixed 2048-entry bound and re-verifies it", () => {
+  // Observe the real memo populated by cryptographic verification, then fill its
+  // remaining slots directly. Cache pressure needs opaque entries, not thousands
+  // of signatures generated and verified inside one runner deadline.
+  const writes = vi.spyOn(ByteLru.prototype, "set");
   const verify = createEventVerifier();
-  const events = Array.from({ length: 2049 }, (_, i) =>
-    signed(key, { kind: 9, content: String(i), tags: [] }),
-  );
-  for (const event of events) verify(event);
-  expect(verifyEvent).toHaveBeenCalledTimes(2049);
-  verify(events[2048]);
-  expect(verifyEvent).toHaveBeenCalledTimes(2049);
-  verify(events[0]);
-  expect(verifyEvent).toHaveBeenCalledTimes(2050);
-}, 15000);
+  verify(wire());
+  const memo = writes.mock.contexts[0] as ByteLru<string>;
+  writes.mockRestore();
+  expect(memo.maxEntries).toBe(2048);
+  expect(memo.maxBytes).toBe(2048 * 192);
+  for (let i = 0; i < 2047; i++) memo.set(`filler:${i}`, "opaque", 192);
+  expect(memo.stats()).toEqual({ entries: 2048, bytes: 2048 * 192 });
+  expect(memo.peek(event.id)).toBe(event.sig);
+
+  const newest = signed(key, { kind: 9, content: "newest", tags: [] });
+  verify(newest);
+  expect(memo.stats()).toEqual({ entries: 2048, bytes: 2048 * 192 });
+  expect(memo.peek(event.id)).toBeUndefined();
+  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  verify(newest);
+  expect(verifyEvent).toHaveBeenCalledTimes(2);
+  verify(wire());
+  expect(verifyEvent).toHaveBeenCalledTimes(3);
+  expect(memo.peek(event.id)).toBe(event.sig);
+});
 
 it.each(["broker", "signed"])(
   "%s HTTP queries keep fresh reads, reject changed warm bytes and isolate proofs",

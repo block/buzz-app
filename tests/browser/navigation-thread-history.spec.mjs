@@ -10,8 +10,8 @@ test("Back restores each thread visit before the previous channel", async ({
   const beta = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .locator('button[data-channel-id="beta"]');
-  // Live head catch-up can supply the same badge as the held unread batch.
-  // Gate that independent source too; request pacing is not a fixture barrier.
+  // Intent preparation can supply the same badge as the held unread batch.
+  // Gate both sources; focus explicitly instead of relying on roster warming.
   let releaseHead;
   let sawHead;
   const headHeld = new Promise((resolve) => {
@@ -35,6 +35,7 @@ test("Back restores each thread visit before the previous channel", async ({
   app.relay.holdUnread();
   try {
     await open(page, app);
+    await beta.focus(); // Prepare without selecting or adding a navigation visit.
     await headStarted;
     await expect.poll(() => app.report.unreadHolds.length).toBe(1);
     await expect(beta).toHaveAccessibleName("Beta");

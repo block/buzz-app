@@ -1,3 +1,4 @@
+import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 import { useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
 
@@ -107,6 +108,7 @@ export function NotificationSettings({
           Message alerts cover the selected community while Buzz is running.
           Reading history and reconnecting stay quiet.
         </p>
+        <UnreadIndicatorSettings indicator={notifications.indicator} />
         {state.preferencesError && (
           <div role="alert" className="notice">
             <p>{state.preferencesError}</p>

@@ -1,3 +1,4 @@
+import { createUnreadIndicator } from "./indicator";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
@@ -65,6 +66,7 @@ export type NotificationSnapshot = Readonly<{
 
 /** Running-session delivery only: no notification journal, inbox, or recovery protocol. */
 export class NotificationsService extends Service implements Notifications {
+  readonly indicator = createUnreadIndicator();
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Candidate>();
@@ -133,6 +135,7 @@ export class NotificationsService extends Service implements Notifications {
         this.listeners.clear();
         if (typeof window !== "undefined")
           window.removeEventListener("focus", refresh);
+        return this.indicator.dispose();
       };
     });
     void this.refreshPermission();

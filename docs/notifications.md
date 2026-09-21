@@ -79,8 +79,9 @@ mac-notification-sys on macOS, the freedesktop notification interface through
 zbus on Linux, and tauri-winrt-notification on Windows. Linux uses the already
 locked zbus dependency directly because notify-rust's send-then-listen wrapper
 can lose early actions. No dependency upgrade or new native FFI is needed.
-Permission and sound remain system-controlled; no permission-only plugin
-or synthetic desktop permission prompt is installed. The main-window-only bridge
+Banner permission and sound remain system-controlled; no permission-only plugin
+or synthetic desktop notification is installed. The macOS Dock settings below
+provide an explicit system authorization action. The main-window-only bridge
 carries display text and an opaque presentation ID, never an account, credential
 or navigation destination. Its Tauri response channel is registered before native
 submission.
@@ -100,9 +101,9 @@ framework's stale minimized-state focus guard. Compositor
 focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 
-Desktop permission state is not observable through these backends. Settings
+Banner permission state is not observable through these backends. Settings
 describes permission and sound as system-controlled, without ineffective desktop
-permission or sound controls. The bridge accepts a submission before waiting for
+banner permission or sound controls. The bridge accepts a submission before waiting for
 interaction: acceptance is **not** proof that a visible banner appeared. The macOS
 backend does not expose all delivery failures, and no uniform withdrawal/receipt
 guarantee is promised.
@@ -122,3 +123,58 @@ For macOS, Windows and Linux, manual acceptance includes background and minimize
 Buzz, two distinct message/thread targets, immediate banner click, banner fade
 then Notification Center click, dismissal without navigation, and old-account or
 revoked-access rejection. A macOS pass is not Windows/Linux acceptance.
+
+
+## macOS Dock unread badge
+
+The host projects one dot from the selected community's existing unread selectors:
+observed unread messages (including thread replies) or explicit channel-unread
+intent. It is not an exact message count or evidence of complete history. Unknown
+and observed-zero both omit the dot. Existing bounded evidence/read-state owns
+startup and updates; this projection adds no relay reads, network subscriptions,
+or storage. Personal space, account/session changes, access loss and host disposal
+clear or recompute the indicator. Disabling Channels does not stop host ownership.
+Desktop alert preferences do not alter this unread indicator.
+
+One ordered host writer calls a main-window-only command using Tauri's standard
+`set_badge_label` API. macOS draws the badge; no custom artwork is supplied.
+Windows, Linux and browsers have no shell unread indicator or badge Settings in
+this version, and do not bind the unread projection or invoke the Dock commands.
+Their existing banner behavior is unchanged. No taskbar overlay, tray icon/menu,
+new image assets or tray dependency is added.
+
+Observable setter failures appear in Settings; **Check Dock permission** retries
+using current unread intent. There is no automatic retry loop or claim of OS
+display acknowledgement.
+
+### macOS permission setup
+
+Settings → Notifications → Dock unread badge shows the actual macOS badge
+setting. **Allow notifications and badges** explicitly requests Alert, Sound and
+Badge for a fresh NotDetermined identity. **Set up Dock badges** explicitly requests
+Badge alone when an already Authorized identity reports NotSupported. Startup,
+focus, and **Check Dock permission** only read settings; they never register or
+repair permissions. Denied authorization and explicitly Disabled badges are never
+re-requested. macOS System Settings controls badge opt-out. Errors withhold the dot
+and are shown; a later focus or explicit check can retry a failed read.
+
+This permission capability requires an actual macOS `.app` bundle. Unbundled
+`tauri dev` never calls UserNotifications or borrows Terminal's badge permission.
+The native bridge is necessary because the official Tauri notification plugin's
+current desktop permission methods return Granted without querying these settings.
+Existing banner delivery/clicks and their acceptance limits above are unchanged.
+Windows and Linux do not use the macOS permission bridge or display its controls.
+
+### Validation boundary
+
+Tests use real relay/unread services for projection transitions, deferred native
+boundaries for ordering, default-adapter command dispatch, and mounted Settings
+controls for explicit setup. Native tests cover the authorization/setting matrix,
+no startup mutation, error recovery and rejection of unbundled framework calls.
+No browser journeys are added: these contracts are below the browser layer.
+
+These checks do not prove a visible Dock badge. Native macOS acceptance must
+exercise startup/arrival/read clearing, account/community/access changes, reload
+and exit under an isolated packaged identity. First permission, explicit
+missing-badge setup, deny/disable and legacy-banner interaction also need native
+acceptance. Distribution signing and packaged account support remain separate work.

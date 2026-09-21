@@ -149,7 +149,7 @@ it("keeps parent drafts separate and cannot send on an unsupported community", a
       onStarted={() => {}}
     />,
   );
-  expect(screen.getByRole("textbox").textContent).toBe("");
+  expect(screen.getByRole("textbox")).toHaveProperty("value", "");
   solo.unmount();
   render(
     <NewSessionComposer
@@ -179,7 +179,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
     />,
   );
   const input = screen.getByRole("textbox");
-  expect(input).toHaveTextContent("");
+  expect(input).toHaveProperty("value", "");
   await user.type(input, "Fresh start");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
@@ -308,6 +308,78 @@ it("loads the new session roster profiles before sending without an explicit age
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   expect(test.messages.send).toHaveBeenCalledOnce();
 });
+
+it.each([
+  { child: false, members: ["a".repeat(64)], error: undefined },
+  { child: true, members: ["a".repeat(64)], error: undefined },
+  { child: false, members: [], error: undefined },
+  {
+    child: false,
+    members: ["a".repeat(64), "b".repeat(64)],
+    error: "There are multiple agents",
+  },
+  {
+    child: false,
+    members: ["f".repeat(64)],
+    error: "Session participants are still loading",
+  },
+])(
+  "resolves recovered session recipients after refreshing membership: $child, $members",
+  async ({ child, members, error }) => {
+    const test = setup(),
+      user = userEvent.setup(),
+      onStarted = vi.fn();
+    const id = "22222222-2222-4222-8222-222222222222";
+    const key = child ? `sessions:channel:${parent.id}` : "sessions";
+    writeView("test", `${key}:pending`, {
+      id,
+      text: "Continue the work",
+      draft: { text: "Continue the work", recipients: [] },
+      creationId: "c".repeat(64),
+    });
+    const channel = {
+      id,
+      name: "Recovered session",
+      channelType: "session" as const,
+      members: [] as string[],
+    };
+    vi.spyOn(test.session.channels, "list").mockReturnValue({
+      status: "ready",
+      channels: [channel],
+    });
+    // Another client admitted these participants after creation was interrupted.
+    test.workSessions.refresh.mockImplementationOnce(async () => {
+      channel.members = members;
+    });
+    render(
+      <NewSessionComposer
+        session={test.session}
+        scope="test"
+        parent={child ? parent : undefined}
+        onStarted={onStarted}
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Send message" }));
+    if (error) {
+      expect(await screen.findByRole("alert")).toHaveTextContent(error);
+      expect(test.messages.send).not.toHaveBeenCalled();
+      expect(onStarted).not.toHaveBeenCalled();
+      expect(screen.getByRole("textbox")).toHaveProperty(
+        "value",
+        "Continue the work",
+      );
+    } else {
+      await waitFor(() => expect(onStarted).toHaveBeenCalledWith(id));
+      expect(test.messages.send).toHaveBeenCalledExactlyOnceWith(
+        id,
+        "Continue the work",
+        members,
+      );
+    }
+    expect(test.workSessions.create).not.toHaveBeenCalled();
+    expect(test.workSessions.invite).not.toHaveBeenCalled();
+  },
+);
 
 it("deduplicates the effective recipient before parent admission", async () => {
   const test = setup(),

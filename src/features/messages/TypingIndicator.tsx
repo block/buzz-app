@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
-import styles from "./Messages.module.css";
+import styles from "./TypingIndicator.module.css";
 
 /** Shared presentation only. Mounting more consumers creates no relay work. */
 export function TypingIndicator({

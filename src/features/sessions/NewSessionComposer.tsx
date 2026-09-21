@@ -6,6 +6,7 @@ import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { AgentChoice } from "./AgentChoice";
+import { sessionRecipients } from "./recipients";
 import styles from "./Sessions.module.css";
 
 type PendingStart = {
@@ -106,7 +107,7 @@ export function NewSessionComposer({
     const mentions = mentionDraft(current.draft).recipients.map(
       (item) => item.pubkey,
     );
-    const recipients = [
+    let recipients = [
       ...new Set(
         mentions.length ? mentions : current.agent ? [current.agent] : [],
       ),
@@ -183,6 +184,17 @@ export function NewSessionComposer({
               : session.agentLibrary.refresh(),
           ]);
           if (!mounted.current) return;
+          recipients = [
+            ...sessionRecipients(
+              session.channels
+                .list()
+                .channels.find((item) => item.id === current.id),
+              session.profiles.snapshot(),
+              session.agentLibrary.snapshot(),
+              session.viewer,
+              recipients,
+            ),
+          ];
         }
         current.messageId = session.messages.send(
           current.id,

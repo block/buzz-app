@@ -67,7 +67,10 @@ export interface ReadTransport {
   presenceSnapshot?(
     authors: readonly string[],
     signal: AbortSignal,
-  ): Promise<ReadonlyMap<string, "online" | "away" | "offline"> | null>;
+  ): Promise<ReadonlyMap<
+    string,
+    "online" | "away" | "offline" | "unknown"
+  > | null>;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -140,7 +143,7 @@ async function parsePresence(
 ) {
   if (!Array.isArray(raw) || raw.length > authors.length)
     throw new Error("Invalid presence snapshot");
-  const values = new Map<string, "online" | "away" | "offline">();
+  const values = new Map<string, "online" | "away" | "offline" | "unknown">();
   for (const event of await parseEvents(raw, eventDto, signal)) {
     const subjects = event.tags.filter(([tag]) => tag === "p");
     const subject = subjects[0]?.[1];
@@ -159,11 +162,17 @@ async function parsePresence(
       subjects[0]?.length !== 2 ||
       !subject ||
       !authors.includes(subject) ||
-      values.has(subject) ||
-      (status !== "online" && status !== "away" && status !== "offline")
+      values.has(subject)
     )
       throw new Error("Untrusted presence snapshot");
-    values.set(subject, status);
+    // The relay permits extensible status strings. An unsupported value is
+    // Unknown for this subject, not a trust failure for unrelated peers.
+    values.set(
+      subject,
+      status === "online" || status === "away" || status === "offline"
+        ? status
+        : "unknown",
+    );
   }
   signal.throwIfAborted();
   for (const author of authors)

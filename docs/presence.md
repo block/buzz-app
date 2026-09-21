@@ -1,8 +1,12 @@
 # Periodically refreshed community presence
 
 Message and thread bylines and profiles show Online, Away, Offline or Unknown
-with text and distinct symbols, not color alone. This is snapshot presence, not
-an immediate live-status stream.
+with text and distinct symbols, not color alone. This describes recent Buzz
+session status in this community, not proof that a person is available or an
+immediate live-status stream. The relay stores one status per community/pubkey:
+multiple devices are last-writer-wins, so an idle device can report Away even
+while another is active. A crashed connection's lease can remain for up to 180
+seconds; refreshing the snapshot does not prove that the session is still alive.
 
 ## Ownership and bounds
 
@@ -20,7 +24,9 @@ an immediate live-status stream.
 - One bounded complete snapshot is validated before any status changes. The
   configured relay must sign each unique requested subject; only a successful
   complete response can make omitted subjects Offline. This is read-time evidence,
-  not the relay's remaining lease. Invalid or failed responses mean Unknown.
+  not the relay's remaining lease. Invalid or failed responses mean Unknown for
+  the whole snapshot. Valid relay-signed unsupported statuses mean Unknown only
+  for that subject; canonical peers and complete-response omissions remain usable.
 - The development broker permits one optional HTTP flight, a principal-wide
   five-second start gate, 256 subjects, a 20 KiB request and 1 MiB response, and
   a ten-second request lifetime. Optional work never uses ordinary read slots or

@@ -253,7 +253,14 @@ it("presence validates whole snapshots before omission means Offline; busy is no
         tags: [["p", key.pubkey]],
       }),
     ],
-    [signed(relay, { kind: 20001, content: "maybe", tags: [["p", author]] })],
+    [signed(relay, { kind: 20002, content: "online", tags: [["p", author]] })],
+    [
+      signed(relay, {
+        kind: 20001,
+        content: "online",
+        tags: [["p", author, "extra"]],
+      }),
+    ],
     [
       signed(relay, {
         kind: 20001,
@@ -283,3 +290,54 @@ it("presence validates whole snapshots before omission means Offline; busy is no
     "demand",
   );
 });
+
+it.each(["busy", '{"status":"busy"}', "{custom-status", '{"status":42}'])(
+  "keeps valid peers and omissions when a signed status is unsupported: %s",
+  async (content) => {
+    const relay = keypair(),
+      custom = keypair().pubkey,
+      online = keypair().pubkey,
+      absent = keypair().pubkey;
+    const customEvent = signed(relay, {
+      kind: 20001,
+      content,
+      tags: [["p", custom]],
+    });
+    const onlineEvent = signed(relay, {
+      kind: 20001,
+      content: "online",
+      tags: [["p", online]],
+    });
+    let events = [customEvent, onlineEvent];
+    vi.stubGlobal("fetch", async (url: string) =>
+      Response.json(
+        url.endsWith("/session")
+          ? {
+              viewer: key.pubkey,
+              relayAuthor: relay.pubkey,
+              live: true,
+              presence: true,
+            }
+          : events,
+      ),
+    );
+    const transport = await connectBrokerTransport();
+    assert.exists(transport.presenceSnapshot);
+    const snapshot = transport.presenceSnapshot;
+    const read = () =>
+      snapshot([custom, online, absent], new AbortController().signal);
+    expect(await read()).toEqual(
+      new Map([
+        [custom, "unknown"],
+        [online, "online"],
+        [absent, "offline"],
+      ]),
+    );
+    // Unknown is still an observed subject: duplicates and invalid signatures
+    // invalidate the complete snapshot, rather than applying a partial result.
+    events = [customEvent, onlineEvent, customEvent];
+    await expect(read()).rejects.toThrow();
+    events = [customEvent, { ...onlineEvent, sig: "0".repeat(128) }];
+    await expect(read()).rejects.toThrow();
+  },
+);

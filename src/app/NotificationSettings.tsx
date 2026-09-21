@@ -1,3 +1,4 @@
+import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 import { useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
 
@@ -23,23 +24,26 @@ export function NotificationSettings({
         </p>
         <Toggle
           label="Desktop alerts"
-          checked={preferences.enabled}
+          checked={!state.developmentPaused && preferences.enabled}
+          disabled={state.developmentPaused}
           onChange={(enabled) => notifications.updatePreferences({ enabled })}
         />
         <p role="status" className="text-body-sm text-muted">
-          {state.requesting
-            ? "Waiting for system permission…"
-            : permission === "granted"
-              ? "Permission granted. Your alert choices still apply."
-              : permission === "denied"
-                ? "Blocked. Allow notifications in your browser or system settings."
-                : permission === "unsupported"
-                  ? "System notifications are unavailable in this build."
-                  : permission === "unknown"
-                    ? "Permission is controlled by system notification settings."
-                    : "Allow notifications to receive alerts."}
+          {state.developmentPaused
+            ? "Notifications are paused by your local development setting. Remove BUZZ_DEV_NOTIFICATIONS=0 from .env.local and restart the dev server to resume normal behavior. Your saved alert choices are unchanged."
+            : state.requesting
+              ? "Waiting for system permission…"
+              : permission === "granted"
+                ? "Permission granted. Your alert choices still apply."
+                : permission === "denied"
+                  ? "Blocked. Allow notifications in your browser or system settings."
+                  : permission === "unsupported"
+                    ? "System notifications are unavailable in this build."
+                    : permission === "unknown"
+                      ? "Permission is controlled by system notification settings."
+                      : "Allow notifications to receive alerts."}
         </p>
-        {!state.systemManaged && (
+        {!state.systemManaged && !state.developmentPaused && (
           <div className="flex gap-2">
             {permission === "default" && (
               <button
@@ -104,6 +108,7 @@ export function NotificationSettings({
           Message alerts cover the selected community while Buzz is running.
           Reading history and reconnecting stay quiet.
         </p>
+        <UnreadIndicatorSettings indicator={notifications.indicator} />
         {state.preferencesError && (
           <div role="alert" className="notice">
             <p>{state.preferencesError}</p>
@@ -134,9 +139,11 @@ function Toggle({
   label,
   checked,
   onChange,
+  disabled = false,
 }: {
   label: string;
   checked: boolean;
+  disabled?: boolean;
   onChange(checked: boolean): void;
 }) {
   return (
@@ -146,6 +153,7 @@ function Toggle({
         type="checkbox"
         role="switch"
         checked={checked}
+        disabled={disabled}
         aria-checked={checked}
         onChange={(event) => onChange(event.target.checked)}
       />

@@ -1,5 +1,6 @@
 mod agent_models;
 mod agents;
+mod dock;
 mod notifications;
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
@@ -12,6 +13,7 @@ use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
 };
+use dock::{dock_permission, unread_indicator_set};
 use notifications::{notification_show, Notifications};
 use std::sync::{Arc, Mutex};
 use tauri::Manager as _;
@@ -182,6 +184,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_models_cancel,
         agent_models_run,
         notification_show,
+        dock_permission,
+        unread_indicator_set,
         terminal_create_owner,
         terminal_spawn,
         terminal_read,

@@ -1,6 +1,7 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
 import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
+import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { NotificationsService } from "../features/notifications/service";
 import {
@@ -45,6 +46,10 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
+  if (notifications.indicator.available)
+    ctx.effect(() =>
+      bindUnreadIndicator(communities, notifications.indicator.setUnread),
+    );
   let disposal: Promise<void> | undefined;
   return {
     agentControl,

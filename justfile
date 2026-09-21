@@ -14,7 +14,7 @@ web: install
 
 # Run the shared frontend in Tauri (requires native toolchain).
 desktop: install
-    pnpm tauri dev
+    node scripts/dev-desktop.mjs
 
 # Run buzzodz; forward arguments unchanged (Rust required).
 [positional-arguments]

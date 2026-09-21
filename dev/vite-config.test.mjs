@@ -19,6 +19,16 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
           );
           assert(loaded?.config.plugins.some(p => p?.name === 'buzz-relay-broker'));
           assert.equal(loaded.config.define['import.meta.env.VITE_BUZZ_LIVE'], '"1"');
+          for (const command of ['serve', 'build']) {
+            for (const optIn of ['', '0', '1', 'true', 'invalid']) {
+              process.env.BUZZ_DEV_NOTIFICATIONS = optIn;
+              const result = await loadConfigFromFile({ command, mode: 'development' });
+              assert.equal(
+                result.config.define['import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED'],
+                JSON.stringify(command === 'serve' && optIn !== '1' ? '1' : '0'),
+              );
+            }
+          }
         `,
     ],
     {

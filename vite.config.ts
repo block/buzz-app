@@ -29,6 +29,9 @@ export default defineConfig(async ({ command, mode }) => {
     plugins,
     define: {
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
+      "import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED": JSON.stringify(
+        command === "serve" && env.BUZZ_DEV_NOTIFICATIONS !== "1" ? "1" : "0",
+      ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
     },
     clearScreen: false,

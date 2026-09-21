@@ -58,6 +58,10 @@ need their own validation.
   implicit runner arguments. Explicit `--config` arguments merge afterward and can
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
+- To pause notifications in your local dev server, set `BUZZ_DEV_NOTIFICATIONS=0`
+  in `.env.local` and restart the server. Only `0` pauses alerts and permission
+  requests; removing the setting restores normal behavior. Saved preferences are
+  untouched and production builds ignore the variable.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe

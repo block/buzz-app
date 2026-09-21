@@ -1,3 +1,4 @@
+import { createUnreadIndicator } from "./indicator";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import { createContributions } from "../../plugins/contributions";
 import { parseOpenTarget, type OpenTarget } from "../navigation/targets";
@@ -60,10 +61,12 @@ export type NotificationSnapshot = Readonly<{
   preferencesError: string | null;
   platform: string;
   systemManaged: boolean;
+  developmentPaused: boolean;
 }>;
 
 /** Running-session delivery only: no notification journal, inbox, or recovery protocol. */
 export class NotificationsService extends Service implements Notifications {
+  readonly indicator = createUnreadIndicator();
   private readonly contributions;
   private readonly listeners = new Set<() => void>();
   private readonly pending = new Set<Candidate>();
@@ -94,6 +97,7 @@ export class NotificationsService extends Service implements Notifications {
       requesting: false,
       platform: platform.label,
       systemManaged: platform.systemManaged ?? false,
+      developmentPaused: import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED === "1",
     });
     ctx.effect(() => {
       const stopPreferences = preferences.subscribe(() => {
@@ -131,6 +135,7 @@ export class NotificationsService extends Service implements Notifications {
         this.listeners.clear();
         if (typeof window !== "undefined")
           window.removeEventListener("focus", refresh);
+        return this.indicator.dispose();
       };
     });
     void this.refreshPermission();
@@ -182,7 +187,7 @@ export class NotificationsService extends Service implements Notifications {
     }
   }
   requestPermission() {
-    if (this.closed) return Promise.resolve();
+    if (this.closed || this.state.developmentPaused) return Promise.resolve();
     if (this.permissionRequest) return this.permissionRequest;
     const generation = ++this.permissionGeneration;
     this.publish({ requesting: true, error: null });
@@ -209,6 +214,7 @@ export class NotificationsService extends Service implements Notifications {
   private allowed(item: Candidate) {
     return (
       !this.closed &&
+      !this.state.developmentPaused &&
       !item.cancelled &&
       item.viewer === this.state.viewer &&
       item.expires > Date.now() &&

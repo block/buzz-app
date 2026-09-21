@@ -5,7 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { Settings, UserRound } from "lucide-react";
+import { GearIcon, UserIcon } from "../../shared/design-system/icons/index";
 import type { Communities } from "../../features/communities/service";
 
 export function ProfileButton({
@@ -74,7 +74,7 @@ export function ProfileButton({
           ) : profile.name ? (
             profile.name.slice(0, 1).toUpperCase()
           ) : (
-            <UserRound aria-hidden="true" size={19} />
+            <UserIcon aria-hidden="true" size={19} />
           )}
         </span>
       </button>
@@ -97,8 +97,8 @@ export function ProfileButton({
             document.getElementById("main-content")?.focus();
           }}
         >
-          <Settings aria-hidden="true" size={17} />
-          Settings
+          <GearIcon aria-hidden="true" size={17} />
+          GearIcon
         </button>
       </nav>
     </div>

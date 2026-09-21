@@ -5,7 +5,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { IconCopy } from "@tabler/icons-react";
+import { CopyIcon } from "../../shared/design-system/icons/index";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -142,7 +142,7 @@ function ProfileDetails({
                 );
             }}
           >
-            <IconCopy size={16} aria-hidden="true" />
+            <CopyIcon size={16} aria-hidden="true" />
             Copy
           </Button>
         </div>

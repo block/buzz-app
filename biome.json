@@ -29,6 +29,27 @@
       "preset": "recommended",
       "suspicious": {
         "noUnknownAtRules": "off"
+      },
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "patterns": [
+              {
+                "group": [
+                  "lucide*",
+                  "@lucide/**",
+                  "@tabler/icons*",
+                  "react-icons/**",
+                  "@heroicons/**",
+                  "@fortawesome/**",
+                  "@phosphor-icons/**"
+                ],
+                "message": "Use the shared design-system/icons gateway; Phosphor only."
+              }
+            ]
+          }
+        }
       }
     }
   },
@@ -44,5 +65,33 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/shared/design-system/icons/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "lucide*",
+                      "@tabler/icons*",
+                      "react-icons/**",
+                      "@heroicons/**",
+                      "@fortawesome/**"
+                    ],
+                    "message": "Phosphor only."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

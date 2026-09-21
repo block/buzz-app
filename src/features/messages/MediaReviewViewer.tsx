@@ -6,7 +6,7 @@ import {
   useSyncExternalStore,
   type RefObject,
 } from "react";
-import { X } from "lucide-react";
+import { XIcon } from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { Attachment } from "../relay/contracts";
@@ -216,7 +216,7 @@ function ReviewShell({
             aria-label="Close fullscreen viewer"
             onClick={close}
           >
-            <X size={20} aria-hidden="true" />
+            <XIcon size={20} aria-hidden="true" />
           </button>
         </header>
         <div className={styles.mediaReviewStage}>

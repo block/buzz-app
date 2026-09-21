@@ -1,4 +1,7 @@
-import { IconMoon, IconSun } from "@tabler/icons-react";
+import {
+  MoonIcon,
+  SunIcon,
+} from "../../../../src/shared/design-system/icons/index";
 import { Link, Outlet } from "@tanstack/react-router";
 import { Fragment, type ReactNode } from "react";
 
@@ -136,9 +139,9 @@ export function DesignSystemLayout({ children }: { children?: ReactNode }) {
           aria-label={scheme === "dark" ? "Use light mode" : "Use dark mode"}
           icon={
             scheme === "dark" ? (
-              <IconSun size={16} aria-hidden="true" />
+              <SunIcon size={16} aria-hidden="true" />
             ) : (
-              <IconMoon size={16} aria-hidden="true" />
+              <MoonIcon size={16} aria-hidden="true" />
             )
           }
           size="toolbar"

@@ -1,5 +1,5 @@
 import { TypingIndicator } from "./TypingIndicator";
-import { ArrowUp, X } from "lucide-react";
+import { ArrowUpIcon, XIcon } from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useId,
@@ -482,7 +482,7 @@ function Composer({
                 onClick={clearMediaTime}
                 aria-label="Remove video time"
               >
-                <X size={13} aria-hidden="true" />
+                <XIcon size={13} aria-hidden="true" />
               </button>
             </div>
           )}
@@ -508,7 +508,7 @@ function Composer({
                 }
               >
                 {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
-                <X size={12} aria-hidden="true" />
+                <XIcon size={12} aria-hidden="true" />
               </button>
             ))}
           </section>
@@ -539,7 +539,7 @@ function Composer({
             title="Send message"
             disabled={disabled || !draft.trim()}
           >
-            <ArrowUp size={18} aria-hidden="true" />
+            <ArrowUpIcon size={18} aria-hidden="true" />
           </button>
         </div>
         {error && <p role="alert">{error}</p>}

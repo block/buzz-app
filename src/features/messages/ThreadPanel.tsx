@@ -10,7 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { X } from "lucide-react";
+import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
@@ -86,7 +86,7 @@ function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
           size="toolbar"
           aria-label="Close thread"
           onClick={close}
-          icon={<X size={18} aria-hidden="true" />}
+          icon={<XIcon size={18} aria-hidden="true" />}
         />
       }
     />
@@ -340,7 +340,7 @@ function ThreadMessages({
         onKeyDown={(event) => {
           if (
             [
-              "ArrowUp",
+              "ArrowUpIcon",
               "ArrowDown",
               "PageUp",
               "PageDown",

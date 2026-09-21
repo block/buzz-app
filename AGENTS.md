@@ -150,3 +150,5 @@ After repairs, verify the hosted **DCO Check** at the new head.
 - Inspect current hosted checks and repository rules, including external checks.
   Resolve relevant failures before declaring readiness; obtain required reviewer
   and code-owner approval. This preflight is not automatic permission to merge.
+
+Icons use Phosphor only, through `src/shared/design-system/icons`. Add individual exports as needed; icon and weight choices belong to the designer. The local lint and design checks enforce this import boundary.

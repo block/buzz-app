@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { PanelRight } from "lucide-react";
+import { SidebarIcon } from "../../shared/design-system/icons/index";
 import type { RegisteredPanel } from "../../features/panels/service";
 
 export function PanelLaunchers({
@@ -33,7 +33,7 @@ export function PanelLaunchers({
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
-    <PanelRight size={18} aria-hidden="true" />
+    <SidebarIcon size={18} aria-hidden="true" />
   ) : (
     <img
       src={src}

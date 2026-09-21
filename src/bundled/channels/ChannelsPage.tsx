@@ -21,13 +21,13 @@ import {
   type ReactNode,
 } from "react";
 import {
-  Hash,
-  Search,
-  MoreHorizontal,
-  PlugZap,
-  MessageCircle,
-  Users,
-} from "lucide-react";
+  HashIcon,
+  MagnifyingGlassIcon,
+  DotsThreeIcon,
+  PlugIcon,
+  ChatCircleIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons/index";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -83,7 +83,7 @@ export function ChannelsPage({
         <PanelFrame companion={companion}>
           <div className={styles.connect}>
             <div className={styles.connectIcon}>
-              <PlugZap size={30} />
+              <PlugIcon size={30} />
             </div>
             <h1>Your channels, one conversation.</h1>
             <p>
@@ -599,10 +599,10 @@ function ChannelWorkspace({
     >
       <aside className={styles.sidebar} aria-label="Channel sidebar">
         <div className={styles.search}>
-          <Search size={17} />
+          <MagnifyingGlassIcon size={17} />
           <input
-            aria-label="Search channels"
-            placeholder="Search"
+            aria-label="MagnifyingGlassIcon channels"
+            placeholder="MagnifyingGlassIcon"
             value={search}
             onChange={(event) => sidebar.setSearch(event.target.value)}
           />
@@ -627,9 +627,9 @@ function ChannelWorkspace({
                 const Icon =
                   channel.channelType === "dm"
                     ? (channel.participants?.length ?? 0) > 1
-                      ? Users
-                      : MessageCircle
-                    : Hash;
+                      ? UsersIcon
+                      : ChatCircleIcon
+                    : HashIcon;
                 return (
                   <ChannelActivityPopover
                     key={channel.id}
@@ -711,9 +711,9 @@ function ChannelWorkspace({
         <header className={styles.heading}>
           <div className={styles.channelTitle}>
             {current?.channelType === "dm" ? (
-              <MessageCircle size={20} />
+              <ChatCircleIcon size={20} />
             ) : (
-              <Hash size={20} />
+              <HashIcon size={20} />
             )}
             <strong>{current?.name ?? "Channels"}</strong>
           </div>
@@ -723,7 +723,7 @@ function ChannelWorkspace({
               aria-label="Conversation options"
               title="Conversation options"
             >
-              <MoreHorizontal size={19} aria-hidden="true" />
+              <DotsThreeIcon size={19} aria-hidden="true" />
             </summary>
             <div className={styles.diagnosticsMenu}>
               <UnreadOptions session={queries} channelId={current?.id} />

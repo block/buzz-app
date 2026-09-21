@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Download, Minus, Plus } from "lucide-react";
+import {
+  CaretLeftIcon,
+  CaretRightIcon,
+  DownloadIcon,
+  MinusIcon,
+  PlusIcon,
+} from "../../shared/design-system/icons/index";
 import type { Attachment } from "../relay/contracts";
 import styles from "./Messages.module.css";
 
@@ -142,7 +148,7 @@ export function ImageReviewStage({
               disabled={selectedIndex === 0}
               onClick={() => choose(selectedIndex - 1)}
             >
-              <ChevronLeft size={18} aria-hidden="true" />
+              <CaretLeftIcon size={18} aria-hidden="true" />
             </button>
             <span>
               {selectedIndex + 1} / {attachments.length}
@@ -153,7 +159,7 @@ export function ImageReviewStage({
               disabled={selectedIndex === attachments.length - 1}
               onClick={() => choose(selectedIndex + 1)}
             >
-              <ChevronRight size={18} aria-hidden="true" />
+              <CaretRightIcon size={18} aria-hidden="true" />
             </button>
           </div>
         )}
@@ -164,7 +170,7 @@ export function ImageReviewStage({
             disabled={zoom <= MIN_ZOOM}
             onClick={() => setBoundedZoom(zoom - ZOOM_STEP)}
           >
-            <Minus size={16} aria-hidden="true" />
+            <MinusIcon size={16} aria-hidden="true" />
           </button>
           <input
             type="range"
@@ -183,7 +189,7 @@ export function ImageReviewStage({
             disabled={zoom >= MAX_ZOOM}
             onClick={() => setBoundedZoom(zoom + ZOOM_STEP)}
           >
-            <Plus size={16} aria-hidden="true" />
+            <PlusIcon size={16} aria-hidden="true" />
           </button>
           <button
             type="button"
@@ -197,10 +203,10 @@ export function ImageReviewStage({
         <a
           href={source}
           download
-          aria-label="Download image"
-          title="Download image"
+          aria-label="DownloadIcon image"
+          title="DownloadIcon image"
         >
-          <Download size={17} aria-hidden="true" />
+          <DownloadIcon size={17} aria-hidden="true" />
         </a>
       </div>
     </div>

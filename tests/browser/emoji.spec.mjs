@@ -365,10 +365,8 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(toneMenu).toHaveCount(0);
     await expect(skinTone).toBeFocused();
     await search.focus();
-    const searchIcon = page.locator(
-      '[aria-label="Emoji picker"] > svg.lucide-search',
-    );
-    await expect(searchIcon).toHaveAttribute("viewBox", "0 0 24 24");
+    const searchIcon = page.locator('[aria-label="Emoji picker"] > svg');
+    await expect(searchIcon).toHaveAttribute("viewBox", "0 0 256 256");
     await expect(searchIcon).toHaveAttribute("stroke-width", "2");
     await expect(searchIcon.locator("path")).toHaveAttribute(
       "d",
@@ -376,7 +374,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     );
     await expect(searchIcon.locator("circle")).toHaveAttribute("r", "8");
     await expect(
-      page.locator('[aria-label="Emoji picker"] > svg.lucide-search:visible'),
+      page.locator('[aria-label="Emoji picker"] > svg:visible'),
     ).toHaveCount(1);
     await expect(page.locator("em-emoji-picker .search .loupe")).toHaveCSS(
       "visibility",
@@ -450,23 +448,13 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(emojiClear).toHaveCSS("right", "10px");
     await expect(emojiClear.locator("svg")).toHaveAttribute(
       "viewBox",
-      "0 0 24 24",
+      "0 0 256 256",
     );
-    await expect(emojiClear.locator("svg")).toHaveClass(/lucide-circle-x/);
     await expect(emojiClear.locator("svg")).toHaveCSS("width", "16px");
     await expect(emojiClear.locator("svg")).toHaveCSS("height", "16px");
     await expect(emojiClear).toHaveCSS("color", "rgb(82, 82, 82)");
-    await expect(emojiClear.locator("circle")).toHaveCSS(
-      "fill",
-      "rgb(82, 82, 82)",
-    );
-    await expect(emojiClear.locator("circle")).toHaveCSS("stroke", "none");
-    await expect(emojiClear.locator("path").first()).toHaveCSS(
-      "stroke",
-      "rgb(240, 240, 240)",
-    );
     await expect(
-      page.locator('[aria-label="Emoji picker"] > svg.lucide-search:visible'),
+      page.locator('[aria-label="Emoji picker"] > svg:visible'),
     ).toHaveCount(1);
     const insert = page.getByRole("button", {
       name: ":party:",
@@ -634,7 +622,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       Math.abs(navigationGutters.left - navigationGutters.right),
     ).toBeLessThan(0.1);
     expect(navigationGutters.left).toBeCloseTo(8, 1);
-    for (const [category, icon] of Object.entries({
+    for (const category of Object.keys({
       "Frequently used": "clock",
       "Smileys & People": "face-slightly-smiling",
       "Animals & Nature": "paw-print",
@@ -648,20 +636,15 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     })) {
       const categoryIcon = navigation
         .getByRole("button", { name: category, exact: true })
-        .locator(`svg.lucide-${icon}`);
+        .locator("svg");
       await expect(categoryIcon).toHaveCount(1);
       await expect(categoryIcon).toHaveCSS("width", "18px");
       await expect(categoryIcon).toHaveCSS("height", "18px");
-      await expect(categoryIcon).toHaveCSS("fill", "none");
-      await expect(categoryIcon).toHaveCSS("stroke-width", "2px");
     }
     const recentIcon = navigation
       .getByRole("button", { name: "Frequently used" })
-      .locator("svg.lucide-clock");
-    await expect(recentIcon).toHaveAttribute("viewBox", "0 0 24 24");
-    await expect(recentIcon).toHaveCSS("fill", "none");
-    await expect(recentIcon).toHaveCSS("stroke-width", "2px");
-    await expect(recentIcon.locator("circle")).toHaveAttribute("r", "10");
+      .locator("svg");
+    await expect(recentIcon).toHaveAttribute("viewBox", "0 0 256 256");
     await expect(recentIcon.locator("path")).toHaveAttribute(
       "d",
       "M12 6v6l4 2",

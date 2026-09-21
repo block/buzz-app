@@ -1,6 +1,6 @@
 import { Avatar } from "../../shared/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
-import { AtSign } from "lucide-react";
+import { AtIcon } from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useId,
@@ -92,7 +92,7 @@ export function MentionPicker({
           session.channels.ensureList();
         }}
       >
-        <AtSign size={20} aria-hidden="true" />
+        <AtIcon size={20} aria-hidden="true" />
       </button>
       {open && (
         <section
@@ -101,7 +101,7 @@ export function MentionPicker({
           aria-label="Mention a channel member"
         >
           <label>
-            Search channel members
+            MagnifyingGlassIcon channel members
             <input
               type="search"
               value={search}

@@ -688,6 +688,64 @@ it.each(
   },
 );
 
+it.each([undefined, "root"])(
+  "resolves a sole session agent before calling shared send/reply, root=%s",
+  async (root) => {
+    const view = mount();
+    const channel = {
+      id: "channel",
+      channelType: "session" as const,
+      members: [first.pubkey],
+    };
+    const list = { status: "ready" as const, channels: [channel] };
+    const library = {
+      status: "ready" as const,
+      definitions: [],
+      identities: [first],
+    };
+    const session = {
+      ...view.session,
+      viewer: "viewer",
+      channels: { list: () => list, subscribeList: () => () => {} },
+      agentLibrary: {
+        snapshot: () => library,
+        subscribe: () => () => {},
+        refresh: vi.fn(async () => {}),
+      },
+      workSessions: {
+        refreshMembership: vi.fn(async () => channel),
+        addAgents: vi.fn(async () => {}),
+      },
+    } as unknown as RelaySession;
+    view.retarget({
+      session,
+      sessionConversation: true,
+      ...(root ? { threadRootId: root } : {}),
+    });
+    view.fill("Keep going");
+    view.submit();
+    await waitFor(() =>
+      expect(
+        root ? view.messages.reply : view.messages.send,
+      ).toHaveBeenCalled(),
+    );
+    if (root)
+      expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        root,
+        "Keep going",
+        [first.pubkey],
+      );
+    else
+      expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "Keep going",
+        [first.pubkey],
+      );
+    expect(session.workSessions.addAgents).not.toHaveBeenCalled();
+  },
+);
+
 it("routes to the avatar choice and lets an explicit mention override it", async () => {
   const view = mount();
   const library = {
@@ -730,6 +788,11 @@ it("routes to the avatar choice and lets an explicit mention override it", async
   expect(view.messages.send).toHaveBeenLastCalledWith("channel", "Hello", [
     second.pubkey,
   ]);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Change agent: Fizz" }),
+    ).toBeEnabled(),
+  );
   await view.user.click(screen.getByRole("button", { name: "First Honey" }));
   view.submit();
   await waitFor(() =>

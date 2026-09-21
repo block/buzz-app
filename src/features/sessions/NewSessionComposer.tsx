@@ -17,6 +17,8 @@ type PendingStart = {
   creationId?: string;
   messageId?: string;
 };
+const sessionId =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 function readPending(
   scope: string,
   draftKey: string,
@@ -29,7 +31,7 @@ function readPending(
   if (
     !value ||
     typeof value.id !== "string" ||
-    !/^[0-9a-f-]{36}$/.test(value.id) ||
+    !sessionId.test(value.id) ||
     typeof value.text !== "string" ||
     value.text.length > 16000
   )
@@ -78,10 +80,6 @@ export function NewSessionComposer({
     return () => {
       mounted.current = false;
     };
-  }, []);
-  const container = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    container.current?.querySelector<HTMLElement>('[role="textbox"]')?.focus();
   }, []);
   const save = (next: PendingStart) => {
     setPending(next);
@@ -241,7 +239,7 @@ export function NewSessionComposer({
     }
   }
   return (
-    <div id="new-session-prompt" ref={container}>
+    <div id="new-session-prompt">
       <MessageComposer
         trailingTool={
           <AgentChoice

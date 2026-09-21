@@ -1,4 +1,5 @@
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
+import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
 import { ArrowUpIcon, XIcon } from "../../shared/design-system/icons/index";
 import {
@@ -344,10 +345,19 @@ function Composer({
     permitted.current &&
     session.channels.list().channels.find((item) => item.id === channelId)
       ?.parentChannelId === parentChannelId;
-  async function prepareRecipients(recipients: readonly string[]) {
+  async function prepareRecipients(explicit: readonly string[]) {
     const channel = await session.workSessions.refreshMembership(channelId);
     if (!currentAdmission())
       throw new Error("The session changed. Review its channel and retry.");
+    const recipients = [
+      ...sessionRecipients(
+        channel,
+        session.profiles.snapshot(),
+        session.agentLibrary.snapshot(),
+        session.viewer,
+        explicit,
+      ),
+    ];
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
       await session.agentLibrary.refresh();
@@ -361,6 +371,7 @@ function Composer({
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
     }
+    return recipients;
   }
   function selectAgent(key: string) {
     if (disabled || admission.current) return;
@@ -382,15 +393,15 @@ function Composer({
         submission.submit(valueRef.current);
         return;
       }
-      const recipients = value.recipients.length
-        ? value.recipients.map((item) => item.pubkey)
+      let recipients = valueRef.current.recipients.length
+        ? valueRef.current.recipients.map((item) => item.pubkey)
         : selectedAgent
           ? [selectedAgent]
           : [];
       if (sessionConversation) {
         admission.current = true;
         setAdmitting(true);
-        await prepareRecipients(recipients);
+        recipients = await prepareRecipients(recipients);
       }
       const content =
         threadRootId && mediaTimeSeconds !== undefined

@@ -163,6 +163,35 @@ it("keeps parent drafts separate and cannot send on an unsupported community", a
   expect(test.workSessions.create).not.toHaveBeenCalled();
 });
 
+it("discards a recovered draft with a malformed session identifier", async () => {
+  const test = setup(),
+    onStarted = vi.fn(),
+    user = userEvent.setup();
+  writeView("test", "sessions:pending", {
+    id: "f".repeat(36),
+    text: "Stale draft",
+  });
+  render(
+    <NewSessionComposer
+      session={test.session}
+      scope="test"
+      onStarted={onStarted}
+    />,
+  );
+  const input = screen.getByRole("textbox");
+  expect(input).toHaveTextContent("");
+  await user.type(input, "Fresh start");
+  await user.click(screen.getByRole("button", { name: "Send message" }));
+  await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
+  expect(test.workSessions.create).toHaveBeenCalledWith(
+    expect.stringMatching(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/,
+    ),
+    "Fresh start",
+    undefined,
+  );
+});
+
 it("keeps the prompt through an uncertain delivery and retries without duplicate writes", async () => {
   const test = setup(),
     onStarted = vi.fn(),

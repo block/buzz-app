@@ -45,7 +45,6 @@ import {
   createOutbox,
   type OutboxStorage,
 } from "./outbox";
-import { sessionRecipients } from "../sessions/recipients";
 import { createMessages } from "./messages";
 import { createThreadView } from "./threads";
 import { ByteLru } from "./budget";
@@ -683,16 +682,6 @@ export function createRelaySession(
         retainedEvent(id),
       emoji.tags,
       validateMentions,
-      (channelId, explicit) =>
-        sessionRecipients(
-          channels.queries
-            .list()
-            .channels.find((channel) => channel.id === channelId),
-          profiles.queries.snapshot(),
-          agentLibrary.queries.snapshot(),
-          transport?.viewer,
-          explicit,
-        ),
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(

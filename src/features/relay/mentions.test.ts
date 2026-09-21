@@ -229,37 +229,25 @@ it("disposal during signing fences publication to a retired session", async () =
 });
 
 it.each([false, true])(
-  "routes a sole session agent automatically and requires explicit choice after another joins, reply=%s",
+  "preserves an independent caller's explicit session recipients, reply=%s",
   async (reply) => {
     const h = setup(true);
     await h.members([viewer.pubkey, honey.pubkey]);
     await h.agentProfile(honey);
-    const send = (mentions: readonly string[] = []) =>
+    const send = (mentions: readonly string[]) =>
       reply
         ? h.session.messages.reply("c", "a".repeat(64), "Keep going", mentions)
         : h.session.messages.send("c", "Keep going", mentions);
-    send();
+    send([]);
     await flush();
     expect(
       h.publish.mock.calls[0]?.[0].tags.filter(([name]) => name === "p"),
+    ).toEqual([]);
+    send([honey.pubkey]);
+    await flush();
+    expect(
+      h.publish.mock.calls.at(-1)?.[0].tags.filter(([name]) => name === "p"),
     ).toEqual([["p", honey.pubkey]]);
-
-    await h.members([viewer.pubkey, honey.pubkey, namesake.pubkey], 1700000001);
-    expect(() => send()).toThrow(/participants are still loading/);
-    await h.agentProfile(namesake);
-    expect(() => send()).toThrow(/multiple agents/);
-    send([namesake.pubkey]);
-    await flush();
-    expect(
-      h.publish.mock.calls.at(-1)?.[0].tags.filter(([name]) => name === "p"),
-    ).toEqual([["p", namesake.pubkey]]);
     expect(h.publish).toHaveBeenCalledTimes(2);
-
-    await h.members([viewer.pubkey, namesake.pubkey], 1700000002);
-    send();
-    await flush();
-    expect(
-      h.publish.mock.calls.at(-1)?.[0].tags.filter(([name]) => name === "p"),
-    ).toEqual([["p", namesake.pubkey]]);
   },
 );

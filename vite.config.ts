@@ -30,7 +30,7 @@ export default defineConfig(async ({ command, mode }) => {
     define: {
       "import.meta.env.VITE_BUZZ_LIVE": JSON.stringify(live ? "1" : "0"),
       "import.meta.env.VITE_BUZZ_NOTIFICATIONS_PAUSED": JSON.stringify(
-        command === "serve" && env.BUZZ_DEV_NOTIFICATIONS !== "1" ? "1" : "0",
+        command === "serve" && env.BUZZ_DEV_NOTIFICATIONS === "0" ? "1" : "0",
       ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
     },

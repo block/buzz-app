@@ -51,7 +51,7 @@ it.each([true, false])(
       expect(toggle).toBeDisabled();
       expect(toggle).not.toBeChecked();
       expect(screen.getByRole("status")).toHaveTextContent(
-        "BUZZ_DEV_NOTIFICATIONS=1",
+        "Remove BUZZ_DEV_NOTIFICATIONS=0",
       );
       expect(
         screen.queryByRole("button", { name: "Allow notifications" }),

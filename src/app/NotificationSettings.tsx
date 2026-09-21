@@ -29,7 +29,7 @@ export function NotificationSettings({
         />
         <p role="status" className="text-body-sm text-muted">
           {state.developmentPaused
-            ? "Notifications are paused in local development. Set BUZZ_DEV_NOTIFICATIONS=1 in .env.local and restart the dev server to enable them. Your saved alert choices are unchanged."
+            ? "Notifications are paused by your local development setting. Remove BUZZ_DEV_NOTIFICATIONS=0 from .env.local and restart the dev server to resume normal behavior. Your saved alert choices are unchanged."
             : state.requesting
               ? "Waiting for system permission…"
               : permission === "granted"

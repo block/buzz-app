@@ -5,7 +5,9 @@ test.use({
   productionBroker: true,
   readState: true,
   threadUnread: true,
+  historyCounts: { alpha: 20, beta: 1 },
   largeSidebar: true,
+  pluginFixtures: true, // Observe the real navigation completion, not reply mount timing.
 });
 test.describe("mentioned reply priority", () => {
   test.use({ threadUnreadMentions: true });
@@ -142,6 +144,9 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(first).toHaveCSS("outline-style", "solid");
   await expect(first).toHaveCSS("outline-width", "2px");
   await broadcast.focus();
+  const previousAttempt = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().attempt.id,
+  );
   await broadcast.press("Enter");
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -151,10 +156,33 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(
     panel.getByText("Unread reply 0", { exact: true }),
   ).toBeVisible();
-  await panel
-    .getByRole("textbox", { name: "Reply to thread", exact: true })
-    .focus();
+  // Content visibility precedes the navigation's deferred reveal/focus. Finish
+  // that owner before testing composer-only dwell; faster reads expose the race.
+  await expect
+    .poll(() =>
+      page.evaluate((previous) => {
+        const { status, entry, attempt } = window.fixtureNavigation.snapshot();
+        return {
+          status,
+          messageId: entry.target.messageId,
+          freshAttempt: attempt.id !== previous,
+        };
+      }, previousAttempt),
+    )
+    .toEqual({
+      status: "opened",
+      freshAttempt: true,
+      messageId: app.histories
+        .get("primary/alpha")
+        .find((row) => row.content === "Broadcast reply").id,
+    });
+  const replyComposer = panel.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await replyComposer.focus();
   await page.waitForTimeout(1000);
+  await expect(replyComposer).toBeFocused();
   await expect(first).toHaveAccessibleName(/Observed unread replies/); // Click/composer focus is not reading.
   await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");

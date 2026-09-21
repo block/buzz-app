@@ -1,4 +1,7 @@
-import { ArrowDown, ArrowUp } from "lucide-react";
+import {
+  ArrowDownIcon,
+  ArrowUpIcon,
+} from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useRef,
@@ -135,7 +138,7 @@ export function SidebarUnread({
       </nav>
       {(["above", "below"] as const).map((edge) => {
         if (!edges[edge].length) return null;
-        const Icon = edge === "above" ? ArrowUp : ArrowDown;
+        const Icon = edge === "above" ? ArrowUpIcon : ArrowDownIcon;
         return (
           <button
             key={edge}

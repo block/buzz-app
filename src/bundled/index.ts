@@ -23,6 +23,8 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
+import sessionsManifest from "./sessions/manifest.json";
+import * as sessions from "./sessions";
 import windowsManifest from "./windows/manifest.json";
 import * as windowsPlugin from "./windows";
 
@@ -39,5 +41,6 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...projectsManifest, apiVersion: 1 }, module: projects },
   { manifest: { ...agentsManifest, apiVersion: 1 }, module: agents },
   { manifest: { ...workflowsManifest, apiVersion: 1 }, module: workflows },
+  { manifest: { ...sessionsManifest, apiVersion: 1 }, module: sessions },
   { manifest: { ...windowsManifest, apiVersion: 1 }, module: windowsPlugin },
 ];

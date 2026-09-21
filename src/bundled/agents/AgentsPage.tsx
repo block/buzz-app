@@ -1,4 +1,7 @@
-import { IconRefresh, IconUsers } from "@tabler/icons-react";
+import {
+  ArrowsClockwiseIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
@@ -78,7 +81,7 @@ function MyAgents({ session }: { session: RelaySession }) {
           disabled={loading || snapshot.status === "unavailable"}
           onClick={refresh}
         >
-          <IconRefresh size={16} stroke={2} aria-hidden="true" />
+          <ArrowsClockwiseIcon size={16} aria-hidden="true" />
           {snapshot.status === "error" ? "Retry" : "Refresh agents"}
         </Button>
       </div>
@@ -214,7 +217,7 @@ function AgentCard({
               value: "identities",
               title: (
                 <span className="flex items-center gap-2">
-                  <IconUsers size={16} stroke={2} aria-hidden="true" />
+                  <UsersIcon size={16} aria-hidden="true" />
                   <span className="sr-only">{name}: </span>
                   {identities.length}{" "}
                   {identities.length === 1 ? "identity" : "identities"}

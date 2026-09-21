@@ -1,3 +1,4 @@
+import { brokerSocket, openBrokerSocket } from "../tests/broker-socket.mjs";
 import { fixtureRelayUrl, fixtureAliases } from "../tests/relay-config.ts";
 import { createRelayReader } from "../src/features/relay/reader.ts";
 import { createServer } from "node:http";
@@ -8,9 +9,9 @@ import { test, expect, vi, beforeEach, afterEach } from "vitest";
 import { finalizeEvent, getPublicKey, verifyEvent } from "nostr-tools";
 import { relayBrokerPlugin } from "./relay-broker.mjs";
 import { connectBrokerTransport } from "../src/features/relay/transport.ts";
-import { PublishRejected } from "../src/features/relay/outbox.ts";
+import { createOutbox, PublishRejected } from "../src/features/relay/outbox.ts";
 
-// Only wall time is controlled. Real timers/performance.now still exercise HTTP pacing.
+// Only wall time is controlled. Real timers/performance.now still exercise HTTP admission.
 let wallClock;
 beforeEach(() => {
   wallClock = 1700000000999;
@@ -19,7 +20,7 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 // Real browser HTTP -> production broker. Ephemeral key; upstream I/O is entirely local.
-async function harness(respond) {
+async function harness(respond, capabilities = {}) {
   const key = new Uint8Array(32);
   key[31] = 7;
   const viewer = getPublicKey(key);
@@ -28,6 +29,8 @@ async function harness(respond) {
     key,
   );
   const calls = [];
+  const socket = brokerSocket();
+  let live;
   let handler;
   const server = createServer((req, res) => {
     req.headers.origin = `http://${req.headers.host}`;
@@ -37,7 +40,8 @@ async function harness(respond) {
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => key,
-    authority: async () => ({ relayAuthor: viewer }),
+    socketFactory: socket.factory,
+    authority: async () => ({ relayAuthor: viewer, ...capabilities }),
     upstreamFetch: async (url, init) => {
       const upstreamUrl = String(url);
       const authorization = new Headers(init?.headers).get("Authorization");
@@ -76,6 +80,10 @@ async function harness(respond) {
     base,
     event,
     calls,
+    publications: socket.publications,
+    async start() {
+      live = await openBrokerSocket(await connectBrokerTransport(base));
+    },
     get(route, signal) {
       return fetch(`${base}/api/relay/${route}`, { signal });
     },
@@ -84,6 +92,7 @@ async function harness(respond) {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
+          ...(live ? { "X-Buzz-Live-ID": live.identity() } : {}),
           ...(priority ? { "X-Buzz-Read-Priority": priority } : {}),
         },
         body: JSON.stringify(body),
@@ -91,15 +100,18 @@ async function harness(respond) {
       });
     },
     async close() {
+      live?.dispose();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));
     },
   };
 }
 const filters = [{ kinds: [0], limit: 1 }];
-const success = (call, _count, event) =>
+const success = (call) =>
   Response.json(
-    call.url.endsWith("/events") ? { accepted: true, event_id: event.id } : [],
+    call.url.endsWith("/events")
+      ? { accepted: true, event_id: call.body.id }
+      : [],
   );
 
 test("GIF capability discovery does not depend on join-policy availability", async () => {
@@ -278,7 +290,7 @@ test("media proxy rejects malformed ranges before upstream I/O", async () => {
   }
 });
 
-test("upstream quota survives browser recreation, gates reads/profile/publish and leaves other communities independent", async () => {
+test("upstream quota survives browser recreation, gates reads/profile and leaves other communities independent", async () => {
   const h = await harness((call, count, event) =>
     count === 1
       ? Response.json(
@@ -318,50 +330,46 @@ test("upstream quota survives browser recreation, gates reads/profile/publish an
     await independent.query(filters);
     expect(h.calls).toHaveLength(2);
     await delay(1050);
-    await replacement.writer.publish(h.event, new AbortController().signal);
+    expect(
+      (await h.post("profile", { name: "Fixture", picture: "" })).status,
+    ).toBe(200);
     expect(h.calls).toHaveLength(3);
-    expect(h.calls[2].body).toEqual(JSON.parse(JSON.stringify(h.event)));
+    expect(h.calls[2].body.kind).toBe(0);
     expect(h.calls[2].at - h.calls[0].at).toBeGreaterThanOrEqual(1000);
   } finally {
     await h.close();
   }
 });
 
-test("foreground publish overtakes queued background reads; cancellation consumes no later start", async () => {
-  const h = await harness(success);
+test("foreground profile publication starts while background I/O is outstanding; cancellation does not replay", async () => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const h = await harness(async (call, count, event) => {
+    if (call.url.endsWith("/query")) await held;
+    return success(call, count, event);
+  });
+  const cancel = new AbortController();
   try {
-    await (await h.post("query", filters)).text();
-    const cancel = new AbortController();
-    const cancelled = h.post(
-      "query",
-      [{ kinds: [0], limit: 2 }],
-      cancel.signal,
-      "background",
-    );
-    const rejection = expect(cancelled).rejects.toMatchObject({
+    const background = h.post("query", filters, cancel.signal, "background");
+    const rejection = expect(background).rejects.toMatchObject({
       name: "AbortError",
     });
-    const background = h.post(
-      "query",
-      [{ kinds: [0], limit: 3 }],
-      undefined,
-      "background",
-    );
-    await delay(50); // Both requests have reached the real broker's admission queue.
+    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
+    const write = await h.post("profile", { name: "Fixture", picture: "" });
+    expect(write.status).toBe(200);
+    await write.text();
     cancel.abort();
     await rejection;
-    const write = h.post("publish", h.event);
-    await (await write).text();
-    await (await background).text();
+    release();
     expect(h.calls.map((c) => c.url.split("/").at(-1))).toEqual([
       "query",
       "events",
-      "query",
     ]);
-    expect(h.calls[2].body[0].limit).toBe(3);
-    for (let i = 1; i < h.calls.length; i++)
-      expect(h.calls[i].at - h.calls[i - 1].at).toBeGreaterThanOrEqual(490);
   } finally {
+    release();
+    cancel.abort();
     await h.close();
   }
 });
@@ -382,9 +390,8 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
       controllers.push(controller);
       return h.post("query", filters, controller.signal);
     });
-    await vi.waitFor(() => expect(h.calls).toHaveLength(1));
-    await delay(50);
-    const refused = await h.post("publish", h.event);
+    await vi.waitFor(() => expect(h.calls).toHaveLength(6));
+    const refused = await h.post("profile", { name: "Fixture", picture: "" });
     expect(refused.status).toBe(429);
     expect(await refused.json()).toEqual({
       error: "Query concurrency limit",
@@ -408,10 +415,12 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
     () => new Response("private upstream detail", { status: 503 }),
   );
   try {
-    const transport = await connectBrokerTransport(uncertain.base);
-    await expect(
-      transport.writer.publish(uncertain.event, new AbortController().signal),
-    ).rejects.not.toBeInstanceOf(PublishRejected);
+    const response = await uncertain.post("profile", {
+      name: "Fixture",
+      picture: "",
+    });
+    expect(response.status).toBe(503);
+    expect(await response.json()).not.toHaveProperty("sent");
     expect(uncertain.calls).toHaveLength(1);
     await delay(550);
     expect(uncertain.calls).toHaveLength(1);
@@ -421,8 +430,15 @@ test("local capacity is explicitly unsent, not relay quota; unknown upstream pub
 }, 10000);
 
 // Reader-to-host priority propagation control contributed by Brain.
-test("priority reaches actual broker from the production reader and transport", async () => {
-  const h = await harness(success);
+test("reader and transport start foreground work without waiting for background completion", async () => {
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  const h = await harness(async (call, count, event) => {
+    if (call.body?.[0]?.limit === 2) await held;
+    return success(call, count, event);
+  });
   let reader;
   try {
     const t = await connectBrokerTransport(h.base);
@@ -431,32 +447,30 @@ test("priority reaches actual broker from the production reader and transport", 
     const background = reader.reader.read([{ kinds: [0], limit: 2 }], {
       priority: "background",
     });
-    await delay(50);
-    const foreground = reader.reader.read([{ kinds: [0], limit: 3 }], {
+    await vi.waitFor(() => expect(h.calls).toHaveLength(2));
+    await reader.reader.read([{ kinds: [0], limit: 3 }], {
       priority: "foreground",
     });
-    await Promise.all([background, foreground]);
-    expect(h.calls.map((c) => c.body[0].limit)).toEqual([1, 3, 2]);
+    expect(h.calls.map((c) => c.body[0].limit)).toEqual([1, 2, 3]);
+    release();
+    await background;
   } finally {
+    release();
     reader?.dispose();
     await h.close();
   }
 });
 
-test("queued request mints fresh auth at dispatch after wall time advances", async () => {
+test("each request mints fresh auth at dispatch after wall time advances", async () => {
   const h = await harness(success);
   try {
     await (await h.post("query", filters)).text();
-    const queued = h.post("query", [{ kinds: [0], limit: 2 }]);
-    // Reach the broker while its real 500ms pacing interval is still active.
-    await delay(50);
-    expect(h.calls).toHaveLength(1);
     wallClock += 61000;
-    const response = await queued;
+    const response = await h.post("query", [{ kinds: [0], limit: 2 }]);
     expect(response.status).toBe(200);
     await response.text();
     expect(h.calls).toHaveLength(2);
-    expect(h.calls[1].at - h.calls[0].at).toBeGreaterThanOrEqual(490);
+    expect(h.calls[1].auth.created_at - h.calls[0].auth.created_at).toBe(61);
   } finally {
     await h.close();
   }
@@ -467,6 +481,7 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
     Response.json({ accepted: true, event_id: call.body.id }),
   );
   try {
+    await h.start();
     const template = {
       ...h.event,
       kind: 7,
@@ -484,8 +499,8 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
     expect(event.kind).toBe(7);
     expect(event.tags).toEqual(template.tags);
     expect((await h.post("publish", event)).status).toBe(200);
-    expect(h.calls).toHaveLength(1);
-    expect(h.calls[0].body).toEqual(JSON.parse(JSON.stringify(event)));
+    expect(h.publications).toHaveLength(1);
+    expect(h.publications[0]).toEqual(JSON.parse(JSON.stringify(event)));
     for (const length of [62, 63, 64]) {
       const content = `:${"a".repeat(length)}:`;
       const signed = await h.post("sign", { ...template, content });
@@ -494,7 +509,7 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
       expect(boundaryEvent.content).toBe(content);
       expect((await h.post("publish", boundaryEvent)).status).toBe(200);
     }
-    expect(h.calls).toHaveLength(4);
+    expect(h.publications).toHaveLength(4);
     for (const route of ["sign", "publish"]) {
       for (const tags of [
         [],
@@ -522,7 +537,7 @@ test("reaction sign and publish preserve kind 7 and reject malformed targets bef
           .status,
       ).toBe(400);
     }
-    expect(h.calls).toHaveLength(4);
+    expect(h.publications).toHaveLength(4);
   } finally {
     await h.close();
   }
@@ -533,6 +548,7 @@ test("both real sign and publish routes admit direct replies but reject arbitrar
     Response.json({ accepted: true, event_id: call.body.id }),
   );
   try {
+    await h.start();
     const template = {
       ...h.event,
       tags: [
@@ -546,11 +562,11 @@ test("both real sign and publish routes admit direct replies but reject arbitrar
     const event = await signed.json();
     expect(verifyEvent(event)).toBe(true);
     expect(event.tags).toEqual(template.tags);
-    expect(h.calls).toHaveLength(0);
+    expect(h.publications).toHaveLength(0);
     const published = await h.post("publish", event);
     expect(published.status).toBe(200);
-    expect(h.calls).toHaveLength(1);
-    expect(h.calls[0].body).toEqual(JSON.parse(JSON.stringify(event)));
+    expect(h.publications).toHaveLength(1);
+    expect(h.publications[0]).toEqual(JSON.parse(JSON.stringify(event)));
     for (const route of ["sign", "publish"]) {
       for (const references of [
         [["e", "a".repeat(64)]],
@@ -569,8 +585,98 @@ test("both real sign and publish routes admit direct replies but reject arbitrar
         expect(await rejected.json()).toEqual({ error: "Message rejected" });
       }
     }
-    expect(h.calls).toHaveLength(1);
+    expect(h.publications).toHaveLength(1);
   } finally {
     await h.close();
   }
 });
+
+test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
+  "real outbox creates, invites and sends without Sessions support (parent: %s)",
+  async (parent) => {
+    const h = await harness(
+      (call) =>
+        Response.json(
+          call.url.endsWith("/events")
+            ? { accepted: true, event_id: call.body.id }
+            : [],
+        ),
+      { channelCreation: true },
+    );
+    let owner;
+    let traffic;
+    try {
+      const transport = await connectBrokerTransport(h.base);
+      traffic = await openBrokerSocket(transport);
+      expect(transport.writer.kinds).toContain(9007);
+      expect(transport.writer.kinds).not.toContain(9050);
+      owner = createOutbox(transport.viewer, transport.writer, {
+        load: () => [],
+        save: () => {},
+      });
+      const id = "11111111-1111-4111-8111-111111111111";
+      const creationId = owner.outbox.send({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", id],
+          ["name", "Work"],
+          ["visibility", "private"],
+          ["channel_type", "stream"],
+          [
+            "about",
+            `Buzz session (buzz.sessions/v1)${parent ? `\nparent:${parent}` : ""}`,
+          ],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === creationId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      const invitationId = owner.outbox.send({
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", id],
+          ["p", "a".repeat(64)],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === invitationId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      const messageId = owner.outbox.send({
+        kind: 9,
+        content: "Hello",
+        tags: [
+          ["h", id],
+          ["p", "a".repeat(64)],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local.snapshot().find((row) => row.event.id === messageId)
+            ?.delivery,
+        ).toBe("accepted"),
+      );
+      expect(h.publications.map((event) => event.kind)).toEqual([
+        9007, 9000, 9,
+      ]);
+      const denied = await h.post("sign", {
+        kind: 9050,
+        created_at: 1700000000,
+        content: JSON.stringify({ action: "create", title: "Work" }),
+        tags: [["h", id]],
+      });
+      expect(denied.status).toBe(400);
+    } finally {
+      owner?.dispose();
+      traffic?.dispose();
+      await h.close();
+    }
+  },
+);

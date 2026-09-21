@@ -1,5 +1,5 @@
 import { type ReactNode, useSyncExternalStore } from "react";
-import { House } from "lucide-react";
+import { HouseIcon } from "../../shared/design-system/icons/index";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
@@ -95,7 +95,7 @@ export function AppShell({
               aria-current={selected === "home" ? "page" : undefined}
               onClick={() => onSelect("home")}
             >
-              <House aria-hidden="true" size={15} strokeWidth={1.7} />
+              <HouseIcon aria-hidden="true" size={15} />
               Home
             </button>
           )}
@@ -113,7 +113,7 @@ export function AppShell({
                 tabsHere={tabsHere}
                 detachable={layout.enabled}
               >
-                <Icon aria-hidden="true" size={15} strokeWidth={1.7} />
+                <Icon aria-hidden="true" size={15} />
                 {label}
               </PageTab>
             );

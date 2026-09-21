@@ -3,9 +3,11 @@
 Read [the contribution workflow](docs/contributing.md) for commands and validation.
 For interactive product work, default to edit → human tries the running app →
 adjust in the agreed worktree. Do not gate each feedback round on E2E, native
-builds, or full validation. `just iterate` is optional; reserve `just scan` for
-an agreed batch before review/integration or relevant native/dependency/build
-changes. Track deferred checks: **ready to try** is not **validated**. Check
+builds, or full validation. Use mandatory hooks and focused behavior checks not
+covered by them; use existing CI for broad validation. `just iterate` is optional.
+Run `just scan` only when explicitly requested or needed to reproduce a broad
+integration failure, not as a routine pre-push or handoff gate.
+Track deferred checks: **ready to try** is not **validated**. Check
 auth/signing, persistence/migrations, protocol semantics, and destructive writes
 before live use.
 
@@ -83,7 +85,8 @@ Do not infer layout, native editing or cross-window correctness from a DOM emula
 When moving coverage, map removed assertions to replacements and demonstrate that
 the replacement catches the regression before deleting the browser case.
 
-Generate only the fixture data the test needs. Share immutable builds and stateless
+Make minimal fixture data the default and opt into larger datasets only for an
+explicit scale, pagination or geometry contract. Share immutable builds and stateless
 servers, never mutable test state, identities or browser contexts. Preserve large
 datasets and isolated runners when scale or performance is the behavior under test.
 Record browser cases added/removed, their browser-only justification, replacement
@@ -150,3 +153,5 @@ After repairs, verify the hosted **DCO Check** at the new head.
 - Inspect current hosted checks and repository rules, including external checks.
   Resolve relevant failures before declaring readiness; obtain required reviewer
   and code-owner approval. This preflight is not automatic permission to merge.
+
+Icons use Phosphor only, through `src/shared/design-system/icons`. Add individual exports as needed; icon and weight choices belong to the designer. The local lint and design checks enforce this import boundary.

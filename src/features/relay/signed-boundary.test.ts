@@ -16,7 +16,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
-it("actual signed fetch starts remain paced after delayed signer completions", async () => {
+it("actual signed fetches start together after delayed signer completions", async () => {
   vi.useFakeTimers();
   const key = keypair();
   const pending: Array<() => void> = [];
@@ -49,16 +49,13 @@ it("actual signed fetch starts remain paced after delayed signer completions", a
   // A host signer can finish several requests together after unlock/prompt/IPC delay.
   for (const resolve of pending) resolve();
   await tick();
-  await vi.advanceTimersByTimeAsync(2000);
   await Promise.all(reads);
   expect(starts).toHaveLength(4);
   for (let i = 1; i < starts.length; i++)
-    expect(
-      required(starts[i]) - required(starts[i - 1]),
-    ).toBeGreaterThanOrEqual(500);
+    expect(required(starts[i]) - required(starts[i - 1])).toBe(0);
 });
 
-it("positive control: immediate signer keeps signed fetches 500ms apart", async () => {
+it("immediate signer starts fetches without an admission timer", async () => {
   vi.useFakeTimers();
   const key = keypair();
   const starts: number[] = [];
@@ -80,13 +77,10 @@ it("positive control: immediate signer keeps signed fetches 500ms apart", async 
   );
   // Digest completion uses real crypto threads, not fake timers. Wait for all
   // preparations before advancing the dispatch clock, including under full-suite load.
-  await vi.waitFor(() => expect(identity.signEvent).toHaveBeenCalledTimes(4));
-  await vi.advanceTimersByTimeAsync(2000);
+  await Promise.all(p);
   await Promise.all(p);
   for (let i = 1; i < starts.length; i++)
-    expect(
-      required(starts[i]) - required(starts[i - 1]),
-    ).toBeGreaterThanOrEqual(500);
+    expect(required(starts[i]) - required(starts[i - 1])).toBe(0);
 });
 it("a signer already waiting cannot bypass a newly learned shared cooldown", async () => {
   vi.useFakeTimers();
@@ -149,17 +143,27 @@ it.each(["signer", "dispatch"])(
   async (phase) => {
     vi.useFakeTimers();
     const identity = deferredSigner();
-    const fetcher = vi.fn(async () => Response.json([]));
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const fetcher = vi.fn(async () => {
+      await held;
+      return Response.json([]);
+    });
     vi.stubGlobal("fetch", fetcher);
     const t = await connectSignedTransport(
       identity,
       "https://cancel-sign.test",
       "relay",
     );
-    const first = t.query([{ kinds: [0], limit: 1 }]);
-    await vi.waitFor(() => expect(identity.pending).toHaveLength(1));
-    required(identity.pending.shift())();
-    await first;
+    const active = Array.from({ length: 6 }, () =>
+      t.query([{ kinds: [0], limit: 1 }]),
+    );
+    await vi.waitFor(() => expect(identity.pending).toHaveLength(6));
+    while (identity.pending.length) required(identity.pending.shift())();
+    await tick();
+    expect(fetcher).toHaveBeenCalledTimes(6);
     const controller = new AbortController();
     const cancelled = t.query([{ kinds: [0], limit: 2 }], controller.signal);
     const rejected = expect(cancelled).rejects.toMatchObject({
@@ -172,14 +176,16 @@ it.each(["signer", "dispatch"])(
     }
     controller.abort();
     if (phase === "signer") required(identity.pending.shift())();
+    release();
+    await Promise.all(active);
     await rejected;
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(6);
     const next = t.query([{ kinds: [0], limit: 3 }]);
     await vi.waitFor(() => expect(identity.pending).toHaveLength(1));
     required(identity.pending.shift())();
     await vi.advanceTimersByTimeAsync(500);
     await next;
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(7);
     expect(vi.getTimerCount()).toBe(0);
   },
 );
@@ -194,6 +200,10 @@ it.each(["signer", "dispatch"])(
       content: "exact",
       tags: [["h", "c"]],
     });
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     const fetcher = vi.fn(async (_url: string, init: RequestInit) => {
       const body = JSON.parse(init.body as string);
       const auth = JSON.parse(
@@ -205,6 +215,7 @@ it.each(["signer", "dispatch"])(
       expect(
         Math.abs(Math.floor(Date.now() / 1000) - auth.created_at),
       ).toBeLessThanOrEqual(45);
+      await held;
       return Response.json(
         Array.isArray(body) ? [] : { accepted: true, event_id: body.id },
       );
@@ -216,10 +227,13 @@ it.each(["signer", "dispatch"])(
       "relay",
     );
     assert.exists(t.writer);
-    const first = t.query([{ kinds: [0], limit: 1 }]);
-    await vi.waitFor(() => expect(identity.pending).toHaveLength(1));
-    required(identity.pending.shift())();
-    await first;
+    const active = Array.from({ length: 6 }, () =>
+      t.query([{ kinds: [0], limit: 1 }]),
+    );
+    await vi.waitFor(() => expect(identity.pending).toHaveLength(6));
+    while (identity.pending.length) required(identity.pending.shift())();
+    await tick();
+    expect(fetcher).toHaveBeenCalledTimes(6);
     const publication = t.writer.publish(event, new AbortController().signal);
     const rejected =
       expect(publication).rejects.toBeInstanceOf(PublishRejected);
@@ -232,15 +246,17 @@ it.each(["signer", "dispatch"])(
     vi.setSystemTime(Date.now() + 46000);
     if (phase === "signer") required(identity.pending.shift())();
     await vi.advanceTimersByTimeAsync(1000);
+    release();
+    await Promise.all(active);
     await rejected;
-    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledTimes(6);
     await vi.advanceTimersByTimeAsync(60000);
-    expect(fetcher).toHaveBeenCalledTimes(1); // No auto-resign or automatic resend.
+    expect(fetcher).toHaveBeenCalledTimes(6); // No auto-resign or automatic resend.
     const retry = t.writer.publish(event, new AbortController().signal);
     await vi.waitFor(() => expect(identity.pending).toHaveLength(1));
     required(identity.pending.shift())();
     await retry;
-    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(fetcher).toHaveBeenCalledTimes(7);
     expect(fetcher.mock.lastCall?.[1].body).toBe(JSON.stringify(event));
   },
 );

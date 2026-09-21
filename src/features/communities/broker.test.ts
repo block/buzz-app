@@ -1,4 +1,10 @@
 import {
+  brokerSocket,
+  openBrokerSocket,
+} from "../../../tests/broker-socket.mjs";
+import type { LiveSubscription } from "../relay/live";
+import type { RelayEvent } from "../relay/events";
+import {
   fixtureRelayUrl,
   fixtureAliases,
 } from "../../../tests/relay-config.ts";
@@ -25,6 +31,8 @@ it("routes reads, profile publication, invite claims and delayed writes to their
   const identity = keypair(),
     relay = keypair();
   const calls: { url: string; body: unknown; auth: unknown }[] = [];
+  const publications: { url: string; event: RelayEvent }[] = [];
+  let traffic: LiveSubscription | undefined;
   let handler: RequestListener | undefined;
   const server = createServer((req, res) => {
     req.headers.origin = `http://${req.headers.host}`;
@@ -34,6 +42,11 @@ it("routes reads, profile publication, invite claims and delayed writes to their
     relayUrl: fixtureRelayUrl,
     communityAliases: fixtureAliases,
     identity: () => identity.secret,
+    socketFactory: (url) =>
+      brokerSocket((event) => {
+        publications.push({ url, event });
+        return "";
+      }).factory(url),
     authority: async () => ({ relayAuthor: relay.pubkey }),
     upstreamFetch: async (input, init) => {
       const url = String(input);
@@ -80,6 +93,7 @@ it("routes reads, profile publication, invite claims and delayed writes to their
     expect(calls).toHaveLength(0);
     const a = await connectBrokerTransport(base, undefined, "primary");
     assert.exists(a.writer);
+    traffic = await openBrokerSocket(a);
     const signed = await a.writer.sign(
       {
         kind: 9,
@@ -93,14 +107,23 @@ it("routes reads, profile publication, invite claims and delayed writes to their
     await b.query([{ kinds: [0], limit: 1 }]);
     await a.writer.publish(signed, new AbortController().signal);
     expect(calls[0]?.url).toBe("https://secondary.example/query");
-    expect(calls[1]?.url).toBe("https://primary.example/events");
+    expect(publications).toEqual([
+      {
+        url: "wss://primary.example",
+        event: JSON.parse(JSON.stringify(signed)),
+      },
+    ]);
+    assert.exists(publications[0]);
+    expect(verifyEvent(publications[0].event)).toBe(true);
+    expect(calls).toHaveLength(1); // No HTTP fallback for the delayed publication.
     const profile = await post("secondary", "profile", {
       name: "Community name",
       picture: "",
       existing: { about: "preserved" },
     });
     expect(profile.ok).toBe(true);
-    const profileEvent = calls[2]?.body;
+    expect(calls[1]?.url).toBe("https://secondary.example/events");
+    const profileEvent = calls[1]?.body;
     if (!isSignedEvent(profileEvent))
       throw new Error("Expected a signed profile event");
     expect(profileEvent.kind).toBe(0);
@@ -118,7 +141,7 @@ it("routes reads, profile publication, invite claims and delayed writes to their
       code: "fixture",
       policy_receipt: "fixture-receipt",
     });
-    const claim = calls[4]?.body;
+    const claim = calls[3]?.body;
     if (
       typeof claim !== "object" ||
       claim === null ||
@@ -156,6 +179,7 @@ it("routes reads, profile publication, invite claims and delayed writes to their
       "/secondary/media?",
     );
   } finally {
+    traffic?.dispose();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

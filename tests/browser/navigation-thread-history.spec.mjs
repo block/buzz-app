@@ -1,7 +1,12 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
-test.use({ productionBroker: true, readState: true, threadUnread: true });
+test.use({
+  productionBroker: true,
+  readState: true,
+  threadUnread: true,
+  historyCounts: { alpha: 20, beta: 20 },
+});
 
 test("Back restores each thread visit before the previous channel", async ({
   page,
@@ -10,12 +15,37 @@ test("Back restores each thread visit before the previous channel", async ({
   const beta = page
     .getByRole("navigation", { name: "Subscribed channels" })
     .locator('button[data-channel-id="beta"]');
+  // Intent preparation can supply the same badge as the held unread batch.
+  // Gate both sources; focus explicitly instead of relying on roster warming.
+  let releaseHead;
+  let sawHead;
+  const headHeld = new Promise((resolve) => {
+    releaseHead = resolve;
+  });
+  const headStarted = new Promise((resolve) => {
+    sawHead = resolve;
+  });
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.top_level && filter["#h"]?.includes("beta"))
+    ) {
+      sawHead();
+      await headHeld;
+    }
+    await route.continue().catch(() => {});
+  });
   app.relay.holdUnread();
   try {
     await open(page, app);
+    await beta.focus(); // Prepare without selecting or adding a navigation visit.
+    await headStarted;
     await expect.poll(() => app.report.unreadHolds.length).toBe(1);
     await expect(beta).toHaveAccessibleName("Beta");
   } finally {
+    releaseHead();
     app.relay.releaseUnread();
   }
   // Unread evidence changes the accessible name independently of navigation.

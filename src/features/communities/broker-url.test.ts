@@ -1,3 +1,9 @@
+import {
+  brokerSocket,
+  openBrokerSocket,
+} from "../../../tests/broker-socket.mjs";
+import type { LiveSubscription } from "../relay/live";
+import type { RelayEvent } from "../relay/events";
 import { createServer, type RequestListener } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { ViteDevServer } from "vite";
@@ -12,20 +18,19 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
     relay = keypair();
   const calls: { url: string; init: RequestInit | undefined }[] = [];
   const sockets: string[] = [];
-  vi.stubGlobal(
-    "WebSocket",
-    class {
-      readyState = 0;
-      constructor(url: string) {
-        sockets.push(url);
-      }
-      close() {}
-    },
-  );
+  const publications: { url: string; event: RelayEvent }[] = [];
+  let traffic: LiveSubscription | undefined;
   let handler: RequestListener | undefined;
   const server = createServer((req, res) => handler?.(req, res));
   const plugin = relayBrokerPlugin({
     identity: () => identity.secret,
+    socketFactory: (url) => {
+      sockets.push(url);
+      return brokerSocket((event) => {
+        publications.push({ url, event });
+        return "";
+      }).factory(url);
+    },
     // Use production authority discovery too; only upstream I/O is a fixture.
     upstreamFetch: async (input, init) => {
       const url = String(input);
@@ -164,6 +169,7 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
     );
     expect(transportA.scope).toBe(a);
     assert.exists(transportA.writer);
+    traffic = await openBrokerSocket(transportA);
     const signed = await transportA.writer.sign(
       {
         kind: 9,
@@ -211,11 +217,20 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
       signal: stream.signal,
     });
     expect(response.status).toBe(200);
-    expect(sockets).toEqual(["wss://third.example:8443"]);
+    expect(sockets).toEqual([
+      "wss://third.example:8443",
+      "wss://third.example:8443",
+    ]);
     stream.abort();
-    const published = calls.find((call) => call.url === `${a}/events`);
-    assert.exists(published);
-    expect(published.init?.body).toBe(JSON.stringify(signed));
+    expect(publications).toEqual([
+      {
+        url: "wss://third.example:8443",
+        event: JSON.parse(JSON.stringify(signed)),
+      },
+    ]);
+    assert.exists(publications[0]);
+    expect(verifyEvent(publications[0].event)).toBe(true);
+    expect(calls.some((call) => call.url === `${a}/events`)).toBe(false);
     expect(calls.some((call) => call.url === `${b}/query`)).toBe(true);
     expect(calls.some((call) => call.url === `${b}/api/invites/claim`)).toBe(
       true,
@@ -236,6 +251,7 @@ it("gates arbitrary destinations before discovery/signing and keeps every reques
       400,
     );
   } finally {
+    traffic?.dispose();
     vi.unstubAllGlobals();
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));

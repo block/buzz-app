@@ -1,7 +1,11 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
-test.use({ productionBroker: true, developmentReact: true });
+test.use({
+  productionBroker: true,
+  developmentReact: true,
+  historyCounts: { alpha: 1, beta: 1 },
+});
 
 const channelActivity = (page) =>
   page.getByRole("region", {
@@ -374,7 +378,11 @@ test("profile activity opens the exact agent and originating channel before its 
 });
 
 test.describe("thread activity", () => {
-  test.use({ threadUnread: true, readState: true });
+  test.use({
+    threadUnread: true,
+    readState: true,
+    historyCounts: { alpha: 2, beta: 1 }, // Thread fixtures replace the last two Alpha rows with roots.
+  });
 
   test("thread typing uses the existing route, stays isolated, and opens channel details above the composer", async ({
     page,

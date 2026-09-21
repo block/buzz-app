@@ -8,6 +8,7 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useLayoutEffect } from "react";
@@ -110,7 +111,11 @@ function mount(options: Partial<MessageComposerProps> = {}) {
   const session = {
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
-    profiles: { snapshot: () => profiles, subscribe: () => () => {} },
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: vi.fn(async () => {}),
+    },
     emoji: {
       snapshot: () => emoji,
       subscribe(listener: () => void) {
@@ -583,3 +588,270 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
   expect(h.input()).toHaveValue(before);
   expect(screen.getByRole("alert")).toHaveTextContent("at most 32 recipients");
 });
+
+it.each(
+  ["send", "unmount", "disabled", "denied"].flatMap((outcome) =>
+    ["mention", "avatar"].flatMap((recipient) =>
+      [true, false].map((parent) => ({
+        outcome,
+        recipient,
+        parent,
+      })),
+    ),
+  ),
+)(
+  "waits for agent admission before saved session messages: $recipient / $outcome / parent=$parent",
+  async ({ outcome, recipient, parent }) => {
+    const view = mount();
+    const list = {
+      status: "ready",
+      channels: [
+        {
+          id: "channel",
+          channelType: "session",
+          ...(parent ? { parentChannelId: "parent" } : {}),
+          members: [] as string[],
+        },
+      ],
+    };
+    const library = { status: "ready", definitions: [], identities: [first] };
+    let release = () => {};
+    const addAgents = vi.fn(
+      () =>
+        new Promise<void>((resolve, reject) => {
+          release = () => {
+            if (outcome === "denied") reject(new Error("Cannot add agents"));
+            else {
+              list.channels[0]?.members.push(first.pubkey);
+              resolve();
+            }
+          };
+        }),
+    );
+    const session = {
+      ...view.session,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      agentLibrary: {
+        snapshot: () => library,
+        subscribe: () => () => {},
+        refresh: async () => {},
+      },
+      workSessions: {
+        addAgents,
+        refreshMembership: vi.fn(async () => list.channels[0]),
+      },
+    } as unknown as RelaySession;
+    view.retarget({ session, sessionConversation: true });
+    expect(view.commands().inviteAgents).toBe(true);
+    if (recipient === "mention") {
+      await view.user.click(
+        screen.getByRole("button", { name: "First Honey" }),
+      );
+    } else {
+      await view.user.type(view.input(), "Hello Honey");
+      await view.user.click(
+        screen.getByRole("button", { name: "Choose an agent" }),
+      );
+      await view.user.click(
+        await screen.findByRole("menuitemradio", {
+          name: parent
+            ? "Honey — adds to session and channel"
+            : "Honey — adds to session",
+        }),
+      );
+    }
+    expect(addAgents).not.toHaveBeenCalled();
+    expect(session.workSessions.refreshMembership).not.toHaveBeenCalled();
+    expect(view.messages.send).not.toHaveBeenCalled();
+    view.submit();
+    await waitFor(() =>
+      expect(addAgents).toHaveBeenCalledWith(
+        "channel",
+        [first.pubkey],
+        expect.any(Function),
+      ),
+    );
+    expect(view.messages.send).not.toHaveBeenCalled();
+    if (outcome === "unmount") view.unmount();
+    if (outcome === "disabled") view.retarget({ disabled: true });
+    await act(async () => release());
+    if (outcome === "send") {
+      await waitFor(() => expect(view.messages.send).toHaveBeenCalledOnce());
+      expect(addAgents).toHaveBeenCalledOnce();
+    } else expect(view.messages.send).not.toHaveBeenCalled();
+    if (outcome === "denied") {
+      expect(await screen.findByRole("alert")).toHaveTextContent(
+        "Cannot add agents",
+      );
+      expect(view.input()).toHaveTextContent("Honey");
+    }
+  },
+);
+
+it.each([undefined, "root"])(
+  "resolves a sole session agent before calling shared send/reply, root=%s",
+  async (root) => {
+    const view = mount();
+    const channel = {
+      id: "channel",
+      channelType: "session" as const,
+      members: [first.pubkey],
+    };
+    const list = { status: "ready" as const, channels: [channel] };
+    const library = {
+      status: "ready" as const,
+      definitions: [],
+      identities: [first],
+    };
+    const session = {
+      ...view.session,
+      viewer: "viewer",
+      channels: { list: () => list, subscribeList: () => () => {} },
+      agentLibrary: {
+        snapshot: () => library,
+        subscribe: () => () => {},
+        refresh: vi.fn(async () => {}),
+      },
+      workSessions: {
+        refreshMembership: vi.fn(async () => channel),
+        addAgents: vi.fn(async () => {}),
+      },
+    } as unknown as RelaySession;
+    view.retarget({
+      session,
+      sessionConversation: true,
+      ...(root ? { threadRootId: root } : {}),
+    });
+    view.fill("Keep going");
+    view.submit();
+    await waitFor(() =>
+      expect(
+        root ? view.messages.reply : view.messages.send,
+      ).toHaveBeenCalled(),
+    );
+    if (root)
+      expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        root,
+        "Keep going",
+        [first.pubkey],
+      );
+    else
+      expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
+        "channel",
+        "Keep going",
+        [first.pubkey],
+      );
+    expect(session.workSessions.addAgents).not.toHaveBeenCalled();
+  },
+);
+
+it("routes to the avatar choice and lets an explicit mention override it", async () => {
+  const view = mount();
+  const library = {
+    status: "ready",
+    definitions: [],
+    identities: [first, { ...second, name: "Fizz" }],
+  };
+  const list = {
+    status: "ready",
+    channels: [
+      {
+        id: "channel",
+        channelType: "session",
+        members: [first.pubkey, second.pubkey],
+      },
+    ],
+  };
+  const session = {
+    ...view.session,
+    channels: { list: () => list, subscribeList: () => () => {} },
+    workSessions: {
+      refreshMembership: vi.fn(async () => list.channels[0]),
+      addAgents: vi.fn(async () => {}),
+    },
+    agentLibrary: {
+      snapshot: () => library,
+      subscribe: () => () => {},
+      refresh: async () => {},
+    },
+  } as unknown as RelaySession;
+  view.retarget({ session, sessionConversation: true });
+  await view.user.click(
+    screen.getByRole("button", { name: "Choose an agent" }),
+  );
+  await view.user.click(
+    await screen.findByRole("menuitemradio", { name: "Fizz" }),
+  );
+  await view.user.type(view.input(), "Hello");
+  await view.user.keyboard("{Enter}");
+  expect(view.messages.send).toHaveBeenLastCalledWith("channel", "Hello", [
+    second.pubkey,
+  ]);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "Change agent: Fizz" }),
+    ).toBeEnabled(),
+  );
+  await view.user.click(screen.getByRole("button", { name: "First Honey" }));
+  view.submit();
+  await waitFor(() =>
+    expect(view.messages.send).toHaveBeenLastCalledWith(
+      "channel",
+      expect.any(String),
+      [first.pubkey],
+    ),
+  );
+  expect(session.workSessions.addAgents).not.toHaveBeenCalled();
+});
+
+it.each(["ready", "failed", "unmounted"])(
+  "refreshes cached membership before sending an existing mention: %s",
+  async (outcome) => {
+    const view = mount();
+    const channel = {
+      id: "channel",
+      channelType: "session",
+      members: [first.pubkey],
+    };
+    const list = { status: "ready", channels: [channel] };
+    const library = { status: "ready", identities: [first] };
+    let release = () => {};
+    const refreshMembership = vi.fn(
+      () =>
+        new Promise<typeof channel>((resolve, reject) => {
+          release = () =>
+            outcome === "failed"
+              ? reject(new Error("Could not refresh channel membership"))
+              : resolve(channel);
+        }),
+    );
+    const addAgents = vi.fn();
+    const session = {
+      ...view.session,
+      channels: { list: () => list, subscribeList: () => () => {} },
+      agentLibrary: { snapshot: () => library, subscribe: () => () => {} },
+      workSessions: { refreshMembership, addAgents },
+    } as unknown as RelaySession;
+    view.retarget({ session, sessionConversation: true });
+    await view.user.click(screen.getByRole("button", { name: "First Honey" }));
+    view.submit();
+    await waitFor(() =>
+      expect(refreshMembership).toHaveBeenCalledWith("channel"),
+    );
+    expect(view.messages.send).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
+    if (outcome === "unmounted") view.unmount();
+    await act(async () => release());
+    expect(addAgents).not.toHaveBeenCalled();
+    if (outcome === "ready") expect(view.messages.send).toHaveBeenCalledOnce();
+    else expect(view.messages.send).not.toHaveBeenCalled();
+    if (outcome === "failed") {
+      expect(screen.getByRole("alert")).toHaveTextContent("Could not refresh");
+      expect(view.input()).toHaveTextContent("Honey");
+      expect(
+        screen.getByRole("button", { name: "Send message" }),
+      ).toBeEnabled();
+    }
+  },
+);

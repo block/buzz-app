@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
-import styles from "./Messages.module.css";
+import styles from "./TypingIndicator.module.css";
 
 /** Shared presentation only. Mounting more consumers creates no relay work. */
 export function TypingIndicator({
@@ -24,6 +24,7 @@ export function TypingIndicator({
     (entry) =>
       entry.channelId === channelId && entry.threadRootId === threadRootId,
   );
+  if (!matching.length) return null;
   // Reuse already available names; optional typing must not trigger profile reads.
   const names = matching
     .slice(0, 3)
@@ -31,13 +32,11 @@ export function TypingIndicator({
   const others = matching.length - names.length;
   return (
     <div className={styles.typing}>
-      {matching.length > 0 && (
-        <span role="status" aria-label="Typing activity">
-          {names.join(", ")}
-          {others > 0 ? ` and ${others} others` : ""}
-          {matching.length === 1 ? " is typing…" : " are typing…"}
-        </span>
-      )}
+      <span role="status" aria-label="Typing activity">
+        {names.join(", ")}
+        {others > 0 ? ` and ${others} others` : ""}
+        {matching.length === 1 ? " is typing…" : " are typing…"}
+      </span>
     </div>
   );
 }

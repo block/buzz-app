@@ -10,7 +10,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { X } from "lucide-react";
+import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
@@ -33,6 +33,7 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
+  sessionConversation?: boolean | undefined;
   messageId: string;
   navigation?: PageNavigation | undefined;
   close(): void;
@@ -86,7 +87,7 @@ function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
           size="toolbar"
           aria-label="Close thread"
           onClick={close}
-          icon={<X size={18} aria-hidden="true" />}
+          icon={<XIcon size={18} aria-hidden="true" />}
         />
       }
     />
@@ -103,6 +104,7 @@ function OwnedThreadPanel({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
+  sessionConversation,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -144,6 +146,7 @@ function OwnedThreadPanel({
     </div>
   ) : view ? (
     <ThreadMessages
+      sessionConversation={sessionConversation}
       extensions={extensions}
       session={session}
       scope={scope}
@@ -174,7 +177,9 @@ function ThreadMessages({
   onOpenLink,
   onOpenMediaReview,
   canOpenLink,
+  sessionConversation,
 }: {
+  sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -452,6 +457,7 @@ function ThreadMessages({
       </section>
       {snapshot.root && (
         <MessageComposer
+          sessionConversation={sessionConversation}
           key={`${scope}:${channelId}:${snapshot.root.id}`}
           extensions={extensions}
           session={session}

@@ -1,11 +1,17 @@
-import { test, expect } from "./fixture.mjs";
+import { test as base, expect } from "./fixture.mjs";
+import { streamEvidence } from "./stream-evidence.mjs";
 import { open } from "./timeline.mjs";
 
+// Preserve the failing handoff and capture original-reader delivery on Linux.
+const test = base.extend({
+  streamEvidence: [streamEvidence, { auto: true }],
+});
 test.use({
   productionBroker: true,
   readState: true,
   largeSidebar: true,
   sidebarUnread: true,
+  historyCounts: { alpha: 20, beta: 20 },
 });
 const sidebar = (page) =>
   page.getByRole("complementary", { name: "Channel sidebar", exact: true });

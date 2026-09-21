@@ -38,27 +38,34 @@ async function observeStreamReads(page) {
         const read = reader.read;
         const decoder = new TextDecoder();
         reader.read = function (...args) {
+          // Retain issuance even if the original read never completes. Large-roster
+          // setup can exceed 1 MiB/256 chunks before the held Alpha EOSE release.
+          const record = { issuedAt: performance.now() };
+          const retain =
+            stream.bytes <= 4 * 1024 * 1024 && stream.reads.length < 2048;
+          if (retain) stream.reads.push(record);
+          else stream.truncated = true;
           const pending = Reflect.apply(read, this, args);
           void pending.then(
             ({ value, done }) => {
               try {
-                stream.bytes += value?.byteLength ?? 0;
-                if (stream.bytes > 1024 * 1024 || stream.reads.length >= 256) {
-                  stream.truncated = true;
-                  return;
-                }
-                stream.reads.push({
+                Object.assign(record, {
                   at: performance.now(),
                   done,
                   bytes: value?.byteLength ?? 0,
-                  text: decoder.decode(value, { stream: !done }),
                 });
+                stream.bytes += value?.byteLength ?? 0;
+                if (!retain || stream.bytes > 4 * 1024 * 1024) {
+                  stream.truncated = true;
+                  return;
+                }
+                record.text = decoder.decode(value, { stream: !done });
               } catch (error) {
                 evidence.errors.push(String(error));
               }
             },
             (error) =>
-              stream.reads.push({
+              Object.assign(record, {
                 at: performance.now(),
                 error: String(error),
               }),

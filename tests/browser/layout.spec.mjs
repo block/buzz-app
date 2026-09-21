@@ -1,8 +1,12 @@
 import { test, expect } from "./fixture.mjs";
 import { settle, upper, expectAnchor } from "./timeline.mjs";
 
+const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 // Resize tests must not enter the fixture’s deliberately held paging path.
-const readingTest = test.extend({ tallMessages: true });
+const readingTest = test.extend({
+  tallMessages: true,
+  historyCounts: { alpha: 20, beta: 1 },
+});
 async function expectNonPaging(page, app) {
   expect(
     await page
@@ -80,47 +84,49 @@ async function shellFits(page, width) {
   }
 }
 
-test("page overscroll is disabled while message history still scrolls", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  // Headless wheel input does not reproduce macOS trackpad rubber-banding.
-  // Check the viewport policy as well as real panel scrolling and shell bounds.
-  await expect(page.locator("html")).toHaveCSS("overscroll-behavior", "none");
-  const shell = page.locator(".shell-background");
-  const bounds = await box(shell);
-  const history = page.getByRole("region", { name: "Channel message history" });
-  await settle(page);
-  const initialOffset = await history.evaluate((el) => el.scrollTop);
-  await history.hover();
-  await page.mouse.wheel(0, -300);
-  await expect
-    .poll(() => history.evaluate((el) => el.scrollTop))
-    .toBeLessThan(initialOffset - 100);
-  await settle(page);
-  expect(await box(shell)).toEqual(bounds);
-
-  // Projects has no overflowing content: gestures must leave the shell in place.
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
-  await page.getByRole("heading", { name: "Projects", exact: true }).hover();
-  for (const [x, y] of [
-    [0, -600],
-    [0, 600],
-    [-600, 0],
-    [600, 0],
-  ]) {
-    await page.mouse.wheel(x, y);
-    await page.evaluate(() => new Promise(requestAnimationFrame));
+scroll(
+  "page overscroll is disabled while message history still scrolls",
+  async ({ page, app }) => {
+    await open(page, app);
+    // Headless wheel input does not reproduce macOS trackpad rubber-banding.
+    // Check the viewport policy as well as real panel scrolling and shell bounds.
+    await expect(page.locator("html")).toHaveCSS("overscroll-behavior", "none");
+    const shell = page.locator(".shell-background");
+    const bounds = await box(shell);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await settle(page);
+    const initialOffset = await history.evaluate((el) => el.scrollTop);
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() => history.evaluate((el) => el.scrollTop))
+      .toBeLessThan(initialOffset - 100);
+    await settle(page);
     expect(await box(shell)).toEqual(bounds);
-    expect(await page.evaluate(() => [window.scrollX, window.scrollY])).toEqual(
-      [0, 0],
-    );
-  }
-});
+
+    // Projects has no overflowing content: gestures must leave the shell in place.
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Projects", exact: true })
+      .click();
+    await page.getByRole("heading", { name: "Projects", exact: true }).hover();
+    for (const [x, y] of [
+      [0, -600],
+      [0, 600],
+      [-600, 0],
+      [600, 0],
+    ]) {
+      await page.mouse.wheel(x, y);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      expect(await box(shell)).toEqual(bounds);
+      expect(
+        await page.evaluate(() => [window.scrollX, window.scrollY]),
+      ).toEqual([0, 0]);
+    }
+  },
+);
 
 test("bento surfaces, centered tabs, real link panel and compact community navigation", async ({
   page,
@@ -642,7 +648,14 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = ["Home", "Messages", "Projects", "Agents", "Workflows"];
+  const titles = [
+    "Home",
+    "Messages",
+    "Projects",
+    "Agents",
+    "Sessions",
+    "Workflows",
+  ];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -685,6 +698,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Home",
     "Messages",
     "Agents",
+    "Sessions",
     "Workflows",
   ]);
   await projects.click();
@@ -699,6 +713,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Home",
     "Projects",
     "Agents",
+    "Sessions",
     "Workflows",
   ]);
   await channels.click();
@@ -708,6 +723,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Messages",
     "Projects",
     "Agents",
+    "Sessions",
     "Workflows",
     "Make it yoursSettings",
   ]);

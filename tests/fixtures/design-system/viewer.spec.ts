@@ -80,6 +80,19 @@ test("icon inventory is routed, complete, decorative, and responsive", async ({
   ).toBeVisible();
   await expect(page.getByText("22 × 22px", { exact: true })).toBeVisible();
   await expect(page.getByText("14 × 14px", { exact: true })).toBeVisible();
+  // CSS visibility alone misses captions hidden from assistive technology.
+  for (const [meaning, caption] of [
+    ["Open GitHub issue", "22 × 22px"],
+    ["Microsoft OneDrive link", "14 × 14px"],
+  ] as const) {
+    const example = page
+      .getByRole("article")
+      .filter({
+        has: page.getByRole("heading", { name: meaning, exact: true }),
+      })
+      .locator(".custom-icon-examples");
+    await expect(example).toMatchAriaSnapshot(`- text: ${caption}`);
+  }
 
   for (const width of [390, 800, 1280]) {
     await page.setViewportSize({ width, height: 900 });

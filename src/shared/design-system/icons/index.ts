@@ -101,11 +101,6 @@ export const MagnifyingGlassIcon = defineIcon(
   "phosphor",
   PhosphorMagnifyingGlassIcon,
 );
-import { MicrosoftExcelLogoIcon as PhosphorMicrosoftExcelLogoIcon } from "@phosphor-icons/react/dist/csr/MicrosoftExcelLogo";
-export const MicrosoftExcelLogoIcon = defineIcon(
-  "phosphor",
-  PhosphorMicrosoftExcelLogoIcon,
-);
 import { MicrosoftTeamsLogoIcon as PhosphorMicrosoftTeamsLogoIcon } from "@phosphor-icons/react/dist/csr/MicrosoftTeamsLogo";
 export const MicrosoftTeamsLogoIcon = defineIcon(
   "phosphor",
@@ -153,6 +148,8 @@ import { StopIcon as PhosphorStopIcon } from "@phosphor-icons/react/dist/csr/Sto
 export const StopIcon = defineIcon("phosphor", PhosphorStopIcon);
 import { SunIcon as PhosphorSunIcon } from "@phosphor-icons/react/dist/csr/Sun";
 export const SunIcon = defineIcon("phosphor", PhosphorSunIcon);
+import { TableIcon as PhosphorTableIcon } from "@phosphor-icons/react/dist/csr/Table";
+export const TableIcon = defineIcon("phosphor", PhosphorTableIcon);
 import { TerminalWindowIcon as PhosphorTerminalWindowIcon } from "@phosphor-icons/react/dist/csr/TerminalWindow";
 export const TerminalWindowIcon = defineIcon(
   "phosphor",

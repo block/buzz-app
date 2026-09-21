@@ -50,7 +50,7 @@ export function IconsPage() {
               intendedSizes,
             }) => (
               <article className="custom-icon-item" key={name}>
-                <div className="custom-icon-examples" aria-hidden="true">
+                <div className="custom-icon-examples">
                   {intendedSizes.map(({ width, height }) => (
                     <div
                       className="custom-icon-example"

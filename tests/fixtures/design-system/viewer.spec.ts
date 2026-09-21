@@ -619,3 +619,52 @@ test("invalid input and textarea boundaries remain visible in both themes", asyn
     }
   }
 });
+
+// These cases verify native reset against actual hidden form inputs, not only ARIA.
+test("controlled choices keep the owner's unchanged values after native reset", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Controlled preferences" });
+  const checkbox = form.getByRole("checkbox", { name: "Include a summary" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await checkbox.click();
+  await mentions.click();
+  await expect(checkbox).toBeChecked();
+  await expect(mentions).toBeChecked();
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(checkbox).toBeChecked();
+  await expect(mentions).toBeChecked();
+  await expect(
+    form.locator('input[type="radio"][value="mentions"]'),
+  ).toBeChecked();
+  await expect(
+    form.locator('input[type="checkbox"][name="summary"]'),
+  ).toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ delivery: "mentions", summary: "yes" });
+});
+
+test("radios enabled after mount remain synchronized on native reset", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Deferred preferences" });
+  const all = form.getByRole("radio", { name: "All updates" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await expect(all).toBeDisabled();
+  await form.getByRole("button", { name: "Enable choices" }).click();
+  await mentions.click();
+  await expect(mentions).toBeChecked();
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(all).toBeChecked();
+  await expect(mentions).not.toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ delivery: "all" });
+});

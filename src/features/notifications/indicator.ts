@@ -1,27 +1,34 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { getCurrentWindow } from "@tauri-apps/api/window";
 
-export type DockPermission =
+export type IndicatorPermission =
   | "default"
+  | "setup"
   | "enabled"
   | "disabled"
   | "denied"
   | "unavailable";
-export interface DockPlatform {
-  permission(request: boolean): Promise<DockPermission>;
+export interface IndicatorPlatform {
+  macOS?: boolean;
+  permission(request: boolean): Promise<IndicatorPermission>;
   set(unread: boolean): Promise<void>;
 }
-export function dockPlatform(): DockPlatform | undefined {
-  if (!isTauri() || !/Mac/i.test(globalThis.navigator?.platform ?? "")) return;
+export function indicatorPlatform(): IndicatorPlatform | undefined {
+  const os = globalThis.navigator?.platform ?? "";
+  if (!isTauri() || !/Mac|Win|Linux/i.test(os)) return;
+  const macOS = /Mac/i.test(os);
   return {
-    permission: (request) => invoke("dock_permission", { request }),
-    set: (unread) => getCurrentWindow().setBadgeLabel(unread ? "•" : undefined),
+    macOS,
+    permission: (request) =>
+      macOS
+        ? invoke("dock_permission", { request })
+        : Promise.resolve("enabled"),
+    set: (unread) => invoke("unread_indicator_set", { unread }),
   };
 }
 
 /** One ordered native projection. Pending work always converges on current intent. */
-export function createDockBadge(
-  platform = dockPlatform(),
+export function createUnreadIndicator(
+  platform = indicatorPlatform(),
   host:
     | Pick<Window, "addEventListener" | "removeEventListener">
     | undefined = typeof window === "undefined" ? undefined : window,
@@ -29,7 +36,7 @@ export function createDockBadge(
   let closed = false,
     unread = false;
   let state = Object.freeze({
-    permission: "unavailable" as DockPermission,
+    permission: "unavailable" as IndicatorPermission,
     requesting: false as boolean,
     error: null as string | null,
   });
@@ -94,13 +101,14 @@ export function createDockBadge(
   const refresh = () => {
     void check(false);
   };
-  project(); // Clear an earlier frontend's label before observing any new state.
+  project(); // Clear an earlier frontend's unread state before observing any new state.
   if (platform) {
     host?.addEventListener("focus", refresh);
     refresh();
   }
   return {
     available: !!platform,
+    macOS: platform?.macOS ?? false,
     snapshot: () => state,
     subscribe(listener: () => void) {
       listeners.add(listener);
@@ -125,4 +133,4 @@ export function createDockBadge(
     },
   };
 }
-export type DockBadge = ReturnType<typeof createDockBadge>;
+export type UnreadIndicator = ReturnType<typeof createUnreadIndicator>;

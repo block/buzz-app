@@ -1,4 +1,5 @@
 mod dock;
+mod indicator;
 use dock::dock_permission;
 mod notifications;
 mod terminal;
@@ -167,6 +168,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             notification_show,
             dock_permission,
+            indicator::unread_indicator_set,
             terminal_create_owner,
             terminal_spawn,
             terminal_read,

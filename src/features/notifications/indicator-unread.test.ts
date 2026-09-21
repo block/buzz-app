@@ -4,7 +4,7 @@ import { createRelaySession } from "../relay/session";
 import type { RelayEvent } from "../relay/events";
 import { readJournal, type ReadJournal } from "../relay/read-state-storage";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
-import { bindDockUnread } from "./dock-unread";
+import { bindUnreadIndicator } from "./indicator-unread";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -72,7 +72,7 @@ function setup() {
   } as unknown as Communities;
   const project = vi.fn();
   const bind = () => {
-    const stop = bindDockUnread(communities, project);
+    const stop = bindUnreadIndicator(communities, project);
     cleanups.push(stop);
     return stop;
   };

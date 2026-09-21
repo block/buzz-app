@@ -2,7 +2,7 @@ import type { Communities } from "../communities/service";
 import type { RelaySession } from "../relay/session";
 
 /** A host projection of existing evidence, never a count or a new read owner. */
-export function bindDockUnread(
+export function bindUnreadIndicator(
   communities: Communities,
   project: (unread: boolean) => void,
 ) {

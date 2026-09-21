@@ -7,6 +7,8 @@ pub(crate) enum Permission {
     #[cfg(target_os = "macos")]
     Default,
     #[cfg(target_os = "macos")]
+    Setup,
+    #[cfg(target_os = "macos")]
     Enabled,
     #[cfg(target_os = "macos")]
     Disabled,
@@ -44,16 +46,8 @@ mod macos {
         UNAuthorizationOptions as Options, UNAuthorizationStatus as Authorization,
         UNNotificationSetting as Setting, UNNotificationSettings, UNUserNotificationCenter,
     };
-    use std::{
-        path::Path,
-        ptr::NonNull,
-        sync::{mpsc, Mutex},
-        time::Duration,
-    };
+    use std::{path::Path, ptr::NonNull, sync::mpsc, time::Duration};
 
-    // One successful initial check per process; failures remain recoverable.
-    // Serialization also keeps explicit permission requests from racing repair.
-    static CHECK: Mutex<bool> = Mutex::new(false);
     fn bundled() -> bool {
         let bundle = NSBundle::mainBundle();
         bundle.bundleIdentifier().is_some()
@@ -108,18 +102,12 @@ mod macos {
         rx.recv_timeout(Duration::from_secs(60))
             .map_err(|_| "Dock authorization request timed out".to_string())?
     }
-    fn options(
-        authorization: Authorization,
-        badge: Setting,
-        explicit: bool,
-        repair: bool,
-    ) -> Option<Options> {
-        if explicit && authorization == Authorization::NotDetermined {
+    fn options(authorization: Authorization, badge: Setting, explicit: bool) -> Option<Options> {
+        if !explicit {
+            None
+        } else if authorization == Authorization::NotDetermined {
             Some(Options::Alert | Options::Sound | Options::Badge)
-        } else if repair
-            && authorization == Authorization::Authorized
-            && badge == Setting::NotSupported
-        {
+        } else if authorization == Authorization::Authorized && badge == Setting::NotSupported {
             Some(Options::Badge)
         } else {
             None
@@ -130,14 +118,18 @@ mod macos {
             Permission::Default
         } else if authorization == Authorization::Denied {
             Permission::Denied
+        } else if authorization == Authorization::Authorized && badge == Setting::NotSupported {
+            Permission::Setup
         } else if matches!(
             authorization,
             Authorization::Authorized | Authorization::Provisional | Authorization::Ephemeral
         ) {
             if badge == Setting::Enabled {
                 Permission::Enabled
-            } else {
+            } else if badge == Setting::Disabled {
                 Permission::Disabled
+            } else {
+                Permission::Unavailable
             }
         } else {
             Permission::Unavailable
@@ -147,23 +139,18 @@ mod macos {
         if !bundled() {
             return Ok(Permission::Unavailable);
         }
-        let mut repaired = CHECK
-            .try_lock()
-            .map_err(|_| "Dock permission check already in progress")?;
-        check(explicit, &mut repaired, settings, authorize)
+        check(explicit, settings, authorize)
     }
     fn check(
         explicit: bool,
-        repaired: &mut bool,
         mut settings: impl FnMut() -> Result<(Authorization, Setting), String>,
         mut authorize: impl FnMut(Options) -> Result<(), String>,
     ) -> Result<Permission, String> {
         let (mut authorization, mut badge) = settings()?;
-        if let Some(options) = options(authorization, badge, explicit, !*repaired) {
+        if let Some(options) = options(authorization, badge, explicit) {
             authorize(options)?;
             (authorization, badge) = settings()?;
         }
-        *repaired = true;
         Ok(project(authorization, badge))
     }
 
@@ -181,77 +168,74 @@ mod macos {
             ] {
                 for badge in [Setting::NotSupported, Setting::Disabled, Setting::Enabled] {
                     for explicit in [false, true] {
-                        for repair in [false, true] {
-                            let result = options(auth, badge, explicit, repair);
-                            if explicit && auth == Authorization::NotDetermined {
-                                assert_eq!(
-                                    result,
-                                    Some(Options::Alert | Options::Sound | Options::Badge)
-                                );
-                            } else if repair
-                                && auth == Authorization::Authorized
-                                && badge == Setting::NotSupported
-                            {
-                                assert_eq!(result, Some(Options::Badge));
-                            } else {
-                                assert_eq!(result, None);
-                            }
-                            let mut checked = !repair;
-                            let mut reads = 0;
-                            let mut requests = Vec::new();
-                            let permission = check(
-                                explicit,
-                                &mut checked,
-                                || {
-                                    reads += 1;
-                                    Ok(if reads == 1 {
-                                        (auth, badge)
-                                    } else {
-                                        (Authorization::Authorized, Setting::Enabled)
-                                    })
-                                },
-                                |options| {
-                                    requests.push(options);
-                                    Ok(())
-                                },
-                            )
-                            .unwrap();
-                            assert_eq!(requests, result.into_iter().collect::<Vec<_>>());
-                            assert_eq!(reads, if result.is_some() { 2 } else { 1 });
-                            assert!(checked);
-                            assert_eq!(
-                                permission,
-                                if result.is_some() {
-                                    Permission::Enabled
+                        let expected = if explicit && auth == Authorization::NotDetermined {
+                            Some(Options::Alert | Options::Sound | Options::Badge)
+                        } else if explicit
+                            && auth == Authorization::Authorized
+                            && badge == Setting::NotSupported
+                        {
+                            Some(Options::Badge)
+                        } else {
+                            None
+                        };
+                        let mut reads = 0;
+                        let mut requests = Vec::new();
+                        let permission = check(
+                            explicit,
+                            || {
+                                reads += 1;
+                                Ok(if reads == 1 {
+                                    (auth, badge)
                                 } else {
-                                    project(auth, badge)
-                                }
-                            );
-                            assert_eq!(
-                                project(auth, badge) == Permission::Enabled,
-                                badge == Setting::Enabled
-                                    && matches!(
-                                        auth,
-                                        Authorization::Authorized
-                                            | Authorization::Provisional
-                                            | Authorization::Ephemeral
-                                    )
-                            );
-                        }
+                                    (Authorization::Authorized, Setting::Enabled)
+                                })
+                            },
+                            |options| {
+                                requests.push(options);
+                                Ok(())
+                            },
+                        )
+                        .unwrap();
+                        assert_eq!(requests, expected.into_iter().collect::<Vec<_>>());
+                        assert_eq!(reads, if expected.is_some() { 2 } else { 1 });
+                        assert_eq!(
+                            permission,
+                            if expected.is_some() {
+                                Permission::Enabled
+                            } else {
+                                project(auth, badge)
+                            }
+                        );
+                        assert_eq!(
+                            project(auth, badge) == Permission::Enabled,
+                            badge == Setting::Enabled
+                                && matches!(
+                                    auth,
+                                    Authorization::Authorized
+                                        | Authorization::Provisional
+                                        | Authorization::Ephemeral
+                                )
+                        );
                     }
                 }
             }
+            assert_eq!(
+                project(Authorization::Authorized, Setting::NotSupported),
+                Permission::Setup
+            );
+            assert_eq!(
+                project(Authorization::Authorized, Setting::Disabled),
+                Permission::Disabled
+            );
         }
         #[test]
-        fn failed_repair_remains_recoverable_on_a_later_check() {
+        fn failed_explicit_setup_remains_recoverable_without_startup_mutation() {
             // Fail initial settings, authorization, then post-authorization settings.
             for failure in 0..3 {
-                let mut checked = false;
                 let mut reads = 0;
                 let mut requests = 0;
                 assert!(check(
-                    false,
-                    &mut checked,
+                    true,
                     || {
                         reads += 1;
                         if (failure == 0 && reads == 1) || (failure == 2 && reads == 2) {
@@ -270,14 +254,20 @@ mod macos {
                     }
                 )
                 .is_err());
-                assert!(!checked);
                 assert_eq!(requests, if failure == 0 { 0 } else { 1 });
-                let mut reads = 0;
-                let mut requested = Vec::new();
                 assert_eq!(
                     check(
                         false,
-                        &mut checked,
+                        || Ok((Authorization::Authorized, Setting::NotSupported)),
+                        |_| panic!("refresh must not repair permission")
+                    )
+                    .unwrap(),
+                    Permission::Setup
+                );
+                let mut reads = 0;
+                assert_eq!(
+                    check(
+                        true,
                         || {
                             reads += 1;
                             Ok((
@@ -290,24 +280,21 @@ mod macos {
                             ))
                         },
                         |options| {
-                            requested.push(options);
+                            assert_eq!(options, Options::Badge);
                             Ok(())
                         }
                     )
                     .unwrap(),
                     Permission::Enabled
                 );
-                assert_eq!(requested, vec![Options::Badge]);
-                assert!(checked);
+                assert_eq!(reads, 2);
             }
         }
         #[test]
         fn no_prompt_on_startup_then_explicit_action_uses_fresh_settings() {
-            let mut checked = false;
             assert_eq!(
                 check(
                     false,
-                    &mut checked,
                     || Ok((Authorization::NotDetermined, Setting::NotSupported)),
                     |_| panic!("startup must not request permission")
                 )
@@ -318,7 +305,6 @@ mod macos {
             assert_eq!(
                 check(
                     true,
-                    &mut checked,
                     || {
                         reads += 1;
                         Ok(if reads == 1 {

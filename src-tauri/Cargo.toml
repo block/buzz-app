@@ -36,6 +36,7 @@ objc2-user-notifications = { version = "=0.3.2", default-features = false, featu
 tauri-winrt-notification = "=0.8.1"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
 zbus = { version = "=5.19.0", default-features = false, features = ["async-io"] }
 futures-lite = "=2.6.1"
 gtk = "0.18"

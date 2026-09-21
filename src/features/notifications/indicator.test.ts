@@ -1,5 +1,5 @@
 import { afterEach, expect, it, vi } from "vitest";
-import { createDockBadge, type DockPermission } from "./dock";
+import { createUnreadIndicator, type IndicatorPermission } from "./indicator";
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -14,13 +14,13 @@ const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   for (const stop of cleanups.splice(0)) await stop();
 });
-function setup(initial: DockPermission = "enabled") {
+function setup(initial: IndicatorPermission = "enabled") {
   const permission = vi.fn(
-    async (_request: boolean): Promise<DockPermission> => initial,
+    async (_request: boolean): Promise<IndicatorPermission> => initial,
   );
   const set = vi.fn(async (_unread: boolean) => {});
   const host = new EventTarget();
-  const dock = createDockBadge({ permission, set }, host);
+  const dock = createUnreadIndicator({ permission, set }, host);
   cleanups.push(dock.dispose);
   return { dock, set, permission, host };
 }
@@ -38,7 +38,7 @@ it("silently checks on startup and projects unread after allow, independently of
   await h.dock.dispose();
   expect(h.set).toHaveBeenLastCalledWith(false);
 });
-it.each(["default", "disabled", "denied", "unavailable"] as const)(
+it.each(["default", "setup", "disabled", "denied", "unavailable"] as const)(
   "withholds the dot for %s and clears on changed system permission",
   async (permission) => {
     const h = setup();
@@ -96,7 +96,7 @@ it("coalesces rapid changes behind one pending native write and makes teardown c
 it("late permission completion cannot revive a disposed badge", async () => {
   const h = setup();
   await h.dock.refresh();
-  const pending = deferred<DockPermission>();
+  const pending = deferred<IndicatorPermission>();
   h.permission.mockImplementationOnce(() => pending.promise);
   const check = h.dock.request();
   h.dock.setUnread(true);
@@ -120,7 +120,7 @@ it("reports native write failure without a retry loop and accepts a later curren
 it("keeps an explicit request when a focus check was already pending", async () => {
   const h = setup("default");
   await h.dock.refresh();
-  const pending = deferred<DockPermission>();
+  const pending = deferred<IndicatorPermission>();
   h.permission.mockImplementationOnce(() => pending.promise);
   const check = h.dock.refresh();
   const request = h.dock.request();

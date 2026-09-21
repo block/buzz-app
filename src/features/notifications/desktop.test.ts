@@ -12,7 +12,7 @@ import { messageNotificationText } from "./content";
 const sdk = vi.hoisted(() => ({
   show: vi.fn(async (..._args: unknown[]) => {}),
   permission: vi.fn(async (_args: unknown) => "enabled"),
-  badge: vi.fn(async (_label?: string) => {}),
+  indicator: vi.fn(async (_args: unknown) => {}),
 }));
 const native = vi.hoisted(() => ({ value: true }));
 vi.mock("@tauri-apps/api/core", () => ({
@@ -20,14 +20,12 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (command: string, args: unknown) => {
     if (command === "notification_show") return sdk.show(command, args);
     if (command === "dock_permission") return sdk.permission(args);
+    if (command === "unread_indicator_set") return sdk.indicator(args);
     throw new Error(`Unexpected native command: ${command}`);
   },
   Channel: class {
     constructor(public onmessage: (response: unknown) => void) {}
   },
-}));
-vi.mock("@tauri-apps/api/window", () => ({
-  getCurrentWindow: () => ({ setBadgeLabel: sdk.badge }),
 }));
 beforeEach(() => vi.stubGlobal("navigator", { platform: "MacIntel" }));
 vi.mock("react", async (original) => ({
@@ -98,8 +96,8 @@ it("banner permission stays system-managed while Dock permission is queried sepa
   expect(service.snapshot().permission).toBe("unknown");
   expect(sdk.show).not.toHaveBeenCalled();
   expect(sdk.permission).toHaveBeenCalledExactlyOnceWith({ request: false });
-  expect(service.dock.snapshot().permission).toBe("enabled");
-  expect(sdk.badge).toHaveBeenCalledExactlyOnceWith(undefined);
+  expect(service.indicator.snapshot().permission).toBe("enabled");
+  expect(sdk.indicator).toHaveBeenCalledExactlyOnceWith({ unread: false });
   await submit("first");
   await flush();
   expect(sdk.show).toHaveBeenCalledOnce();
@@ -319,33 +317,52 @@ it("native presentation rejects at capacity before sending instead of evicting l
 });
 
 it.each(["Win32", "Linux x86_64"])(
-  "%s has no Dock permission or setter calls",
+  "%s projects and clears unread without macOS permission calls or changing banners",
   async (platform) => {
     vi.stubGlobal("navigator", { platform });
-    const { service, submit } = setup();
+    const { service, submit, ctx } = setup();
+    await service.indicator.refresh();
+    expect(service.indicator.available).toBe(true);
+    expect(service.indicator.macOS).toBe(false);
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false });
+    service.indicator.setUnread(true);
+    await flush();
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
+    await service.indicator.request();
+    expect(sdk.permission).not.toHaveBeenCalled();
     await submit("banner");
     await flush();
-    expect(service.dock.available).toBe(false);
-    expect(sdk.permission).not.toHaveBeenCalled();
-    expect(sdk.badge).not.toHaveBeenCalled();
     expect(sdk.show).toHaveBeenCalledOnce();
+    await ctx.fiber.dispose();
+    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false });
   },
 );
 
-it("the macOS default binds explicit permission and exact Dock label/clear commands", async () => {
+it("browser runs create no shell indicator", async () => {
+  native.value = false;
+  const { service, ctx } = setup();
+  service.indicator.setUnread(true);
+  await service.indicator.refresh();
+  await ctx.fiber.dispose();
+  expect(service.indicator.available).toBe(false);
+  expect(sdk.permission).not.toHaveBeenCalled();
+  expect(sdk.indicator).not.toHaveBeenCalled();
+});
+
+it("the macOS default binds explicit permission and ordered unread/clear commands", async () => {
   sdk.permission.mockResolvedValueOnce("default");
   const { service, ctx } = setup();
-  service.dock.setUnread(true);
-  await service.dock.refresh();
-  expect(sdk.badge.mock.calls).toEqual([[undefined]]);
-  await service.dock.request();
+  service.indicator.setUnread(true);
+  await service.indicator.refresh();
+  expect(sdk.indicator.mock.calls).toEqual([[{ unread: false }]]);
+  await service.indicator.request();
   expect(sdk.permission.mock.calls).toEqual([
     [{ request: false }],
     [{ request: true }],
   ]);
-  expect(sdk.badge).toHaveBeenLastCalledWith("•");
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
   service.updatePreferences({ enabled: false });
-  expect(sdk.badge).toHaveBeenLastCalledWith("•");
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
   await ctx.fiber.dispose();
-  expect(sdk.badge).toHaveBeenLastCalledWith(undefined);
+  expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false });
 });

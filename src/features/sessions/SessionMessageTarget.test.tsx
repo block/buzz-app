@@ -54,6 +54,14 @@ function setup() {
   const profiles = new Map();
   const channels = { status: "ready", channels: [] };
   const session = {
+    presence: {
+      status: () => "unknown",
+      limited: () => false,
+      subscribe: () => () => {},
+    } satisfies Pick<
+      RelaySession["presence"],
+      "status" | "limited" | "subscribe"
+    >,
     thread: vi.fn(() => {
       const view = makeView();
       views.push(view);

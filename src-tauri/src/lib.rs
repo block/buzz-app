@@ -1,3 +1,5 @@
+mod dock;
+use dock::dock_permission;
 mod notifications;
 mod terminal;
 use notifications::{notification_show, Notifications};
@@ -164,6 +166,7 @@ pub fn run() {
         .manage(PluginManager(Manager::from_env()))
         .invoke_handler(tauri::generate_handler![
             notification_show,
+            dock_permission,
             terminal_create_owner,
             terminal_spawn,
             terminal_read,

@@ -1,3 +1,4 @@
+import { DockSettings } from "./DockSettings";
 import { useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
 
@@ -104,6 +105,7 @@ export function NotificationSettings({
           Message alerts cover the selected community while Buzz is running.
           Reading history and reconnecting stay quiet.
         </p>
+        <DockSettings dock={notifications.dock} />
         {state.preferencesError && (
           <div role="alert" className="notice">
             <p>{state.preferencesError}</p>

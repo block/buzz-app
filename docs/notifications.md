@@ -73,8 +73,9 @@ mac-notification-sys on macOS, the freedesktop notification interface through
 zbus on Linux, and tauri-winrt-notification on Windows. Linux uses the already
 locked zbus dependency directly because notify-rust's send-then-listen wrapper
 can lose early actions. No dependency upgrade or new native FFI is needed.
-Permission and sound remain system-controlled; no permission-only plugin
-or synthetic desktop permission prompt is installed. The main-window-only bridge
+Banner permission and sound remain system-controlled; no permission-only plugin
+or synthetic desktop notification is installed. The macOS Dock settings below
+provide an explicit system authorization action. The main-window-only bridge
 carries display text and an opaque presentation ID, never an account, credential
 or navigation destination. Its Tauri response channel is registered before native
 submission.
@@ -94,9 +95,9 @@ framework's stale minimized-state focus guard. Compositor
 focus policy still applies. Dismissal never navigates. Observable send/focus
 failures reach Settings without retry; a focus error does not discard navigation.
 
-Desktop permission state is not observable through these backends. Settings
+Banner permission state is not observable through these backends. Settings
 describes permission and sound as system-controlled, without ineffective desktop
-permission or sound controls. The bridge accepts a submission before waiting for
+banner permission or sound controls. The bridge accepts a submission before waiting for
 interaction: acceptance is **not** proof that a visible banner appeared. The macOS
 backend does not expose all delivery failures, and no uniform withdrawal/receipt
 guarantee is promised.
@@ -116,3 +117,37 @@ For macOS, Windows and Linux, manual acceptance includes background and minimize
 Buzz, two distinct message/thread targets, immediate banner click, banner fade
 then Notification Center click, dismissal without navigation, and old-account or
 revoked-access rejection. A macOS pass is not Windows/Linux acceptance.
+
+
+## macOS Dock unread indicator
+
+The host projects one dot from the selected community's existing unread selectors:
+observed unread messages (including thread replies) or explicit channel-unread
+intent. It is not an exact message count or evidence of complete history. Unknown
+and observed-zero both omit the dot. Existing bounded evidence/read-state owns
+startup and updates; this projection adds no relay reads, subscriptions, or storage.
+Personal space, account/session changes, access loss and app disposal clear or
+recompute the indicator. Disabling Channels does not stop host ownership.
+
+Settings → Notifications → Dock unread indicator shows the macOS badge setting.
+A fresh permission prompt occurs only after **Allow notifications and badges**;
+it requests Alert, Sound and Badge together. The first native check per process
+can add Badge alone for an already Authorized installation whose badge setting
+is NotSupported. Denied authorization and explicitly Disabled badges are never
+re-requested. Focus and **Check Dock permission** refresh the current setting;
+errors withhold the dot and are shown, not automatically retried. Desktop alert
+preferences do not alter this unread indicator. macOS System Settings controls
+badge opt-out.
+
+This capability requires an actual macOS `.app` bundle. Unbundled `tauri dev` never
+calls UserNotifications or borrows Terminal's badge permission. Other desktop
+platforms and browsers have no Dock adapter. Existing banner delivery/clicks and
+their acceptance limits above are unchanged.
+
+Tests use real relay/unread services for projection transitions, deferred native
+boundaries for ordering, and mounted Settings controls for explicit permission
+intent. Native tests cover the authorization/setting matrix and reject unbundled
+framework calls. These are not proof of a visible Dock dot. Bundled acceptance
+must separately exercise first permission, Badge-only repair, deny/disable,
+startup/arrival/read clearing and switching with isolated identities; distribution
+signing and packaged account support remain separate work.

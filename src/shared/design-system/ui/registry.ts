@@ -434,9 +434,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "navigation-item",
     name: "NavigationItem",
-    purpose: "A selectable destination row with optional icon and metadata.",
+    purpose:
+      "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button",
-    variants: ["default", "inset", "selected"],
+    variants: ["row", "pill", "inset", "selected"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

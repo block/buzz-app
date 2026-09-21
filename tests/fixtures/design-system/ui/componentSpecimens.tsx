@@ -623,6 +623,7 @@ function NavigationSectionSpecimen() {
 
 function NavigationItemSpecimen() {
   const [selected, setSelected] = useState("buzz-design");
+  const [selectedPill, setSelectedPill] = useState("Notes");
   return (
     <div className="component-specimen-stack">
       {/* Interactive: clicking moves `selected`, so the selected fill and the
@@ -655,6 +656,19 @@ function NavigationItemSpecimen() {
             selected={selected === "session"}
             onClick={() => setSelected("session")}
           />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup label="Pill — click to move the selection">
+        <div className="component-specimen-row">
+          {["Notes", "Activity"].map((label) => (
+            <NavigationItem
+              key={label}
+              label={label}
+              variant="pill"
+              selected={selectedPill === label}
+              onClick={() => setSelectedPill(label)}
+            />
+          ))}
         </div>
       </SpecimenGroup>
     </div>

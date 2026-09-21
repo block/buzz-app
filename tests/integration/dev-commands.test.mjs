@@ -27,6 +27,10 @@ function recipe(name, ...args) {
       new URL("../../scripts/desktop-dev.mjs", import.meta.url),
       path.join(directory, "scripts/desktop-dev.mjs"),
     );
+    copyFileSync(
+      new URL("../../scripts/worktree-icon.mjs", import.meta.url),
+      path.join(directory, "scripts/worktree-icon.mjs"),
+    );
     // Run the real recipes and adapter, recording only the package-manager boundary.
     symlinkSync(process.execPath, path.join(directory, "node"));
     writeFileSync(

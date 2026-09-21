@@ -3,6 +3,12 @@
 The host provides one `notifications` service for built-in messages and trusted
 plugins. Settings → Notifications stores account-local choices: alerts are on
 by default, subject to system permission; master off preserves category choices.
+To pause all alerts and permission requests in a local dev server, set
+`BUZZ_DEV_NOTIFICATIONS=0` in `.env.local` and restart the server. Only `0` pauses
+notifications; unset or any other value keeps normal behavior. This development
+gate never rewrites saved preferences. Settings shows the pause and how to remove
+it; normal behavior still honors account choices and system permission.
+Production builds ignore this variable.
 Browser sound uses the Notification API. Desktop sound is managed in OS settings;
 there is no separate audio player.
 

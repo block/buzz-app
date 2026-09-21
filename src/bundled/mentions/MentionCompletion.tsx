@@ -1,4 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useMentionAgents } from "../../features/agents/mention-context";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/Avatar";
@@ -10,6 +11,7 @@ import { matchesMentionQuery } from "./mention-query";
 const demands = new WeakMap<RelaySession, Set<string>>();
 export function MentionCompletion({
   session,
+  scope,
   channelId,
   query,
   publish,
@@ -26,6 +28,19 @@ export function MentionCompletion({
   );
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
+  const { agents } = useMentionAgents(scope);
+  const available = useMemo(
+    () =>
+      channel?.members &&
+      !channel.archived &&
+      (channel.channelType === "stream" || channel.channelType === "forum") &&
+      session.outbox?.supports(9000)
+        ? agents
+            .filter((agent) => !channel.members?.includes(agent.pubkey))
+            .map(({ pubkey, name }) => ({ pubkey, name }))
+        : [],
+    [channel, agents, session.outbox],
+  );
   const members = channel?.members ?? [];
   const memberKey = members.join(":");
   const [attempt, retry] = useState(0);
@@ -50,10 +65,13 @@ export function MentionCompletion({
   }, [session, memberKey, attempt]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const candidates = members.map((pubkey) => ({
-      pubkey,
-      name: profiles.get(pubkey)?.name ?? pubkey.slice(0, 12),
-    }));
+    const candidates = [
+      ...members.map((pubkey) => ({
+        pubkey,
+        name: profiles.get(pubkey)?.name ?? pubkey.slice(0, 12),
+      })),
+      ...available,
+    ];
     const needle = query.query.toLowerCase();
     const admitted = matchesMentionQuery(
       query.query,
@@ -78,7 +96,9 @@ export function MentionCompletion({
       items: matching.slice(0, 20).map((recipient) => ({
         id: recipient.pubkey,
         label: recipient.name,
-        detail: recipient.pubkey,
+        detail: members.includes(recipient.pubkey)
+          ? recipient.pubkey
+          : "Adds to channel when you send",
         preview: (
           <Avatar
             name={recipient.name}
@@ -87,7 +107,12 @@ export function MentionCompletion({
               "small",
             )}
             className="size-7 rounded-lg text-caption"
-            shape={agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"}
+            shape={
+              agentPubkeys.has(recipient.pubkey) ||
+              !members.includes(recipient.pubkey)
+                ? "squircle"
+                : "circle"
+            }
           />
         ),
         edit: { mention: recipient },
@@ -142,6 +167,7 @@ export function MentionCompletion({
     channel,
     channelId,
     memberKey,
+    available,
     profiles,
     agentPubkeys,
     query.query,

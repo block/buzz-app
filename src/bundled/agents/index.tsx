@@ -1,6 +1,6 @@
 import type { PluginModule } from "../../plugins/api";
 import { AgentsPage } from "./AgentsPage";
-export const inject = ["pages", "relay", "agentControl", "navigation"];
+export const inject = ["pages", "relay", "agentControl"];
 export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const control = ctx.agentControl;
@@ -8,8 +8,6 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "agents",
     title: "Agents",
     layout: "workspace",
-    component: () => (
-      <AgentsPage relay={relay} control={control} navigator={ctx.navigation} />
-    ),
+    component: () => <AgentsPage relay={relay} control={control} />,
   });
 };

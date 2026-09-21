@@ -150,6 +150,19 @@ impl Store {
         agent.enabled = enabled;
         self.write(&doc)
     }
+    pub(crate) fn profile_published(&mut self, id: &str, revision: u64) -> Result<()> {
+        let mut doc = self.read()?;
+        let agent = doc
+            .agents
+            .iter_mut()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        if agent.revision != revision {
+            return Err("Saved settings changed; retry the profile".into());
+        }
+        agent.extra.remove("profilePending");
+        self.write(&doc)
+    }
     pub(crate) fn insert(&mut self, agents: Vec<Agent>) -> Result<()> {
         let mut doc = self.read()?;
         doc.agents.extend(agents);

@@ -15,30 +15,28 @@ export function AgentHarnessEditor({
   const harness = options.find((option) => option.command === draft.command);
   return (
     <div className="space-y-4">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <ConfigChoice
-          label="Harness"
-          customLabel="Custom executable / current value"
-          inputLabel="Executable"
-          value={draft.command}
-          options={options.map(({ command, label }) => ({
-            value: command,
-            label,
-          }))}
-          onChange={(command) => onChange({ command })}
-        />
-        <ConfigChoice
-          label="Provider"
-          customLabel="Custom provider / current value"
-          inputLabel="Custom provider"
-          value={draft.provider}
-          options={[
-            { value: "", label: "Not set" },
-            ...(harness?.providers ?? []),
-          ]}
-          onChange={(provider) => onChange({ provider })}
-        />
-      </div>
+      <ConfigChoice
+        label="Harness"
+        customLabel="Custom executable / current value"
+        inputLabel="Executable"
+        value={draft.command}
+        options={options.map(({ command, label }) => ({
+          value: command,
+          label,
+        }))}
+        onChange={(command) => onChange({ command })}
+      />
+      <ConfigChoice
+        label="Provider"
+        customLabel="Custom provider / current value"
+        inputLabel="Custom provider"
+        value={draft.provider}
+        options={[
+          { value: "", label: "Not set" },
+          ...(harness?.providers ?? []),
+        ]}
+        onChange={(provider) => onChange({ provider })}
+      />
     </div>
   );
 }

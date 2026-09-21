@@ -328,43 +328,27 @@ impl Controller {
             );
         }
         agent.apply(edit)?;
-        if Path::new(&agent.harness.command)
-            .file_name()
-            .and_then(|s| s.to_str())
-            != Some("buzz-agent")
-        {
-            return Err("Model discovery requires the Buzz Agent harness".into());
-        }
-        let provider = agent
+        model_context(&agent.harness, &agent.environment)
+    }
+    pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
+        let environment = edit
             .environment
-            .get("BUZZ_AGENT_PROVIDER")
-            .unwrap_or(&agent.harness.provider);
-        if provider != "databricks_v2" {
-            return Err("Effective provider is not Databricks v2; check the provider and environment overrides".into());
-        }
-        if agent.environment.contains_key("DATABRICKS_TOKEN") {
-            return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
-        }
-        Ok(ModelContext {
-            host: agent
-                .environment
-                .get("DATABRICKS_HOST")
-                .cloned()
-                .or_else(|| {
-                    agent
-                        .harness
-                        .databricks
-                        .as_ref()
-                        .map(|s| s.host.clone())
-                        .filter(|h| !h.is_empty())
-                }),
-            filter: agent
-                .environment
-                .get("DATABRICKS_MODEL_FILTER")
-                .cloned()
-                .or_else(|| agent.harness.databricks.as_ref().map(|s| s.filter.clone())),
-            model_overridden: agent.environment.contains_key("BUZZ_AGENT_MODEL"),
-        })
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|value| (key, value)))
+            .collect();
+        model_context(&edit.harness, &environment)
+    }
+    pub fn requires_legacy_handover(&self, id: &str) -> Result<bool> {
+        let agent = self
+            .store
+            .agents()?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or("Agent no longer exists")?;
+        Ok(
+            agent.extra.get("nativeCreated") != Some(&serde_json::Value::Bool(true))
+                || !agent.imported.is_null(),
+        )
     }
     pub fn prepare_import(
         &self,
@@ -438,6 +422,7 @@ impl Controller {
         action: Action,
         revision: u64,
         key: &crate::Secret,
+        replay_floor: Option<u64>,
     ) -> Result<ControlSnapshot> {
         if self.credential_request(id)?.2 != revision {
             return Err("Saved settings changed while opening credentials; retry Start".into());
@@ -446,7 +431,7 @@ impl Controller {
         if matches!(action, Action::Restart) {
             self.stop(id)?;
         }
-        match self.start_with_key(id, Some(key)) {
+        match self.start_with_key(id, Some(key), replay_floor) {
             Ok(()) => {
                 self.errors.remove(id);
             }
@@ -469,9 +454,14 @@ impl Controller {
             .collect())
     }
     fn start(&mut self, id: &str) -> Result<()> {
-        self.start_with_key(id, None)
+        self.start_with_key(id, None, None)
     }
-    fn start_with_key(&mut self, id: &str, supplied: Option<&crate::Secret>) -> Result<()> {
+    fn start_with_key(
+        &mut self,
+        id: &str,
+        supplied: Option<&crate::Secret>,
+        replay_floor: Option<u64>,
+    ) -> Result<()> {
         if let Some(run) = self.running.get_mut(id) {
             if run.process.alive()? {
                 return Ok(());
@@ -510,6 +500,10 @@ impl Controller {
             .tempdir_in(&runs)
             .map_err(|_| "Could not create private runtime directory")?;
         let mut command = bundle.command(&agent, key)?;
+        // Per-send startup input, never saved configuration or inherited environment.
+        if let Some(floor) = replay_floor {
+            command.env("BUZZ_ACP_REPLAY_FLOOR", floor.to_string());
+        }
         // Last writer wins: neither user environment nor relay persona extra_env
         // may redirect credentials/temp signing material outside this app profile.
         command
@@ -583,3 +577,42 @@ impl Drop for Controller {
 }
 #[cfg(test)]
 mod tests;
+
+fn model_context(
+    harness: &crate::HarnessEdit,
+    environment: &BTreeMap<String, String>,
+) -> Result<ModelContext> {
+    if Path::new(&harness.command)
+        .file_name()
+        .and_then(|s| s.to_str())
+        != Some("buzz-agent")
+    {
+        return Err("Model discovery requires the Buzz Agent harness".into());
+    }
+    let provider = environment
+        .get("BUZZ_AGENT_PROVIDER")
+        .unwrap_or(&harness.provider);
+    if provider != "databricks_v2" {
+        return Err(
+            "Effective provider is not Databricks v2; check the provider and environment overrides"
+                .into(),
+        );
+    }
+    if environment.contains_key("DATABRICKS_TOKEN") {
+        return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
+    }
+    Ok(ModelContext {
+        host: environment.get("DATABRICKS_HOST").cloned().or_else(|| {
+            harness
+                .databricks
+                .as_ref()
+                .map(|s| s.host.clone())
+                .filter(|h| !h.is_empty())
+        }),
+        filter: environment
+            .get("DATABRICKS_MODEL_FILTER")
+            .cloned()
+            .or_else(|| harness.databricks.as_ref().map(|s| s.filter.clone())),
+        model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
+    })
+}

@@ -50,6 +50,27 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     const button = await actions.boundingBox();
     expect(button.y - bounds.y).toBeLessThan(16);
     expect(bounds.x + bounds.width - button.x - button.width).toBeLessThan(16);
+    // Managed cards group identity in one row, not a tall gallery pedestal.
+    const avatar = await card
+      .getByRole("img", { name: "Fixture agent", exact: true })
+      .boundingBox();
+    const name = await card
+      .getByRole("heading", { name: "Fixture agent", exact: true })
+      .boundingBox();
+    expect(name.x).toBeGreaterThan(avatar.x + avatar.width);
+    expect(name.y).toBeGreaterThanOrEqual(avatar.y);
+    expect(name.y + name.height).toBeLessThanOrEqual(avatar.y + avatar.height);
+    const add = page.getByRole("button", { name: "Add agent", exact: true });
+    await expect(add).toHaveAttribute("aria-expanded", "false");
+    await add.focus();
+    await add.press("Enter");
+    await expect(
+      page.getByLabel("Destination community", { exact: true }),
+    ).toBeVisible();
+    await add.press("Enter");
+    await expect(
+      page.getByLabel("Destination community", { exact: true }),
+    ).toBeHidden();
     await expect(
       card.getByRole("button", { name: "Edit", exact: true }),
     ).toHaveCount(0);
@@ -70,8 +91,19 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel("Workspace", { exact: true })).toBeHidden();
-    await expect(dialog.getByLabel("Harness", { exact: true })).toBeHidden();
-    await expect(dialog.getByLabel("Provider", { exact: true })).toBeHidden();
+    await expect(dialog.getByLabel("Harness", { exact: true })).toBeVisible();
+    await expect(dialog.getByLabel("Provider", { exact: true })).toBeVisible();
+    const harness = await dialog
+      .getByLabel("Harness", { exact: true })
+      .boundingBox();
+    const provider = await dialog
+      .getByLabel("Provider", { exact: true })
+      .boundingBox();
+    const model = await dialog
+      .getByRole("combobox", { name: "Model", exact: true })
+      .boundingBox();
+    expect(provider.y).toBeGreaterThan(harness.y + harness.height);
+    expect(model.y).toBeGreaterThan(provider.y + provider.height);
     await dialog
       .getByRole("button", { name: "Browse models", exact: true })
       .click();
@@ -230,9 +262,8 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
   }
 });
 
-// Browser-only: real storage → navigation/remount → rich composer identity rendering,
-// plus native keyboard focus and narrow-card geometry. Failure matrices live in RTL.
-test("managed controls prepare an exact channel mention without replacing a draft", async ({
+// Browser-only: compact card geometry after removing channel-selection controls.
+test("managed cards omit the channel picker at narrow widths", async ({
   page,
 }) => {
   const server = await createServer({
@@ -242,9 +273,8 @@ test("managed controls prepare an exact channel mention without replacing a draf
     server: { host: "127.0.0.1", port: 0, strictPort: false },
   });
   await server.listen();
-  const errors = [];
-  page.on("pageerror", (e) => errors.push(String(e)));
   try {
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
     );
@@ -252,73 +282,15 @@ test("managed controls prepare an exact channel mention without replacing a draf
       name: "Agent Fixture agent",
       exact: true,
     });
-    const stop = card.getByRole("button", { name: "Stop", exact: true });
-    await expect(stop).toBeVisible();
-    await stop.click();
     await expect(
-      card.getByRole("button", { name: "Start", exact: true }),
-    ).toBeEnabled();
-    const storedKey = `buzz-view.v1:${JSON.stringify([`https://relay.example.test:${"de".repeat(32)}`, "draft:11111111-1111-4111-8111-111111111111"])}`;
-    await page.evaluate(
-      (key) => localStorage.setItem(key, JSON.stringify("Existing draft")),
-      storedKey,
-    );
-    await page.setViewportSize({ width: 390, height: 844 });
-    await page.evaluate(() => {
-      document.documentElement.dataset.colorMode = "dark";
-    });
-    const use = card.getByRole("button", {
-      name: "Use in channel",
-      exact: true,
-    });
-    await use.focus();
-    await use.press("Enter");
-    const choose = page.getByRole("button", {
-      name: "#shared-fixture",
-      exact: true,
-    });
-    await expect(choose).toBeVisible();
+      card.getByRole("button", { name: "Stop", exact: true }),
+    ).toBeVisible();
+    await expect(
+      card.getByRole("button", { name: "Use in channel", exact: true }),
+    ).toHaveCount(0);
     expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(
       true,
     );
-    await page.screenshot({
-      path: test.info().outputPath("managed-agent-channel-narrow.png"),
-      fullPage: true,
-    });
-    await choose.click();
-    const composer = page.getByRole("textbox", {
-      name: "Message #shared-fixture",
-    });
-    // Rich mentions render the display name, not the literal @ in textContent.
-    await expect(composer).toContainText("Existing draft");
-    await expect(composer).toContainText("Fixture agent");
-    expect(
-      await page.evaluate(
-        (key) => JSON.parse(localStorage.getItem(key)),
-        storedKey,
-      ),
-    ).toEqual({
-      text: "Existing draft @Fixture agent ",
-      recipients: [
-        { pubkey: "ab".repeat(32), name: "Fixture agent", start: 15, end: 29 },
-      ],
-    });
-    // Read-only preview can never sign/publish; reaching the composer does not send.
-    await expect(composer).toHaveAttribute("aria-disabled", "true");
-    await page.getByRole("button", { name: "Back to Agents" }).click();
-    await card
-      .getByRole("button", { name: "Use in channel", exact: true })
-      .click();
-    await choose.click();
-    expect(
-      (
-        await page.evaluate(
-          (key) => JSON.parse(localStorage.getItem(key)),
-          storedKey,
-        )
-      ).recipients,
-    ).toHaveLength(1);
-    expect(errors).toEqual([]);
   } finally {
     await server.close();
   }

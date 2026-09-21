@@ -36,7 +36,7 @@ export function AgentCard({
   return (
     <article
       aria-label={`Agent ${name}`}
-      className="relative flex min-w-0 flex-col rounded-2xl border border-primary p-4"
+      className="relative flex min-w-0 flex-col gap-4 rounded-2xl border border-primary p-4"
     >
       {onEdit && (
         <div className="absolute right-2 top-2">
@@ -105,21 +105,33 @@ export function AgentCard({
         </div>
       )}
       <div
-        className={`flex items-center justify-center py-5 ${children ? "min-h-20" : "min-h-36 flex-1"}`}
+        className={
+          children
+            ? "flex min-w-0 items-center gap-3 pr-6"
+            : "flex flex-1 flex-col gap-4"
+        }
       >
-        <Avatar
-          alt={name}
-          fallback={name}
-          src={picture ?? null}
-          size="large"
-          shape="squircle"
-        />
+        <div
+          className={
+            children
+              ? "shrink-0"
+              : "flex min-h-36 items-center justify-center py-5"
+          }
+        >
+          <Avatar
+            alt={name}
+            fallback={name}
+            src={picture ?? null}
+            size="large"
+            shape="squircle"
+          />
+        </div>
+        <h3 className="m-0 min-w-0 truncate text-label" title={name}>
+          {name}
+        </h3>
       </div>
-      <h3 className="m-0 truncate text-label" title={name}>
-        {name}
-      </h3>
       {children}
-      {identities.length ? (
+      {identities.length && !children ? (
         <Accordion
           items={[
             {
@@ -149,11 +161,11 @@ export function AgentCard({
             },
           ]}
         />
-      ) : (
+      ) : !children ? (
         <p className="m-0 mt-1 text-body-sm text-secondary">
           No linked identity
         </p>
-      )}
+      ) : null}
     </article>
   );
 }

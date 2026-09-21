@@ -8,9 +8,7 @@ import {
   type AgentView,
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
-import { AgentEnvironmentEditor } from "./AgentEnvironmentEditor";
-import { AgentHarnessEditor } from "./AgentHarnessEditor";
-import { AgentModelPicker } from "./AgentModelPicker";
+import { AgentSettingsFields } from "./AgentSettingsFields";
 import {
   agentDraft,
   agentEdit,
@@ -112,7 +110,7 @@ export function AgentEditor({
                         ? state.data?.runtimeAvailable
                           ? "Enabled · starts with buzz-app"
                           : "Enabled intent saved · execution unavailable"
-                        : "Disabled · mentions will not wake this agent"}
+                        : "Stopped · a later sent mention can start this agent"}
                     </p>
                   </div>
                   <div className="flex flex-wrap gap-2">
@@ -162,8 +160,8 @@ export function AgentEditor({
                 <p className="text-body-sm text-secondary">
                   Saved revision {agent.revision} · Running revision{" "}
                   {agent.runningRevision ?? "none"}.
-                  {unapplied && " Saved changes are not running yet."} Stop
-                  disables future wake and stops active work.
+                  {unapplied && " Saved changes are not running yet."} Stop ends
+                  current work; a later sent mention can start it again.
                 </p>
                 {agent.error && (
                   <p role="alert" className="text-red-12">
@@ -194,76 +192,16 @@ export function AgentEditor({
                   .catch(() => {});
               }}
             >
-              <fieldset disabled={state.busy} className="min-w-0 space-y-4">
-                <label className="agent-control-field">
-                  Name
-                  <input
-                    value={current.name}
-                    onChange={(event) => change({ name: event.target.value })}
-                  />
-                </label>
-                <label className="agent-control-field">
-                  Agent instructions
-                  <textarea
-                    rows={6}
-                    value={current.systemPrompt}
-                    onChange={(event) =>
-                      change({ systemPrompt: event.target.value })
-                    }
-                  />
-                </label>
-                <AgentModelPicker
-                  id={agent.id}
-                  savedRevision={agent.revision}
-                  control={control}
-                  defaults={state.data?.databricksDefaults}
-                  draft={current}
-                  onChange={change}
-                />
-              </fieldset>
-              <details className="space-y-4">
-                <summary className="cursor-pointer text-body-sm">
-                  Advanced
-                </summary>
-                <fieldset disabled={state.busy} className="min-w-0">
-                  <AgentHarnessEditor
-                    draft={current}
-                    options={state.data?.harnessOptions ?? []}
-                    onChange={change}
-                  />
-                </fieldset>
-                <label className="agent-control-field">
-                  Workspace
-                  <input
-                    value={current.workspace}
-                    disabled={state.busy}
-                    spellCheck={false}
-                    onChange={(event) =>
-                      change({ workspace: event.target.value })
-                    }
-                  />
-                </label>
-                <label className="agent-control-field">
-                  Arguments (JSON array)
-                  <textarea
-                    rows={3}
-                    value={current.args}
-                    disabled={state.busy}
-                    onChange={(event) => change({ args: event.target.value })}
-                  />
-                </label>
-                <AgentEnvironmentEditor
-                  keys={agent.harness.environmentKeys}
-                  patch={current.environment}
-                  disabled={state.busy}
-                  onChange={(environment) => change({ environment })}
-                />
-                <p className="text-body-sm text-secondary">
-                  Environment overrides take precedence over provider and model
-                  selections. Arguments are passed literally, not through a
-                  shell.
-                </p>
-              </details>
+              <AgentSettingsFields
+                id={agent.id}
+                savedRevision={agent.revision}
+                draft={current}
+                control={control}
+                state={state}
+                disabled={state.busy}
+                environmentKeys={agent.harness.environmentKeys}
+                onChange={change}
+              />
               {state.error && (
                 <p role="alert" className="text-red-12">
                   {state.error}

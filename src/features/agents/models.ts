@@ -1,8 +1,8 @@
 import type { AgentEdit } from "./control";
 
 export interface ModelRequest {
-  id: string;
-  expectedRevision: number;
+  id?: string | undefined;
+  expectedRevision?: number | undefined;
   edit?: AgentEdit | undefined;
   host: string;
   filter: string;

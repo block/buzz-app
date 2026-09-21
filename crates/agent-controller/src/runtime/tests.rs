@@ -619,3 +619,39 @@ fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
     assert!(controller.store.agents().unwrap()[0].enabled);
     assert!(controller.running.is_empty());
 }
+
+#[test]
+#[cfg(unix)]
+fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    let a = agent(dir.path());
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let key = Secret::parse(KEY, PUB).unwrap();
+    let result = controller
+        .action_with_key(&a.id, Action::Start, 1, &key, Some(1234567890))
+        .unwrap();
+    assert!(result.agents[0].enabled);
+    assert!(matches!(result.agents[0].status, ProcessStatus::Running));
+    let output = wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 10).then(|| text.to_owned())
+    });
+    assert_eq!(output.lines().nth(8), Some("1234567890"));
+    assert!(!fs::read_to_string(dir.path().join("config/agents.json"))
+        .unwrap()
+        .contains("1234567890"));
+    controller.shutdown().unwrap();
+    controller.restore().unwrap();
+    let output = wait_for_contents(&dir.path().join("starts"), |text| {
+        (text.lines().count() == 20).then(|| text.to_owned())
+    });
+    assert_eq!(output.lines().nth(18), Some(""));
+    controller.action(&a.id, Action::Stop).unwrap();
+}

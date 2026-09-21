@@ -105,6 +105,7 @@ it("shows one managed card per exact destination and keeps unimported templates 
     name: "Agent Fixture agent",
   });
   expect(cards).toHaveLength(2);
+  expect(screen.queryByRole("button", { name: "Use in channel" })).toBeNull();
   const card = cards.find((entry) =>
     entry.textContent?.includes("wss://second.example"),
   );
@@ -267,6 +268,33 @@ it("keeps lifecycle controls visible and reports failure without disabling recov
     within(card).getByText(/bundled agent runtime is unavailable/),
   ).toBeVisible();
 });
+it("Add is an accessible disclosure that preserves its draft without importing or starting", async () => {
+  const { f } = setup();
+  const add = await screen.findByRole("button", {
+    name: "Add agent",
+  });
+  expect(add).toHaveAttribute("aria-expanded", "false");
+  expect(
+    screen.getByRole("heading", { level: 1, name: "Agents" }),
+  ).toBeVisible();
+  expect(screen.getByLabelText("Destination community")).not.toBeVisible();
+  fireEvent.click(add);
+  expect(add).toHaveAttribute("aria-expanded", "true");
+  expect(
+    document.getElementById(add.getAttribute("aria-controls") ?? ""),
+  ).toBeVisible();
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: "wss://chosen.example" },
+  });
+  fireEvent.click(add);
+  expect(screen.getByLabelText("Destination community")).not.toBeVisible();
+  fireEvent.click(add);
+  expect(screen.getByLabelText("Destination community")).toHaveValue(
+    "wss://chosen.example",
+  );
+  expect(f.calls.every((call) => call.action === "snapshot")).toBe(true);
+});
+
 it("focuses the imported managed identity without starting it", async () => {
   const { f } = setup();
   await screen.findAllByRole("article", { name: "Agent Fixture agent" });
@@ -305,7 +333,34 @@ it("keeps the read-only library available when native management is unavailable"
   expect(screen.queryByText("Add agent", { exact: true })).toBeNull();
   expect(screen.getByText(/This browser cannot run/)).toBeVisible();
 });
-it("keeps everyday editing focused and preserves hidden harness settings on Save", async () => {
+function expectAIFieldOrder(dialog: HTMLElement) {
+  const fields = ["Harness", "Provider", "Model"].map((name) =>
+    within(dialog).getByLabelText(name, { exact: true }),
+  );
+  for (const [index, field] of fields.entries()) {
+    expect(field).toBeVisible();
+    const next = fields[index + 1];
+    if (next)
+      expect(field.compareDocumentPosition(next)).toBe(
+        Node.DOCUMENT_POSITION_FOLLOWING,
+      );
+  }
+}
+
+it("shows Harness, Provider and Model in that order when adding an agent", async () => {
+  const { f } = setup();
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  expectAIFieldOrder(dialog);
+  expect(
+    within(dialog).getByRole("group", { name: "AI configuration" }),
+  ).toBeVisible();
+  expect(within(dialog).getByLabelText("Workspace")).not.toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(f.calls.every((call) => call.action === "snapshot")).toBe(true);
+});
+
+it("shows Harness, Provider and Model in order while preserving settings on Save", async () => {
   const { f } = setup();
   const original = structuredClone(f.agent.harness);
   const [card] = await screen.findAllByRole("article", {
@@ -319,13 +374,8 @@ it("keeps everyday editing focused and preserves hidden harness settings on Save
   const dialog = screen.getByRole("dialog", { name: "Edit agent" });
   expect(within(dialog).getByLabelText("Name")).toBeVisible();
   expect(within(dialog).getByLabelText("Agent instructions")).toBeVisible();
-  expect(within(dialog).getByLabelText("Model", { exact: true })).toBeVisible();
-  expect(
-    within(dialog).getByLabelText("Harness", { exact: true }),
-  ).not.toBeVisible();
-  expect(
-    within(dialog).getByLabelText("Provider", { exact: true }),
-  ).not.toBeVisible();
+  expectAIFieldOrder(dialog);
+  expect(within(dialog).getByLabelText("Workspace")).not.toBeVisible();
   fireEvent.change(within(dialog).getByLabelText("Agent instructions"), {
     target: { value: "Focused everyday edit" },
   });

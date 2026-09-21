@@ -9,6 +9,80 @@ pub struct Secret {
     pubkey: String,
 }
 impl Secret {
+    pub fn generate() -> Result<Self> {
+        let mut bytes = Zeroizing::new([0; 32]);
+        loop {
+            getrandom::fill(bytes.as_mut()).map_err(|_| "Could not generate agent identity")?;
+            if let Ok(mut key) = SecretKey::from_byte_array(*bytes) {
+                let pubkey = PublicKey::from_secret_key(&Secp256k1::signing_only(), &key)
+                    .x_only_public_key()
+                    .0
+                    .to_string();
+                key.non_secure_erase();
+                return Ok(Self { bytes, pubkey });
+            }
+        }
+    }
+    /// Only the native creation/profile path constructs this event, never arbitrary input.
+    pub(crate) fn profile(&self, name: &str, auth: &str) -> Result<serde_json::Value> {
+        use serde_json::json;
+        let auth: Vec<String> =
+            serde_json::from_str(auth).map_err(|_| "Invalid owner authorization")?;
+        self.sign_event(
+            0,
+            json!({"name": name, "display_name": name, "bot": true}).to_string(),
+            vec![auth],
+        )
+    }
+    pub(crate) fn profile_auth(&self, url: &str, body: &[u8]) -> Result<serde_json::Value> {
+        use sha2::{Digest, Sha256};
+        let mut nonce = [0; 16];
+        getrandom::fill(&mut nonce).map_err(|_| "Could not authorize profile request")?;
+        self.sign_event(
+            27235,
+            String::new(),
+            vec![
+                vec!["u".into(), url.into()],
+                vec!["method".into(), "POST".into()],
+                vec!["payload".into(), format!("{:x}", Sha256::digest(body))],
+                vec![
+                    "nonce".into(),
+                    nonce.iter().map(|b| format!("{b:02x}")).collect(),
+                ],
+            ],
+        )
+    }
+    fn sign_event(
+        &self,
+        kind: u16,
+        content: String,
+        tags: Vec<Vec<String>>,
+    ) -> Result<serde_json::Value> {
+        use secp256k1::Keypair;
+        use serde_json::json;
+        use sha2::{Digest, Sha256};
+        let created_at = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_err(|_| "System clock is unavailable")?
+            .as_secs();
+        let serialized =
+            serde_json::to_vec(&json!([0, self.pubkey, created_at, kind, tags, content]))
+                .map_err(|_| "Could not encode agent event")?;
+        let hash = Sha256::digest(serialized);
+        let mut secret =
+            SecretKey::from_byte_array(*self.bytes).map_err(|_| "Invalid agent key")?;
+        let mut pair = Keypair::from_secret_key(&Secp256k1::signing_only(), &secret);
+        let signature = Secp256k1::signing_only()
+            .sign_schnorr_no_aux_rand(&hash, &pair)
+            .to_string();
+        secret.non_secure_erase();
+        pair.non_secure_erase();
+        Ok(
+            json!({"id": format!("{hash:x}"), "pubkey": self.pubkey, "created_at": created_at,
+            "kind": kind, "tags": tags, "content": content, "sig": signature}),
+        )
+    }
+
     pub fn parse(text: &str, expected: &str) -> Result<Self> {
         let mut bytes = Zeroizing::new([0; 32]);
         if text.len() == 64 && text.bytes().all(|c| c.is_ascii_hexdigit()) {

@@ -9,24 +9,36 @@ import type {
   AgentControlState,
   AgentView,
 } from "../../features/agents/control";
+import { IconPlus } from "@tabler/icons-react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { AgentCard } from "./AgentCard";
 import { AgentEditor } from "./AgentEditor";
 import { AgentImport } from "./AgentImport";
+import { AgentCreateDialog } from "./AgentCreateDialog";
 import "./AgentControls.css";
 
 /** No relay dependency. Page lifetime owns observation only, never native execution. */
 export function AgentControlPanel({
   control,
+  importDestination = "",
+  createOwner,
   children,
 }: {
   control: AgentControl;
+  importDestination?: string;
+  createOwner?: string | undefined;
   children?: (
     state: AgentControlState,
     edit: (agent: AgentView, avatar?: string) => void,
     importedId: string | null,
   ) => ReactNode;
 }) {
+  const [adding, setAdding] = useState<{
+    destination: string;
+    owner: string;
+  } | null>(null);
+  const [importSections, setImportSections] = useState<string[]>([]);
   const [importedId, setImportedId] = useState<string | null>(null);
   const [selected, setSelected] = useState<{
     id: string;
@@ -63,23 +75,31 @@ export function AgentControlPanel({
     <section
       data-buzz-ui=""
       aria-label="Local agent controls"
-      className="agent-controls min-w-0 space-y-5 text-body text-primary"
+      className="agent-controls flex min-w-0 flex-col gap-section-gap text-body text-primary"
     >
-      {state.data && (
-        <details className="space-y-4">
-          <summary className="cursor-pointer text-label">Add agent</summary>
-          <p className="text-secondary">
-            Import an existing agent from old Buzz. Creating a new agent is not
-            available yet. Imported agents stay stopped until you start them.
+      <header className="flex flex-wrap items-center justify-between gap-4">
+        <div className="flex min-w-0 flex-col gap-2">
+          <h1 className="m-0 text-title">Agents</h1>
+          <p className="m-0 text-body-sm text-secondary">
+            Manage your agents and bring them into a conversation.
           </p>
-          <AgentImport
-            control={control}
-            commitAvailable={state.data.importAvailable !== false}
-            disabled={state.busy || state.status !== "ready"}
-            onImported={(agents) => setImportedId(agents[0]?.id ?? null)}
-          />
-        </details>
-      )}
+        </div>
+        {state.data && (
+          <Button
+            variant="primary"
+            aria-haspopup="dialog"
+            onClick={() =>
+              setAdding({
+                destination: importDestination,
+                owner: createOwner ?? "",
+              })
+            }
+          >
+            <IconPlus size={16} aria-hidden="true" />
+            Add agent
+          </Button>
+        )}
+      </header>
       {children ? (
         children(state, edit, importedId)
       ) : (
@@ -94,6 +114,42 @@ export function AgentControlPanel({
             />
           ))}
         </div>
+      )}
+      {state.data && (
+        <Accordion
+          variant="activity"
+          value={importSections}
+          onValueChange={setImportSections}
+          items={[
+            {
+              value: "old-buzz",
+              title: "Not imported from old Buzz",
+              content: importSections.includes("old-buzz") ? (
+                <AgentImport
+                  key={importDestination}
+                  control={control}
+                  initialDestination={importDestination}
+                  managedAgents={state.data.agents}
+                  commitAvailable={state.data.importAvailable !== false}
+                  disabled={state.busy}
+                  onImported={(agents) => {
+                    setImportedId(agents[0]?.id ?? null);
+                    setImportSections([]);
+                  }}
+                />
+              ) : null,
+            },
+          ]}
+        />
+      )}
+      {adding && (
+        <AgentCreateDialog
+          control={control}
+          state={state}
+          destination={adding.destination}
+          owner={adding.owner}
+          onClose={() => setAdding(null)}
+        />
       )}
       {(state.status === "idle" || state.status === "loading") && (
         <p role="status">Reading local agent status…</p>
@@ -113,31 +169,6 @@ export function AgentControlPanel({
         <Button onClick={() => void control.refresh()}>Retry status</Button>
       )}
       {state.busy && <p role="status">Waiting for the host to confirm…</p>}
-      <details className="space-y-3">
-        <summary className="cursor-pointer text-body-sm text-secondary">
-          Manage local agents
-        </summary>
-        <Button
-          disabled={
-            state.busy ||
-            state.status === "loading" ||
-            state.status === "unavailable"
-          }
-          onClick={() => void control.refresh()}
-        >
-          Refresh status
-        </Button>
-        <p className="text-body-sm text-secondary">
-          Enabled agents start with this app. Stop disables future wake and
-          stops active work. Leaving this page does not stop agents.
-        </p>
-        {state.data && !state.data.runtimeAvailable && (
-          <p role="status">
-            {state.data.runtimeMessage ||
-              "The bundled agent runtime is unavailable. You can still edit saved settings."}
-          </p>
-        )}
-      </details>
       {editing && (
         <AgentEditor
           key={editing.id}

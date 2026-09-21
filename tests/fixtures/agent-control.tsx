@@ -231,7 +231,6 @@ function Fixture() {
         shown && (
           <AgentsPage
             relay={relay}
-            navigator={navigationHost.navigation}
             key={browser ? "browser" : "native"}
             control={browser ? unavailable : control}
           />

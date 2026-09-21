@@ -16,9 +16,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "picker",
     title: "Mentions",
     order: -10,
-    component: ({ session, channelId, disabled, insertMention }) => (
+    component: ({ session, scope, channelId, disabled, insertMention }) => (
       <MentionPicker
         session={session}
+        scope={scope}
         channelId={channelId}
         disabled={disabled}
         select={insertMention}

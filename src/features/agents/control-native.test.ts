@@ -69,3 +69,14 @@ it("model operations use explicit ticket commands and no construction-time invoc
     ["agent_models_cancel", { ticket: 12 }],
   ]);
 });
+
+it("mention replay floor is transient IPC input on the existing Start command", async () => {
+  vi.mocked(invoke).mockClear();
+  vi.mocked(isTauri).mockReturnValue(true);
+  await nativeAgentControlHost()?.action("exact-id", "start", 1234567890);
+  expect(invoke).toHaveBeenCalledExactlyOnceWith("agent_control_action", {
+    id: "exact-id",
+    action: "start",
+    replayFloor: 1234567890,
+  });
+});

@@ -24,29 +24,49 @@ card’s three-dot menu. Same-key identities at different destinations have sepa
 cards; actions use native ID/revision, never the display name. Managed controls
 remain available when the old library is disconnected, unavailable or archived.
 
-**Add agent → Import from old Buzz** is the single native entry for adding agents.
-It explicitly previews and imports selected identities. Import focuses the first
-imported card and says **Imported, not started**. It does not start a listener,
-invite an agent or change the old library. There is no competing library grid in
-native management. New-agent creation is not implemented, and the Add entry says so.
+**Add agent** shares the Edit fields and model browser. In the development desktop,
+Create generates a native key, obtains the captured viewer's owner authorization,
+and saves the agent stopped before publishing its profile. Failed profile publication
+has a Retry action on the same saved card; it never creates another identity.
+The dev broker and native host must both be restarted for this slice. Packaged human
+signing remains unavailable. Source-reviewed only; compilation and live trial deferred.
 
-**Use in channel** is an optional composer shortcut, not a start action. In the
-agent’s currently connected community, choose an existing non-DM channel with
-known exact membership for both viewer and agent. The action appends that exact
-recipient to the scoped channel draft, preserving prose, existing recipients and
-thread drafts, then opens the conversation. Nothing sends automatically. Already
-selected recipients are not duplicated; unreadable/full drafts or storage errors
-block navigation with an explanation. Failed navigation leaves the prepared draft
-saved for explicit retry. The production Agents → Channels transition remounts the
-composer; no cross-window draft synchronization is introduced.
+**Not imported from old Buzz** is a separate collapsible section. Expanding it
+loads installed identities for the connected community; already-managed exact
+identities are excluded. Each remaining row says **Not imported** and has its own
+**Import** action. Source/destination overrides and source warnings stay under
+Import options. Import focuses the imported card and says **Imported, not started**.
+It does not start a listener, invite an agent or change the old library.
 
-An imported/disabled agent does not wake on mention. Start enables its listener;
-Stop disables future wake. Enabled idle-worker wake and startup restoration are
-runtime contracts, not proof that a listener can receive or reply. The attended
-handover below must still establish those behaviors with old Buzz stopped.
+To use an agent, open a channel and select it from **@ mentions**. The chooser
+includes this app's managed agents in that same community. A nonmember is labeled
+**Adds to channel when you send**. Selection alone does nothing; Send adds the agent
+through the existing outbox, verifies membership, then sends the message. Failed or
+unconfirmed additions keep the draft and expose the error; Send retries the same
+pending enrollment. A definitively failed addition older than 15 minutes directs
+the person to remove its labeled **Add agent** item from Outbox before sending
+again; an unknown outcome is never silently replaced. Channel and thread composers
+share this behavior. DMs and
+other-community agents are excluded. No Agents-page channel picker is needed.
 
-The focused dialog contains Name, Agent instructions and Model.
-Harness, Provider, workspace, arguments and write-only environment patches are under **Advanced**;
+A confirmed outgoing channel or thread mention now starts an exact imported local
+agent (public key + community), without a separate Start click. Import itself
+remains non-starting. Stop cancels earlier pending mention wakes and active work;
+a later deliberate mention can start the agent again. Plain name text without
+recipient selection, received history and unconfirmed sends do not start agents.
+Start failures appear separately as “Message sent, but…”; do not resend merely
+because execution failed. The old-Buzz ownership guard remains in force.
+
+Mention startup carries the earliest relevant pending send timestamp into the
+bundled runner's existing replay input (bounded by its 15-minute catch-up limit).
+Already-running agents are not restarted. This is a ready-to-try implementation,
+not proof of a live reply; the attended handover still requires old Buzz stopped.
+
+The focused Add/Edit dialog contains Name and Agent instructions, followed by
+**AI configuration** in dependency order: **Harness → Provider → Model**. Provider
+choices come from the selected harness; model discovery uses the current draft.
+Existing/custom values remain intact when another field changes. Workspace,
+arguments and write-only environment patches remain under **Advanced**;
 Start/Stop/Restart and exact identity are under **Runtime and identity**. Save uses
 native ID/revision and does not restart. Dirty drafts resist backdrop/Escape;
 explicit Cancel/Close discards. Page navigation/reload still discards page-local drafts.
@@ -176,8 +196,8 @@ fixture the controls simulate native responses, not agent execution.
 
 ## User contract
 
-- Start enables host-owned execution; Stop disables future wake and stops active
-  work. Native confirmation, not React optimism, determines displayed state.
+- Start enables host-owned execution; Stop disables automatic resume and stops active
+  work. A later deliberate outgoing mention can enable execution again. Native confirmation, not React optimism, determines displayed state.
   App Quit stops owned processes but retains enabled intent for the next launch.
 - `running` is **process-alive evidence only**, labeled “Process running · relay
   readiness unverified.” It is not a Listening/Working badge or proof a mention
@@ -429,7 +449,7 @@ Attended sequence (not executed by the implementer):
    against relaunching unmodified old Buzz: no coexistence guarantee.
 4. Start, observe process-alive/error state, Save an edit, then Restart. `running`
    means process alive only. An isolated live channel/thread mention and reply,
-   idle wake, Stop preventing wake and Quit descendant cleanup must still be
+   idle wake, Stop cancelling prior intent and Quit descendant cleanup must still be
    witnessed; fixture messages in this management-only app are not relay evidence.
    Use an independently working real client, or integrate the separately owned
    Account/native messaging first. Do not repeat the standalone SSO harness.

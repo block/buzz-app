@@ -9,8 +9,11 @@ async function closeEditor(page) {
 }
 async function showManagement(page) {
   await closeEditor(page);
-  const summary = page.getByText("Manage local agents", { exact: true });
-  if (!(await summary.evaluate((el) => el.parentElement.open)))
+  const summary = page.getByRole("button", {
+    name: "Manage local agents",
+    exact: true,
+  });
+  if ((await summary.getAttribute("aria-expanded")) !== "true")
     await summary.click();
 }
 async function openEditor(page, name = "Fixture agent") {

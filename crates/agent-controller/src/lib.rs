@@ -3,6 +3,7 @@
 mod bundle;
 mod config;
 pub mod connection;
+mod create;
 mod credentials;
 mod import;
 mod ownership;
@@ -13,6 +14,7 @@ mod store;
 
 pub use bundle::RuntimeBundle;
 pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};
+pub use create::{CreationProfile, NewAgent};
 pub use credentials::PlatformCredentials;
 pub use import::{CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport};
 pub use runtime::{Action, Controller, ModelContext};

@@ -1,6 +1,8 @@
 /** Native-owned configuration and process evidence; never a relay-session capability. */
 // Keep injection reachable from the generated author contract, not host construction.
 import type {} from "@deepseek-ai/cordis";
+import { communityRequest } from "../communities/api";
+import { relayOrigin } from "../communities/destination";
 import { createAgentModels, type AgentModels, type ModelHost } from "./models";
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -30,6 +32,7 @@ export interface AgentView {
   status: "stopped" | "starting" | "running" | "stopping" | "failed";
   error: string | null;
   diagnostics: string[];
+  profilePending?: boolean;
 }
 export interface ControlSnapshot {
   agents: AgentView[];
@@ -43,6 +46,8 @@ export interface ControlSnapshot {
   }[];
   /** False while native credential/import acceptance is outstanding. */
   importAvailable?: boolean;
+  createAvailable?: boolean;
+  defaultWorkspace?: string;
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
 }
@@ -62,13 +67,28 @@ export interface AgentImportPreview {
 }
 export interface AgentControlHost {
   models?: ModelHost;
+  prepareCreate?(
+    requestId: string,
+    destination: string,
+    owner: string,
+  ): Promise<{ id: string; pubkey: string }>;
+  commitCreate?(
+    requestId: string,
+    edit: AgentEdit,
+    auth: string,
+  ): Promise<ControlSnapshot>;
+  publishProfile?(id: string): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
     id: string,
     expectedRevision: number,
     edit: AgentEdit,
   ): Promise<ControlSnapshot>;
-  action(id: string, action: AgentAction): Promise<ControlSnapshot>;
+  action(
+    id: string,
+    action: AgentAction,
+    replayFloor?: number,
+  ): Promise<ControlSnapshot>;
   previewImport(
     source: ImportSource,
     destination: string,
@@ -82,11 +102,19 @@ export interface AgentControlState {
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
   pendingImport?: boolean;
+  mentionError?: string | null;
   stopping?: boolean;
   error: string | null;
 }
 export interface AgentControl {
   models?: AgentModels;
+  create?(
+    requestId: string,
+    destination: string,
+    owner: string,
+    edit: AgentEdit,
+  ): Promise<AgentView>;
+  publishProfile?(id: string): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
@@ -94,6 +122,13 @@ export interface AgentControl {
   action: AgentControlHost["action"];
   previewImport: AgentControlHost["previewImport"];
   commitImport: AgentControlHost["commitImport"];
+  prepareMention(
+    pubkeys: readonly string[],
+    relayUrl: string,
+    replayFloor: number,
+    signal: AbortSignal,
+  ): (earliestPending?: number) => Promise<void>;
+  dismissMentionError(): void;
 }
 
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
@@ -131,6 +166,7 @@ export function createAgentControl(
   const listeners = new Set<() => void>();
   let disposed = false;
   let generation = 0;
+  let stopped = 0;
   let read: Promise<void> | null = null;
   const update = (patch: Partial<AgentControlState>) => {
     if (disposed) return;
@@ -221,8 +257,70 @@ export function createAgentControl(
     }
   }
 
+  const action: AgentControlHost["action"] = (id, command, replayFloor) => {
+    if (command === "stop") stopped++;
+    return run(
+      (native) =>
+        native.action(
+          id,
+          command,
+          ...(replayFloor === undefined ? [] : [replayFloor]),
+        ),
+      ready,
+      command === "stop" && canStopAgent(state, id),
+      command === "stop" ? undefined : id,
+    );
+  };
   return {
     models,
+    ...(host?.prepareCreate && host.commitCreate
+      ? {
+          create: async (
+            requestId: string,
+            destination: string,
+            owner: string,
+            edit: AgentEdit,
+          ) => {
+            let id = "";
+            const data = await run(async (native) => {
+              if (!native.prepareCreate || !native.commitCreate)
+                throw new Error("Agent creation is unavailable.");
+              const prepared = await native.prepareCreate(
+                requestId,
+                destination,
+                owner,
+              );
+              id = prepared.id;
+              const result = await communityRequest<{ auth: string[] }>(
+                destination,
+                "authorize-agent",
+                { pubkey: prepared.pubkey, owner },
+              );
+              return native.commitCreate(
+                requestId,
+                edit,
+                JSON.stringify(result.auth),
+              );
+            }, ready);
+            const agent = data.agents.find((agent) => agent.id === id);
+            if (!agent)
+              throw new Error(
+                "Creation was not confirmed; refresh agents before trying again.",
+              );
+            return agent;
+          },
+        }
+      : {}),
+    ...(host?.publishProfile
+      ? {
+          publishProfile: (id: string) =>
+            run((native) => {
+              if (!native.publishProfile)
+                throw new Error("Profile publication is unavailable.");
+              return native.publishProfile(id);
+            }, ready),
+        }
+      : {}),
     snapshot: () => state,
     subscribe(listener) {
       listeners.add(listener);
@@ -233,13 +331,59 @@ export function createAgentControl(
     refresh,
     save: (id, revision, edit) =>
       run((native) => native.save(id, revision, edit), ready),
-    action: (id, action) =>
-      run(
-        (native) => native.action(id, action),
-        ready,
-        action === "stop" && canStopAgent(state, id),
-        action === "stop" ? undefined : id,
-      ),
+    action,
+    dismissMentionError: () => update({ mentionError: null }),
+    prepareMention(pubkeys, relayUrl, replayFloor, signal) {
+      const beforeStop = stopped;
+      return async (earliestPending = replayFloor) => {
+        if (!host || disposed || signal.aborted || !pubkeys.length) return;
+        const valid = () =>
+          !disposed && !signal.aborted && stopped === beforeStop;
+        await refresh();
+        if (!valid()) return;
+        if (state.status !== "ready") {
+          update({
+            mentionError:
+              "Message sent, but local agents could not be read. Open Agents to retry.",
+          });
+          return;
+        }
+        const agents =
+          state.data?.agents.filter(
+            (agent) =>
+              pubkeys.includes(agent.pubkey) &&
+              relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
+          ) ?? [];
+        const failures: string[] = [];
+        for (const agent of agents) {
+          if (!valid()) return;
+          if (agent.status === "running" || state.pendingLaunch === agent.id)
+            continue;
+          try {
+            const result = await action(
+              agent.id,
+              "start",
+              Math.min(replayFloor, earliestPending),
+            );
+            if (!valid()) return;
+            const started = result.agents.find((item) => item.id === agent.id);
+            if (started?.status !== "running")
+              failures.push(
+                `${agent.name} could not start. ${started?.error ?? "Open Agents to check its status."}`,
+              );
+          } catch {
+            // Do not retry uncertain writes or bypass the existing busy/fresh-read gate.
+            // Later recipients still get an explicit outcome, not silent omission.
+            if (!valid()) return;
+            failures.push(
+              `${agent.name} could not start. ${state.error ?? "Open Agents to retry."}`,
+            );
+          }
+        }
+        if (valid() && failures.length)
+          update({ mentionError: `Message sent, but ${failures.join(" ")}` });
+      };
+    },
     previewImport: (source, destination) =>
       run(
         (native) => native.previewImport(source, destination),

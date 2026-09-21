@@ -2,7 +2,7 @@
 //! credentials/execution; normal native startup uses only app-owned resources.
 use buzz_agent_controller::{
     Action, AgentEdit, ControlSnapshot, Controller, Credentials, ImportPreview, Imports,
-    LegacySource, PlatformCredentials, RuntimeBundle, Secret, Store,
+    LegacySource, NewAgent, PlatformCredentials, RuntimeBundle, Secret, Store,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
@@ -33,14 +33,18 @@ pub(crate) struct Snapshot {
     #[serde(flatten)]
     data: ControlSnapshot,
     import_available: bool,
+    create_available: bool,
+    default_workspace: String,
     harness_options: &'static [HarnessOption],
     databricks_defaults: crate::agent_models::Defaults,
 }
 impl Snapshot {
-    fn from(data: ControlSnapshot, import_available: bool) -> Self {
+    fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
         Self {
             data,
             import_available,
+            create_available: import_available,
+            default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: HARNESS_OPTIONS,
             databricks_defaults: crate::agent_models::defaults(),
         }
@@ -78,6 +82,7 @@ struct Host {
     credentials: Arc<dyn Credentials>,
     starts: BTreeMap<String, (u64, Option<String>)>,
     next_start: u64,
+    creating: Option<(String, Arc<NewAgent>)>,
     legacy_check: fn() -> Result<(), String>,
 }
 impl Host {
@@ -114,13 +119,18 @@ impl Host {
             credentials,
             starts: BTreeMap::new(),
             next_start: 0,
+            creating: None,
             legacy_check: refuse_legacy,
         })
     }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        self.controller
-            .snapshot()
-            .map(|data| Snapshot::from(data, !self.preview && cfg!(target_os = "macos")))
+        self.controller.snapshot().map(|data| {
+            Snapshot::from(
+                data,
+                !self.preview && cfg!(target_os = "macos"),
+                &self.workspace,
+            )
+        })
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
         if self.preview && !matches!(action, Action::Stop) {
@@ -130,8 +140,12 @@ impl Host {
         self.controller.action(id, action)?;
         self.snapshot()
     }
-    fn refuse_legacy(&self) -> Result<(), String> {
-        (self.legacy_check)()
+    fn refuse_legacy(&self, id: &str) -> Result<(), String> {
+        if self.controller.requires_legacy_handover(id)? {
+            (self.legacy_check)()
+        } else {
+            Ok(())
+        }
     }
     fn shutdown(&mut self) -> Result<(), String> {
         self.closed = true; // Fence queued commands before shutdown starts.
@@ -209,7 +223,7 @@ impl AgentHost {
             })
             .unwrap_or_default();
         for id in ids {
-            let _ = start(self.clone(), id, Action::Start, true).await;
+            let _ = start(self.clone(), id, Action::Start, true, None).await;
         }
     }
     pub(crate) fn ensure_open(&self) -> Result<(), String> {
@@ -228,11 +242,15 @@ impl AgentHost {
     }
     pub(crate) fn model_context(
         &self,
-        id: &str,
-        revision: u64,
+        id: Option<&str>,
+        revision: Option<u64>,
         edit: AgentEdit,
     ) -> Result<buzz_agent_controller::ModelContext, String> {
-        self.with(|host| host.controller.model_context(id, revision, edit))
+        self.with(|host| match (id, revision) {
+            (Some(id), Some(revision)) => host.controller.model_context(id, revision, edit),
+            (None, None) => Controller::draft_model_context(edit),
+            _ => Err("Invalid agent model context".into()),
+        })
     }
     pub(crate) fn shutdown(&self) -> Result<(), String> {
         self.1.store(true, Ordering::SeqCst);
@@ -278,18 +296,20 @@ pub(crate) async fn agent_control_action(
     state: tauri::State<'_, AgentHost>,
     id: String,
     action: Action,
+    replay_floor: Option<u64>,
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
     if matches!(action, Action::Stop) {
         return run(owner, move |host| host.action(&id, action)).await;
     }
-    start(owner, id, action, false).await
+    start(owner, id, action, false, replay_floor).await
 }
 async fn start(
     owner: AgentHost,
     id: String,
     action: Action,
     restore: bool,
+    replay_floor: Option<u64>,
 ) -> Result<Snapshot, String> {
     let prepared = owner.with(|host| {
         if host.preview {
@@ -306,7 +326,7 @@ async fn start(
                 return Err(error);
             }
         };
-        if let Err(error) = host.refuse_legacy() {
+        if let Err(error) = host.refuse_legacy(&id) {
             host.controller.record_error(&id, error.clone());
             return Err(error);
         }
@@ -339,12 +359,12 @@ async fn start(
                 return host.snapshot();
             }
         };
-        if let Err(error) = host.refuse_legacy() {
+        if let Err(error) = host.refuse_legacy(&id) {
             host.controller.record_error(&id, error);
             return host.snapshot();
         }
         host.controller
-            .action_with_key(&id, action, revision, &key)?;
+            .action_with_key(&id, action, revision, &key, replay_floor)?;
         host.snapshot()
     })
     .await
@@ -389,6 +409,144 @@ pub(crate) async fn agent_control_import_commit(
             .map_err(|_| "Native import credential operation failed")??;
     owner.with(|host| {
         host.controller.commit_import(imported)?;
+        host.snapshot()
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn agent_control_create_prepare(
+    state: tauri::State<'_, AgentHost>,
+    request_id: String,
+    destination: String,
+    owner: String,
+) -> Result<serde_json::Value, String> {
+    run(state.inner().clone(), move |host| {
+        if host.preview {
+            return Err(IMPORT_GATE.into());
+        }
+        if uuid::Uuid::parse_str(&request_id).is_err() {
+            return Err("Invalid create request".into());
+        }
+        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
+            host.creating = Some((
+                request_id,
+                Arc::new(NewAgent::prepare(&destination, &owner)?),
+            ));
+        }
+        let agent = &host.creating.as_ref().ok_or("Create request expired")?.1;
+        if !agent.matches(&destination, &owner)? {
+            return Err("Create destination or owner changed".into());
+        }
+        Ok(serde_json::json!({"id": agent.id, "pubkey": agent.key.pubkey()}))
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_create_commit(
+    state: tauri::State<'_, AgentHost>,
+    request_id: String,
+    edit: AgentEdit,
+    auth: String,
+) -> Result<Snapshot, String> {
+    let owner = state.inner().clone();
+    let (prepared, credentials) = owner.with(|host| {
+        if host.preview {
+            return Err(IMPORT_GATE.into());
+        }
+        let (_, prepared) = host
+            .creating
+            .as_ref()
+            .filter(|(id, _)| id == &request_id)
+            .ok_or("Create request expired; reopen Add agent")?;
+        prepared.validate(edit.clone(), &auth)?;
+        Ok((prepared.clone(), host.credentials.clone()))
+    })?;
+    let saved = prepared.clone();
+    tauri::async_runtime::spawn_blocking(move || saved.save_key(credentials.as_ref()))
+        .await
+        .map_err(|_| "Native credential operation failed")??;
+    owner.with(|host| {
+        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
+            return Err("Create request was replaced".into());
+        }
+        host.controller.create(&prepared, edit, &auth)?;
+        host.snapshot()
+    })
+}
+#[tauri::command]
+pub(crate) async fn agent_control_creation_profile(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+) -> Result<Snapshot, String> {
+    use base64::Engine;
+    let owner = state.inner().clone();
+    let (profile, credentials) = owner.with(|host| {
+        if host.preview {
+            return Err(IMPORT_GATE.into());
+        }
+        Ok((
+            host.controller.creation_profile(&id)?,
+            host.credentials.clone(),
+        ))
+    })?;
+    let (profile, body, authorization, event_id) =
+        tauri::async_runtime::spawn_blocking(move || -> Result<_, String> {
+            let key = credentials
+                .read(&profile.credential_id, &profile.pubkey)?
+                .ok_or("Agent key unavailable")?;
+            let event = profile.event(&key)?;
+            let event_id = event
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("Invalid profile")?
+                .to_owned();
+            let body = serde_json::to_vec(&event).map_err(|_| "Could not encode profile")?;
+            let authorization = base64::engine::general_purpose::STANDARD.encode(
+                serde_json::to_vec(&profile.authenticate(&key, &body)?)
+                    .map_err(|_| "Could not authorize profile")?,
+            );
+            Ok((profile, body, authorization, event_id))
+        })
+        .await
+        .map_err(|_| "Native credential operation failed")??;
+    owner.ensure_open()?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|_| "Profile client unavailable")?;
+    let mut response = client
+        .post(&profile.url)
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Nostr {authorization}"))
+        .header("x-auth-tag", &profile.auth)
+        .body(body)
+        .send()
+        .await
+        .map_err(|_| "Agent saved; profile publication unconfirmed. Retry this saved agent.")?;
+    if !response.status().is_success() {
+        return Err("Agent saved; relay refused its profile. Check community access, then retry this saved agent.".into());
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| "Profile receipt unavailable; retry this saved agent")?
+    {
+        if bytes.len() + chunk.len() > 16 * 1024 {
+            return Err("Profile receipt too large".into());
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let receipt: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|_| "Invalid profile receipt; retry this saved agent")?;
+    if receipt.get("accepted").and_then(serde_json::Value::as_bool) != Some(true)
+        || receipt.get("event_id").and_then(serde_json::Value::as_str) != Some(event_id.as_str())
+    {
+        return Err("Agent saved; profile was not accepted. Retry this saved agent.".into());
+    }
+    owner.with(|host| {
+        host.controller.profile_published(&id, profile.revision)?;
         host.snapshot()
     })
 }

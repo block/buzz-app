@@ -4,7 +4,8 @@ mod notifications;
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 use agents::{
-    agent_control_action, agent_control_import_commit, agent_control_import_preview,
+    agent_control_action, agent_control_create_commit, agent_control_create_prepare,
+    agent_control_creation_profile, agent_control_import_commit, agent_control_import_preview,
     agent_control_save, agent_control_snapshot, AgentHost,
 };
 use buzzodz_plugins::{
@@ -170,6 +171,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_change,
         plugin_module,
         plugin_recover,
+        agent_control_create_prepare,
+        agent_control_create_commit,
+        agent_control_creation_profile,
         agent_control_snapshot,
         agent_control_save,
         agent_control_action,

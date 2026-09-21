@@ -89,7 +89,11 @@ than guess. Even a same-text replacement drops the edited identity. Explicit rec
 chips show who will be notified and can be removed without deleting the prose.
 
 `session.messages.send/reply` accepts up to 32 exact pubkeys and emits deduplicated
-`p` tags. Selection never invites someone. Current roster membership is checked at
+`p` tags. Selection never invites someone. The native local-agent flow now offers
+same-community managed agents too: the composer enrolls a selected nonmember on
+Send, verifies the roster, then calls this unchanged message API. See
+[local agent controls](agent-control.md#normal-desktop-workflow). Ordinary nonmember
+people are not automatically added. Current roster membership is checked at
 intent, before signing, and after signing before entering the transport publisher;
 retry/restored signed intent uses the same publisher check. Before **each**
 mention publication the session performs a bounded foreground finite read of this

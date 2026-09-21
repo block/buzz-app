@@ -33,7 +33,10 @@ export function OutboxStatus({
         {operations.map((item) => (
           <li key={item.event.id}>
             <span>
-              {item.event.content.slice(0, 100)} ·{" "}
+              {item.event.kind === 9000
+                ? `Add agent ${item.event.tags.find(([tag]) => tag === "p")?.[1]?.slice(0, 12) ?? ""}`
+                : item.event.content.slice(0, 100)}{" "}
+              ·{" "}
               {
                 {
                   sending: "Sending",

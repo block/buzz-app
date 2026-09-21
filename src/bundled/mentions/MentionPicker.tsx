@@ -1,9 +1,11 @@
+import { useMentionAgents } from "../../features/agents/mention-context";
 import { Avatar } from "../../shared/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { AtSign } from "lucide-react";
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -16,11 +18,13 @@ import type { ComposerToolProps } from "../../features/conversation/contracts";
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
   session,
+  scope,
   channelId,
   disabled,
   select,
 }: {
   session: RelaySession;
+  scope: string;
   channelId: string;
   disabled: boolean;
   select: ComposerToolProps["insertMention"];
@@ -42,6 +46,19 @@ export function MentionPicker({
   );
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
+  const { agents } = useMentionAgents(scope);
+  const available = useMemo(
+    () =>
+      channel?.members &&
+      !channel.archived &&
+      (channel.channelType === "stream" || channel.channelType === "forum") &&
+      session.outbox?.supports(9000)
+        ? agents
+            .filter((agent) => !channel.members?.includes(agent.pubkey))
+            .map(({ pubkey, name }) => ({ pubkey, name }))
+        : [],
+    [channel, agents, session.outbox],
+  );
   const memberKey = channel?.members?.join(":") ?? "";
   useEffect(() => {
     if (!open || !memberKey) return;
@@ -58,14 +75,15 @@ export function MentionPicker({
       current = false;
     };
   }, [session, open, memberKey]);
-  const candidates = (channel?.members ?? [])
-    .map((pubkey) => ({
+  const candidates = [
+    ...(channel?.members ?? []).map((pubkey) => ({
       pubkey,
       name: profiles.get(pubkey)?.name ?? pubkey.slice(0, 12),
-    }))
-    .filter(({ name, pubkey }) =>
-      `${name} ${pubkey}`.toLowerCase().includes(search.trim().toLowerCase()),
-    );
+    })),
+    ...available,
+  ].filter(({ name, pubkey }) =>
+    `${name} ${pubkey}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
   return (
     <fieldset
       disabled={disabled}
@@ -98,10 +116,10 @@ export function MentionPicker({
         <section
           id={id}
           className={styles.mentionPopover}
-          aria-label="Mention a channel member"
+          aria-label="Mention a member or agent"
         >
           <label>
-            Search channel members
+            Search members and your agents
             <input
               type="search"
               value={search}
@@ -111,7 +129,7 @@ export function MentionPicker({
               }}
             />
           </label>
-          <p>Only members of this channel are shown.</p>
+          <p>Your agents are added to this channel when you send.</p>
           {error && <p role="status">{error}</p>}
           {list.error && (
             <p role="alert">Could not refresh channel membership.</p>
@@ -144,12 +162,18 @@ export function MentionPicker({
                   )}
                   className="size-8 rounded-lg text-caption"
                   shape={
-                    agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                    agentPubkeys.has(recipient.pubkey) ||
+                    !channel?.members?.includes(recipient.pubkey)
+                      ? "squircle"
+                      : "circle"
                   }
                 />
                 <span className={styles.mentionLabel}>
                   <span>{recipient.name}</span>
                   <code title={recipient.pubkey}>{recipient.pubkey}</code>
+                  {!channel?.members?.includes(recipient.pubkey) && (
+                    <small>Adds to channel when you send</small>
+                  )}
                 </span>
               </button>
             ))}

@@ -1,35 +1,24 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import {
   canStopAgent,
   type AgentControl,
   type AgentControlState,
   type AgentView,
 } from "../../features/agents/control";
-import type { Navigation } from "../../features/navigation/controller";
-import type { RelayData, RelaySnapshot } from "../../features/relay/service";
-import { relayOrigin } from "../../features/communities/destination";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentProcessLabel } from "./agent-edit";
-import { AgentChannelPicker } from "./AgentChannelPicker";
 
 export function ManagedAgentActions({
   agent,
   state,
   control,
   imported,
-  connection,
-  relay,
-  navigator,
 }: {
   agent: AgentView;
   state: AgentControlState;
   control: AgentControl;
   imported: boolean;
-  connection: RelaySnapshot;
-  relay: RelayData;
-  navigator?: Navigation | undefined;
 }) {
-  const [choosing, setChoosing] = useState(false);
   const details = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (imported) {
@@ -50,32 +39,24 @@ export function ManagedAgentActions({
           : transitioning
             ? "Waiting for the process transition."
             : null;
-  const matchesCommunity =
-    !!connection.viewer &&
-    !!connection.scope &&
-    connection.scope === `${relayOrigin(agent.relayUrl)}:${connection.viewer}`;
-  const useBlock =
-    connection.status !== "ready"
-      ? "Connect to this agent’s community to choose a channel."
-      : !matchesCommunity
-        ? "Switch to this agent’s community to choose a channel."
-        : !navigator
-          ? "Channel navigation is unavailable."
-          : null;
   const act = (action: "start" | "stop") => {
     void control.action(agent.id, action).catch(() => {});
   };
   return (
-    <div ref={details} tabIndex={-1} className="my-3 space-y-3">
-      <p className="m-0 break-all text-body-sm text-secondary">
-        {agent.relayUrl}
-      </p>
-      <p className="m-0 text-body-sm">
-        {state.status === "error" && "Last known: "}
-        {agentProcessLabel(agent)}
-      </p>
+    <div ref={details} tabIndex={-1} className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1">
+        <p className="m-0 break-all text-body-sm text-secondary">
+          {agent.relayUrl}
+        </p>
+        <p className="m-0 text-body-sm">
+          {state.status === "error" && "Last known: "}
+          {agentProcessLabel(agent)}
+        </p>
+      </div>
       {imported && !agent.enabled && (
-        <p role="status">Imported, not started. Review settings, then Start.</p>
+        <p role="status">
+          Imported, not started. Mention this agent in a channel to start it.
+        </p>
       )}
       {agent.enabled && (
         <p className="text-body-sm text-secondary">Starts with this app.</p>
@@ -85,10 +66,28 @@ export function ManagedAgentActions({
           {agent.error}
         </p>
       )}
+      {agent.profilePending && (
+        <div className="space-y-2">
+          <p role="status">
+            Agent saved. Publish its profile so people can find it by name.
+          </p>
+          <Button
+            disabled={
+              state.busy || state.status !== "ready" || !control.publishProfile
+            }
+            onClick={() =>
+              void control.publishProfile?.(agent.id).catch(() => {})
+            }
+          >
+            Retry profile
+          </Button>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
         {agent.status !== "running" && (
           <Button
             variant="primary"
+            size="compact"
             disabled={!!startBlock}
             onClick={() => act("start")}
           >
@@ -96,6 +95,7 @@ export function ManagedAgentActions({
           </Button>
         )}
         <Button
+          size="compact"
           disabled={!canStopAgent(state, agent.id)}
           onClick={() => act("stop")}
         >
@@ -104,23 +104,6 @@ export function ManagedAgentActions({
       </div>
       {startBlock && agent.status !== "running" && (
         <p className="text-body-sm text-secondary">{startBlock}</p>
-      )}
-      <Button
-        disabled={!!useBlock}
-        onClick={() => setChoosing(!choosing)}
-        aria-expanded={choosing}
-      >
-        Use in channel
-      </Button>
-      {useBlock && <p className="text-body-sm text-secondary">{useBlock}</p>}
-      {choosing && !useBlock && navigator && (
-        <AgentChannelPicker
-          key={`${connection.scope}:${connection.generation}`}
-          agent={agent}
-          connection={connection}
-          relay={relay}
-          navigator={navigator}
-        />
       )}
     </div>
   );

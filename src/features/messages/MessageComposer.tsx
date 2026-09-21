@@ -1,3 +1,5 @@
+import { useMentionAgents } from "../agents/mention-context";
+import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { TypingIndicator } from "./TypingIndicator";
 import { ArrowUp, X } from "lucide-react";
 import {
@@ -39,7 +41,7 @@ import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
-import type { ComposerInputElement } from "./composer-dom";
+import { sourceOffset, type ComposerInputElement } from "./composer-dom";
 
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
@@ -86,6 +88,13 @@ function Composer({
   hideMediaTimeIndicator = false,
   disabled = false,
 }: MessageComposerProps) {
+  const { control } = useMentionAgents(scope);
+  const [sending, setSending] = useState(false);
+  const sendAttempt = useRef<AbortController | null>(null);
+  useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
+  useLayoutEffect(() => {
+    if (disabled) sendAttempt.current?.abort();
+  }, [disabled]);
   const inputId = useId();
   const draftKey = threadRootId
     ? `draft:${channelId}:thread:${threadRootId}`
@@ -157,10 +166,21 @@ function Composer({
     const element = input.current;
     if (!element) return;
     const capture = (event: InputEvent) => {
+      const target = event.getTargetRanges?.()[0];
+      const targeted =
+        target &&
+        element.contains(target.startContainer) &&
+        element.contains(target.endContainer);
+      // Smart punctuation/autocorrect can replace text behind the caret.
+      // Only the browser's target range identifies which spans were touched.
       edit.current = {
         text: element.value,
-        start: element.selectionStart,
-        end: element.selectionEnd,
+        start: targeted
+          ? sourceOffset(element, target.startContainer, target.startOffset)
+          : element.selectionStart,
+        end: targeted
+          ? sourceOffset(element, target.endContainer, target.endOffset)
+          : element.selectionEnd,
         inputType: event.isComposing
           ? "insertCompositionText"
           : event.inputType,
@@ -279,16 +299,41 @@ function Composer({
       )
     );
   }
-  function send() {
+  async function send() {
     if (
       disabled ||
       input.current?.readOnly ||
       input.current?.disabled ||
       !draft.trim() ||
+      sendAttempt.current ||
       !outbox
     )
       return;
+    const attempt = new AbortController();
+    sendAttempt.current = attempt;
+    const captured = valueRef.current;
     try {
+      const recipients = captured.recipients.map((item) => item.pubkey);
+      const members =
+        control && recipients.length
+          ? session.channels
+              .list()
+              .channels.find((item) => item.id === channelId)?.members
+          : [];
+      if (control && recipients.some((key) => !members?.includes(key))) {
+        setSending(true);
+        setError(undefined);
+        await enrollMentionedAgents(
+          session,
+          scope,
+          channelId,
+          recipients,
+          control,
+          attempt.signal,
+        );
+        attempt.signal.throwIfAborted();
+        if (valueRef.current !== captured) return;
+      }
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, draft)
@@ -313,7 +358,13 @@ function Composer({
       input.current?.focus();
       setError(undefined);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (!attempt.signal.aborted)
+        setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      if (sendAttempt.current === attempt) {
+        sendAttempt.current = null;
+        setSending(false);
+      }
     }
   }
   const accessories = extensions?.accessories && (
@@ -376,11 +427,12 @@ function Composer({
             replace={replaceCompletion}
           />
         )}
+        {sending && <p role="status">Adding agent to this channel…</p>}
         <div className={styles.composerInput}>
           <RichComposerInput
             ref={input}
             id={inputId}
-            disabled={disabled}
+            disabled={disabled || sending}
             value={draft}
             draft={value}
             session={session}
@@ -522,7 +574,7 @@ function Composer({
                 scope={scope}
                 channelId={channelId}
                 threadRootId={threadRootId}
-                disabled={disabled}
+                disabled={disabled || sending}
                 insertText={(text) => insert(text)}
                 insertMention={insertMention}
                 focus={() => input.current?.focus()}
@@ -537,7 +589,7 @@ function Composer({
             type="submit"
             aria-label="Send message"
             title="Send message"
-            disabled={disabled || !draft.trim()}
+            disabled={disabled || sending || !draft.trim()}
           >
             <ArrowUp size={18} aria-hidden="true" />
           </button>
@@ -546,7 +598,7 @@ function Composer({
         {error && session.emoji?.snapshot().status === "error" && (
           <button
             type="button"
-            disabled={disabled}
+            disabled={disabled || sending}
             onClick={() => {
               void session.emoji.refresh().then(() => {
                 if (

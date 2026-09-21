@@ -34,8 +34,8 @@ pub(crate) fn defaults() -> Defaults {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct Request {
-    id: String,
-    expected_revision: u64,
+    id: Option<String>,
+    expected_revision: Option<u64>,
     edit: Option<AgentEdit>,
     host: String,
     filter: String,
@@ -264,7 +264,9 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             .edit
             .clone()
             .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
-            .and_then(|edit| controller.model_context(&request.id, request.expected_revision, edit))
+            .and_then(|edit| {
+                controller.model_context(request.id.as_deref(), request.expected_revision, edit)
+            })
             .and_then(|context| {
                 resolve(&request, &context)
                     .map(|(workspace, filter)| (context.model_overridden, workspace, filter))

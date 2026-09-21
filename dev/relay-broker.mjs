@@ -55,6 +55,7 @@ import { Readable } from "node:stream";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
@@ -266,6 +267,36 @@ export function validMessageTemplate(event) {
         reply[3] === "reply"
       );
     })()
+  );
+}
+/** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
+export function validAgentEnrollment(event) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (
+    event?.kind !== 9000 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length !== 4
+  )
+    return false;
+  const validators = {
+    h: uuid,
+    p: /^[0-9a-f]{64}$/,
+    role: /^bot$/,
+    "client-id": uuid,
+  };
+  return (
+    new Set(event.tags.map((tag) => tag?.[0])).size === 4 &&
+    event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        typeof tag[1] === "string" &&
+        Object.hasOwn(validators, tag[0]) &&
+        validators[tag[0]].test(tag[1]),
+    )
   );
 }
 export function validFilters(filters) {
@@ -578,7 +609,7 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
-              writeKinds: [7, 9, ...WORKFLOW_KINDS],
+              writeKinds: [7, 9, 9000, ...WORKFLOW_KINDS],
               workflowReads: true,
               sidebarPreferences: true,
               readState: true,
@@ -931,6 +962,7 @@ export function relayBrokerPlugin({
               "/api/relay/read-state-sign",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
+              "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/gifs",
@@ -950,6 +982,26 @@ export function relayBrokerPlugin({
             filters = JSON.parse(raw);
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
+          }
+          if (route === "/api/relay/authorize-agent") {
+            if (
+              !scoped ||
+              filters?.owner !== viewer ||
+              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+              filters.pubkey === viewer ||
+              Object.keys(filters).length !== 2
+            )
+              return json(res, 400, {
+                error: "Invalid agent owner authorization",
+              });
+            cancel.signal.throwIfAborted();
+            const digest = createHash("sha256")
+              .update(`nostr:agent-auth:${filters.pubkey}:`)
+              .digest();
+            const signature = Buffer.from(schnorr.sign(digest, key)).toString(
+              "hex",
+            );
+            return json(res, 200, { auth: ["auth", viewer, "", signature] });
           }
           let workflowPath;
           if (route === "/api/relay/workflow-runs") {
@@ -1060,7 +1112,13 @@ export function relayBrokerPlugin({
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
-            if (![7, 9].includes(filters?.kind)) {
+            if (filters?.kind === 9000) {
+              if (!validAgentEnrollment(filters))
+                return json(res, 400, {
+                  error: "Invalid agent enrollment",
+                  sent: false,
+                });
+            } else if (![7, 9].includes(filters?.kind)) {
               try {
                 validateWorkflowEvent(
                   { ...filters, pubkey: signing ? viewer : filters.pubkey },

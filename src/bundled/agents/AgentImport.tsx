@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentControl,
   AgentImportPreview,
@@ -10,167 +10,186 @@ import { Button } from "../../shared/design-system/ui/Button";
 export function AgentImport({
   control,
   disabled,
+  initialDestination = "",
+  managedAgents,
   commitAvailable = true,
   onImported,
 }: {
   control: AgentControl;
   disabled: boolean;
+  initialDestination?: string;
+  managedAgents: readonly AgentView[];
   commitAvailable?: boolean;
   onImported?: (agents: AgentView[]) => void;
 }) {
   const [source, setSource] = useState<ImportSource>("installed");
-  const [destination, setDestination] = useState("");
+  const [destination, setDestination] = useState(initialDestination);
   const [previewing, setPreviewing] = useState(false);
   const generation = useRef(0);
   const [preview, setPreview] = useState<AgentImportPreview | null>(null);
-  const [selected, setSelected] = useState<string[]>([]);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const invalidatePreview = () => {
     generation.current++;
     setPreview(null);
-    setSelected([]);
-    setNotice(null);
+    setPreviewing(false);
+    setError(null);
   };
+  const load = useCallback(
+    async (from: ImportSource, to: string) => {
+      const current = ++generation.current;
+      setPreview(null);
+      setError(null);
+      setPreviewing(true);
+      try {
+        // A failed Start must not force a separate recovery ritual before browsing.
+        // Refresh only reads status; it never retries the failed operation.
+        await control.refresh();
+        if (generation.current !== current) return;
+        const result = await control.previewImport(from, to);
+        if (generation.current === current) setPreview(result);
+      } catch {
+        if (generation.current === current)
+          setError(
+            "Could not load agents from old Buzz. Check Import options and try again.",
+          );
+      } finally {
+        if (generation.current === current) setPreviewing(false);
+      }
+    },
+    [control],
+  );
+  useEffect(() => {
+    if (initialDestination) void load("installed", initialDestination);
+    return () => {
+      generation.current++;
+    };
+  }, [initialDestination, load]);
+  const candidates = preview?.candidates.filter(
+    (candidate) => !managedAgents.some((agent) => agent.id === candidate.id),
+  );
   return (
-    <section aria-label="Import from old Buzz" className="space-y-4">
-      <h2 className="text-heading">Import from old Buzz</h2>
-      <p className="text-body-sm text-secondary">
-        Preview reads the selected library without accessing credentials. Import
-        copies the selected identities into this app and leaves them stopped.
-        Before starting them here, stop old Buzz and its agent listeners.
+    <section
+      aria-label="Import from old Buzz"
+      className="flex flex-col gap-4 pt-3"
+    >
+      <p className="m-0 text-body-sm text-secondary">
+        These agents are not imported into this app. Import keeps the same
+        identity and leaves the agent stopped.
       </p>
-      {!commitAvailable && (
-        <p role="status">
-          Import is disabled in this integration checkpoint. Preview does not
-          access Keychain; credential acceptance is still pending.
-        </p>
+      {destination && (
+        <p className="m-0 break-all text-body-sm">Community: {destination}</p>
       )}
-      <fieldset disabled={disabled && !previewing} className="space-y-3">
-        <legend className="text-body font-semibold">Source library</legend>
-        <div className="flex flex-wrap gap-4">
-          {(["installed", "development"] as const).map((value) => (
-            <label key={value} className="flex items-center gap-2">
-              <input
-                type="radio"
-                name="agent-import-source"
-                value={value}
-                checked={source === value}
-                onChange={() => {
-                  setSource(value);
-                  invalidatePreview();
-                }}
-              />
-              {value === "installed" ? "Installed Buzz" : "Development Buzz"}
-            </label>
-          ))}
-        </div>
-        <label className="block space-y-1">
-          <span>Destination community</span>
-          <input
-            className="w-full rounded border border-primary bg-panel p-2"
-            type="text"
-            value={destination}
-            placeholder="wss://community.example"
-            spellCheck={false}
-            onChange={(event) => {
-              setDestination(event.target.value);
-              invalidatePreview();
-            }}
-          />
-        </label>
-        <p className="text-body-sm text-secondary">
-          Choose the secure community origin for these identities. Old saved
-          relay values are not used. Import does not join or start agents there.
-        </p>
-        <Button
-          disabled={disabled || previewing || !destination.trim()}
-          onClick={() => {
-            invalidatePreview();
-            const current = generation.current;
-            setPreviewing(true);
-            void control
-              .previewImport(source, destination)
-              .then((result) => {
-                if (generation.current === current) setPreview(result);
-              })
-              .catch(() => {})
-              .finally(() => setPreviewing(false));
-          }}
-        >
-          Preview selected library
-        </Button>
-      </fieldset>
-      {preview && (
-        <div className="space-y-3">
-          <p className="break-all font-mono text-mono-sm">
-            {preview.sourcePath}
-          </p>
-          {[...new Set(preview.warnings)].map((warning) => (
-            <p key={warning} className="text-amber-12 text-body-sm">
-              {warning}
-            </p>
-          ))}
-          {!preview.candidates.length && (
-            <p>No importable identities in this library.</p>
-          )}
-          {preview.candidates.map((candidate) => (
-            <label
-              key={candidate.id}
-              className="flex items-start gap-3 border-t border-primary pt-3"
-            >
-              <input
-                type="checkbox"
-                className="mt-1"
-                disabled={disabled}
-                checked={selected.includes(candidate.id)}
-                onChange={(event) =>
-                  setSelected(
-                    event.target.checked
-                      ? [...selected, candidate.id]
-                      : selected.filter((id) => id !== candidate.id),
-                  )
-                }
-              />
-              <span className="min-w-0 space-y-1">
-                <span className="block font-semibold">{candidate.name}</span>
-                <span className="block break-all font-mono text-mono-sm">
-                  {candidate.pubkey}
-                </span>
-                <span className="block break-all font-mono text-mono-sm text-secondary">
-                  {candidate.relayUrl}
-                </span>
-              </span>
-            </label>
-          ))}
+      {!commitAvailable && (
+        <p role="status">Import is unavailable in this app session.</p>
+      )}
+      {previewing && <p role="status">Loading agents from old Buzz…</p>}
+      {error && (
+        <div className="flex flex-col items-start gap-2">
+          <p role="alert">{error}</p>
           <Button
-            disabled={disabled || !selected.length || !commitAvailable}
-            onClick={() => {
-              void control
-                .commitImport(preview.token, selected)
-                .then((result) => {
-                  onImported?.(
-                    result.agents.filter((agent) =>
-                      selected.includes(agent.id),
-                    ),
-                  );
-                  setPreview(null);
-                  setSelected([]);
-                  setNotice(
-                    "Imported with agents disabled. Review their settings before starting.",
-                  );
-                })
-                .catch(() => {});
-            }}
+            disabled={disabled || !destination.trim()}
+            onClick={() => void load(source, destination)}
           >
-            Import selected identities
+            Retry
           </Button>
         </div>
       )}
-      {notice && (
-        <p role="status" className="text-secondary">
-          {notice}
-        </p>
+      {candidates?.length === 0 && (
+        <p>No agents left to import from this library for this community.</p>
       )}
+      {candidates?.map((candidate) => (
+        <div
+          key={candidate.id}
+          className="flex flex-wrap items-center justify-between gap-3 border-t border-primary pt-3"
+        >
+          <div className="flex min-w-0 flex-col gap-1">
+            <p className="m-0 font-semibold">{candidate.name}</p>
+            <p className="m-0 text-body-sm text-secondary">Not imported</p>
+            <details className="text-body-sm text-secondary">
+              <summary className="cursor-pointer">Identity</summary>
+              <p className="break-all font-mono text-mono-sm">
+                {candidate.pubkey}
+              </p>
+            </details>
+          </div>
+          <Button
+            disabled={disabled || previewing || !commitAvailable}
+            aria-label={`Import ${candidate.name}`}
+            onClick={() => {
+              if (!preview) return;
+              const current = generation.current;
+              void control
+                .commitImport(preview.token, [candidate.id])
+                .then((result) => {
+                  if (generation.current !== current) return;
+                  onImported?.(
+                    result.agents.filter((agent) => agent.id === candidate.id),
+                  );
+                })
+                .catch(() => {
+                  if (generation.current !== current) return;
+                  setPreview(null);
+                  setError(
+                    "Import did not complete. Reload the list before trying again.",
+                  );
+                });
+            }}
+          >
+            Import
+          </Button>
+        </div>
+      ))}
+      <details open={!initialDestination || undefined} className="text-body-sm">
+        <summary className="cursor-pointer text-secondary">
+          Import options
+        </summary>
+        <fieldset
+          disabled={disabled || previewing}
+          className="flex flex-col gap-3 pt-3"
+        >
+          <label className="agent-control-field">
+            Source library
+            <select
+              value={source}
+              onChange={(event) => {
+                const next = event.target.value as ImportSource;
+                setSource(next);
+                invalidatePreview();
+                if (destination.trim()) void load(next, destination);
+              }}
+            >
+              <option value="installed">Installed Buzz</option>
+              <option value="development">Development Buzz</option>
+            </select>
+          </label>
+          <label className="agent-control-field">
+            Destination community
+            <input
+              value={destination}
+              placeholder="https://community.example"
+              spellCheck={false}
+              onChange={(event) => {
+                setDestination(event.target.value);
+                invalidatePreview();
+              }}
+            />
+          </label>
+          <Button
+            disabled={disabled || previewing || !destination.trim()}
+            onClick={() => void load(source, destination)}
+          >
+            Load agents
+          </Button>
+        </fieldset>
+        {preview && (
+          <div className="flex flex-col gap-2 pt-3 text-secondary">
+            <p className="break-all">{preview.sourcePath}</p>
+            {[...new Set(preview.warnings)].map((warning) => (
+              <p key={warning}>{warning}</p>
+            ))}
+          </div>
+        )}
+      </details>
     </section>
   );
 }

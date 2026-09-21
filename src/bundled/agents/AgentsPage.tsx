@@ -4,8 +4,8 @@ import type {
   AgentControlState,
   AgentView,
 } from "../../features/agents/control";
-import type { Navigation } from "../../features/navigation/controller";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import { relayOrigin } from "../../features/communities/destination";
 import { useRelayConnection } from "../../features/relay/react";
 import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
 import { AgentLibrary } from "./AgentLibrary";
@@ -17,13 +17,24 @@ import { ManagedAgentActions } from "./ManagedAgentActions";
 export function AgentsPage({
   relay,
   control,
-  navigator,
 }: {
   relay: RelayData;
   control?: AgentControl;
-  navigator?: Navigation;
 }) {
   const connection = useRelayConnection(relay);
+  let importDestination = "";
+  if (
+    connection.viewer &&
+    connection.scope?.endsWith(`:${connection.viewer}`)
+  ) {
+    try {
+      importDestination = relayOrigin(
+        connection.scope.slice(0, -(connection.viewer.length + 1)),
+      );
+    } catch {
+      // A non-URL fixture or unavailable connection needs an explicit destination.
+    }
+  }
   const library =
     connection.status === "ready" ? (
       <AgentLibrary
@@ -42,10 +53,18 @@ export function AgentsPage({
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Agents">
         <div className="h-full min-h-0 overflow-auto p-panel-inset text-body">
-          <div className="mx-auto max-w-6xl space-y-5">
-            <h1 className="m-0 text-title text-primary">Agents</h1>
+          <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
+            {!control && (
+              <h1 className="m-0 text-title text-primary">Agents</h1>
+            )}
             {control ? (
-              <AgentControlPanel control={control}>
+              <AgentControlPanel
+                control={control}
+                importDestination={importDestination}
+                createOwner={
+                  connection.status === "ready" ? connection.viewer : undefined
+                }
+              >
                 {(state, edit, importedId) =>
                   state.status === "unavailable" ? (
                     library
@@ -57,8 +76,6 @@ export function AgentsPage({
                       importedId={importedId}
                       control={control}
                       connection={connection}
-                      relay={relay}
-                      navigator={navigator}
                     />
                   )
                 }
@@ -84,16 +101,12 @@ function ManagedAgents({
   importedId,
   control,
   connection,
-  relay,
-  navigator,
 }: {
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   importedId: string | null;
   control: AgentControl;
   connection: RelaySnapshot;
-  relay: RelayData;
-  navigator?: Navigation | undefined;
 }) {
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
@@ -105,17 +118,14 @@ function ManagedAgents({
     if (connection.status === "ready") void library.refresh();
   }, [library, connection.status]);
   return (
-    <section aria-label="My agents" className="space-y-3">
-      <h2 className="m-0 text-heading">
-        My agents{" "}
-        <span className="text-secondary">{state.data?.agents.length ?? 0}</span>
-      </h2>
-      <p className="text-secondary">
-        Start an agent, then mention it in a channel or thread. Stop old Buzz
-        and its listeners before starting an imported identity here.
+    <section aria-label="My agents" className="flex flex-col gap-4">
+      <h2 className="sr-only">My agents</h2>
+      <p className="m-0 text-body-sm text-secondary">
+        Mention an agent in a channel to add it and start it. Stop old Buzz and
+        its listeners before using an imported identity here.
       </p>
       {state.data?.agents.length === 0 && (
-        <p>No agents yet. Choose Add agent to import one.</p>
+        <p>No agents yet. Create an agent or import one from old Buzz below.</p>
       )}
       <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
         {state.data?.agents.map((agent) => {
@@ -142,9 +152,6 @@ function ManagedAgents({
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
-                connection={connection}
-                relay={relay}
-                navigator={navigator}
               />
             </AgentCard>
           );

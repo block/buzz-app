@@ -22,6 +22,8 @@ serde_json = "1"
 buzz-agent = { git = "https://github.com/block/buzz.git", rev = "84b0fd04b7831657df2873c3a835412f47cebb03" }
 tokio = { version = "1", features = ["sync", "time", "macros"] }
 sha2 = "0.10"
+base64 = "0.22"
+reqwest = { version = "0.13", default-features = false, features = ["rustls"] }
 url = "2"
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"

@@ -16,8 +16,8 @@ export function AgentModelPicker({
   defaults,
   onChange,
 }: {
-  id: string;
-  savedRevision: number;
+  id?: string | undefined;
+  savedRevision?: number | undefined;
   draft: AgentDraft;
   control: AgentControl;
   defaults: ControlSnapshot["databricksDefaults"];
@@ -90,8 +90,8 @@ export function AgentModelPicker({
       const data = await control.models.request(
         {
           id,
-          expectedRevision: draft.revision,
-          edit: action === "disconnect" ? undefined : agentEdit(draft),
+          expectedRevision: id ? draft.revision : undefined,
+          edit: action === "disconnect" ? undefined : agentEdit(draft, true),
           host,
           filter,
           action,

@@ -32,6 +32,7 @@ pub struct AgentView {
     pub status: ProcessStatus,
     pub error: Option<String>,
     pub diagnostics: Vec<String>,
+    pub profile_pending: bool,
 }
 #[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -116,6 +117,7 @@ impl Agent {
             status: ProcessStatus::Stopped,
             error: None,
             diagnostics: Vec::new(),
+            profile_pending: self.extra.get("profilePending") == Some(&Value::Bool(true)),
         }
     }
     pub fn apply(&mut self, edit: AgentEdit) -> Result<()> {

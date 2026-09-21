@@ -30,10 +30,15 @@ export function agentDraft(
     ...(databricks ? { databricks: { ...databricks } } : {}),
   };
 }
-export function agentEdit(draft: AgentDraft): AgentEdit {
-  if (!draft.name.trim()) throw new Error("Enter an agent name.");
+export function agentEdit(
+  draft: AgentDraft,
+  modelDiscovery = false,
+): AgentEdit {
+  if (!modelDiscovery && !draft.name.trim())
+    throw new Error("Enter an agent name.");
   if (!draft.command.trim()) throw new Error("Enter a harness executable.");
-  if (!draft.workspace.trim()) throw new Error("Enter a workspace path.");
+  if (!modelDiscovery && !draft.workspace.trim())
+    throw new Error("Enter a workspace path.");
   let args: unknown;
   try {
     args = JSON.parse(draft.args);

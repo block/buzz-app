@@ -320,7 +320,7 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
                 owner.restore().await;
                 Err("restore completed".into())
             } else {
-                start(owner, agent_id, Action::Start, false).await
+                start(owner, agent_id, Action::Start, false, None).await
             }
         });
         tokio::task::spawn_blocking({

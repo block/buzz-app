@@ -116,7 +116,7 @@ for (const value of ["1431", "1", "65535", "01431"]) {
   }
 }
 
-test("desktop preserves other options and applies port config last before --", () => {
+test("desktop prepends port config and preserves user config and arguments", () => {
   const config =
     '{"productName":"Two words","build":{"devUrl":"http://localhost:9999"}}';
   const runnerArgs = [
@@ -138,20 +138,18 @@ test("desktop preserves other options and applies port config last before --", (
     "--port=1432",
     ...runnerArgs,
   );
-  assert.deepEqual(call.slice(0, 5), [
-    "tauri",
-    "dev",
+  assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
+  assert.equal(JSON.parse(call[3]).build.devUrl, "http://localhost:1432");
+  assert.equal(
+    JSON.parse(call[3]).build.beforeDevCommand,
+    "pnpm dev:desktop --port 1432",
+  );
+  assert.deepEqual(call.slice(4), [
     "--config",
     config,
     "--no-watch",
+    ...runnerArgs,
   ]);
-  assert.equal(call[5], "--config");
-  assert.equal(JSON.parse(call[6]).build.devUrl, "http://localhost:1432");
-  assert.equal(
-    JSON.parse(call[6]).build.beforeDevCommand,
-    "pnpm dev:desktop --port 1432",
-  );
-  assert.deepEqual(call.slice(7), runnerArgs);
 });
 
 test("desktop forwards help and runner arguments without a port override", () => {
@@ -188,4 +186,18 @@ test("desktop rejects invalid or missing ports before launching Tauri", () => {
     );
     assert.deepEqual(result.calls, [["install", "--frozen-lockfile"]]);
   }
+});
+
+test("desktop config precedes Tauri's implicit runner-argument boundary", () => {
+  const call = launched(
+    "desktop",
+    "--port",
+    "1431",
+    "--runner",
+    "echo",
+    "hello",
+  );
+  assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
+  assert.equal(JSON.parse(call[3]).build.devUrl, "http://localhost:1431");
+  assert.deepEqual(call.slice(4), ["--runner", "echo", "hello"]);
 });

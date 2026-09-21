@@ -54,8 +54,10 @@ need their own validation.
   the existing Tauri configuration is unchanged (port 1430). Desktop requires the
   exact port to be free; an occupied port fails rather than opening another copy's
   server. Other arguments, including runner/application arguments after `--`, pass
-  through unchanged. The selected port overrides these two settings in any supplied
-  `--config`; other config fields are preserved.
+  through unchanged. Port configuration is prepended so Tauri parses it even with
+  implicit runner arguments. Explicit `--config` arguments merge afterward and can
+  override it; keep their development URL and frontend command consistent. Use `--`
+  before runner/application arguments if they contain their own `--port` flag.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe

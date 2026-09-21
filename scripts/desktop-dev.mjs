@@ -25,8 +25,8 @@ for (; index < args.length && args[index] !== "--"; index++) {
 
 if (port !== undefined) {
   // Tauri's own --port controls its static-file server, not our Vite server.
-  // Apply this last so a supplied config cannot separate the two dev endpoints.
-  forwarded.push(
+  // Prepend: Tauri treats everything after a bare positional as runner args.
+  forwarded.unshift(
     "--config",
     JSON.stringify({
       build: {

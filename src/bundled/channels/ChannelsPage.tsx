@@ -693,12 +693,20 @@ function ChannelWorkspace({
             <details
               key={section.key}
               className={styles.channelSection}
-              open={!sidebar.collapsed.includes(section.key)}
-              onToggle={(event) =>
-                sidebar.toggle(section.key, event.currentTarget.open)
-              }
+              open={!!search || !sidebar.collapsed.includes(section.key)}
             >
-              <summary>
+              {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
+              <summary
+                onClick={(event) => {
+                  event.preventDefault();
+                  // Only user intent changes the saved layout, never search expansion.
+                  if (!search)
+                    sidebar.toggle(
+                      section.key,
+                      sidebar.collapsed.includes(section.key),
+                    );
+                }}
+              >
                 {section.icon && (
                   <span aria-hidden="true">{section.icon} </span>
                 )}
@@ -745,12 +753,16 @@ function ChannelWorkspace({
                       />
                     )}
                     selected={current?.id}
-                    collapsed={sidebar.collapsed.includes(
-                      `session-children:${channel.id}`,
-                    )}
-                    onToggle={(open) =>
-                      sidebar.toggle(`session-children:${channel.id}`, open)
+                    collapsed={
+                      !search &&
+                      sidebar.collapsed.includes(
+                        `session-children:${channel.id}`,
+                      )
                     }
+                    onToggle={(open) => {
+                      if (!search)
+                        sidebar.toggle(`session-children:${channel.id}`, open);
+                    }}
                     draft={draftParents.includes(channel.id)}
                     draftSelected={drafting && draftParent === channel.id}
                     sessions={(childrenByParent.get(channel.id) ?? []).filter(

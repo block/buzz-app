@@ -222,6 +222,7 @@ function SessionWork({
             <ChannelTimeline
               extensions={extensions}
               queries={session}
+              viewer={session.viewer}
               scope={scope}
               channelId={channel.id}
               window={window}

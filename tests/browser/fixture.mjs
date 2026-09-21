@@ -32,6 +32,7 @@ export const test = base.extend({
   threadUnreadMentions: [false, { option: true }],
   exactMessages: [false, { option: true }],
   sessionChannels: [[], { option: true }],
+  sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -56,6 +57,7 @@ export const test = base.extend({
       threadUnreadMentions,
       exactMessages,
       sessionChannels,
+      sessionParents,
       sidebarUnread,
       savedSidebar,
       expectedPageFailure,
@@ -135,7 +137,9 @@ export const test = base.extend({
       : dmLabels
         ? ["dm-peer"]
         : [];
-    const rosterIds = [...channels, ...dmIds];
+    const rosterIds = [
+      ...new Set([...channels, ...dmIds, ...Object.values(sessionParents)]),
+    ];
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
       for (const community of ["primary", "secondary"]) {
@@ -175,6 +179,9 @@ export const test = base.extend({
     // Tall histories leave room above the older-page prefetch threshold, even
     // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
+    for (const community of ["primary", "secondary"])
+      for (const parent of Object.values(sessionParents))
+        histories.set(`${community}/${parent}`, []);
     const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
@@ -427,7 +434,10 @@ export const test = base.extend({
               ? [
                   ["t", "stream"],
                   ["private"],
-                  ["about", "Buzz session (buzz.sessions/v1)"],
+                  [
+                    "about",
+                    `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                  ],
                 ]
               : []),
             ...(hiddenChannels.has(id) ? [["hidden"]] : []),

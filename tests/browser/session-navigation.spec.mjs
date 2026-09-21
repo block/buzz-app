@@ -91,42 +91,47 @@ test("older session root and reply links fetch and reveal inline, then sending r
   await expect(selected(page)).toHaveCount(0);
 });
 
-test("a loaded session reply reveals in the existing timeline without an exact lookup", async ({
-  page,
-  app,
-}) => {
-  await page.goto(app.origin);
-  await expect
-    .poll(() =>
-      page.evaluate(() => window.fixtureNavigation?.snapshot().status),
-    )
-    .toBe("opened");
-  expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-  await expect(history(page)).toBeVisible();
-  await settle(page);
-  const reply = app.append(
-    "primary",
-    "alpha",
-    "Loaded session reply",
-    true,
-    true,
-    app.exact.root.id,
-  );
-  await expect(
-    history(page).locator(`[data-message-id="${reply.id}"]`),
-  ).toBeVisible();
-  await settle(page);
-  const reads = app.report.queries.filter(({ filter }) =>
-    filter.ids?.includes(reply.id),
-  ).length;
-  expect(
-    await openTarget(page, target(app, reply.id, app.exact.root.id)),
-  ).toEqual({ status: "opened" });
-  await expect(
-    history(page).locator(`[data-message-id="${reply.id}"]`),
-  ).toBeFocused();
-  await expect(selected(page)).toHaveCount(0);
-  expect(
-    app.report.queries.filter(({ filter }) => filter.ids?.includes(reply.id)),
-  ).toHaveLength(reads);
-});
+const membershipTest = test.extend({ membershipActivity: true });
+membershipTest(
+  "a loaded session reply reveals in the existing timeline without an exact lookup",
+  async ({ page, app }) => {
+    await page.goto(app.origin);
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation?.snapshot().status),
+      )
+      .toBe("opened");
+    expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+    await expect(history(page)).toBeVisible();
+    // The Sessions page must pass the active viewer through to its shared timeline.
+    await expect(history(page).locator("[data-membership-row]")).toContainText(
+      "Pinky added by you, along with Brain",
+    );
+    await settle(page);
+    const reply = app.append(
+      "primary",
+      "alpha",
+      "Loaded session reply",
+      true,
+      true,
+      app.exact.root.id,
+    );
+    await expect(
+      history(page).locator(`[data-message-id="${reply.id}"]`),
+    ).toBeVisible();
+    await settle(page);
+    const reads = app.report.queries.filter(({ filter }) =>
+      filter.ids?.includes(reply.id),
+    ).length;
+    expect(
+      await openTarget(page, target(app, reply.id, app.exact.root.id)),
+    ).toEqual({ status: "opened" });
+    await expect(
+      history(page).locator(`[data-message-id="${reply.id}"]`),
+    ).toBeFocused();
+    await expect(selected(page)).toHaveCount(0);
+    expect(
+      app.report.queries.filter(({ filter }) => filter.ids?.includes(reply.id)),
+    ).toHaveLength(reads);
+  },
+);

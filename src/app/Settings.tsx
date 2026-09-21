@@ -4,12 +4,12 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import { RecoveryScreen } from "./RecoveryScreen";
 import styles from "./Settings.module.css";
 import {
-  IconBlocks as Blocks,
-  IconUser as UserRound,
-  IconPalette as Palette,
-  IconBell as Bell,
-  IconTool as Wrench,
-} from "@tabler/icons-react";
+  SquaresFourIcon,
+  UserIcon,
+  PaletteIcon,
+  BellIcon,
+  WrenchIcon,
+} from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
 import { PluginImport } from "./PluginImport";
@@ -21,13 +21,13 @@ import { NotificationSettings } from "./NotificationSettings";
 import type { NotificationsService } from "../features/notifications/service";
 import { DeveloperSettings } from "./DeveloperSettings";
 
-type Section = { id: string; label: string; icon: typeof UserRound };
+type Section = { id: string; label: string; icon: typeof UserIcon };
 
 const baseSections: Section[] = [
-  { id: "profile", label: "Profile", icon: UserRound },
-  { id: "plugins", label: "Plugins", icon: Blocks },
-  { id: "appearance", label: "Appearance", icon: Palette },
-  { id: "notifications", label: "Notifications", icon: Bell },
+  { id: "profile", label: "Profile", icon: UserIcon },
+  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
+  { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "notifications", label: "Notifications", icon: BellIcon },
 ];
 
 // DEV alone is not enough: packaged desktop builds load a production bundle
@@ -37,7 +37,7 @@ export const developerMode =
   /^(localhost|127\.0\.0\.1)$/.test(window.location.hostname);
 
 const sections: Section[] = developerMode
-  ? [...baseSections, { id: "developer", label: "Developer", icon: Wrench }]
+  ? [...baseSections, { id: "developer", label: "Developer", icon: WrenchIcon }]
   : baseSections;
 
 export function Settings({
@@ -99,7 +99,7 @@ export function Settings({
                   else setSelected(id);
                 }}
               >
-                <Icon aria-hidden="true" size={18} stroke={1.6} />
+                <Icon aria-hidden="true" size={18} />
                 {label}
               </button>
             ))}
@@ -182,7 +182,7 @@ export function Settings({
                       >
                         <div className="flex min-w-0 flex-1 items-center gap-3">
                           <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-soft text-muted">
-                            <Blocks aria-hidden="true" size={17} stroke={1.6} />
+                            <SquaresFourIcon aria-hidden="true" size={17} />
                           </span>
                           <div className="min-w-0">
                             <h3 className="m-0 text-label font-medium">

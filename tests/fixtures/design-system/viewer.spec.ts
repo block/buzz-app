@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
+import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
 const viewer = "/tests/fixtures/design-system.html";
 
@@ -28,6 +29,7 @@ test("built viewer loads every specimen and foundation without app connections",
     "Color",
     "Token table",
     "Typography",
+    "Icons",
     "Spacing",
     "Radius",
     "Elevation",
@@ -49,6 +51,58 @@ test("built viewer loads every specimen and foundation without app connections",
   ).toHaveCount(0);
   expect(failures).toEqual([]);
   expect(sockets).toEqual([]);
+});
+
+test("icon inventory is routed, complete, decorative, and responsive", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/icons`);
+  await expect(
+    page.getByRole("heading", { name: "Icons", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/#\/design\/icons$/);
+
+  const phosphorList = page.getByRole("list", {
+    name: "Available Phosphor icons",
+  });
+  await expect(phosphorList.getByRole("listitem")).toHaveCount(
+    PHOSPHOR_ICONS.length,
+  );
+  await expect(page.getByRole("img")).toHaveCount(0);
+  await expect(page.locator("main svg:not([aria-hidden='true'])")).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText("Open GitHub issue", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Microsoft OneDrive link", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("22 × 22px", { exact: true })).toBeVisible();
+  await expect(page.getByText("14 × 14px", { exact: true })).toBeVisible();
+  // CSS visibility alone misses captions hidden from assistive technology.
+  for (const [meaning, caption] of [
+    ["Open GitHub issue", "22 × 22px"],
+    ["Microsoft OneDrive link", "14 × 14px"],
+  ] as const) {
+    const example = page
+      .getByRole("article")
+      .filter({
+        has: page.getByRole("heading", { name: meaning, exact: true }),
+      })
+      .locator(".custom-icon-examples");
+    await expect(example).toMatchAriaSnapshot(`- text: ${caption}`);
+  }
+
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expect(phosphorList.getByRole("listitem").first()).toBeVisible();
+  }
 });
 
 test("foundation proposals are independent, local, and usable in both modes", async ({
@@ -438,9 +492,9 @@ test("avatar specimens preserve human and agent identity shapes in both modes", 
   for (const mode of ["light", "dark"]) {
     const change = page.getByRole("button", { name: `Use ${mode} mode` });
     if (await change.count()) await change.click();
-    await expect(
-      page.getByRole("img", { name: "Brain", exact: true }),
-    ).toHaveCSS("border-radius", "10px");
+    const agent = page.getByRole("img", { name: "Brain", exact: true });
+    await expect(agent).toHaveCSS("border-radius", "0px");
+    await expect(agent).toHaveCSS("mask-image", /^url\(/);
     const human = page.getByRole("img", { name: "Alex Lee", exact: true });
     expect(
       await human.evaluate(

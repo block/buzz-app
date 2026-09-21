@@ -1,5 +1,7 @@
+import { expectPhosphor } from "./phosphor.mjs";
 import { test, expect } from "./fixture.mjs";
 
+test.use({ historyCounts: { alpha: 1, beta: 0 } });
 test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   page,
   app,
@@ -133,7 +135,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   const emojiContentHeight = (
     await page.locator("em-emoji-picker").boundingBox()
   ).height;
-  const sharedSearchIcon = picker.locator(":scope > svg.tabler-icon-search");
+  const sharedSearchIcon = picker.locator(":scope > svg");
   const sharedSearchIconNode = await sharedSearchIcon.elementHandle();
   const emojiSearchIconPosition = await sharedSearchIcon.boundingBox();
   expect(emojiSearchIconPosition.x - emojiSearchPosition.x).toBeCloseTo(8, 1);
@@ -241,9 +243,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
-  await expect(sharedSearchIcon).toHaveAttribute("viewBox", "0 0 24 24");
-  await expect(sharedSearchIcon).toHaveAttribute("stroke-width", "2");
-  await expect(sharedSearchIcon).toHaveAttribute("aria-hidden", "true");
+  await expectPhosphor(sharedSearchIcon, "magnifying-glass");
   expect(await sharedSearchIconNode.evaluate((node) => node.isConnected)).toBe(
     true,
   );
@@ -355,14 +355,8 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(clear).toHaveCSS("width", "16px");
   await expect(clear).toHaveCSS("height", "16px");
   await expect(clear).toHaveCSS("color", "rgb(82, 82, 82)");
-  await expect(clearIcon).toHaveAttribute("viewBox", "0 0 24 24");
-  await expect(clearIcon).toHaveClass(/tabler-icon-circle-x-filled/);
-  await expect(clearIcon).toHaveAttribute("aria-hidden", "true");
-  await expect(clearIcon.locator("path").last()).toHaveCSS(
-    "fill",
-    "rgb(82, 82, 82)",
-  );
-  await expect(clearIcon).toHaveAttribute("stroke", "none");
+  await expectPhosphor(clearIcon, "x-circle");
+  await expect(clearIcon.locator("path")).toHaveCSS("fill", "rgb(82, 82, 82)");
   const filledSearchPosition = await search.boundingBox();
   const clearIconPosition = await clearIcon.boundingBox();
   expect(

@@ -1,7 +1,7 @@
 import {
-  IconArrowUpRight as ArrowUpRight,
-  IconAdjustments as Settings2,
-} from "@tabler/icons-react";
+  ArrowUpRightIcon,
+  GearIcon,
+} from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 import { orderPages, pagePresentation } from "./presentation";
 
@@ -40,7 +40,7 @@ export function Home({
                 <Icon size={21} aria-hidden="true" />
               </span>
               <span className="flex-1 text-label">{label}</span>
-              <ArrowUpRight
+              <ArrowUpRightIcon
                 size={18}
                 className="text-muted"
                 aria-hidden="true"
@@ -54,13 +54,17 @@ export function Home({
           className="flex w-full items-center gap-4 rounded-none border-0 bg-transparent p-6 text-left text-ink hover:bg-soft"
         >
           <span className="flex size-11 items-center justify-center rounded-2xl bg-soft">
-            <Settings2 size={21} aria-hidden="true" />
+            <GearIcon size={21} aria-hidden="true" />
           </span>
           <span className="flex-1">
             <span className="block text-label">Make it yours</span>
             <span className="text-body-sm text-muted">Settings</span>
           </span>
-          <ArrowUpRight size={18} className="text-muted" aria-hidden="true" />
+          <ArrowUpRightIcon
+            size={18}
+            className="text-muted"
+            aria-hidden="true"
+          />
         </button>
       </div>
     </section>

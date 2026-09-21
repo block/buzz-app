@@ -3,12 +3,12 @@ import { PanelSwapPlaygrounds } from "./PanelSwapPlaygrounds";
 import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorkspace";
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
-  IconDots,
-  IconHash,
-  IconMessageCircle,
-  IconPlus,
-  IconSettings,
-} from "@tabler/icons-react";
+  DotsThreeIcon,
+  HashIcon,
+  ChatCircleIcon,
+  PlusIcon,
+  GearIcon,
+} from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
@@ -143,9 +143,9 @@ function ButtonSpecimen() {
 }
 function IconButtonSpecimen() {
   const icons = {
-    add: <IconPlus size={16} stroke={1.7} aria-hidden="true" />,
-    more: <IconDots size={16} stroke={1.7} aria-hidden="true" />,
-    settings: <IconSettings size={16} stroke={1.7} aria-hidden="true" />,
+    add: <PlusIcon size={16} aria-hidden="true" />,
+    more: <DotsThreeIcon size={16} aria-hidden="true" />,
+    settings: <GearIcon size={16} aria-hidden="true" />,
   };
   return (
     <div className="component-specimen-stack">
@@ -279,13 +279,13 @@ function IconButtonSpecimen() {
 function AvatarSpecimen() {
   return (
     <div className="component-specimen-stack">
-      <SpecimenGroup label="Identity shape: circles for humans, rounded rectangles for agents">
+      <SpecimenGroup label="Identity shape: circles for humans, squircles for agents">
         <div className="component-specimen-row">
           <Specimen prop='shape="circle" · human'>
             <Avatar alt="Alex Lee" fallback="Alex" shape="circle" />
           </Specimen>
-          <Specimen prop='shape="rounded" · agent'>
-            <Avatar alt="Brain" fallback="Brain" shape="rounded" />
+          <Specimen prop='shape="squircle" · agent'>
+            <Avatar alt="Brain" fallback="Brain" shape="squircle" />
           </Specimen>
         </div>
       </SpecimenGroup>
@@ -309,6 +309,21 @@ function AvatarSpecimen() {
               fallback="Morgan"
               size="large"
             />
+          </Specimen>
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup label="Agent shape (proposed)">
+        <div className="component-specimen-row">
+          <Specimen prop='shape="squircle"'>
+            <Avatar
+              src={avatarUrl}
+              alt="Agent artwork"
+              fallback="Agent"
+              shape="squircle"
+            />
+          </Specimen>
+          <Specimen prop='shape="squircle", no src'>
+            <Avatar alt="Agent fallback" fallback="Agent" shape="squircle" />
           </Specimen>
         </div>
       </SpecimenGroup>
@@ -443,7 +458,7 @@ function TabsSpecimen() {
   const [iconDestination, setIconDestination] = useState<Destination>("home");
   const iconItems = DESTINATIONS.map((item) => ({
     ...item,
-    icon: <IconMessageCircle size={16} stroke={1.7} aria-hidden="true" />,
+    icon: <ChatCircleIcon size={16} aria-hidden="true" />,
   }));
   return (
     <div className="component-specimen-stack">
@@ -515,7 +530,7 @@ function TabsSpecimen() {
             trailingAction={
               <IconButton
                 aria-label="Create"
-                icon={<IconPlus size={16} stroke={1.7} aria-hidden="true" />}
+                icon={<PlusIcon size={16} aria-hidden="true" />}
                 size="compact"
               />
             }
@@ -530,7 +545,7 @@ function PanelHeaderSpecimen() {
   const actions = (
     <IconButton
       aria-label="More conversation actions"
-      icon={<IconDots size={16} stroke={1.7} aria-hidden="true" />}
+      icon={<DotsThreeIcon size={16} aria-hidden="true" />}
       size="compact"
     />
   );
@@ -544,7 +559,7 @@ function PanelHeaderSpecimen() {
       <SpecimenGroup label="Default — icon, title, and IconButton action">
         <PanelHeader
           title="Conversation"
-          icon={<IconMessageCircle size={16} stroke={1.7} aria-hidden="true" />}
+          icon={<ChatCircleIcon size={16} aria-hidden="true" />}
           actions={actions}
         />
       </SpecimenGroup>
@@ -592,11 +607,11 @@ function NavigationSectionSpecimen() {
           <NavigationSection label="Pinned">
             <NavigationItem
               label="buzz-design"
-              icon={<IconHash size={16} stroke={1.7} aria-hidden="true" />}
+              icon={<HashIcon size={16} aria-hidden="true" />}
             />
             <NavigationItem
               label="desktop-new"
-              icon={<IconHash size={16} stroke={1.7} aria-hidden="true" />}
+              icon={<HashIcon size={16} aria-hidden="true" />}
             />
           </NavigationSection>
         </div>
@@ -625,13 +640,13 @@ function NavigationItemSpecimen() {
         <div className="component-navigation-section-demo">
           <NavigationItem
             label="buzz-design"
-            icon={<IconHash size={16} stroke={1.7} aria-hidden="true" />}
+            icon={<HashIcon size={16} aria-hidden="true" />}
             selected={selected === "buzz-design"}
             onClick={() => setSelected("buzz-design")}
           />
           <NavigationItem
             label="desktop-new"
-            icon={<IconHash size={16} stroke={1.7} aria-hidden="true" />}
+            icon={<HashIcon size={16} aria-hidden="true" />}
             trailing={<span className="text-body-sm">3</span>}
             selected={selected === "desktop-new"}
             onClick={() => setSelected("desktop-new")}
@@ -642,9 +657,7 @@ function NavigationItemSpecimen() {
         <div className="component-navigation-section-demo">
           <NavigationItem
             label="Session interaction model"
-            icon={
-              <IconMessageCircle size={16} stroke={1.7} aria-hidden="true" />
-            }
+            icon={<ChatCircleIcon size={16} aria-hidden="true" />}
             inset
             selected={selected === "session"}
             onClick={() => setSelected("session")}

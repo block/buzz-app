@@ -152,6 +152,34 @@ test("editable composer renders links and mentions while preserving source and n
     await expect(input).toHaveJSProperty("value", "");
     await expect(preview.locator("[data-source]")).toHaveCount(0);
 
+    // Empty editors still need a real text caret after send, refocus and delete.
+    for (const state of ["sent", "refocused", "deleted"]) {
+      if (state === "refocused") {
+        await input.evaluate((el) => el.blur());
+        await input.focus();
+      } else if (state === "deleted") {
+        await input.pressSequentially("x");
+        await input.press("Backspace");
+      } else await input.focus();
+      await expect(input).toHaveJSProperty("value", "");
+      const emptyCaret = await input.evaluate((el) => {
+        const caret = getSelection().getRangeAt(0).getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        return {
+          height: caret.height,
+          left: caret.left - box.left,
+          top: caret.top - box.top,
+          bottom: box.bottom - caret.bottom,
+          selection: [el.selectionStart, el.selectionEnd],
+        };
+      });
+      expect(emptyCaret.height, state).toBeGreaterThan(10);
+      expect(Math.abs(emptyCaret.left), state).toBeLessThan(2);
+      expect(emptyCaret.top, state).toBeGreaterThanOrEqual(0);
+      expect(emptyCaret.bottom, state).toBeGreaterThanOrEqual(0);
+      expect(emptyCaret.selection, state).toEqual([0, 0]);
+    }
+
     const pasted = "@Alex Chen [Drive](https://drive.google.com/file/example)";
     await input.fill(pasted);
     await expect(preview.locator("[data-mention-kind]")).toHaveCount(0);

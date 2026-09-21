@@ -48,11 +48,11 @@ Run `pnpm design:dev` and open `/tests/fixtures/design-system.html` to see the s
 
 ## Identity shapes
 
-Human avatars are circular. Agent avatars are rounded rectangles. Use the shared
-Avatar `shape="circle"` or `shape="rounded"`; the shape carries identity meaning,
+Human avatars are circular. Agent avatars are squircles. Use the shared
+Avatar `shape="circle"` or `shape="squircle"`; the shape carries identity meaning,
 not density or emphasis. The caller supplies identity type from domain data,
-never a name or picture heuristic. `size="fill"` inherits the owning layout’s
-corners unless an explicit shape is supplied.
+never a name or picture heuristic. `size="fill"` fills the owning layout’s
+available space. Shape clips the artwork, never the interactive focus target.
 
 ## Posture
 
@@ -153,202 +153,49 @@ documented above define this system, including the 12px xsmall role.
 
 ## Colour structure
 
-Two public layers, plus components: screens normally write a palette step, and use a role only for a decision a step cannot express.
+The palette supplies values. Semantic roles name their purpose. Components and
+screens consume those roles so one shared edit can change every caller.
 
-| Layer | Example | What it is |
+| Layer | Example | Used by |
 |---|---|---|
-| **0 palette** | `--purple-9`, `--neutral-4` | Every hue, twelve steps, authored per mode. The only place a literal lives. **Public: a screen writes `bg-purple-9`.** |
-| **1 roles** | `--bg-panel` | The fifteen cases a step cannot express. Public too. |
-| **2 components** | `bg-panel`, `bg-neutral-4` | Tailwind utilities, from either layer. |
+| **Palette** | `--purple-9`, `--neutral-4` | Shared token definitions; each hue has authored light and dark steps. |
+| **Roles** | `--surface-panel`, `--text-danger`, `--affordance-subtle-hover` | Component recipes and product screens. |
+| **Components** | Button, TextField, Dialog | Product features that need the same appearance and behavior. |
 
-**Screens are built from the ramps.** This reverses the rule this file used to
-state, and the reversal turns on one fact: **every palette step is authored per
-mode.** `neutral-4` is `#e8e8e8` in light and `#232323` in dark, so a component
-naming the step behaves correctly in both. That is what makes a raw step safe
-here and unsafe in stock Tailwind, where `neutral-200` is a single literal —
-naming it there really does break dark mode, and a semantic layer really is the
-only fix.
+Choose a role by its job, even when it uses the same palette step in both modes.
+Add roles for real uses and their required states; document the intended surfaces
+and paired text. Do not generate unused role families from every palette hue.
+Existing palette utilities and older role names are compatibility APIs while
+callers migrate, not the default for new UI. Tailwind's stock palette is removed.
 
-Once a step is mode-aware, **a role whose light and dark values are the same step
-is a name in front of a number**, and a name in front of a number hides the
-decision instead of recording it. `bg-accent` was `purple-9`; `text-error` was
-`red-12`. Nineteen roles were exactly that and are gone.
+### Changing a color
 
-### When a name is earned
+Change a semantic mapping when one job needs a different value. Change a palette
+step when its value is wrong for all roles that share it. Measure the actual
+pairings in both themes; a numbered step alone does not guarantee contrast.
+For example, warning boundaries use amber-11 in light mode and amber-9 in dark,
+because the lighter amber steps cannot identify a control against a light panel.
 
-Three cases, and `pnpm design:check` enforces the first two by rejecting any new
-role that fails them:
+Palette values are based on Radix Colors (MIT), with authored neutral ramps and
+documented adjustments in `tokens.css`. These are values, not a component or
+behavior dependency. Base UI remains the component behavior layer.
 
-1. **Light and dark take different steps.** `bg-panel` is `neutral-1` in light and
-   `neutral-3` in dark. No single class can say that, so the name is load-bearing.
-   The four structural surfaces are all of this kind.
-2. **The name enforces a rule a ramp cannot state.** There are deliberately three
-   levels of text and one border weight. `text-neutral-11` looks reasonable and is
-   how a fourth level appears without anyone deciding, so `text-secondary` stays
-   even though its step is identical in both modes.
-3. **Morgan sees a repeated pattern and asks for one.** A tinted callout that
-   turns up on four screens earns a name — for the *pattern*, not the colour. This
-   is the only route by which the role layer grows, and it is deliberately manual.
+### Naming and usage
 
-`neutral` is a hue like any other — the same twelve steps, the same naming. There
-is no separate grey ramp and no `palette-` prefix: a step is `--neutral-4`, the
-way Tailwind names a colour.
+Use purpose, emphasis and state: `surface-panel`, `text-subtle`, `border-danger`,
+`affordance-prominent-pressed`. Text and border roles register in their own
+Tailwind namespaces so a border cannot accidentally inherit a text color.
 
-**Tailwind's default palette is deleted** with `--color-*: initial`, so
-`text-gray-500` does not exist. It is a build error, not a style choice.
-
-**There used to be a families layer** — `--accent-fill`, `--danger-tint`, thirty
-steps in five families, sitting between the palette and the roles. It was
-deleted. Every one of its thirty steps had exactly *one* reader, so it renamed a
-colour rather than abstracting one, and answering "what colour is this button"
-meant reading three lines in two places
-(`bg-accent` → `accent-fill` → `palette-purple-9`). The naming survives where it
-was always clearest — in the role names, which say *what the colour is for*
-(`bg-accent-tint` is a background) rather than restating a job (`accent fill`
-does not tell you where to put it).
-
-**The role layer was then cut from 54 names to 15, by the same test.** A census
-counted every reader of every role — both `var(--x)` in a stylesheet and the
-Tailwind class each role registers as, with the /design pages counted separately
-from product code, since a page displaying a swatch proves only that the token
-exists. Eighteen roles had no reader anywhere and six were read only by the docs
-that documented them; the rest went once palette steps became reachable as
-classes and the "same step in both modes" test above disqualified them.
-
-**The argument that lost is worth recording, because it is a good one.** A role is
-a slot whose hue can change, so `bg-accent-tint` survives a retint where
-`purple-3` does not. It lost to a fact: the accent hue *did* change, to Tailwind
-purple, and it was five values in the ramp rather than a rename. The ramp is the
-slot. A role in front of it only adds a hop.
-
-The palette stays because it is where **light and dark are reconciled**. A hue's
-dark steps are not its light steps dimmed — purple's step 12 is near-black in
-light and near-white in dark; step 3 is a lilac wash in light and a deep plum in
-dark. Only step 9 is identical. Two hand-authored ramps under one name is what
-lets a role be a single line and still behave in both modes, and what keeps
-`.dark` to a restatement of values rather than the 50 hand-picked colours it used
-to hold — which is where an accent tint and a categorical purple drifted into two
-different purples in dark.
-
-To retint, change the ramp. The accent moved to Tailwind purple in five values,
-which is the demonstration that **the ramp is the slot** — no rename, nothing
-above it needed to know.
-
-### Which step, for what
-
-Twelve steps mean the same twelve jobs in every hue, so this is the map from a job
-to a step. It used to generate roles; now it tells you which class to write:
-
-| step | job | example |
-|---|---|---|
-| 3 | a tinted surface | `bg-purple-3` |
-| 4 | that tint, hovered | `bg-purple-4` |
-| 8 | border, focus ring | `border-purple-8` |
-| 9 | solid fill | `bg-purple-9` |
-| 10 | that fill, hovered | `bg-purple-10` |
-| 12 | coloured text on a neutral surface | `text-purple-12` |
-
-Adding a hue is mechanical — generate twelve steps, and the map above already
-answers which one is the button. `cyan` and `orange` are authored and unused, so
-that half is proven.
-
-**Being mechanical is exactly why it must not run ahead of the product.** This map
-is how four status identities came to exist: twenty roles from one line of a
-lookup table, nineteen of which nothing ever read. It tells you which step to take
-*once a design needs the colour*. It is not a licence to pre-generate a set.
-
-**It is a good default, not a guarantee — measure the pair you actually use.**
-Step 10 crosses over, darker than step 9 in light and lighter in dark, so a hover
-reads as a press in light mode and a lift in dark with no special-casing. But
-green's and blue's step 10 lift *too* far in dark mode and drop white text below
-the APCA target. Likewise step 12 is the safe text step and step 11 is the
-tempting one: red-11 is more obviously red and fails the Lc 60 body target on a
-dark panel (59.7) and the dark composer (57.5), which is why error text is
-`text-red-12`. A step used for text goes into `TEXT_ROLES` in
-`scripts/design-system/check-contrast.mjs` so the guard measures what screens actually write.
-
-Palette values are Radix Colors (MIT), transcribed rather than depended on —
-Radix is not on Block's Tech Radar, so this is a values-only copy with no
-package. Its twelve-step contract is the one this system already described in
-comments, step for step. Two deliberate divergences, both documented in
-`tokens.css`: `text-*` roles take step 12 rather than the 11 Radix names
-"low-contrast text" (Radix sizes 11 for WCAG 4.5:1; every hue's step 11 measured
-Lc 55–61 against this system's Lc 60 target), and the **neutral ramp** is
-hand-authored in both modes because it was sized against the real panel stack
-rather than taken from an even ramp.
-
-### Naming grammar
-
-```
-<property>-<role>[-<modifier>][-<material>][-<state>]
-```
-
-Fixed order, so there is one correct spelling: `--bg-glass-primary-hover` is
-legal, `--bg-glass-hover-primary` is not. One modifier, one material, one state per name.
-This governs the fifteen roles; a ramp class is `<property>-<hue>-<step>` and has
-no grammar to get wrong, which is part of its appeal.
-
-Every word a token may be built from is listed in `VOCABULARY` in the registry.
-No page renders it yet. Combining them freely is routine. Introducing a new
-word is allowed but is the thing the audit reports on its own line — use an
-existing word if one fits.
-
-### Text and borders register in their own namespaces
-
-**`--color-x` is not one utility. It is all of them.** One such line defines
-`bg-x`, `text-x`, `border-x`, `ring-x` and the rest, every one pointing at the
-same value. So the moment two roles differ only by *which prefix uses them*, that
-namespace picks one and silently drops the other.
-
-This has now shipped twice, and both times the symptom looked like a design
-mistake rather than a registration one.
-
-**Borders, first.** Text and borders shared the emphasis names while holding
-different values — text at the dark end of the neutral ramp, borders at the light
-end. Registered under `--color-*`, `border-primary` resolved to the *text* colour
-and every hairline drew at near-black. It is why the first design system site had
-black dividers while the tokens said `#d4d4d4`. Fixed with `--border-color-*`.
-
-**Text colour, second, and worse.** `--color-danger: var(--bg-danger)` also
-defined `text-danger`, so error text rendered in red-9 — the saturated *fill* —
-instead of red-12. On a dark panel that measured **APCA Lc 34 against a target of
-60**, on real error messages, for months. And `check-contrast` passed the entire
-time, because it measured `--text-danger`: a token that was declared, documented,
-audited, and which no class could reach.
-
-So the rule, and it is a rule rather than a caution:
-
-> A text role registers as `--text-color-*`. A border role registers as
-> `--border-color-*`. Only backgrounds use the shared `--color-*`.
-
-`src/shared/design-system/tokens/registry.test.ts` binds this to the file — a text or border
-role registered under `--color-*` fails there now, rather than after shipping.
-
-**The general lesson is about the guards, not the namespaces.** A guard that
-measures a token nothing resolves to is worse than no guard: it reports the
-system is fine and is not wrong about the token, only about whether anything uses
-it. When adding a check, verify it measures the value the *browser* computes.
-
-## Colour discipline
-
-- **Colour is signal.** Status, authorship, presence, and mentions earn colour. Ordinary structure does not.
-- **Name colours after colour jobs, never after the thing on screen.** If the name is an interface element — mention, unread, badge, sidebar — it belongs in the component, assembled from roles that already exist.
-- **A colour is used one of two ways: solid or tint.** Solid carries an action and takes its paired text; tint carries a meaning and takes coloured text. There is deliberately nothing between them.
-- **Accent is signal, never structure.** Reaching for an accent surface where a neutral one belongs is the most common way a functional screen starts to look decorated.
-- **Never use a status colour decoratively.** A green that does not mean success teaches people to stop trusting green.
-- **There are no status roles, and that is deliberate.** Danger, success, warning, and info existed as four identities of five roles each — the accent's shape copied four times, generated from one line of a lookup table. **Nineteen of the twenty had no reader outside the page that displayed them.** They were invented by symmetry rather than by need, and the symmetry actively hid the decision: the red ramp alone offers red-3, red-8, red-9 and red-12 for "an error", and a set of ready-made names made that look settled when it never was. The proof is that `text-danger` shipped resolving to the wrong red and no design had ever looked closely enough to notice. **Status colour gets designed on the screen that needs it.** Until then the ramps are right there — pick a step, measure it, and once two screens pick the same one it has earned a name.
-- **Write the step, not a name for the step.** Error text is `text-red-12` and the running-agent dot is `bg-green-9`, written where they are used. Both briefly had semantic names and both were one step, identical in both modes — a name in front of a number. The name comes back if the pattern repeats across screens, and it will be named for the pattern.
-- **Measure the step, do not reason about it.** Red-11 is the more obviously red choice for error text and was the first pick; measured against every surface the text actually lands on, it fails the Lc 60 body target on a dark panel (59.7) and the dark composer (57.5). Two of five surfaces — invisible to judgement, decisive on inspection. Red-12 clears all five at 82–97.
-- **Categorical colours are the one place appearance-naming would be allowed.** Telling two projects apart genuinely is a choice about appearance, so a hue name is honest there. No such roles exist yet — the palette carries eight hues, and a categorical role gets named when a feature actually needs to distinguish things, not before.
-- **Opacity is not how you reach a subtler colour.** If a tint looks too strong, take a different palette step — do not dim a stronger one. `purple-950/50` composites to a real, correct colour, which is exactly the trap: it is a colour decision with no name, no light/dark pair, and nothing the contrast guard can measure. A missing shade is a missing palette step, and adding one is an ordinary reviewed edit. `scripts/design-system/check-color.mjs` enforces this.
-- **Transparency is a different axis from shade, and it has its own tokens.** `glass-*` exists for surfaces something must show through. Alpha baked into a named value at the palette layer is the system working; alpha applied to a token in a component is not.
-- **A dark value is authored, never derived.** A hue's dark steps are not its light steps darkened or dimmed — Tailwind's purple gets *more* saturated as it descends, so a dark tint drawn from its bottom end reads as oversaturated. This is why the palette holds two authored ramps per hue rather than one ramp and a transform.
-- **Two tokens doing the same job must resolve to the same step, not merely to the same value.** Matching literals drift; a shared reference cannot. An accent tint and a hand-picked categorical purple were the same colour in light mode and two different colours in dark, and nothing caught it because both held their own value.
+- Use `text-danger` for error text and pair it with the documented surface.
+- Add a categorical role when a feature needs to distinguish identities by hue.
+- Keep transparency in shared material recipes. Do not dim tokens locally.
+- Author both light and dark values; do not derive one by dimming the other.
+- When two roles share a decision, reference the same token rather than copying a literal.
 
 ## Contrast
 
-Buzz judges contrast with **APCA** (the perceptual algorithm in the WCAG 3
-draft), not the WCAG 2 ratio. Target **Lc 60** for body text, Lc 45 for large
+Buzz judges text contrast with **APCA** (the perceptual algorithm in the WCAG 3
+draft). Control and state boundaries use the separate WCAG 2 non-text ratio. Target **Lc 60** for body text, Lc 45 for large
 or non-essential text. This is a deliberate position, taken with evidence, and
 it is the rule a generated theme is measured against.
 
@@ -395,8 +242,9 @@ it is the rule a generated theme is measured against.
   rule covers boundaries needed to identify a *control* or its state, not
   grouping lines. Buzz's borders measure 1.2–1.8:1, which is where Radix and
   Apple ship theirs; raising them would draw the box the fill already implies.
-  When the input layer lands, a control's own outline is a different question and
-  does need the 3:1 treatment.
+  Error and warning boundary roles must reach 3:1 against surface-base,
+  surface-panel, surface-inset and surface-popover in both themes. The contrast
+  guard checks these role mappings separately from text and decorative dividers.
 
 ## Writing
 
@@ -443,3 +291,9 @@ it is the rule a generated theme is measured against.
 - **Choose the job first.** Page → surface-base; card → surface-panel; popup → surface-popover; recessed region → surface-inset. Controls use affordance roles; labels use text roles; edges use border roles.
 - **A role is useful because it names a purpose.** It does not need different palette steps in each theme to earn its name.
 - **If a screen looks right but breaks these rules, the rules are probably wrong — say so.** This document is meant to be argued with, not worked around.
+
+## Icons
+
+Phosphor is the only general icon family. Import named icons from `icons/index.ts`, which re-exports individual upstream modules. Add exports as needed; no approval list. SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the upstream packages elsewhere or reintroduce other icon libraries. All six native weights remain designer choices: no size-to-weight or selection-to-fill rules. For chat and conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`) over square or teardrop variants; choose the matching dots, text, or slash variant when the meaning requires it. Keep accessible names on controls and decorative artwork hidden from assistive technology.
+
+OneDrive is a designer-approved custom brand mark: its complete outline is recreated on Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in the shared icon gateway. It does not permit another general icon library.

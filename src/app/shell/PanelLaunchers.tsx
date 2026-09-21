@@ -1,6 +1,6 @@
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useState } from "react";
-import { IconLayoutSidebarRight as PanelRight } from "@tabler/icons-react";
+import { SidebarIcon } from "../../shared/design-system/icons/index";
 import type { RegisteredPanel } from "../../features/panels/service";
 
 export function PanelLaunchers({
@@ -36,7 +36,7 @@ export function PanelLaunchers({
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
-    <PanelRight size={16} aria-hidden="true" />
+    <SidebarIcon size={18} aria-hidden="true" />
   ) : (
     <img
       src={src}

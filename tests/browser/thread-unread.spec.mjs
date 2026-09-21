@@ -5,6 +5,7 @@ test.use({
   productionBroker: true,
   readState: true,
   threadUnread: true,
+  historyCounts: { alpha: 20, beta: 1 },
   largeSidebar: true,
   pluginFixtures: true, // Observe the real navigation completion, not reply mount timing.
 });

@@ -8,13 +8,14 @@ import {
   checkIconManifest,
   checkIconSource,
 } from "../../scripts/design-system/check-icons.mjs";
-
 test("icon dependency policy rejects retired families and aliases", () => {
   for (const name of [
     "lucide-react",
     "@tabler/icons-react",
     "react-icons",
     "@heroicons/react",
+    "@mui/icons-material",
+    "bootstrap-icons",
   ])
     assert.equal(
       checkIconManifest({ dependencies: { [name]: "1" } }).length,
@@ -35,6 +36,26 @@ test("icon dependency policy rejects retired families and aliases", () => {
     [],
   );
 });
+test("unlisted icon catalogs fail closed without blocking ordinary dependencies", () => {
+  assert.equal(
+    checkIconManifest({ dependencies: { "new-artwork-catalog": "1.0.0" } })
+      .length,
+    1,
+  );
+  assert.equal(
+    checkIconSource(
+      "src/probe.ts",
+      'import { Mark } from "new-artwork-catalog";',
+    ).length,
+    1,
+  );
+  assert.deepEqual(checkIconManifest({ dependencies: { yaml: "1.0.0" } }), []);
+  assert.deepEqual(
+    checkIconSource("src/probe.ts", 'import { helper } from "yaml";'),
+    [],
+  );
+});
+
 test("gateway allows individual exports, never the whole catalog", () => {
   const path = "src/shared/design-system/icons/index.ts";
   assert.deepEqual(
@@ -95,6 +116,8 @@ test("all import forms and subpaths obey the shared gateway", () => {
     "iconoir-react",
     "iconsax-react",
     "@radix-ui/react-icons",
+    "@mui/icons-material/Add",
+    "bootstrap-icons/icons/alarm.svg",
     "@phosphor-icons/react/dist/csr/House",
   ];
   for (const specifier of families) {

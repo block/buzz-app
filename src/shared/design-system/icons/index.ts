@@ -1,71 +1,193 @@
+import { defineIcon } from "./createDecorativeIcon";
+import { GitHubIssueArtwork } from "./GitHubIssue";
+import { OneDriveLogoArtwork } from "./OneDriveLogo";
 // Phosphor only. Add individual exports as needed; all native weights remain available.
-export { BrowserIcon } from "@phosphor-icons/react/dist/csr/Browser";
-export { ArrowDownIcon } from "@phosphor-icons/react/dist/csr/ArrowDown";
-export { ArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
-export { ArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
-export { ArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
-export { ArrowUpIcon } from "@phosphor-icons/react/dist/csr/ArrowUp";
-export { ArrowUpRightIcon } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
-export { ArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
-export { ArrowsInIcon } from "@phosphor-icons/react/dist/csr/ArrowsIn";
-export { ArrowsOutIcon } from "@phosphor-icons/react/dist/csr/ArrowsOut";
-export { AtIcon } from "@phosphor-icons/react/dist/csr/At";
-export { BellIcon } from "@phosphor-icons/react/dist/csr/Bell";
-export { CaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
-export { CaretLeftIcon } from "@phosphor-icons/react/dist/csr/CaretLeft";
-export { CaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
-export { ChatCircleIcon } from "@phosphor-icons/react/dist/csr/ChatCircle";
-export { ChatsCircleIcon } from "@phosphor-icons/react/dist/csr/ChatsCircle";
-export { CheckIcon } from "@phosphor-icons/react/dist/csr/Check";
-export { CopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
-export { DotOutlineIcon } from "@phosphor-icons/react/dist/csr/DotOutline";
-export { DotsThreeIcon } from "@phosphor-icons/react/dist/csr/DotsThree";
-export { DownloadIcon } from "@phosphor-icons/react/dist/csr/Download";
-export { DropboxLogoIcon } from "@phosphor-icons/react/dist/csr/DropboxLogo";
-export { FigmaLogoIcon } from "@phosphor-icons/react/dist/csr/FigmaLogo";
-export { FileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
-export { FolderOpenIcon } from "@phosphor-icons/react/dist/csr/FolderOpen";
-export { FolderSimpleIcon } from "@phosphor-icons/react/dist/csr/FolderSimple";
-export { GearIcon } from "@phosphor-icons/react/dist/csr/Gear";
-export { GitBranchIcon } from "@phosphor-icons/react/dist/csr/GitBranch";
-export { GitCommitIcon } from "@phosphor-icons/react/dist/csr/GitCommit";
-export { GitPullRequestIcon } from "@phosphor-icons/react/dist/csr/GitPullRequest";
-export { GithubLogoIcon } from "@phosphor-icons/react/dist/csr/GithubLogo";
-export { GitlabLogoIcon } from "@phosphor-icons/react/dist/csr/GitlabLogo";
-export { GlobeIcon } from "@phosphor-icons/react/dist/csr/Globe";
-export { GoogleDriveLogoIcon } from "@phosphor-icons/react/dist/csr/GoogleDriveLogo";
-export { HashIcon } from "@phosphor-icons/react/dist/csr/Hash";
-export { HouseIcon } from "@phosphor-icons/react/dist/csr/House";
-export { LinkIcon } from "@phosphor-icons/react/dist/csr/Link";
-export { LockIcon } from "@phosphor-icons/react/dist/csr/Lock";
-export { MagnifyingGlassIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
-export { MicrosoftExcelLogoIcon } from "@phosphor-icons/react/dist/csr/MicrosoftExcelLogo";
-export { MicrosoftTeamsLogoIcon } from "@phosphor-icons/react/dist/csr/MicrosoftTeamsLogo";
-export { MinusIcon } from "@phosphor-icons/react/dist/csr/Minus";
-export { MoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
-export { NotionLogoIcon } from "@phosphor-icons/react/dist/csr/NotionLogo";
-export { PaletteIcon } from "@phosphor-icons/react/dist/csr/Palette";
-export { PauseIcon } from "@phosphor-icons/react/dist/csr/Pause";
-export { PlayIcon } from "@phosphor-icons/react/dist/csr/Play";
-export { PlugIcon } from "@phosphor-icons/react/dist/csr/Plug";
-export { PlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
-export { PresentationIcon } from "@phosphor-icons/react/dist/csr/Presentation";
-export { QuestionIcon } from "@phosphor-icons/react/dist/csr/Question";
-export { RobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
-export { SidebarIcon } from "@phosphor-icons/react/dist/csr/Sidebar";
-export { SlackLogoIcon } from "@phosphor-icons/react/dist/csr/SlackLogo";
-export { SmileyIcon } from "@phosphor-icons/react/dist/csr/Smiley";
-export { SmileyStickerIcon } from "@phosphor-icons/react/dist/csr/SmileySticker";
-export { SquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
-export { StopIcon } from "@phosphor-icons/react/dist/csr/Stop";
-export { SunIcon } from "@phosphor-icons/react/dist/csr/Sun";
-export { TerminalWindowIcon } from "@phosphor-icons/react/dist/csr/TerminalWindow";
-export { UserIcon } from "@phosphor-icons/react/dist/csr/User";
-export { UsersIcon } from "@phosphor-icons/react/dist/csr/Users";
-export { VideoCameraIcon } from "@phosphor-icons/react/dist/csr/VideoCamera";
-export { VideoConferenceIcon } from "@phosphor-icons/react/dist/csr/VideoConference";
-export { WrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
-export { XIcon } from "@phosphor-icons/react/dist/csr/X";
-export { XCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
-export { YoutubeLogoIcon } from "@phosphor-icons/react/dist/csr/YoutubeLogo";
-export { OneDriveLogoIcon } from "./OneDriveLogo";
+import { BrowserIcon as PhosphorBrowserIcon } from "@phosphor-icons/react/dist/csr/Browser";
+export const BrowserIcon = defineIcon("phosphor", PhosphorBrowserIcon);
+import { ArrowDownIcon as PhosphorArrowDownIcon } from "@phosphor-icons/react/dist/csr/ArrowDown";
+export const ArrowDownIcon = defineIcon("phosphor", PhosphorArrowDownIcon);
+import { ArrowLeftIcon as PhosphorArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
+export const ArrowLeftIcon = defineIcon("phosphor", PhosphorArrowLeftIcon);
+import { ArrowRightIcon as PhosphorArrowRightIcon } from "@phosphor-icons/react/dist/csr/ArrowRight";
+export const ArrowRightIcon = defineIcon("phosphor", PhosphorArrowRightIcon);
+import { ArrowSquareOutIcon as PhosphorArrowSquareOutIcon } from "@phosphor-icons/react/dist/csr/ArrowSquareOut";
+export const ArrowSquareOutIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowSquareOutIcon,
+);
+import { ArrowUpIcon as PhosphorArrowUpIcon } from "@phosphor-icons/react/dist/csr/ArrowUp";
+export const ArrowUpIcon = defineIcon("phosphor", PhosphorArrowUpIcon);
+import { ArrowUpRightIcon as PhosphorArrowUpRightIcon } from "@phosphor-icons/react/dist/csr/ArrowUpRight";
+export const ArrowUpRightIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowUpRightIcon,
+);
+import { ArrowsClockwiseIcon as PhosphorArrowsClockwiseIcon } from "@phosphor-icons/react/dist/csr/ArrowsClockwise";
+export const ArrowsClockwiseIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowsClockwiseIcon,
+);
+import { ArrowsInIcon as PhosphorArrowsInIcon } from "@phosphor-icons/react/dist/csr/ArrowsIn";
+export const ArrowsInIcon = defineIcon("phosphor", PhosphorArrowsInIcon);
+import { ArrowsOutIcon as PhosphorArrowsOutIcon } from "@phosphor-icons/react/dist/csr/ArrowsOut";
+export const ArrowsOutIcon = defineIcon("phosphor", PhosphorArrowsOutIcon);
+import { AtIcon as PhosphorAtIcon } from "@phosphor-icons/react/dist/csr/At";
+export const AtIcon = defineIcon("phosphor", PhosphorAtIcon);
+import { BellIcon as PhosphorBellIcon } from "@phosphor-icons/react/dist/csr/Bell";
+export const BellIcon = defineIcon("phosphor", PhosphorBellIcon);
+import { CaretDownIcon as PhosphorCaretDownIcon } from "@phosphor-icons/react/dist/csr/CaretDown";
+export const CaretDownIcon = defineIcon("phosphor", PhosphorCaretDownIcon);
+import { CaretLeftIcon as PhosphorCaretLeftIcon } from "@phosphor-icons/react/dist/csr/CaretLeft";
+export const CaretLeftIcon = defineIcon("phosphor", PhosphorCaretLeftIcon);
+import { CaretRightIcon as PhosphorCaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
+export const CaretRightIcon = defineIcon("phosphor", PhosphorCaretRightIcon);
+import { ChatCircleIcon as PhosphorChatCircleIcon } from "@phosphor-icons/react/dist/csr/ChatCircle";
+export const ChatCircleIcon = defineIcon("phosphor", PhosphorChatCircleIcon);
+import { ChatsCircleIcon as PhosphorChatsCircleIcon } from "@phosphor-icons/react/dist/csr/ChatsCircle";
+export const ChatsCircleIcon = defineIcon("phosphor", PhosphorChatsCircleIcon);
+import { CheckIcon as PhosphorCheckIcon } from "@phosphor-icons/react/dist/csr/Check";
+export const CheckIcon = defineIcon("phosphor", PhosphorCheckIcon);
+import { CopyIcon as PhosphorCopyIcon } from "@phosphor-icons/react/dist/csr/Copy";
+export const CopyIcon = defineIcon("phosphor", PhosphorCopyIcon);
+import { DotsThreeIcon as PhosphorDotsThreeIcon } from "@phosphor-icons/react/dist/csr/DotsThree";
+export const DotsThreeIcon = defineIcon("phosphor", PhosphorDotsThreeIcon);
+import { DownloadIcon as PhosphorDownloadIcon } from "@phosphor-icons/react/dist/csr/Download";
+export const DownloadIcon = defineIcon("phosphor", PhosphorDownloadIcon);
+import { DropboxLogoIcon as PhosphorDropboxLogoIcon } from "@phosphor-icons/react/dist/csr/DropboxLogo";
+export const DropboxLogoIcon = defineIcon("phosphor", PhosphorDropboxLogoIcon);
+import { FigmaLogoIcon as PhosphorFigmaLogoIcon } from "@phosphor-icons/react/dist/csr/FigmaLogo";
+export const FigmaLogoIcon = defineIcon("phosphor", PhosphorFigmaLogoIcon);
+import { FileTextIcon as PhosphorFileTextIcon } from "@phosphor-icons/react/dist/csr/FileText";
+export const FileTextIcon = defineIcon("phosphor", PhosphorFileTextIcon);
+import { FolderOpenIcon as PhosphorFolderOpenIcon } from "@phosphor-icons/react/dist/csr/FolderOpen";
+export const FolderOpenIcon = defineIcon("phosphor", PhosphorFolderOpenIcon);
+import { FolderSimpleIcon as PhosphorFolderSimpleIcon } from "@phosphor-icons/react/dist/csr/FolderSimple";
+export const FolderSimpleIcon = defineIcon(
+  "phosphor",
+  PhosphorFolderSimpleIcon,
+);
+import { GearIcon as PhosphorGearIcon } from "@phosphor-icons/react/dist/csr/Gear";
+export const GearIcon = defineIcon("phosphor", PhosphorGearIcon);
+import { GitBranchIcon as PhosphorGitBranchIcon } from "@phosphor-icons/react/dist/csr/GitBranch";
+export const GitBranchIcon = defineIcon("phosphor", PhosphorGitBranchIcon);
+import { GitCommitIcon as PhosphorGitCommitIcon } from "@phosphor-icons/react/dist/csr/GitCommit";
+export const GitCommitIcon = defineIcon("phosphor", PhosphorGitCommitIcon);
+import { GitPullRequestIcon as PhosphorGitPullRequestIcon } from "@phosphor-icons/react/dist/csr/GitPullRequest";
+export const GitPullRequestIcon = defineIcon(
+  "phosphor",
+  PhosphorGitPullRequestIcon,
+);
+import { GithubLogoIcon as PhosphorGithubLogoIcon } from "@phosphor-icons/react/dist/csr/GithubLogo";
+export const GithubLogoIcon = defineIcon("phosphor", PhosphorGithubLogoIcon);
+import { GitlabLogoIcon as PhosphorGitlabLogoIcon } from "@phosphor-icons/react/dist/csr/GitlabLogo";
+export const GitlabLogoIcon = defineIcon("phosphor", PhosphorGitlabLogoIcon);
+import { GlobeIcon as PhosphorGlobeIcon } from "@phosphor-icons/react/dist/csr/Globe";
+export const GlobeIcon = defineIcon("phosphor", PhosphorGlobeIcon);
+import { GoogleDriveLogoIcon as PhosphorGoogleDriveLogoIcon } from "@phosphor-icons/react/dist/csr/GoogleDriveLogo";
+export const GoogleDriveLogoIcon = defineIcon(
+  "phosphor",
+  PhosphorGoogleDriveLogoIcon,
+);
+import { HashIcon as PhosphorHashIcon } from "@phosphor-icons/react/dist/csr/Hash";
+export const HashIcon = defineIcon("phosphor", PhosphorHashIcon);
+import { HouseIcon as PhosphorHouseIcon } from "@phosphor-icons/react/dist/csr/House";
+export const HouseIcon = defineIcon("phosphor", PhosphorHouseIcon);
+import { LinkIcon as PhosphorLinkIcon } from "@phosphor-icons/react/dist/csr/Link";
+export const LinkIcon = defineIcon("phosphor", PhosphorLinkIcon);
+import { LockIcon as PhosphorLockIcon } from "@phosphor-icons/react/dist/csr/Lock";
+export const LockIcon = defineIcon("phosphor", PhosphorLockIcon);
+import { MagnifyingGlassIcon as PhosphorMagnifyingGlassIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
+export const MagnifyingGlassIcon = defineIcon(
+  "phosphor",
+  PhosphorMagnifyingGlassIcon,
+);
+import { MicrosoftExcelLogoIcon as PhosphorMicrosoftExcelLogoIcon } from "@phosphor-icons/react/dist/csr/MicrosoftExcelLogo";
+export const MicrosoftExcelLogoIcon = defineIcon(
+  "phosphor",
+  PhosphorMicrosoftExcelLogoIcon,
+);
+import { MicrosoftTeamsLogoIcon as PhosphorMicrosoftTeamsLogoIcon } from "@phosphor-icons/react/dist/csr/MicrosoftTeamsLogo";
+export const MicrosoftTeamsLogoIcon = defineIcon(
+  "phosphor",
+  PhosphorMicrosoftTeamsLogoIcon,
+);
+import { MinusIcon as PhosphorMinusIcon } from "@phosphor-icons/react/dist/csr/Minus";
+export const MinusIcon = defineIcon("phosphor", PhosphorMinusIcon);
+import { MoonIcon as PhosphorMoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
+export const MoonIcon = defineIcon("phosphor", PhosphorMoonIcon);
+import { NotionLogoIcon as PhosphorNotionLogoIcon } from "@phosphor-icons/react/dist/csr/NotionLogo";
+export const NotionLogoIcon = defineIcon("phosphor", PhosphorNotionLogoIcon);
+import { PaletteIcon as PhosphorPaletteIcon } from "@phosphor-icons/react/dist/csr/Palette";
+export const PaletteIcon = defineIcon("phosphor", PhosphorPaletteIcon);
+import { PauseIcon as PhosphorPauseIcon } from "@phosphor-icons/react/dist/csr/Pause";
+export const PauseIcon = defineIcon("phosphor", PhosphorPauseIcon);
+import { PlayIcon as PhosphorPlayIcon } from "@phosphor-icons/react/dist/csr/Play";
+export const PlayIcon = defineIcon("phosphor", PhosphorPlayIcon);
+import { PlugIcon as PhosphorPlugIcon } from "@phosphor-icons/react/dist/csr/Plug";
+export const PlugIcon = defineIcon("phosphor", PhosphorPlugIcon);
+import { PlusIcon as PhosphorPlusIcon } from "@phosphor-icons/react/dist/csr/Plus";
+export const PlusIcon = defineIcon("phosphor", PhosphorPlusIcon);
+import { PresentationIcon as PhosphorPresentationIcon } from "@phosphor-icons/react/dist/csr/Presentation";
+export const PresentationIcon = defineIcon(
+  "phosphor",
+  PhosphorPresentationIcon,
+);
+import { QuestionIcon as PhosphorQuestionIcon } from "@phosphor-icons/react/dist/csr/Question";
+export const QuestionIcon = defineIcon("phosphor", PhosphorQuestionIcon);
+import { RobotIcon as PhosphorRobotIcon } from "@phosphor-icons/react/dist/csr/Robot";
+export const RobotIcon = defineIcon("phosphor", PhosphorRobotIcon);
+import { SidebarIcon as PhosphorSidebarIcon } from "@phosphor-icons/react/dist/csr/Sidebar";
+export const SidebarIcon = defineIcon("phosphor", PhosphorSidebarIcon);
+import { SlackLogoIcon as PhosphorSlackLogoIcon } from "@phosphor-icons/react/dist/csr/SlackLogo";
+export const SlackLogoIcon = defineIcon("phosphor", PhosphorSlackLogoIcon);
+import { SmileyIcon as PhosphorSmileyIcon } from "@phosphor-icons/react/dist/csr/Smiley";
+export const SmileyIcon = defineIcon("phosphor", PhosphorSmileyIcon);
+import { SmileyStickerIcon as PhosphorSmileyStickerIcon } from "@phosphor-icons/react/dist/csr/SmileySticker";
+export const SmileyStickerIcon = defineIcon(
+  "phosphor",
+  PhosphorSmileyStickerIcon,
+);
+import { SquaresFourIcon as PhosphorSquaresFourIcon } from "@phosphor-icons/react/dist/csr/SquaresFour";
+export const SquaresFourIcon = defineIcon("phosphor", PhosphorSquaresFourIcon);
+import { StopIcon as PhosphorStopIcon } from "@phosphor-icons/react/dist/csr/Stop";
+export const StopIcon = defineIcon("phosphor", PhosphorStopIcon);
+import { SunIcon as PhosphorSunIcon } from "@phosphor-icons/react/dist/csr/Sun";
+export const SunIcon = defineIcon("phosphor", PhosphorSunIcon);
+import { TerminalWindowIcon as PhosphorTerminalWindowIcon } from "@phosphor-icons/react/dist/csr/TerminalWindow";
+export const TerminalWindowIcon = defineIcon(
+  "phosphor",
+  PhosphorTerminalWindowIcon,
+);
+import { UserIcon as PhosphorUserIcon } from "@phosphor-icons/react/dist/csr/User";
+export const UserIcon = defineIcon("phosphor", PhosphorUserIcon);
+import { UsersIcon as PhosphorUsersIcon } from "@phosphor-icons/react/dist/csr/Users";
+export const UsersIcon = defineIcon("phosphor", PhosphorUsersIcon);
+import { VideoCameraIcon as PhosphorVideoCameraIcon } from "@phosphor-icons/react/dist/csr/VideoCamera";
+export const VideoCameraIcon = defineIcon("phosphor", PhosphorVideoCameraIcon);
+import { VideoConferenceIcon as PhosphorVideoConferenceIcon } from "@phosphor-icons/react/dist/csr/VideoConference";
+export const VideoConferenceIcon = defineIcon(
+  "phosphor",
+  PhosphorVideoConferenceIcon,
+);
+import { WrenchIcon as PhosphorWrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
+export const WrenchIcon = defineIcon("phosphor", PhosphorWrenchIcon);
+import { XIcon as PhosphorXIcon } from "@phosphor-icons/react/dist/csr/X";
+export const XIcon = defineIcon("phosphor", PhosphorXIcon);
+import { XCircleIcon as PhosphorXCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";
+export const XCircleIcon = defineIcon("phosphor", PhosphorXCircleIcon);
+import { YoutubeLogoIcon as PhosphorYoutubeLogoIcon } from "@phosphor-icons/react/dist/csr/YoutubeLogo";
+export const YoutubeLogoIcon = defineIcon("phosphor", PhosphorYoutubeLogoIcon);
+export const OneDriveLogoIcon = defineIcon("custom", OneDriveLogoArtwork, {
+  meaning: "Microsoft OneDrive link",
+  category: "Custom brand mark",
+  provenance:
+    "Custom current-color outline recreation of the Microsoft OneDrive cloud mark.",
+  intendedSizes: [{ width: 14, height: 14 }],
+});
+export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
+  meaning: "Open GitHub issue",
+  category: "Product mark",
+  provenance:
+    "Buzz-owned mark based on GitHub’s issue symbol and Phosphor Circle geometry.",
+  intendedSizes: [{ width: 22, height: 22 }],
+});

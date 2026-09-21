@@ -273,6 +273,69 @@
     background: var(--bg-panel);
   }
 
+  .icon-inventory-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+    gap: var(--space-2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  .icon-inventory-item {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border-radius: var(--radius-control);
+    background: var(--neutral-2);
+  }
+
+  .icon-inventory-item svg {
+    flex: 0 0 auto;
+  }
+
+  .custom-icon-inventory {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-6);
+  }
+
+  .custom-icon-item {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--space-5);
+  }
+
+  .custom-icon-examples {
+    display: flex;
+    min-width: 5rem;
+    justify-content: center;
+    gap: var(--space-4);
+  }
+
+  .custom-icon-example,
+  .custom-icon-copy {
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+  }
+
+  .custom-icon-example {
+    align-items: center;
+    gap: var(--space-2);
+  }
+
+  .custom-icon-copy {
+    gap: var(--space-1);
+  }
+
+  .custom-icon-copy > * {
+    margin: 0;
+  }
+
   .component-overview-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -334,8 +397,13 @@
       padding: var(--space-6) var(--space-4);
     }
 
-    .component-overview-grid {
+    .component-overview-grid,
+    .custom-icon-inventory {
       grid-template-columns: 1fr;
+    }
+
+    .custom-icon-item {
+      align-items: flex-start;
     }
   }
 }

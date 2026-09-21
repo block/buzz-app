@@ -5,34 +5,80 @@ import { parseSync } from "rolldown/utils";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const gateway = "src/shared/design-system/icons/";
-const allowed = new Set(["@phosphor-icons/react", "@phosphor-icons/core"]);
-// Known icon families, not a security sandbox or a classifier for arbitrary new packages.
-const family =
-  /lucide|tabler|phosphor|heroicons|fortawesome|react-icons|iconify|iconoir|iconsax|radix-ui\/react-icons|icons-react/i;
+const approved = new Set(["@phosphor-icons/react", "@phosphor-icons/core"]);
+// A closed policy needs an explicit non-icon side as well as approved icon catalogs.
+// Version changes remain ordinary; adding a package requires classifying it here.
+const nonIconDependencies = new Set([
+  "@base-ui/react",
+  "@biomejs/biome",
+  "@buzz/author",
+  "@deepseek-ai/cordis",
+  "@emoji-mart/data",
+  "@fontsource-variable/inter",
+  "@fontsource/jetbrains-mono",
+  "@playwright/test",
+  "@tailwindcss/postcss",
+  "@tanstack/react-router",
+  "@tauri-apps/api",
+  "@tauri-apps/cli",
+  "@testing-library/dom",
+  "@testing-library/jest-dom",
+  "@testing-library/react",
+  "@testing-library/user-event",
+  "@types/node",
+  "@types/react",
+  "@types/react-dom",
+  "@vitejs/plugin-react",
+  "@xterm/addon-fit",
+  "@xterm/xterm",
+  "blurhash",
+  "dockview-react",
+  "emoji-mart",
+  "flexlayout-react",
+  "jsdom",
+  "mdast-util-from-markdown",
+  "nostr-tools",
+  "postcss",
+  "react",
+  "react-dom",
+  "react-markdown",
+  "remark-breaks",
+  "remark-gfm",
+  "rolldown",
+  "tailwindcss",
+  "typescript",
+  "undici",
+  "virtua",
+  "vite",
+  "vitest",
+  "yaml",
+]);
+const allowedDependencies = new Set([...approved, ...nonIconDependencies]);
+const dependencyFields = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+];
 const packageName = (specifier) =>
   specifier
     .split("/")
     .slice(0, specifier.startsWith("@") ? 2 : 1)
     .join("/");
 export function checkIconManifest(manifest) {
-  return [
-    "dependencies",
-    "devDependencies",
-    "optionalDependencies",
-    "peerDependencies",
-  ]
+  return dependencyFields
     .flatMap((field) => Object.entries(manifest[field] ?? {}))
-    .filter(
-      ([name, version]) =>
-        (family.test(name) && !allowed.has(name)) ||
-        (version.startsWith("npm:") &&
-          family.test(version.slice(4)) &&
-          !allowed.has(version.slice(4).replace(/@[^@]*$/, ""))),
-    )
-    .map(
-      ([name]) =>
-        `Unapproved icon dependency: ${name}. Use Phosphor through shared/design-system/icons.`,
-    );
+    .flatMap(([name, version]) => {
+      const alias = version.startsWith("npm:")
+        ? packageName(version.slice(4).replace(/@[^@]*$/, ""))
+        : undefined;
+      const target = alias ?? packageName(name);
+      if (allowedDependencies.has(name) && target === name) return [];
+      if (!alias && nonIconDependencies.has(target)) return [];
+      return [
+        `Unclassified dependency: ${name}. Approve non-icon packages explicitly; use only Phosphor for icons.`,
+      ];
+    });
 }
 
 // Reuse the build tool's syntax parser so JSX, regexes and template text are
@@ -78,17 +124,34 @@ export function checkIconSource(path, source) {
     )
       target = node.arguments[0];
     const specifier = literal(target);
-    if (typeof specifier === "string" && family.test(packageName(specifier))) {
-      if (!inside || !allowed.has(packageName(specifier)))
-        errors.push(`Use shared/design-system/icons instead of ${specifier}.`);
-      else if (
-        !/^@phosphor-icons\/(?:react\/dist\/csr\/[A-Z][A-Za-z0-9]*|core\/assets\/(?:thin|light|regular|bold|fill|duotone)\/[a-z0-9-]+\.svg\?raw)$/.test(
-          specifier,
-        )
-      )
+    const dependency =
+      typeof specifier === "string" ? packageName(specifier) : undefined;
+    if (
+      dependency !== undefined &&
+      !specifier.startsWith(".") &&
+      !specifier.startsWith("/") &&
+      !specifier.startsWith("node:") &&
+      !specifier.startsWith("#")
+    ) {
+      if (!allowedDependencies.has(dependency))
         errors.push(
-          `Import individual Phosphor modules/assets, not the full catalog: ${specifier}`,
+          `Use shared/design-system/icons instead of unclassified external dependency ${specifier}.`,
         );
+      else if (approved.has(dependency)) {
+        if (!inside)
+          errors.push(
+            `Use shared/design-system/icons instead of ${specifier}.`,
+          );
+        else if (
+          !/^@phosphor-icons\/(?:react\/dist\/csr\/[A-Z][A-Za-z0-9]*|core\/assets\/(?:thin|light|regular|bold|fill|duotone)\/[a-z0-9-]+\.svg\?raw)$/.test(
+            specifier,
+          )
+        )
+          errors.push(
+            `Import individual Phosphor modules/assets, not the full catalog: ${specifier}`,
+          );
+      } else if (inside && dependency !== "react")
+        errors.push(`The icon gateway cannot depend on ${specifier}.`);
     }
     for (const value of Object.values(node))
       if (value && typeof value === "object") visit(value);

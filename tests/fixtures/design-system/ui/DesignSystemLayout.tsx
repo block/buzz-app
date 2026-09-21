@@ -33,6 +33,7 @@ const SECTIONS: NavSection[] = [
     items: [
       ["Color", "/design/color", [["Token table", "/design/color/table"]]],
       ["Typography", "/design/typography"],
+      ["Icons", "/design/icons"],
       ["Spacing", "/design/spacing"],
       ["Radius", "/design/radius"],
       ["Elevation", "/design/elevation"],

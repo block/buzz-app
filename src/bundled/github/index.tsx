@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ArrowSquareOutIcon,
   GitPullRequestIcon,
-  DotOutlineIcon,
+  GitHubIssueIcon,
   GitCommitIcon,
   FolderSimpleIcon,
 } from "../../shared/design-system/icons/index";
@@ -30,7 +30,7 @@ const labels = {
 const icons = {
   repository: FolderSimpleIcon,
   pull: GitPullRequestIcon,
-  issue: DotOutlineIcon,
+  issue: GitHubIssueIcon,
   commit: GitCommitIcon,
 };
 

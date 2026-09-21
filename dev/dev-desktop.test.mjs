@@ -2,11 +2,27 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { desktopArgs, worktreeLabel } from "../scripts/dev-desktop.mjs";
 
 const directories = [];
+// Git hooks export repository selectors. Keep every fixture command, including
+// the real launcher under test, scoped to the disposable checkout instead.
+const repositoryEnvironment = [
+  "GIT_DIR",
+  "GIT_COMMON_DIR",
+  "GIT_WORK_TREE",
+  "GIT_IMPLICIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_PREFIX",
+];
+beforeEach(() => {
+  for (const key of repositoryEnvironment) vi.stubEnv(key, undefined);
+});
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const path of directories.splice(0))
     rmSync(path, { recursive: true, force: true });
 });

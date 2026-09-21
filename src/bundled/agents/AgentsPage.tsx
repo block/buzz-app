@@ -1,4 +1,7 @@
-import { IconRefresh, IconUsers } from "@tabler/icons-react";
+import {
+  ArrowsClockwiseIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
@@ -18,7 +21,7 @@ export function AgentsPage({ relay }: { relay: RelayData }) {
   return (
     <div className="h-full min-h-0">
       <FullPageSurface aria-label="Agents">
-        <div className="h-full min-h-0 overflow-auto p-5 text-body sm:p-8">
+        <div className="h-full min-h-0 overflow-auto p-panel-inset text-body">
           <h1 className="m-0 text-title text-primary">Agents</h1>
           {connection.status === "ready" ? (
             <MyAgents
@@ -69,7 +72,7 @@ function MyAgents({ session }: { session: RelaySession }) {
   );
   const loading = snapshot.status === "loading";
   return (
-    <div className="mx-auto mt-2 max-w-6xl space-y-6">
+    <div className="mx-auto mt-2 max-w-6xl space-y-section-gap">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="m-0 text-body text-secondary">Your agents from Buzz.</p>
         <Button
@@ -78,7 +81,7 @@ function MyAgents({ session }: { session: RelaySession }) {
           disabled={loading || snapshot.status === "unavailable"}
           onClick={refresh}
         >
-          <IconRefresh size={16} stroke={2} aria-hidden="true" />
+          <ArrowsClockwiseIcon size={16} aria-hidden="true" />
           {snapshot.status === "error" ? "Retry" : "Refresh agents"}
         </Button>
       </div>
@@ -196,9 +199,15 @@ function AgentCard({
   return (
     <article className="flex min-w-0 flex-col rounded-2xl border border-primary p-4">
       <div className="flex min-h-36 flex-1 items-center justify-center py-5">
-        <Avatar alt={name} fallback={name} src={picture ?? null} size="large" />
+        <Avatar
+          alt={name}
+          fallback={name}
+          src={picture ?? null}
+          size="large"
+          shape="squircle"
+        />
       </div>
-      <h3 className="m-0 truncate text-body font-semibold" title={name}>
+      <h3 className="m-0 truncate text-label" title={name}>
         {name}
       </h3>
       {identities.length ? (
@@ -208,7 +217,7 @@ function AgentCard({
               value: "identities",
               title: (
                 <span className="flex items-center gap-2">
-                  <IconUsers size={16} stroke={2} aria-hidden="true" />
+                  <UsersIcon size={16} aria-hidden="true" />
                   <span className="sr-only">{name}: </span>
                   {identities.length}{" "}
                   {identities.length === 1 ? "identity" : "identities"}

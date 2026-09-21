@@ -1,10 +1,10 @@
 import { Layout, Model } from "flexlayout-react";
 import {
-  IconArrowsMaximize,
-  IconArrowsMinimize,
-  IconChevronDown,
-  IconX,
-} from "@tabler/icons-react";
+  ArrowsOutIcon,
+  ArrowsInIcon,
+  CaretDownIcon,
+  XIcon,
+} from "../icons/index";
 import { useState } from "react";
 import { Button } from "./Button";
 import "../styles/flex-workspace.css";
@@ -42,10 +42,10 @@ export function FlexWorkspace() {
 }
 
 const icons = {
-  close: <IconX size={16} aria-hidden="true" />,
-  maximize: <IconArrowsMaximize size={16} aria-hidden="true" />,
-  restore: <IconArrowsMinimize size={16} aria-hidden="true" />,
-  more: <IconChevronDown size={16} aria-hidden="true" />,
+  close: <XIcon size={16} aria-hidden="true" />,
+  maximize: <ArrowsOutIcon size={16} aria-hidden="true" />,
+  restore: <ArrowsInIcon size={16} aria-hidden="true" />,
+  more: <CaretDownIcon size={16} aria-hidden="true" />,
 };
 
 function emptyPanel() {

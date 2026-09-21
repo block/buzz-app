@@ -1,5 +1,27 @@
 # DESIGN.md
 
+## Current local adoption
+
+The product owner has requested BlockUI foundations in the actual Buzz app.
+Shared neutrals now use BlockUI text and surface values; primary actions are
+neutral. Inter uses the BlockUI 16/24 body, 14/20 small body, 20/28 lead,
+24/24 section, 32/32 title and 56/56 hero settings, with 400/500 weights.
+Labels have separate 16/24 and 14/20 roles; caption is 12/16.
+Buzz retains its 11/13/15 mono roles for source code.
+Existing host color names alias the shared tokens. Panel padding is 24, control
+inset 16, group gap 32 and page-section gap 64 (all rem-based).
+This supersedes the historical 14px body, 400/600 and neutral-ramp values below.
+Dark secondary/tertiary text select the lighter BlockUI ramp steps to preserve
+Buzz’s APCA targets on raised panels; the raw BlockUI grays remain in the palette.
+Buzz keeps its full-window gradient backdrops and glass navigation in both modes.
+The app and shared system use the same backdrop and glass materials; content
+panels keep the new neutral surfaces. Status, picker, dialog and host compatibility colors now resolve to the shared
+palette. Application typography, insets, gaps and corners use shared roles.
+The app-wide foundation guard covers src/ (including the Emoji Mart adapter);
+layout dimensions, emoji artwork geometry and terminal ANSI/artwork remain
+renderer-owned. The terminal UI itself uses the shared colors and mono type.
+
+
 How to design well in this client. The token registry says which value to use; this says what tokens cannot express — the judgement a designer makes without thinking and an agent gets wrong without being told. Read it before building a surface.
 
 Run `pnpm design:dev` and open `/tests/fixtures/design-system.html` to see the system rendered from the tokens themselves.
@@ -406,3 +428,9 @@ Every addition lands in `src/shared/design-system/tokens/registry.ts` in the sam
   6. **If the choice cannot be expressed by one step in both modes, make a proposed role with both values and a one-sentence job.** If the name only restates one step, it has not earned a role. If it is a whole treatment — glass is the example — make a utility that carries every inseparable part together.
   7. **If none of this feels clearly right, stop and ask.** Choosing a raw literal or a local exception is never the escape hatch. The system is deliberately allowed to grow; uncertainty is evidence of a missing decision, not a prompt to hide one.
 - **If a screen looks right but breaks these rules, the rules are probably wrong — say so.** This document is meant to be argued with, not worked around.
+
+## Icons
+
+Phosphor is the only general icon family. Import named icons from `icons/index.ts`, which re-exports individual upstream modules. Add exports as needed; no approval list. SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the upstream packages elsewhere or reintroduce other icon libraries. All six native weights remain designer choices: no size-to-weight or selection-to-fill rules. For chat and conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`) over square or teardrop variants; choose the matching dots, text, or slash variant when the meaning requires it. Keep accessible names on controls and decorative artwork hidden from assistive technology.
+
+OneDrive is a designer-approved custom brand mark: its complete outline is recreated on Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in the shared icon gateway. It does not permit another general icon library.

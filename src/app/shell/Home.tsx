@@ -1,4 +1,7 @@
-import { ArrowUpRight, Settings2 } from "lucide-react";
+import {
+  ArrowUpRightIcon,
+  GearIcon,
+} from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 import { orderPages, pagePresentation } from "./presentation";
 
@@ -10,17 +13,20 @@ export function Home({
   onSelect: (key: string) => void;
 }) {
   return (
-    <section className="mx-auto max-w-2xl pt-8 sm:pt-16">
+    <section
+      className="mx-auto max-w-2xl"
+      style={{ paddingTop: "var(--space-page-section-gap)" }}
+    >
       <img
         src="/app-icon.png"
         alt="Buzz"
         className="mb-6 size-16 rounded-2xl"
       />
-      <p className="mb-2 text-sm text-muted">A little space for everything.</p>
-      <h1 className="mb-8 text-4xl font-medium tracking-tight sm:text-5xl">
-        Make yourself at home.
-      </h1>
-      <div className="overflow-hidden rounded-3xl border border-shell-edge/70 bg-surface/95 shadow-surface">
+      <p className="mb-2 text-body-sm text-muted">
+        A little space for everything.
+      </p>
+      <h1 className="mb-8 text-display">Make yourself at home.</h1>
+      <div className="overflow-hidden rounded-3xl border border-primary bg-panel shadow-surface">
         {orderPages(pages).map((page) => {
           const { label, icon: Icon } = pagePresentation(page);
           return (
@@ -33,8 +39,8 @@ export function Home({
               <span className="flex size-11 items-center justify-center rounded-2xl bg-shell">
                 <Icon size={21} aria-hidden="true" />
               </span>
-              <span className="flex-1 text-base font-medium">{label}</span>
-              <ArrowUpRight
+              <span className="flex-1 text-label">{label}</span>
+              <ArrowUpRightIcon
                 size={18}
                 className="text-muted"
                 aria-hidden="true"
@@ -48,13 +54,17 @@ export function Home({
           className="flex w-full items-center gap-4 rounded-none border-0 bg-transparent p-6 text-left text-ink hover:bg-soft"
         >
           <span className="flex size-11 items-center justify-center rounded-2xl bg-soft">
-            <Settings2 size={21} aria-hidden="true" />
+            <GearIcon size={21} aria-hidden="true" />
           </span>
           <span className="flex-1">
-            <span className="block text-base font-medium">Make it yours</span>
-            <span className="text-sm text-muted">Settings</span>
+            <span className="block text-label">Make it yours</span>
+            <span className="text-body-sm text-muted">Settings</span>
           </span>
-          <ArrowUpRight size={18} className="text-muted" aria-hidden="true" />
+          <ArrowUpRightIcon
+            size={18}
+            className="text-muted"
+            aria-hidden="true"
+          />
         </button>
       </div>
     </section>

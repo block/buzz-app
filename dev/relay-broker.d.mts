@@ -12,4 +12,5 @@ export function relayBrokerPlugin(options?: {
     relay: string,
   ) => Promise<{ relayAuthor: string; archiveAuthority?: string }>;
   upstreamFetch?: typeof fetch;
+  socketFactory?: (url: string) => WebSocket;
 }): Plugin;

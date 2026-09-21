@@ -1,5 +1,7 @@
+import { expectPhosphor } from "./phosphor.mjs";
 import { test, expect } from "./fixture.mjs";
 
+test.use({ historyCounts: { alpha: 1, beta: 0 } });
 test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   page,
   app,
@@ -108,7 +110,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(emojiSearch).toHaveCSS(
     "box-shadow",
-    "rgb(206, 206, 206) 0px 0px 0px 2px",
+    "rgb(0, 0, 0) 0px 0px 0px 2px",
   );
   const emojiSearchPosition = await emojiSearch.boundingBox();
   const emojiTabPosition = await emojiTab.boundingBox();
@@ -128,12 +130,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     };
   };
   const emojiSearchStyle = await emojiSearch.evaluate(searchStyle);
-  expect(emojiSearchStyle.fontFamily).toMatch(/^Inter, /);
-  expect(emojiSearchStyle.fontFamily).not.toContain("Inter Variable");
+  expect(emojiSearchStyle.fontFamily).toMatch(/Inter Variable/);
+
   const emojiContentHeight = (
     await page.locator("em-emoji-picker").boundingBox()
   ).height;
-  const sharedSearchIcon = picker.locator(":scope > svg.lucide-search");
+  const sharedSearchIcon = picker.locator(":scope > svg");
   const sharedSearchIconNode = await sharedSearchIcon.elementHandle();
   const emojiSearchIconPosition = await sharedSearchIcon.boundingBox();
   expect(emojiSearchIconPosition.x - emojiSearchPosition.x).toBeCloseTo(8, 1);
@@ -158,10 +160,10 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     (element) => getComputedStyle(element).transform,
   );
   await page.mouse.move(0, 0);
-  await expect(gifTab).toHaveCSS("color", "rgb(141, 141, 141)");
+  await expect(gifTab).toHaveCSS("color", "rgb(82, 82, 82)");
   await gifTab.hover();
   await expect(gifTab).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(gifTab).toHaveCSS("color", "rgb(10, 10, 10)");
+  await expect(gifTab).toHaveCSS("color", "rgb(0, 0, 0)");
   const initialIndicatorBox = await tabIndicator.boundingBox();
   await gifTab.dispatchEvent("pointerdown", {
     button: 0,
@@ -192,12 +194,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   const activeTab = gifTab;
   await expect(activeTab).toHaveCSS("align-items", "center");
   await expect(activeTab).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
-  await expect(activeTab).toHaveCSS("color", "rgb(10, 10, 10)");
+  await expect(activeTab).toHaveCSS("color", "rgb(0, 0, 0)");
   await expect(activeTab).toHaveCSS("display", "flex");
   await expect(activeTab).toHaveCSS("height", "30px");
   await expect(tabIndicator).toHaveCSS(
     "background-color",
-    "rgb(240, 240, 240)",
+    "rgb(232, 232, 232)",
   );
   await expect(tabIndicator).toHaveCSS("transition-duration", "0.16s");
   await expect
@@ -236,18 +238,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(draft).toHaveJSProperty("value", "");
   const composer = draft.locator("xpath=ancestor::form");
-  await expect(composer).toHaveCSS("border-top-color", "rgb(138, 148, 152)");
+  await expect(composer).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
   await expect(composer).toHaveCSS("box-shadow", "none");
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
-  await expect(sharedSearchIcon).toHaveAttribute("viewBox", "0 0 24 24");
-  await expect(sharedSearchIcon).toHaveAttribute("stroke-width", "2");
-  await expect(sharedSearchIcon.locator("path")).toHaveAttribute(
-    "d",
-    "m21 21-4.34-4.34",
-  );
-  await expect(sharedSearchIcon.locator("circle")).toHaveAttribute("r", "8");
+  await expectPhosphor(sharedSearchIcon, "magnifying-glass");
   expect(await sharedSearchIconNode.evaluate((node) => node.isConnected)).toBe(
     true,
   );
@@ -260,10 +256,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   expect(gifSearchPosition.x).toBeCloseTo(emojiSearchPosition.x, 1);
   expect(gifSearchPosition.y).toBeCloseTo(emojiSearchPosition.y, 1);
   expect(gifSearchPosition.width).toBeCloseTo(emojiSearchPosition.width, 1);
-  await expect(search).toHaveCSS(
-    "box-shadow",
-    "rgb(206, 206, 206) 0px 0px 0px 2px",
-  );
+  await expect(search).toHaveCSS("box-shadow", "rgb(0, 0, 0) 0px 0px 0px 2px");
   expect(gifSearchIconPosition.x - gifSearchPosition.x).toBeCloseTo(8, 1);
   expect(gifSearchIconPosition.y - gifSearchPosition.y).toBeCloseTo(6, 1);
   expect(await search.evaluate(searchStyle)).toEqual(emojiSearchStyle);
@@ -271,9 +264,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveCSS("margin-left", "2px");
   await expect(search).toHaveCSS("margin-right", "2px");
   await expect(search).toHaveCSS("border-top-width", "0px");
-  await expect(search).toHaveCSS("border-radius", "8px");
-  await expect(search).toHaveCSS("background-color", "rgb(245, 245, 246)");
-  await expect(search).toHaveCSS("color", "rgb(10, 10, 10)");
+  await expect(search).toHaveCSS("border-radius", "10px");
+  await expect(search).toHaveCSS("background-color", "rgb(240, 240, 240)");
+  await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
   await expect(search).toHaveCSS("animation-name", "none");
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(tabIndicator).toHaveCSS("transition-duration", "0s");
@@ -361,18 +354,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(clear).toHaveCSS("right", "10px");
   await expect(clear).toHaveCSS("width", "16px");
   await expect(clear).toHaveCSS("height", "16px");
-  await expect(clear).toHaveCSS("color", "rgb(141, 141, 141)");
-  await expect(clearIcon).toHaveAttribute("viewBox", "0 0 24 24");
-  await expect(clearIcon).toHaveClass(/lucide-circle-x/);
-  await expect(clearIcon.locator("circle")).toHaveCSS(
-    "fill",
-    "rgb(141, 141, 141)",
-  );
-  await expect(clearIcon.locator("circle")).toHaveCSS("stroke", "none");
-  await expect(clearIcon.locator("path").first()).toHaveCSS(
-    "stroke",
-    "rgb(245, 245, 246)",
-  );
+  await expect(clear).toHaveCSS("color", "rgb(82, 82, 82)");
+  await expectPhosphor(clearIcon, "x-circle");
+  await expect(clearIcon.locator("path")).toHaveCSS("fill", "rgb(82, 82, 82)");
   const filledSearchPosition = await search.boundingBox();
   const clearIconPosition = await clearIcon.boundingBox();
   expect(

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
+import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
 const viewer = "/tests/fixtures/design-system.html";
 
@@ -28,12 +29,14 @@ test("built viewer loads every specimen and foundation without app connections",
     "Color",
     "Token table",
     "Typography",
+    "Icons",
     "Spacing",
     "Radius",
     "Elevation",
     "Glass",
     "Motion",
     "Base UI backing",
+    "Foundation alignment",
     "Maintaining the system",
     "DESIGN.md",
     "AGENTS.md",
@@ -48,6 +51,156 @@ test("built viewer loads every specimen and foundation without app connections",
   ).toHaveCount(0);
   expect(failures).toEqual([]);
   expect(sockets).toEqual([]);
+});
+
+test("icon inventory is routed, complete, decorative, and responsive", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/icons`);
+  await expect(
+    page.getByRole("heading", { name: "Icons", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/#\/design\/icons$/);
+
+  const phosphorList = page.getByRole("list", {
+    name: "Available Phosphor icons",
+  });
+  await expect(phosphorList.getByRole("listitem")).toHaveCount(
+    PHOSPHOR_ICONS.length,
+  );
+  await expect(page.getByRole("img")).toHaveCount(0);
+  await expect(page.locator("main svg:not([aria-hidden='true'])")).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText("Open GitHub issue", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Microsoft OneDrive link", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("22 × 22px", { exact: true })).toBeVisible();
+  await expect(page.getByText("14 × 14px", { exact: true })).toBeVisible();
+  // CSS visibility alone misses captions hidden from assistive technology.
+  for (const [meaning, caption] of [
+    ["Open GitHub issue", "22 × 22px"],
+    ["Microsoft OneDrive link", "14 × 14px"],
+  ] as const) {
+    const example = page
+      .getByRole("article")
+      .filter({
+        has: page.getByRole("heading", { name: meaning, exact: true }),
+      })
+      .locator(".custom-icon-examples");
+    await expect(example).toMatchAriaSnapshot(`- text: ${caption}`);
+  }
+
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expect(phosphorList.getByRole("listitem").first()).toBeVisible();
+  }
+});
+
+test("foundation proposals are independent, local, and usable in both modes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/foundation-alignment`);
+  const current = page.getByRole("region", {
+    name: "Current tokens",
+    exact: true,
+  });
+  const proposal = page.getByRole("region", {
+    name: "Selected proposal",
+    exact: true,
+  });
+  const color = page.getByRole("switch", { name: "Status color" });
+  const reading = page.getByRole("switch", { name: "Larger reading text" });
+  const spacing = page.getByRole("switch", { name: "More section space" });
+
+  for (const mode of ["light", "dark"]) {
+    const theme = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await theme.count()) await theme.click();
+    await expect(proposal.locator("[data-reading]")).toHaveCSS(
+      "font-size",
+      "16px",
+    );
+    await expect(proposal.locator(".alignment-project")).toHaveCSS(
+      "row-gap",
+      "32px",
+    );
+    const neutral = await current
+      .locator("[data-status]")
+      .evaluate((el) => getComputedStyle(el).color);
+    await expect(proposal.locator("[data-status]")).toHaveCSS("color", neutral);
+
+    await color.click();
+    await expect(proposal.locator("[data-status]")).not.toHaveCSS(
+      "color",
+      neutral,
+    );
+    await expect(proposal.locator("[data-reading]")).toHaveCSS(
+      "font-size",
+      "16px",
+    );
+    await expect(proposal.locator(".alignment-project")).toHaveCSS(
+      "row-gap",
+      "32px",
+    );
+    await reading.focus();
+    await page.keyboard.press("Space");
+    await expect(reading).toBeChecked();
+    await expect(proposal.locator("[data-reading]")).toHaveCSS(
+      "font-size",
+      "20px",
+    );
+    await spacing.click();
+    await expect(proposal.locator(".alignment-project")).toHaveCSS(
+      "row-gap",
+      "64px",
+    );
+    await expect(current.locator("[data-reading]")).toHaveCSS(
+      "font-size",
+      "16px",
+    );
+    await expect(current.locator(".alignment-project")).toHaveCSS(
+      "row-gap",
+      "32px",
+    );
+    await expect(current.locator("[data-status]")).toHaveCSS("color", neutral);
+
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect(page.getByRole("table")).toHaveCount(3);
+      await expect(page.getByRole("table").first()).toBeVisible();
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      ).toBe(true);
+    }
+    await color.click();
+    await reading.click();
+    await spacing.focus();
+    await page.keyboard.press("Space");
+    await expect(spacing).not.toBeChecked();
+  }
+  await proposal
+    .getByRole("button", { name: "Follow project", exact: true })
+    .click();
+  await expect(
+    proposal.getByRole("button", { name: "Following project" }),
+  ).toHaveAttribute("aria-pressed", "true");
+  await expect(
+    current.getByRole("button", { name: "Follow project", exact: true }),
+  ).toHaveAttribute("aria-pressed", "false");
+  await page.reload();
+  await expect(color).not.toBeChecked();
+  await expect(reading).not.toBeChecked();
+  await expect(spacing).not.toBeChecked();
 });
 
 test("narrow, intermediate and wide layouts preserve theme and keyboard interaction", async ({

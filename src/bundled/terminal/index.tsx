@@ -1,5 +1,5 @@
 import { useLayoutEffect } from "react";
-import { IconTerminal2 } from "@tabler/icons-react";
+import { TerminalWindowIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import type { PluginModule } from "../../plugins/api";
 import type { ChannelLauncherProps } from "../../features/panels/service";
@@ -47,7 +47,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <IconButton
         size="toolbar"
         variant={pressed ? "tint" : "ghost"}
-        icon={<IconTerminal2 size={16} aria-hidden="true" />}
+        icon={<TerminalWindowIcon size={16} aria-hidden="true" />}
         aria-label="Toggle channel terminal"
         title="Terminal (Cmd/Ctrl+J)"
         aria-pressed={pressed}

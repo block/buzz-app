@@ -1,8 +1,12 @@
 import { test, expect } from "./fixture.mjs";
 import { settle, upper, expectAnchor } from "./timeline.mjs";
 
+const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 // Resize tests must not enter the fixture’s deliberately held paging path.
-const readingTest = test.extend({ tallMessages: true });
+const readingTest = test.extend({
+  tallMessages: true,
+  historyCounts: { alpha: 20, beta: 1 },
+});
 async function expectNonPaging(page, app) {
   expect(
     await page
@@ -80,47 +84,49 @@ async function shellFits(page, width) {
   }
 }
 
-test("page overscroll is disabled while message history still scrolls", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  // Headless wheel input does not reproduce macOS trackpad rubber-banding.
-  // Check the viewport policy as well as real panel scrolling and shell bounds.
-  await expect(page.locator("html")).toHaveCSS("overscroll-behavior", "none");
-  const shell = page.locator(".shell-background");
-  const bounds = await box(shell);
-  const history = page.getByRole("region", { name: "Channel message history" });
-  await settle(page);
-  const initialOffset = await history.evaluate((el) => el.scrollTop);
-  await history.hover();
-  await page.mouse.wheel(0, -300);
-  await expect
-    .poll(() => history.evaluate((el) => el.scrollTop))
-    .toBeLessThan(initialOffset - 100);
-  await settle(page);
-  expect(await box(shell)).toEqual(bounds);
-
-  // Projects has no overflowing content: gestures must leave the shell in place.
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
-  await page.getByRole("heading", { name: "Projects", exact: true }).hover();
-  for (const [x, y] of [
-    [0, -600],
-    [0, 600],
-    [-600, 0],
-    [600, 0],
-  ]) {
-    await page.mouse.wheel(x, y);
-    await page.evaluate(() => new Promise(requestAnimationFrame));
+scroll(
+  "page overscroll is disabled while message history still scrolls",
+  async ({ page, app }) => {
+    await open(page, app);
+    // Headless wheel input does not reproduce macOS trackpad rubber-banding.
+    // Check the viewport policy as well as real panel scrolling and shell bounds.
+    await expect(page.locator("html")).toHaveCSS("overscroll-behavior", "none");
+    const shell = page.locator(".shell-background");
+    const bounds = await box(shell);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await settle(page);
+    const initialOffset = await history.evaluate((el) => el.scrollTop);
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() => history.evaluate((el) => el.scrollTop))
+      .toBeLessThan(initialOffset - 100);
+    await settle(page);
     expect(await box(shell)).toEqual(bounds);
-    expect(await page.evaluate(() => [window.scrollX, window.scrollY])).toEqual(
-      [0, 0],
-    );
-  }
-});
+
+    // Projects has no overflowing content: gestures must leave the shell in place.
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Projects", exact: true })
+      .click();
+    await page.getByRole("heading", { name: "Projects", exact: true }).hover();
+    for (const [x, y] of [
+      [0, -600],
+      [0, 600],
+      [-600, 0],
+      [600, 0],
+    ]) {
+      await page.mouse.wheel(x, y);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      expect(await box(shell)).toEqual(bounds);
+      expect(
+        await page.evaluate(() => [window.scrollX, window.scrollY]),
+      ).toEqual([0, 0]);
+    }
+  },
+);
 
 test("bento surfaces, centered tabs, real link panel and compact community navigation", async ({
   page,
@@ -138,22 +144,23 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   });
   const before = await box(conversation);
   near(sidebar.x, 16);
-  near(before.x - sidebar.x - sidebar.width, 16);
+  near(before.x - sidebar.x - sidebar.width, 4);
   near(before.y, 56);
   near(before.height, 760);
   const background = await page
     .locator(".shell-background")
     .evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(background).toContain("radial-gradient");
-  expect(background).toContain("/shell-gradient.png");
-  expect(
-    await page.evaluate(async () => {
-      const image = new Image();
-      image.src = "/shell-gradient.png";
-      await image.decode();
-      return [image.naturalWidth, image.naturalHeight];
-    }),
-  ).toEqual([564, 1002]);
+  // The full-bleed backdrop is now the shared gradient rather than a bitmap.
+  const gradient = await page.locator(".shell-background").evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.backgroundImage = "var(--bg-app)";
+    el.append(probe);
+    const value = getComputedStyle(probe).backgroundImage;
+    probe.remove();
+    return value;
+  });
+  expect(background).toBe(gradient);
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -165,7 +172,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   const dock = await box(panel(page));
   near(dock.y, main.y);
   near(dock.height, main.height);
-  near(dock.x - main.x - main.width, 16);
+  near(dock.x - main.x - main.width, 4);
   near(dock.x + dock.width, 1264);
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();
@@ -456,7 +463,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     main = await box(conversation);
   near(top.height, bottom.height);
   near(top.y, main.y);
-  near(bottom.y - top.y - top.height, 12);
+  near(bottom.y - top.y - top.height, 4);
   near(bottom.y + bottom.height, main.y + main.height);
   near(top.x, bottom.x);
   await page.screenshot({ path: testInfo.outputPath("bestie-two-panels.png") });
@@ -523,7 +530,10 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
 
   // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
   // not a Settings row: reach the toggle with real input, not scrollIntoView.
-  const settingsPage = page.getByRole("main").locator(".overflow-y-auto");
+  // Narrow Settings scrolls navigation and details together inside the container.
+  const settingsPage = page
+    .getByRole("region", { name: "Settings", exact: true })
+    .locator(":scope > div");
   await expect(enabled).not.toBeInViewport();
   const viewport = await box(settingsPage);
   await page.mouse.move(
@@ -578,7 +588,7 @@ readingTest(
         page.getByRole("complementary", { name: "Bestie", exact: true }),
       );
       near(top.height, bottom.height);
-      near(bottom.y - top.y - top.height, 12);
+      near(bottom.y - top.y - top.height, 4);
       await expect(button(page, "Close channel panel")).toBeInViewport();
       await expect(button(page, "Close Bestie panel")).toBeInViewport();
     }
@@ -638,7 +648,14 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = ["Home", "Messages", "Projects", "Agents", "Workflows"];
+  const titles = [
+    "Home",
+    "Messages",
+    "Projects",
+    "Agents",
+    "Sessions",
+    "Workflows",
+  ];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -681,6 +698,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Home",
     "Messages",
     "Agents",
+    "Sessions",
     "Workflows",
   ]);
   await projects.click();
@@ -695,6 +713,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Home",
     "Projects",
     "Agents",
+    "Sessions",
     "Workflows",
   ]);
   await channels.click();
@@ -704,6 +723,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Messages",
     "Projects",
     "Agents",
+    "Sessions",
     "Workflows",
     "Make it yoursSettings",
   ]);

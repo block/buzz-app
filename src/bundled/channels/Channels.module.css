@@ -1,9 +1,13 @@
+@reference "../../shared/styles/globals.css";
+
 /* Separate bento surfaces; the shell owns the gradient and outer gutter. */
 .root {
   height: 100%;
   min-height: 0;
   color: var(--text);
-  font-size: calc(14px * var(--buzz-text-scale, 1));
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
 }
 .root button:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
   color: inherit;
@@ -11,7 +15,7 @@
 .board {
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
-  gap: 16px;
+  gap: var(--space-1);
   height: 100%;
   position: relative;
   overflow: hidden;
@@ -32,15 +36,15 @@
   box-shadow: var(--elevation-card);
 }
 .sidebar {
-  padding: 10px;
+  padding: var(--space-2);
 }
 .search {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 7px 8px;
-  margin-bottom: 16px;
-  border-radius: 14px;
+  gap: var(--space-2);
+  padding: var(--space-1h) var(--space-2);
+  margin-bottom: var(--space-4);
+  border-radius: var(--radius-control);
   background: var(--surface-input);
   color: var(--text-muted);
 }
@@ -67,7 +71,7 @@
 .channelListContent {
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: var(--space-half);
 }
 .sidebar .unreadEdge {
   position: absolute;
@@ -75,18 +79,30 @@
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: var(--space-1);
   width: max-content;
   max-width: calc(100% - 8px);
-  padding: 6px 10px;
-  border: 1px solid transparent;
-  border-radius: 999px;
+  min-height: 28px;
+  padding: var(--space-1h) var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pill);
+  background: var(--surface);
+  color: var(--text-muted);
+  box-shadow: var(--elevation-card);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--type-weight-medium);
+  cursor: pointer;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    border-color 160ms ease;
+}
+.sidebar .unreadEdge[data-attention="true"] {
+  border-color: transparent;
   background: var(--primary);
   color: var(--on-primary);
-  box-shadow: var(--elevation-card);
-  font-size: calc(12px * var(--buzz-text-scale, 1));
-  line-height: 1.3;
-  cursor: pointer;
 }
 .unreadEdge svg {
   flex-shrink: 0;
@@ -108,13 +124,15 @@
   flex-shrink: 0;
 }
 .channelSection + .channelSection {
-  margin-top: 12px;
+  margin-top: var(--space-3);
 }
 .channelSection > summary {
-  padding: 6px 8px;
+  padding: var(--space-1h) var(--space-2);
   color: var(--text-muted);
-  font-size: calc(12px * var(--buzz-text-scale, 1));
-  font-weight: 600;
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-weight: var(--type-weight-medium);
   cursor: pointer;
 }
 .channelList button {
@@ -122,13 +140,15 @@
   display: flex;
   align-items: center;
   text-align: left;
-  gap: 9px;
+  gap: var(--space-2);
   border: 0;
   background: none;
-  padding: 5px 8px;
+  padding: var(--space-1) var(--space-2);
   min-height: 30px;
-  line-height: calc(20px * var(--buzz-text-scale, 1));
-  border-radius: 10px;
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+  border-radius: var(--radius-row);
   flex-shrink: 0;
 }
 .channelList button svg {
@@ -141,17 +161,19 @@
 .channelList button[aria-current="page"] {
   background: var(--surface-accent);
   color: var(--text);
-  font-weight: 550;
+  font-weight: var(--type-weight-medium);
 }
 .preferenceNotice {
-  padding: 8px;
+  padding: var(--space-2);
   color: var(--text-muted);
-  font-size: calc(12px * var(--buzz-text-scale, 1));
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
   border-top: 1px solid var(--border);
 }
 .preferenceNotice button {
   display: block;
-  margin-top: 5px;
+  margin-top: var(--space-1);
   border: 0;
   background: none;
   text-decoration: underline;
@@ -159,21 +181,23 @@
 }
 .heading {
   min-height: 58px;
-  padding: 12px 16px;
+  padding: var(--space-4) var(--space-panel-inset);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: var(--space-2);
   flex-shrink: 0;
 }
 .heading button:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1h);
   border: 0;
   background: var(--surface-control);
-  padding: 7px 9px;
-  font-size: calc(12px * var(--buzz-text-scale, 1));
+  padding: var(--space-1h) var(--space-2);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }
 .heading
   button[aria-pressed="true"]:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
@@ -183,7 +207,7 @@
 .channelTitle {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: var(--space-2);
   min-width: 0;
 }
 .channelTitle strong {
@@ -192,17 +216,18 @@
   white-space: nowrap;
 }
 .empty {
-  padding: 30px 18px;
+  padding: var(--space-8) var(--space-4);
   color: var(--text-muted);
-  font-size: calc(13px * var(--buzz-text-scale, 1));
-  line-height: 1.6;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
 }
 .panelStack {
   min-width: 0;
   min-height: 0;
   display: grid;
   grid-auto-rows: minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--space-1);
 }
 .companion {
   display: grid;
@@ -212,34 +237,38 @@
 }
 .connect {
   height: 100%;
-  background: color-mix(in srgb, var(--surface) 79%, transparent);
+  @apply glass-secondary;
   border-radius: var(--radius-card);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-direction: column;
-  padding: 32px;
+  padding: var(--space-section-gap);
   text-align: center;
 }
 .connectIcon {
-  padding: 20px;
-  border-radius: 22px;
+  padding: var(--space-5);
+  border-radius: var(--radius-panel);
   color: var(--link);
   background: var(--surface-control);
-  margin-bottom: 16px;
+  margin-bottom: var(--space-4);
 }
 .connect h1 {
-  font-size: calc(28px * var(--buzz-text-scale, 1));
+  font-size: var(--text-title);
+  line-height: var(--text-title--line-height);
+  letter-spacing: var(--text-title--letter-spacing);
 }
 .connect p {
   max-width: 550px;
   color: var(--text-muted);
 }
 .connect button {
-  margin: 15px 0;
+  margin: var(--space-4) 0;
 }
 .note {
-  font-size: calc(12px * var(--buzz-text-scale, 1));
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }
 @media (max-width: 1000px) {
   .board,
@@ -258,10 +287,9 @@
   .board,
   .withPanel {
     grid-template-columns: 124px minmax(0, 1fr);
-    gap: 8px;
   }
   .sidebar {
-    padding: 10px 5px;
+    padding: var(--space-2) var(--space-1);
   }
   .sidebar,
   .conversation {
@@ -271,13 +299,17 @@
     width: 100%;
   }
   .heading {
-    padding: 12px;
+    padding: var(--space-3);
   }
   .channelList button {
-    font-size: calc(12px * var(--buzz-text-scale, 1));
+    font-size: var(--text-caption);
+    line-height: var(--text-caption--line-height);
+    letter-spacing: var(--text-caption--letter-spacing);
   }
   .roster {
-    font-size: calc(10px * var(--buzz-text-scale, 1));
+    font-size: var(--text-caption);
+    line-height: var(--text-caption--line-height);
+    letter-spacing: var(--text-caption--letter-spacing);
   }
 }
 .channelList button span {
@@ -294,7 +326,7 @@
   place-items: center;
   width: 30px;
   height: 30px;
-  border-radius: 8px;
+  border-radius: var(--radius-row);
   cursor: pointer;
   list-style: none;
   color: var(--text-muted);
@@ -313,49 +345,174 @@
   width: min(300px, 70vw);
   max-height: 60vh;
   overflow: auto;
-  padding: 14px;
+  padding: var(--space-3);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   box-shadow: var(--elevation-popover);
-  font-size: calc(12px * var(--buzz-text-scale, 1));
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
 }
 .diagnosticsMenu summary {
   cursor: pointer;
-  padding: 4px 0;
+  padding: var(--space-1) 0;
 }
 .liveStatus {
   display: flex;
   flex-shrink: 0;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 8px 16px;
-  font-size: calc(12px * var(--buzz-text-scale, 1));
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
   background: var(--warning-surface);
   color: var(--warning);
   border-bottom: 1px solid var(--border);
 }
 
-.unreadBadge {
-  margin-inline-start: auto;
-  min-width: 1.25rem;
-  border-radius: 1rem;
-  padding: 0 0.35rem;
-  font-size: 0.75rem;
-  font-weight: 650;
-  background: var(--surface-hover);
-  text-align: center;
+.channelLabel:has(~ .unreadState),
+.channelLabel:has(~ .threadActivityDot) {
+  color: var(--text);
+  font-weight: var(--type-weight-medium);
 }
-.unreadBadge[data-attention="true"] {
-  color: inherit;
-  outline: 1px solid currentColor;
+.unreadState {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: calc(-0.5 * var(--space-half));
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.priorityDot,
+.threadActivityDot {
+  display: block;
+  margin-inline-start: auto;
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.threadActivityDot {
+  cursor: help;
+}
+.activityPopover {
+  z-index: 20;
+  width: min(360px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-elevated);
+  box-shadow: var(--elevation-popover);
+  transform-origin: var(--transform-origin);
+  transition:
+    opacity 120ms ease-out,
+    transform 120ms ease-out;
+}
+.activityPopover[data-starting-style],
+.activityPopover[data-ending-style] {
+  opacity: 0;
+  transform: scale(0.98);
+}
+.activityStale {
+  margin: 0;
+  padding: var(--space-1h) var(--space-3);
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.activityList {
+  max-height: 360px;
+  overflow-y: auto;
+}
+.activityItem {
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: start;
+  width: 100%;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  line-height: 1.4;
+  text-align: left;
+}
+.activityItem + .activityItem {
+  border-top: 1px solid var(--border);
+}
+.activityItem:hover,
+.activityItem:focus-visible {
+  background: var(--surface-hover);
+}
+.activityAvatar {
+  width: 30px;
+  height: 30px;
+  border-radius: var(--radius-row);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.activityItemBody {
+  display: grid;
+  min-width: 0;
+  gap: var(--space-half);
+}
+.activityItemHeading {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.activityItemHeading strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.activityItemHeading > span.activityTimestamp,
+.activityItemMeta {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.activityItemPreview {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: normal;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+@media (prefers-reduced-motion: reduce) {
+  .activityPopover {
+    transition: opacity 120ms ease-out;
+  }
+  .activityPopover[data-starting-style],
+  .activityPopover[data-ending-style] {
+    transform: none;
+  }
 }
 
 .channelLaunchers {
   display: flex;
   margin-left: auto;
-  gap: 6px;
+  gap: var(--space-1h);
 }
 .channelDrawer {
   height: 42%;
@@ -364,4 +521,12 @@
   flex-shrink: 0;
   border-top: 1px solid var(--border);
   overflow: hidden;
+}
+
+.working {
+  width: 6px;
+  height: 6px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--purple-9);
 }

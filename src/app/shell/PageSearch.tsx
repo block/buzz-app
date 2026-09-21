@@ -1,5 +1,8 @@
 import { useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import {
+  MagnifyingGlassIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
   orderPages,
@@ -38,7 +41,7 @@ export function PageSearch({
           dialog.current?.showModal();
         }}
       >
-        <Search size={19} aria-hidden="true" strokeWidth={2} />
+        <MagnifyingGlassIcon size={19} aria-hidden="true" />
       </button>
       <dialog
         ref={dialog}
@@ -46,13 +49,13 @@ export function PageSearch({
         className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-line bg-surface p-4 text-ink shadow-surface backdrop:bg-overlay"
       >
         <div className="mb-3 flex items-center gap-3 border-b border-line pb-3">
-          <Search size={18} aria-hidden="true" />
+          <MagnifyingGlassIcon size={18} aria-hidden="true" />
           <input
             aria-label="Find a page"
             placeholder="Find a page…"
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 rounded bg-transparent py-2 text-sm"
+            className="min-w-0 flex-1 rounded bg-transparent py-2 text-body-sm"
           />
           <button
             type="button"
@@ -60,7 +63,7 @@ export function PageSearch({
             className="shell-icon"
             onClick={() => dialog.current?.close()}
           >
-            <X size={18} aria-hidden="true" />
+            <XIcon size={18} aria-hidden="true" />
           </button>
         </div>
         <div className="max-h-72 overflow-y-auto">
@@ -79,7 +82,7 @@ export function PageSearch({
             </button>
           ))}
           {!destinations.length && (
-            <p role="status" className="px-3 text-sm text-muted">
+            <p role="status" className="px-3 text-body-sm text-muted">
               No matching pages.
             </p>
           )}

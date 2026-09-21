@@ -1,3 +1,5 @@
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useReading } from "./use-reading";
 import { beforeEach, expect, it, vi } from "vitest";
 import {
@@ -7,9 +9,11 @@ import {
   type ReactElement,
   type ReactNode,
 } from "react";
-import { ThreadPanel } from "./ThreadPanel";
+import { ThreadPanel, type ThreadPanelProps } from "./ThreadPanel";
+import { createAgentLibrary } from "../agents/library";
 import { MessageRow } from "./MessageRow";
 import { MessageMarkdown } from "./MessageMarkdown";
+import { MediaAttachment } from "./MediaAttachment";
 import { MessageComposer } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import type { PageNavigation } from "../navigation/service";
@@ -98,12 +102,18 @@ beforeEach(() =>
 function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
   if (Array.isArray(node)) return node.flatMap(elements);
   if (!isValidElement<Record<string, unknown>>(node)) return [];
-  return [node, ...elements(node.props.children as ReactNode)];
+  return [
+    node,
+    ...elements(node.props.children as ReactNode),
+    ...(node.type === PanelHeader
+      ? elements(node.props.actions as ReactNode)
+      : []),
+  ];
 }
 function button(tree: ReactNode, label: string) {
   const found = elements(tree).find(
     (e) =>
-      e.type === "button" &&
+      (e.type === "button" || e.type === IconButton) &&
       (e.props.children === label || e.props["aria-label"] === label),
   );
   expect(found, label).toBeDefined();
@@ -142,7 +152,10 @@ function ordinaryNavigation() {
     forSession: vi.fn<PageNavigation["forSession"]>(),
   } satisfies PageNavigation;
 }
-function setup(navigation?: PageNavigation) {
+function setup(
+  navigation?: PageNavigation,
+  onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"],
+) {
   const snapshot: ThreadSnapshot = {
     status: "ready",
     root: row,
@@ -163,6 +176,7 @@ function setup(navigation?: PageNavigation) {
   const session = {
     thread,
     profiles: { ensure },
+    agentLibrary: createAgentLibrary(undefined).queries,
     messages: { retry: vi.fn() },
     // Geometry fixtures are read-only; reading behavior has its own boundary tests.
     unread: { sync: () => ({ capability: "unsupported" }) },
@@ -180,6 +194,7 @@ function setup(navigation?: PageNavigation) {
       navigation,
       close,
       onOpenLink: () => false,
+      ...(onOpenMediaReview ? { onOpenMediaReview } : {}),
     });
     const children = Children.map(scoped.props.children, (child) => {
       if (!isValidElement(child) || typeof child.type !== "function")
@@ -253,7 +268,9 @@ it("loads history automatically with error-only retry and no routine history con
   h.render();
   h.effects();
   const panel = h.render();
-  const child = elements(panel).find((e) => typeof e.type === "function");
+  const child = elements(panel).find(
+    (e) => typeof e.type === "function" && e.props.view === h.view,
+  );
   if (!child) throw new Error("Missing thread messages");
   const renderMessages = child.type as (
     props: Record<string, unknown>,
@@ -372,12 +389,48 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
     day: false,
     retry: undefined,
   });
-  const links = elements(tree).filter((element) => element.type === "a");
-  expect(links).toHaveLength(1);
-  expect(links[0]?.props).toMatchObject({
-    href: "https://safe.test/a.png",
-    rel: "noreferrer",
+  const attachments = elements(tree).filter(
+    (element) => element.type === MediaAttachment,
+  );
+  expect(attachments).toHaveLength(1);
+  expect(attachments[0]?.props.attachment).toEqual({
+    url: "https://safe.test/a.png",
+    video: false,
   });
+});
+
+it("seeks the media timecode while passing the stripped body to Markdown", () => {
+  const seek = vi.fn();
+  const tree = MessageRow({
+    row: { ...row, content: "⏱ 0:42 — **Change** the title" },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    onMediaTime: seek,
+    day: false,
+    retry: undefined,
+  });
+  (button(tree, "0:42").props.onClick as () => void)();
+  expect(seek).toHaveBeenCalledExactlyOnceWith(42);
+  const markdown = elements(tree).find(
+    (element) => element.type === MessageMarkdown,
+  );
+  expect(markdown?.props.row).toEqual({
+    ...row,
+    content: "**Change** the title",
+  });
+});
+
+it("preserves a media timecode as compatible text when no player can seek", () => {
+  const tree = MessageRow({
+    row: { ...row, content: "⏱ 0:42 — Change the title" },
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  });
+  expect(JSON.stringify(tree)).toContain("⏱ 0:42 — Change the title");
 });
 
 it("the actual message reply button opens its selected message and canonical thread root while retaining the trigger focus target", () => {
@@ -417,11 +470,16 @@ it("the actual message reply button opens its selected message and canonical thr
   expect(open).toHaveBeenLastCalledWith("b".repeat(64), row.id);
 });
 
-function messagesHarness(navigation?: PageNavigation) {
-  const h = setup(navigation);
+function messagesHarness(
+  navigation?: PageNavigation,
+  onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"],
+) {
+  const h = setup(navigation, onOpenMediaReview);
   h.render();
   h.effects();
-  const child = elements(h.render()).find((e) => typeof e.type === "function");
+  const child = elements(h.render()).find(
+    (e) => typeof e.type === "function" && e.props.view === h.view,
+  );
   if (!child) throw new Error("Missing thread messages");
   const props = child.props;
   const component = child.type as (
@@ -536,6 +594,27 @@ it("preserves reading above the bottom through live updates and refresh, then re
   h.effects();
   expect(h.element.scrollTop).toBe(4900);
 });
+it("routes media in replies through the resolved root review workspace", () => {
+  const open = vi.fn();
+  const h = messagesHarness(undefined, open);
+  const root = { ...row, id: "resolved-root" };
+  const attachment = { url: "https://safe/image.png", video: false };
+  h.snapshot.root = root;
+  h.snapshot.replies = [{ ...row, id: "reply", attachments: [attachment] }];
+  h.render();
+  h.effects();
+  const reply = elements(h.tree()).find(
+    (e) =>
+      e.type === MessageRow && (e.props.row as ChannelMessage).id === "reply",
+  );
+  const handler = reply?.props.onOpenMediaReview as
+    | ((rowId: string, item: typeof attachment, seconds: number) => void)
+    | undefined;
+  expect(handler).toBeDefined();
+  handler?.("reply", attachment, 0);
+  expect(open).toHaveBeenCalledExactlyOnceWith("reply", attachment, 0);
+});
+
 it("uses the resolved root with the shared composer and reveals an own send even while reading above", () => {
   const h = messagesHarness();
   h.snapshot.root = { ...row, id: "resolved-root" };

@@ -23,12 +23,14 @@ import { ColorTablePage } from "./ui/ColorTablePage";
 import { TypographyPage } from "./ui/TypographyPage";
 import { SpacingPage } from "./ui/SpacingPage";
 import { RadiusPage } from "./ui/RadiusPage";
+import { IconsPage } from "./ui/IconsPage";
 import { ElevationPage } from "./ui/ElevationPage";
 import { GlassPage } from "./ui/GlassPage";
 import { MotionPage } from "./ui/MotionPage";
 import { BaseUiPage } from "./ui/BaseUiPage";
 import { SystemDocumentPage } from "./ui/SystemDocumentPage";
 import { MissingPage } from "./ui/MissingPage";
+import { FoundationAlignmentPage } from "./ui/FoundationAlignmentPage";
 
 // Explicit design-only routes: no import of the app route tree or native startup.
 // Hash history keeps deep links reloadable on a static file host.
@@ -73,6 +75,11 @@ const pages = [
   }),
   createRoute({
     getParentRoute: () => design,
+    path: "icons",
+    component: IconsPage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
     path: "typography",
     component: TypographyPage,
   }),
@@ -100,6 +107,11 @@ const pages = [
     getParentRoute: () => design,
     path: "motion",
     component: MotionPage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
+    path: "foundation-alignment",
+    component: FoundationAlignmentPage,
   }),
   createRoute({
     getParentRoute: () => design,

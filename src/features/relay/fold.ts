@@ -33,10 +33,15 @@ export function parseAttachments(
     const width = Number(dim?.[1]),
       height = Number(dim?.[2]);
     const blurhash = validatedBlurhash(fields.blurhash);
+    const previewUrl =
+      fields.image || fields.thumb
+        ? safeMessageUrl(fields.image ?? fields.thumb ?? "")
+        : undefined;
     result.push({
       url,
       ...(blurhash ? { blurhash } : {}),
       video: fields.m?.startsWith("video/") ?? false,
+      ...(previewUrl ? { previewUrl } : {}),
       ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),
     });
   }
@@ -165,6 +170,7 @@ export function foldMessages(
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: projected.content,
+        ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
         ...(edits.length ? { edited: true as const } : {}),
         ...(projected.content !== content &&
         projected.content !== content.trimEnd()

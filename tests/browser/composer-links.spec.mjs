@@ -35,6 +35,31 @@ test("editable composer renders links and mentions while preserving source and n
     await expect(preview.locator('[data-mention-kind="agent"]')).toHaveText(
       "Build Bot",
     );
+    const delivered = page.locator('[data-message-id="link-row"]');
+    const deliveredLink = delivered
+      .locator('a:has([data-link-kind="github"])')
+      .first();
+    const deliveredMentions = delivered.locator("[data-mention-kind]");
+    const inlineStyles = await Promise.all(
+      [deliveredLink, deliveredMentions.nth(0), deliveredMentions.nth(1)].map(
+        (locator) =>
+          locator.evaluate((element) => {
+            const style = getComputedStyle(element);
+            return {
+              color: style.color,
+              paddingBlock: [style.paddingTop, style.paddingBottom],
+              height: element.getBoundingClientRect().height,
+            };
+          }),
+      ),
+    );
+    for (const mentionStyle of inlineStyles.slice(1)) {
+      expect(mentionStyle.color).toBe(inlineStyles[0].color);
+      expect(mentionStyle.paddingBlock).toEqual(inlineStyles[0].paddingBlock);
+      expect(
+        Math.abs(mentionStyle.height - inlineStyles[0].height),
+      ).toBeLessThan(1);
+    }
     await expect(preview.getByRole("link")).toHaveCount(0);
     await expect(preview.getByRole("button")).toHaveCount(0);
 
@@ -126,6 +151,34 @@ test("editable composer renders links and mentions while preserving source and n
     ]);
     await expect(input).toHaveJSProperty("value", "");
     await expect(preview.locator("[data-source]")).toHaveCount(0);
+
+    // Empty editors still need a real text caret after send, refocus and delete.
+    for (const state of ["sent", "refocused", "deleted"]) {
+      if (state === "refocused") {
+        await input.evaluate((el) => el.blur());
+        await input.focus();
+      } else if (state === "deleted") {
+        await input.pressSequentially("x");
+        await input.press("Backspace");
+      } else await input.focus();
+      await expect(input).toHaveJSProperty("value", "");
+      const emptyCaret = await input.evaluate((el) => {
+        const caret = getSelection().getRangeAt(0).getBoundingClientRect();
+        const box = el.getBoundingClientRect();
+        return {
+          height: caret.height,
+          left: caret.left - box.left,
+          top: caret.top - box.top,
+          bottom: box.bottom - caret.bottom,
+          selection: [el.selectionStart, el.selectionEnd],
+        };
+      });
+      expect(emptyCaret.height, state).toBeGreaterThan(10);
+      expect(Math.abs(emptyCaret.left), state).toBeLessThan(2);
+      expect(emptyCaret.top, state).toBeGreaterThanOrEqual(0);
+      expect(emptyCaret.bottom, state).toBeGreaterThanOrEqual(0);
+      expect(emptyCaret.selection, state).toEqual([0, 0]);
+    }
 
     const pasted = "@Alex Chen [Drive](https://drive.google.com/file/example)";
     await input.fill(pasted);

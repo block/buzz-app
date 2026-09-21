@@ -47,6 +47,10 @@ need their own validation.
 - `just web`: install locked dependencies and start Vite on port 1430 or the
   next available port, allowing parallel browser development across worktrees.
 - `just desktop`: install locked dependencies and start Tauri, which starts Vite.
+- To pause notifications in your local dev server, set `BUZZ_DEV_NOTIFICATIONS=0`
+  in `.env.local` and restart the server. Only `0` pauses alerts and permission
+  requests; removing the setting restores normal behavior. Saved preferences are
+  untouched and production builds ignore the variable.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe

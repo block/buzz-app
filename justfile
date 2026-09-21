@@ -8,13 +8,15 @@ default:
 install:
     pnpm install --frozen-lockfile
 
-# Run the shared frontend in a browser.
-web: install
-    pnpm dev
+# Run the shared frontend in a browser; forward Vite arguments (e.g. --port 1431).
+[positional-arguments]
+web *args: install
+    pnpm dev "$@"
 
-# Run the shared frontend in Tauri (requires native toolchain).
-desktop: install
-    pnpm tauri dev
+# Run Tauri; --port selects Vite's port, other arguments pass through to Tauri.
+[positional-arguments]
+desktop *args: install
+    node scripts/desktop-dev.mjs "$@"
 
 # Run buzzodz; forward arguments unchanged (Rust required).
 [positional-arguments]

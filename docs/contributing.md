@@ -44,9 +44,18 @@ The pinned pnpm Hermit package supports Apple Silicon macOS but marks Intel macO
 on an unsupported platform; resolve that tooling gap first. Other platforms still
 need their own validation.
 
-- `just web`: install locked dependencies and start Vite on port 1430 or the
-  next available port, allowing parallel browser development across worktrees.
-- `just desktop`: install locked dependencies and start Tauri, which starts Vite.
+- `just web [args...]`: install locked dependencies and forward arguments to Vite,
+  e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
+  (default: 1430) or the next available port, allowing parallel browser development.
+- `just desktop [args...]`: install locked dependencies and forward arguments to
+  Tauri, e.g. `just desktop --port 1431 --no-watch`. The desktop adapter consumes
+  `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
+  Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
+  the existing Tauri configuration is unchanged (port 1430). Desktop requires the
+  exact port to be free; an occupied port fails rather than opening another copy's
+  server. Other arguments, including runner/application arguments after `--`, pass
+  through unchanged. The selected port overrides these two settings in any supplied
+  `--config`; other config fields are preserved.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe
@@ -66,9 +75,12 @@ isolated test buses, never use the desktop session bus or display real banners. 
 Installs run on every invocation to account for branch and lockfile changes.
 pnpm reuses its shared package cache; no node_modules directory needs to be copied
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
-downloads and native compilation can take time. Desktop dev requires port 1430
-for its fixed native development URL. Browser dev prints its selected URL and can
-use a later port when 1430 is occupied.
+downloads and native compilation can take time. For parallel copies, run
+`just desktop --port 1430` and `just desktop --port 1431` in separate
+terminals/worktrees, or choose other free ports. Ports must be integers from 1 to 65535. Browser dev
+prints its selected URL and can use a later port when the requested port is
+occupied. Port selection does not isolate credentials or native plugin data;
+use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
 Both run the development broker with your identity when the public
 `BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
 identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).

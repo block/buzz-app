@@ -172,6 +172,12 @@ export function AgentModelPicker({
             }
           }}
           onOpenChange={(next, details) => {
+            // Browse opens the list, even if typing already opened it. Base UI
+            // may deliver its mousedown toggle after the button's click handler.
+            if (!next && details.reason === "trigger-press") {
+              details.cancel();
+              return;
+            }
             setOpen(next);
             if (!next && details.reason === "escape-key") setQuery(null);
           }}

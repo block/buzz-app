@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { AgentModelPicker } from "./AgentModelPicker";
 import { agentDraft } from "./agent-edit";
@@ -57,6 +57,13 @@ for (const opening of ["typing", "ArrowDown", "closed"] as const) {
         expect(browse).toHaveFocus();
         await user.keyboard("{Enter}");
       } else await user.click(browse);
+      // Base UI defers the trigger's mousedown toggle to the next frame. Assert
+      // only after that callback, not whichever side of it userEvent happened to finish.
+      await act(async () => {
+        await new Promise<void>((resolve) =>
+          requestAnimationFrame(() => resolve()),
+        );
+      });
       await screen.findByText("Synthetic sign-in failure");
       expect(begin).toHaveBeenCalledOnce();
       expect(run).toHaveBeenCalledExactlyOnceWith(

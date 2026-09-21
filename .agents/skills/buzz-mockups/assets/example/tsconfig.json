@@ -1,7 +1,0 @@
-{
-  "extends": "../../../../../tsconfig.json",
-  "compilerOptions": {
-    "paths": { "@buzz/*": ["../../../../../src/*"] }
-  },
-  "include": ["main.tsx"]
-}

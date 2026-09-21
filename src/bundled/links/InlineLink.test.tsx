@@ -1,5 +1,7 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { TableIcon } from "../../shared/design-system/icons/index";
+import styles from "../../shared/InlineReference.module.css";
 import { targetLink } from "../../features/navigation/targets";
 import { InlineLink, LinkLabel, linkKind } from "./InlineLink";
 import {
@@ -161,3 +163,22 @@ it("does not mistake lookalike hosts or URL paths for Google Drive", () => {
   expect(linkKind("https://drive.google.com.example.com/file")).toBe("web");
   expect(linkKind("https://example.com/drive.google.com")).toBe("web");
 });
+
+it.each([false, true])(
+  "renders a neutral table glyph for Google Sheets, including rich labels (%s)",
+  (rich) => {
+    const href = "https://docs.google.com/spreadsheets/d/example/edit";
+    const markup = renderToStaticMarkup(
+      <LinkContentContext
+        value={rich ? <strong>the tracker</strong> : undefined}
+      >
+        <InlineLink href={href}>the tracker</InlineLink>
+      </LinkContentContext>,
+    );
+    expect(markup).toContain(
+      renderToStaticMarkup(<TableIcon className={styles.icon} />),
+    );
+    expect(markup).toContain(`href="${href}"`);
+    expect(markup.replace(/<[^>]+>/g, "")).toBe("the tracker");
+  },
+);

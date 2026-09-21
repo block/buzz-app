@@ -91,3 +91,57 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   ).toBeVisible();
   expect(context.pages()).toHaveLength(1);
 });
+
+test("GitHub object identities have comparable visible artwork at one size", async ({
+  page,
+  app,
+}, testInfo) => {
+  const targets = [
+    ["Repository", "https://github.com/block/buzz"],
+    ["Pull request", "https://github.com/block/buzz/pull/1"],
+    ["Issue", "https://github.com/block/buzz/issues/2"],
+    ["Commit", "https://github.com/block/buzz/commit/abcdef1"],
+  ];
+  await page.route("https://api.github.com/repos/block/buzz**", (route) =>
+    route.fulfill({ json: { title: "GitHub object", state: "open" } }),
+  );
+  await page.goto(app.origin);
+  await openMessages(page);
+  app.append("primary", "alpha", targets.map(([, target]) => target).join(" "));
+
+  const dimensions = [];
+  const icons = [];
+  for (const [kind, target] of targets) {
+    await expect(link(page, target)).toBeVisible();
+    await link(page, target).click();
+    const identity = page
+      .getByRole("complementary", { name: "GitHub", exact: true })
+      .getByText(new RegExp(`^${kind} `))
+      .locator("xpath=../..");
+    const svg = identity.locator("svg");
+    await expect(svg).toHaveAttribute("width", "22");
+    await expect(svg).toHaveAttribute("height", "22");
+    icons.push(await svg.evaluate((node) => node.outerHTML));
+    dimensions.push(
+      await svg.evaluate((node) => {
+        const { width, height } = node.getBBox();
+        return { width, height };
+      }),
+    );
+  }
+
+  for (const { width, height } of dimensions) {
+    expect(width).toBeGreaterThanOrEqual(184);
+    expect(height).toBeGreaterThanOrEqual(111);
+  }
+  expect(dimensions[2].width).toBeCloseTo(208, 3);
+  expect(dimensions[2].height).toBeCloseTo(208, 3);
+  await page.setContent(`
+    <main style="display:flex;gap:16px;align-items:center;color:#111">
+      ${icons.map((icon, index) => `<figure style="margin:0;display:grid;justify-items:center;gap:8px">${icon}<figcaption>${targets[index][0]}</figcaption></figure>`).join("")}
+    </main>
+  `);
+  await page.locator("main").screenshot({
+    path: testInfo.outputPath("github-object-identities.png"),
+  });
+});

@@ -376,6 +376,12 @@ function pushFixture(t, changes) {
     path.join(f.dir, "node_modules/typescript"),
     "dir",
   );
+  // The icon guard parses real JS/TS using the pinned build-tool parser.
+  symlinkSync(
+    path.join(root, "node_modules/rolldown"),
+    path.join(f.dir, "node_modules/rolldown"),
+    "dir",
+  );
   f.write(
     "tsconfig.json",
     JSON.stringify({
@@ -666,4 +672,21 @@ test("the design lane disables dependency auto-repair even when inherited as tru
     result.stdout + result.stderr,
     /Already up to date|Progress: resolved/,
   );
+});
+
+test("staged icon checks reject CommonJS subpaths without changing the index", (t) => {
+  const f = fixture(t);
+  f.write(
+    "probe.cjs",
+    'const icon = require("lucide-react/dist/cjs/icons/x.js");\nmodule.exports = icon;\n',
+  );
+  f.git("add", "probe.cjs");
+  const index = f.git("write-tree");
+  const result = f.commit();
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stdout + result.stderr,
+    /Use shared\/design-system\/icons/,
+  );
+  assert.equal(f.git("write-tree"), index);
 });

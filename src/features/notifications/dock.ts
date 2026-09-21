@@ -30,7 +30,7 @@ export function createDockBadge(
     unread = false;
   let state = Object.freeze({
     permission: "unavailable" as DockPermission,
-    requesting: false,
+    requesting: false as boolean,
     error: null as string | null,
   });
   const listeners = new Set<() => void>();

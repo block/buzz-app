@@ -137,9 +137,9 @@ Browser installation is not supported; the browser shows a desktop-only explanat
 
 Emoji is independently toggleable in Settings. Its picker and custom rendering
 plug into shared conversation surfaces; catalog, event tags and delivery stay
-session-owned. The independent Composer Lab example reuses those surfaces in a
-test page without adding tools to normal composers. Automated tests use a separate
-external-tool fixture to exercise contribution lifecycle.
+session-owned. The standard composer remains shared host UI, independent of any
+example plugin. Automated tests use source-only external consumer and tool fixtures
+to exercise component reuse and contribution lifecycle.
 
 ## Plugin contract
 

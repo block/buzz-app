@@ -1,12 +1,16 @@
+import type { ChangeEvent } from "react";
+import type { Context, RelaySnapshot } from "@buzz/author";
+
+// Test-only external consumer, built into a temporary profile by conversation.spec.mjs.
 // Type-only author contract. The installed artifact has no private paths, React
 // copy, bundled Channels import, or runtime dependencies.
 export const inject = ["react", "pages", "relay", "conversation"];
-export function apply(ctx) {
+export function apply(ctx: Context) {
   const React = ctx.react;
   const h = React.createElement;
   const ui = ctx.conversation;
   const relay = ctx.relay;
-  function Connected({ connection }) {
+  function Connected({ connection }: { connection: RelaySnapshot }) {
     const session = connection.session;
     const list = React.useSyncExternalStore(
       session.channels.subscribeList,
@@ -23,17 +27,18 @@ export function apply(ctx) {
       h(
         "p",
         null,
-        "This page uses the same session and composer as Channels. Sending here posts to the selected channel.",
+        "Test-only consumer of the shared session, composer and message UI.",
       ),
       h(
         "label",
         null,
-        "Lab channel",
+        "Consumer channel",
         h(
           "select",
           {
             value: channel?.id ?? "",
-            onChange: (event) => select(event.target.value),
+            onChange: (event: ChangeEvent<HTMLSelectElement>) =>
+              select(event.target.value),
           },
           list.channels.map((item) =>
             h("option", { key: item.id, value: item.id }, item.name),
@@ -49,11 +54,20 @@ export function apply(ctx) {
         : h("p", null, list.error ?? "No channels available"),
     );
   }
-  function Conversation({ connection, channelId, channelName }) {
+  function Conversation({
+    connection,
+    channelId,
+    channelName,
+  }: {
+    connection: RelaySnapshot;
+    channelId: string;
+    channelName: string;
+  }) {
     const [renders, rerender] = React.useState(0);
     const session = connection.session;
     const subscribe = React.useCallback(
-      (listener) => session.channels.subscribeWindow(channelId, listener),
+      (listener: () => void) =>
+        session.channels.subscribeWindow(channelId, listener),
       [session, channelId],
     );
     const read = React.useCallback(
@@ -71,11 +85,11 @@ export function apply(ctx) {
       h(
         "button",
         { type: "button", onClick: () => rerender(renders + 1) },
-        `Rerender Lab ${renders}`,
+        `Rerender consumer ${renders}`,
       ),
       h(
         "div",
-        { "aria-label": "Lab messages" },
+        { "aria-label": "Consumer messages" },
         window.rows.map((row) =>
           h(ui.ui.Message, {
             key: row.id,
@@ -98,8 +112,8 @@ export function apply(ctx) {
   }
   ctx.pages.register({
     id: "main",
-    title: "Composer Lab",
-    component: function Lab() {
+    title: "Test conversation consumer",
+    component: function Consumer() {
       const connection = React.useSyncExternalStore(
         relay.subscribe,
         relay.snapshot,
@@ -107,14 +121,14 @@ export function apply(ctx) {
       );
       return h(
         "section",
-        { "aria-label": "Composer Lab", style: { padding: 24 } },
-        h("h1", null, "Composer Lab"),
+        { "aria-label": "Test conversation consumer", style: { padding: 24 } },
+        h("h1", null, "Test conversation consumer"),
         connection.status === "ready"
           ? h(Connected, {
               key: `${connection.scope}:${connection.generation}`,
               connection,
             })
-          : h("p", null, "Connect to a community to try the shared composer."),
+          : h("p", null, "Waiting for the fixture session."),
       );
     },
   });

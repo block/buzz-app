@@ -19,7 +19,7 @@ test("independent packed author consumer and native-installed contribution survi
     run("pnpm", ["author:build", author]);
     run("pnpm", ["pack", "--pack-destination", temp], author);
     const source = join(temp, "consumer");
-    await cp(join(root, "examples/plugins/composer-lab"), source, {
+    await cp(join(root, "tests/fixtures/conversation-consumer"), source, {
       recursive: true,
     });
     run(
@@ -28,7 +28,7 @@ test("independent packed author consumer and native-installed contribution survi
       source,
     );
     run("pnpm", ["build"], source);
-    // The global producer is a separate test-only artifact, never part of Lab.
+    // The global producer is a separate test-only artifact, never part of the consumer.
     const toolSource = join(temp, "timestamp-tool");
     await cp(source, toolSource, { recursive: true });
     await cp(
@@ -71,10 +71,10 @@ test("independent packed author consumer and native-installed contribution survi
     const installed = native("install", join(source, "dist"));
     expect(
       installed.catalog.plugins.find(
-        (p) => p.manifest.id === "example.composer-lab",
+        (p) => p.manifest.id === "test.conversation-consumer",
       ).enabled,
     ).toBe(false);
-    native("change", "enable", "example.composer-lab");
+    native("change", "enable", "test.conversation-consumer");
     const id = "test.timestamp";
     const toolInstalled = native("install", join(toolSource, "dist"));
     const firstRevision = toolInstalled.catalog.plugins.find(
@@ -154,34 +154,37 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(
       page
         .getByRole("navigation", { name: "Proof pages" })
-        .getByRole("button", { name: "Composer Lab" }),
+        .getByRole("button", { name: "Test conversation consumer" }),
     ).toBeVisible();
     const editor = await draft.elementHandle();
     const tools = await page.evaluate(() => window.conversationFixture.tools());
-    expect(tools.some((tool) => tool.startsWith("example.composer-lab/"))).toBe(
-      false,
-    );
+    expect(
+      tools.some((tool) => tool.startsWith("test.conversation-consumer/")),
+    ).toBe(false);
     await expect(
       page.getByRole("button", { name: "Insert timestamp", exact: true }),
     ).toHaveCount(0);
     await page.evaluate(() =>
-      window.conversationFixture.change("disable", "example.composer-lab"),
+      window.conversationFixture.change(
+        "disable",
+        "test.conversation-consumer",
+      ),
     );
     await expect(
       page
         .getByRole("navigation", { name: "Proof pages" })
-        .getByRole("button", { name: "Composer Lab" }),
+        .getByRole("button", { name: "Test conversation consumer" }),
     ).toHaveCount(0);
     expect(
       await page.evaluate(() => window.conversationFixture.tools()),
     ).toEqual(tools);
     await page.evaluate(() =>
-      window.conversationFixture.change("enable", "example.composer-lab"),
+      window.conversationFixture.change("enable", "test.conversation-consumer"),
     );
     await expect(
       page
         .getByRole("navigation", { name: "Proof pages" })
-        .getByRole("button", { name: "Composer Lab" }),
+        .getByRole("button", { name: "Test conversation consumer" }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => window.conversationFixture.tools()),
@@ -244,10 +247,10 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.fill("Channels draft");
     await page
       .getByRole("navigation", { name: "Proof pages" })
-      .getByRole("button", { name: "Composer Lab" })
+      .getByRole("button", { name: "Test conversation consumer" })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Composer Lab" }),
+      page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await expect(draft).toHaveJSProperty("value", "Channels draft");
     // The independently built page consumes the host's registered Mentions tool.
@@ -287,10 +290,10 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
     // Programmatic click avoids intentionally moving focus away from the editor.
     await page
-      .getByRole("button", { name: "Rerender Lab 0" })
+      .getByRole("button", { name: "Rerender consumer 0" })
       .evaluate((el) => el.click());
     await expect(
-      page.getByRole("button", { name: "Rerender Lab 1" }),
+      page.getByRole("button", { name: "Rerender consumer 1" }),
     ).toBeVisible();
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
     await expect(draft).toBeFocused();
@@ -304,10 +307,10 @@ test("independent packed author consumer and native-installed contribution survi
     await search.fill("party");
     const picker = await page.locator("em-emoji-picker").elementHandle();
     await page
-      .getByRole("button", { name: "Rerender Lab 1" })
+      .getByRole("button", { name: "Rerender consumer 1" })
       .evaluate((el) => el.click());
     await expect(
-      page.getByRole("button", { name: "Rerender Lab 2" }),
+      page.getByRole("button", { name: "Rerender consumer 2" }),
     ).toBeVisible();
     expect(await picker.evaluate((el) => el.isConnected)).toBe(true);
     await expect(search).toHaveValue("party");
@@ -433,13 +436,16 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("button", { name: "Insert timestamp", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "Composer Lab" }),
+      page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await page.evaluate(() =>
-      window.conversationFixture.change("disable", "example.composer-lab"),
+      window.conversationFixture.change(
+        "disable",
+        "test.conversation-consumer",
+      ),
     );
     await expect(
-      page.getByRole("heading", { name: "Composer Lab" }),
+      page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toHaveCount(0);
     await page
       .getByRole("navigation", { name: "Proof pages" })

@@ -352,7 +352,9 @@ ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` components. Generated
-type-only `@buzz/author` declarations support the independent Composer Lab example.
+type-only `@buzz/author` declarations are exercised by a source-only external consumer
+fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
+the browser test's temporary profile.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
 

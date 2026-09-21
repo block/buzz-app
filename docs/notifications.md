@@ -131,11 +131,12 @@ recompute the indicator. Disabling Channels does not stop host ownership.
 
 Settings → Notifications → Dock unread indicator shows the macOS badge setting.
 A fresh permission prompt occurs only after **Allow notifications and badges**;
-it requests Alert, Sound and Badge together. The first native check per process
+it requests Alert, Sound and Badge together. The first successful native check per process
 can add Badge alone for an already Authorized installation whose badge setting
 is NotSupported. Denied authorization and explicitly Disabled badges are never
 re-requested. Focus and **Check Dock permission** refresh the current setting;
-errors withhold the dot and are shown, not automatically retried. Desktop alert
+errors withhold the dot and are shown. A later focus or explicit check can retry
+a failed check/repair; there is no retry loop. Desktop alert
 preferences do not alter this unread indicator. macOS System Settings controls
 badge opt-out.
 

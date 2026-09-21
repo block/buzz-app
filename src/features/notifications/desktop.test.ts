@@ -1,7 +1,7 @@
 import { Context } from "@deepseek-ai/cordis";
 import { renderToStaticMarkup } from "react-dom/server";
 import { createElement } from "react";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { NotificationSettings } from "../../app/NotificationSettings";
 import { PluginRuntime } from "../../plugins/runtime";
 import { provideNavigation } from "../navigation/service";
@@ -10,16 +10,26 @@ import { NotificationsService } from "./service";
 import { messageNotificationText } from "./content";
 
 const sdk = vi.hoisted(() => ({
-  invoke: vi.fn(async () => {}),
+  show: vi.fn(async (..._args: unknown[]) => {}),
+  permission: vi.fn(async (_args: unknown) => "enabled"),
+  badge: vi.fn(async (_label?: string) => {}),
 }));
 const native = vi.hoisted(() => ({ value: true }));
 vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => native.value,
-  invoke: sdk.invoke,
+  invoke: (command: string, args: unknown) => {
+    if (command === "notification_show") return sdk.show(command, args);
+    if (command === "dock_permission") return sdk.permission(args);
+    throw new Error(`Unexpected native command: ${command}`);
+  },
   Channel: class {
     constructor(public onmessage: (response: unknown) => void) {}
   },
 }));
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({ setBadgeLabel: sdk.badge }),
+}));
+beforeEach(() => vi.stubGlobal("navigator", { platform: "MacIntel" }));
 vi.mock("react", async (original) => ({
   ...(await original<typeof import("react")>()),
   useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
@@ -29,6 +39,7 @@ const contexts: Context[] = [];
 afterEach(async () => {
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
   vi.resetAllMocks();
+  vi.unstubAllGlobals();
   native.value = true;
 });
 function setup() {
@@ -65,7 +76,7 @@ it("the default service sends desktop banners via the native bridge and shared p
   await submit("first");
   await submit("first");
   await flush();
-  expect(sdk.invoke).toHaveBeenCalledExactlyOnceWith("notification_show", {
+  expect(sdk.show).toHaveBeenCalledExactlyOnceWith("notification_show", {
     title: "Buzz",
     body: "New mentions",
     id: expect.any(String),
@@ -76,28 +87,28 @@ it("the default service sends desktop banners via the native bridge and shared p
   service.updatePreferences({ enabled: true, categories: { mention: false } });
   await submit("category-off");
   await flush();
-  expect(sdk.invoke).toHaveBeenCalledTimes(1);
+  expect(sdk.show).toHaveBeenCalledTimes(1);
 });
 
-it("desktop permission remains system-managed without a permission RPC or shim", async () => {
+it("banner permission stays system-managed while Dock permission is queried separately", async () => {
   const { service, submit } = setup();
   await flush();
   await service.refreshPermission();
   await service.requestPermission();
   expect(service.snapshot().permission).toBe("unknown");
-  expect(sdk.invoke).not.toHaveBeenCalled();
+  expect(sdk.show).not.toHaveBeenCalled();
+  expect(sdk.permission).toHaveBeenCalledExactlyOnceWith({ request: false });
+  expect(service.dock.snapshot().permission).toBe("enabled");
+  expect(sdk.badge).toHaveBeenCalledExactlyOnceWith(undefined);
   await submit("first");
   await flush();
-  expect(sdk.invoke).toHaveBeenCalledOnce();
-  expect(sdk.invoke).toHaveBeenCalledWith(
-    "notification_show",
-    expect.anything(),
-  );
+  expect(sdk.show).toHaveBeenCalledOnce();
+  expect(sdk.show).toHaveBeenCalledWith("notification_show", expect.anything());
 });
 
 it("observable SDK failures surface once without retry or a browser fallback", async () => {
   const { service, submit } = setup();
-  sdk.invoke.mockImplementationOnce(() => {
+  sdk.show.mockImplementationOnce(() => {
     throw new Error("SDK unavailable");
   });
   await submit("failed");
@@ -105,10 +116,10 @@ it("observable SDK failures surface once without retry or a browser fallback", a
   expect(service.snapshot().error).toBe("SDK unavailable");
   await submit("failed");
   await flush();
-  expect(sdk.invoke).toHaveBeenCalledOnce();
+  expect(sdk.show).toHaveBeenCalledOnce();
   await submit("next");
   await flush();
-  expect(sdk.invoke).toHaveBeenCalledTimes(2);
+  expect(sdk.show).toHaveBeenCalledTimes(2);
 });
 
 it("desktop settings explain OS sound and running-app exact clicks", async () => {
@@ -136,7 +147,7 @@ it("non-Tauri runs select the unchanged browser adapter, never the native SDK", 
   const platform = createNotifications();
   expect(platform.label).toBe("Browser notifications");
   expect(await platform.permission()).toBe("unsupported");
-  expect(sdk.invoke).not.toHaveBeenCalled();
+  expect(sdk.show).not.toHaveBeenCalled();
 });
 
 it("the production desktop adapter forwards the message title and preview unchanged", async () => {
@@ -162,7 +173,7 @@ it("the production desktop adapter forwards the message title and preview unchan
       ),
   );
   await flush();
-  expect(sdk.invoke).toHaveBeenCalledExactlyOnceWith("notification_show", {
+  expect(sdk.show).toHaveBeenCalledExactlyOnceWith("notification_show", {
     title: "Pinky mentioned you in #Room",
     body: "Hello Wes",
     id: expect.any(String),
@@ -171,7 +182,7 @@ it("the production desktop adapter forwards the message title and preview unchan
 });
 
 function presentation(index = 0) {
-  const call = sdk.invoke.mock.calls[index] as unknown as [
+  const call = sdk.show.mock.calls[index] as unknown as [
     string,
     {
       id: string;
@@ -240,7 +251,7 @@ it("native close/error never opens or retries; focus failure still preserves exa
   expect(service.snapshot().error).toBe("Window focus failed");
   await service.refreshPermission();
   await flush();
-  expect(sdk.invoke).toHaveBeenCalledTimes(3);
+  expect(sdk.show).toHaveBeenCalledTimes(3);
 });
 
 it("account replacement and service disposal fence previously displayed native clicks", async () => {
@@ -265,7 +276,7 @@ it("the click channel exists before native submission, including immediate activ
   const { navigation, submit } = setup();
   const open = vi.fn();
   navigation.subscribe(() => open(navigation.snapshot().entry.target));
-  sdk.invoke.mockImplementationOnce(async (...args: unknown[]) => {
+  sdk.show.mockImplementationOnce(async (...args: unknown[]) => {
     const { id, onEvent } = args[1] as ReturnType<typeof presentation>;
     onEvent.onmessage({ id, kind: "activated" });
   });
@@ -294,7 +305,7 @@ it("native presentation rejects at capacity before sending instead of evicting l
       failed,
     ),
   ).rejects.toThrow("maximum 128");
-  expect(sdk.invoke).toHaveBeenCalledTimes(128);
+  expect(sdk.show).toHaveBeenCalledTimes(128);
   const first = presentation(0);
   first.onEvent.onmessage({ id: first.id, kind: "activated" });
   expect(activate).toHaveBeenCalledOnce();
@@ -303,6 +314,38 @@ it("native presentation rejects at capacity before sending instead of evicting l
     activate,
     failed,
   );
-  expect(sdk.invoke).toHaveBeenCalledTimes(129);
+  expect(sdk.show).toHaveBeenCalledTimes(129);
   platform.dispose();
+});
+
+it.each(["Win32", "Linux x86_64"])(
+  "%s has no Dock permission or setter calls",
+  async (platform) => {
+    vi.stubGlobal("navigator", { platform });
+    const { service, submit } = setup();
+    await submit("banner");
+    await flush();
+    expect(service.dock.available).toBe(false);
+    expect(sdk.permission).not.toHaveBeenCalled();
+    expect(sdk.badge).not.toHaveBeenCalled();
+    expect(sdk.show).toHaveBeenCalledOnce();
+  },
+);
+
+it("the macOS default binds explicit permission and exact Dock label/clear commands", async () => {
+  sdk.permission.mockResolvedValueOnce("default");
+  const { service, ctx } = setup();
+  service.dock.setUnread(true);
+  await service.dock.refresh();
+  expect(sdk.badge.mock.calls).toEqual([[undefined]]);
+  await service.dock.request();
+  expect(sdk.permission.mock.calls).toEqual([
+    [{ request: false }],
+    [{ request: true }],
+  ]);
+  expect(sdk.badge).toHaveBeenLastCalledWith("•");
+  service.updatePreferences({ enabled: false });
+  expect(sdk.badge).toHaveBeenLastCalledWith("•");
+  await ctx.fiber.dispose();
+  expect(sdk.badge).toHaveBeenLastCalledWith(undefined);
 });

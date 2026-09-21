@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -94,9 +94,26 @@ it("opens a compact action menu independently of selecting its channel", async (
   );
   expect(callbacks.onNewSession).toHaveBeenCalledWith("parent");
   expect(callbacks.onSelect).not.toHaveBeenCalled();
+  // The first close must finish before reopening, and keyboard dismissal must
+  // start after the popup has taken focus rather than racing its focus effect.
+  await waitFor(() =>
+    expect(
+      screen.queryByRole("menu", { name: "More options for Engineering" }),
+    ).not.toBeInTheDocument(),
+  );
   await user.click(trigger);
+  await waitFor(() =>
+    expect(
+      screen.getByRole("menu", { name: "More options for Engineering" }),
+    ).toHaveFocus(),
+  );
   await user.keyboard("{Escape}");
-  expect(trigger).toHaveFocus();
+  await waitFor(() => {
+    expect(
+      screen.queryByRole("menu", { name: "More options for Engineering" }),
+    ).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
 });
 it("opens saved child sessions and retained drafts without a channel icon", async () => {
   const user = userEvent.setup();

@@ -1,4 +1,31 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"]
+  "extends": ["config:recommended", "helpers:pinGitHubActionDigests"],
+  "packageRules": [
+    {
+      "description": "Tauri 2 requires the GTK 0.18 native-link and type family.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["gtk"],
+      "allowedVersions": "<0.19"
+    },
+    {
+      "description": "sha2 0.11 removes the LowerHex implementation used for artifact revisions.",
+      "matchManagers": ["cargo"],
+      "matchPackageNames": ["sha2"],
+      "allowedVersions": "<0.11"
+    },
+    {
+      "description": "Upgrade virtua only with a reviewed port of its WebKit scroll patch.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["virtua"],
+      "allowedVersions": "0.51.0"
+    },
+    {
+      "description": "Update packageManager together with the Hermit pnpm pin in bin/.",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["pnpm"],
+      "matchDepTypes": ["packageManager"],
+      "enabled": false
+    }
+  ]
 }

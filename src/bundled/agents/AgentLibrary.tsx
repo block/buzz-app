@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { IconRefresh } from "@tabler/icons-react";
+import { ArrowsClockwiseIcon } from "../../shared/design-system/icons/index";
 import { groupAgentLibrary } from "../../features/agents/library";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -41,7 +41,7 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
           disabled={loading || snapshot.status === "unavailable"}
           onClick={refresh}
         >
-          <IconRefresh size={16} stroke={2} aria-hidden="true" />
+          <ArrowsClockwiseIcon size={16} aria-hidden="true" />
           {snapshot.status === "error" ? "Retry" : "Refresh agents"}
         </Button>
       </div>

@@ -268,51 +268,38 @@ it("keeps lifecycle controls visible and reports failure without disabling recov
     within(card).getByText(/bundled agent runtime is unavailable/),
   ).toBeVisible();
 });
-it("Add is an accessible disclosure that preserves its draft without importing or starting", async () => {
+it("Add opens a focused creation dialog and retains a dirty draft on Escape", async () => {
   const { f } = setup();
-  const add = await screen.findByRole("button", {
-    name: "Add agent",
+  const add = await screen.findByRole("button", { name: "Add agent" });
+  expect(add).toHaveAttribute("aria-haspopup", "dialog");
+  expect(screen.queryByRole("dialog")).toBeNull();
+  fireEvent.click(add);
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "New helper" },
   });
-  expect(add).toHaveAttribute("aria-expanded", "false");
-  expect(
-    screen.getByRole("heading", { level: 1, name: "Agents" }),
-  ).toBeVisible();
-  expect(screen.getByLabelText("Destination community")).not.toBeVisible();
-  fireEvent.click(add);
-  expect(add).toHaveAttribute("aria-expanded", "true");
-  expect(
-    document.getElementById(add.getAttribute("aria-controls") ?? ""),
-  ).toBeVisible();
-  fireEvent.change(screen.getByLabelText("Destination community"), {
-    target: { value: "wss://chosen.example" },
-  });
-  fireEvent.click(add);
-  expect(screen.getByLabelText("Destination community")).not.toBeVisible();
-  fireEvent.click(add);
-  expect(screen.getByLabelText("Destination community")).toHaveValue(
-    "wss://chosen.example",
-  );
+  fireEvent.keyDown(dialog, { key: "Escape" });
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("New helper");
   expect(f.calls.every((call) => call.action === "snapshot")).toBe(true);
+  fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog")).toBeNull();
 });
 
 it("focuses the imported managed identity without starting it", async () => {
   const { f } = setup();
   await screen.findAllByRole("article", { name: "Agent Fixture agent" });
-  fireEvent.click(screen.getByText("Add agent", { exact: true }));
+  fireEvent.click(
+    screen.getByRole("button", { name: "Not imported from old Buzz" }),
+  );
   fireEvent.change(screen.getByLabelText("Destination community"), {
     target: { value: "wss://third.example" },
   });
+  fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
   fireEvent.click(
-    screen.getByRole("button", { name: "Preview selected library" }),
-  );
-  fireEvent.click(
-    await screen.findByRole("checkbox", { name: /Fixture agent/ }),
-  );
-  fireEvent.click(
-    screen.getByRole("button", { name: "Import selected identities" }),
+    await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
   const notice = await screen.findByText(
-    "Imported, not started. Review settings, then Start.",
+    "Imported, not started. Mention this agent in a channel to start it.",
   );
   const imported = notice.closest("article");
   if (!imported) throw Error("Imported card missing");
@@ -417,18 +404,15 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     });
     const [first, other] = cards;
     if (!first || !other) throw Error("Missing managed cards");
-    fireEvent.click(screen.getByText("Add agent", { exact: true }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Not imported from old Buzz" }),
+    );
     fireEvent.change(screen.getByLabelText("Destination community"), {
       target: { value: "wss://third.example" },
     });
+    fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
     fireEvent.click(
-      screen.getByRole("button", { name: "Preview selected library" }),
-    );
-    fireEvent.click(
-      await screen.findByRole("checkbox", { name: /Fixture agent/ }),
-    );
-    fireEvent.click(
-      screen.getByRole("button", { name: "Import selected identities" }),
+      await screen.findByRole("button", { name: "Import Fixture agent" }),
     );
     expect(control.snapshot().busy).toBe(true);
     expect(within(first).getByRole("button", { name: "Stop" })).toBeEnabled();
@@ -452,7 +436,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     ).toBeEnabled();
     fireEvent.click(within(dialog).getByRole("button", { name: "Stop" }));
     await within(dialog).findByText(
-      "Disabled · mentions will not wake this agent",
+      "Stopped · a later sent mention can start this agent",
     );
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Close editor" }),
@@ -472,7 +456,9 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     });
     await waitFor(() => expect(control.snapshot().busy).toBe(false));
     expect(
-      screen.queryByText("Imported, not started. Review settings, then Start."),
+      screen.queryByText(
+        "Imported, not started. Mention this agent in a channel to start it.",
+      ),
     ).toBeNull();
     await act(async () => control.refresh());
     const imported = control

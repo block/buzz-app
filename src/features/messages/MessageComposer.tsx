@@ -1,7 +1,9 @@
 import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
+import { SessionAgentControl } from "../sessions/SessionAgentControl";
+import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
-import { ArrowUp, X } from "lucide-react";
+import { ArrowUpIcon, XIcon } from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useId,
@@ -9,6 +11,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
@@ -43,12 +46,23 @@ import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import { sourceOffset, type ComposerInputElement } from "./composer-dom";
 
+const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
+  status: "idle",
+  channels: [],
+};
+const noChannelSnapshot = () => noChannels;
+const noChannelSubscription = () => () => {};
+
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
   scope: string;
   session: RelaySession;
   channelId: string;
   channelName: string;
+  label?: string | undefined;
+  sessionConversation?: boolean | undefined;
+  trailingTool?: ReactNode;
+  inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
   onOpenLink?: ((target: string) => boolean) | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
@@ -57,18 +71,26 @@ export type MessageComposerProps = {
   clearMediaTime?(): void;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
+  /** A new conversation owns persistence and delivery before a channel exists. */
+  submission?: {
+    draftKey: string;
+    initialDraft?: MentionDraft | string | undefined;
+    locked: boolean;
+    disabled: boolean;
+    submit: (draft: MentionDraft) => void;
+  };
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function MessageComposer(props: MessageComposerProps) {
   return (
     <Composer
-      key={messageViewKey(
+      key={`${props.submission?.draftKey ?? ""}:${messageViewKey(
         props.session,
         props.scope,
         props.channelId,
         props.threadRootId,
-      )}
+      )}`}
       {...props}
     />
   );
@@ -79,6 +101,7 @@ function Composer({
   scope,
   channelId,
   channelName,
+  label: customLabel,
   onSend,
   onOpenLink,
   canOpenLink,
@@ -87,6 +110,10 @@ function Composer({
   clearMediaTime,
   hideMediaTimeIndicator = false,
   disabled = false,
+  submission,
+  sessionConversation,
+  inviteAgents = false,
+  trailingTool,
 }: MessageComposerProps) {
   const { control } = useMentionAgents(scope);
   const [sending, setSending] = useState(false);
@@ -96,12 +123,43 @@ function Composer({
     if (disabled) sendAttempt.current?.abort();
   }, [disabled]);
   const inputId = useId();
-  const draftKey = threadRootId
-    ? `draft:${channelId}:thread:${threadRootId}`
-    : `draft:${channelId}`;
-  const label = threadRootId ? "Reply to thread" : `Message #${channelName}`;
+  const draftKey =
+    submission?.draftKey ??
+    (threadRootId
+      ? `draft:${channelId}:thread:${threadRootId}`
+      : `draft:${channelId}`);
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [admitting, setAdmitting] = useState(false);
+  const admission = useRef(false);
+  const live = useRef(true);
+  const permitted = useRef(!disabled);
+  permitted.current = !disabled;
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  const list = useSyncExternalStore(
+    sessionConversation
+      ? session.channels.subscribeList
+      : noChannelSubscription,
+    sessionConversation ? session.channels.list : noChannelSnapshot,
+    sessionConversation ? session.channels.list : noChannelSnapshot,
+  );
+  const parentChannelId = list.channels.find(
+    (item) => item.id === channelId,
+  )?.parentChannelId;
+  const agentChoices = inviteAgents || !!sessionConversation;
+  const editingDisabled =
+    disabled || admitting || sending || !!submission?.locked;
+  const label =
+    customLabel ??
+    (threadRootId ? "Reply to thread" : `Message #${channelName}`);
   const [value, updateDraft] = useState(() =>
-    mentionDraft(readView<unknown>(scope, draftKey, "")),
+    mentionDraft(
+      readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+    ),
   );
   const draft = value.text;
   const valueRef = useRef(value);
@@ -160,7 +218,7 @@ function Composer({
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
     input,
-    !disabled && !!outbox?.supports(9),
+    !editingDisabled && !!outbox?.supports(9),
   );
   useEffect(() => {
     const element = input.current;
@@ -206,7 +264,11 @@ function Composer({
     caret.current = undefined;
   });
   function undo(redo: boolean) {
-    if (disabled || input.current?.readOnly || completion.composing.current)
+    if (
+      editingDisabled ||
+      input.current?.readOnly ||
+      completion.composing.current
+    )
       return;
     const source = redo ? history.current.future : history.current.past;
     const destination = redo ? history.current.past : history.current.future;
@@ -230,7 +292,7 @@ function Composer({
     range?: CompletionQuery,
   ) {
     if (
-      disabled ||
+      editingDisabled ||
       !outbox?.supports(9) ||
       !input.current?.isConnected ||
       // DOM props are committed before child layout effects; closures can still
@@ -299,11 +361,51 @@ function Composer({
       )
     );
   }
+  const currentAdmission = () =>
+    live.current &&
+    permitted.current &&
+    !sendAttempt.current?.signal.aborted &&
+    session.channels.list().channels.find((item) => item.id === channelId)
+      ?.parentChannelId === parentChannelId;
+  async function prepareRecipients(explicit: readonly string[]) {
+    const channel = await session.workSessions.refreshMembership(channelId);
+    if (!currentAdmission())
+      throw new Error("The session changed. Review its channel and retry.");
+    const recipients = [
+      ...sessionRecipients(
+        channel,
+        session.profiles.snapshot(),
+        session.agentLibrary.snapshot(),
+        session.viewer,
+        explicit,
+      ),
+    ];
+    const missing = recipients.filter((key) => !channel.members?.includes(key));
+    if (missing.length) {
+      await session.agentLibrary.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      await session.workSessions.addAgents(
+        channelId,
+        missing,
+        currentAdmission,
+      );
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+    }
+    return recipients;
+  }
+  function selectAgent(key: string) {
+    if (disabled || admission.current) return;
+    setSelectedAgent(key);
+    setError(undefined);
+  }
   async function send() {
     if (
       disabled ||
-      input.current?.readOnly ||
-      input.current?.disabled ||
+      admission.current ||
+      submission?.disabled ||
+      (!submission && (input.current?.readOnly || input.current?.disabled)) ||
       !draft.trim() ||
       sendAttempt.current ||
       !outbox
@@ -313,43 +415,45 @@ function Composer({
     sendAttempt.current = attempt;
     const captured = valueRef.current;
     try {
-      const recipients = captured.recipients.map((item) => item.pubkey);
-      const members =
-        control && recipients.length
-          ? session.channels
-              .list()
-              .channels.find((item) => item.id === channelId)?.members
-          : [];
-      if (control && recipients.some((key) => !members?.includes(key))) {
-        setSending(true);
-        setError(undefined);
-        await enrollMentionedAgents(
-          session,
-          scope,
-          channelId,
-          recipients,
-          control,
-          attempt.signal,
-        );
-        attempt.signal.throwIfAborted();
-        if (valueRef.current !== captured) return;
+      if (submission) {
+        submission.submit(captured);
+        return;
       }
+      let recipients = captured.recipients.length
+        ? captured.recipients.map((item) => item.pubkey)
+        : selectedAgent
+          ? [selectedAgent]
+          : [];
+      if (sessionConversation) {
+        admission.current = true;
+        setAdmitting(true);
+        recipients = await prepareRecipients(recipients);
+      } else if (control && recipients.length) {
+        const members = session.channels
+          .list()
+          .channels.find((item) => item.id === channelId)?.members;
+        if (recipients.some((key) => !members?.includes(key))) {
+          setSending(true);
+          setError(undefined);
+          await enrollMentionedAgents(
+            session,
+            scope,
+            channelId,
+            recipients,
+            control,
+            attempt.signal,
+          );
+        }
+      }
+      attempt.signal.throwIfAborted();
+      if (valueRef.current !== captured) return;
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, draft)
-          : draft;
+          ? mediaTimeReply(mediaTimeSeconds, captured.text)
+          : captured.text;
       const id = threadRootId
-        ? session.messages.reply(
-            channelId,
-            threadRootId,
-            content,
-            value.recipients.map((item) => item.pubkey),
-          )
-        : session.messages.send(
-            channelId,
-            draft,
-            value.recipients.map((item) => item.pubkey),
-          );
+        ? session.messages.reply(channelId, threadRootId, content, recipients)
+        : session.messages.send(channelId, content, recipients);
       onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();
@@ -358,12 +462,16 @@ function Composer({
       input.current?.focus();
       setError(undefined);
     } catch (reason) {
-      if (!attempt.signal.aborted)
+      if (live.current && !attempt.signal.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      admission.current = false;
       if (sendAttempt.current === attempt) {
         sendAttempt.current = null;
-        setSending(false);
+        if (live.current) {
+          setSending(false);
+          setAdmitting(false);
+        }
       }
     }
   }
@@ -405,7 +513,7 @@ function Composer({
           send();
         }}
       >
-        {!disabled && (
+        {!disabled && !submission && (
           <TypingIndicator
             session={session}
             channelId={channelId}
@@ -424,6 +532,7 @@ function Composer({
             scope={scope}
             channelId={channelId}
             threadRootId={threadRootId}
+            inviteAgents={agentChoices}
             replace={replaceCompletion}
           />
         )}
@@ -432,7 +541,7 @@ function Composer({
           <RichComposerInput
             ref={input}
             id={inputId}
-            disabled={disabled || sending}
+            disabled={editingDisabled}
             value={draft}
             draft={value}
             session={session}
@@ -534,7 +643,7 @@ function Composer({
                 onClick={clearMediaTime}
                 aria-label="Remove video time"
               >
-                <X size={13} aria-hidden="true" />
+                <XIcon size={13} aria-hidden="true" />
               </button>
             </div>
           )}
@@ -550,6 +659,7 @@ function Composer({
                 key={`${recipient.pubkey}:${recipient.start}`}
                 title={recipient.pubkey}
                 aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
+                disabled={editingDisabled}
                 onClick={() =>
                   saveDraft({
                     ...value,
@@ -560,7 +670,7 @@ function Composer({
                 }
               >
                 {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
-                <X size={12} aria-hidden="true" />
+                <XIcon size={12} aria-hidden="true" />
               </button>
             ))}
           </section>
@@ -574,31 +684,49 @@ function Composer({
                 scope={scope}
                 channelId={channelId}
                 threadRootId={threadRootId}
-                disabled={disabled || sending}
+                disabled={editingDisabled}
+                inviteAgents={agentChoices}
                 insertText={(text) => insert(text)}
                 insertMention={insertMention}
                 focus={() => input.current?.focus()}
               />
             )}
           </div>
-          <span className={styles.composerHint}>
-            Shift + Enter for a new line
-          </span>
+          {trailingTool ??
+            (sessionConversation ? (
+              <SessionAgentControl
+                session={session}
+                channelId={channelId}
+                value={selectedAgent}
+                onChange={selectAgent}
+                disabled={editingDisabled}
+              />
+            ) : (
+              <span className={styles.composerHint}>
+                Shift + Enter for a new line
+              </span>
+            ))}
           <button
             className={styles.sendButton}
             type="submit"
             aria-label="Send message"
             title="Send message"
-            disabled={disabled || sending || !draft.trim()}
+            disabled={
+              disabled ||
+              admitting ||
+              sending ||
+              submission?.disabled ||
+              !draft.trim()
+            }
           >
-            <ArrowUp size={18} aria-hidden="true" />
+            <ArrowUpIcon size={18} aria-hidden="true" />
           </button>
         </div>
         {error && <p role="alert">{error}</p>}
         {error && session.emoji?.snapshot().status === "error" && (
           <button
             type="button"
-            disabled={disabled || sending}
+            disabled={editingDisabled}
             onClick={() => {
               void session.emoji.refresh().then(() => {
                 if (

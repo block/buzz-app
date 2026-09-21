@@ -1,4 +1,5 @@
 import { useMentionAgents } from "../../features/agents/mention-context";
+import { useAgentChoices } from "./use-agent-choices";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -13,6 +14,7 @@ export function MentionCompletion({
   session,
   scope,
   channelId,
+  inviteAgents,
   query,
   publish,
 }: ComposerCompletionProps) {
@@ -26,21 +28,26 @@ export function MentionCompletion({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
+  const agents = useAgentChoices(session, inviteAgents);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
-  const { agents } = useMentionAgents(scope);
+  const { agents: localAgents } = useMentionAgents(scope);
   const available = useMemo(
     () =>
+      !inviteAgents &&
       channel?.members &&
       !channel.archived &&
       (channel.channelType === "stream" || channel.channelType === "forum") &&
       session.outbox?.supports(9000)
-        ? agents
+        ? localAgents
             .filter((agent) => !channel.members?.includes(agent.pubkey))
             .map(({ pubkey, name }) => ({ pubkey, name }))
         : [],
-    [channel, agents, session.outbox],
+    [channel, localAgents, session.outbox, inviteAgents],
   );
+  const parentAdmission =
+    !!channel &&
+    (channel.channelType !== "session" || !!channel.parentChannelId);
   const members = channel?.members ?? [];
   const memberKey = members.join(":");
   const [attempt, retry] = useState(0);
@@ -65,13 +72,21 @@ export function MentionCompletion({
   }, [session, memberKey, attempt]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const candidates = [
-      ...members.map((pubkey) => ({
+    const choices = new Map(
+      [...agents.identities, ...available].map((agent) => [
+        agent.pubkey,
+        { pubkey: agent.pubkey, name: agent.name },
+      ]),
+    );
+    for (const pubkey of members)
+      choices.set(pubkey, {
         pubkey,
-        name: profiles.get(pubkey)?.name ?? pubkey.slice(0, 12),
-      })),
-      ...available,
-    ];
+        name:
+          profiles.get(pubkey)?.name ??
+          choices.get(pubkey)?.name ??
+          pubkey.slice(0, 12),
+      });
+    const candidates = [...choices.values()];
     const needle = query.query.toLowerCase();
     const admitted = matchesMentionQuery(
       query.query,
@@ -91,6 +106,7 @@ export function MentionCompletion({
                 a.pubkey.localeCompare(b.pubkey),
             )
         : [];
+    const membershipMissing = (!inviteAgents || !!channel) && !channel?.members;
     const missing = members.some((key) => !profiles.has(key));
     const withdraw = publish({
       items: matching.slice(0, 20).map((recipient) => ({
@@ -98,7 +114,9 @@ export function MentionCompletion({
         label: recipient.name,
         detail: members.includes(recipient.pubkey)
           ? recipient.pubkey
-          : "Adds to channel when you send",
+          : inviteAgents
+            ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
+            : "Adds to channel when you send",
         preview: (
           <Avatar
             name={recipient.name}
@@ -117,24 +135,31 @@ export function MentionCompletion({
         ),
         edit: { mention: recipient },
       })),
-      ...(admitted && !channel?.members
-        ? { status: "Channel membership unavailable." }
-        : admitted && list.error
-          ? { status: "Could not refresh channel membership." }
-          : error || missing
-            ? {
-                status:
-                  "Some names unavailable. Exact public keys still identify recipients.",
-              }
-            : matching.length > 20
-              ? { status: "Narrow your search to see more members." }
-              : {}),
-      ...(!channel?.members || list.error || error || missing
+      ...(agents.status === "error"
+        ? { status: "Could not load agents. Retry to refresh." }
+        : admitted && membershipMissing
+          ? { status: "Channel membership unavailable." }
+          : admitted && list.error
+            ? { status: "Could not refresh channel membership." }
+            : error || missing
+              ? {
+                  status:
+                    "Some names unavailable. Exact public keys still identify recipients.",
+                }
+              : matching.length > 20
+                ? { status: "Narrow your search to see more members." }
+                : {}),
+      ...(agents.status === "error" ||
+      membershipMissing ||
+      list.error ||
+      error ||
+      missing
         ? {
             retry: () => {
+              if (inviteAgents) void session.agentLibrary.refresh();
               setError(false);
               retry((value) => value + 1);
-              if (!channel?.members || list.error)
+              if (membershipMissing || list.error)
                 session.channels.refreshList?.();
             },
           }
@@ -157,17 +182,24 @@ export function MentionCompletion({
     const profilesChanged = session.profiles.subscribe(() => {
       if (session.profiles.snapshot() !== profiles) revoke();
     });
+    const agentsChanged = inviteAgents
+      ? session.agentLibrary.subscribe(revoke)
+      : () => {};
     return () => {
+      agentsChanged();
       rosterChanged();
       profilesChanged();
       revoke();
     };
   }, [
     session,
+    agents,
+    inviteAgents,
     channel,
     channelId,
     memberKey,
     available,
+    parentAdmission,
     profiles,
     agentPubkeys,
     query.query,

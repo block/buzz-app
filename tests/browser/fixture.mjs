@@ -31,6 +31,8 @@ export const test = base.extend({
   threadUnread: [false, { option: true }],
   threadUnreadMentions: [false, { option: true }],
   exactMessages: [false, { option: true }],
+  sessionChannels: [[], { option: true }],
+  sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
@@ -38,7 +40,7 @@ export const test = base.extend({
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
   membershipActivity: [false, { option: true }],
-  historyCounts: [{ alpha: historySize, beta: 80 }, { option: true }],
+  historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -54,6 +56,8 @@ export const test = base.extend({
       threadUnread,
       threadUnreadMentions,
       exactMessages,
+      sessionChannels,
+      sessionParents,
       sidebarUnread,
       savedSidebar,
       expectedPageFailure,
@@ -133,7 +137,9 @@ export const test = base.extend({
       : dmLabels
         ? ["dm-peer"]
         : [];
-    const rosterIds = [...channels, ...dmIds];
+    const rosterIds = [
+      ...new Set([...channels, ...dmIds, ...Object.values(sessionParents)]),
+    ];
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
       for (const community of ["primary", "secondary"]) {
@@ -173,6 +179,9 @@ export const test = base.extend({
     // Tall histories leave room above the older-page prefetch threshold, even
     // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
+    for (const community of ["primary", "secondary"])
+      for (const parent of Object.values(sessionParents))
+        histories.set(`${community}/${parent}`, []);
     const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
@@ -421,6 +430,16 @@ export const test = base.extend({
             ["d", id],
             ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
             ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
+            ...(sessionChannels.includes(id)
+              ? [
+                  ["t", "stream"],
+                  ["private"],
+                  [
+                    "about",
+                    `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                  ],
+                ]
+              : []),
             ...(hiddenChannels.has(id) ? [["hidden"]] : []),
           ]),
         );
@@ -502,6 +521,13 @@ export const test = base.extend({
                 ([key, value]) => key === "e" && filter["#e"].includes(value),
               ),
           )
+          .filter(
+            (event) =>
+              filter.until === undefined ||
+              event.created_at < filter.until ||
+              (event.created_at === filter.until &&
+                event.id > filter.before_id),
+          )
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
@@ -564,6 +590,13 @@ export const test = base.extend({
               ? [...threadReplies.values()].flat()
               : []),
           ])
+          .filter(
+            (event) =>
+              filter.until === undefined ||
+              event.created_at < filter.until ||
+              (event.created_at === filter.until &&
+                event.id > filter.before_id),
+          )
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
@@ -720,10 +753,23 @@ export const test = base.extend({
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: [9],
+            writeKinds: sessionChannels.length ? [9, 9007] : [9],
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
+        }
+        if (sessionChannels.length && route === "sign") {
+          expect(body.kind).toBe(9);
+          return send(response, finalizeEvent(body, userKey));
+        }
+        if (sessionChannels.length && route === "publish") {
+          expect(verifyEvent(body)).toBe(true);
+          expect(body.pubkey).toBe(viewer);
+          expect(body.kind).toBe(9);
+          const channel = body.tags.find(([key]) => key === "h")?.[1];
+          expect(sessionChannels).toContain(channel);
+          histories.get(`${community}/${channel}`).push(body);
+          return send(response, { accepted: true, event_id: body.id });
         }
         if (
           ["stream-interests", "stream-priority", "stream-observer"].includes(
@@ -802,7 +848,7 @@ export const test = base.extend({
               .map((event) => [event.id, event]),
           ).values(),
         ];
-        if (filter.until !== undefined) {
+        if (filter.until !== undefined && filter["#h"]?.length) {
           pending.push({
             community,
             channel: filter["#h"][0],
@@ -1037,7 +1083,7 @@ export const test = base.extend({
           targetEvents.push(event);
           relay.publish("primary", event);
         },
-        reply(rootId, own = false) {
+        reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");
           const event = sign(
@@ -1051,14 +1097,14 @@ export const test = base.extend({
             replies.at(-1).created_at + 1,
           );
           replies.push(event);
-          relay.publish("primary", event);
+          if (deliver) relay.publish("primary", event);
           return event;
         },
-        append(community, channel, content, deliver = true, own = true) {
+        append(community, channel, content, deliver = true, own = true, root) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
             9,
-            [["h", channel]],
+            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
             (history.at(-1)?.created_at ?? 1700000900) + 1,

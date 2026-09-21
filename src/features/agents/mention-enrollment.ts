@@ -55,6 +55,9 @@ export async function enrollMentionedAgents(
         (item) =>
           item.event.kind === 9000 &&
           item.event.tags.some(
+            ([tag, value]) => tag === "role" && value === "bot",
+          ) &&
+          item.event.tags.some(
             ([tag, value]) => tag === "h" && value === channelId,
           ) &&
           item.event.tags.some(

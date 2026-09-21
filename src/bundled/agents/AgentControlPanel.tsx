@@ -9,7 +9,7 @@ import type {
   AgentControlState,
   AgentView,
 } from "../../features/agents/control";
-import { IconPlus } from "@tabler/icons-react";
+import { PlusIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { AgentCard } from "./AgentCard";
@@ -95,7 +95,7 @@ export function AgentControlPanel({
               })
             }
           >
-            <IconPlus size={16} aria-hidden="true" />
+            <PlusIcon size={16} aria-hidden="true" />
             Add agent
           </Button>
         )}
@@ -130,7 +130,10 @@ export function AgentControlPanel({
                   control={control}
                   initialDestination={importDestination}
                   managedAgents={state.data.agents}
-                  commitAvailable={state.data.importAvailable !== false}
+                  commitAvailable={
+                    state.status === "ready" &&
+                    state.data.importAvailable !== false
+                  }
                   disabled={state.busy}
                   onImported={(agents) => {
                     setImportedId(agents[0]?.id ?? null);

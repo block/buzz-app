@@ -110,12 +110,16 @@ While shaping the first version, default to **edit → human tries the running a
   builds, rather than merely refreshing the app. Local checkpoint commits use
   the existing staged-file hook; no hook bypass is needed.
 - When the human is happy with a coherent batch, finish its regression coverage,
-  self-review, obtain independent review where risk warrants, and run one
-  `just scan` before review/integration. Attribute validation to that snapshot;
-  subsequent edits require appropriate revalidation. Fix failures and rerun the
-  affected gate rather than repeating unchanged successful work just for a
-  handoff. **Validated** means the required checks passed, not merely that the
-  screen looked right.
+  self-review, and obtain independent review where risk warrants. Let mandatory
+  pre-commit/pre-push hooks own their checks; run focused behavior checks they do
+  not cover and use existing CI for broad validation. Do not duplicate hook or
+  CI suites locally by default. Run `just scan` only when explicitly requested or
+  needed to reproduce a broad integration failure, not for every review,
+  integration, or handoff. Attribute validation to the checked snapshot; later
+  edits require appropriate revalidation. Fix failures and rerun the affected
+  gate rather than repeating unchanged successful work. **Validated** means the
+  required checks passed, not merely that the screen looked right; pending CI
+  and untested native/browser behavior remain explicit gaps.
 
 ### Performance is acceptance, not a follow-up
 
@@ -159,11 +163,13 @@ custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
 
 Pre-commit runs pinned Biome formatting and safe lint fixes on fully staged
 JS/TS/JSON/CSS files, and rustfmt on individual staged Rust files. Remaining
-warnings/errors block the commit; no unsafe lint fixes are applied. Deletions and
+warnings/errors block the commit; no unsafe lint fixes are applied. The staged
+icon check also rejects known alternate icon families, direct upstream imports
+outside the design-system gateway, and whole-catalog imports. Deletions and
 unsupported formats (including Markdown, HTML and YAML) are not formatted here.
 The hook does **not** run types, tests, builds, Clippy, or a whole-tree formatter.
-`just iterate` remains the fast whole-tree fix/build command; `just scan` remains
-the full validation gate. Both reject remaining Biome warnings.
+`just iterate` remains the optional whole-tree fix/build command; `just scan` is
+an opt-in broad diagnostic. Both reject remaining Biome warnings.
 
 Before writing, the hook refuses partially staged supported files, non-regular
 files, and differing/untracked formatter configuration in their ancestor paths.
@@ -171,8 +177,9 @@ Format and reselect partial hunks, or stage/restore configuration, then retry.
 Only checked paths are restaged after all checks succeed; a failed check can leave
 safe fixes visible for review but does not update the index. Unrelated changes and
 existing stashes are left alone. Do not edit/stage concurrently with a commit.
-This is a developer guardrail, not a security boundary or a substitute for the full
-scan; changes to tool/config dependencies still require broad validation.
+This is a developer guardrail, not a security boundary or a substitute for CI
+and risk-appropriate behavior checks. Tool/config dependency changes require
+relevant integration evidence, not an automatic local full scan.
 
 ### Fast pre-push feedback
 

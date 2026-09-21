@@ -33,10 +33,9 @@ Implemented with isolated filesystem/credential/subprocess fixtures:
 
 ## Known incomplete boundaries — do not claim live readiness
 
-- Normal native startup enables Start/Restart and selected credential import when
-  the app's manifest-verified runtime resources are staged. The disposable editor
-  still gates execution/import off. Real macOS Keychain consent, signing/ACL
-  behavior and packaged custody remain unverified; other credential platforms
+- Normal native startup enables Start/Restart when the app's manifest-verified
+  runtime resources are staged. Credential import/create is macOS-only. Real
+  Keychain consent, signing/ACL behavior and packaged custody remain unverified; other credential platforms
   report unavailable rather than storing agent keys in files.
 - `scripts/build-agent-runtime.mjs` stages the immutable tools and hash manifest;
   native startup and spawn validate them without an old-bundle/PATH fallback.

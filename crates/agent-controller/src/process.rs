@@ -1,11 +1,15 @@
 //! Every listener gets its own Unix session. ACP's worker process groups stay
 //! inside that session, so teardown is not limited to the listener's group.
 use crate::Result;
-use std::process::{Child, Command, Stdio};
+#[cfg(unix)]
+use std::process::Stdio;
+use std::process::{Child, Command};
+#[cfg(unix)]
 use std::time::{Duration, Instant};
 
 pub(crate) struct Process {
     child: Child,
+    #[cfg(unix)]
     session: u32,
     stopped: bool,
 }
@@ -25,7 +29,10 @@ impl Process {
             }
         }
         #[cfg(not(unix))]
-        return Err("Agent process containment is not supported on this platform yet".into());
+        {
+            let _ = command;
+            Err("Agent process containment is not supported on this platform yet".into())
+        }
         #[cfg(unix)]
         {
             let child = command.spawn().map_err(|_| {

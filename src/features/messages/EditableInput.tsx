@@ -296,7 +296,7 @@ export function EditableInput({
         fragment.append(root.ownerDocument.createTextNode(text));
         return;
       }
-      // A real text position after an inline object gives WebKit a caret box.
+      // Empty editors and positions after inline objects need a real caret box.
       // editorText/source offsets exclude this rendering-only boundary character.
       const span = root.ownerDocument.createElement("span");
       span.dataset.editorText = "";
@@ -318,7 +318,7 @@ export function EditableInput({
       });
       offset = decoration.end;
     }
-    appendText(value.slice(offset), next.length > 0);
+    appendText(value.slice(offset), next.length > 0 || !value);
     const tail = root.ownerDocument.createElement("br");
     tail.dataset.placeholder = "true";
     fragment.append(tail);

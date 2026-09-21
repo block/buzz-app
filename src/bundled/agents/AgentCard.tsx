@@ -1,6 +1,9 @@
 import { useRef, type ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
-import { IconDots, IconUsers } from "@tabler/icons-react";
+import {
+  DotsThreeIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
@@ -47,7 +50,7 @@ export function AgentCard({
                 <IconButton
                   aria-label={`Actions for ${name}`}
                   size="compact"
-                  icon={<IconDots size={18} stroke={2} aria-hidden="true" />}
+                  icon={<DotsThreeIcon size={18} aria-hidden="true" />}
                 />
               }
             />
@@ -138,7 +141,7 @@ export function AgentCard({
               value: "identities",
               title: (
                 <span className="flex items-center gap-2">
-                  <IconUsers size={16} stroke={2} aria-hidden="true" />
+                  <UsersIcon size={16} aria-hidden="true" />
                   <span className="sr-only">{name}: </span>
                   {identities.length}{" "}
                   {identities.length === 1 ? "identity" : "identities"}

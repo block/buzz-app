@@ -144,7 +144,7 @@ export function AgentImport({
           Import options
         </summary>
         <fieldset
-          disabled={disabled || previewing}
+          disabled={disabled && !previewing}
           className="flex flex-col gap-3 pt-3"
         >
           <label className="agent-control-field">
@@ -155,7 +155,8 @@ export function AgentImport({
                 const next = event.target.value as ImportSource;
                 setSource(next);
                 invalidatePreview();
-                if (destination.trim()) void load(next, destination);
+                if (destination.trim() && !disabled)
+                  void load(next, destination);
               }}
             >
               <option value="installed">Installed Buzz</option>

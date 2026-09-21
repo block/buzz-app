@@ -194,7 +194,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     let snapshot = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
     assert_eq!(snapshot["agents"][0]["harness"]["model"], "sample");
     assert_eq!(snapshot["runtimeAvailable"], false);
-    assert_eq!(snapshot["importAvailable"], false);
+    assert_eq!(snapshot["importAvailable"], cfg!(target_os = "macos"));
     invoke(
         &view,
         "agent_control_action",

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { X } from "lucide-react";
+import { XIcon } from "../../shared/design-system/icons/index";
 import {
   communityRequest,
   inspectProfile,
@@ -171,7 +171,7 @@ export function CommunityDialog({
             disabled={busy}
             onClick={close}
           >
-            <X size={20} />
+            <XIcon size={20} />
           </button>
         </header>
         {mode === "join" && step !== "destination" && destination && (

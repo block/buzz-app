@@ -1,3 +1,4 @@
+import { validSessionCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
@@ -221,6 +222,8 @@ async function relayAuthority(fetch, relay) {
     throw new Error("Relay did not advertise its identity");
   return {
     relayAuthor: author,
+    channelCreation:
+      Array.isArray(nip11.supported_nips) && nip11.supported_nips.includes(29),
     ...(readSnapshotCommunity(nip11.read_state_snapshot)
       ? { readStateCommunity: readSnapshotCommunity(nip11.read_state_snapshot) }
       : {}),
@@ -609,7 +612,13 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
-              writeKinds: [7, 9, 9000, ...WORKFLOW_KINDS],
+              writeKinds: [
+                7,
+                9,
+                9000,
+                ...WORKFLOW_KINDS,
+                ...((await getAuthority(relay)).channelCreation ? [9007] : []),
+              ],
               workflowReads: true,
               sidebarPreferences: true,
               readState: true,
@@ -1112,10 +1121,16 @@ export function relayBrokerPlugin({
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
-            if (filters?.kind === 9000) {
-              if (!validAgentEnrollment(filters))
+            if ([9000, 9007].includes(filters?.kind)) {
+              const enrollment = validAgentEnrollment(filters);
+              const authority = await getAuthority(relay);
+              if (
+                !enrollment &&
+                !(authority.channelCreation && validSessionCommand(filters))
+              )
                 return json(res, 400, {
-                  error: "Invalid agent enrollment",
+                  error:
+                    "Agent enrollment or session operation unavailable or invalid",
                   sent: false,
                 });
             } else if (![7, 9].includes(filters?.kind)) {

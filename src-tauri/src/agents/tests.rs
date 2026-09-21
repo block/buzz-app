@@ -1,6 +1,41 @@
 use super::*;
+use buzz_agent_controller::Secret;
 use serde_json::{json, Value};
 use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, MockRuntime};
+
+const RUNTIME_GATE: &str = "Synthetic runtime unavailable.";
+const IMPORT_GATE: &str = "Synthetic credential refusal.";
+
+// Test-only custody. Synthetic fixtures cannot reach PlatformCredentials.
+struct RejectingCredentials;
+impl Credentials for RejectingCredentials {
+    fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
+        Err(IMPORT_GATE.into())
+    }
+    fn read(&self, _: &str, _: &str) -> Result<Option<Secret>, String> {
+        Err(IMPORT_GATE.into())
+    }
+    fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
+        Err(IMPORT_GATE.into())
+    }
+}
+
+impl AgentHost {
+    fn open(paths: Result<(PathBuf, PathBuf, PathBuf), String>) -> Self {
+        Self(
+            Arc::new(Mutex::new(paths.and_then(|(root, legacy, workspace)| {
+                Host::open(
+                    root,
+                    legacy,
+                    workspace,
+                    Err(RUNTIME_GATE.into()),
+                    Arc::new(RejectingCredentials),
+                )
+            }))),
+            Arc::new(AtomicBool::new(false)),
+        )
+    }
+}
 
 pub(crate) fn fixture() -> (
     tempfile::TempDir,
@@ -20,15 +55,11 @@ pub(crate) fn fixture_with_models(
 ) {
     let dir = tempfile::tempdir().unwrap();
     let model_host = models(dir.path());
-    let host = AgentHost::open(
-        Ok((
-            dir.path().join("store"),
-            dir.path().join("legacy"),
-            dir.path().join("workspace"),
-        )),
-        Err(RUNTIME_GATE.into()),
-        true,
-    );
+    let host = AgentHost::open(Ok((
+        dir.path().join("store"),
+        dir.path().join("legacy"),
+        dir.path().join("workspace"),
+    )));
     let app = mock_builder()
         .manage(host.clone())
         .manage(model_host)
@@ -79,7 +110,7 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     let id = seed(dir.path());
     let before = invoke(&view, "agent_control_snapshot", json!({})).unwrap();
     assert_eq!(before["runtimeAvailable"], false);
-    assert_eq!(before["importAvailable"], false);
+    assert_eq!(before["importAvailable"], cfg!(target_os = "macos"));
     assert_eq!(
         before["harnessOptions"],
         json!([{
@@ -91,6 +122,15 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(before["agents"][0]["enabled"], true);
     assert_eq!(before["agents"][0]["status"], "stopped");
     assert!(!before.to_string().contains("DO_NOT_PROJECT"));
+    for action in ["start", "restart"] {
+        let err = invoke(
+            &view,
+            "agent_control_action",
+            json!({"id":id,"action":action}),
+        )
+        .unwrap_err();
+        assert_eq!(err, RUNTIME_GATE);
+    }
     let edit = json!({"name":"Edited","systemPrompt":"Saved via IPC","workspace":dir.path().to_str().unwrap(),
         "harness":{"command":"buzz-agent","args":["--literal space"],"model":"chosen","provider":"databricks_v2"},"environment":{}});
     let saved = invoke(
@@ -101,8 +141,12 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     .unwrap();
     assert_eq!(saved["harnessOptions"], before["harnessOptions"]);
     assert_eq!(saved["runtimeAvailable"], false);
-    assert_eq!(saved["importAvailable"], false);
+    assert_eq!(saved["importAvailable"], cfg!(target_os = "macos"));
     assert_eq!(saved["agents"][0]["harness"]["provider"], "databricks_v2");
+    assert_eq!(
+        saved["agents"][0]["harness"]["args"],
+        json!(["--literal space"])
+    );
     assert_eq!(saved["agents"][0]["revision"], 2);
     assert_eq!(saved["agents"][0]["systemPrompt"], "Saved via IPC");
     assert!(invoke(
@@ -111,15 +155,6 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
         json!({"id":id,"expectedRevision":1,"edit":edit})
     )
     .is_err());
-    for action in ["start", "restart"] {
-        let err = invoke(
-            &view,
-            "agent_control_action",
-            json!({"id":id,"action":action}),
-        )
-        .unwrap_err();
-        assert_eq!(err, RUNTIME_GATE);
-    }
     let stopped = invoke(
         &view,
         "agent_control_action",
@@ -149,7 +184,15 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
     let (dir, host, _app, view) = fixture();
     let source = dir.path().join("legacy/xyz.block.buzz.app.dev/agents");
     std::fs::create_dir_all(&source).unwrap();
-    std::fs::write(source.join("managed-agents.json"), "[]").unwrap();
+    std::fs::write(
+        source.join("managed-agents.json"),
+        serde_json::to_vec(&json!([{
+            "pubkey":"79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798",
+            "name":"Synthetic", "agent_command":"buzz-agent", "agent_args":[]
+        }]))
+        .unwrap(),
+    )
+    .unwrap();
     let preview = invoke(
         &view,
         "agent_control_import_preview",
@@ -170,7 +213,22 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
         invoke(
             &view,
             "agent_control_import_commit",
-            json!({"token":preview["token"],"ids":[]})
+            json!({"token":preview["token"],"ids":[preview["candidates"][0]["id"]]})
+        )
+        .unwrap_err(),
+        "Import preview expired; choose the source again"
+    );
+    let preview = invoke(
+        &view,
+        "agent_control_import_preview",
+        json!({"source":"development","destination":"wss://chosen.example"}),
+    )
+    .unwrap();
+    assert_eq!(
+        invoke(
+            &view,
+            "agent_control_import_commit",
+            json!({"token":preview["token"],"ids":[preview["candidates"][0]["id"]]})
         )
         .unwrap_err(),
         IMPORT_GATE
@@ -185,11 +243,11 @@ fn real_ipc_preview_source_no_import_and_shutdown_fence() {
 fn malformed_store_does_not_prevent_native_host_construction() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("agents.json"), "RAW_SECRET_INVALID").unwrap();
-    let host = AgentHost::open(
-        Ok((dir.path().into(), dir.path().into(), dir.path().into())),
-        Err(RUNTIME_GATE.into()),
-        true,
-    );
+    let host = AgentHost::open(Ok((
+        dir.path().into(),
+        dir.path().into(),
+        dir.path().into(),
+    )));
     let error = host.with(|h| h.snapshot()).err().unwrap();
     assert!(!error.contains("RAW_SECRET"));
     assert!(error.contains("malformed"));
@@ -295,7 +353,6 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
             dir.path().join("ownership"),
         );
         h.credentials = credentials;
-        h.preview = false;
         h.legacy_check = || Ok(());
         Ok(())
     })
@@ -360,7 +417,7 @@ async fn native_start_restore_disconnect_stop_and_quit_fence_late_credentials() 
 }
 
 #[test]
-fn nonpreview_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
+fn real_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
     const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
     #[derive(Default)]
@@ -400,7 +457,6 @@ fn nonpreview_ipc_import_uses_selected_memory_custody_and_stays_disabled() {
     std::fs::write(source.join("managed-agents.json"), &bytes).unwrap();
     let memory = Arc::new(Memory::default());
     host.with(|h| {
-        h.preview = false;
         h.credentials = memory.clone();
         Ok(())
     })

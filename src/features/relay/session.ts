@@ -8,6 +8,7 @@ import {
 } from "./reader";
 import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
+import { createWorkSessions } from "./work-sessions";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -629,6 +630,7 @@ export function createRelaySession(
     notify,
   );
   const session = Object.freeze({
+    viewer: transport?.viewer,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */
     subscribeIncoming(listener: IncomingListener) {
       if (closed) return () => {};
@@ -638,6 +640,35 @@ export function createRelaySession(
       };
     },
     typing: typing.capability,
+    workSessions: createWorkSessions(
+      writes?.outbox,
+      channels.queries,
+      verified,
+      lifetime.signal,
+      writes?.local,
+      async (id) => {
+        if (!transport) return false;
+        // Confirm only this viewer's exact creation receipt. Discovery may be
+        // incomplete; this never admits the channel or grants content access.
+        const events = await requests.reader.read(
+          [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
+          { signal: lifetime.signal, fresh: true },
+        );
+        return events.some(
+          (event) =>
+            event.id === id &&
+            event.kind === 9007 &&
+            event.pubkey === transport.viewer,
+        );
+      },
+      () => {
+        const library = agentLibrary.queries.snapshot();
+        return library.status === "ready"
+          ? library.identities.map((agent) => agent.pubkey)
+          : [];
+      },
+      transport?.relayAuthor,
+    ),
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     live,
@@ -1103,6 +1134,21 @@ export function createRelaySession(
         channels.staleHeads();
         unread.stale();
       }
+      // Access-revoked CLOSED is a refresh hint, not signed archive/membership
+      // authority. Aggregate snapshots repeat failures; only react to a new one.
+      const revoked = (route: LiveSnapshot["routes"][number]) =>
+        route.channelId &&
+        route.status === "error" &&
+        route.error === "restricted: channel access revoked";
+      const previous = new Set(
+        liveSnapshot.routes.filter(revoked).map((r) => r.id),
+      );
+      if (
+        snapshot.routes.some(
+          (route) => revoked(route) && !previous.has(route.id),
+        )
+      )
+        refreshRoster();
       liveSnapshot = snapshot;
       publishLive();
     },

@@ -1,14 +1,9 @@
 # Local agent controls
 
-The real Agents page now receives one app-owned native capability. Native IPC uses
-persistent settings and the controller, not the in-memory editor fixture. The
-managed identities are the main grid, one card per exact native identity and
-destination. Browser-only access keeps the read-only old library; native management
-shows only this app's managed agents. **Normal native startup now enables
-the local management loop when its immutable runtime resources are staged.** The
-disposable editor still blocks execution and credential import. The real-agent
-handover requires independent review and an attended trial; old Buzz still owns
-live replies until that separate switch.
+The Agents page uses one app-owned native controller for creating, importing,
+editing and running local agents. Managed cards are keyed by exact identity and
+community. Browser-only access keeps the read-only old library; it cannot run
+agents. The only product entry point is ordinary desktop startup.
 
 ## Normal desktop workflow
 
@@ -28,8 +23,8 @@ remain available when the old library is disconnected, unavailable or archived.
 Create generates a native key, obtains the captured viewer's owner authorization,
 and saves the agent stopped before publishing its profile. Failed profile publication
 has a Retry action on the same saved card; it never creates another identity.
-The dev broker and native host must both be restarted for this slice. Packaged human
-signing remains unavailable. Source-reviewed only; compilation and live trial deferred.
+The dev broker and native host must both support this flow. Packaged human
+signing remains unavailable.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
 loads installed identities for the connected community; already-managed exact
@@ -59,8 +54,8 @@ because execution failed. The old-Buzz ownership guard remains in force.
 
 Mention startup carries the earliest relevant pending send timestamp into the
 bundled runner's existing replay input (bounded by its 15-minute catch-up limit).
-Already-running agents are not restarted. This is a ready-to-try implementation,
-not proof of a live reply; the attended handover still requires old Buzz stopped.
+Already-running agents are not restarted. Process state is not proof of a live
+reply; imported identities require old Buzz stopped before handover.
 
 The focused Add/Edit dialog contains Name and Agent instructions, followed by
 **AI configuration** in dependency order: **Harness → Provider → Model**. Provider
@@ -95,83 +90,17 @@ filter line to use no filter. Saved per-agent settings/overrides retain preceden
 Tokens/unknown keys are rejected; never put credentials here. The connection cache
 remains separate from old Buzz. No private host is committed to source.
 
-Browser fixtures prove grid → Edit → selection/custom/blank → Save/reopen and
-cancellation/draft recovery with synthetic identities. They do not prove native
-persistence, real SSO, live replies or packaged acceptance. The historical restricted
-launchers below remain diagnostic tools, not the normal product entry point.
-
-## Diagnostic: connected desktop with disposable sample data
-
-From the feature worktree, after an attended launch is agreed:
-
-```sh
-bin/pnpm install --frozen-lockfile
-bin/node scripts/agent-control-preview.mjs
-```
-
-This opens **Buzz Agent Editor Preview** using the real app/native IPC. It uses a
-separate app identifier/webview storage, temporary plugin/settings directories,
-and a Vite configuration with **no dotenv loading or live broker**, at loopback
-port 1445 (fails if occupied). It seeds one artificial public identity with no
-private key. Its synthetic enabled flag lets you exercise Stop, but the native
-launch gate prevents startup regardless of that flag. The directory remains
-printed and retained for inspection.
-`--prepare-only` prepares these files but does not launch an app or dev server.
-Native watching is disabled, so source changes cannot trigger an unattended native
-relaunch. Frontend Vite hot reload remains available; coordinate edits during sign-in.
-
-Open Agents, edit the sample name/prompt/harness/environment and Save. Reload the
-window to verify disk persistence; compare Saved revision. Invalid arguments or
-reserved environment keys should retain your draft and report a safe error.
-Start/Restart and Import selected identities must be disabled. No worker can wake.
-Stop only persists disabled intent in this checkpoint. Quit closes this app; do
-not close old Buzz. No GUI acceptance is implied until a person tries this.
-
-Preview selected library is keyless/read-only but reads the explicitly selected
-old library. Skip preview to keep the exercise wholly synthetic. No background
-library scan, Keychain operation, live import, relay connection or live agent
-start/stop is performed by this launch path. Browsing Databricks models can prompt
-for browser sign-in only if needed; its app-isolated credentials persist under the printed
-temporary directory until Disconnect or manual cleanup. Never put real credentials
-in sample fields. `BUZZ_AGENT_CONTROL_HOME` is a native process-only storage override, must
-be absolute, and cannot select an import source. Normal startup uses this app's
-`app_data_dir/agent-controller`, never the old library as a destination.
-
 ## Runtime boundary
 
-Native host holds one serialized controller for the app lifetime; page/plugin/
-community disposal only drops observations. Normal startup restores saved enabled
-intent using app-owned Keychain custody and manifest-verified resources. Preview
-startup uses a rejecting credential adapter and never restores. App Quit fences
-pending starts and stops owned processes, retaining enabled intent for next launch.
-A pending OS credential dialog does not hold the controller; Stop, Disconnect and
-Quit retire late starts. Save during a credential wait requires an explicit retry.
-
-The app's native identity/relay/media path remains separately owned work. The
-management-only launcher below intentionally disables the dev broker, so its
-fixture channel UI cannot prove live replies. Account integration, native Keychain
-consent and mention → reply → idle wake → Stop acceptance remain trial gates.
-
-## Older in-memory editor fixture
-
-From this feature worktree:
-
-```sh
-bin/pnpm install --frozen-lockfile
-bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs
-```
-
-Open <http://127.0.0.1:1444/tests/fixtures/agent-control.html>. Ctrl+C stops the
-server. It binds to loopback, fails if that port is occupied, and deliberately
-uses a separate Vite configuration with no environment-file loading or live
-broker. It does not launch a native app, read libraries/Keychain, connect a relay,
-or start processes. Identities and persistence are simulated in memory; reload
-resets the fixture. Use sample input, not real credentials.
-
-Try prompt/name/harness editing, Save then Restart, rejected saves, a newer saved
-revision, runtime unavailable, appearance, page navigation and import from either
-explicit source. Import candidates show their exact public key and relay. In this
-fixture the controls simulate native responses, not agent execution.
+Native startup opens `app_data_dir/agent-controller`, never the old library as a
+destination. One serialized controller lives for the app lifetime. It restores
+saved enabled intent with app-owned credential custody and verified resources.
+Page/plugin/community disposal drops observations, not processes. Quit fences
+pending starts and stops owned processes while retaining enabled intent. A pending
+OS credential dialog does not hold the controller: Stop, Disconnect and Quit
+retire late starts; Save during a credential wait requires an explicit retry.
+Synthetic native tests inject rejecting or in-memory credentials and runtime
+resources. Production has no disposable storage override or preview launch mode.
 
 ## Ownership and handoff
 
@@ -190,9 +119,6 @@ fixture the controls simulate native responses, not agent execution.
   duplicate ownership checks, source import validation and sanitized diagnostics.
   It must bound IPC operations and reject with deliberately user-facing strings;
   raw child/OS/parser errors must never cross into these snapshots or rejections.
-- Composition and additive author exports were authorized in thread `935caec3`;
-  the integration owner wires AgentsPage/index. No runtime code was copied
-  from the identity workstream. Packaged native identity remains a dependency.
 
 ## User contract
 
@@ -220,8 +146,7 @@ fixture the controls simulate native responses, not agent execution.
   remains editable alongside on-demand Databricks browsing. Selecting a choice changes only its field, not arguments,
   model/provider defaults or write-only environment overrides. Advanced arguments
   remain a literal JSON array. Old native hosts without this metadata fall back
-  to custom entry; restart the sample launcher to rebuild native and see the new
-  choices. This creates a fresh sample, not a restart-persistence test.
+  to custom entry.
 - Environment values never arrive in snapshots. Inputs are masked write-only
   patches: missing key preserves; string replaces (including empty); null removes.
   Undo omits a patch again. Successful save clears entered values from UI state.
@@ -234,13 +159,13 @@ fixture the controls simulate native responses, not agent execution.
   pins at runtime; blank, stale or malformed saved pins do not route or hide
   identities here. Native validates the chosen destination, shows it beside each
   exact key, and retains it with the preview token through commit. Source or
-  destination edits discard selection and invalidate late preview results. Nothing
-  selects all by default. Duplicate source keys fail closed even with different
+  destination edits discard candidates and invalidate late preview results. Each
+  Import action selects one exact identity. Duplicate source keys fail closed even with different
   old pins; changed sources and duplicate destination ownership are rejected.
-  Only explicit commit imports, always disabled. No key minting, membership
-  enrollment or source-store write. After a failed preview, **Retry status**, then
-  correct the destination/source and preview again; never edit the old library to
-  work around a destination error.
+  Only explicit Import actions commit, always stopped. No key minting, membership
+  enrollment or source-store write. After a failed preview, correct the destination/source
+  and choose **Load agents** or **Retry**; both refresh status before previewing.
+  Never edit the old library to work around a destination error.
 - Operations are serialized except explicit recovery Stop during a pending
   Start/Restart or Import credential wait. Stop can reach the native fence for a
   pending launch or another known enabled/running identity; only one Stop is
@@ -256,48 +181,7 @@ fixture the controls simulate native responses, not agent execution.
   snapshot says stopped/disabled. Failed durable disable remains unconfirmed;
   Stop is never automatically retried. No process recovery loop in TypeScript.
 
-## Checks and remaining acceptance
-
-`control.test.ts`, `control-native.test.ts`, `agent-edit.test.ts` cover projection
-races, unavailable browser, exact IPC payloads, uncertain result handling,
-save/restart distinction, literal arguments and environment patch semantics.
-`tests/browser/agent-control.spec.mjs` drives the real editor and capability over
-the isolated fake host in Chromium/WebKit: dirty refresh, save failure, revisions,
-write-only replacement, Stop, unmount without control actions, selected import,
-browser unavailability and narrow dark layout. Mounted recovery cases start with
-running and stopped snapshots, fail status reads, then exercise explicit Stop
-through the real capability; failed durable disable retains uncertainty and drafts.
-These browser fixtures do not prove native IPC or persistence.
-
-`src/app/agent-control.integration.test.ts` exercises real app composition, Agents
-registration, plugin management, community selection and the native adapter with
-synthetic IPC/relay transports. The same injected capability remains functional
-through disable/re-enable, two real community session switches and Personal space.
-Captured IPC contains only snapshots during those transitions; root disposal fences
-further reads without sending Stop. This is not a mounted native GUI test.
-`src/plugins/author.test.mjs` builds declarations and independently compiles a plugin
-consumer with no host source, checking Context injection and non-exported ownership.
-`src-tauri/src/agents/tests.rs` uses the actual command handler and Tauri mock runtime
-with temporary disk stores for Save/CAS/Stop, source preview, native gates and
-shutdown fencing. These checks do not establish secure custody, process teardown
-or a working listener.
-
-The integration batch still needs `just scan`, protected wiring review, native
-controller tests, bundled runtime verification and an attended packaged workflow
-with old Buzz stopped and an explicitly approved isolated identity. Live agents
-must not be cut over merely because this browser fixture works. The legacy reaper
-and cross-app duplicate listener risks need their own native acceptance evidence.
-
-## Databricks connection and searchable models (local preview)
-
-After independent auth-boundary review and an attended launch, open Agents → Edit.
-Select Buzz Agent and Databricks v2. Supply a workspace HTTPS origin under
-**Advanced model settings** if no saved/build default exists, then open **Browse
-models**. Complete browser sign-in only if prompted. Search by label or ID and
-choose a result; the exact ID goes in Model. Save explicitly.
-Typing, blank/custom/current models, Save/Discard, arguments and write-only
-environment patches retain their existing semantics. The disposable preview still
-blocks execution/import; normal native management is described below.
+## Databricks connection and models
 
 - Native `agent_models.rs` owns one ticketed, 180-second operation lane, separate
   from the controller lock. Only the user-intent Connect IPC action (Browse/Retry) can open a browser; it tries headless discovery first. Refresh is always headless.
@@ -305,9 +189,8 @@ blocks execution/import; normal native management is described below.
   admission remains occupied until the old task's future has actually dropped.
 - The immutable `buzz-agent` dependency is pinned to
   `84b0fd04b7831657df2873c3a835412f47cebb03`; no local-checkout dependency. It owns
-  OAuth PKCE, refresh, catalog parsing/filtering and per-page bounds. The approved
-  existing-runtime route retains current Buzz endpoint/redirect semantics; it does
-  NOT enforce the earlier preview's strict same-origin/no-redirect policy. Native rejects over 10,000 projected models or oversized IDs.
+  OAuth PKCE, refresh, catalog parsing/filtering and per-page bounds. It retains current Buzz endpoint/redirect semantics. Native rejects over 10,000
+  projected models or oversized IDs.
 - OAuth credentials remain under this app's
   `agent-controller/buzz-agent/oauth/databricks/<connection-hash>.json`. Connect,
   native catalog, worker catalog and inference share this exact engine layout.
@@ -330,60 +213,9 @@ blocks execution/import; normal native management is described below.
 - Private build configuration may supply only nonsecret defaults through
   `BUZZ_BUILD_AGENT_ENV` (`DATABRICKS_HOST`, `DATABRICKS_MODEL_FILTER`; the existing
   `DATABRICKS_MODEL` convention is ignored, never chosen automatically). Unknown
-  or secret keys fail the build. Unset means no workspace. Default sample launch
-  scrubs this input and all ambient Databricks variables. No private release
-  pipeline changes are included; enter a workspace explicitly for this preview.
+  or secret keys fail the build. Unset means no workspace; enter one explicitly if no default is configured.
 
-This is a source/native-build checkpoint, not a signed package or live credential
-acceptance. Synthetic IPC/browser coverage and upstream SSO harness evidence do not
-replace an attended app Connect → models → Save → reload → Disconnect try.
-
-
-### Attended connection checklist and cleanup
-
-Keep old Buzz running. Use the native launcher above, not the browser-only fixture
-or the upstream standalone SSO harness. No Accessibility/screen automation is
-required: the person opens the page and browses models. If port 1445 is occupied,
-stop only the preview server you own; do not terminate another app.
-
-1. Open **Agents → Sample agent (not runnable) → Edit**.
-   The sample already selects Buzz Agent / Databricks v2.
-2. Expand **Advanced model settings**. Enter the intended HTTPS
-   workspace origin, without a token/path/query. No `.env.local` edit is needed.
-3. Before browsing, confirm the Model remains `sample-model`. Optionally click
-   Refresh: an empty app cache must report unavailable, without a browser.
-4. Open **Browse models**, approve browser sign-in if asked, and return to the app.
-   Search by name or ID. Choose explicitly; verify Model receives the exact ID.
-   Loading alone must not change it. Escape abandons a search without selection. Save, reload this same window, and
-   confirm the saved ID/revision. Re-running the launcher creates a NEW sample.
-5. Confirm the saved workspace after reload, then **Refresh models**. It may refresh this app's token, but must never open sign-in.
-   Try a custom ID or blank Model and refresh; each value must stay untouched.
-6. For cancellation, Browse/Retry/Refresh, then **Cancel sign-in** while pending.
-   A cancelled browser tab may remain open; close it yourself. Save/Stop are not
-   held behind network waits. A brief busy error on immediate retry means the old
-   task is still dropping; retry explicitly.
-7. Enter the original workspace and **Disconnect**. Confirm removal, then Refresh
-   should fail headlessly. Changing the workspace does not delete earlier caches.
-   Disconnect each used workspace or remove the whole disposable profile below.
-8. Quit **Buzz Agent Editor Preview**, then Ctrl+C its launch terminal if still
-   running. Keep old Buzz open. Do not delete files while the preview is running.
-
-The terminal prints `Disposable native settings: <temporary-profile>/agents`.
-Credentials are under that path at
-`buzz-agent/oauth/databricks/`. Old disposable strict-preview caches are not
-copied or reused; explicitly Connect again for the existing-runtime route.
-After quitting, inspect the printed **temporary profile parent** in Finder and move
-that `buzz-agent-editor-*` folder to Trash. It contains this disposable sample,
-plugin profile and any remaining Databricks cache; never remove the old Buzz
-library or the repository. This does not sign out the browser or revoke provider
-tokens. The separate preview WebView may retain noncredential appearance state.
-
-Wes reported successful native preview Connect/model listing at the earlier
-`36eefeab` checkpoint. That does not prove this changed cache policy, inference,
-refresh/reload/Disconnect or the real-agent management loop.
-
-
-## Diagnostic: existing-runtime management checkpoint (macOS, attended only)
+## Runtime resources
 
 Build without launching any app or accessing old credentials:
 
@@ -406,99 +238,66 @@ download. The manifest detects corrupt/mixed resources, not a same-user attacker
 who can replace the app and manifest. Inputs are immutable, not a promise of
 bit-identical machine-independent binaries. This build is not a signed installer.
 
-After independent review, a human may launch the persistent management-only app:
+## Handover and rollback
 
-```sh
-bin/node scripts/agent-control-management.mjs
-```
+1. While old Buzz still runs, review/import only. Choose the installed/development
+   library and destination under **Import options**. Import may prompt for the
+   selected legacy Keychain blob; it creates separate app credentials at service
+   `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. The source
+   is read-only and imported agents stay stopped. Refused custody is a blocker,
+   never a reason to migrate keys implicitly.
+2. Review prompt, workspace, harness/provider/model and write-only overrides.
+   Browse models, save explicitly, and verify settings after reopening.
+3. Before Start or an outgoing mention, stop old Buzz **and its listeners** with
+   the human's agreement. Native refuses detected legacy paths; it never kills
+   them. Cooperating new-app profiles also hold an exact-key/community OS lock.
+   Neither protects against relaunching unmodified old Buzz: no coexistence claim.
+4. Observe a real channel/thread reply, idle wake, Stop cancellation and Quit
+   cleanup in the attended workflow. A process-running badge is not relay evidence.
+5. Stop agents on a workspace before Disconnect. A saved host edit does not change
+   a running worker. Temporary signing files under private `runs/agent-*` disappear
+   only after confirmed teardown. This is lifecycle management, not a sandbox for
+   same-user code that escapes its Unix session.
+6. Roll back with Stop and confirmed new-owner cleanup, then Quit and resume that
+   identity in old Buzz. Never delete the old library or its credentials.
 
-This uses the actual app/native commands, the ordinary app identifier and
-persistent native `app_data_dir/agent-controller` (macOS:
-`~/Library/Application Support/dev.local.buzz.foundation/agent-controller`).
-It does not seed samples or enable preview gates. It disables dotenv/live broker
-and native watching; opens **Buzz Foundation — Agent management** at loopback
-1445. Frontend hot reload remains enabled. No Accessibility automation is required.
-Do not run it alongside the editor preview (same port), or another copy of this
-app (same profile lock). `--prepare-only` prints the launch description without
-opening a window/server. Quit the named app and stop its terminal when done.
+## Validation and limits
 
-The launcher scrubs ambient Buzz/Nostr/Databricks variables; only explicitly
-supplied `BUZZ_BUILD_AGENT_ENV` is retained as a private BUILD input. Native build
-validation permits only nonsecret host/filter defaults (plus the ignored old
-model-default convention); source contains no internal workspace. Unset means no
-workspace default. Runtime tools never embed that private build input. No release
-pipeline change or real credential in environment/build configuration is needed.
+`control.test.ts`, `control-native.test.ts`, `agent-edit.test.ts` cover projection
+races, unavailable browser, exact IPC payloads, uncertain result handling,
+save/restart distinction, literal arguments and environment patch semantics.
+`tests/browser/agent-control.spec.mjs` drives the real editor and capability over
+the isolated fake host in Chromium/WebKit: dirty refresh, save failure, revisions,
+write-only replacement, Stop, unmount without control actions, selected import,
+browser unavailability and narrow dark layout. Mounted recovery cases start with
+running and stopped snapshots, fail status reads, then exercise explicit Stop
+through the real capability; failed durable disable retains uncertainty and drafts.
+These browser fixtures do not prove native IPC or persistence.
 
-Attended sequence (not executed by the implementer):
+`src/app/agent-control.integration.test.ts` exercises real app composition, Agents
+registration, plugin management, community selection and the native adapter with
+synthetic IPC/relay transports. The same injected capability remains functional
+through disable/re-enable, two real community session switches and Personal space.
+Captured IPC contains only snapshots during those transitions; root disposal fences
+further reads without sending Stop. This is not a mounted native GUI test.
+`src/plugins/author.test.mjs` builds declarations and independently compiles a plugin
+consumer with no host source, checking Context injection and non-exported ownership.
+`src-tauri/src/agents/tests.rs` uses the actual command handler and Tauri mock runtime
+with temporary disk stores for Save/CAS/Stop, source preview, rejecting test credentials/runtime and
+shutdown fencing. These checks do not establish secure custody, process teardown
+or a working listener.
 
-1. Keep old Buzz running while reviewing settings/import; do not Start yet. Choose
-   installed/development library and explicitly enter **Destination community**
-   (secure origin), then Preview. Review the returned destination beside each exact
-   key and explicitly import selected rows. This can prompt for the selected
-   legacy `secrets` Keychain blob and creates separate app credentials at service
-   `dev.local.buzz.foundation.agents`, account `agent:<key-community>`. Source stays
-   read-only; imported rows are disabled. No enrollment/new key or service fallback.
-   Refused/missing custody is an explicit blocker, not a reason to migrate keys.
-2. Inspect prompt, workspace, harness/provider/model and write-only overrides. Choose
-   Buzz Agent / Databricks v2, no arguments. Enter workspace/filter, browse models,
-   select a real model or custom ID and Save. Reload preserves settings.
-3. **Before Start, obtain the separate handover agreement.** The human must stop
-   old Buzz AND its listeners and keep them stopped. Native refuses detected
-   `buzz-desktop`/legacy listener paths, never kills them. Cooperating new-app
-   profiles also hold an exact-key/canonical-community OS lock. Neither protects
-   against relaunching unmodified old Buzz: no coexistence guarantee.
-4. Start, observe process-alive/error state, Save an edit, then Restart. `running`
-   means process alive only. An isolated live channel/thread mention and reply,
-   idle wake, Stop cancelling prior intent and Quit descendant cleanup must still be
-   witnessed; fixture messages in this management-only app are not relay evidence.
-   Use an independently working real client, or integrate the separately owned
-   Account/native messaging first. Do not repeat the standalone SSO harness.
-5. Stop all agents on a workspace before Disconnect. A saved host edit does not
-   change the running host; restart first or stop its existing worker. Temporary
-   runtime signing files live under private `runs/agent-*` and disappear only
-   after confirmed teardown. This is process lifecycle management, not a sandbox
-   for arbitrary same-user code that escapes its Unix session.
-6. Roll back by Stop + confirmed cleanup of the new owner, Quit, then resume the
-   same identity in old Buzz. Never delete the old library or its credentials.
+The isolated browser fixture (`tests/fixtures/agent-control.*`) remains test-only:
+no dotenv loading, live broker, native credentials or actual process execution.
+It supports the controller, editor-grid and model browser regression suites, not
+an alternative product launch mode. Check results belong in the PR at their exact
+snapshot rather than as permanent checkpoint claims here.
 
-Explicit limits: local Unix execution; native credential import currently macOS;
-no conditional attestation, remote/team/mesh runtime; custom harnesses require an
-absolute executable and are not certified by the bundled Buzz Agent test. Saved
-unsupported configuration stays editable but Start refuses it. OAuth files are
-owner-only, not Keychain-encrypted. Cancelled/failed import may leave create-only
-app custody for retry but no enabled/configured agent. The previous strict-preview
-cache is neither migrated nor reused. Native UI, actual Keychain ACLs, production
-TLS/Databricks inference, live relay replies, forced native quit, signed packaging
-and other platforms remain unproven by the synthetic checks.
-
-
-## Managed-first UI feedback checkpoint (2026-09-19)
-
-The UI work continues in `brain-agent-controller` at base `8da3863`, not a second
-native app/worktree. Changes are frontend-only; no controller, credential or
-native lifecycle semantics changed. TypeScript and the focused mounted regressions
-passed, and Chromium/WebKit exercised lifecycle recovery, import fencing, library
-compatibility, model editing and real rich-composer draft restoration using the
-isolated fixture. These are synthetic results, not a live Donut reply.
-
-Remaining integration gates: independent changed-path review, full batch validation
-when agreed, native/package and attended live handover. No old-Buzz shutdown or
-native relaunch is implied by this checkpoint. Keep the old installation intact
-for rollback; never operate two owners of the same identity simultaneously.
-
-
-## Consolidated UX checkpoint (2026-09-20)
-
-The native page now has one **Add agent** disclosure using the existing importer,
-managed cards only, and the focused Name / Instructions / Model editor. Browser-only
-access retains read-only library browsing. No native/runtime ownership changed.
-The seven-file production cleanup removes more lines than it adds. Independent
-changed-slice source review found no blocker; this is not a cumulative native review.
-
-TypeScript and all 1,626 Vitest tests pass at `8da3863` plus this working UI state.
-The four agent browser files exercised 34 Chromium/WebKit checks: 32 passed in the
-initial run; the model-search test required opening the newly collapsed Advanced
-section and then passed in both engines. No assertions, engines or cases were removed.
-Screenshots of the grid and focused editor were inspected. This is synthetic
-regression evidence, not a real native sign-in/reply or a merged-main batch gate.
-Main integration, full scan and the attended native handover remain outstanding.
+Local execution currently uses Unix containment; native credential import/create
+is macOS-only. Custom harnesses require an absolute executable and are not
+certified by bundled Buzz Agent tests. Unsupported settings stay editable but
+Start refuses them. OAuth files are owner-only, not Keychain-encrypted. A failed
+import can leave create-only app custody for retry but no enabled/configured agent.
+No remote/team/mesh runtime or conditional attestation is added. Synthetic checks
+do not establish actual Keychain ACLs, production TLS/inference, live replies,
+forced native quit, signed packaging or other-platform behavior.

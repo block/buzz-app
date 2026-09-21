@@ -1,31 +1,13 @@
-//! App lifetime, not page/plugin lifetime. The disposable editor opts out of
-//! credentials/execution; normal native startup uses only app-owned resources.
+//! App lifetime, not page/plugin lifetime. Native startup uses app-owned resources.
 use buzz_agent_controller::{
     Action, AgentEdit, ControlSnapshot, Controller, Credentials, ImportPreview, Imports,
-    LegacySource, NewAgent, PlatformCredentials, RuntimeBundle, Secret, Store,
+    LegacySource, NewAgent, PlatformCredentials, RuntimeBundle, Store,
 };
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-
-const RUNTIME_GATE: &str = "Agent execution is disabled in the disposable editor preview.";
-const IMPORT_GATE: &str = "Credential import is disabled in the disposable editor preview.";
-
-// Disposable preview: even accidental restore/read cannot access Keychain.
-struct PendingCredentials;
-impl Credentials for PendingCredentials {
-    fn read_legacy(&self, _: LegacySource, _: &str) -> Result<Secret, String> {
-        Err(IMPORT_GATE.into())
-    }
-    fn read(&self, _: &str, _: &str) -> Result<Option<Secret>, String> {
-        Err(IMPORT_GATE.into())
-    }
-    fn add(&self, _: &str, _: &Secret) -> Result<(), String> {
-        Err(IMPORT_GATE.into())
-    }
-}
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -78,7 +60,6 @@ struct Host {
     legacy_parent: PathBuf,
     workspace: PathBuf,
     closed: bool,
-    preview: bool,
     credentials: Arc<dyn Credentials>,
     starts: BTreeMap<String, (u64, Option<String>)>,
     next_start: u64,
@@ -91,22 +72,13 @@ impl Host {
         legacy_parent: PathBuf,
         workspace: PathBuf,
         bundle: Result<RuntimeBundle, String>,
-        preview: bool,
+        credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
         let store = Store::open(root)?;
-        let credentials: Arc<dyn Credentials> = if preview {
-            Arc::new(PendingCredentials)
-        } else {
-            Arc::new(PlatformCredentials::default())
-        };
         let controller = Controller::new(
             store,
             credentials.clone(),
-            if preview {
-                Err(RUNTIME_GATE.into())
-            } else {
-                bundle
-            },
+            bundle,
             legacy_parent.join("dev.local.buzz.agent-ownership"),
         );
         Ok(Self {
@@ -115,7 +87,6 @@ impl Host {
             legacy_parent,
             workspace,
             closed: false,
-            preview,
             credentials,
             starts: BTreeMap::new(),
             next_start: 0,
@@ -124,18 +95,11 @@ impl Host {
         })
     }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        self.controller.snapshot().map(|data| {
-            Snapshot::from(
-                data,
-                !self.preview && cfg!(target_os = "macos"),
-                &self.workspace,
-            )
-        })
+        self.controller
+            .snapshot()
+            .map(|data| Snapshot::from(data, cfg!(target_os = "macos"), &self.workspace))
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
-        if self.preview && !matches!(action, Action::Stop) {
-            return Err(RUNTIME_GATE.into());
-        }
         self.starts.remove(id);
         self.controller.action(id, action)?;
         self.snapshot()
@@ -156,23 +120,9 @@ impl Host {
 #[derive(Clone)]
 pub(crate) struct AgentHost(Arc<Mutex<Result<Host, String>>>, Arc<AtomicBool>);
 impl AgentHost {
-    #[cfg(test)]
-    pub(crate) fn open(
-        paths: Result<(PathBuf, PathBuf, PathBuf), String>,
-        bundle: Result<RuntimeBundle, String>,
-        preview: bool,
-    ) -> Self {
-        Self(
-            Arc::new(Mutex::new(paths.and_then(|(root, legacy, workspace)| {
-                Host::open(root, legacy, workspace, bundle, preview)
-            }))),
-            Arc::new(AtomicBool::new(false)),
-        )
-    }
     pub(crate) fn initialize(
         paths: Result<(PathBuf, PathBuf, PathBuf), String>,
         resources: Result<PathBuf, String>,
-        preview: bool,
     ) -> Self {
         let state = Arc::new(Mutex::new(Err(
             "Agent runtime is initializing; retry shortly".into(),
@@ -183,7 +133,13 @@ impl AgentHost {
             let opened = tauri::async_runtime::spawn_blocking(move || {
                 let bundle = resources.and_then(RuntimeBundle::new);
                 paths.and_then(|(root, legacy, workspace)| {
-                    Host::open(root, legacy, workspace, bundle, preview)
+                    Host::open(
+                        root,
+                        legacy,
+                        workspace,
+                        bundle,
+                        Arc::new(PlatformCredentials::default()),
+                    )
                 })
             })
             .await
@@ -214,13 +170,7 @@ impl AgentHost {
     }
     pub(crate) async fn restore(&self) {
         let ids = self
-            .with(|host| {
-                if host.preview {
-                    Ok(vec![])
-                } else {
-                    host.controller.enabled_ids()
-                }
-            })
+            .with(|host| host.controller.enabled_ids())
             .unwrap_or_default();
         for id in ids {
             let _ = start(self.clone(), id, Action::Start, true, None).await;
@@ -312,9 +262,6 @@ async fn start(
     replay_floor: Option<u64>,
 ) -> Result<Snapshot, String> {
     let prepared = owner.with(|host| {
-        if host.preview {
-            return Err(RUNTIME_GATE.into());
-        }
         host.starts.remove(&id);
         if restore && !host.controller.enabled_ids()?.contains(&id) {
             return Err("Agent disabled before restore".into());
@@ -393,9 +340,6 @@ pub(crate) async fn agent_control_import_commit(
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
     let (prepared, credentials) = owner.with(|host| {
-        if host.preview {
-            return Err(IMPORT_GATE.into());
-        }
         let prepared = host
             .controller
             .prepare_import(&mut host.imports, &token, &ids)?;
@@ -421,9 +365,6 @@ pub(crate) async fn agent_control_create_prepare(
     owner: String,
 ) -> Result<serde_json::Value, String> {
     run(state.inner().clone(), move |host| {
-        if host.preview {
-            return Err(IMPORT_GATE.into());
-        }
         if uuid::Uuid::parse_str(&request_id).is_err() {
             return Err("Invalid create request".into());
         }
@@ -450,9 +391,6 @@ pub(crate) async fn agent_control_create_commit(
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
     let (prepared, credentials) = owner.with(|host| {
-        if host.preview {
-            return Err(IMPORT_GATE.into());
-        }
         let (_, prepared) = host
             .creating
             .as_ref()
@@ -481,9 +419,6 @@ pub(crate) async fn agent_control_creation_profile(
     use base64::Engine;
     let owner = state.inner().clone();
     let (profile, credentials) = owner.with(|host| {
-        if host.preview {
-            return Err(IMPORT_GATE.into());
-        }
         Ok((
             host.controller.creation_profile(&id)?,
             host.credentials.clone(),

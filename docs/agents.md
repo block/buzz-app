@@ -3,10 +3,10 @@
 ## Scope
 
 This document describes the read-only compatibility/mention slice. The Agents
-page now also exposes a separate [native local-controls checkpoint](agent-control.md)
-for saved settings, selected credential import and bundled Start/Stop/Restart.
-The disposable editor still blocks execution/import; old Buzz remains responsible
-for live replies until the separately attended management handover.
+page also exposes [native local controls](agent-control.md) for create/import,
+saved settings, mention-to-add/wake and bundled Start/Stop/Restart. The read-only
+compatibility view below remains the browser fallback; native management has its
+own handover and rollback contract.
 
 V1 **reuses the current Buzz library and mentions existing agents in channels
 and threads**. No migration to relay-only storage. Creation, editing,

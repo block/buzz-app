@@ -61,16 +61,17 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     expect(name.y).toBeGreaterThanOrEqual(avatar.y);
     expect(name.y + name.height).toBeLessThanOrEqual(avatar.y + avatar.height);
     const add = page.getByRole("button", { name: "Add agent", exact: true });
-    await expect(add).toHaveAttribute("aria-expanded", "false");
+    await expect(add).toHaveAttribute("aria-haspopup", "dialog");
     await add.focus();
     await add.press("Enter");
-    await expect(
-      page.getByLabel("Destination community", { exact: true }),
-    ).toBeVisible();
-    await add.press("Enter");
-    await expect(
-      page.getByLabel("Destination community", { exact: true }),
-    ).toBeHidden();
+    const create = page.getByRole("dialog", {
+      name: "Create agent",
+      exact: true,
+    });
+    await expect(create.getByLabel("Name", { exact: true })).toBeVisible();
+    await create.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(create).toBeHidden();
+    await expect(add).toBeFocused();
     await expect(
       card.getByRole("button", { name: "Edit", exact: true }),
     ).toHaveCount(0);
@@ -91,13 +92,17 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     });
     await expect(dialog).toBeVisible();
     await expect(dialog.getByLabel("Workspace", { exact: true })).toBeHidden();
-    await expect(dialog.getByLabel("Harness", { exact: true })).toBeVisible();
-    await expect(dialog.getByLabel("Provider", { exact: true })).toBeVisible();
+    await expect(
+      dialog.getByRole("combobox", { name: "Harness", exact: true }),
+    ).toBeVisible();
+    await expect(
+      dialog.getByRole("combobox", { name: "Provider", exact: true }),
+    ).toBeVisible();
     const harness = await dialog
-      .getByLabel("Harness", { exact: true })
+      .getByRole("combobox", { name: "Harness", exact: true })
       .boundingBox();
     const provider = await dialog
-      .getByLabel("Provider", { exact: true })
+      .getByRole("combobox", { name: "Provider", exact: true })
       .boundingBox();
     const model = await dialog
       .getByRole("combobox", { name: "Model", exact: true })

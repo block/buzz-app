@@ -7,14 +7,16 @@ async function closeEditor(page) {
   if (await dialog.count())
     await dialog.getByRole("button", { name: "Close editor" }).click();
 }
-async function showManagement(page) {
-  await closeEditor(page);
-  const summary = page.getByRole("button", {
-    name: "Manage local agents",
-    exact: true,
-  });
-  if ((await summary.getAttribute("aria-expanded")) !== "true")
-    await summary.click();
+async function openImport(panel) {
+  await panel
+    .getByRole("button", { name: "Not imported from old Buzz", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("button", { name: "Import Fixture agent" }),
+  ).toBeVisible();
+  const options = panel.getByText("Import options", { exact: true });
+  if (!(await options.evaluate((el) => el.parentElement.open)))
+    await options.click();
 }
 async function openEditor(page, name = "Fixture agent") {
   const dialog = page.getByRole("dialog", { name: "Edit agent", exact: true });
@@ -137,7 +139,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     ).toHaveValue("My unsaved prompt");
     await editor.getByRole("button", { name: "Stop", exact: true }).click();
     await expect(
-      editor.getByText("Disabled · mentions will not wake this agent"),
+      editor.getByText("Stopped · a later sent mention can start this agent"),
     ).toBeVisible();
     const before = await page.evaluate(() =>
       window.agentControlFixture.calls.filter(
@@ -159,25 +161,29 @@ test("local controls preserve drafts, confirm operations and distinguish disable
         ),
       ),
     ).toEqual(before);
-    await showManagement(page);
-    await panel.getByText("Add agent", { exact: true }).click();
-    await panel.getByLabel("Development Buzz", { exact: true }).check();
+    await closeEditor(page);
+    await openImport(panel);
+    await panel
+      .getByRole("combobox", { name: "Source library", exact: true })
+      .selectOption("development");
     await panel
       .getByLabel("Destination community", { exact: true })
       .fill("wss://chosen.example");
-    await panel
-      .getByRole("button", { name: "Preview selected library" })
-      .click();
+    await panel.getByRole("button", { name: "Load agents" }).click();
     await expect(
       panel.getByText("/fixture/development/managed-agents.json"),
     ).toBeVisible();
     await expect(
-      panel.getByRole("button", { name: "Import selected identities" }),
-    ).toBeDisabled();
-    await panel.getByRole("checkbox").check();
-    await panel
-      .getByRole("button", { name: "Import selected identities" })
-      .click();
+      panel.getByRole("button", { name: "Import Fixture agent" }),
+    ).toBeEnabled();
+    expect(
+      await page.evaluate(() =>
+        window.agentControlFixture.calls.filter(
+          (call) => call.action === "import",
+        ),
+      ),
+    ).toEqual([]);
+    await panel.getByRole("button", { name: "Import Fixture agent" }).click();
     // Only the two managed identities belong here, not the library template.
     await expect(panel.getByRole("article")).toHaveCount(2);
     expect(
@@ -191,10 +197,12 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     });
     await page.getByRole("button", { name: "Toggle appearance" }).click();
     await page.setViewportSize({ width: 390, height: 844 });
-    await panel.getByRole("button", { name: "Refresh status" }).blur();
-    await expect(
-      panel.getByRole("button", { name: "Refresh status" }),
-    ).toHaveCSS("background-color", "rgb(16, 16, 16)");
+    await panel.getByRole("button", { name: "Add agent" }).blur();
+    await page.mouse.move(0, 0);
+    await expect(panel.getByRole("button", { name: "Add agent" })).toHaveCSS(
+      "background-color",
+      "rgb(199, 199, 199)",
+    );
     await page.screenshot({
       path: test.info().outputPath("agent-controls-dark-narrow.png"),
       fullPage: true,
@@ -207,7 +215,7 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await page
       .getByRole("button", { name: "Toggle browser-only mode" })
       .click();
-    await showManagement(page);
+    await closeEditor(page);
     await expect(panel.getByText(/This browser cannot run/)).toBeVisible();
     // Library-only entries no longer pretend to be managed cards with Edit.
     await expect(panel.getByText("Add agent", { exact: true })).toHaveCount(0);
@@ -250,15 +258,12 @@ for (const previouslyStopped of [false, true]) {
         await stop.click();
         await expect(stop).toBeDisabled();
       }
-      await showManagement(page);
-      await panel.getByText("Add agent", { exact: true }).click();
+      await closeEditor(page);
+      await openImport(panel);
       await panel
         .getByLabel("Destination community", { exact: true })
         .fill("wss://chosen.example");
-      await panel
-        .getByRole("button", { name: "Preview selected library" })
-        .click();
-      await panel.getByRole("checkbox").check();
+      await panel.getByRole("button", { name: "Load agents" }).click();
       await openEditor(page);
       await page.evaluate(() => {
         const fixture = window.agentControlFixture;
@@ -293,10 +298,7 @@ for (const previouslyStopped of [false, true]) {
       await expect(
         editor.getByRole("button", { name: "Save changes", exact: true }),
       ).toBeDisabled();
-      for (const name of [
-        "Preview selected library",
-        "Import selected identities",
-      ]) {
+      for (const name of ["Import Fixture agent"]) {
         await expect(
           panel.getByRole("button", { name, exact: true, includeHidden: true }),
         ).toBeDisabled();
@@ -318,7 +320,9 @@ for (const previouslyStopped of [false, true]) {
       ).toContainText("unconfirmed");
       if (!previouslyStopped) {
         await expect(
-          editor.getByText("Enabled · starts with buzz-app", { exact: true }),
+          editor.getByText("Enabled · starts with buzz-app", {
+            exact: true,
+          }),
         ).toBeVisible();
         await expect(
           editor.getByText("Process running · relay readiness unverified", {
@@ -326,7 +330,9 @@ for (const previouslyStopped of [false, true]) {
           }),
         ).toBeVisible();
         await expect(
-          editor.getByText("Disabled · mentions will not wake this agent"),
+          editor.getByText(
+            "Stopped · a later sent mention can start this agent",
+          ),
         ).toHaveCount(0);
       }
       await expect(
@@ -354,7 +360,7 @@ for (const previouslyStopped of [false, true]) {
       await stop.click();
       await expect(page.getByRole("alert")).toHaveCount(0);
       await expect(
-        editor.getByText("Disabled · mentions will not wake this agent"),
+        editor.getByText("Stopped · a later sent mention can start this agent"),
       ).toBeVisible();
       await expect(
         editor.getByRole("button", { name: "Save changes" }),
@@ -365,7 +371,7 @@ for (const previouslyStopped of [false, true]) {
   });
 }
 
-test("native editing checkpoint blocks launch and credential import while retaining Stop", async ({
+test("unavailable runtime blocks launch and credential import while retaining Stop", async ({
   page,
 }) => {
   const server = await createServer({
@@ -393,7 +399,7 @@ test("native editing checkpoint blocks launch and credential import while retain
       name: "Local agent controls",
       includeHidden: true,
     });
-    await showManagement(page);
+    await closeEditor(page);
     await expect(
       panel
         .getByRole("region", { name: "My agents" })
@@ -409,25 +415,22 @@ test("native editing checkpoint blocks launch and credential import while retain
     await expect(
       editor.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
-    await showManagement(page);
-    await panel.getByText("Add agent", { exact: true }).click();
+    await closeEditor(page);
+    await openImport(panel);
     await expect(
-      panel.getByText(/Import is disabled in this integration checkpoint/),
+      panel.getByText(/Import is unavailable in this app session/),
     ).toBeVisible();
     await panel
       .getByLabel("Destination community", { exact: true })
       .fill("wss://chosen.example");
-    await panel
-      .getByRole("button", { name: "Preview selected library" })
-      .click();
-    await panel.getByRole("checkbox").check();
+    await panel.getByRole("button", { name: "Load agents" }).click();
     await expect(
-      panel.getByRole("button", { name: "Import selected identities" }),
+      panel.getByRole("button", { name: "Import Fixture agent" }),
     ).toBeDisabled();
     await openEditor(page);
     await editor.getByRole("button", { name: "Stop", exact: true }).click();
     await expect(
-      editor.getByText("Disabled · mentions will not wake this agent"),
+      editor.getByText("Stopped · a later sent mention can start this agent"),
     ).toBeVisible();
     expect(
       await page.evaluate(() =>
@@ -785,7 +788,9 @@ for (const launch of ["start", "restart"]) {
         await expect(firstStop).toBeDisabled(); // one Stop IPC at a time
         await page.evaluate(() => window.releaseStop());
         await expect(
-          other.getByText("Disabled · mentions will not wake this agent"),
+          other.getByText(
+            "Stopped · a later sent mention can start this agent",
+          ),
         ).toBeVisible();
         await closeEditor(page);
         await openEditor(page);
@@ -804,7 +809,9 @@ for (const launch of ["start", "restart"]) {
           .toBe("fixture-agent");
         await page.evaluate(() => window.releaseStop());
         await expect(
-          first.getByText("Disabled · mentions will not wake this agent"),
+          first.getByText(
+            "Stopped · a later sent mention can start this agent",
+          ),
         ).toBeVisible();
         await expect(
           first.getByRole("button", { name: "Restart", exact: true }),
@@ -821,12 +828,16 @@ for (const launch of ["start", "restart"]) {
           first.getByRole("button", { name: "Restart", exact: true }),
         ).toBeEnabled();
         await expect(
-          first.getByText("Disabled · mentions will not wake this agent"),
+          first.getByText(
+            "Stopped · a later sent mention can start this agent",
+          ),
         ).toBeVisible();
         await closeEditor(page);
         await openEditor(page, "Other running agent");
         await expect(
-          other.getByText("Disabled · mentions will not wake this agent"),
+          other.getByText(
+            "Stopped · a later sent mention can start this agent",
+          ),
         ).toBeVisible();
         await expect(
           page
@@ -841,7 +852,7 @@ for (const launch of ["start", "restart"]) {
 }
 
 for (const changed of ["destination", "source"]) {
-  test(`import ${changed} edits clear selection and fence delayed previews`, async ({
+  test(`import ${changed} edits invalidate candidates and fence delayed previews`, async ({
     page,
   }) => {
     const server = await createServer({
@@ -859,31 +870,40 @@ for (const changed of ["destination", "source"]) {
         name: "Local agent controls",
         includeHidden: true,
       });
-      await showManagement(page);
-      await panel.getByText("Add agent", { exact: true }).click();
+      await closeEditor(page);
+      await openImport(panel);
       const destination = panel.getByLabel("Destination community", {
         exact: true,
       });
       const preview = panel.getByRole("button", {
-        name: "Preview selected library",
+        name: "Load agents",
       });
       const commit = panel.getByRole("button", {
-        name: "Import selected identities",
+        name: "Import Fixture agent",
       });
-      await expect(destination).toHaveValue("");
-      await expect(preview).toBeDisabled();
+      await expect(destination).toHaveValue("https://relay.example.test");
+      await expect(preview).toBeEnabled();
       await destination.fill("wss://first.example");
       await preview.click();
-      await panel.getByRole("checkbox").check();
       await expect(commit).toBeEnabled();
       if (changed === "destination")
         await destination.fill("wss://chosen.example");
-      else await panel.getByLabel("Development Buzz", { exact: true }).check();
-      await expect(panel.getByRole("checkbox")).toHaveCount(0);
-      await expect(commit).toHaveCount(0);
-      await preview.click();
-      await expect(panel.getByRole("checkbox")).not.toBeChecked();
-      await expect(commit).toBeDisabled();
+      else
+        await panel
+          .getByRole("combobox", { name: "Source library", exact: true })
+          .selectOption("development");
+      if (changed === "destination") {
+        await expect(commit).toHaveCount(0);
+        await preview.click();
+      }
+      await expect(commit).toBeEnabled();
+      expect(
+        await page.evaluate(() =>
+          window.agentControlFixture.calls.filter(
+            (call) => call.action === "import",
+          ),
+        ),
+      ).toEqual([]);
       // Delay the actual host boundary, not a leaf projection helper.
       await page.evaluate(() => {
         const fixture = window.agentControlFixture;
@@ -901,25 +921,31 @@ for (const changed of ["destination", "source"]) {
       });
       await preview.click();
       await expect(preview).toBeDisabled();
+      await expect
+        .poll(() =>
+          page.evaluate(() => typeof window.agentControlFixture.releasePreview),
+        )
+        .toBe("function");
       // Inputs remain editable during this read-only preview; writes remain blocked.
       if (changed === "destination")
         await destination.fill("wss://final.example");
-      else await panel.getByLabel("Installed Buzz", { exact: true }).check();
+      else
+        await panel
+          .getByRole("combobox", { name: "Source library", exact: true })
+          .selectOption("installed");
       await page.evaluate(() => window.agentControlFixture.releasePreview());
       await expect(preview).toBeEnabled();
-      await expect(panel.getByRole("checkbox")).toHaveCount(0);
       await expect(commit).toHaveCount(0);
       await page.evaluate(() => window.agentControlFixture.restorePreview());
       await preview.click();
-      await expect(panel.getByRole("checkbox")).not.toBeChecked();
+      await expect(commit).toBeEnabled();
       const expectedDestination =
         changed === "destination"
           ? "wss://final.example"
           : "wss://first.example";
       await expect(
-        panel.getByText(expectedDestination, { exact: true }),
+        panel.getByText(`Community: ${expectedDestination}`, { exact: true }),
       ).toBeVisible();
-      await panel.getByRole("checkbox").check();
       await commit.click();
       const saved = await page.evaluate(() =>
         window.agentControlFixture.data.agents.at(-1),
@@ -945,7 +971,7 @@ for (const changed of ["destination", "source"]) {
   });
 }
 
-test("rejected import preview keeps inputs and recovers through Retry status", async ({
+test("rejected import preview keeps inputs and recovers through Load agents", async ({
   page,
 }) => {
   const server = await createServer({
@@ -963,13 +989,13 @@ test("rejected import preview keeps inputs and recovers through Retry status", a
       name: "Local agent controls",
       includeHidden: true,
     });
-    await showManagement(page);
-    await panel.getByText("Add agent", { exact: true }).click();
+    await closeEditor(page);
+    await openImport(panel);
     const destination = panel.getByLabel("Destination community", {
       exact: true,
     });
     const preview = panel.getByRole("button", {
-      name: "Preview selected library",
+      name: "Load agents",
     });
     await destination.fill("ws://not-supported.example");
     await page.evaluate(() => {
@@ -983,23 +1009,23 @@ test("rejected import preview keeps inputs and recovers through Retry status", a
       };
     });
     await preview.click();
-    await expect(page.getByRole("alert")).toContainText(
-      "Choose a secure community origin",
-    );
+    await expect(
+      page
+        .getByRole("alert")
+        .filter({ hasText: "Choose a secure community origin" }),
+    ).toContainText("Choose a secure community origin");
     await expect(destination).toHaveValue("ws://not-supported.example");
-    await expect(preview).toBeDisabled();
-    await page.evaluate(() => window.agentControlFixture.control.refresh());
+    await expect(preview).toBeEnabled();
     await expect(destination).toBeEnabled();
     await page.evaluate(() => window.agentControlFixture.restorePreview());
     await destination.fill("wss://corrected.example");
     await preview.click();
     await expect(
-      panel.getByText("wss://corrected.example", { exact: true }),
+      panel.getByText("Community: wss://corrected.example", { exact: true }),
     ).toBeVisible();
-    await expect(panel.getByRole("checkbox")).not.toBeChecked();
     await expect(
-      panel.getByRole("button", { name: "Import selected identities" }),
-    ).toBeDisabled();
+      panel.getByRole("button", { name: "Import Fixture agent" }),
+    ).toBeEnabled();
     expect(
       await page.evaluate(() =>
         window.agentControlFixture.calls.some(

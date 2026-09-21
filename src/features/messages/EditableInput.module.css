@@ -1,12 +1,13 @@
 .input {
   width: 100%;
-  min-height: 3rem;
+  min-height: 1.5rem;
   max-height: 12rem;
   overflow-y: auto;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
   line-height: 1.5;
+  caret-color: var(--text);
   cursor: text;
   outline: none;
 }

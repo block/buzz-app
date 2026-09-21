@@ -13,7 +13,6 @@ use buzzodz_plugins::{
     Catalog, InstallationResult, Manager,
 };
 use notifications::{notification_show, Notifications};
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::Manager as _;
 use tauri_plugin_dialog::DialogExt;
@@ -206,9 +205,6 @@ pub fn run() {
                     .app_data_dir()
                     .map_err(|_| "Could not resolve local agent storage")?
                     .join("agent-controller");
-                let root = std::env::var_os("BUZZ_AGENT_CONTROL_HOME")
-                    .map(PathBuf::from)
-                    .unwrap_or(root);
                 let legacy = app
                     .path()
                     .data_dir()
@@ -226,13 +222,12 @@ pub fn run() {
                     .map(|(root, _, _)| root.clone())
                     .map_err(Clone::clone),
             ));
-            let preview = std::env::var("BUZZ_AGENT_CONTROL_PREVIEW").as_deref() == Ok("1");
             let resources = app
                 .path()
                 .resource_dir()
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
-            app.manage(AgentHost::initialize(paths, resources, preview));
+            app.manage(AgentHost::initialize(paths, resources));
             Ok(())
         })
         .manage(Imports::default())

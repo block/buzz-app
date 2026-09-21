@@ -116,7 +116,7 @@ export function AgentCreateDialog({
             {!available && (
               <p role="status">
                 Connect to a community and use a rebuilt desktop app to create
-                an agent. Creation is disabled in the disposable preview.
+                an agent.
               </p>
             )}
             {saved && (

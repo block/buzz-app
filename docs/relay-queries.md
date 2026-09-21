@@ -538,6 +538,12 @@ Refresh channels share the same cooldown. Metadata failure never revokes success
 membership authority. Hints during an active read coalesce into one follow-up;
 a refused read retains the obligation without draining queued work. Live Retry
 retries failed/deferred work, not every successful refresh or healthy subscription.
+A new channel-route failure with Buzz's `restricted: channel access revoked`
+reason schedules this same coalesced refresh. CLOSED is a hint, not archive or
+membership authority: signed discovery decides whether the channel is archived,
+still accessible, or removed. Repeated aggregate failure snapshots do not refresh
+again; failed discovery remains visible and explicitly retryable. The existing
+explicit `restricted: not a channel member` denial still revokes immediately.
 
 The outbound host owns WS and HTTP admission for each canonical community/viewer.
 Healthy requests have **no fixed inter-request delay**. WS admits up to three

@@ -3,6 +3,7 @@ import {
   cloneElement,
   useId,
   useState,
+  type AriaAttributes,
   type ReactElement,
   type ReactNode,
 } from "react";
@@ -11,18 +12,30 @@ import {
 export function Tooltip({
   children,
   content,
+  disableHoverablePopup = false,
 }: {
-  children: ReactElement<{ "aria-describedby"?: string | undefined }>;
+  children: ReactElement<
+    Pick<AriaAttributes, "aria-describedby" | "aria-expanded">
+  >;
   content: ReactNode;
+  disableHoverablePopup?: boolean;
 }) {
   const id = useId();
   const [open, setOpen] = useState(false);
+  const expanded =
+    children.props["aria-expanded"] === true ||
+    children.props["aria-expanded"] === "true";
   const describedBy =
-    [children.props["aria-describedby"], open ? id : undefined]
+    [children.props["aria-describedby"], open && !expanded ? id : undefined]
       .filter(Boolean)
       .join(" ") || undefined;
   return (
-    <BaseTooltip.Root open={open} onOpenChange={setOpen}>
+    <BaseTooltip.Root
+      open={open}
+      onOpenChange={setOpen}
+      disabled={expanded}
+      disableHoverablePopup={disableHoverablePopup}
+    >
       <BaseTooltip.Trigger
         delay={0}
         // Base UI merges render-element props last. Put the combined link on

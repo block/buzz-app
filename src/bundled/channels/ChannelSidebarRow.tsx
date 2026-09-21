@@ -62,7 +62,7 @@ export function ChannelSidebarRow({
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
       selected={selected === channel.id && !draftSelected}
-      label={channel.name}
+      label={<span className={styles.label}>{channel.name}</span>}
       icon={
         hasChildren ? (
           <span className={styles.iconSpace} aria-hidden="true" />

@@ -14,6 +14,54 @@ import { NavigationItem } from "./NavigationItem";
 
 afterEach(cleanup);
 
+test.each([true, "true"] as const)(
+  "expanded button hints dismiss without replacing the trigger (%s)",
+  async (expanded) => {
+    const user = userEvent.setup();
+    const ref = createRef<HTMLButtonElement>();
+    const control = (value: boolean | "true") => (
+      <>
+        <p id="picker-help">Choose a symbol.</p>
+        <Button
+          ref={ref}
+          title="Open symbols"
+          aria-label="Symbols"
+          aria-describedby="picker-help"
+          aria-expanded={value}
+        >
+          Symbols
+        </Button>
+      </>
+    );
+    const view = render(control(false));
+    const trigger = screen.getByRole("button", { name: "Symbols" });
+    await user.tab();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Open symbols",
+    );
+    view.rerender(control(expanded));
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    expect(ref.current).toBe(trigger);
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAccessibleName("Symbols");
+    expect(trigger).toHaveAttribute("aria-describedby", "picker-help");
+    view.rerender(control(false));
+    expect(ref.current).toBe(trigger);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.hover(trigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Open symbols",
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveAccessibleDescription("Choose a symbol.");
+  },
+);
+
 test("button titles use the shared hint while preserving refs and activation", async () => {
   const user = userEvent.setup();
   const activate = vi.fn();

@@ -443,17 +443,30 @@ test("selection follows IDs through reordering and rejected replacement never fa
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "B ");
   await input.fill("!limit");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("limit");
   const next = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );
-  await page.evaluate(
-    (index) =>
-      window.completionFixture.publish(index, {
-        items: [
-          { id: "long", label: "Too long", edit: { text: "x".repeat(16001) } },
-        ],
-      }),
-    next,
+  expect(
+    await page.evaluate(
+      (index) =>
+        window.completionFixture.publish(index, {
+          items: [
+            {
+              id: "long",
+              label: "Too long",
+              edit: { text: "x".repeat(16001) },
+            },
+          ],
+        }),
+      next,
+    ),
+  ).toBe(true);
+  await expect(page.getByRole("option", { name: "Too long" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "!limit");

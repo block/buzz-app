@@ -75,5 +75,11 @@ export function Button({
   );
   // Keep the native title API at call sites, but share the hint's appearance
   // and dismissal behavior. Content titles on non-controls remain native.
-  return title ? <Tooltip content={title}>{control}</Tooltip> : control;
+  return title ? (
+    <Tooltip content={title} disableHoverablePopup>
+      {control}
+    </Tooltip>
+  ) : (
+    control
+  );
 }

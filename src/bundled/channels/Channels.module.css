@@ -225,11 +225,6 @@
   border-bottom: 1px solid var(--border-standard);
 }
 
-.channelLabel:has(~ .unreadState),
-.channelLabel:has(~ .threadActivityDot) {
-  color: var(--text-standard);
-  font-weight: var(--type-weight-medium);
-}
 .unreadState {
   position: absolute;
   width: 1px;

@@ -42,6 +42,10 @@ test("real Settings keys respect dialogs and modifiers, focus main, and preserve
     }),
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
+  await expect(
+    page.getByRole("dialog", { name: "Find a page", includeHidden: true }),
+  ).toHaveCount(0);
+  await expect(button(page, "Find a page")).toBeFocused();
   await composer.focus();
   await page.keyboard.press(`${modifier}+,`);
   await expect(

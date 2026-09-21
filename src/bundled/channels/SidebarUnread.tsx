@@ -149,6 +149,7 @@ export function SidebarUnread({
                   : "outline"
               }
               aria-label={`Unread ${edge}`}
+              data-edge={edge}
               data-attention={edges[edge].some(({ attention }) => attention)}
               size="sm"
               type="button"

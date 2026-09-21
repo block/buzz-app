@@ -978,6 +978,80 @@ function AlertDialogSpecimen() {
   );
 }
 
+function RadioGroupSpecimen() {
+  const [summary, setSummary] = useState(false);
+  const [delivery, setDelivery] = useState("all");
+  const [enabled, setEnabled] = useState(false);
+  return (
+    <>
+      <SpecimenGroup label="Native form reset">
+        <SpecimenFrame>
+          <form aria-label="Notification preferences">
+            <Field label="Notifications">
+              <RadioGroup name="notifications" defaultValue="all">
+                <Radio value="all" label="All updates" variant="card" />
+                <Radio value="mentions" label="Mentions only" variant="card" />
+                <Radio value="none" label="Unavailable" disabled />
+              </RadioGroup>
+            </Field>
+            <Checkbox
+              name="summary"
+              value="yes"
+              label="Include a summary"
+              defaultChecked
+            />
+            <Button type="reset">Reset preferences</Button>
+          </form>
+        </SpecimenFrame>
+      </SpecimenGroup>
+      <SpecimenGroup label="Controlled form reset">
+        <SpecimenFrame>
+          <form aria-label="Controlled preferences">
+            <Field label="Delivery">
+              <RadioGroup
+                name="delivery"
+                value={delivery}
+                onValueChange={setDelivery}
+              >
+                <Radio value="all" label="All updates" />
+                <Radio value="mentions" label="Mentions only" />
+              </RadioGroup>
+            </Field>
+            <Checkbox
+              name="summary"
+              value="yes"
+              label="Include a summary"
+              checked={summary}
+              onCheckedChange={setSummary}
+            />
+            <Button type="reset">Reset preferences</Button>
+          </form>
+        </SpecimenFrame>
+      </SpecimenGroup>
+      <SpecimenGroup label="Initially disabled choices">
+        <SpecimenFrame>
+          <form aria-label="Deferred preferences">
+            <Button onClick={() => setEnabled(true)} disabled={enabled}>
+              Enable choices
+            </Button>
+            <Field label="Delivery">
+              <RadioGroup
+                name="delivery"
+                defaultValue="all"
+                disabled={!enabled}
+              >
+                <Radio value="all" label="All updates" />
+                <Radio value="mentions" label="Mentions only" />
+              </RadioGroup>
+            </Field>
+            <Button type="reset">Reset preferences</Button>
+          </form>
+        </SpecimenFrame>
+      </SpecimenGroup>
+    </>
+  );
+}
+
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimen,
@@ -1019,26 +1093,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </Field>
     </SpecimenFrame>
   ),
-  "radio-group": () => (
-    <SpecimenFrame>
-      <form aria-label="Notification preferences">
-        <Field label="Notifications">
-          <RadioGroup name="notifications" defaultValue="all">
-            <Radio value="all" label="All updates" variant="card" />
-            <Radio value="mentions" label="Mentions only" variant="card" />
-            <Radio value="none" label="Unavailable" disabled />
-          </RadioGroup>
-        </Field>
-        <Checkbox
-          name="summary"
-          value="yes"
-          label="Include a summary"
-          defaultChecked
-        />
-        <Button type="reset">Reset preferences</Button>
-      </form>
-    </SpecimenFrame>
-  ),
+  "radio-group": RadioGroupSpecimen,
   checkbox: () => (
     <SpecimenFrame>
       <Checkbox label="Include a summary" />

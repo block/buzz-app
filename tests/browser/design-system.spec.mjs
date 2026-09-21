@@ -31,7 +31,11 @@ test("shared tokens reach app controls without history or chip overrides", async
     for (const sheet of document.styleSheets) collect(sheet.cssRules);
     const probes = document.createElement("div");
     probes.id = "design-contract";
-    for (const name of ["edge", "threadHistoryControls"]) {
+    for (const name of [
+      "edge",
+      "threadHistoryControls",
+      "mediaReviewUnavailable",
+    ]) {
       const selector = selectors.find((s) =>
         new RegExp(`\\._${name}_`).test(s),
       );
@@ -90,6 +94,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         reset,
         page.locator("#probe-edge"),
         page.locator("#probe-threadHistoryControls"),
+        page.locator("#probe-mediaReviewUnavailable"),
       ]) {
         await expect(control).toHaveCSS("background-color", "rgb(12, 34, 56)");
         await expect(control).toHaveCSS("color", "rgb(10, 20, 30)");

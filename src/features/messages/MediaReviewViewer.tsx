@@ -230,7 +230,12 @@ function ReviewShell({
             >
               {error ?? (loading ? "Loading media…" : "Media unavailable")}
               {retry && (
-                <Button size="sm" type="button" onClick={() => void retry()}>
+                <Button
+                  variant="subtle"
+                  size="sm"
+                  type="button"
+                  onClick={() => void retry()}
+                >
                   Retry
                 </Button>
               )}

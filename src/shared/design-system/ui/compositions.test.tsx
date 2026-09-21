@@ -206,3 +206,40 @@ test("tooltip adds a dismissible hint without replacing the control name", async
   );
   expect(button).toHaveAccessibleName("Create note");
 });
+
+test("tooltip preserves existing descriptions while open and after dismissal", async () => {
+  const user = userEvent.setup();
+  render(
+    <>
+      <p id="existing-help">Existing help.</p>
+      <p id="additional-help">More context.</p>
+      <Tooltip content="Additional hint.">
+        <Button aria-describedby="existing-help additional-help">
+          Described action
+        </Button>
+      </Tooltip>
+    </>,
+  );
+  const button = screen.getByRole("button", { name: "Described action" });
+  expect(button).toHaveAccessibleDescription("Existing help. More context.");
+  await user.tab();
+  const tooltip = await screen.findByRole("tooltip");
+  expect(button).toHaveAttribute(
+    "aria-describedby",
+    `existing-help additional-help ${tooltip.id}`,
+  );
+  expect(button).toHaveAccessibleDescription(
+    "Existing help. More context. Additional hint.",
+  );
+  expect(button).toHaveAccessibleName("Described action");
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+  expect(button).toHaveAttribute(
+    "aria-describedby",
+    "existing-help additional-help",
+  );
+  expect(button).toHaveAccessibleDescription("Existing help. More context.");
+  expect(button).toHaveAccessibleName("Described action");
+});

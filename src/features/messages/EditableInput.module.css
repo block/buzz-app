@@ -1,6 +1,6 @@
 .input {
   width: 100%;
-  min-height: 3rem;
+  min-height: 1.5rem;
   max-height: 12rem;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -8,6 +8,7 @@
   font: inherit;
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
+  caret-color: var(--text-standard);
   cursor: text;
   outline: none;
 }

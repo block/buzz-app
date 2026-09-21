@@ -114,3 +114,28 @@ movie and JavaScript clocks are not synchronized. These bounded results are not
 signed-package/cross-platform acceptance or verification of the original user's
 sustained real-message incident. Keep the change draft until that acceptance is
 completed; do not restart a running app without coordination.
+
+
+## Base UI 1.8.0: native choice reset
+
+`@base-ui__react@1.8.0.patch` adds native form-reset listeners to Checkbox.Root
+and RadioGroup, in their shipped ESM and CommonJS modules. Without it, resetting
+an uncontrolled choice restores the hidden native input but leaves Base UI's
+visible checked state unchanged. The shared Buzz wrappers continue to delegate
+choice state, keyboard handling and form participation to Base UI.
+
+The listeners call the existing uncontrolled setters after reset propagation,
+so an ancestor can cancel the reset. They use the hidden input's `form` owner
+(including an external `form=` association), and cleanup prevents queued work
+after unmount. Controlled values remain with the caller. Like native reset, this
+does not emit the ordinary change callbacks. No other primitives are patched.
+
+Remove the patch when a pinned Base UI release passes the reset regressions in
+`src/shared/design-system/ui/controls.test.tsx` and the design viewer's native
+reset browser check without it. A frozen install must reproduce the patch:
+
+```sh
+bin/pnpm install --frozen-lockfile
+bin/pnpm exec vitest run src/shared/design-system/ui/controls.test.tsx
+bin/pnpm design:test:browser
+```

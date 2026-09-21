@@ -177,7 +177,8 @@ raised dark surface. Compact completion/emoji layouts may select shared radius
 tokens to fit their inner geometry. Shared Button/IconButton `title` props render
 a shared Tooltip; content titles (full names, timestamps and media descriptions) remain native.
 
-Explicit exceptions: GIF tiles use native media buttons; rendered Markdown task
+Explicit exceptions: GIF and image tiles use native media buttons, image zoom
+uses a native range with semantic colors; rendered Markdown task
 checkboxes and inline links keep their content semantics; the rich editor uses
 native selection colors; terminal ANSI colors and decorative artwork remain
 renderer-owned. The design viewer's layout experiments are not bundled app UI.

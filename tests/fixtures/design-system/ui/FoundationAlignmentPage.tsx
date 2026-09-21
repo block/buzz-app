@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { IconCheck } from "@tabler/icons-react";
+import { CheckIcon } from "../../../../src/shared/design-system/icons/index";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
 import { Panel } from "../../../../src/shared/design-system/ui/Panel";
 import { PanelHeader } from "../../../../src/shared/design-system/ui/PanelHeader";
@@ -59,7 +59,7 @@ function ProjectSpecimen({
                   data-status
                   className={`alignment-status ${treatment.statusColor ? "text-green-12" : "text-primary"}`}
                 >
-                  <IconCheck size={16} aria-hidden="true" />
+                  <CheckIcon size={16} aria-hidden="true" />
                   Complete
                 </span>
               </li>

@@ -1,4 +1,7 @@
-import { IconRefresh, IconUsers } from "@tabler/icons-react";
+import {
+  ArrowsClockwiseIcon,
+  UsersIcon,
+} from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
@@ -78,7 +81,7 @@ function MyAgents({ session }: { session: RelaySession }) {
           disabled={loading || snapshot.status === "unavailable"}
           onClick={refresh}
         >
-          <IconRefresh size={16} stroke={2} aria-hidden="true" />
+          <ArrowsClockwiseIcon size={16} aria-hidden="true" />
           {snapshot.status === "error" ? "Retry" : "Refresh agents"}
         </Button>
       </div>
@@ -196,7 +199,13 @@ function AgentCard({
   return (
     <article className="flex min-w-0 flex-col rounded-2xl border border-primary p-4">
       <div className="flex min-h-36 flex-1 items-center justify-center py-5">
-        <Avatar alt={name} fallback={name} src={picture ?? null} size="large" />
+        <Avatar
+          alt={name}
+          fallback={name}
+          src={picture ?? null}
+          size="large"
+          shape="squircle"
+        />
       </div>
       <h3 className="m-0 truncate text-label" title={name}>
         {name}
@@ -208,7 +217,7 @@ function AgentCard({
               value: "identities",
               title: (
                 <span className="flex items-center gap-2">
-                  <IconUsers size={16} stroke={2} aria-hidden="true" />
+                  <UsersIcon size={16} aria-hidden="true" />
                   <span className="sr-only">{name}: </span>
                   {identities.length}{" "}
                   {identities.length === 1 ? "identity" : "identities"}

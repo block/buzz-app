@@ -28,7 +28,7 @@ export function OverviewPage() {
 
       <Section
         title="The layers"
-        description="Use semantic roles for surfaces, text, borders and controls. Palette steps stay inside the token layer. Glass is available only as a complete material."
+        description="Use semantic roles for surfaces, text, borders and controls. The shared palette supplies their values. Glass is available as a complete material."
       >
         <div className="flex flex-col gap-2 rounded-xl bg-neutral-2 px-6 py-5">
           {LAYERS.map(([layer, what, why]) => (

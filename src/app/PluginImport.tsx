@@ -4,9 +4,9 @@ import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Button } from "../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import {
-  IconFolderOpen as FolderOpen,
-  IconGitBranch as GitBranch,
-} from "@tabler/icons-react";
+  FolderOpenIcon,
+  GitBranchIcon,
+} from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview } from "../plugins/types";
 
@@ -94,7 +94,7 @@ export function PluginImport({
           disabled={busy || loading}
           onClick={() => void load(imports.folder)}
         >
-          <FolderOpen aria-hidden="true" size={17} /> Load from folder
+          <FolderOpenIcon aria-hidden="true" size={17} /> Load from folder
         </Button>
         <Button
           type="button"
@@ -102,7 +102,7 @@ export function PluginImport({
           aria-expanded={gitForm}
           onClick={() => setGitForm(!gitForm)}
         >
-          <GitBranch aria-hidden="true" size={17} /> Load from Git
+          <GitBranchIcon aria-hidden="true" size={17} /> Load from Git
         </Button>
       </div>
       {gitForm && (

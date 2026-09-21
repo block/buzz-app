@@ -302,6 +302,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-surface-inverse",
+        variable: "--surface-inverse",
+        pointsAt: "neutral-11 light / neutral-11 dark",
+        use: "Image and video stages; pair labels with text-inverse.",
+        status: "core",
+      },
+      {
         token: "bg-surface-inset",
         variable: "--surface-inset",
         pointsAt: "neutral-2 light / neutral-2 dark",
@@ -340,7 +347,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-inverse",
         variable: "--text-inverse",
         pointsAt: "neutral-1 light / neutral-1 dark",
-        use: "Text on prominent actions.",
+        use: "Text on prominent actions and inverse media surfaces.",
         status: "core",
       },
       {
@@ -416,14 +423,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "border-danger",
         variable: "--border-danger",
-        pointsAt: "red-8 light / red-8 dark",
+        pointsAt: "red-9 light / red-9 dark",
         use: "Invalid field boundary.",
         status: "core",
       },
       {
         token: "border-warning",
         variable: "--border-warning",
-        pointsAt: "amber-8 light / amber-8 dark",
+        pointsAt: "amber-11 light / amber-9 dark",
         use: "Warning boundary.",
         status: "core",
       },

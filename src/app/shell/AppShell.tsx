@@ -1,6 +1,6 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ReactNode } from "react";
-import { IconHome as House } from "@tabler/icons-react";
+import { HouseIcon } from "../../shared/design-system/icons/index";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
@@ -74,7 +74,7 @@ export function AppShell({
             onClick={() => onSelect("home")}
             selected={selected === "home"}
             label="Home"
-            icon={<House aria-hidden="true" size={15} stroke={1.7} />}
+            icon={<HouseIcon aria-hidden="true" size={15} />}
           />
           {orderPages(pages).map((page) => {
             const { label, icon: Icon } = pagePresentation(page);
@@ -87,7 +87,7 @@ export function AppShell({
                 onClick={() => onSelect(page.key)}
                 selected={selected === page.key}
                 label={label}
-                icon={<Icon aria-hidden="true" size={15} stroke={1.7} />}
+                icon={<Icon aria-hidden="true" size={15} />}
               />
             );
           })}

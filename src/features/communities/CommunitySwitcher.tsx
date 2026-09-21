@@ -2,10 +2,10 @@ import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  IconChevronDown as ChevronDown,
-  IconWorld as Globe2,
-  IconPlus as Plus,
-} from "@tabler/icons-react";
+  CaretDownIcon,
+  GlobeIcon,
+  PlusIcon,
+} from "../../shared/design-system/icons/index";
 import { CommunityDialog } from "./CommunityDialog";
 import type { Communities } from "./service";
 import styles from "./Communities.module.css";
@@ -56,8 +56,8 @@ export function CommunitySwitcher({
         aria-label="Switch community"
         title={current?.name ?? "Personal space"}
         label={current?.name ?? "Personal space"}
-        icon={<Globe2 size={18} aria-hidden="true" />}
-        trailing={<ChevronDown size={14} aria-hidden="true" />}
+        icon={<GlobeIcon size={18} aria-hidden="true" />}
+        trailing={<CaretDownIcon size={14} aria-hidden="true" />}
         onClick={() => setOpen(true)}
       />
       <Dialog
@@ -76,7 +76,7 @@ export function CommunitySwitcher({
             onClick={() => select(null)}
             selected={client.selected === null}
             label="Personal space"
-            icon={<Globe2 size={22} aria-hidden="true" />}
+            icon={<GlobeIcon size={22} aria-hidden="true" />}
           />
           {client.memberships.map((m) => (
             <NavigationItem
@@ -107,7 +107,7 @@ export function CommunitySwitcher({
               setJoining(true);
             }}
             label="Add a community"
-            icon={<Plus size={22} aria-hidden="true" />}
+            icon={<PlusIcon size={22} aria-hidden="true" />}
           />
         </nav>
       </Dialog>

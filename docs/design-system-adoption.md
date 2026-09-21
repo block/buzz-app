@@ -17,14 +17,19 @@ pill actions, consistent fields and shared states.
 | Tabs | Tabs | Emoji/GIF uses associated panels and Base UI keyboard activation. Workflow mode retains its existing externally owned editor view. |
 | Modals | Dialog and AlertDialog | Page search, community chooser/setup and workflow confirmations. Pending work prevents dismissal; focus returns to the opener. |
 | Panels and headers | Panel and PanelHeader | Settings, channels and companion cards use shared paint. Grids, scrolling, docks and subscriptions stay with the feature. |
-| Hints | Tooltip | Navigation history uses keyboard-accessible, dismissible hints. Accessible names stay on the controls. |
+| Hints | Tooltip | Control titles and agent activity use keyboard-accessible, dismissible hints. Accessible names stay on the controls. |
+| Sessions and activity | NavigationItem, Button, IconButton, Panel and PanelHeader | Session history, agent choice, child-channel navigation and activity actions retain unread, admission, draft and focus behavior. Base UI owns their menus. |
+| Media stages | surface-inverse with text-inverse | Preserve existing stage values and measure their text pairing explicitly; images and video pixels stay renderer-owned. |
 
 ## Deliberate local ownership
 
 - The rich message editor keeps its caret, IME, selection and completion logic.
   Completion rows retain `aria-activedescendant` while using shared colors and type.
-- GIF tiles retain native media-selection buttons and image geometry. Search, retry
-  and picker triggers use shared controls.
+- GIF and image tiles retain native media-selection buttons and image geometry.
+  Search, retry, playback and zoom actions use shared controls. The image zoom
+  range retains native range behavior and reads semantic colors; there is no
+  separate shared Slider. Media modal focus, drag regions, playback and timecode
+  ownership stay with the renderer.
 - Emoji Mart keeps its shadow-root adapter and compact search geometry. It reads
   shared semantic colors, type and the host’s keyboard-focus mode. It does not own
   another appearance preference.

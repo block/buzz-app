@@ -1,6 +1,6 @@
 import { Field } from "@base-ui/react/field";
 import { Input } from "@base-ui/react/input";
-import { IconSearch, IconX } from "@tabler/icons-react";
+import { MagnifyingGlassIcon, XIcon } from "../icons/index";
 import { useRef, type ComponentProps, type Ref } from "react";
 import { IconButton } from "./IconButton";
 
@@ -28,7 +28,7 @@ export function SearchField({
   return (
     <Field.Root data-buzz-ui="" className="search-field" data-variant={variant}>
       <Field.Label className="sr-only">{label}</Field.Label>
-      <IconSearch size={16} stroke={1.7} aria-hidden="true" />
+      <MagnifyingGlassIcon size={16} aria-hidden="true" />
       <Input
         {...inputProps}
         ref={(node) => {
@@ -44,7 +44,7 @@ export function SearchField({
       {value ? (
         <IconButton
           aria-label={`Clear ${label.toLowerCase()}`}
-          icon={<IconX size={14} stroke={1.7} aria-hidden="true" />}
+          icon={<XIcon size={14} aria-hidden="true" />}
           size="compact"
           disabled={inputProps.disabled || inputProps.readOnly}
           onClick={() => {

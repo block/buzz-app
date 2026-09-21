@@ -1,8 +1,8 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
-  IconArrowUpRight as ArrowUpRight,
-  IconAdjustments as Settings2,
-} from "@tabler/icons-react";
+  ArrowUpRightIcon,
+  GearIcon,
+} from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 import { orderPages, pagePresentation } from "./presentation";
 
@@ -36,15 +36,15 @@ export function Home({
               onClick={() => onSelect(page.key)}
               label={label}
               icon={<Icon size={21} aria-hidden="true" />}
-              trailing={<ArrowUpRight size={18} aria-hidden="true" />}
+              trailing={<ArrowUpRightIcon size={18} aria-hidden="true" />}
             />
           );
         })}
         <NavigationItem
           onClick={() => onSelect("settings")}
           label="Make it yours · Settings"
-          icon={<Settings2 size={21} aria-hidden="true" />}
-          trailing={<ArrowUpRight size={18} aria-hidden="true" />}
+          icon={<GearIcon size={21} aria-hidden="true" />}
+          trailing={<ArrowUpRightIcon size={18} aria-hidden="true" />}
         />
       </div>
     </section>

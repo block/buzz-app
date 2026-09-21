@@ -2,7 +2,7 @@ import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Button } from "../shared/design-system/ui/Button";
 import { useSyncExternalStore } from "react";
-import { IconMoon as Moon, IconSun as Sun } from "@tabler/icons-react";
+import { MoonIcon, SunIcon } from "../shared/design-system/icons/index";
 import type { Appearance } from "../shared/theme/service";
 
 /** Shared radios provide one Tab stop and standard arrow-key selection. */
@@ -28,8 +28,8 @@ export function AppearanceSettings({ appearance }: { appearance: Appearance }) {
           >
             {(
               [
-                ["light", "Light", Sun],
-                ["dark", "Dark", Moon],
+                ["light", "Light", SunIcon],
+                ["dark", "Dark", MoonIcon],
               ] as const
             ).map(([value, label, Icon]) => (
               <Radio

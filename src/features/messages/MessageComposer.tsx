@@ -1,7 +1,9 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { SessionAgentControl } from "../sessions/SessionAgentControl";
+import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
-import { IconArrowUp as ArrowUp, IconX as X } from "@tabler/icons-react";
+import { ArrowUpIcon, XIcon } from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useId,
@@ -9,6 +11,7 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
 import { readView, writeView } from "../../shared/view-state";
@@ -29,6 +32,7 @@ import {
   type MentionEdit,
   type MentionRecipient,
 } from "./mention-draft";
+import { ComposerAccessories } from "../conversation/ComposerAccessories";
 import { ComposerTools } from "../conversation/ComposerTools";
 import type {
   ConversationExtensions,
@@ -38,8 +42,16 @@ import type {
 } from "../conversation/contracts";
 import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
+import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
 import type { ComposerInputElement } from "./composer-dom";
+
+const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
+  status: "idle",
+  channels: [],
+};
+const noChannelSnapshot = () => noChannels;
+const noChannelSubscription = () => () => {};
 
 export type MessageComposerProps = {
   extensions?: ConversationExtensions | undefined;
@@ -47,21 +59,38 @@ export type MessageComposerProps = {
   session: RelaySession;
   channelId: string;
   channelName: string;
+  label?: string | undefined;
+  sessionConversation?: boolean | undefined;
+  trailingTool?: ReactNode;
+  inviteAgents?: boolean | undefined;
   onSend?: (id: string) => void;
+  onOpenLink?: ((target: string) => boolean) | undefined;
+  canOpenLink?: ((target: string) => boolean) | undefined;
   threadRootId?: string;
+  mediaTimeSeconds?: number;
+  clearMediaTime?(): void;
+  hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
+  /** A new conversation owns persistence and delivery before a channel exists. */
+  submission?: {
+    draftKey: string;
+    initialDraft?: MentionDraft | string | undefined;
+    locked: boolean;
+    disabled: boolean;
+    submit: (draft: MentionDraft) => void;
+  };
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function MessageComposer(props: MessageComposerProps) {
   return (
     <Composer
-      key={messageViewKey(
+      key={`${props.submission?.draftKey ?? ""}:${messageViewKey(
         props.session,
         props.scope,
         props.channelId,
         props.threadRootId,
-      )}
+      )}`}
       {...props}
     />
   );
@@ -72,17 +101,57 @@ function Composer({
   scope,
   channelId,
   channelName,
+  label: customLabel,
   onSend,
+  onOpenLink,
+  canOpenLink,
   threadRootId,
+  mediaTimeSeconds,
+  clearMediaTime,
+  hideMediaTimeIndicator = false,
   disabled = false,
+  submission,
+  sessionConversation,
+  inviteAgents = false,
+  trailingTool,
 }: MessageComposerProps) {
   const inputId = useId();
-  const draftKey = threadRootId
-    ? `draft:${channelId}:thread:${threadRootId}`
-    : `draft:${channelId}`;
-  const label = threadRootId ? "Reply to thread" : `Message #${channelName}`;
+  const draftKey =
+    submission?.draftKey ??
+    (threadRootId
+      ? `draft:${channelId}:thread:${threadRootId}`
+      : `draft:${channelId}`);
+  const [selectedAgent, setSelectedAgent] = useState("");
+  const [admitting, setAdmitting] = useState(false);
+  const admission = useRef(false);
+  const live = useRef(true);
+  const permitted = useRef(!disabled);
+  permitted.current = !disabled;
+  useEffect(() => {
+    live.current = true;
+    return () => {
+      live.current = false;
+    };
+  }, []);
+  const list = useSyncExternalStore(
+    sessionConversation
+      ? session.channels.subscribeList
+      : noChannelSubscription,
+    sessionConversation ? session.channels.list : noChannelSnapshot,
+    sessionConversation ? session.channels.list : noChannelSnapshot,
+  );
+  const parentChannelId = list.channels.find(
+    (item) => item.id === channelId,
+  )?.parentChannelId;
+  const agentChoices = inviteAgents || !!sessionConversation;
+  const editingDisabled = disabled || admitting || !!submission?.locked;
+  const label =
+    customLabel ??
+    (threadRootId ? "Reply to thread" : `Message #${channelName}`);
   const [value, updateDraft] = useState(() =>
-    mentionDraft(readView<unknown>(scope, draftKey, "")),
+    mentionDraft(
+      readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+    ),
   );
   const draft = value.text;
   const valueRef = useRef(value);
@@ -141,7 +210,7 @@ function Composer({
   const edit = useRef<MentionEdit | undefined>(undefined);
   const completion = useCompletionEditor(
     input,
-    !disabled && !!outbox?.supports(9),
+    !editingDisabled && !!outbox?.supports(9),
   );
   useEffect(() => {
     const element = input.current;
@@ -176,7 +245,11 @@ function Composer({
     caret.current = undefined;
   });
   function undo(redo: boolean) {
-    if (disabled || input.current?.readOnly || completion.composing.current)
+    if (
+      editingDisabled ||
+      input.current?.readOnly ||
+      completion.composing.current
+    )
       return;
     const source = redo ? history.current.future : history.current.past;
     const destination = redo ? history.current.past : history.current.future;
@@ -200,7 +273,7 @@ function Composer({
     range?: CompletionQuery,
   ) {
     if (
-      disabled ||
+      editingDisabled ||
       !outbox?.supports(9) ||
       !input.current?.isConnected ||
       // DOM props are committed before child layout effects; closures can still
@@ -269,255 +342,352 @@ function Composer({
       )
     );
   }
-  function send() {
+  const currentAdmission = () =>
+    live.current &&
+    permitted.current &&
+    session.channels.list().channels.find((item) => item.id === channelId)
+      ?.parentChannelId === parentChannelId;
+  async function prepareRecipients(explicit: readonly string[]) {
+    const channel = await session.workSessions.refreshMembership(channelId);
+    if (!currentAdmission())
+      throw new Error("The session changed. Review its channel and retry.");
+    const recipients = [
+      ...sessionRecipients(
+        channel,
+        session.profiles.snapshot(),
+        session.agentLibrary.snapshot(),
+        session.viewer,
+        explicit,
+      ),
+    ];
+    const missing = recipients.filter((key) => !channel.members?.includes(key));
+    if (missing.length) {
+      await session.agentLibrary.refresh();
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+      await session.workSessions.addAgents(
+        channelId,
+        missing,
+        currentAdmission,
+      );
+      if (!currentAdmission())
+        throw new Error("The session changed. Review its channel and retry.");
+    }
+    return recipients;
+  }
+  function selectAgent(key: string) {
+    if (disabled || admission.current) return;
+    setSelectedAgent(key);
+    setError(undefined);
+  }
+  async function send() {
     if (
       disabled ||
-      input.current?.readOnly ||
-      input.current?.disabled ||
+      admission.current ||
+      submission?.disabled ||
+      (!submission && (input.current?.readOnly || input.current?.disabled)) ||
       !draft.trim() ||
       !outbox
     )
       return;
     try {
+      if (submission) {
+        submission.submit(valueRef.current);
+        return;
+      }
+      let recipients = valueRef.current.recipients.length
+        ? valueRef.current.recipients.map((item) => item.pubkey)
+        : selectedAgent
+          ? [selectedAgent]
+          : [];
+      if (sessionConversation) {
+        admission.current = true;
+        setAdmitting(true);
+        recipients = await prepareRecipients(recipients);
+      }
+      const content =
+        threadRootId && mediaTimeSeconds !== undefined
+          ? mediaTimeReply(mediaTimeSeconds, draft)
+          : draft;
       const id = threadRootId
-        ? session.messages.reply(
-            channelId,
-            threadRootId,
-            draft,
-            value.recipients.map((item) => item.pubkey),
-          )
-        : session.messages.send(
-            channelId,
-            draft,
-            value.recipients.map((item) => item.pubkey),
-          );
+        ? session.messages.reply(channelId, threadRootId, content, recipients)
+        : session.messages.send(channelId, draft, recipients);
       onSend?.(id);
       completion.invalidate();
+      clearMediaTime?.();
       setDraft("");
       history.current = { past: [], future: [] };
       input.current?.focus();
       setError(undefined);
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
+      if (live.current)
+        setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      admission.current = false;
+      if (live.current) setAdmitting(false);
     }
   }
+  const accessories = extensions?.accessories && (
+    <ComposerAccessories
+      registry={extensions.accessories}
+      session={session}
+      scope={scope}
+      channelId={channelId}
+      threadRootId={threadRootId}
+      canOpen={(target) => canOpenLink?.(target) ?? false}
+      open={(target) => onOpenLink?.(target) ?? false}
+    />
+  );
   if (!outbox?.supports(9))
     return (
-      <footer className={styles.composer}>
-        <TypingIndicator
-          session={session}
-          channelId={channelId}
-          threadRootId={threadRootId}
-        />
-        This relay connection supports reading only.
-      </footer>
+      <>
+        {accessories}
+        <footer className={styles.composer}>
+          <TypingIndicator
+            session={session}
+            channelId={channelId}
+            threadRootId={threadRootId}
+          />
+          This relay connection supports reading only.
+        </footer>
+      </>
     );
   return (
-    <form
-      className={styles.composer}
-      aria-label={
-        threadRootId ? "Reply to thread" : `Send a message to ${channelName}`
-      }
-      onSubmit={(event) => {
-        event.preventDefault();
-        send();
-      }}
-    >
-      {!disabled && (
-        <TypingIndicator
-          session={session}
-          channelId={channelId}
-          threadRootId={threadRootId}
-        />
-      )}
-      <label className="sr-only" htmlFor={inputId}>
-        {label}
-      </label>
-      {extensions?.completions && (
-        <ComposerCompletions
-          registry={extensions.completions}
-          editor={completion}
-          input={input}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          threadRootId={threadRootId}
-          replace={replaceCompletion}
-        />
-      )}
-      <div className={styles.composerInput}>
-        <RichComposerInput
-          ref={input}
-          id={inputId}
-          disabled={disabled}
-          value={draft}
-          draft={value}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          extensions={extensions}
-          emoji={emojiCatalog.entries}
-          onUndo={undo}
-          data-single-emoji={largeEmojiDraft || undefined}
-          maxLength={16000}
-          placeholder={label}
-          onFocus={() => completion.observe(true)}
-          onBlur={() => {
-            completion.invalidate();
-          }}
-          onSelect={() => {
-            completion.observe();
-          }}
-          onCompositionStart={() => {
-            compositionSaved.current = false;
-            completion.composing.current = true;
-            completion.invalidate();
-          }}
-          onCompositionEnd={() => {
-            compositionSaved.current = false;
-            completion.composing.current = false;
-            completion.observe(true);
-          }}
-          // onInput also observes same-text replacements, which onChange omits.
-          onInput={(event) => {
-            const range = edit.current;
-            edit.current = undefined;
-            saveDraft(
-              editMentionDraft(
-                valueRef.current,
-                event.currentTarget.value,
-                range,
-              ),
-              range,
-            );
-            completion.observe(true);
-          }}
-          onKeyDown={(event) => {
-            if (
-              event.nativeEvent.isComposing ||
-              event.nativeEvent.keyCode === 229 ||
-              completion.composing.current
-            )
-              return;
-            if (
-              event.shiftKey &&
-              ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
-            ) {
+    <>
+      {accessories}
+      <form
+        className={styles.composer}
+        aria-label={
+          threadRootId ? "Reply to thread" : `Send a message to ${channelName}`
+        }
+        onSubmit={(event) => {
+          event.preventDefault();
+          send();
+        }}
+      >
+        {!disabled && !submission && (
+          <TypingIndicator
+            session={session}
+            channelId={channelId}
+            threadRootId={threadRootId}
+          />
+        )}
+        <label className="sr-only" htmlFor={inputId}>
+          {label}
+        </label>
+        {extensions?.completions && (
+          <ComposerCompletions
+            registry={extensions.completions}
+            editor={completion}
+            input={input}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            threadRootId={threadRootId}
+            inviteAgents={agentChoices}
+            replace={replaceCompletion}
+          />
+        )}
+        <div className={styles.composerInput}>
+          <RichComposerInput
+            ref={input}
+            id={inputId}
+            disabled={editingDisabled}
+            value={draft}
+            draft={value}
+            session={session}
+            scope={scope}
+            channelId={channelId}
+            extensions={extensions}
+            emoji={emojiCatalog.entries}
+            onUndo={undo}
+            data-single-emoji={largeEmojiDraft || undefined}
+            maxLength={16000}
+            placeholder={label}
+            onFocus={() => completion.observe(true)}
+            onBlur={() => {
               completion.invalidate();
+            }}
+            onSelect={() => {
+              completion.observe();
+            }}
+            onCompositionStart={() => {
+              compositionSaved.current = false;
+              completion.composing.current = true;
+              completion.invalidate();
+            }}
+            onCompositionEnd={() => {
+              compositionSaved.current = false;
+              completion.composing.current = false;
+              completion.observe(true);
+            }}
+            // onInput also observes same-text replacements, which onChange omits.
+            onInput={(event) => {
+              const range = edit.current;
+              edit.current = undefined;
+              saveDraft(
+                editMentionDraft(
+                  valueRef.current,
+                  event.currentTarget.value,
+                  range,
+                ),
+                range,
+              );
+              completion.observe(true);
+            }}
+            onKeyDown={(event) => {
               if (
-                customEmojiSpans.length &&
+                event.nativeEvent.isComposing ||
+                event.nativeEvent.keyCode === 229 ||
+                completion.composing.current
+              )
+                return;
+              if (
+                event.shiftKey &&
+                ["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+              ) {
+                completion.invalidate();
+                if (
+                  customEmojiSpans.length &&
+                  !event.altKey &&
+                  !event.ctrlKey &&
+                  !event.metaKey &&
+                  (event.key === "ArrowLeft" || event.key === "ArrowRight")
+                ) {
+                  const next = extendEmojiSelection(
+                    customEmojiSpans,
+                    event.currentTarget,
+                    event.key,
+                  );
+                  if (next) {
+                    event.preventDefault();
+                    event.currentTarget.setSelectionRange(
+                      next.start,
+                      next.end,
+                      next.direction,
+                    );
+                  }
+                }
+                return;
+              }
+              if (completion.keys.current?.(event)) return;
+              if (
+                event.key === "Enter" &&
+                !event.shiftKey &&
                 !event.altKey &&
                 !event.ctrlKey &&
-                !event.metaKey &&
-                (event.key === "ArrowLeft" || event.key === "ArrowRight")
+                !event.metaKey
               ) {
-                const next = extendEmojiSelection(
-                  customEmojiSpans,
-                  event.currentTarget,
-                  event.key,
-                );
-                if (next) {
-                  event.preventDefault();
-                  event.currentTarget.setSelectionRange(
-                    next.start,
-                    next.end,
-                    next.direction,
-                  );
-                }
+                event.preventDefault();
+                send();
               }
-              return;
-            }
-            if (completion.keys.current?.(event)) return;
-            if (
-              event.key === "Enter" &&
-              !event.shiftKey &&
-              !event.altKey &&
-              !event.ctrlKey &&
-              !event.metaKey
-            ) {
-              event.preventDefault();
-              send();
-            }
-          }}
-        />
-      </div>
-      {!!value.recipients.length && (
-        <section
-          className={styles.mentionRecipients}
-          aria-label="Notification recipients"
-        >
-          <span>Notify:</span>
-          {value.recipients.map((recipient) => (
-            <Button
-              size="sm"
-              type="button"
-              key={`${recipient.pubkey}:${recipient.start}`}
-              title={recipient.pubkey}
-              aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
-              onClick={() =>
-                saveDraft({
-                  ...value,
-                  recipients: value.recipients.filter(
-                    (item) => item.pubkey !== recipient.pubkey,
-                  ),
-                })
-              }
-            >
-              {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
-              <X size={12} aria-hidden="true" />
-            </Button>
-          ))}
-        </section>
-      )}
-      <div className={styles.composerActions}>
-        <div className={styles.composerTools}>
-          {extensions && (
-            <ComposerTools
-              registry={extensions.tools}
-              session={session}
-              scope={scope}
-              channelId={channelId}
-              threadRootId={threadRootId}
-              disabled={disabled}
-              insertText={(text) => insert(text)}
-              insertMention={insertMention}
-              focus={() => input.current?.focus()}
-            />
-          )}
+            }}
+          />
         </div>
-        <span className={styles.composerHint}>
-          Shift + Enter for a new line
-        </span>
-        <IconButton
-          size="toolbar"
-          variant="solid"
-          shape="round"
-          type="submit"
-          aria-label="Send message"
-          title="Send message"
-          disabled={disabled || !draft.trim()}
-          icon={<ArrowUp size={18} aria-hidden="true" />}
-        />
-      </div>
-      {error && <p role="alert">{error}</p>}
-      {error && session.emoji?.snapshot().status === "error" && (
-        <Button
-          size="sm"
-          type="button"
-          disabled={disabled}
-          onClick={() => {
-            void session.emoji.refresh().then(() => {
-              if (
-                input.current?.isConnected &&
-                session.emoji.snapshot().status === "ready"
-              )
-                setError(undefined);
-            });
-          }}
-        >
-          Retry message preparation
-        </Button>
-      )}
-    </form>
+        {threadRootId &&
+          mediaTimeSeconds !== undefined &&
+          !hideMediaTimeIndicator && (
+            <div className={styles.mediaComposerAnchor}>
+              <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
+              <IconButton
+                size="compact"
+                type="button"
+                onClick={clearMediaTime}
+                aria-label="Remove video time"
+                icon={<XIcon size={13} />}
+              />
+            </div>
+          )}
+        {!!value.recipients.length && (
+          <section
+            className={styles.mentionRecipients}
+            aria-label="Notification recipients"
+          >
+            <span>Notify:</span>
+            {value.recipients.map((recipient) => (
+              <Button
+                type="button"
+                key={`${recipient.pubkey}:${recipient.start}`}
+                title={recipient.pubkey}
+                aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
+                disabled={editingDisabled}
+                onClick={() =>
+                  saveDraft({
+                    ...value,
+                    recipients: value.recipients.filter(
+                      (item) => item.pubkey !== recipient.pubkey,
+                    ),
+                  })
+                }
+              >
+                {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
+                <XIcon size={12} aria-hidden="true" />
+              </Button>
+            ))}
+          </section>
+        )}
+        <div className={styles.composerActions}>
+          <div className={styles.composerTools}>
+            {extensions && (
+              <ComposerTools
+                registry={extensions.tools}
+                session={session}
+                scope={scope}
+                channelId={channelId}
+                threadRootId={threadRootId}
+                disabled={editingDisabled}
+                inviteAgents={agentChoices}
+                insertText={(text) => insert(text)}
+                insertMention={insertMention}
+                focus={() => input.current?.focus()}
+              />
+            )}
+          </div>
+          {trailingTool ??
+            (sessionConversation ? (
+              <SessionAgentControl
+                session={session}
+                channelId={channelId}
+                value={selectedAgent}
+                onChange={selectAgent}
+                disabled={editingDisabled}
+              />
+            ) : (
+              <span className={styles.composerHint}>
+                Shift + Enter for a new line
+              </span>
+            ))}
+          <IconButton
+            variant="solid"
+            shape="round"
+            type="submit"
+            aria-label="Send message"
+            title="Send message"
+            disabled={
+              disabled || admitting || submission?.disabled || !draft.trim()
+            }
+            icon={<ArrowUpIcon size={18} />}
+          />
+        </div>
+        {error && <p role="alert">{error}</p>}
+        {error && session.emoji?.snapshot().status === "error" && (
+          <Button
+            type="button"
+            disabled={editingDisabled}
+            onClick={() => {
+              void session.emoji.refresh().then(() => {
+                if (
+                  input.current?.isConnected &&
+                  session.emoji.snapshot().status === "ready"
+                )
+                  setError(undefined);
+              });
+            }}
+          >
+            Retry message preparation
+          </Button>
+        )}
+      </form>
+    </>
   );
 }

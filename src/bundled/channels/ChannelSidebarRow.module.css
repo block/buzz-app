@@ -1,0 +1,73 @@
+.row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  border-radius: var(--radius-control);
+}
+.row .select {
+  flex: 1;
+  min-width: 0;
+}
+.row .more {
+  opacity: 0;
+  pointer-events: none;
+  flex-shrink: 0;
+  margin-right: var(--space-chip-inset);
+}
+.row:is(:hover, :has(:focus-visible)) .more,
+.row .more[data-popup-open] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.iconSpace {
+  width: 17px;
+  flex: 0 0 17px;
+}
+.positioner {
+  z-index: var(--layer-popover);
+}
+.menu.menu {
+  position: relative;
+  width: max-content;
+  max-width: var(--available-width);
+  font-size: var(--text-body-sm);
+  outline: none;
+}
+.menuItem {
+  white-space: nowrap;
+  outline: none;
+}
+.menuItem[data-highlighted] {
+  background: var(--completion-highlight);
+}
+
+.row .disclosure {
+  position: absolute;
+  left: var(--space-1);
+  z-index: 1;
+}
+.hashIcon {
+  display: flex;
+}
+.row .chevronIcon {
+  display: none;
+}
+.row:is(:hover, :has(:focus-visible)) .hashIcon {
+  display: none;
+}
+.row:is(:hover, :has(:focus-visible)) .chevronIcon {
+  display: block;
+}
+
+.childLabel {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.childLabel > [data-channel-unread-title="true"] {
+  color: var(--text-standard);
+  font-weight: var(--type-weight-medium);
+}

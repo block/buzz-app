@@ -221,7 +221,7 @@ export function ColorPage() {
 
       <Section
         title="Layer 2 — the roles"
-        description="Choose roles by purpose: surfaces, text, borders and controls. Each role has a light and dark value. Shared components consume these roles; palette steps stay inside the token layer."
+        description="Choose a role by its purpose: surface, text, border or control. Shared roles keep callers consistent when values change, even when a role uses the same palette step in both themes."
       >
         <div className="flex flex-col gap-8">
           {ROLE_GROUPS.map((group) => (

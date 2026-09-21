@@ -1,5 +1,5 @@
 import { Checkbox as BaseCheckbox } from "@base-ui/react/checkbox";
-import { IconCheck, IconMinus } from "@tabler/icons-react";
+import { CheckIcon, MinusIcon } from "../icons/index";
 import { useId, type ComponentProps, type ReactNode } from "react";
 
 export function Checkbox({
@@ -23,9 +23,9 @@ export function Checkbox({
       >
         <BaseCheckbox.Indicator>
           {indeterminate ? (
-            <IconMinus size={14} aria-hidden="true" />
+            <MinusIcon size={14} aria-hidden="true" />
           ) : (
-            <IconCheck size={14} aria-hidden="true" />
+            <CheckIcon size={14} aria-hidden="true" />
           )}
         </BaseCheckbox.Indicator>
       </BaseCheckbox.Root>

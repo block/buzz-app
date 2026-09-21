@@ -1,9 +1,9 @@
+import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useRef, useState } from "react";
-import { IconSearch as Search } from "@tabler/icons-react";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
   orderPages,
@@ -45,7 +45,7 @@ export function PageSearch({
           setQuery("");
           setOpen(true);
         }}
-        icon={<Search size={16} aria-hidden="true" stroke={2} />}
+        icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
       />
       <Dialog
         open={open}

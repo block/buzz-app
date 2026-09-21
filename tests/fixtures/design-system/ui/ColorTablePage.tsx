@@ -156,10 +156,9 @@ export function ColorTablePage() {
       {view === "roles" ? (
         <>
           <Note>
-            Build screens from <strong>semantic roles</strong>: choose the name
-            for the color's job, such as <code>text-danger</code> or{" "}
-            <code>bg-surface-panel</code>. Palette steps supply those values;
-            components do not choose steps directly. See the{" "}
+            Build screens with <strong>semantic roles</strong>. Choose the name
+            by what the color does, then let the shared palette supply its light
+            and dark values. See the{" "}
             <Link to="/design/color" className="text-purple-12 underline">
               colour page
             </Link>

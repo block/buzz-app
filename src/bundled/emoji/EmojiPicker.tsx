@@ -10,10 +10,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
-  IconSearch as Search,
-  IconMoodSmile as Smile,
-  IconMoodPlus as SmilePlus,
-} from "@tabler/icons-react";
+  MagnifyingGlassIcon,
+  SmileyIcon,
+  SmileyStickerIcon,
+} from "../../shared/design-system/icons/index";
 import { Popover } from "@base-ui/react/popover";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -184,7 +184,7 @@ export function EmojiPicker({
   }, [open, disabled, session, scope, catalog, attempt, perLine, tab, host]);
   const emojiContent = (
     <div className={styles.emojiMart}>
-      <Search
+      <MagnifyingGlassIcon
         className={styles.sharedSearchIcon}
         size={16}
         aria-hidden="true"
@@ -276,9 +276,9 @@ export function EmojiPicker({
       }}
       icon={
         reaction ? (
-          <SmilePlus size={18} aria-hidden="true" />
+          <SmileyStickerIcon size={18} aria-hidden="true" />
         ) : (
-          <Smile size={20} aria-hidden="true" />
+          <SmileyIcon size={20} aria-hidden="true" />
         )
       }
     />

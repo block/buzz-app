@@ -2,8 +2,10 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { useAgentChoices } from "./use-agent-choices";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { IconAt as AtSign } from "@tabler/icons-react";
+import { useKnownAgentPubkeys } from "../../features/agents/use-known";
+import { AtIcon } from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useId,
@@ -21,11 +23,13 @@ export function MentionPicker({
   session,
   channelId,
   disabled,
+  inviteAgents,
   select,
 }: {
   session: RelaySession;
   channelId: string;
   disabled: boolean;
+  inviteAgents?: boolean | undefined;
   select: ComposerToolProps["insertMention"];
 }) {
   const [open, setOpen] = useState(false);
@@ -43,7 +47,12 @@ export function MentionPicker({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
+  const agents = useAgentChoices(session, inviteAgents && open);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
+  const parentAdmission =
+    !!channel &&
+    (channel.channelType !== "session" || !!channel.parentChannelId);
   const memberKey = channel?.members?.join(":") ?? "";
   useEffect(() => {
     if (!open || !memberKey) return;
@@ -60,14 +69,23 @@ export function MentionPicker({
       current = false;
     };
   }, [session, open, memberKey]);
-  const candidates = (channel?.members ?? [])
-    .map((pubkey) => ({
+  const choices = new Map(
+    agents.identities.map((agent) => [
+      agent.pubkey,
+      { pubkey: agent.pubkey, name: agent.name },
+    ]),
+  );
+  for (const pubkey of channel?.members ?? [])
+    choices.set(pubkey, {
       pubkey,
-      name: profiles.get(pubkey)?.name ?? pubkey.slice(0, 12),
-    }))
-    .filter(({ name, pubkey }) =>
-      `${name} ${pubkey}`.toLowerCase().includes(search.trim().toLowerCase()),
-    );
+      name:
+        profiles.get(pubkey)?.name ??
+        choices.get(pubkey)?.name ??
+        pubkey.slice(0, 12),
+    });
+  const candidates = [...choices.values()].filter(({ name, pubkey }) =>
+    `${name} ${pubkey}`.toLowerCase().includes(search.trim().toLowerCase()),
+  );
   return (
     <fieldset
       disabled={disabled}
@@ -95,7 +113,7 @@ export function MentionPicker({
           setOpen(!open);
           session.channels.ensureList();
         }}
-        icon={<AtSign size={20} aria-hidden="true" />}
+        icon={<AtIcon size={20} aria-hidden="true" />}
       />
       {open && (
         <section
@@ -104,7 +122,11 @@ export function MentionPicker({
           aria-label="Mention a channel member"
         >
           <SearchField
-            label="Search channel members"
+            label={
+              inviteAgents
+                ? "Search members and agents"
+                : "Search channel members"
+            }
             value={search}
             onValueChange={setSearch}
             disabled={disabled}
@@ -112,12 +134,27 @@ export function MentionPicker({
               if (event.key === "Enter") event.preventDefault();
             }}
           />
-          <p>Only members of this channel are shown.</p>
+          <p>
+            {inviteAgents
+              ? parentAdmission
+                ? "Agents you mention join this session and its parent channel when you send, with access to their history."
+                : "Agents you mention join this session when you send, with access to its history."
+              : "Only members of this channel are shown."}
+          </p>
+          {agents.status === "loading" && <p role="status">Loading agents…</p>}
+          {agents.status === "error" && (
+            <Button
+              type="button"
+              onClick={() => void session.agentLibrary.refresh()}
+            >
+              Retry agent list
+            </Button>
+          )}
           {error && <p role="status">{error}</p>}
           {list.error && (
             <p role="alert">Could not refresh channel membership.</p>
           )}
-          {!channel?.members && (
+          {(!inviteAgents || !!channel) && !channel?.members && (
             <p role="status">Channel membership unavailable.</p>
           )}
           <Button
@@ -149,6 +186,9 @@ export function MentionPicker({
                       "small",
                     )}
                     size="default"
+                    shape={
+                      agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                    }
                   />
                 }
               />

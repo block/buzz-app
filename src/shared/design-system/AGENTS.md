@@ -3,7 +3,7 @@
 This is the app's design system. New UI and surfaces moving off the existing styles should use it.
 This initial port does not migrate existing surfaces; that is a boundary of the PR, not a prohibition on adoption.
 Read DESIGN.md and MAINTAINING_DESIGN_SYSTEM.md before editing.
-Use semantic color roles and complete type roles; keep Base UI behavior and Tabler icons.
+Use semantic color roles and complete type roles; keep Base UI behavior and Phosphor icons through ../icons.
 Block UI is the visual target. Palette steps belong in shared token definitions, not new component recipes.
 Preserve keyboard-only focus and test light/dark and narrow/intermediate/wide views.
 Components live in ui/, values in styles/, documentation metadata in tokens/ and ui/registry.ts.

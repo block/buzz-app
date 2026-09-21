@@ -8,7 +8,7 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { IconSettings as Settings } from "@tabler/icons-react";
+import { GearIcon, UserIcon } from "../../shared/design-system/icons/index";
 import type { Communities } from "../../features/communities/service";
 
 export function ProfileButton({
@@ -64,17 +64,21 @@ export function ProfileButton({
         shape="round"
         icon={
           /* Keep pointer-origin Tab traversal rooted at the button in WebKit. */
-          <span className="pointer-events-none flex size-full rounded-full">
-            <Avatar
-              src={
-                profile.picture.startsWith("https://")
-                  ? profile.picture
-                  : undefined
-              }
-              alt=""
-              fallback={profile.name || "?"}
-              size="fill"
-            />
+          <span className="pointer-events-none flex size-full items-center justify-center rounded-full">
+            {profile.picture.startsWith("https://") || profile.name ? (
+              <Avatar
+                src={
+                  profile.picture.startsWith("https://")
+                    ? profile.picture
+                    : undefined
+                }
+                alt=""
+                fallback={profile.name || "?"}
+                size="fill"
+              />
+            ) : (
+              <UserIcon aria-hidden="true" size={19} />
+            )}
           </span>
         }
       />
@@ -92,7 +96,7 @@ export function ProfileButton({
           aria-current={settingsSelected ? "page" : undefined}
           selected={settingsSelected}
           label="Settings"
-          icon={<Settings aria-hidden="true" size={17} />}
+          icon={<GearIcon aria-hidden="true" size={17} />}
           onClick={() => {
             setOpen(false);
             onSettings();

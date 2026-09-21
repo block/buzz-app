@@ -1,8 +1,8 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import {
-  IconArrowDown as ArrowDown,
-  IconArrowUp as ArrowUp,
-} from "@tabler/icons-react";
+  ArrowDownIcon,
+  ArrowUpIcon,
+} from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useRef,
@@ -12,25 +12,36 @@ import {
 } from "react";
 import styles from "./Channels.module.css";
 
-type Edges = { above: HTMLButtonElement[]; below: HTMLButtonElement[] };
+type EdgeTarget = { row: HTMLButtonElement; attention: boolean };
+type Edges = { above: EdgeTarget[]; below: EdgeTarget[] };
 
-/** Geometry over the existing badges, not another unread store or subscription. */
+/** Geometry over rendered unread destinations, not another unread store. */
 function unreadEdges(list: HTMLElement): Edges {
   const edges: Edges = { above: [], below: [] };
   const viewport = list.getBoundingClientRect();
   if (!list.clientHeight || !viewport.width) return edges;
-  for (const badge of list.querySelectorAll("[data-channel-unread]")) {
-    const row = badge.closest("button");
-    if (!row) continue;
+  const rows = new Set<HTMLButtonElement>();
+  for (const marker of list.querySelectorAll(
+    "[data-channel-unread], [data-channel-activity]",
+  )) {
+    const row = marker.closest("button");
+    if (row) rows.add(row);
+  }
+  for (const row of rows) {
     // A collapsed section represents its hidden rows at the summary. Clicking
     // an edge cue expands that section before revealing the actual channel.
     const closed = row.closest("details:not([open])");
     const anchor = closed?.querySelector("summary") ?? row;
     const rect = anchor.getBoundingClientRect();
     if (!rect.height || !rect.width) continue;
-    if (rect.bottom <= viewport.top) edges.above.push(row);
+    const attention =
+      row.getAttribute("data-channel-type") === "dm" ||
+      row.querySelector('[data-priority="true"]') !== null ||
+      row.querySelector("[data-channel-activity]") !== null;
+    const target = { row, attention };
+    if (rect.bottom <= viewport.top) edges.above.push(target);
     else if (rect.top >= viewport.top + list.clientHeight)
-      edges.below.push(row);
+      edges.below.push(target);
   }
   return edges;
 }
@@ -58,7 +69,11 @@ export function SidebarUnread({
         (["above", "below"] as const).every(
           (edge) =>
             previous[edge].length === next[edge].length &&
-            previous[edge].every((row, i) => row === next[edge][i]),
+            previous[edge].every(
+              (target, i) =>
+                target.row === next[edge][i]?.row &&
+                target.attention === next[edge][i]?.attention,
+            ),
         )
           ? previous
           : next,
@@ -75,7 +90,13 @@ export function SidebarUnread({
       subtree: true,
       childList: true,
       attributes: true,
-      attributeFilter: ["open", "data-channel-unread"],
+      attributeFilter: [
+        "open",
+        "data-channel-unread",
+        "data-channel-activity",
+        "data-channel-type",
+        "data-priority",
+      ],
     });
     viewport.addEventListener("scroll", schedule, { passive: true });
     schedule();
@@ -93,16 +114,17 @@ export function SidebarUnread({
     const targets = unreadEdges(viewport)[edge];
     const target = edge === "above" ? targets.at(-1) : targets[0];
     if (!target) return;
-    const section = target.closest("details");
+    const { row } = target;
+    const section = row.closest("details");
     if (section) section.open = true;
-    const rect = target.getBoundingClientRect();
+    const rect = row.getBoundingClientRect();
     viewport.scrollTop +=
       rect.top -
       viewport.getBoundingClientRect().top -
       (viewport.clientHeight - rect.height) / 2;
     // Continue keyboard navigation at the revealed row, not the start of the
     // roster. Its existing focus preparation still applies; focus is not selection.
-    target.focus({ preventScroll: true });
+    row.focus({ preventScroll: true });
   };
   return (
     <div className={styles.channelListFrame}>
@@ -117,18 +139,24 @@ export function SidebarUnread({
       </nav>
       {(["above", "below"] as const).map((edge) => {
         if (!edges[edge].length) return null;
-        const Icon = edge === "above" ? ArrowUp : ArrowDown;
+        const Icon = edge === "above" ? ArrowUpIcon : ArrowDownIcon;
         return (
           <div className={styles.unreadEdge} data-edge={edge} key={edge}>
             <Button
-              variant="prominent"
+              variant={
+                edges[edge].some(({ attention }) => attention)
+                  ? "prominent"
+                  : "outline"
+              }
+              aria-label={`Unread ${edge}`}
+              data-attention={edges[edge].some(({ attention }) => attention)}
               size="sm"
               type="button"
               title={`Reveal the nearest unread channel ${edge} without opening it`}
               onClick={() => reveal(edge)}
             >
               <Icon size={15} aria-hidden="true" />
-              Unread {edge}
+              Unread
             </Button>
           </div>
         );

@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { ReactElement } from "react";
 import { Virtualizer } from "virtua";
 import { ChannelTimeline } from "./ChannelTimeline";
+import { createAgentLibrary } from "../agents/library";
 import { createRelaySession } from "../relay/session";
 import {
   bounds,
@@ -92,6 +93,8 @@ vi.mock("react", async (original) => ({
       });
     }
   },
+  useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
+    snapshot(),
 }));
 vi.mock("../relay/react", () => ({
   useRowProfiles: () => new Map(),
@@ -231,6 +234,7 @@ function setup({
     ({
       channels: { loadOlder, window: snapshot },
       profiles: {},
+      agentLibrary: createAgentLibrary(undefined).queries,
       // Geometry fixtures are read-only; reading behavior has its own boundary tests.
       unread: { sync: () => ({ capability: "unsupported" }) },
       media: () => undefined,

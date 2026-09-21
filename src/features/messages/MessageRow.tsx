@@ -4,6 +4,8 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { memo, useCallback, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
+import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
+import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget } from "../profiles/target";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -32,6 +34,7 @@ export type MessageRowProps = {
   extensions?: ConversationExtensions | undefined;
   profile: Profile | undefined;
   participantProfiles?: ReadonlyMap<string, Profile> | undefined;
+  agentPubkeys?: ReadonlySet<string> | undefined;
   canOpenLink?: ((target: string) => boolean) | undefined;
   media(url: string, size?: "small"): string | undefined;
   onOpenLink(url: string): boolean;
@@ -40,6 +43,16 @@ export type MessageRowProps = {
   onOpenThread?:
     | ((messageId: string, threadRootId: string) => void)
     | undefined;
+  mediaMode?: "inline" | "thread";
+  mediaSeekTo?: number;
+  mediaSeekRequest?: number;
+  onMediaPlayback?: (playback: MediaPlayback) => void;
+  onMediaTime?: (seconds: number) => void;
+  onOpenMediaReview?: (
+    messageId: string,
+    attachment: ChannelMessage["attachments"][number],
+    seconds: number,
+  ) => void;
 };
 
 export const MessageRow = memo(function MessageRow({
@@ -56,6 +69,13 @@ export const MessageRow = memo(function MessageRow({
   retry,
   onOpenThread,
   participantProfiles,
+  mediaMode = "inline",
+  mediaSeekTo,
+  mediaSeekRequest,
+  onMediaPlayback,
+  onMediaTime,
+  onOpenMediaReview,
+  agentPubkeys,
 }: MessageRowProps) {
   const directory = useReferenceDirectory(session, row.mentions.length > 0);
   const threadUnread = useThreadUnread(
@@ -82,7 +102,14 @@ export const MessageRow = memo(function MessageRow({
     : undefined;
   const target = profileTarget(row.authorId);
   const clickable = target && canOpenLink?.(target);
-  const emojiOnly = usesLargeEmojiPresentation(row.content, row.emoji);
+  const avatarShape =
+    row.agentEnvelope || agentPubkeys?.has(row.authorId)
+      ? "squircle"
+      : "circle";
+  const timeReply = parseMediaTimeReply(row.content);
+  const replaceTime = !!timeReply && !!onMediaTime;
+  const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
+  const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
   const canReact = !!(
     extensions &&
     session &&
@@ -114,10 +141,24 @@ export const MessageRow = memo(function MessageRow({
               event.currentTarget.focus();
               onOpenLink(target);
             }}
-            icon={<Avatar src={picture} alt="" fallback={name} size="fill" />}
+            icon={
+              <Avatar
+                src={picture}
+                alt=""
+                fallback={name}
+                size="fill"
+                shape={avatarShape}
+              />
+            }
           />
         ) : (
-          <Avatar src={picture} alt="" fallback={name} size="large" />
+          <Avatar
+            src={picture}
+            alt=""
+            fallback={name}
+            size="large"
+            shape={avatarShape}
+          />
         )}
         <div className={styles.messageBody}>
           <div className={styles.byline}>
@@ -129,11 +170,22 @@ export const MessageRow = memo(function MessageRow({
               })}
             </time>
           </div>
+          {timeReply && onMediaTime && (
+            <span className={styles.mediaTimeLink}>
+              <Button
+                size="sm"
+                type="button"
+                onClick={() => onMediaTime(timeReply.anchor.seconds)}
+              >
+                {timeReply.label}
+              </Button>
+            </span>
+          )}
           <MessageMarkdown
             directory={directory}
             session={session}
             scope={scope}
-            row={row}
+            row={displayRow}
             extensions={extensions}
             media={media}
             onOpenLink={onOpenLink}
@@ -146,23 +198,43 @@ export const MessageRow = memo(function MessageRow({
             const url = safeMessageUrl(attachment.url);
             if (!url) return null;
             const source = media(url);
-            return attachment.video || !source ? (
-              <a
-                className={styles.attachment}
+            if (!attachment.video && source)
+              return (
+                <AttachmentImage
+                  key={url}
+                  attachment={{ ...attachment, url }}
+                  url={url}
+                  source={source}
+                  onOpenLink={onOpenLink}
+                  {...(onOpenMediaReview
+                    ? {
+                        onOpenReview: (item, seconds) =>
+                          onOpenMediaReview(row.id, item, seconds),
+                      }
+                    : {})}
+                />
+              );
+            return (
+              <MediaAttachment
                 key={url}
-                href={url}
-                target="_blank"
-                rel="noreferrer"
-              >
-                {attachment.video ? "Video attachment" : "Image attachment"} ↗
-              </a>
-            ) : (
-              <AttachmentImage
-                key={url}
-                attachment={attachment}
-                url={url}
-                source={source}
-                onOpenLink={onOpenLink}
+                attachment={{ ...attachment, url }}
+                media={media}
+                mode={mediaMode}
+                {...(attachment.video && mediaSeekTo !== undefined
+                  ? {
+                      seekTo: mediaSeekTo,
+                      ...(mediaSeekRequest !== undefined
+                        ? { seekRequest: mediaSeekRequest }
+                        : {}),
+                    }
+                  : {})}
+                {...(onMediaPlayback ? { onPlayback: onMediaPlayback } : {})}
+                {...(onOpenMediaReview
+                  ? {
+                      onOpenReview: (item, seconds) =>
+                        onOpenMediaReview(row.id, item, seconds),
+                    }
+                  : {})}
               />
             );
           })}
@@ -222,13 +294,17 @@ export const MessageRow = memo(function MessageRow({
                       <span
                         key={id}
                         className={styles.threadAvatar}
+                        data-avatar-shape={
+                          agentPubkeys?.has(id) ? "squircle" : "circle"
+                        }
                         title={name}
                       >
                         <Avatar
                           src={picture}
                           alt=""
                           fallback={name}
-                          size="small"
+                          size="fill"
+                          shape={agentPubkeys?.has(id) ? "squircle" : "circle"}
                         />
                       </span>
                     );

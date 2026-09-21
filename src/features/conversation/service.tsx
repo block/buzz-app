@@ -15,6 +15,7 @@ import {
 } from "../../shared/datetime";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import type {
+  ChannelThreadDirectory,
   ComposerTool,
   ComposerAccessory,
   ComposerCompletion,
@@ -27,6 +28,8 @@ import type {
 export type Conversation = {
   messages: ContributionReader<MessageRenderer>;
   registerMessage(renderer: MessageRenderer): void;
+  channelDirectories: ContributionReader<ChannelThreadDirectory>;
+  registerChannelDirectory(directory: ChannelThreadDirectory): void;
   accessories: ContributionReader<ComposerAccessory>;
   registerAccessory(accessory: ComposerAccessory): void;
   tools: ContributionReader<ComposerTool>;
@@ -63,6 +66,7 @@ declare module "@deepseek-ai/cordis" {
 }
 function validate(
   value:
+    | ChannelThreadDirectory
     | ComposerTool
     | InlineRenderer
     | ComposerCompletion
@@ -84,6 +88,8 @@ function validate(
 export class ConversationService extends Service implements Conversation {
   readonly messages;
   private readonly messageEntries;
+  readonly channelDirectories;
+  private readonly directoryEntries;
   readonly tools;
   readonly accessories;
   private readonly accessoryEntries;
@@ -101,6 +107,12 @@ export class ConversationService extends Service implements Conversation {
     this.messages = {
       snapshot: messages.snapshot,
       subscribe: messages.subscribe,
+    };
+    const directories = createContributions<ChannelThreadDirectory>(ctx);
+    this.directoryEntries = directories;
+    this.channelDirectories = {
+      snapshot: directories.snapshot,
+      subscribe: directories.subscribe,
     };
     const accessories = createContributions<ComposerAccessory>(ctx);
     this.accessoryEntries = accessories;
@@ -129,6 +141,10 @@ export class ConversationService extends Service implements Conversation {
     if (typeof value.matches !== "function")
       throw new Error("A message renderer needs a matcher");
     this.messageEntries.register(this.ctx, value);
+  }
+  registerChannelDirectory(value: ChannelThreadDirectory) {
+    validate(value);
+    this.directoryEntries.register(this.ctx, value);
   }
   registerAccessory(value: ComposerAccessory) {
     validate(value);

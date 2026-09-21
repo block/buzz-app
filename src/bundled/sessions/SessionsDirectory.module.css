@@ -1,0 +1,103 @@
+.directory {
+  overflow-y: auto;
+  padding: var(--space-panel-inset);
+  color: var(--text-primary);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.intro h2 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-body-lg);
+  line-height: var(--text-body-lg--line-height);
+  letter-spacing: var(--text-body-lg--letter-spacing);
+  font-weight: var(--type-weight-medium);
+}
+.intro p,
+.empty {
+  color: var(--text-secondary);
+  max-width: 65ch;
+}
+.group {
+  margin-top: var(--space-6);
+}
+.group h3 {
+  margin: 0 0 var(--space-2);
+  color: var(--text-secondary);
+  font-size: var(--text-label-sm);
+  line-height: var(--text-label-sm--line-height);
+  letter-spacing: var(--text-label-sm--letter-spacing);
+  font-weight: var(--type-weight-medium);
+}
+.group ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  border: 0;
+  border-radius: var(--radius-control);
+  padding: var(--space-3) var(--space-2);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.row:hover {
+  background: var(--bg-inset);
+}
+html[data-keyboard-navigation] .row:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.row svg {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+.text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.text strong {
+  font-weight: var(--type-weight-medium);
+  overflow-wrap: anywhere;
+}
+.text > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.row time {
+  flex-shrink: 0;
+  color: var(--text-tertiary);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+@media (max-width: 650px) {
+  .directory {
+    padding: var(--space-3);
+  }
+  .row {
+    flex-wrap: wrap;
+  }
+  .row time {
+    width: 100%;
+    padding-left: var(--space-8);
+  }
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}

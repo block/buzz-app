@@ -328,3 +328,63 @@ it("owns accessories through disable, replacement and failed activation", async 
   );
   expect(broken.service.accessories.snapshot()).toHaveLength(0);
 });
+
+it("owns channel directories through exact Cordis activation, removal and replacement", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerChannelDirectory({
+        id: "sessions",
+        title: "Sessions",
+        component: Component,
+      });
+    },
+  });
+  expect(() =>
+    h.service.registerChannelDirectory({
+      id: "unowned",
+      title: "Unowned",
+      component: Component,
+    }),
+  ).toThrow(/installed plugin/);
+  expect(() =>
+    h.service.registerChannelDirectory({
+      id: "BAD",
+      title: "",
+      component: Component,
+    }),
+  ).toThrow(/id, title and component/);
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.channelDirectories.snapshot()).toHaveLength(1),
+  );
+  const first = h.service.channelDirectories.snapshot()[0];
+  expect(first?.key).toBe("test.tools/sessions");
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.channelDirectories.snapshot()).toHaveLength(0),
+  );
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.channelDirectories.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.channelDirectories.snapshot()[0]).not.toBe(first);
+});
+it("does not expose a channel directory from a failed activation", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerChannelDirectory({
+        id: "sessions",
+        title: "Sessions",
+        component: Component,
+      });
+      throw new Error("activation rejected");
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.runtime.snapshot()[h.plugin.manifest.id]?.status).toBe("failed"),
+  );
+  expect(h.service.channelDirectories.snapshot()).toHaveLength(0);
+});

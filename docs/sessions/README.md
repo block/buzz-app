@@ -1,6 +1,12 @@
-# Sessions
+# Private Sessions
 
 Sessions are focused work conversations built on ordinary private channels.
+
+The complementary **[channel-local shared Sessions](../sessions.md)** mode is
+thread-backed and has a separate contract. Its current Sessions tab is explicitly
+a bounded agent-thread directory over loaded channel history, not complete V1. It
+does not replace this private IDE-like workspace or change optional parent links,
+independent memberships, invitations, private drafts or recipient behavior below.
 
 ## Current contract
 

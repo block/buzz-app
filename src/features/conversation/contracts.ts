@@ -94,8 +94,24 @@ export type MessageRenderer = Readonly<{
   matches(message: ChannelMessage): boolean;
   component: ComponentType<{ message: ChannelMessage }>;
 }>;
+/** A channel-local presentation. The host owns destination and thread navigation. */
+export type ChannelThreadDirectoryProps = Readonly<{
+  session: RelaySession;
+  scope: string;
+  channelId: string;
+  channelName: string;
+  /** Accepted host navigation request, not proof of existence or access. Revoked
+   * with the exact registration, destination, connection and access lifetime. */
+  openThread(rootId: string): boolean;
+}>;
+export type ChannelThreadDirectory = Readonly<{
+  id: string;
+  title: string;
+  component: ComponentType<ChannelThreadDirectoryProps>;
+}>;
 export type ConversationExtensions = Readonly<{
   messages?: ContributionReader<MessageRenderer>;
+  channelDirectories?: ContributionReader<ChannelThreadDirectory>;
   accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;

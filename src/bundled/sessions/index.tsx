@@ -1,4 +1,5 @@
 import type { PluginModule } from "../../plugins/api";
+import { RecentChannelThreads } from "./RecentChannelThreads";
 import { SessionsPage } from "./SessionsPage";
 
 export const inject = ["pages", "relay", "conversation", "navigation"];
@@ -6,6 +7,11 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const relay = ctx.relay;
   const extensions = ctx.conversation;
   const navigator = ctx.navigation;
+  extensions.registerChannelDirectory({
+    id: "sessions",
+    title: "Sessions",
+    component: RecentChannelThreads,
+  });
   ctx.pages.register({
     id: "sessions",
     title: "Sessions",

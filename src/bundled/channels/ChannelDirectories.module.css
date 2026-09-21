@@ -1,0 +1,23 @@
+.tabs {
+  padding: 0 var(--space-3);
+  flex: none;
+  overflow-x: auto;
+}
+.content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.content > * {
+  flex: 1;
+  min-width: 0;
+}
+.notice {
+  padding: var(--space-panel-inset);
+  color: var(--text-secondary);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}

@@ -18,6 +18,25 @@ pub(crate) enum Permission {
 }
 
 #[tauri::command]
+pub(crate) fn unread_indicator_set(
+    window: tauri::WebviewWindow,
+    unread: bool,
+) -> Result<(), String> {
+    if window.label() != "main" {
+        return Err("Dock badges belong to the main window".into());
+    }
+    #[cfg(target_os = "macos")]
+    return window
+        .set_badge_label(unread.then(|| "•".into()))
+        .map_err(|e| e.to_string());
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = unread;
+        Err("Dock badges are only available on macOS".into())
+    }
+}
+
+#[tauri::command]
 pub(crate) async fn dock_permission(
     window: tauri::WebviewWindow,
     request: bool,

@@ -9,15 +9,24 @@ import {
 } from "../features/notifications/indicator";
 import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 
+const native = vi.hoisted(() => ({ value: true }));
+const invoke = vi.hoisted(() => vi.fn());
+vi.mock("@tauri-apps/api/core", () => ({
+  isTauri: () => native.value,
+  invoke,
+}));
+
 const cleanups: (() => Promise<void>)[] = [];
 afterEach(async () => {
   cleanup();
   for (const stop of cleanups.splice(0)) await stop();
+  vi.unstubAllGlobals();
+  vi.clearAllMocks();
+  native.value = true;
 });
 function setup(initial: IndicatorPermission) {
   const permission = vi.fn(async (): Promise<IndicatorPermission> => initial);
   const dock = createUnreadIndicator({
-    macOS: true,
     permission,
     set: vi.fn(async () => {}),
   });
@@ -85,7 +94,33 @@ it("offers missing-badge setup only as an explicit action", async () => {
     .click(screen.getByRole("button", { name: "Set up Dock badges" }));
   expect(h.permission.mock.calls).toEqual([[false], [true]]);
 });
-it("Windows/Linux settings describe the surface without fake permission controls and offer write retry", async () => {
+it.each([
+  [true, "Win32"],
+  [true, "Linux x86_64"],
+  [true, ""],
+  [false, "MacIntel"],
+] as const)(
+  "hides Dock settings and makes no IPC calls for native=%s platform=%s",
+  async (tauri, platform) => {
+    native.value = tauri;
+    vi.stubGlobal("navigator", { platform });
+    const indicator = createUnreadIndicator();
+    cleanups.push(indicator.dispose);
+    const { container } = render(
+      <UnreadIndicatorSettings indicator={indicator} />,
+    );
+    await act(async () => {
+      indicator.setUnread(true);
+      await indicator.refresh();
+      await indicator.request();
+      await indicator.dispose();
+    });
+    expect(container).toBeEmptyDOMElement();
+    expect(invoke).not.toHaveBeenCalled();
+  },
+);
+
+it("shows a Dock write error and retries through the existing permission check", async () => {
   const set = vi.fn(async (_unread: boolean) => {});
   const indicator = createUnreadIndicator({
     permission: async () => "enabled",
@@ -94,23 +129,16 @@ it("Windows/Linux settings describe the surface without fake permission controls
   cleanups.push(indicator.dispose);
   render(<UnreadIndicatorSettings indicator={indicator} />);
   await act(() => indicator.refresh());
-  expect(
-    screen.getByRole("heading", { name: "Desktop unread indicator" }),
-  ).toBeInTheDocument();
-  expect(
-    screen.getByText(/system tray on supported Linux desktops/),
-  ).toBeInTheDocument();
-  expect(screen.queryByRole("button")).not.toBeInTheDocument();
-  set.mockRejectedValueOnce(new Error("Shell unavailable"));
+  set.mockRejectedValueOnce(new Error("Dock unavailable"));
   await act(async () => {
     indicator.setUnread(true);
   });
   expect(await screen.findByRole("alert")).toHaveTextContent(
-    "Shell unavailable",
+    "Dock unavailable",
   );
   await userEvent
     .setup()
-    .click(screen.getByRole("button", { name: "Retry unread indicator" }));
+    .click(screen.getByRole("button", { name: "Check Dock permission" }));
   expect(set).toHaveBeenLastCalledWith(true);
   expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 });

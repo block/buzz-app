@@ -99,7 +99,7 @@ fn respond(app: tauri::AppHandle, channel: Channel<Response>, id: String, outcom
     }
 }
 
-pub(crate) fn focus(window: &tauri::WebviewWindow) -> Result<(), String> {
+fn focus(window: &tauri::WebviewWindow) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use gtk::prelude::GtkWindowExt;

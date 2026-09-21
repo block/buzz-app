@@ -8,20 +8,14 @@ export type IndicatorPermission =
   | "denied"
   | "unavailable";
 export interface IndicatorPlatform {
-  macOS?: boolean;
   permission(request: boolean): Promise<IndicatorPermission>;
   set(unread: boolean): Promise<void>;
 }
 export function indicatorPlatform(): IndicatorPlatform | undefined {
   const os = globalThis.navigator?.platform ?? "";
-  if (!isTauri() || !/Mac|Win|Linux/i.test(os)) return;
-  const macOS = /Mac/i.test(os);
+  if (!isTauri() || !/Mac/i.test(os)) return;
   return {
-    macOS,
-    permission: (request) =>
-      macOS
-        ? invoke("dock_permission", { request })
-        : Promise.resolve("enabled"),
+    permission: (request) => invoke("dock_permission", { request }),
     set: (unread) => invoke("unread_indicator_set", { unread }),
   };
 }
@@ -108,7 +102,6 @@ export function createUnreadIndicator(
   }
   return {
     available: !!platform,
-    macOS: platform?.macOS ?? false,
     snapshot: () => state,
     subscribe(listener: () => void) {
       listeners.add(listener);

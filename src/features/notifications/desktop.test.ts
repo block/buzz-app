@@ -317,24 +317,27 @@ it("native presentation rejects at capacity before sending instead of evicting l
 });
 
 it.each(["Win32", "Linux x86_64"])(
-  "%s projects and clears unread without macOS permission calls or changing banners",
+  "%s has no Dock IPC or Settings and keeps existing banners",
   async (platform) => {
     vi.stubGlobal("navigator", { platform });
     const { service, submit, ctx } = setup();
     await service.indicator.refresh();
-    expect(service.indicator.available).toBe(true);
-    expect(service.indicator.macOS).toBe(false);
-    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false });
+    expect(service.indicator.available).toBe(false);
+    expect(
+      renderToStaticMarkup(
+        createElement(NotificationSettings, { notifications: service }),
+      ),
+    ).not.toContain("Dock unread badge");
     service.indicator.setUnread(true);
     await flush();
-    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: true });
     await service.indicator.request();
     expect(sdk.permission).not.toHaveBeenCalled();
     await submit("banner");
     await flush();
     expect(sdk.show).toHaveBeenCalledOnce();
     await ctx.fiber.dispose();
-    expect(sdk.indicator).toHaveBeenLastCalledWith({ unread: false });
+    expect(sdk.indicator).not.toHaveBeenCalled();
+    expect(sdk.permission).not.toHaveBeenCalled();
   },
 );
 

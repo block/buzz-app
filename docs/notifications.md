@@ -119,7 +119,7 @@ then Notification Center click, dismissal without navigation, and old-account or
 revoked-access rejection. A macOS pass is not Windows/Linux acceptance.
 
 
-## Desktop unread indicator
+## macOS Dock unread badge
 
 The host projects one dot from the selected community's existing unread selectors:
 observed unread messages (including thread replies) or explicit channel-unread
@@ -131,28 +131,19 @@ clear or recompute the indicator. Disabling Channels does not stop host ownershi
 Desktop alert preferences do not alter this unread indicator.
 
 One ordered host writer calls a main-window-only command using Tauri's standard
-platform APIs:
+`set_badge_label` API. macOS draws the badge; no custom artwork is supplied.
+Windows, Linux and browsers have no shell unread indicator or badge Settings in
+this version, and do not bind the unread projection or invoke the Dock commands.
+Their existing banner behavior is unchanged. No taskbar overlay, tray icon/menu,
+new image assets or tray dependency is added.
 
-- **macOS:** `set_badge_label` adds/removes the Dock dot.
-- **Windows:** `set_overlay_icon` adds/removes a dot overlay on the main window's
-  taskbar icon. This is not a numeric badge or an attention request.
-- **Linux:** `TrayIconBuilder` owns a single normal/unread tray icon for the app
-  process, with a **Show Buzz** menu action using existing foregrounding behavior.
-  The first setter creates it; frontend reloads reuse the same tray and handler.
-  Clearing restores the normal icon, including on frontend teardown; process exit
-  removes the tray. This does not introduce close-to-tray or background operation.
-  A compatible AppIndicator/system-tray host is required. Some desktops need an
-  extension, and an accepted setter call does not prove the tray is visible.
-  No numeric libunity badge, tooltip, or unsupported tray click callback is used.
-
-Tauri embeds the small Phosphor-based icons at compile time; there is no runtime
-image loader or separate frontend tray-resource lifecycle. Browsers have no shell
-indicator. Observable setter failures appear in Settings with explicit retry;
-there is no automatic retry loop or claim of OS display acknowledgement.
+Observable setter failures appear in Settings; **Check Dock permission** retries
+using current unread intent. There is no automatic retry loop or claim of OS
+display acknowledgement.
 
 ### macOS permission setup
 
-Settings → Notifications → Desktop unread indicator shows the actual macOS badge
+Settings → Notifications → Dock unread badge shows the actual macOS badge
 setting. **Allow notifications and badges** explicitly requests Alert, Sound and
 Badge for a fresh NotDetermined identity. **Set up Dock badges** explicitly requests
 Badge alone when an already Authorized identity reports NotSupported. Startup,
@@ -176,10 +167,8 @@ controls for explicit setup. Native tests cover the authorization/setting matrix
 no startup mutation, error recovery and rejection of unbundled framework calls.
 No browser journeys are added: these contracts are below the browser layer.
 
-These checks do not prove a visible shell indicator. Per-platform native acceptance
-must exercise startup/arrival/read clearing, account/community/access changes,
-reload and exit under an isolated packaged identity. macOS also needs first
-permission, explicit missing-badge setup, deny/disable and legacy-banner interaction;
-Windows needs taskbar overlay/clear; Linux needs tray host availability, normal vs
-unread artwork, reload reuse and minimized **Show Buzz** behavior. Distribution
-signing and packaged account support remain separate work.
+These checks do not prove a visible Dock badge. Native macOS acceptance must
+exercise startup/arrival/read clearing, account/community/access changes, reload
+and exit under an isolated packaged identity. First permission, explicit
+missing-badge setup, deny/disable and legacy-banner interaction also need native
+acceptance. Distribution signing and packaged account support remain separate work.

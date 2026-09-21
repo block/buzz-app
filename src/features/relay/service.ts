@@ -86,7 +86,8 @@ export function provideRelay(
             store.dispose();
             store = createRelaySession(transport, {
               prepared: true,
-              warm: true,
+              // Keep intent preparation, but do not fetch every unopened channel.
+              warm: false,
               persistence: createHeadPersistence(
                 transport.viewer,
                 transport.scope ?? transport.relayAuthor,

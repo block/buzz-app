@@ -28,3 +28,5 @@ The Emoji Mart picker configuration and search-input focus/correction behavior i
 `desktop/src/features/custom-emoji/ui/EmojiPicker.tsx` at revision
 `b9392d9d78744df365f9276e1ffe8c1baa5ea903`. The adapter adds scoped custom IDs,
 explicit dictionary cleanup, and lazy loading for the session-owned catalog.
+
+OneDrive is a trademark of Microsoft.

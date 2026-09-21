@@ -9,8 +9,8 @@ import {
 } from "./live";
 
 const MAX_FRAME = 1024 * 1024;
-/** A bounded POST body avoids URL/header limits and a second server-side interest registry.
- * A generation owns its fetch, parser, retry and heartbeat; replacing it fences all callbacks. */
+/** A generation owns its stream, parser, retry and heartbeat. Interest changes
+ * use the same host owner so they cannot interrupt pending publications. */
 export function subscribeBrokerTraffic(
   endpoint: string,
   callbacks: LiveCallbacks,
@@ -19,8 +19,24 @@ export function subscribeBrokerTraffic(
     generation = 0,
     attempts = 0;
   let channels: string[] = [];
+  let sentChannels: string[] = [];
+  // Only IDs in the last dispatched snapshot can have a host wire (at most 1024).
+  const removed = new Set<string>();
+  let interestRevision = 0;
+  const addedAt = new Map<string, number>();
+  const currentChannel = (id: string, revision: unknown) => {
+    const minimum = addedAt.get(id);
+    return (
+      minimum !== undefined &&
+      (revision === undefined ||
+        (Number.isSafeInteger(revision) &&
+          (revision as number) >= minimum &&
+          (revision as number) <= interestRevision))
+    );
+  };
   let priority: string[] = [];
   let priorityPending = false;
+  let interestsPending = false;
   let observer: number | null = null;
   let observerPending = false;
   let controller: AbortController | undefined;
@@ -42,6 +58,7 @@ export function subscribeBrokerTraffic(
     streamId = undefined;
     controlPending = false;
     priorityPending = false;
+    interestsPending = false;
     observerPending = false;
     receiving = true;
     controller?.abort();
@@ -60,6 +77,9 @@ export function subscribeBrokerTraffic(
       );
     };
     pulse();
+    const startingInterests = interestRevision;
+    sentChannels = channels;
+    removed.clear();
     const startingPriority = JSON.stringify(priority);
     const startingObserver = observer;
     void (async () => {
@@ -68,7 +88,12 @@ export function subscribeBrokerTraffic(
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channels, priority, observer }),
+          body: JSON.stringify({
+            channels,
+            priority,
+            observer,
+            interestRevision,
+          }),
           signal: owned.signal,
         });
         if (!valid()) return;
@@ -90,6 +115,7 @@ export function subscribeBrokerTraffic(
         if (identity !== null && !/^[0-9a-f]{32}$/.test(identity))
           throw new Error("Invalid live broker control identity");
         streamId = identity ?? undefined;
+        if (startingInterests !== interestRevision) sendInterests();
         if (startingPriority !== JSON.stringify(priority)) sendPriority();
         if (startingObserver !== observer) sendObserver();
         const reader = response.body.getReader();
@@ -129,10 +155,15 @@ export function subscribeBrokerTraffic(
                   !("provenance" in data)
                 )
                   throw new Error("Invalid live traffic envelope");
-                callbacks.receive(
-                  [eventDto(data.event)],
-                  liveProvenance(data.provenance),
-                );
+                const provenance = liveProvenance(data.provenance);
+                if (
+                  !provenance.channelId ||
+                  currentChannel(
+                    provenance.channelId,
+                    (data as { interestRevision?: unknown }).interestRevision,
+                  )
+                )
+                  callbacks.receive([eventDto(data.event)], provenance);
               } else if (kind === "observer") {
                 const record = data as {
                   frame?: unknown;
@@ -142,10 +173,26 @@ export function subscribeBrokerTraffic(
                   callbacks.observer?.(observerFrame(record.frame), observer);
               } else if (kind === "state") {
                 const snapshot = liveSnapshot(data);
-                publish(snapshot);
+                const revision = (data as { interestRevision?: unknown })
+                  .interestRevision;
+                publish({
+                  ...snapshot,
+                  routes: snapshot.routes.filter(
+                    (route) =>
+                      !route.channelId ||
+                      currentChannel(route.channelId, revision),
+                  ),
+                });
               } else if (kind === "established") {
                 const id = channelField(data);
-                callbacks.established(id);
+                if (
+                  !id ||
+                  currentChannel(
+                    id,
+                    (data as { interestRevision?: unknown }).interestRevision,
+                  )
+                )
+                  callbacks.established(id);
               } else if (kind === "denied") {
                 const id = channelField(data);
                 if (
@@ -153,7 +200,13 @@ export function subscribeBrokerTraffic(
                   typeof (data as { reason?: unknown }).reason !== "string"
                 )
                   throw new Error("Invalid live denial");
-                callbacks.denied(id, (data as { reason: string }).reason);
+                if (
+                  currentChannel(
+                    id,
+                    (data as { interestRevision?: unknown }).interestRevision,
+                  )
+                )
+                  callbacks.denied(id, (data as { reason: string }).reason);
               }
               if (!valid()) return;
             }
@@ -186,6 +239,43 @@ export function subscribeBrokerTraffic(
         }
       }
     })();
+  }
+  function sendInterests() {
+    if (closed || !streamId || interestsPending) return;
+    const current = generation;
+    const sent = interestRevision;
+    interestsPending = true;
+    const body = JSON.stringify({
+      streamId,
+      channels,
+      removed: [...removed],
+      interestRevision,
+    });
+    sentChannels = channels;
+    removed.clear();
+    void fetch(`${endpoint}/stream-interests`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: AbortSignal.any([
+        controller?.signal ?? new AbortController().signal,
+        AbortSignal.timeout(5000),
+      ]),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("Live interests control failed");
+      })
+      .catch(() => {
+        // Unknown control outcome: bounded reconnect captures current intent.
+        if (!closed && current === generation)
+          controller?.abort(new Error("Live interests interrupted"));
+      })
+      .finally(() => {
+        if (current !== generation) return;
+        interestsPending = false;
+        if (sent !== interestRevision) sendInterests();
+      });
   }
   function sendPriority() {
     if (closed || !streamId || priorityPending) return;
@@ -250,6 +340,7 @@ export function subscribeBrokerTraffic(
   }
   start();
   return {
+    identity: () => (closed ? undefined : streamId),
     observe(value) {
       const next = observerGeneration(value);
       if (closed || observer === next) return;
@@ -266,8 +357,16 @@ export function subscribeBrokerTraffic(
     update(input) {
       const next = liveChannels(input);
       if (closed || JSON.stringify(next) === JSON.stringify(channels)) return;
+      interestRevision++;
+      for (const id of channels)
+        if (!next.includes(id)) {
+          addedAt.delete(id);
+          if (sentChannels.includes(id)) removed.add(id);
+        }
+      for (const id of next)
+        if (!addedAt.has(id)) addedAt.set(id, interestRevision);
       channels = next;
-      start();
+      sendInterests();
     },
     retry() {
       if (closed || controlPending) return;

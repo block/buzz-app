@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open, settle } from "./timeline.mjs";
+import { end, open, settle } from "./timeline.mjs";
 import { finalizeEvent, generateSecretKey } from "nostr-tools";
 
 test.use({
@@ -7,6 +7,7 @@ test.use({
   readState: true,
   threadUnread: true,
   pluginFixtures: true,
+  historyCounts: { alpha: 20, beta: 1 },
 });
 
 // Only the browser's OS boundary is replaced. The built host, session,
@@ -254,14 +255,14 @@ for (const kind of ["mention", "thread reply"]) {
     page,
     app,
   }) => {
+    // Only this geometry scenario needs an overflowing Beta history.
+    if (kind === "mention") {
+      for (let i = 0; i < 20; i++) {
+        app.append("primary", "beta", `Earlier message ${i}`, false, false);
+      }
+    }
     // Model a real prior contribution in relay history, not a client-side
     // participation/readiness override. The incoming reply itself has no p tag.
-    // Keep this prior contribution inside the existing 500-event unread
-    // evidence window; the default 640-row Alpha fixture would crowd it out.
-    app.histories.set(
-      "primary/alpha",
-      app.histories.get("primary/alpha").slice(-200),
-    );
     const root =
       kind === "thread reply"
         ? app.append("primary", "beta", "My prior thread", false)
@@ -348,6 +349,24 @@ for (const kind of ["mention", "thread reply"]) {
         ),
       )
       .toBe(false);
+    if (!root) {
+      // Fractional reflow must not leave the last row clipped at maximum scroll.
+      await row.evaluate((element) => {
+        element.style.paddingBottom = "0.125px";
+      });
+      for (const width of [1440, 640]) {
+        await page.setViewportSize({ width, height: 950 });
+        await expect
+          .poll(() =>
+            surface.evaluate(
+              (element) => element.scrollHeight > element.clientHeight,
+            ),
+          )
+          .toBe(true);
+        await end(page);
+        await expect(row).toBeInViewport({ ratio: 1 });
+      }
+    }
   });
 }
 

@@ -1,4 +1,4 @@
-import { IconLink, IconMessageCircle } from "@tabler/icons-react";
+import { LinkIcon, ChatCircleIcon } from "../icons/index";
 import { useSyncExternalStore } from "react";
 
 import type { ChipAddress, ChipKind } from "../chips/address";
@@ -16,9 +16,9 @@ import { PreviewCard } from "./PreviewCard";
  * a surface that owns an explicit persistent view.
  */
 
-const KIND_ICON: Partial<Record<ChipKind, typeof IconLink>> = {
-  message: IconMessageCircle,
-  link: IconLink,
+const KIND_ICON: Partial<Record<ChipKind, typeof LinkIcon>> = {
+  message: ChatCircleIcon,
+  link: LinkIcon,
 };
 
 /** Subscribes to face changes so a rename repaints without a document edit. */

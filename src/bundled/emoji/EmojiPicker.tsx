@@ -7,10 +7,10 @@ import {
   useSyncExternalStore,
 } from "react";
 import {
-  IconSearch as Search,
-  IconMoodSmile as Smile,
-  IconMoodPlus as SmilePlus,
-} from "@tabler/icons-react";
+  MagnifyingGlassIcon,
+  SmileyIcon,
+  SmileyStickerIcon,
+} from "../../shared/design-system/icons/index";
 import { Popover } from "@base-ui/react/popover";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -203,7 +203,7 @@ export function EmojiPicker({
       data-has-tabs={showGifTab || undefined}
       style={{ width: perLine * EMOJI_SLOT + PICKER_CHROME + 2 }}
     >
-      <Search
+      <MagnifyingGlassIcon
         className={styles.sharedSearchIcon}
         size={16}
         aria-hidden="true"
@@ -333,9 +333,9 @@ export function EmojiPicker({
       }}
     >
       {reaction ? (
-        <SmilePlus size={18} aria-hidden="true" />
+        <SmileyStickerIcon size={18} aria-hidden="true" />
       ) : (
-        <Smile size={20} aria-hidden="true" />
+        <SmileyIcon size={20} aria-hidden="true" />
       )}
     </button>
   );

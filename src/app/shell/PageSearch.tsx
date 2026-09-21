@@ -1,6 +1,9 @@
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useRef, useState } from "react";
-import { IconSearch as Search, IconX as X } from "@tabler/icons-react";
+import {
+  MagnifyingGlassIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
   orderPages,
@@ -39,7 +42,7 @@ export function PageSearch({
           setQuery("");
           dialog.current?.showModal();
         }}
-        icon={<Search size={16} aria-hidden="true" stroke={2} />}
+        icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
       />
       <dialog
         ref={dialog}
@@ -47,7 +50,7 @@ export function PageSearch({
         className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-line bg-surface p-4 text-ink shadow-surface backdrop:bg-overlay"
       >
         <div className="mb-3 flex items-center gap-3 border-b border-line pb-3">
-          <Search size={18} aria-hidden="true" />
+          <MagnifyingGlassIcon size={18} aria-hidden="true" />
           <input
             aria-label="Find a page"
             placeholder="Find a page…"
@@ -59,7 +62,7 @@ export function PageSearch({
             type="button"
             aria-label="Close search"
             onClick={() => dialog.current?.close()}
-            icon={<X size={16} aria-hidden="true" />}
+            icon={<XIcon size={16} aria-hidden="true" />}
           />
         </div>
         <div className="max-h-72 overflow-y-auto">

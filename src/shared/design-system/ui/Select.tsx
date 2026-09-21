@@ -1,5 +1,5 @@
 import { Select as BaseSelect } from "@base-ui/react/select";
-import { IconCheck, IconChevronDown } from "@tabler/icons-react";
+import { CheckIcon, CaretDownIcon } from "../icons/index";
 import { Button } from "./Button";
 
 export type SelectGroup = {
@@ -34,7 +34,7 @@ export function Select({
             <Button {...props} variant="ghost">
               <BaseSelect.Value />
               <BaseSelect.Icon>
-                <IconChevronDown size={14} aria-hidden="true" />
+                <CaretDownIcon size={14} aria-hidden="true" />
               </BaseSelect.Icon>
             </Button>
           )}
@@ -65,7 +65,7 @@ export function Select({
                           {option.label}
                         </BaseSelect.ItemText>
                         <BaseSelect.ItemIndicator>
-                          <IconCheck size={14} aria-hidden="true" />
+                          <CheckIcon size={14} aria-hidden="true" />
                         </BaseSelect.ItemIndicator>
                       </BaseSelect.Item>
                     ))}

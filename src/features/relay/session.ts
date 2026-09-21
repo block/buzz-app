@@ -1,4 +1,6 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createPresence } from "../presence/presence";
+import type { PresenceActivity } from "../presence/activity";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -65,6 +67,7 @@ export type EventViewSnapshot = Readonly<{
 export function createRelaySession(
   transport: ReadTransport | null,
   options: ChannelStoreOptions & {
+    presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
     readPublisherLock?: ReadPublisherLock;
@@ -211,6 +214,7 @@ export function createRelaySession(
       emoji.clear();
       agentLibrary.clear();
       activity.clear();
+      presence.clear();
       archives.clear();
       workflows.clear();
       for (const purge of views.values()) purge();
@@ -331,6 +335,13 @@ export function createRelaySession(
         timers.add(timer);
       });
   }
+  const presence = createPresence(
+    transport,
+    options.presenceActivity,
+    (status, signal) =>
+      traffic?.publishPresence?.(status, signal) ?? Promise.resolve(false),
+    notify,
+  );
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
   const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
@@ -630,6 +641,7 @@ export function createRelaySession(
     notify,
   );
   const session = Object.freeze({
+    presence,
     viewer: transport?.viewer,
     /** Verified new live-route messages, after reconciliation. Never history or local intent. */
     subscribeIncoming(listener: IncomingListener) {
@@ -1119,6 +1131,7 @@ export function createRelaySession(
     state(snapshot) {
       if (closed) return;
       activity.state(snapshot);
+      presence.connected(snapshot.status === "connected");
       if (snapshot.status !== "connected") typing.clear();
       if (
         snapshot.status !== "connected" &&
@@ -1199,6 +1212,7 @@ export function createRelaySession(
       accessEpoch++;
       cacheClearEpoch++;
       activity.clear();
+      presence.clear();
       typing.clear();
       sidebarPreferences.clear();
       // New windows must not yield to or receive errors from retired owners.
@@ -1221,6 +1235,7 @@ export function createRelaySession(
       typing.dispose();
       lifetime.abort();
       activity.dispose();
+      presence.dispose();
       sidebarPreferences.dispose();
       stopInterests();
       stopWarmPreferences();

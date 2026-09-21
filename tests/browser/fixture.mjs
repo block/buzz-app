@@ -29,6 +29,7 @@ export const test = base.extend({
   actionProfile: [false, { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
+  presenceThreadAuthors: [0, { option: true }],
   threadUnreadMentions: [false, { option: true }],
   exactMessages: [false, { option: true }],
   sessionChannels: [[], { option: true }],
@@ -54,6 +55,7 @@ export const test = base.extend({
       actionProfile,
       readState,
       threadUnread,
+      presenceThreadAuthors,
       threadUnreadMentions,
       exactMessages,
       sessionChannels,
@@ -347,6 +349,42 @@ export const test = base.extend({
         ),
       );
     }
+    // Signed upstream-only stress data; production traversal and mounting stay real.
+    let presenceThread;
+    if (presenceThreadAuthors) {
+      const threadRoot = histories
+        .get("primary/alpha")
+        .find((event) => event.content === "Thread root 0");
+      if (!threadRoot) throw new Error("Presence thread requires threadUnread");
+      const replies = Array.from({ length: presenceThreadAuthors }, (_, i) =>
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", threadRoot.id, "", "reply"],
+          ],
+          `Distinct author reply ${i}`,
+          generateSecretKey(),
+          threadRoot.created_at + i + 20,
+        ),
+      );
+      threadReplies.set(threadRoot.id, replies);
+      // The ordinary unread fixture also broadcasts one reply into the timeline.
+      // This stress case owns exactly the distinct replies above, not that extra row.
+      histories.set(
+        "primary/alpha",
+        histories
+          .get("primary/alpha")
+          .filter(
+            (event) =>
+              !event.tags.some(
+                ([key, value]) =>
+                  key === "e" && value.toLowerCase() === threadRoot.id,
+              ),
+          ),
+      );
+      presenceThread = { root: threadRoot, replies };
+    }
     if (actionProfile) {
       const root = histories
         .get("primary/alpha")
@@ -414,6 +452,10 @@ export const test = base.extend({
       response.end(JSON.stringify(body));
     };
     const answer = (community, filter) => {
+      if (filter.kinds?.includes(20001))
+        return filter.authors.map((author) =>
+          sign(20001, [["p", author]], "online"),
+        );
       if (filter.kinds?.includes(39002))
         return rosterIds.map((id) =>
           sign(39002, [
@@ -660,6 +702,13 @@ export const test = base.extend({
     const acceptReadPublication = (community, event) => {
       expect(verifyEvent(event)).toBe(true);
       expect(event.pubkey).toBe(viewer);
+      if (event.kind === 9) {
+        report.publications.push({ community, event });
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        histories.get(`${community}/${channel}`).push(event);
+        relay.publish(community, event);
+        return;
+      }
       expect(event.kind).toBe(30078);
       expect(event.tags).toContainEqual(["t", "read-state"]);
       const blob = JSON.parse(
@@ -965,6 +1014,7 @@ export const test = base.extend({
         report,
         pending,
         histories,
+        presenceThread,
         exact,
         membership(
           type,
@@ -1083,7 +1133,7 @@ export const test = base.extend({
           targetEvents.push(event);
           relay.publish("primary", event);
         },
-        reply(rootId, own = false) {
+        reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");
           const event = sign(
@@ -1097,7 +1147,7 @@ export const test = base.extend({
             replies.at(-1).created_at + 1,
           );
           replies.push(event);
-          relay.publish("primary", event);
+          if (deliver) relay.publish("primary", event);
           return event;
         },
         append(community, channel, content, deliver = true, own = true, root) {

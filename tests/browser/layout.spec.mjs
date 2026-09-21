@@ -1,11 +1,12 @@
 import { test, expect } from "./fixture.mjs";
-import { settle, upper, expectAnchor } from "./timeline.mjs";
+import { anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
 const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 // Resize tests must not enter the fixture’s deliberately held paging path.
 const readingTest = test.extend({
   tallMessages: true,
-  historyCounts: { alpha: 20, beta: 1 },
+  // Keep the old restored row visible when wheel input selects another row.
+  historyCounts: { alpha: 24, beta: 1 },
 });
 async function expectNonPaging(page, app) {
   expect(
@@ -606,34 +607,32 @@ readingTest(
     const history = page.getByRole("region", {
       name: "Channel message history",
     });
-    const before = await history.evaluate((el) => el.scrollTop);
     await history.hover();
-    await page.mouse.wheel(0, -300);
-    await expect
-      .poll(() => history.evaluate((el) => el.scrollTop))
-      .toBeLessThan(before);
-    await settle(page);
-    // A tall paragraph need not fit wholly in the narrowed viewport. Capture
-    // the visible reading row, including the production clipped-row fallback.
-    const reading = await history.evaluate((el) => {
-      const bounds = el.getBoundingClientRect();
-      const rows = Array.from(el.querySelectorAll("[data-message-id]"));
-      const row =
-        rows.find((row) => {
-          const p = row.querySelector("p").getBoundingClientRect();
-          return p.top >= bounds.top && p.bottom <= bounds.bottom;
-        }) ??
-        rows.find((row) => {
-          const rect = row.getBoundingClientRect();
-          return rect.bottom > bounds.top && rect.top < bounds.bottom;
-        });
-      if (!row) throw new Error("No visible post-gesture reading row");
-      return {
-        id: row.dataset.messageId,
-        y: row.querySelector("p").getBoundingClientRect().top - bounds.top,
-      };
-    });
+    // A tall row above the anchor can exceed one wheel step, and a tall
+    // paragraph need not fit wholly in the narrowed viewport. Keep making real
+    // progress until the visible reading row (including the production
+    // clipped-row fallback) belongs to another message; never repeat a read
+    // until an immobile timeline happens to pass.
+    let reading = original;
+    for (
+      let gesture = 0;
+      gesture < 6 && reading.id === original.id;
+      gesture++
+    ) {
+      const before = await history.evaluate((el) => el.scrollTop);
+      await page.mouse.wheel(0, -300);
+      await expect
+        .poll(() => history.evaluate((el) => el.scrollTop))
+        .toBeLessThan(before);
+      await settle(page);
+      reading = await anchor(page);
+    }
     expect(reading.id).not.toBe(original.id);
+    // An offscreen restored row is ignored even if gesture() fails to clear it.
+    // Keep that row intersecting so the final assertion detects a stale anchor.
+    await expect(
+      history.locator(`[data-message-id="${original.id}"]`),
+    ).toBeInViewport();
     await button(page, "Close Bestie panel").click();
     await settle(page);
     await expectAnchor(page, reading);

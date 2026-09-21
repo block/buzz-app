@@ -1,6 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { canStopAgent, createAgentControl } from "./control";
 import { controlFixture } from "./control-testing";
+import * as communityApi from "../communities/api";
 import { agentDraft, agentEdit } from "../../bundled/agents/agent-edit";
 
 afterEach(() => vi.restoreAllMocks());
@@ -404,6 +405,145 @@ for (const importFirst of [false, true]) {
         expect(control.snapshot().status).toBe("ready");
         control.dispose();
       });
+    }
+  }
+}
+
+for (const operation of ["create", "profile"] as const) {
+  for (const writeFirst of [false, true]) {
+    for (const rejectWrite of [false, true]) {
+      for (const rejectStop of [false, true]) {
+        it(`${operation} credential wait: ${writeFirst ? "write" : "Stop"} settles first; write failure=${rejectWrite}, Stop failure=${rejectStop}`, async () => {
+          const fixture = controlFixture();
+          const created = {
+            ...structuredClone(fixture.agent),
+            id: "created",
+            enabled: false,
+            status: "stopped" as const,
+            runningRevision: null,
+            profilePending: true,
+          };
+          if (operation === "profile") fixture.data.agents.push(created);
+          const before = structuredClone(fixture.data);
+          const committed = structuredClone(before);
+          if (operation === "create") committed.agents.push(created);
+          else committed.agents[1] = { ...created, profilePending: false };
+          const writeGate = deferred<void>();
+          const started = deferred<void>();
+          const stopGate = deferred<void>();
+          const write = vi.fn(async () => {
+            started.resolve();
+            await writeGate.promise;
+            if (rejectWrite) throw "Credential operation failed";
+            return committed;
+          });
+          fixture.host.prepareCreate = vi.fn(async () => created);
+          fixture.host.commitCreate = write;
+          fixture.host.publishProfile = write;
+          vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+            auth: [],
+          });
+          const stopped = structuredClone(before);
+          stopped.agents[0] = {
+            ...fixture.agent,
+            enabled: false,
+            status: "stopped",
+            runningRevision: null,
+          };
+          const action = vi
+            .spyOn(fixture.host, "action")
+            .mockImplementation(async () => {
+              await stopGate.promise;
+              if (rejectStop) throw "Durable disable failed";
+              return stopped;
+            });
+          const control = createAgentControl(fixture.host);
+          await control.refresh();
+          const { create: createAgent, publishProfile } = control;
+          if (!createAgent || !publishProfile)
+            throw Error("Creation fixture unavailable");
+          const create = () =>
+            createAgent(
+              "request",
+              "https://relay.example.test",
+              "owner",
+              agentEdit(agentDraft(fixture.agent)),
+            );
+          const pending = (
+            operation === "create" ? create() : publishProfile(created.id)
+          ).catch(() => {});
+          await started.promise;
+          expect(canStopAgent(control.snapshot(), fixture.agent.id)).toBe(true);
+          expect(canStopAgent(control.snapshot(), "unknown")).toBe(false);
+          const stopping = control
+            .action(fixture.agent.id, "stop")
+            .catch(() => {});
+          expect(action).toHaveBeenCalledExactlyOnceWith(
+            fixture.agent.id,
+            "stop",
+          );
+          await expect(
+            control.action(fixture.agent.id, "stop"),
+          ).rejects.toThrow("in progress");
+          if (writeFirst) {
+            writeGate.resolve();
+            await pending;
+            expect(control.snapshot().data).toEqual(before);
+            expect(control.snapshot().error).toBeNull();
+          } else {
+            stopGate.resolve();
+            await stopping;
+          }
+          expect(control.snapshot().busy).toBe(true);
+          for (const attempt of [
+            create,
+            () => publishProfile(created.id),
+            () => control.action(fixture.agent.id, "start"),
+            () =>
+              control.save(
+                fixture.agent.id,
+                1,
+                agentEdit(agentDraft(fixture.agent)),
+              ),
+            () => control.commitImport("token", ["imported"]),
+          ])
+            await expect(attempt()).rejects.toThrow("in progress");
+          const read = vi.spyOn(fixture.host, "snapshot");
+          await control.refresh();
+          expect(read).not.toHaveBeenCalled();
+          if (writeFirst) {
+            stopGate.resolve();
+            await stopping;
+          } else {
+            const evidence = control.snapshot();
+            writeGate.resolve();
+            await pending;
+            expect(control.snapshot().data).toBe(evidence.data);
+            expect(control.snapshot().error).toBe(evidence.error);
+          }
+          expect(control.snapshot().busy).toBe(false);
+          expect(control.snapshot().data).toEqual(
+            rejectStop ? before : stopped,
+          );
+          expect(control.snapshot().status).toBe(
+            rejectStop ? "error" : "ready",
+          );
+          if (rejectStop)
+            expect(control.snapshot().error).toContain(
+              "Durable disable failed",
+            );
+          const latest = structuredClone(rejectStop ? before : stopped);
+          if (!rejectWrite) {
+            if (operation === "create") latest.agents.push(created);
+            else latest.agents[1] = { ...created, profilePending: false };
+          }
+          read.mockResolvedValue(latest);
+          await control.refresh();
+          expect(control.snapshot().data).toEqual(latest);
+          expect(write).toHaveBeenCalledOnce();
+          control.dispose();
+        });
+      }
     }
   }
 }

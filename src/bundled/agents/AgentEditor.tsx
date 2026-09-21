@@ -37,7 +37,7 @@ export function AgentEditor({
   const stale = current.revision !== agent.revision;
   const blocked = state.busy || state.status !== "ready";
   const canClose =
-    !state.busy || !!(state.pendingLaunch || state.pendingImport);
+    !state.busy || !!(state.pendingLaunch || state.pendingCredentialWrite);
   const transitioning =
     agent.status === "starting" || agent.status === "stopping";
   const unapplied =

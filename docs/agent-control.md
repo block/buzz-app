@@ -23,6 +23,10 @@ remain available when the old library is disconnected, unavailable or archived.
 Create generates a native key, obtains the captured viewer's owner authorization,
 and saves the agent stopped before publishing its profile. Failed profile publication
 has a Retry action on the same saved card; it never creates another identity.
+During a Create/profile wait, **Close** leaves the native operation running and
+exposes the existing cards' recovery Stop. Closing before creation returns skips
+automatic profile publication; refresh status and retry on the saved card. Late
+completion never closes a subsequently opened dialog.
 The dev broker and native host must both support this flow. Packaged human
 signing remains unavailable.
 
@@ -66,7 +70,9 @@ Start/Stop/Restart and exact identity are under **Runtime and identity**. Save u
 native ID/revision and does not restart. Dirty drafts resist backdrop/Escape;
 explicit Cancel/Close discards. Page navigation/reload still discards page-local drafts.
 
-**Browse models** requests the current Databricks catalog on demand. Existing
+**Browse models** requests the current Databricks catalog on explicit button
+activation, including when typing has already opened the local popup. Typing,
+focus and ArrowDown navigation never start a model-host request. Existing
 app-isolated credentials are used/refreshed first; only an authentication failure
 can open browser sign-in. No separate Connect button is required. Errors/cancellation
 need explicit Retry; Refresh in **Advanced model settings** stays headless.
@@ -167,13 +173,14 @@ resources. Production has no disposable storage override or preview launch mode.
   and choose **Load agents** or **Retry**; both refresh status before previewing.
   Never edit the old library to work around a destination error.
 - Operations are serialized except explicit recovery Stop during a pending
-  Start/Restart or Import credential wait. Stop can reach the native fence for a
-  pending launch or another known enabled/running identity; only one Stop is
-  admitted at a time. Other writes remain blocked until both operations settle.
-  Superseded launch/import success, error and finalization cannot overwrite the
-  newer Stop result or unlock its pending operation. Stop does not cancel native
-  import: imported rows may still commit disabled and are recovered by a fresh
-  status read, never by replaying the superseded result.
+  Start/Restart, Import, Create or profile-publication credential wait. Stop can
+  reach the native fence for a pending launch or another known enabled/running
+  identity; only one Stop is admitted at a time. Other writes remain blocked until
+  both operations settle. Superseded success, error and finalization cannot
+  overwrite the newer Stop result or unlock its pending operation. Stop does not
+  cancel native credential writes: imported/created rows may still commit stopped,
+  and profiles may publish. Recover these changes by a fresh status read, never by
+  replaying the superseded result.
   Old pre-write reads cannot overwrite newer command evidence. Failed reads/commands retain the last snapshot
   and draft with explicit uncertainty. Start/Restart/Save/import require a fresh
   successful host read before retry. Explicit Stop is the only recovery exception:

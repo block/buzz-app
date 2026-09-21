@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
 import type {
   AgentControl,
@@ -41,6 +41,13 @@ export function AgentCreateDialog({
   const [saved, setSaved] = useState<AgentView | null>(null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
   const available = !!(
     destination &&
     owner &&
@@ -56,6 +63,8 @@ export function AgentCreateDialog({
       const agent =
         saved ??
         (await control.create(requestId, destination, owner, agentEdit(draft)));
+      // Closing leaves native creation alone; the saved card owns profile retry.
+      if (!mounted.current) return;
       setSaved(agent); // Durable local success survives a failed profile publication.
       const current = state.data?.agents.find((item) => item.id === agent.id);
       if (saved && current && !current.profilePending) {
@@ -65,15 +74,16 @@ export function AgentCreateDialog({
       if (!control.publishProfile)
         throw new Error("Agent saved; rebuild desktop to publish its profile.");
       await control.publishProfile(agent.id);
-      onClose();
+      if (mounted.current) onClose();
     } catch (problem) {
-      setError(
-        problem instanceof Error
-          ? problem.message
-          : "Could not finish creation. Your draft is retained.",
-      );
+      if (mounted.current)
+        setError(
+          problem instanceof Error
+            ? problem.message
+            : "Could not finish creation. Your draft is retained.",
+        );
     } finally {
-      setBusy(false);
+      if (mounted.current) setBusy(false);
     }
   };
   return (
@@ -119,6 +129,13 @@ export function AgentCreateDialog({
                 an agent.
               </p>
             )}
+            {busy && (
+              <p role="status">
+                You can close this dialog to stop another agent. Saving
+                continues; refresh status afterward to recover the saved agent
+                and retry its profile.
+              </p>
+            )}
             {saved && (
               <p role="status">
                 {saved.name} is saved and stopped. Its profile is not confirmed
@@ -135,8 +152,8 @@ export function AgentCreateDialog({
               </Button>
             )}
             <div className="flex justify-end gap-2">
-              <Button disabled={busy || state.busy} onClick={onClose}>
-                {saved ? "Close" : "Cancel"}
+              <Button onClick={onClose}>
+                {busy || saved ? "Close" : "Cancel"}
               </Button>
               <Button
                 type="submit"

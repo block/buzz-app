@@ -174,8 +174,6 @@ export function AgentModelPicker({
           onOpenChange={(next, details) => {
             setOpen(next);
             if (!next && details.reason === "escape-key") setQuery(null);
-            if (next && supported && !fresh && attempted.current !== key)
-              void run("connect");
           }}
           modal={false}
           onItemHighlighted={(item) => {
@@ -208,6 +206,13 @@ export function AgentModelPicker({
               }}
             />
             <Combobox.Trigger
+              tabIndex={0}
+              onClick={() => {
+                if (supported && !fresh && attempted.current !== key) {
+                  setOpen(true);
+                  void run("connect");
+                }
+              }}
               render={<Button aria-label="Browse models">⌄</Button>}
             />
           </div>

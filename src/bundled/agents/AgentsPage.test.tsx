@@ -10,6 +10,8 @@ import {
   within,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import * as communityApi from "../../features/communities/api";
 import { AgentsPage } from "./AgentsPage";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
@@ -19,6 +21,7 @@ import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 const disposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   for (const dispose of disposals.splice(0)) dispose();
 });
 function setup(
@@ -71,7 +74,11 @@ function setup(
       : owned.session;
   let snapshot: RelaySnapshot = {
     status: mode === "disconnected" ? "disconnected" : "ready",
-    scope: "A",
+    scope:
+      mode === "connected"
+        ? `wss://relay.example.test:${"de".repeat(32)}`
+        : "A",
+    ...(mode === "connected" ? { viewer: "de".repeat(32) } : {}),
     generation: 1,
     session,
   };
@@ -472,3 +479,115 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     });
   }
 });
+
+for (const stage of ["create", "profile"] as const) {
+  for (const recoverStop of [false, true]) {
+    it(`${stage} wait: dismiss Create, recovery Stop=${recoverStop}, no late UI replay`, async () => {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const create = vi.fn();
+      const profile = vi.fn();
+      vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+        auth: [],
+      });
+      const { f, control } = setup("connected", (fixture) => {
+        fixture.data.createAvailable = true;
+        fixture.data.defaultWorkspace = "/fixture/workspace";
+        fixture.host.prepareCreate = async () => ({
+          id: "created",
+          pubkey: "cd".repeat(32),
+        });
+        fixture.host.commitCreate = create.mockImplementation(
+          async (_requestId, edit) => {
+            if (stage === "create") await gate;
+            fixture.data.agents.push({
+              ...structuredClone(fixture.agent),
+              id: "created",
+              name: edit.name,
+              enabled: false,
+              status: "stopped",
+              runningRevision: null,
+              profilePending: true,
+            });
+            return structuredClone(fixture.data);
+          },
+        );
+        fixture.host.publishProfile = profile.mockImplementation(async () => {
+          await gate;
+          const created = fixture.data.agents.find(
+            (agent) => agent.id === "created",
+          );
+          if (!created) throw Error("Created fixture missing");
+          created.profilePending = false;
+          return structuredClone(fixture.data);
+        });
+      });
+      const user = userEvent.setup();
+      try {
+        await user.click(
+          await screen.findByRole("button", { name: "Add agent" }),
+        );
+        const dialog = screen.getByRole("dialog", { name: "Create agent" });
+        await user.type(within(dialog).getByLabelText("Name"), "New helper");
+        await user.click(
+          within(dialog).getByRole("button", { name: "Create agent" }),
+        );
+        await waitFor(() =>
+          expect(stage === "create" ? create : profile).toHaveBeenCalledOnce(),
+        );
+        expect(control.snapshot().busy).toBe(true);
+        await user.click(within(dialog).getByRole("button", { name: "Close" }));
+        expect(screen.queryByRole("dialog")).toBeNull();
+        const card = screen.getAllByRole("article", {
+          name: "Agent Fixture agent",
+        })[0];
+        if (!card) throw Error("Running fixture card missing");
+        const stop = within(card).getByRole("button", { name: "Stop" });
+        expect(stop).toBeVisible();
+        expect(stop).toBeEnabled();
+        if (recoverStop) {
+          await user.click(stop);
+          await waitFor(() =>
+            expect(f.calls).toContainEqual({
+              action: "stop",
+              payload: { id: "fixture-agent" },
+            }),
+          );
+          expect(
+            within(card).getByRole("button", { name: "Start" }),
+          ).toBeDisabled();
+        }
+        // A later dialog must not be closed by the dismissed operation's callback.
+        await user.click(screen.getByRole("button", { name: "Add agent" }));
+        const newer = screen.getByRole("dialog", { name: "Create agent" });
+        await act(async () => {
+          release();
+          await gate;
+        });
+        await waitFor(() => expect(control.snapshot().busy).toBe(false));
+        expect(newer).toBeVisible();
+        await user.click(within(newer).getByRole("button", { name: "Cancel" }));
+        await act(async () => control.refresh());
+        expect(
+          control
+            .snapshot()
+            .data?.agents.find((agent) => agent.id === "created"),
+        ).toMatchObject({ enabled: false, profilePending: stage === "create" });
+        if (recoverStop)
+          expect(control.snapshot().data?.agents[0]).toMatchObject({
+            enabled: false,
+            status: "stopped",
+          });
+        expect(create).toHaveBeenCalledOnce();
+        expect(profile).toHaveBeenCalledTimes(stage === "create" ? 0 : 1);
+      } finally {
+        await act(async () => {
+          release();
+          await gate;
+        });
+      }
+    });
+  }
+}

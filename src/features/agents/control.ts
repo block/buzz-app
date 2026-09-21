@@ -101,7 +101,7 @@ export interface AgentControlState {
   busy: boolean;
   /** A credential wait may be interrupted only by explicit Stop. */
   pendingLaunch?: string | null;
-  pendingImport?: boolean;
+  pendingCredentialWrite?: boolean;
   mentionError?: string | null;
   stopping?: boolean;
   error: string | null;
@@ -135,7 +135,7 @@ export interface AgentControl {
 export function canStopAgent(state: AgentControlState, id: string): boolean {
   if (
     state.busy &&
-    ((!state.pendingLaunch && !state.pendingImport) || state.stopping)
+    ((!state.pendingLaunch && !state.pendingCredentialWrite) || state.stopping)
   )
     return false;
   const agent = state.data?.agents.find((candidate) => candidate.id === id);
@@ -208,7 +208,7 @@ export function createAgentControl(
     apply: (result: T) => void,
     allowRecoveryStop = false,
     launchId?: string,
-    importing = false,
+    credentialWrite = false,
   ): Promise<T> {
     if (!host || disposed) throw new Error(agentControlUnavailable);
     if (state.busy && !allowRecoveryStop)
@@ -222,7 +222,7 @@ export function createAgentControl(
       busy: true,
       error: null,
       ...(launchId ? { pendingLaunch: launchId } : {}),
-      ...(importing ? { pendingImport: true } : {}),
+      ...(credentialWrite ? { pendingCredentialWrite: true } : {}),
       stopping: allowRecoveryStop,
     });
     try {
@@ -242,16 +242,18 @@ export function createAgentControl(
       throw new Error("Could not confirm the agent operation.");
     } finally {
       // A superseded credential wait still owns its busy lane, but never the
-      // newer Stop's result/error. Import may commit; refresh recovers its rows.
-      if (!disposed && (launchId || importing)) {
+      // newer Stop's result/error. Credential writes may commit; refresh recovers them.
+      if (!disposed && (launchId || credentialWrite)) {
         update({
-          ...(launchId ? { pendingLaunch: null } : { pendingImport: false }),
+          ...(launchId
+            ? { pendingLaunch: null }
+            : { pendingCredentialWrite: false }),
           busy: !!state.stopping,
         });
       } else if (current === generation) {
         update({
           stopping: false,
-          busy: !!(state.pendingLaunch || state.pendingImport),
+          busy: !!(state.pendingLaunch || state.pendingCredentialWrite),
         });
       }
     }
@@ -282,26 +284,32 @@ export function createAgentControl(
             edit: AgentEdit,
           ) => {
             let id = "";
-            const data = await run(async (native) => {
-              if (!native.prepareCreate || !native.commitCreate)
-                throw new Error("Agent creation is unavailable.");
-              const prepared = await native.prepareCreate(
-                requestId,
-                destination,
-                owner,
-              );
-              id = prepared.id;
-              const result = await communityRequest<{ auth: string[] }>(
-                destination,
-                "authorize-agent",
-                { pubkey: prepared.pubkey, owner },
-              );
-              return native.commitCreate(
-                requestId,
-                edit,
-                JSON.stringify(result.auth),
-              );
-            }, ready);
+            const data = await run(
+              async (native) => {
+                if (!native.prepareCreate || !native.commitCreate)
+                  throw new Error("Agent creation is unavailable.");
+                const prepared = await native.prepareCreate(
+                  requestId,
+                  destination,
+                  owner,
+                );
+                id = prepared.id;
+                const result = await communityRequest<{ auth: string[] }>(
+                  destination,
+                  "authorize-agent",
+                  { pubkey: prepared.pubkey, owner },
+                );
+                return native.commitCreate(
+                  requestId,
+                  edit,
+                  JSON.stringify(result.auth),
+                );
+              },
+              ready,
+              false,
+              undefined,
+              true,
+            );
             const agent = data.agents.find((agent) => agent.id === id);
             if (!agent)
               throw new Error(
@@ -314,11 +322,17 @@ export function createAgentControl(
     ...(host?.publishProfile
       ? {
           publishProfile: (id: string) =>
-            run((native) => {
-              if (!native.publishProfile)
-                throw new Error("Profile publication is unavailable.");
-              return native.publishProfile(id);
-            }, ready),
+            run(
+              (native) => {
+                if (!native.publishProfile)
+                  throw new Error("Profile publication is unavailable.");
+                return native.publishProfile(id);
+              },
+              ready,
+              false,
+              undefined,
+              true,
+            ),
         }
       : {}),
     snapshot: () => state,

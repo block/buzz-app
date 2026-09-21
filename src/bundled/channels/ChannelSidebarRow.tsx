@@ -70,7 +70,7 @@ export function ChannelSidebarRow({
           icon
         )
       }
-      trailing={badge}
+      trailing={badge && <span className={styles.badges}>{badge}</span>}
     />
   );
   return (
@@ -112,17 +112,18 @@ export function ChannelSidebarRow({
               if (open) starting.current = false;
             }}
           >
-            <Menu.Trigger
-              render={
-                <IconButton
-                  size="compact"
-                  aria-label={`More options for ${channel.name}`}
-                  icon={<DotsThreeVerticalIcon size={15} />}
-                />
-              }
-              className={styles.more}
-              aria-label={`More options for ${channel.name}`}
-            />
+            <span className={styles.more}>
+              <Menu.Trigger
+                render={
+                  <IconButton
+                    size="compact"
+                    aria-label={`More options for ${channel.name}`}
+                    icon={<DotsThreeVerticalIcon size={15} />}
+                  />
+                }
+                aria-label={`More options for ${channel.name}`}
+              />
+            </span>
             <Menu.Portal>
               <Menu.Positioner
                 side="bottom"

@@ -77,32 +77,31 @@ export function AgentChoice({
       : "Choose an agent";
   return (
     <Menu.Root>
-      <Menu.Trigger
-        render={
-          <Button variant="outline" size="sm">
-            {null}
-          </Button>
-        }
-        className={styles.agentTrigger}
-        aria-label={label}
-        title={label}
-        disabled={disabled}
-      >
-        {selected ? (
-          <Avatar
-            name={selected.name}
-            src={picture(selected.avatar)}
-            className={styles.agentAvatar ?? ""}
-            shape="squircle"
-          />
-        ) : (
-          <RobotIcon size={20} aria-hidden="true" />
-        )}
-        <span className={styles.agentName}>
-          {selected?.name ?? "Choose agent"}
-        </span>
-        <CaretUpIcon size={12} aria-hidden="true" />
-      </Menu.Trigger>
+      <span className={styles.agentTrigger}>
+        <Menu.Trigger
+          render={
+            <Button variant="outline" size="sm" style={{ maxWidth: "100%" }}>
+              {selected ? (
+                <Avatar
+                  name={selected.name}
+                  src={picture(selected.avatar)}
+                  className={styles.agentAvatar ?? ""}
+                  shape="squircle"
+                />
+              ) : (
+                <RobotIcon size={20} aria-hidden="true" />
+              )}
+              <span className={styles.agentName}>
+                {selected?.name ?? "Choose agent"}
+              </span>
+              <CaretUpIcon size={12} aria-hidden="true" />
+            </Button>
+          }
+          aria-label={label}
+          title={label}
+          disabled={disabled}
+        />
+      </span>
       <Menu.Portal>
         <Menu.Positioner
           side={side}

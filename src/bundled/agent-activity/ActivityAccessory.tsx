@@ -97,7 +97,7 @@ export function ActivityAccessory({
                       </>
                     )}
                   </p>
-                  <p className="text-body-sm text-secondary">
+                  <p className="text-body-sm">
                     Owner-only activity. Select to inspect.
                   </p>
                   <code className="font-mono text-mono">{agent}</code>

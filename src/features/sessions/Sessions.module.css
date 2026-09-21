@@ -101,6 +101,8 @@
 }
 
 .agentTrigger {
+  display: inline-flex;
+  min-width: 0;
   max-width: min(240px, 45vw);
 }
 .agentTrigger .agentAvatar,

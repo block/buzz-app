@@ -1,4 +1,3 @@
-@import "../../shared/design-system/styles/avatar-shape.css";
 @reference "../../shared/styles/globals.css";
 
 /* Reusable conversation components; plugins own placement and surrounding layout. */

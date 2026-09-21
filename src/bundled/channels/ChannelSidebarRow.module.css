@@ -17,13 +17,18 @@
   margin-right: var(--space-chip-inset);
 }
 .row:is(:hover, :has(:focus-visible)) .more,
-.row .more[data-popup-open] {
+.row .more:has([data-popup-open]) {
   opacity: 1;
   pointer-events: auto;
 }
 .iconSpace {
   width: 17px;
   flex: 0 0 17px;
+}
+.badges {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
 }
 .positioner {
   z-index: var(--layer-popover);

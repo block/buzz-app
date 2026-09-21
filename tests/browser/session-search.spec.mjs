@@ -21,7 +21,7 @@ test("child-only search temporarily opens both collapsed sidebar levels", async 
   const parentRow = page.locator(`button[data-channel-id="${parent}"]`);
   const child = sidebar.locator('button[data-channel-id="alpha"]');
   const section = sidebar.locator("details").filter({ has: parentRow });
-  const search = page.getByRole("textbox", { name: "Search channels" });
+  const search = page.getByRole("searchbox", { name: "Search channels" });
   await expect(child).toBeVisible();
   await sidebar
     .getByRole("button", { name: `Collapse sessions in ${parent}` })

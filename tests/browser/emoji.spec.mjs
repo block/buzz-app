@@ -366,10 +366,14 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(toneMenu).toHaveCount(0);
     await expect(skinTone).toBeFocused();
     await search.focus();
-    const searchIcon = page.locator('[aria-label="Emoji picker"] > svg');
+    const searchIcon = page.locator(
+      '[aria-label="Emoji picker"] svg[class*="sharedSearchIcon"]',
+    );
     await expectPhosphor(searchIcon, "magnifying-glass");
     await expect(
-      page.locator('[aria-label="Emoji picker"] > svg:visible'),
+      page.locator(
+        '[aria-label="Emoji picker"] svg[class*="sharedSearchIcon"]:visible',
+      ),
     ).toHaveCount(1);
     await expect(page.locator("em-emoji-picker .search .loupe")).toHaveCSS(
       "visibility",
@@ -464,7 +468,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await search.fill("party");
     await expectPhosphor(emojiClear.locator("svg"), "x-circle");
     await expect(
-      page.locator('[aria-label="Emoji picker"] > svg:visible'),
+      page.locator(
+        '[aria-label="Emoji picker"] svg[class*="sharedSearchIcon"]:visible',
+      ),
     ).toHaveCount(1);
     const insert = page.getByRole("button", {
       name: ":party:",

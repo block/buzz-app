@@ -141,7 +141,7 @@ async function parsePresence(
   if (!Array.isArray(raw) || raw.length > authors.length)
     throw new Error("Invalid presence snapshot");
   const values = new Map<string, "online" | "away" | "offline">();
-  for (const event of await parseEvents(raw, signal)) {
+  for (const event of await parseEvents(raw, eventDto, signal)) {
     const subjects = event.tags.filter(([tag]) => tag === "p");
     const subject = subjects[0]?.[1];
     let status: unknown = event.content;

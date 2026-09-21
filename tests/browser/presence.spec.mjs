@@ -204,7 +204,7 @@ test("foreground send and cold channel entry remain available during a profile s
 });
 
 test.describe("mounted conversation demand", () => {
-  test.use({ threadUnread: true });
+  test.use({ threadUnread: true, historyCounts: { alpha: 20, beta: 20 } });
   test("timeline and thread author indicators share one bounded snapshot", async ({
     page,
     app,
@@ -246,7 +246,11 @@ test.describe("mounted conversation demand", () => {
 });
 
 test.describe("large mounted thread", () => {
-  test.use({ threadUnread: true, presenceThreadAuthors: 300 });
+  test.use({
+    threadUnread: true,
+    presenceThreadAuthors: 300,
+    historyCounts: { alpha: 20, beta: 20 },
+  });
   test("distinct thread authors stay bounded through loading, scrolling and unmount", async ({
     page,
     app,

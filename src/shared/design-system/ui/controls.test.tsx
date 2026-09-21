@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, test, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { Button } from "./Button";
@@ -230,7 +230,7 @@ test.each([false, true])(
         await user.click(
           screen.getByRole("button", { name: "Reset preferences" }),
         );
-      expect(checkbox).toBeChecked();
+      await waitFor(() => expect(checkbox).toBeChecked());
       expect(all).toBeChecked();
       expect(mentions).not.toBeChecked();
       expect(Object.fromEntries(new FormData(form))).toEqual({
@@ -360,3 +360,120 @@ test("reset restores an initially empty radio group and unchecked checkbox", asy
     ),
   ).toEqual({ summary: "no" });
 });
+
+test.each([false, true])(
+  "controlled choices retain submitted values when reset does not change the owner (external form: %s)",
+  async (external) => {
+    const user = userEvent.setup();
+    const checkboxChange = vi.fn();
+    const radioChange = vi.fn();
+    function Example() {
+      const [updated, setUpdated] = useState(false);
+      const choices = (
+        <>
+          <Checkbox
+            label="Include summary"
+            name="summary"
+            value="yes"
+            checked={updated}
+            onCheckedChange={checkboxChange}
+            form={external ? "preferences" : undefined}
+          />
+          <Field label="Delivery">
+            <RadioGroup
+              name="delivery"
+              value={updated ? "mentions" : "all"}
+              onValueChange={radioChange}
+              form={external ? "preferences" : undefined}
+            >
+              <Radio label="All updates" value="all" />
+              <Radio label="Mentions only" value="mentions" />
+            </RadioGroup>
+          </Field>
+        </>
+      );
+      return (
+        <>
+          <form id="preferences" aria-label="Preferences">
+            {!external && choices}
+            <button type="button" onClick={() => setUpdated(true)}>
+              Update owner
+            </button>
+            <button type="reset">Reset preferences</button>
+          </form>
+          {external && choices}
+        </>
+      );
+    }
+    render(<Example />);
+    await user.click(screen.getByRole("button", { name: "Update owner" }));
+    const form = screen.getByRole("form") as HTMLFormElement;
+    const values = { delivery: "mentions", summary: "yes" };
+    expect(Object.fromEntries(new FormData(form))).toEqual(values);
+    await user.click(screen.getByRole("button", { name: "Reset preferences" }));
+    expect(
+      screen.getByRole("checkbox", { name: "Include summary" }),
+    ).toBeChecked();
+    expect(screen.getByRole("radio", { name: "Mentions only" })).toBeChecked();
+    expect(Object.fromEntries(new FormData(form))).toEqual(values);
+    expect(checkboxChange).not.toHaveBeenCalled();
+    expect(radioChange).not.toHaveBeenCalled();
+  },
+);
+
+test.each(["disabled", "late-mounted"])(
+  "reset binds to radios that become available after group mount (%s)",
+  async (mode) => {
+    const user = userEvent.setup();
+    const choices = (
+      <>
+        <Radio label="All updates" value="all" />
+        <Radio label="Mentions only" value="mentions" />
+      </>
+    );
+    function DelayedChoices() {
+      const [ready, setReady] = useState(false);
+      return (
+        <>
+          <button type="button" onClick={() => setReady(true)}>
+            Show choices
+          </button>
+          {ready && choices}
+        </>
+      );
+    }
+    function Example() {
+      const [disabled, setDisabled] = useState(mode === "disabled");
+      return (
+        <form aria-label="Preferences">
+          <button type="button" onClick={() => setDisabled(false)}>
+            Enable choices
+          </button>
+          <Field label="Delivery">
+            <RadioGroup name="delivery" defaultValue="all" disabled={disabled}>
+              {mode === "late-mounted" ? <DelayedChoices /> : choices}
+            </RadioGroup>
+          </Field>
+          <button type="reset">Reset preferences</button>
+        </form>
+      );
+    }
+    render(<Example />);
+    await user.click(
+      screen.getByRole("button", {
+        name: mode === "disabled" ? "Enable choices" : "Show choices",
+      }),
+    );
+    await user.click(screen.getByRole("radio", { name: "Mentions only" }));
+    await user.click(screen.getByRole("button", { name: "Reset preferences" }));
+    expect(screen.getByRole("radio", { name: "All updates" })).toBeChecked();
+    expect(
+      screen.getByRole("radio", { name: "Mentions only" }),
+    ).not.toBeChecked();
+    expect(
+      Object.fromEntries(
+        new FormData(screen.getByRole("form") as HTMLFormElement),
+      ),
+    ).toEqual({ delivery: "all" });
+  },
+);

@@ -1,4 +1,5 @@
 import { test, expect } from "./fixture.mjs";
+import { end } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 const github = "https://github.com/block/buzz/pull/1";
@@ -49,6 +50,8 @@ test("unhandled links open externally and disabling GitHub restores the fallback
   await page.goto(app.origin);
   await openMessages(page);
   app.append("primary", "alpha", `${github} ${ordinary} ${unsupported}`);
+  await expect(link(page, github)).toBeAttached();
+  await end(page);
   await link(page, github).click();
   const panel = page.getByRole("complementary", {
     name: "GitHub",

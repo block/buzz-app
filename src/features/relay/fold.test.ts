@@ -194,6 +194,46 @@ describe("message fold", () => {
     },
   );
 
+  it.each([
+    [9, "Plain message"],
+    [9, JSON.stringify({ content: "Envelope-looking prose", is_agent: true })],
+    [40002, JSON.stringify({ content: "Agent message" })],
+    [40002, "Malformed envelope"],
+  ])(
+    "keeps the original kind %s display hint independent of body and edits (%s)",
+    (kind, content) => {
+      const original = signed(alice, {
+        kind,
+        content,
+        created_at: 10,
+        tags: [["h", channel]],
+      });
+      const hint = kind === 40002 ? true : undefined;
+      expect(
+        foldMessages(channel, relay.pubkey, [original])[0]?.agentEnvelope,
+      ).toBe(hint);
+      for (const replacement of [
+        "Plain edit",
+        JSON.stringify({ content: "Envelope edit" }),
+      ]) {
+        const edit = signed(alice, {
+          kind: 40003,
+          content: replacement,
+          created_at: 11,
+          tags: [["e", original.id]],
+        });
+        const [row] = foldMessages(channel, relay.pubkey, [original, edit]);
+        expect(row?.edited).toBe(true);
+        expect(row?.agentEnvelope).toBe(hint);
+        expect(row?.content).toBe(
+          kind === 40002 && replacement.startsWith("{")
+            ? "Envelope edit"
+            : replacement,
+        );
+      }
+    },
+  );
+
   it("unwraps agent envelopes and projects valid CommonMark images through one safe URL policy", () => {
     const agent = signed(bob, {
       kind: 40002,
@@ -207,7 +247,13 @@ describe("message fold", () => {
       created_at: 10,
       tags: [
         ["h", channel],
-        ["imeta", "url https://x.test/c.jpg", "m image/jpeg"],
+        [
+          "imeta",
+          "url https://x.test/c.jpg",
+          "m image/jpeg",
+          "dim 1280x720",
+          "image https://x.test/c-poster.jpg",
+        ],
         ["imeta", "url http://insecure.test/d.jpg"],
         ["imeta", "url https://user:secret@x.test/e.jpg"],
       ],
@@ -220,7 +266,12 @@ describe("message fold", () => {
 
 [image]: https://x.test/reference.jpg`);
     expect(row.attachments).toEqual([
-      { url: "https://x.test/c.jpg", video: false },
+      {
+        url: "https://x.test/c.jpg",
+        video: false,
+        dimensions: { width: 1280, height: 720 },
+        previewUrl: "https://x.test/c-poster.jpg",
+      },
       { url: "https://x.test/a.png", video: false },
       { url: "https://x.test/b.mp4", video: true },
       { url: "https://x.test/reference.jpg", video: false },
@@ -365,6 +416,7 @@ it.each([
       url: "https://x.test/original.png",
       video: false,
       ...(valid ? { blurhash: hash } : {}),
+      previewUrl: "https://x.test/thumbnail.png",
     },
     { url: "https://x.test/legacy.png", video: false },
   ]);

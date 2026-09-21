@@ -6,7 +6,41 @@ test.use({
   readState: true,
   threadUnread: true,
   historyCounts: { alpha: 20, beta: 1 },
+  largeSidebar: true,
+  pluginFixtures: true, // Observe the real navigation completion, not reply mount timing.
 });
+test.describe("mentioned reply priority", () => {
+  test.use({ threadUnreadMentions: true });
+
+  test("a mention and broadcast remain distinguishable in Activity", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    await expect(
+      alpha.getByRole("img", { name: /unread threads?/ }),
+    ).toBeVisible();
+    await alpha.hover();
+    const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+    await expect(popover).toBeVisible();
+    const items = popover.getByRole("button", {
+      name: /Open unread thread from/,
+    });
+    await expect(items).toHaveCount(2);
+    const names = await items.evaluateAll((rows) =>
+      rows.map((row) => row.getAttribute("aria-label")),
+    );
+
+    expect(
+      names.every((name) => name?.startsWith("Open unread thread from ")),
+    ).toBe(true);
+    expect(new Set(names.map((name) => name?.split(": ").at(-1)))).toEqual(
+      new Set(["Broadcast reply", "Unread reply 1"]),
+    );
+  });
+});
+
 test("thread buttons show observed unread independently, clear only after reading, and expose hover/focus affordance", async ({
   page,
   app,
@@ -37,12 +71,61 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(dot(first)).toBeVisible();
   await expect(dot(other)).toBeVisible();
   await expect(broadcast).toHaveAccessibleName(/Observed unread replies/);
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  const activity = alpha.getByRole("img", { name: /unread threads?/ });
+  await expect(activity).toBeVisible();
+  await expect(alpha.locator("span").first()).toHaveCSS("font-weight", "500");
+  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Mark unread on this device", exact: true })
+    .click();
+  await page.getByLabel("Conversation options", { exact: true }).click();
+  await expect(
+    alpha.getByRole("img", { name: /Marked unread on this device only/ }),
+  ).toBeAttached();
+  await expect(activity).toHaveAccessibleName(/unread threads?/);
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "dark";
+  });
+  await alpha.hover();
+  const popover = page.getByRole("dialog", { name: "Activity in Alpha" });
+  await expect(popover).toBeVisible();
+  await expect(
+    popover.getByText("Activity in Alpha", { exact: true }),
+  ).toHaveCount(0);
+  await popover.screenshot({
+    path: testInfo.outputPath("activity-popover.png"),
+  });
+  await expect(
+    popover.getByRole("button", { name: /Open unread thread from/ }),
+  ).toHaveCount(1);
   const queries = () =>
     app.report.queries.filter(({ filter }) => filter.depth_limit);
   expect(queries()).toHaveLength(0); // Merely displaying buttons never fetches threads.
-  const rect = await first.boundingBox();
+  await page.keyboard.press("Escape");
+  await alpha.focus();
+  await alpha.press("Enter");
+  await expect(popover).toBeVisible();
+  const item = popover
+    .getByRole("button", {
+      name: /Open unread thread from/,
+    })
+    .first();
+  await item.focus();
+  await expect(item).toBeFocused();
+  await item.press("Enter");
+  await expect(
+    page.getByRole("complementary", { name: "Thread", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close thread", exact: true }).click();
+  await expect(alpha).toBeFocused();
+  const beforeRect = await first.boundingBox();
   await first.hover();
-  expect(await first.boundingBox()).toEqual(rect);
+  const afterRect = await first.boundingBox();
+  expect(afterRect).not.toBeNull();
+  expect(beforeRect).not.toBeNull();
+  expect(afterRect.width).toBe(beforeRect.width);
+  expect(afterRect.height).toBe(beforeRect.height);
   await expect(first).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   const hover = await first.evaluate((el) => {
     const s = getComputedStyle(el);
@@ -61,6 +144,9 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(first).toHaveCSS("outline-style", "solid");
   await expect(first).toHaveCSS("outline-width", "2px");
   await broadcast.focus();
+  const previousAttempt = await page.evaluate(
+    () => window.fixtureNavigation.snapshot().attempt.id,
+  );
   await broadcast.press("Enter");
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -70,10 +156,33 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(
     panel.getByText("Unread reply 0", { exact: true }),
   ).toBeVisible();
-  await panel
-    .getByRole("textbox", { name: "Reply to thread", exact: true })
-    .focus();
+  // Content visibility precedes the navigation's deferred reveal/focus. Finish
+  // that owner before testing composer-only dwell; faster reads expose the race.
+  await expect
+    .poll(() =>
+      page.evaluate((previous) => {
+        const { status, entry, attempt } = window.fixtureNavigation.snapshot();
+        return {
+          status,
+          messageId: entry.target.messageId,
+          freshAttempt: attempt.id !== previous,
+        };
+      }, previousAttempt),
+    )
+    .toEqual({
+      status: "opened",
+      freshAttempt: true,
+      messageId: app.histories
+        .get("primary/alpha")
+        .find((row) => row.content === "Broadcast reply").id,
+    });
+  const replyComposer = panel.getByRole("textbox", {
+    name: "Reply to thread",
+    exact: true,
+  });
+  await replyComposer.focus();
   await page.waitForTimeout(1000);
+  await expect(replyComposer).toBeFocused();
   await expect(first).toHaveAccessibleName(/Observed unread replies/); // Click/composer focus is not reading.
   await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");

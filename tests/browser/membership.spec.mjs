@@ -30,6 +30,16 @@ test("Channels renders grouped history and live membership without turning activ
     "Pinky added by you, along with Brain",
   );
   await expect(groups.locator("button")).toHaveCount(0);
+  const avatars = groups.first().locator("[data-avatar-shape]");
+  await expect(avatars).toHaveCount(2);
+  await expect(avatars.filter({ hasText: "PI" })).toHaveAttribute(
+    "data-avatar-shape",
+    "circle",
+  );
+  await expect(avatars.filter({ hasText: "BR" })).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
   const centered = await groups.first().evaluate((row) => {
     const content = row.querySelector("p");
     const avatars = row.querySelector('[aria-hidden="true"]');
@@ -99,7 +109,12 @@ keyboardTest(
       .getByLabel("Pages")
       .getByRole("button", { name: "Messages", exact: true })
       .click();
-    await page.getByRole("button", { name: "Alpha", exact: true }).click();
+    // Unread evidence contributes to the accessible name; channel identity does not change.
+    const alpha = page.locator('button[data-channel-id="alpha"]');
+    await expect(alpha.getByRole("img")).toHaveAccessibleName(
+      /observed unread messages/,
+    );
+    await alpha.click();
     const feed = page.getByRole("region", { name: "Channel message history" });
     const distance = () =>
       feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);

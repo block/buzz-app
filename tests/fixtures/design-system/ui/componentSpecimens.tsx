@@ -340,6 +340,24 @@ function AvatarSpecimen() {
           />
         </Specimen>
       </SpecimenGroup>
+      <SpecimenGroup label="Profile buttons">
+        <div className="component-specimen-row">
+          <IconButton
+            aria-label="View Morgan profile"
+            size="large"
+            shape="round"
+            icon={
+              <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
+            }
+          />
+          <IconButton
+            aria-label="View Alex profile"
+            size="large"
+            shape="round"
+            icon={<Avatar alt="" fallback="Alex" size="fill" />}
+          />
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Fill an owning layout box">
         <div className="size-40 overflow-hidden rounded-2xl">
           <Avatar

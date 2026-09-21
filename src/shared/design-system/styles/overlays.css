@@ -97,3 +97,15 @@
     }
   }
 }
+
+/* Shared paint for anchored popups. Features retain layout and interaction. */
+@utility popover-surface {
+  /* Selection must remain visible on the raised dark surface. */
+  --affordance-selected: var(--affordance-subtle-hover);
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-popover);
+  color: var(--text-standard);
+  box-shadow: var(--shadow-sm);
+  z-index: var(--layer-popover);
+}

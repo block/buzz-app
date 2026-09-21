@@ -1,17 +1,14 @@
+@reference "../../shared/styles/globals.css";
+
 .popup {
+  @apply popover-surface;
   --completion-highlight: var(--affordance-selected);
   position: fixed;
   display: flex;
   flex-direction: column;
   overflow: auto;
   box-sizing: border-box;
-  z-index: 30;
   padding: var(--space-1h);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  background: var(--surface-panel);
-  color: var(--text-standard);
-  box-shadow: var(--shadow-sm);
 }
 .list {
   max-height: 280px;

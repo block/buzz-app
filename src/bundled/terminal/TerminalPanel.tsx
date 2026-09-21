@@ -169,7 +169,7 @@ function Content({
         <>
           {(error || entry?.error) && (
             <p
-              className={`${styles.notice} text-body text-red-12`}
+              className={`${styles.notice} text-body text-danger`}
               role="alert"
             >
               {error ?? entry?.error}

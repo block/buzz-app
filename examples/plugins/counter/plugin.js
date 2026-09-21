@@ -10,7 +10,10 @@ export function apply(ctx) {
       const [count, setCount] = React.useState(0);
       return React.createElement(
         "section",
-        { style: { padding: 24, background: "white", borderRadius: 24 } },
+        {
+          className: "ui-card",
+          style: { padding: "var(--space-panel-inset)" },
+        },
         React.createElement("h1", null, "Counter playground"),
         React.createElement("p", null, "Your local plugin is running. Narf!"),
         React.createElement(

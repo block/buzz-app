@@ -130,14 +130,11 @@ palette, typography roles, materials and component styles with one Tailwind rese
 It does not import the viewer's global entry, preference owner, docking vendor CSS
 or workspace experiments. Panel styling remains defined only by the shared system.
 
-Existing screens retain their palette, canvas, type sizes and native-control
-recipes. Compatibility names are temporary, not the vocabulary for new work.
-`bg-primary` retains the old action fill via an explicit compatibility utility;
-`text-primary` and `border-primary` belong to the system. The old control radius
-is explicitly named `--radius-legacy-control` to avoid overriding shared controls.
-Legacy monospace utilities and native code retain their system font stack; migrated
-boundaries select the shared mono face. No old paint role is aliased merely because it sounds similar: the current
-palettes differ, and aliasing them would silently recolor unmigrated screens.
+Bundled screens use semantic colors and shared controls. Compatibility names
+forward to the same shared roles; they are not the vocabulary for new work.
+`bg-primary` forwards to the prominent action role, while `text-primary` and
+`border-primary` keep their text and border meanings. Native plugin fallbacks
+remain available outside shared-control boundaries.
 
 Shared primitives carry `data-buzz-ui`, including portal popup roots. Legacy
 native-element selectors exclude that boundary and its descendants (without native CSS scope); shared typography starts there.
@@ -162,3 +159,32 @@ and the temporary font/color compatibility contracts. Remove compatibility check
 as their legacy consumers disappear; no separate legacy viewer or test suite is
 needed. Browser checks do not establish native or packaged acceptance. Broad scan
 remains an agreed integration-batch gate.
+
+## Baseline ownership and exceptions
+
+Bundled UI uses semantic roles, including renderer adapters. Change color values
+in the shared token layer and visual control recipes in the shared components.
+Feature CSS owns layout, not a second Button/Input recipe. `design:check` rejects
+direct palette consumption and feature selectors that override control paint,
+padding or typography; `design:census` includes the app and renderer string reads.
+These are static guardrails, not a substitute for browser checks.
+
+Anchored emoji, mention, completion, account and diagnostics surfaces use
+`popover-surface` for their border, fill, elevation and layer. Their placement,
+scrolling and specialized keyboard/editor interactions remain feature-owned.
+Popup selection uses the shared hover affordance so it stays visible on the
+raised dark surface. Compact completion/emoji layouts may select shared radius
+tokens to fit their inner geometry. Shared Button/IconButton `title` props render
+a shared Tooltip; content titles (full names, timestamps and media descriptions) remain native.
+
+Explicit exceptions: GIF tiles use native media buttons; rendered Markdown task
+checkboxes and inline links keep their content semantics; the rich editor uses
+native selection colors; terminal ANSI colors and decorative artwork remain
+renderer-owned. The design viewer's layout experiments are not bundled app UI.
+Plugin examples consume public CSS roles and host fallbacks. External plugins
+cannot be guaranteed to follow this system; no new plugin API is introduced here.
+
+The browser adoption regression changes semantic fill, type and spacing values
+and checks the actual Settings button, inline chips and production CSS inside
+message-history containers and anchored popups. It exists because DOM emulation
+cannot establish CSS layer ownership.

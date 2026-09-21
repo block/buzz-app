@@ -1,3 +1,5 @@
+@reference "../../shared/styles/globals.css";
+
 .customEmoji {
   display: inline-block;
   width: var(--inline-emoji-size, 22px);
@@ -12,7 +14,9 @@
   min-width: 0;
 }
 .emojiPopover {
+  @apply popover-surface;
   --picker-container-radius: var(--radius-card);
+  border-radius: var(--picker-container-radius);
   --picker-inner-radius: calc(var(--picker-container-radius) - var(--space-2));
   --picker-search-radius: var(--radius-row);
   --picker-scrollbar-space: var(--space-4);
@@ -27,13 +31,8 @@
   position: absolute;
   bottom: 42px;
   left: 0;
-  z-index: 5;
   max-width: 100%;
   overflow: hidden;
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-card);
-  background: var(--surface-panel);
-  box-shadow: var(--elevation-card);
 }
 .sharedSearchIcon {
   position: absolute;
@@ -44,7 +43,7 @@
   pointer-events: none;
 }
 .reactionPositioner {
-  z-index: 100;
+  z-index: var(--layer-popover);
 }
 .reactionPopover {
   position: relative;

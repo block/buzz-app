@@ -179,6 +179,12 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
     "Shortcut count: 1",
   );
   await page.keyboard.press("Escape");
+  // Dismissal and focus restoration finish asynchronously. The host correctly
+  // suppresses Settings while a closing modal still owns the keyboard.
+  await expect(
+    page.getByRole("dialog", { name: "Find a page", includeHidden: true }),
+  ).toHaveCount(0);
+  await expect(button(page, "Find a page")).toBeFocused();
   await page.keyboard.press(`${modifier}+,`);
   await button(page, "Plugins").click();
   const toggle = page.getByRole("switch", { name: "Enable Shortcut counter" });

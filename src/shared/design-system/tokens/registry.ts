@@ -273,25 +273,7 @@ export const RAMPS: Ramp[] = [
    PUBLIC ROLES
    ============================================================ */
 
-/**
- * There is no identity-group generator any more, and that is the point.
- *
- * A helper here built five roles from one line of a hue lookup — `bg-accent`,
- * `bg-accent-tint`, `text-accent`, and so on — which is exactly how twenty status
- * roles came to exist without anyone designing them. Every one of those roles
- * held the same palette step in both modes, so each was a name in front of a
- * number.
- *
- * Screens now write the step: `bg-purple-9`, `bg-purple-3`, `text-purple-12`.
- * Safe here and not in Tailwind because **every step is authored per mode**, so a
- * class still behaves in light and dark. The step-to-role mapping in DESIGN.md
- * survives as guidance for *which* step to reach for; it is no longer a
- * generator.
- *
- * A name comes back when a repeated accent PATTERN appears — a tinted callout on
- * four screens — and it will be named for the pattern, not the colour.
- */
-
+/** Semantic roles name color jobs; the palette remains an implementation detail. */
 export const ROLE_GROUPS: RoleGroup[] = [
   {
     id: "semantic-surface",
@@ -592,7 +574,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
     id: "surfaces",
     name: "Structural surfaces",
     description:
-      "Legacy aliases maintained during migration. The original rationale was: each takes a different step in light and dark, so no single class like `bg-neutral-1` is correct in both. That is the whole test for whether a colour earns a name. Ask one question: is it behind, on, above, or in? (`bg-hover` was here and is now written as `bg-neutral-4` \u2014 it was the same step in both modes. Hover is a *relationship*, one step more contrast than whatever is underneath, which no single token could express anyway.)",
+      "Compatibility aliases forward to semantic surface roles. New screens use surface-base, surface-panel and surface-popover directly.",
     roles: [
       {
         token: "bg-app",

@@ -35,15 +35,6 @@
   color: var(--text-subtle);
   gap: var(--space-2);
 }
-.edge button {
-  border: 0;
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  color: var(--text-subtle);
-  background: var(--affordance-subtle);
-}
 .day {
   display: flex;
   align-items: center;
@@ -274,14 +265,6 @@
   flex-wrap: wrap;
   gap: var(--space-2);
   padding: var(--space-3) var(--space-4);
-}
-.threadHistoryControls button {
-  padding: var(--space-1h) var(--space-2);
-  background: var(--affordance-selected);
-  border: 0;
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
 }
 .threadNote {
   color: var(--text-subtle);

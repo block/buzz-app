@@ -194,18 +194,14 @@
   background: var(--affordance-selected);
 }
 .diagnosticsMenu {
+  @apply popover-surface;
   position: absolute;
   right: 0;
   top: 36px;
-  z-index: 5;
   width: min(300px, 70vw);
   max-height: 60vh;
   overflow: auto;
   padding: var(--space-3);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  background: var(--surface-panel);
-  box-shadow: var(--elevation-popover);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);

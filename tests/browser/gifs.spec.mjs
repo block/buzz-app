@@ -270,9 +270,14 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
 for (const initial of ["invalid response", "unsupported relay"]) {
   test(`GIF discovery retries after ${initial}`, async ({ page, app }) => {
     let attempts = 0;
+    let releaseFirst;
+    const firstResponse = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
     await page.route("**/api/relay/*/gif-info", async (route) => {
       attempts += 1;
       if (attempts === 1) {
+        await firstResponse;
         await route.fulfill({
           status: 200,
           contentType: "application/json",
@@ -300,8 +305,15 @@ for (const initial of ["invalid response", "unsupported relay"]) {
     });
     const gifTab = page.getByRole("tab", { name: "GIF", exact: true });
 
-    await trigger.click();
-    await expect.poll(() => attempts).toBe(1);
+    // Hover/focus may prefetch. Hold that response through the opening click
+    // so the click cannot accidentally become a retry of a completed request.
+    try {
+      await trigger.click();
+      await expect.poll(() => attempts).toBe(1);
+      await expect(trigger).toHaveAttribute("aria-busy", "true");
+    } finally {
+      releaseFirst();
+    }
     await expect(trigger).not.toHaveAttribute("aria-busy", "true");
     await expect(gifTab).toHaveCount(0);
     await trigger.click();

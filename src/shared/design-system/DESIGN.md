@@ -210,13 +210,15 @@ components use semantic roles.
 
 ## Colour discipline
 
+Use `text-danger`, `text-warning` and `text-success` for status text. Pair them
+with the corresponding semantic surface and border roles when a treatment needs
+them. Roles describe intent even when their current values happen to match.
+
 - **Colour is signal.** Status, authorship, presence, and mentions earn colour. Ordinary structure does not.
 - **Name colours after colour jobs, never after the thing on screen.** If the name is an interface element — mention, unread, badge, sidebar — it belongs in the component, assembled from roles that already exist.
 - **A colour is used one of two ways: solid or tint.** Solid carries an action and takes its paired text; tint carries a meaning and takes coloured text. There is deliberately nothing between them.
 - **Accent is signal, never structure.** Reaching for an accent surface where a neutral one belongs is the most common way a functional screen starts to look decorated.
 - **Never use a status colour decoratively.** A green that does not mean success teaches people to stop trusting green.
-- **There are no status roles, and that is deliberate.** Danger, success, warning, and info existed as four identities of five roles each — the accent's shape copied four times, generated from one line of a lookup table. **Nineteen of the twenty had no reader outside the page that displayed them.** They were invented by symmetry rather than by need, and the symmetry actively hid the decision: the red ramp alone offers red-3, red-8, red-9 and red-12 for "an error", and a set of ready-made names made that look settled when it never was. The proof is that `text-danger` shipped resolving to the wrong red and no design had ever looked closely enough to notice. **Status colour gets designed on the screen that needs it.** Until then the ramps are right there — pick a step, measure it, and once two screens pick the same one it has earned a name.
-- **Write the step, not a name for the step.** Error text is `text-red-12` and the running-agent dot is `bg-green-9`, written where they are used. Both briefly had semantic names and both were one step, identical in both modes — a name in front of a number. The name comes back if the pattern repeats across screens, and it will be named for the pattern.
 - **Measure the step, do not reason about it.** Red-11 is the more obviously red choice for error text and was the first pick; measured against every surface the text actually lands on, it fails the Lc 60 body target on a dark panel (59.7) and the dark composer (57.5). Two of five surfaces — invisible to judgement, decisive on inspection. Red-12 clears all five at 82–97.
 - **Categorical colours are the one place appearance-naming would be allowed.** Telling two projects apart genuinely is a choice about appearance, so a hue name is honest there. No such roles exist yet — the palette carries eight hues, and a categorical role gets named when a feature actually needs to distinguish things, not before.
 - **Opacity is not how you reach a subtler colour.** If a tint looks too strong, take a different palette step — do not dim a stronger one. `purple-950/50` composites to a real, correct colour, which is exactly the trap: it is a colour decision with no name, no light/dark pair, and nothing the contrast guard can measure. A missing shade is a missing palette step, and adding one is an ordinary reviewed edit. `scripts/design-system/check-color.mjs` enforces this.

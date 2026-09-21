@@ -32,7 +32,7 @@ for (const mode of ["light", "dark"]) {
       await expect(selected).toBeInViewport({ ratio: 1 });
       await expect(selected).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(51, 51, 51)" : "rgb(232, 232, 232)",
+        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)",
       );
       const surface = await popup.evaluate(
         (element) => getComputedStyle(element).backgroundColor,

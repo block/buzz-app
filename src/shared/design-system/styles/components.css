@@ -108,8 +108,12 @@
     padding: 0;
   }
 
-  /* Keep pointer-origin keyboard traversal rooted at the button in WebKit. */
+  /* Fill artwork needs a sized parent; inherit the control's avatar shape.
+     Keep pointer-origin keyboard traversal rooted at the button in WebKit. */
   .buzz-button[data-icon-variant] .buzz-button-label {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
     pointer-events: none;
   }
 

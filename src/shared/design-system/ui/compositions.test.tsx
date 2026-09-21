@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, test, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { createRef, useState } from "react";
 import { Dialog } from "./Dialog";
 import { Button } from "./Button";
 import { Input } from "./Input";
@@ -13,6 +13,37 @@ import { Tabs } from "./Tabs";
 import { NavigationItem } from "./NavigationItem";
 
 afterEach(cleanup);
+
+test("button titles use the shared hint while preserving refs and activation", async () => {
+  const user = userEvent.setup();
+  const activate = vi.fn();
+  const ref = createRef<HTMLButtonElement>();
+  render(
+    <Button
+      ref={ref}
+      title="Send this draft"
+      aria-label="Send"
+      onClick={activate}
+    >
+      Send
+    </Button>,
+  );
+  const button = screen.getByRole("button", { name: "Send" });
+  expect(ref.current).toBe(button);
+  expect(button).not.toHaveAttribute("title");
+  await user.hover(button);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Send this draft",
+  );
+  expect(button).toHaveAccessibleDescription("Send this draft");
+  await user.click(button);
+  expect(activate).toHaveBeenCalledTimes(1);
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+  expect(button).toHaveAccessibleName("Send");
+});
 
 test("pending dialogs reject close and Escape, then allow dismissal once released", async () => {
   const user = userEvent.setup();

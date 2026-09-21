@@ -129,7 +129,7 @@ export function WorkflowEditor({
         }}
       />
       {modeError && (
-        <p role="alert" className="text-red-12">
+        <p role="alert" className="text-danger">
           {modeError}
         </p>
       )}
@@ -163,7 +163,7 @@ export function WorkflowEditor({
         </div>
       )}
       {error && (
-        <p role="status" className="text-red-12">
+        <p role="status" className="text-danger">
           {error}
         </p>
       )}

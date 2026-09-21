@@ -6,7 +6,12 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
-import { Expand, Pause, Play, X } from "lucide-react";
+import {
+  ArrowsOutIcon,
+  PauseIcon,
+  PlayIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import { createPortal } from "react-dom";
 import type { Attachment } from "../relay/contracts";
 import { formatMediaTime } from "./media-timecode";
@@ -220,7 +225,7 @@ export function MediaAttachment({
             else video.current.pause();
           }}
         >
-          {playing ? <Pause size={18} /> : <Play size={18} />}
+          {playing ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
         </button>
         <span className={styles.mediaTime}>{formatMediaTime(currentTime)}</span>
         <button
@@ -233,7 +238,7 @@ export function MediaAttachment({
             else setViewerOpen(true);
           }}
         >
-          <Expand size={16} aria-hidden="true" />
+          <ArrowsOutIcon size={16} aria-hidden="true" />
         </button>
       </div>
       {viewerOpen &&
@@ -301,7 +306,7 @@ function MediaViewer({
           aria-label="Close fullscreen viewer"
           onClick={close}
         >
-          <X size={20} aria-hidden="true" />
+          <XIcon size={20} aria-hidden="true" />
         </button>
         {children}
       </section>

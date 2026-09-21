@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
-import { ArrowLeft, ArrowRight } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+} from "../../shared/design-system/icons/index";
 import type { Navigation } from "../../features/navigation/controller";
 export function NavigationControls({ navigation }: { navigation: Navigation }) {
   const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
@@ -16,7 +19,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         disabled={!state.canGoBack}
         onClick={navigation.back}
       >
-        <ArrowLeft size={17} aria-hidden="true" />
+        <ArrowLeftIcon size={17} aria-hidden="true" />
       </button>
       <button
         type="button"
@@ -26,7 +29,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         disabled={!state.canGoForward}
         onClick={navigation.forward}
       >
-        <ArrowRight size={17} aria-hidden="true" />
+        <ArrowRightIcon size={17} aria-hidden="true" />
       </button>
     </nav>
   );

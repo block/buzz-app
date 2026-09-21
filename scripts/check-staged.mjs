@@ -1,3 +1,7 @@
+import {
+  checkIconSource,
+  checkIconManifest,
+} from "./design-system/check-icons.mjs";
 import { execFileSync } from "node:child_process";
 import { lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -52,6 +56,16 @@ for (const file of files) {
     );
   if (!lstatSync(file).isFile())
     throw new Error(`Refusing to format a non-regular staged file: ${file}`);
+}
+// Same icon policy as lint/CI, after partial-stage checks and before any writes.
+for (const file of files) {
+  const source = readFileSync(file, "utf8");
+  const errors = /\.[cm]?[jt]sx?$/.test(file)
+    ? checkIconSource(file, source)
+    : file === "package.json" || file.endsWith("/package.json")
+      ? checkIconManifest(JSON.parse(source))
+      : [];
+  if (errors.length) throw new Error(`${file}: ${errors.join("\n")}`);
 }
 const biome = files.filter((file) => !file.endsWith(".rs"));
 if (biome.length)

@@ -428,3 +428,9 @@ Every addition lands in `src/shared/design-system/tokens/registry.ts` in the sam
   6. **If the choice cannot be expressed by one step in both modes, make a proposed role with both values and a one-sentence job.** If the name only restates one step, it has not earned a role. If it is a whole treatment — glass is the example — make a utility that carries every inseparable part together.
   7. **If none of this feels clearly right, stop and ask.** Choosing a raw literal or a local exception is never the escape hatch. The system is deliberately allowed to grow; uncertainty is evidence of a missing decision, not a prompt to hide one.
 - **If a screen looks right but breaks these rules, the rules are probably wrong — say so.** This document is meant to be argued with, not worked around.
+
+## Icons
+
+Phosphor is the only general icon family. Import named icons from `icons/index.ts`, which re-exports individual upstream modules. Add exports as needed; no approval list. SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the upstream packages elsewhere or reintroduce other icon libraries. All six native weights remain designer choices: no size-to-weight or selection-to-fill rules. For chat and conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`) over square or teardrop variants; choose the matching dots, text, or slash variant when the meaning requires it. Keep accessible names on controls and decorative artwork hidden from assistive technology.
+
+OneDrive is a designer-approved custom brand mark: its complete outline is recreated on Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in the shared icon gateway. It does not permit another general icon library.

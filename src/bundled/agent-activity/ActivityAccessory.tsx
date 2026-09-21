@@ -1,6 +1,9 @@
 import { useEffect, useId, useMemo, useSyncExternalStore } from "react";
 import { Tooltip } from "@base-ui/react/tooltip";
-import { IconDots, IconQuestionMark } from "@tabler/icons-react";
+import {
+  DotsThreeIcon,
+  QuestionIcon,
+} from "../../shared/design-system/icons/index";
 import type { ComposerAccessoryProps } from "../../features/conversation/contracts";
 import { activityTarget } from "../../features/agents/activity-target";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -74,7 +77,7 @@ export function ActivityAccessory({
             const unknown = active.length - working;
             const isWorking =
               working > 0 || typing.some((entry) => entry.agent === agent);
-            const Icon = isWorking ? IconDots : IconQuestionMark;
+            const Icon = isWorking ? DotsThreeIcon : QuestionIcon;
             const picture = identities.get(agent)?.picture;
             return (
               <Tooltip.Root key={agent}>

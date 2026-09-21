@@ -1,3 +1,4 @@
+import { pickerIcons } from "../../shared/design-system/icons/svg";
 // Emoji Mart config adapted from block/buzz's shared picker; see NOTICE.md.
 import data from "@emoji-mart/data";
 import { Data, Picker, SearchIndex } from "emoji-mart";
@@ -5,60 +6,18 @@ import { parseColorMode } from "../../shared/theme/service";
 import type { CustomEmoji } from "../../features/relay/emoji";
 
 const prefix = "buzz-custom/";
-const categoryIcon = (name: string, paths: string) => ({
-  svg: [
-    `<svg class="lucide lucide-${name}" xmlns="http://www.w3.org/2000/svg"`,
-    'viewBox="0 0 24 24" fill="none" stroke="currentColor"',
-    'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">',
-    paths,
-    "</svg>",
-  ].join(" "),
-});
 const categoryIcons = {
-  frequent: categoryIcon(
-    "clock",
-    '<circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path>',
-  ),
-  people: categoryIcon(
-    "face-slightly-smiling",
-    '<path d="M15 10V9"></path><path d="M16.472 15a6 6 0 0 1-8.943 0"></path><path d="M9 10V9"></path><circle cx="12" cy="12" r="10"></circle>',
-  ),
-  nature: categoryIcon(
-    "paw-print",
-    '<circle cx="11" cy="4" r="2"></circle><circle cx="18" cy="8" r="2"></circle><circle cx="20" cy="16" r="2"></circle><path d="M9 10a5 5 0 0 1 5 5v3.5a3.5 3.5 0 0 1-6.84 1.045Q6.52 17.48 4.46 16.84A3.5 3.5 0 0 1 5.5 10Z"></path>',
-  ),
-  foods: categoryIcon(
-    "apple",
-    '<path d="M12 6.528V3a1 1 0 0 1 1-1h0"></path><path d="M18.237 21A15 15 0 0 0 22 11a6 6 0 0 0-10-4.472A6 6 0 0 0 2 11a15.1 15.1 0 0 0 3.763 10 3 3 0 0 0 3.648.648 5.5 5.5 0 0 1 5.178 0A3 3 0 0 0 18.237 21"></path>',
-  ),
-  activity: categoryIcon(
-    "dumbbell",
-    '<path d="M17.596 12.768a2 2 0 1 0 2.829-2.829l-1.768-1.767a2 2 0 0 0 2.828-2.829l-2.828-2.828a2 2 0 0 0-2.829 2.828l-1.767-1.768a2 2 0 1 0-2.829 2.829z"></path><path d="m2.5 21.5 1.4-1.4"></path><path d="m20.1 3.9 1.4-1.4"></path><path d="M5.343 21.485a2 2 0 1 0 2.829-2.828l1.767 1.768a2 2 0 1 0 2.829-2.829l-6.364-6.364a2 2 0 1 0-2.829 2.829l1.768 1.767a2 2 0 0 0-2.828 2.829z"></path><path d="m9.6 14.4 4.8-4.8"></path>',
-  ),
-  places: categoryIcon(
-    "car-front",
-    '<path d="m21 8-2 2-1.5-3.7A2 2 0 0 0 15.646 5H8.4a2 2 0 0 0-1.903 1.257L5 10 3 8"></path><path d="M7 14h.01"></path><path d="M17 14h.01"></path><rect width="18" height="8" x="3" y="10" rx="2"></rect><path d="M5 18v2"></path><path d="M19 18v2"></path>',
-  ),
-  objects: categoryIcon(
-    "lightbulb",
-    '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"></path><path d="M9 18h6"></path><path d="M10 22h4"></path>',
-  ),
-  symbols: categoryIcon(
-    "shapes",
-    '<path d="M8.3 10a.7.7 0 0 1-.626-1.079L11.4 3a.7.7 0 0 1 1.198-.043L16.3 8.9a.7.7 0 0 1-.572 1.1Z"></path><rect x="3" y="14" width="7" height="7" rx="1"></rect><circle cx="17.5" cy="17.5" r="3.5"></circle>',
-  ),
-  flags: categoryIcon(
-    "flag",
-    '<path d="M4 22V4a1 1 0 0 1 .4-.8A6 6 0 0 1 8 2c3 0 5 2 7.333 2q2 0 3.067-.8A1 1 0 0 1 20 4v10a1 1 0 0 1-.4.8A6 6 0 0 1 16 16c-3 0-5-2-8-2a6 6 0 0 0-4 1.528"></path>',
-  ),
-  custom: categoryIcon(
-    "asterisk",
-    '<path d="M12 6v12"></path><path d="M17.196 9 6.804 15"></path><path d="m6.804 9 10.392 6"></path>',
-  ),
-  "buzz-custom": categoryIcon(
-    "asterisk",
-    '<path d="M12 6v12"></path><path d="M17.196 9 6.804 15"></path><path d="m6.804 9 10.392 6"></path>',
-  ),
+  frequent: { svg: pickerIcons.clock },
+  people: { svg: pickerIcons.smiley },
+  nature: { svg: pickerIcons["paw-print"] },
+  foods: { svg: pickerIcons.orange },
+  activity: { svg: pickerIcons.barbell },
+  places: { svg: pickerIcons.car },
+  objects: { svg: pickerIcons.lightbulb },
+  symbols: { svg: pickerIcons.shapes },
+  flags: { svg: pickerIcons.flag },
+  custom: { svg: pickerIcons.asterisk },
+  "buzz-custom": { svg: pickerIcons.asterisk },
 };
 let active: (() => void) | undefined;
 
@@ -277,14 +236,7 @@ export function mountEmojiMart({
       width: 16px;
       height: 16px;
     }
-    .search .delete svg circle {
-      fill: currentColor;
-      stroke: none;
-    }
-    .search .delete svg path {
-      fill: none;
-      stroke: var(--picker-search-background);
-    }
+
     .spacer {
       height: var(--picker-search-top-space, 4px);
     }
@@ -325,13 +277,7 @@ export function mountEmojiMart({
       flex: 1 1 0;
       border: 0;
     }
-    #nav .lucide {
-      fill: none;
-      stroke: currentColor;
-      stroke-width: 2;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-    }
+
     #nav button::before {
       position: absolute;
       top: 50%;
@@ -499,16 +445,18 @@ export function mountEmojiMart({
   const installSearchClearIcon = () => {
     const icon = root?.querySelector<SVGSVGElement>(".search .delete svg");
     if (!icon || icon.dataset.buzzCircleX) return;
+    const template = document.createElement("template");
+    template.innerHTML = pickerIcons["x-circle"];
+    const replacement = template.content.firstElementChild;
+    if (!replacement) return;
+    // Preserve the widget-owned node so its renderer does not insert a second SVG.
+    for (const attribute of [...icon.attributes])
+      icon.removeAttribute(attribute.name);
+    for (const attribute of [...replacement.attributes])
+      icon.setAttribute(attribute.name, attribute.value);
+    icon.innerHTML = replacement.innerHTML;
     icon.dataset.buzzCircleX = "true";
-    icon.classList.add("lucide", "lucide-circle-x");
-    icon.setAttribute("viewBox", "0 0 24 24");
-    icon.setAttribute("fill", "none");
-    icon.setAttribute("stroke", "currentColor");
-    icon.setAttribute("stroke-width", "2");
-    icon.setAttribute("stroke-linecap", "round");
-    icon.setAttribute("stroke-linejoin", "round");
-    icon.innerHTML =
-      '<circle cx="12" cy="12" r="10"></circle><path d="m15 9-6 6"></path><path d="m9 9 6 6"></path>';
+    icon.setAttribute("aria-hidden", "true");
   };
   const focusSearch = () => {
     const input = root?.querySelector<HTMLInputElement>('input[type="search"]');

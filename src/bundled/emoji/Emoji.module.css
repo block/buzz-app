@@ -249,6 +249,7 @@
   width: 16px;
   height: 16px;
 }
+
 .gifSearch input::placeholder {
   color: var(--picker-search-muted);
 }

@@ -1,7 +1,12 @@
 import { test, expect } from "./fixture.mjs";
 import { open, end } from "./timeline.mjs";
 
-test.use({ productionBroker: true, readState: true, threadUnread: true });
+test.use({
+  productionBroker: true,
+  readState: true,
+  threadUnread: true,
+  historyCounts: { alpha: 20, beta: 1 },
+});
 test("Messages receives scoped typing through authenticated live traffic and expires it without publishing", async ({
   page,
   app,
@@ -26,6 +31,11 @@ test("Messages receives scoped typing through authenticated live traffic and exp
   await expect(indicator).toHaveCount(0);
   app.activity(); // same-second late pulse cannot resurrect completion
   await expect(indicator).toHaveCount(0);
+  // Typing completion precedes the appended messages' virtual-list layout.
+  await expect(
+    page.getByText("Fixture completion", { exact: true }),
+  ).toHaveCount(2);
+  await end(page);
   const root = app.histories
     .get("primary/alpha")
     .find((e) => e.content === "Thread root 0");

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
+import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
 const viewer = "/tests/fixtures/design-system.html";
 
@@ -28,6 +29,7 @@ test("built viewer loads every specimen and foundation without app connections",
     "Color",
     "Token table",
     "Typography",
+    "Icons",
     "Spacing",
     "Radius",
     "Elevation",
@@ -49,6 +51,58 @@ test("built viewer loads every specimen and foundation without app connections",
   ).toHaveCount(0);
   expect(failures).toEqual([]);
   expect(sockets).toEqual([]);
+});
+
+test("icon inventory is routed, complete, decorative, and responsive", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/icons`);
+  await expect(
+    page.getByRole("heading", { name: "Icons", exact: true }),
+  ).toBeVisible();
+  await expect(page).toHaveURL(/#\/design\/icons$/);
+
+  const phosphorList = page.getByRole("list", {
+    name: "Available Phosphor icons",
+  });
+  await expect(phosphorList.getByRole("listitem")).toHaveCount(
+    PHOSPHOR_ICONS.length,
+  );
+  await expect(page.getByRole("img")).toHaveCount(0);
+  await expect(page.locator("main svg:not([aria-hidden='true'])")).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByText("Open GitHub issue", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("Microsoft OneDrive link", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("22 × 22px", { exact: true })).toBeVisible();
+  await expect(page.getByText("14 × 14px", { exact: true })).toBeVisible();
+  // CSS visibility alone misses captions hidden from assistive technology.
+  for (const [meaning, caption] of [
+    ["Open GitHub issue", "22 × 22px"],
+    ["Microsoft OneDrive link", "14 × 14px"],
+  ] as const) {
+    const example = page
+      .getByRole("article")
+      .filter({
+        has: page.getByRole("heading", { name: meaning, exact: true }),
+      })
+      .locator(".custom-icon-examples");
+    await expect(example).toMatchAriaSnapshot(`- text: ${caption}`);
+  }
+
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expect(phosphorList.getByRole("listitem").first()).toBeVisible();
+  }
 });
 
 test("foundation proposals are independent, local, and usable in both modes", async ({
@@ -306,12 +360,12 @@ test("documentation retains table guidance and storage failure stays usable", as
   });
   await page.goto(`${viewer}#/design/design-guide`);
   // A real cell in a real row, so run-on prose or a dropped table both fail.
-  const stepRow = page
+  const roleRow = page
     .locator("main table tbody tr")
-    .filter({ hasText: "Main text on a neutral surface" });
-  await expect(stepRow.locator("td").first()).toHaveText("text-standard");
+    .filter({ hasText: "Component recipes and product screens." });
+  await expect(roleRow.locator("td").first()).toHaveText("Roles");
   await expect(
-    page.locator("main table thead th").filter({ hasText: "Role" }),
+    page.locator("main table thead th").filter({ hasText: "Layer" }),
   ).toHaveCount(1);
   await expect(page.locator("main")).not.toContainText("|---|");
   // A token is one word: it may sit on its own line, never break across two.
@@ -436,9 +490,9 @@ test("avatar specimens preserve human and agent identity shapes in both modes", 
   for (const mode of ["light", "dark"]) {
     const change = page.getByRole("button", { name: `Use ${mode} mode` });
     if (await change.count()) await change.click();
-    await expect(
-      page.getByRole("img", { name: "Brain", exact: true }),
-    ).toHaveCSS("border-radius", "10px");
+    const agent = page.getByRole("img", { name: "Brain", exact: true });
+    await expect(agent).toHaveCSS("border-radius", "0px");
+    await expect(agent).toHaveCSS("mask-image", /^url\(/);
     const human = page.getByRole("img", { name: "Alex Lee", exact: true });
     expect(
       await human.evaluate(
@@ -474,6 +528,94 @@ test("typography shows the size ramp and renders xsmall mono details", async ({
     page.getByRole("link", { name: "Typography source specification" }),
   ).toHaveAttribute(
     "href",
-    /github\.com\/block\/buzz-app\/blob\/main\/src\/shared\/design-system\/styles\/typography\.css$/,
+    "https://github.com/block/buzz-app/blob/main/src/shared/design-system/styles/typography.css",
   );
+});
+
+// Native label focus and reset/FormData behavior must agree in real engines.
+// Detailed cancellation, controlled state and external form cases live in RTL.
+test("textarea labels focus explicit IDs and preserve edits", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/textarea`);
+  const textarea = page.getByRole("textbox", {
+    name: "Description",
+    exact: true,
+  });
+  await page
+    .locator("label")
+    .filter({ hasText: /^Description$/ })
+    .click();
+  await expect(textarea).toBeFocused();
+  await textarea.fill("Updated summary");
+  await expect(textarea).toHaveValue("Updated summary");
+});
+
+test("native form reset keeps choice appearance and submitted values together", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Notification preferences" });
+  const checkbox = form.getByRole("checkbox", { name: "Include a summary" });
+  const all = form.getByRole("radio", { name: "All updates" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await checkbox.click();
+  await mentions.click();
+  await expect(checkbox).not.toBeChecked();
+  await expect(mentions).toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ notifications: "mentions" });
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(checkbox).toBeChecked();
+  await expect(all).toBeChecked();
+  await expect(mentions).not.toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ notifications: "all", summary: "yes" });
+});
+
+test("invalid input and textarea boundaries remain visible in both themes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/field`);
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    const controls = page.getByRole("textbox");
+    await expect(controls).toHaveCount(2);
+    for (const control of await controls.all()) {
+      await expect(control).toHaveAttribute("aria-invalid", "true");
+      const ratio = await control.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const luminance = (color: string) => {
+          const components = color
+            .match(/[\d.]+/g)
+            ?.slice(0, 3)
+            .map(Number);
+          if (components?.length !== 3)
+            throw new Error(`Unexpected color ${color}`);
+          const linear = components.map((component) => {
+            const value = component / 255;
+            return value <= 0.04045
+              ? value / 12.92
+              : ((value + 0.055) / 1.055) ** 2.4;
+          });
+          const [red = 0, green = 0, blue = 0] = linear;
+          return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        };
+        const border = luminance(style.borderTopColor);
+        const background = luminance(style.backgroundColor);
+        return (
+          (Math.max(border, background) + 0.05) /
+          (Math.min(border, background) + 0.05)
+        );
+      });
+      expect(ratio).toBeGreaterThanOrEqual(3);
+    }
+  }
 });

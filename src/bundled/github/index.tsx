@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  IconExternalLink as ExternalLink,
-  IconGitPullRequest as GitPullRequest,
-  IconCircleDot as CircleDot,
-  IconGitCommit as GitCommitHorizontal,
-  IconFolderCode as FolderGit2,
-} from "@tabler/icons-react";
+  ArrowSquareOutIcon,
+  GitPullRequestIcon,
+  GitHubIssueIcon,
+  GitCommitIcon,
+  FolderSimpleIcon,
+} from "../../shared/design-system/icons/index";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
@@ -28,10 +28,10 @@ const labels = {
   commit: "Commit",
 };
 const icons = {
-  repository: FolderGit2,
-  pull: GitPullRequest,
-  issue: CircleDot,
-  commit: GitCommitHorizontal,
+  repository: FolderSimpleIcon,
+  pull: GitPullRequestIcon,
+  issue: GitHubIssueIcon,
+  commit: GitCommitIcon,
 };
 
 export function GitHubPanel({ target }: PanelProps) {
@@ -92,7 +92,7 @@ function ObjectPanel({
         target="_blank"
         rel="noreferrer"
       >
-        Open on GitHub <ExternalLink size={14} aria-hidden="true" />
+        Open on GitHub <ArrowSquareOutIcon size={14} />
       </a>
       {result === undefined ? (
         <p role="status">Loading from GitHub…</p>

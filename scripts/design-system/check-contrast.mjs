@@ -10,9 +10,8 @@
  * drift from the system it audits: resolve each role through its `var()` chain
  * to a literal, per mode, then measure every pairing the roles allow.
  *
- * Judged with APCA, per DESIGN.md § Contrast. The WCAG 2 ratio is reported for
- * context and never decides — it is the standard that calls #8f8f8f on #1c1c1c
- * a pass at 5.27:1 while APCA scores it Lc 40.
+ * Text uses APCA, per DESIGN.md § Contrast. Control/state boundaries use the
+ * separate WCAG 3:1 non-text target on their supported opaque surfaces.
  */
 
 import { readFileSync } from "node:fs";
@@ -137,7 +136,21 @@ const PAIRS = [
  * and its hover are both real surfaces — a chip at rest and a chip under the
  * cursor — and the hover is the harder one, which is where the gap was.
  */
+const BOUNDARY_SURFACES = [
+  "--surface-base",
+  "--surface-panel",
+  "--surface-inset",
+  "--surface-popover",
+];
+const BOUNDARY_ROLES = ["--border-danger", "--border-warning"];
+
 const TINT_PAIRS = [
+  ["--text-warning", "--affordance-warning"],
+  ["--text-success", "--affordance-success"],
+  ["--text-accent", "--affordance-accent"],
+  ["--text-accent", "--affordance-accent-hover"],
+  ["--text-on-accent", "--affordance-accent-prominent"],
+  ["--text-on-accent", "--affordance-accent-prominent-hover"],
   ["--amber-12", "--amber-3"],
   ["--green-12", "--green-3"],
   ["--purple-12", "--purple-3"],
@@ -183,6 +196,7 @@ function resolve(map, name, depth = 0) {
 
 const modes = declarationsByMode();
 const failures = [];
+const boundaryFailures = [];
 const skipped = [];
 /**
  * Pairing-scoped exceptions this run actually needed. An exception nobody hits
@@ -227,6 +241,20 @@ for (const [mode, map] of Object.entries(modes)) {
   }
   for (const [role, fill] of PAIRS) check(role, fill);
   for (const [text, tint] of TINT_PAIRS) check(text, tint);
+  for (const role of BOUNDARY_ROLES) {
+    for (const surface of BOUNDARY_SURFACES) {
+      const borderColor = resolve(map, role);
+      const surfaceColor = resolve(map, surface);
+      const ratio =
+        borderColor && surfaceColor
+          ? wcagRatio(borderColor, surfaceColor)
+          : null;
+      if (ratio === null || ratio < 3)
+        boundaryFailures.push(
+          `${mode}: ${role} on ${surface} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+        );
+    }
+  }
 }
 
 // Guard the maths itself: if these drift, every verdict above is wrong.
@@ -250,6 +278,12 @@ if (skipped.length > 0) {
   for (const s of skipped) console.log(`    ${s}`);
 }
 
+if (boundaryFailures.length > 0) {
+  console.error(
+    `\n✗ Control/state boundaries:\n  ${boundaryFailures.join("\n  ")}`,
+  );
+}
+
 if (failures.length > 0) {
   console.error(
     `\n✗ Contrast: ${failures.length} pairing(s) below their APCA target\n`,
@@ -268,7 +302,10 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("✓ Contrast: every text role clears its APCA target in both modes");
+if (boundaryFailures.length > 0) process.exit(1);
+console.log(
+  "✓ Contrast: text and control/state boundaries clear their targets in both modes",
+);
 for (const [role, why] of EXCEPTIONS) {
   console.log(`  (exception) ${role} — ${why.split(";")[0]}`);
 }

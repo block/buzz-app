@@ -1,5 +1,5 @@
 import { Button as BaseButton } from "@base-ui/react/button";
-import { IconLoader2 } from "@tabler/icons-react";
+import { CircleNotchIcon } from "../icons/index";
 import type { ComponentProps, ReactNode } from "react";
 
 type ButtonVariant =
@@ -63,7 +63,7 @@ export function Button({
     >
       <span className="buzz-button-label">{children}</span>
       {loading && (
-        <IconLoader2
+        <CircleNotchIcon
           className="buzz-button-spinner"
           size={18}
           aria-hidden="true"

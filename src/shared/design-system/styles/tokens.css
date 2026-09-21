@@ -499,8 +499,8 @@
   --border-standard: var(--neutral-3);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
-  --border-danger: var(--red-8);
-  --border-warning: var(--amber-8);
+  --border-danger: var(--red-9);
+  --border-warning: var(--amber-11);
   --affordance-prominent: var(--neutral-12);
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);
@@ -539,8 +539,8 @@
   --border-standard: var(--neutral-4);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
-  --border-danger: var(--red-8);
-  --border-warning: var(--amber-8);
+  --border-danger: var(--red-9);
+  --border-warning: var(--amber-9);
   --affordance-prominent: var(--neutral-12);
   --affordance-prominent-hover: var(--neutral-11);
   --affordance-prominent-pressed: var(--neutral-action-pressed);

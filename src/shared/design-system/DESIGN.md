@@ -56,11 +56,11 @@ Run `pnpm design:dev` and open `/tests/fixtures/design-system.html` to see the s
 
 ## Identity shapes
 
-Human avatars are circular. Agent avatars are rounded rectangles. Use the shared
-Avatar `shape="circle"` or `shape="rounded"`; the shape carries identity meaning,
+Human avatars are circular. Agent avatars are squircles. Use the shared
+Avatar `shape="circle"` or `shape="squircle"`; the shape carries identity meaning,
 not density or emphasis. The caller supplies identity type from domain data,
-never a name or picture heuristic. `size="fill"` inherits the owning layout’s
-corners unless an explicit shape is supplied.
+never a name or picture heuristic. `size="fill"` fills the owning layout’s
+available space. Shape clips the artwork, never the interactive focus target.
 
 ## Posture
 
@@ -191,43 +191,49 @@ documented above define this system, including the 12px xsmall role.
 
 ## Colour structure
 
-The semantic grammar at the top of this guide is the current contract.
-Palette steps supply values; shared roles name their purpose; components own
-recipes and states; app screens compose those components. Equal values do not
-make two purposes interchangeable. A border and a label may happen to share a
-step today and still need separate roles.
+The palette supplies values. Semantic roles name their purpose. Components and
+screens consume those roles so one shared edit can change every caller.
 
-Text and border roles register as `--text-color-*` and `--border-color-*`.
-Surface and affordance roles register as `--color-surface-*` and
-`--color-affordance-*`. Keep these namespaces distinct: a utility such as
-`text-danger` must never resolve to the destructive action's background.
+| Layer | Example | Used by |
+|---|---|---|
+| **Palette** | `--purple-9`, `--neutral-4` | Shared token definitions; each hue has authored light and dark steps. |
+| **Roles** | `--surface-panel`, `--text-danger`, `--affordance-subtle-hover` | Component recipes and product screens. |
+| **Components** | Button, TextField, Dialog | Product features that need the same appearance and behavior. |
 
-A color role always has a light and dark value. Paired text is measured against
-all of its actual fills, including hover and pressed states. Status is conveyed
-with text or an icon too. Keep glass as a complete material rather than using its
-fill alone. Palette swatches in the viewer may inspect raw steps; product
-components use semantic roles.
+Choose a role by its job, even when it uses the same palette step in both modes.
+Add roles for real uses and their required states; document the intended surfaces
+and paired text. Do not generate unused role families from every palette hue.
+Existing palette utilities and older role names are compatibility APIs while
+callers migrate, not the default for new UI. Tailwind's stock palette is removed.
 
-## Colour discipline
+### Changing a color
 
-- **Colour is signal.** Status, authorship, presence, and mentions earn colour. Ordinary structure does not.
-- **Name colours after colour jobs, never after the thing on screen.** If the name is an interface element — mention, unread, badge, sidebar — it belongs in the component, assembled from roles that already exist.
-- **A colour is used one of two ways: solid or tint.** Solid carries an action and takes its paired text; tint carries a meaning and takes coloured text. There is deliberately nothing between them.
-- **Accent is signal, never structure.** Reaching for an accent surface where a neutral one belongs is the most common way a functional screen starts to look decorated.
-- **Never use a status colour decoratively.** A green that does not mean success teaches people to stop trusting green.
-- **There are no status roles, and that is deliberate.** Danger, success, warning, and info existed as four identities of five roles each — the accent's shape copied four times, generated from one line of a lookup table. **Nineteen of the twenty had no reader outside the page that displayed them.** They were invented by symmetry rather than by need, and the symmetry actively hid the decision: the red ramp alone offers red-3, red-8, red-9 and red-12 for "an error", and a set of ready-made names made that look settled when it never was. The proof is that `text-danger` shipped resolving to the wrong red and no design had ever looked closely enough to notice. **Status colour gets designed on the screen that needs it.** Until then the ramps are right there — pick a step, measure it, and once two screens pick the same one it has earned a name.
-- **Write the step, not a name for the step.** Error text is `text-red-12` and the running-agent dot is `bg-green-9`, written where they are used. Both briefly had semantic names and both were one step, identical in both modes — a name in front of a number. The name comes back if the pattern repeats across screens, and it will be named for the pattern.
-- **Measure the step, do not reason about it.** Red-11 is the more obviously red choice for error text and was the first pick; measured against every surface the text actually lands on, it fails the Lc 60 body target on a dark panel (59.7) and the dark composer (57.5). Two of five surfaces — invisible to judgement, decisive on inspection. Red-12 clears all five at 82–97.
-- **Categorical colours are the one place appearance-naming would be allowed.** Telling two projects apart genuinely is a choice about appearance, so a hue name is honest there. No such roles exist yet — the palette carries eight hues, and a categorical role gets named when a feature actually needs to distinguish things, not before.
-- **Opacity is not how you reach a subtler colour.** If a tint looks too strong, take a different palette step — do not dim a stronger one. `purple-950/50` composites to a real, correct colour, which is exactly the trap: it is a colour decision with no name, no light/dark pair, and nothing the contrast guard can measure. A missing shade is a missing palette step, and adding one is an ordinary reviewed edit. `scripts/design-system/check-color.mjs` enforces this.
-- **Transparency is a different axis from shade, and it has its own tokens.** `glass-*` exists for surfaces something must show through. Alpha baked into a named value at the palette layer is the system working; alpha applied to a token in a component is not.
-- **A dark value is authored, never derived.** A hue's dark steps are not its light steps darkened or dimmed — Tailwind's purple gets *more* saturated as it descends, so a dark tint drawn from its bottom end reads as oversaturated. This is why the palette holds two authored ramps per hue rather than one ramp and a transform.
-- **Two tokens doing the same job must resolve to the same step, not merely to the same value.** Matching literals drift; a shared reference cannot. An accent tint and a hand-picked categorical purple were the same colour in light mode and two different colours in dark, and nothing caught it because both held their own value.
+Change a semantic mapping when one job needs a different value. Change a palette
+step when its value is wrong for all roles that share it. Measure the actual
+pairings in both themes; a numbered step alone does not guarantee contrast.
+For example, warning boundaries use amber-11 in light mode and amber-9 in dark,
+because the lighter amber steps cannot identify a control against a light panel.
+
+Palette values are based on Radix Colors (MIT), with authored neutral ramps and
+documented adjustments in `tokens.css`. These are values, not a component or
+behavior dependency. Base UI remains the component behavior layer.
+
+### Naming and usage
+
+Use purpose, emphasis and state: `surface-panel`, `text-subtle`, `border-danger`,
+`affordance-prominent-pressed`. Text and border roles register in their own
+Tailwind namespaces so a border cannot accidentally inherit a text color.
+
+- Use `text-danger` for error text and pair it with the documented surface.
+- Add a categorical role when a feature needs to distinguish identities by hue.
+- Keep transparency in shared material recipes. Do not dim tokens locally.
+- Author both light and dark values; do not derive one by dimming the other.
+- When two roles share a decision, reference the same token rather than copying a literal.
 
 ## Contrast
 
-Buzz judges contrast with **APCA** (the perceptual algorithm in the WCAG 3
-draft), not the WCAG 2 ratio. Target **Lc 60** for body text, Lc 45 for large
+Buzz judges text contrast with **APCA** (the perceptual algorithm in the WCAG 3
+draft). Control and state boundaries use the separate WCAG 2 non-text ratio. Target **Lc 60** for body text, Lc 45 for large
 or non-essential text. This is a deliberate position, taken with evidence, and
 it is the rule a generated theme is measured against.
 
@@ -274,8 +280,9 @@ it is the rule a generated theme is measured against.
   rule covers boundaries needed to identify a *control* or its state, not
   grouping lines. Buzz's borders measure 1.2–1.8:1, which is where Radix and
   Apple ship theirs; raising them would draw the box the fill already implies.
-  When the input layer lands, a control's own outline is a different question and
-  does need the 3:1 treatment.
+  Error and warning boundary roles must reach 3:1 against surface-base,
+  surface-panel, surface-inset and surface-popover in both themes. The contrast
+  guard checks these role mappings separately from text and decorative dividers.
 
 ## Writing
 
@@ -322,3 +329,9 @@ it is the rule a generated theme is measured against.
 - **Choose the job first.** Page → surface-base; card → surface-panel; popup → surface-popover; recessed region → surface-inset. Controls use affordance roles; labels use text roles; edges use border roles.
 - **A role is useful because it names a purpose.** It does not need different palette steps in each theme to earn its name.
 - **If a screen looks right but breaks these rules, the rules are probably wrong — say so.** This document is meant to be argued with, not worked around.
+
+## Icons
+
+Phosphor is the only general icon family. Import named icons from `icons/index.ts`, which re-exports individual upstream modules. Add exports as needed; no approval list. SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the upstream packages elsewhere or reintroduce other icon libraries. All six native weights remain designer choices: no size-to-weight or selection-to-fill rules. For chat and conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`) over square or teardrop variants; choose the matching dots, text, or slash variant when the meaning requires it. Keep accessible names on controls and decorative artwork hidden from assistive technology.
+
+OneDrive is a designer-approved custom brand mark: its complete outline is recreated on Phosphor’s square canvas, uses the same current-color and sizing behavior, and stays in the shared icon gateway. It does not permit another general icon library.

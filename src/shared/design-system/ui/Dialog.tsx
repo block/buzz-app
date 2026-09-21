@@ -1,5 +1,5 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
-import { IconX } from "@tabler/icons-react";
+import { XIcon } from "../icons";
 import type { ComponentProps, ReactNode } from "react";
 import { IconButton } from "./IconButton";
 
@@ -63,7 +63,7 @@ export function Dialog({
                   aria-label={closeLabel}
                   disabled={preventClose}
                   size="compact"
-                  icon={<IconX size={16} aria-hidden="true" />}
+                  icon={<XIcon size={16} aria-hidden="true" />}
                 />
               }
             />

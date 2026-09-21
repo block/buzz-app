@@ -3,9 +3,11 @@
 Read [the contribution workflow](docs/contributing.md) for commands and validation.
 For interactive product work, default to edit → human tries the running app →
 adjust in the agreed worktree. Do not gate each feedback round on E2E, native
-builds, or full validation. `just iterate` is optional; reserve `just scan` for
-an agreed batch before review/integration or relevant native/dependency/build
-changes. Track deferred checks: **ready to try** is not **validated**. Check
+builds, or full validation. Use mandatory hooks and focused behavior checks not
+covered by them; use existing CI for broad validation. `just iterate` is optional.
+Run `just scan` only when explicitly requested or needed to reproduce a broad
+integration failure, not as a routine pre-push or handoff gate.
+Track deferred checks: **ready to try** is not **validated**. Check
 auth/signing, persistence/migrations, protocol semantics, and destructive writes
 before live use.
 

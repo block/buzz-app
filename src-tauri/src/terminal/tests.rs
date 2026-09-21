@@ -11,11 +11,26 @@ fn context() -> TerminalContext {
         relay_url: "wss://buzz.example.com".into(),
     }
 }
+fn shell() -> CommandBuilder {
+    // portable-pty 0.9 uses non-reentrant getpwuid when constructing a command
+    // without inherited SHELL, and when spawning without explicit HOME/SHELL.
+    // Initialize once, then clone a complete fixture environment so parallel
+    // tests never share those password-database buffers or inherit user config.
+    static SHELL: std::sync::OnceLock<CommandBuilder> = std::sync::OnceLock::new();
+    SHELL
+        .get_or_init(|| {
+            let mut cmd = CommandBuilder::new("/bin/sh");
+            cmd.env_clear();
+            cmd.env("PATH", "/usr/bin:/bin");
+            cmd.env("HOME", "/");
+            cmd.env("SHELL", "/bin/sh");
+            cmd
+        })
+        .clone()
+}
 fn script(script: &str) -> CommandBuilder {
-    let mut cmd = CommandBuilder::new("/bin/sh");
+    let mut cmd = shell();
     cmd.args(["-c", script]);
-    cmd.env_clear();
-    cmd.env("PATH", "/usr/bin:/bin");
     cmd
 }
 fn read_all(state: &Terminals, owner: &str, id: &str) -> Vec<u8> {
@@ -35,6 +50,54 @@ fn read_all(state: &Terminals, owner: &str, id: &str) -> Vec<u8> {
         );
         std::thread::sleep(Duration::from_millis(2));
     }
+}
+
+#[test]
+fn parallel_fixture_environment_probe() {
+    if std::env::var("BUZZ_TERMINAL_FIXTURE_PROBE").as_deref() != Ok("1") {
+        return;
+    }
+    let barrier = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        for _ in 0..8 {
+            let barrier = &barrier;
+            scope.spawn(move || {
+                barrier.wait();
+                let cmd = script("printf '%s|%s|%s' \"$HOME\" \"$SHELL\" \"$PWD\"");
+                assert_eq!(cmd.get_env("HOME"), Some(std::ffi::OsStr::new("/")));
+                assert_eq!(cmd.get_env("SHELL"), Some(std::ffi::OsStr::new("/bin/sh")));
+                let state = Terminals::default();
+                let owner = state.create_owner().unwrap();
+                let id = state.spawn_with(&owner, |_| Ok(cmd), 80, 24).unwrap();
+                let output = read_all(&state, &owner, &id);
+                state.close_owner(&owner).unwrap();
+                assert_eq!(output, b"/|/bin/sh|/");
+            });
+        }
+    });
+}
+
+#[test]
+fn parallel_fixtures_work_without_parent_home_or_shell() {
+    // A fresh process exercises first-use construction without mutating the
+    // environment shared by the other tests or pre-initializing the template.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "terminal::tests::parallel_fixture_environment_probe",
+            "--nocapture",
+        ])
+        .env("BUZZ_TERMINAL_FIXTURE_PROBE", "1")
+        .env_remove("HOME")
+        .env_remove("SHELL")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[test]
@@ -322,10 +385,8 @@ fn foreground_job_receives_ctrl_c_and_close_stops_job_control_group() {
         .spawn_with(
             &owner,
             |_| {
-                let mut cmd = CommandBuilder::new("/bin/sh");
+                let mut cmd = shell();
                 cmd.arg("-i");
-                cmd.env_clear();
-                cmd.env("PATH", "/usr/bin:/bin");
                 Ok(cmd)
             },
             80,

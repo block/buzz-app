@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { IconCircleXFilled as CircleX } from "@tabler/icons-react";
+import { XCircleIcon } from "../../shared/design-system/icons/index";
 import { fetchKlipyGifs, type KlipyGif } from "../../features/relay/gifs";
 import styles from "./Emoji.module.css";
 
@@ -133,7 +133,7 @@ export function GifPicker({
               input.current?.focus();
             }}
           >
-            <CircleX size={16} aria-hidden="true" />
+            <XCircleIcon size={16} aria-hidden="true" />
           </button>
         )}
       </label>

@@ -8,22 +8,18 @@ afterEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
 });
-it("production reader priority reaches actual signed fetch admission", async () => {
+it("production reader prioritizes queued work at real capacity, not a clock interval", async () => {
   vi.useFakeTimers();
   const key = keypair();
-  const prepared: Array<() => void> = [];
-  const nextAuth = () => new Promise<void>((resolve) => prepared.push(resolve));
   const calls: number[] = [];
+  const release: Array<() => void> = [];
   const signer = {
     getPublicKey: async () => key.pubkey,
-    signEvent: async (t: Parameters<typeof signed>[1]) => {
-      const event = signed(key, t);
-      prepared.shift()?.();
-      return event;
-    },
+    signEvent: async (t: Parameters<typeof signed>[1]) => signed(key, t),
   };
   vi.stubGlobal("fetch", async (_url: string, init: RequestInit) => {
     calls.push(JSON.parse(init.body as string)[0].limit);
+    await new Promise<void>((resolve) => release.push(resolve));
     return Response.json([]);
   });
   const t = await connectSignedTransport(
@@ -33,30 +29,24 @@ it("production reader priority reaches actual signed fetch admission", async () 
   );
   const r = createRelayReader(t);
   try {
-    await r.reader.read([{ kinds: [0], limit: 1 }]);
-    const backgroundAuth = nextAuth();
-    const b = r.reader.read([{ kinds: [0], limit: 2 }], {
+    const active = [1, 2, 3].map((limit) =>
+      r.reader.read([{ kinds: [0], limit }]),
+    );
+    await vi.waitFor(() => expect(calls).toHaveLength(3));
+    const b = r.reader.read([{ kinds: [0], limit: 4 }], {
       priority: "background",
     });
-    // Finish real async authentication, then drain its admission continuation
-    // without allowing the 500ms dispatch window to expire.
-    await backgroundAuth;
-    await vi.advanceTimersByTimeAsync(0);
-    expect(calls).toEqual([1]);
-    const foregroundAuth = nextAuth();
-    const f = r.reader.read([{ kinds: [0], limit: 3 }], {
+    const f = r.reader.read([{ kinds: [0], limit: 5 }], {
       priority: "foreground",
     });
-    await foregroundAuth;
-    await vi.advanceTimersByTimeAsync(0);
-    await vi.advanceTimersByTimeAsync(499);
-    expect(calls).toEqual([1]);
-    await vi.advanceTimersByTimeAsync(1);
-    await f;
-    expect(calls).toEqual([1, 3]);
-    await vi.advanceTimersByTimeAsync(500);
-    await b;
-    expect(calls).toEqual([1, 3, 2]);
+    release.shift()?.();
+    await vi.waitFor(() => expect(calls).toHaveLength(4));
+    expect(calls.at(-1)).toBe(5);
+    release.shift()?.();
+    await vi.waitFor(() => expect(calls).toHaveLength(5));
+    expect(calls.at(-1)).toBe(4);
+    for (const finish of release) finish();
+    await Promise.all([...active, b, f]);
   } finally {
     r.dispose();
   }

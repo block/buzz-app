@@ -427,14 +427,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
       {
         token: "border-danger",
         variable: "--border-danger",
-        pointsAt: "red-8 light / red-8 dark",
+        pointsAt: "red-9 light / red-9 dark",
         use: "Invalid field boundary.",
         status: "core",
       },
       {
         token: "border-warning",
         variable: "--border-warning",
-        pointsAt: "amber-8 light / amber-8 dark",
+        pointsAt: "amber-11 light / amber-9 dark",
         use: "Warning boundary.",
         status: "core",
       },

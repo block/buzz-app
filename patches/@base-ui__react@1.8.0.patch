@@ -1,0 +1,124 @@
+diff --git a/checkbox/root/CheckboxRoot.js b/checkbox/root/CheckboxRoot.js
+index 7000305591bd64e9f26ed573e12ee41a873cafe4..6a720da96e3f78b3242595794dd2a25df4d2bd34 100644
+--- a/checkbox/root/CheckboxRoot.js
++++ b/checkbox/root/CheckboxRoot.js
+@@ -139,6 +139,27 @@ const CheckboxRoot = exports.CheckboxRoot = /*#__PURE__*/React.forwardRef(functi
+   (0, _useRegisterFieldControl.useRegisterFieldControl)(controlRef, id, checked, undefined, !groupContext && !disabled, nameProp);
+   const registerChildId = parentContext?.registerChildId;
+   const inputRef = React.useRef(null);
++  // Native reset does not dispatch change; keep uncontrolled UI and inputs aligned.
++  React.useEffect(() => {
++    const formElement = inputRef.current?.form;
++    if (!formElement) {
++      return undefined;
++    }
++    let active = true;
++    function handleReset(event) {
++      // Ancestor handlers can still cancel reset after this listener runs.
++      queueMicrotask(() => {
++        if (active && !event.defaultPrevented) {
++          setCheckedState(defaultChecked);
++        }
++      });
++    }
++    formElement.addEventListener('reset', handleReset);
++    return () => {
++      active = false;
++      formElement.removeEventListener('reset', handleReset);
++    };
++  }, [form, defaultChecked, setCheckedState]);
+   const registerFieldInput = validation.registerInput;
+   const registeredInputValue = groupContext ? value : undefined;
+   const registerInput = React.useCallback(element => registerFieldInput(element, {
+diff --git a/checkbox/root/CheckboxRoot.mjs b/checkbox/root/CheckboxRoot.mjs
+index 8276fca70dc1a847bce9cf5a7c46207a2b1da49b..b13acfc968c756f9e1f5b6751ed9ace5eb9bd8e5 100644
+--- a/checkbox/root/CheckboxRoot.mjs
++++ b/checkbox/root/CheckboxRoot.mjs
+@@ -133,6 +133,27 @@ export const CheckboxRoot = /*#__PURE__*/React.forwardRef(function CheckboxRoot(
+   useRegisterFieldControl(controlRef, id, checked, undefined, !groupContext && !disabled, nameProp);
+   const registerChildId = parentContext?.registerChildId;
+   const inputRef = React.useRef(null);
++  // Native reset does not dispatch change; keep uncontrolled UI and inputs aligned.
++  React.useEffect(() => {
++    const formElement = inputRef.current?.form;
++    if (!formElement) {
++      return undefined;
++    }
++    let active = true;
++    function handleReset(event) {
++      // Ancestor handlers can still cancel reset after this listener runs.
++      queueMicrotask(() => {
++        if (active && !event.defaultPrevented) {
++          setCheckedState(defaultChecked);
++        }
++      });
++    }
++    formElement.addEventListener('reset', handleReset);
++    return () => {
++      active = false;
++      formElement.removeEventListener('reset', handleReset);
++    };
++  }, [form, defaultChecked, setCheckedState]);
+   const registerFieldInput = validation.registerInput;
+   const registeredInputValue = groupContext ? value : undefined;
+   const registerInput = React.useCallback(element => registerFieldInput(element, {
+diff --git a/radio-group/RadioGroup.js b/radio-group/RadioGroup.js
+index 28192b015befb7a8896a5056262145b924abd01d..5632d35122db874e934ea8966c5315ef22505b93 100644
+--- a/radio-group/RadioGroup.js
++++ b/radio-group/RadioGroup.js
+@@ -92,4 +92,25 @@ const RadioGroup = exports.RadioGroup = /*#__PURE__*/React.forwardRef(function R
+     }
+   }), [getInputControl]);
+   const groupInputRef = React.useRef(null);
++  // Native reset does not dispatch change; keep uncontrolled UI and inputs aligned.
++  React.useEffect(() => {
++    const formElement = groupInputRef.current?.form;
++    if (!formElement) {
++      return undefined;
++    }
++    let active = true;
++    function handleReset(event) {
++      // Ancestor handlers can still cancel reset after this listener runs.
++      queueMicrotask(() => {
++        if (active && !event.defaultPrevented) {
++          setCheckedValueUnwrapped(defaultValue);
++        }
++      });
++    }
++    formElement.addEventListener('reset', handleReset);
++    return () => {
++      active = false;
++      formElement.removeEventListener('reset', handleReset);
++    };
++  }, [form, defaultValue, setCheckedValueUnwrapped]);
+   const firstEnabledInputRef = React.useRef(null);
+diff --git a/radio-group/RadioGroup.mjs b/radio-group/RadioGroup.mjs
+index ef202bd782287091b2a7d0d179fe5d43c4ff73a3..375854c5db11e3a28b873e588c37fc530a358a20 100644
+--- a/radio-group/RadioGroup.mjs
++++ b/radio-group/RadioGroup.mjs
+@@ -86,4 +86,25 @@ export const RadioGroup = /*#__PURE__*/React.forwardRef(function RadioGroup(comp
+     }
+   }), [getInputControl]);
+   const groupInputRef = React.useRef(null);
++  // Native reset does not dispatch change; keep uncontrolled UI and inputs aligned.
++  React.useEffect(() => {
++    const formElement = groupInputRef.current?.form;
++    if (!formElement) {
++      return undefined;
++    }
++    let active = true;
++    function handleReset(event) {
++      // Ancestor handlers can still cancel reset after this listener runs.
++      queueMicrotask(() => {
++        if (active && !event.defaultPrevented) {
++          setCheckedValueUnwrapped(defaultValue);
++        }
++      });
++    }
++    formElement.addEventListener('reset', handleReset);
++    return () => {
++      active = false;
++      formElement.removeEventListener('reset', handleReset);
++    };
++  }, [form, defaultValue, setCheckedValueUnwrapped]);
+   const firstEnabledInputRef = React.useRef(null);

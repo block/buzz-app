@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, test, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRef, useState } from "react";
 import { Button } from "./Button";
@@ -74,6 +74,7 @@ test("loading non-native actions prevent activation and navigation", async () =>
 
 test("fields connect labels, help and errors and keep textarea edits controlled", async () => {
   const user = userEvent.setup();
+  const ref = createRef<HTMLTextAreaElement>();
   function Example() {
     const [value, setValue] = useState("Draft");
     return (
@@ -83,6 +84,10 @@ test("fields connect labels, help and errors and keep textarea edits controlled"
         </Field>
         <Field label="Description">
           <Textarea
+            id="description-control"
+            ref={ref}
+            name="description"
+            rows={4}
             value={value}
             onChange={(event) => setValue(event.target.value)}
           />
@@ -96,10 +101,14 @@ test("fields connect labels, help and errors and keep textarea edits controlled"
   expect(title).toHaveAccessibleDescription(/A short name/);
   expect(title).toHaveAccessibleDescription(/Name required/);
   expect(title).toHaveAttribute("aria-invalid", "true");
-  await user.type(
-    screen.getByRole("textbox", { name: "Description" }),
-    " notes",
-  );
+  const description = screen.getByRole("textbox", { name: "Description" });
+  expect(ref.current).toBe(description);
+  expect(description).toHaveAttribute("id", "description-control");
+  expect(description).toHaveAttribute("name", "description");
+  expect(description).toHaveAttribute("rows", "4");
+  await user.click(screen.getByText("Description", { selector: "label" }));
+  expect(description).toHaveFocus();
+  await user.type(description, " notes");
   expect(screen.getByRole("status")).toHaveTextContent("Draft notes");
 });
 
@@ -158,4 +167,196 @@ test("search forwards keyboard events and ref, and clearing restores input focus
   expect(input).toHaveFocus();
   await user.keyboard("{Escape}");
   expect(onKeyDown).toHaveBeenCalled();
+});
+
+test.each([false, true])(
+  "native reset restores uncontrolled choices and form values (external form: %s)",
+  async (external) => {
+    const user = userEvent.setup();
+    const checkboxChange = vi.fn();
+    const radioChange = vi.fn();
+    const checkboxRef = createRef<HTMLInputElement>();
+    const radioRef = createRef<HTMLInputElement>();
+    const choices = (
+      <>
+        <Field label="Delivery">
+          <RadioGroup
+            name="delivery"
+            defaultValue="all"
+            form={external ? "preferences" : undefined}
+            inputRef={radioRef}
+            onValueChange={radioChange}
+          >
+            <Radio value="all" label="All updates" />
+            <Radio value="mentions" label="Mentions only" />
+          </RadioGroup>
+        </Field>
+        <Checkbox
+          name="summary"
+          value="yes"
+          label="Include summary"
+          defaultChecked
+          form={external ? "preferences" : undefined}
+          inputRef={checkboxRef}
+          onCheckedChange={checkboxChange}
+        />
+      </>
+    );
+    render(
+      <>
+        <form id="preferences" aria-label="Preferences">
+          {!external && choices}
+          <button type="reset">Reset preferences</button>
+        </form>
+        {external && choices}
+      </>,
+    );
+    const form = screen.getByRole("form") as HTMLFormElement;
+    const checkbox = screen.getByRole("checkbox", { name: "Include summary" });
+    const all = screen.getByRole("radio", { name: "All updates" });
+    const mentions = screen.getByRole("radio", { name: "Mentions only" });
+    for (const programmatic of [false, true]) {
+      await user.click(checkbox);
+      await user.click(mentions);
+      expect(checkbox).not.toBeChecked();
+      expect(mentions).toBeChecked();
+      expect(Object.fromEntries(new FormData(form))).toEqual({
+        delivery: "mentions",
+      });
+      checkboxChange.mockClear();
+      radioChange.mockClear();
+      if (programmatic) await act(async () => form.reset());
+      else
+        await user.click(
+          screen.getByRole("button", { name: "Reset preferences" }),
+        );
+      expect(checkbox).toBeChecked();
+      expect(all).toBeChecked();
+      expect(mentions).not.toBeChecked();
+      expect(Object.fromEntries(new FormData(form))).toEqual({
+        delivery: "all",
+        summary: "yes",
+      });
+      expect(checkboxRef.current?.checked).toBe(true);
+      expect(radioRef.current?.value).toBe("all");
+      expect(checkboxChange).not.toHaveBeenCalled();
+      expect(radioChange).not.toHaveBeenCalled();
+    }
+  },
+);
+
+test("canceling a native reset preserves choices and form values", async () => {
+  const user = userEvent.setup();
+  render(
+    <form aria-label="Preferences" onReset={(event) => event.preventDefault()}>
+      <Checkbox
+        name="summary"
+        value="yes"
+        label="Include summary"
+        defaultChecked
+      />
+      <Field label="Delivery">
+        <RadioGroup name="delivery" defaultValue="all">
+          <Radio value="all" label="All updates" />
+          <Radio value="mentions" label="Mentions only" />
+        </RadioGroup>
+      </Field>
+      <button type="reset">Reset preferences</button>
+    </form>,
+  );
+  const checkbox = screen.getByRole("checkbox", { name: "Include summary" });
+  const mentions = screen.getByRole("radio", { name: "Mentions only" });
+  await user.click(checkbox);
+  await user.click(mentions);
+  await user.click(screen.getByRole("button", { name: "Reset preferences" }));
+  expect(checkbox).not.toBeChecked();
+  expect(mentions).toBeChecked();
+  expect(
+    Object.fromEntries(
+      new FormData(screen.getByRole("form") as HTMLFormElement),
+    ),
+  ).toEqual({ delivery: "mentions" });
+});
+
+test("controlled choices leave reset values with their owner", async () => {
+  const user = userEvent.setup();
+  function Example() {
+    const [checked, setChecked] = useState(true);
+    const [delivery, setDelivery] = useState("all");
+    return (
+      <form
+        aria-label="Preferences"
+        onReset={() => {
+          setChecked(false);
+          setDelivery("mentions");
+        }}
+      >
+        <Checkbox
+          name="summary"
+          value="yes"
+          label="Include summary"
+          checked={checked}
+          onCheckedChange={setChecked}
+        />
+        <Field label="Delivery">
+          <RadioGroup
+            name="delivery"
+            value={delivery}
+            onValueChange={setDelivery}
+          >
+            <Radio value="all" label="All updates" />
+            <Radio value="mentions" label="Mentions only" />
+          </RadioGroup>
+        </Field>
+        <button type="reset">Reset preferences</button>
+      </form>
+    );
+  }
+  render(<Example />);
+  await user.click(screen.getByRole("button", { name: "Reset preferences" }));
+  expect(
+    screen.getByRole("checkbox", { name: "Include summary" }),
+  ).not.toBeChecked();
+  expect(screen.getByRole("radio", { name: "Mentions only" })).toBeChecked();
+  expect(
+    Object.fromEntries(
+      new FormData(screen.getByRole("form") as HTMLFormElement),
+    ),
+  ).toEqual({ delivery: "mentions" });
+});
+
+test("reset restores an initially empty radio group and unchecked checkbox", async () => {
+  const user = userEvent.setup();
+  render(
+    <form aria-label="Preferences">
+      <Checkbox
+        name="summary"
+        value="yes"
+        uncheckedValue="no"
+        label="Include summary"
+      />
+      <Field label="Delivery">
+        <RadioGroup name="delivery">
+          <Radio value="all" label="All updates" />
+          <Radio value="mentions" label="Mentions only" />
+        </RadioGroup>
+      </Field>
+      <button type="reset">Reset preferences</button>
+    </form>,
+  );
+  await user.click(screen.getByRole("checkbox", { name: "Include summary" }));
+  await user.click(screen.getByRole("radio", { name: "Mentions only" }));
+  await user.click(screen.getByRole("button", { name: "Reset preferences" }));
+  expect(
+    screen.getByRole("checkbox", { name: "Include summary" }),
+  ).not.toBeChecked();
+  expect(screen.getByRole("radio", { name: "All updates" })).not.toBeChecked();
+  expect(
+    screen.getByRole("radio", { name: "Mentions only" }),
+  ).not.toBeChecked();
+  expect(
+    Object.fromEntries(
+      new FormData(screen.getByRole("form") as HTMLFormElement),
+    ),
+  ).toEqual({ summary: "no" });
 });

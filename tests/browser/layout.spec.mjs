@@ -1,8 +1,13 @@
 import { test, expect } from "./fixture.mjs";
-import { settle, upper, expectAnchor } from "./timeline.mjs";
+import { anchor, settle, upper, expectAnchor } from "./timeline.mjs";
 
+const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 // Resize tests must not enter the fixture’s deliberately held paging path.
-const readingTest = test.extend({ tallMessages: true });
+const readingTest = test.extend({
+  tallMessages: true,
+  // Keep the old restored row visible when wheel input selects another row.
+  historyCounts: { alpha: 24, beta: 1 },
+});
 async function expectNonPaging(page, app) {
   expect(
     await page
@@ -80,47 +85,49 @@ async function shellFits(page, width) {
   }
 }
 
-test("page overscroll is disabled while message history still scrolls", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  // Headless wheel input does not reproduce macOS trackpad rubber-banding.
-  // Check the viewport policy as well as real panel scrolling and shell bounds.
-  await expect(page.locator("html")).toHaveCSS("overscroll-behavior", "none");
-  const shell = page.locator(".shell-background");
-  const bounds = await box(shell);
-  const history = page.getByRole("region", { name: "Channel message history" });
-  await settle(page);
-  const initialOffset = await history.evaluate((el) => el.scrollTop);
-  await history.hover();
-  await page.mouse.wheel(0, -300);
-  await expect
-    .poll(() => history.evaluate((el) => el.scrollTop))
-    .toBeLessThan(initialOffset - 100);
-  await settle(page);
-  expect(await box(shell)).toEqual(bounds);
-
-  // Projects has no overflowing content: gestures must leave the shell in place.
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Projects", exact: true })
-    .click();
-  await page.getByRole("heading", { name: "Projects", exact: true }).hover();
-  for (const [x, y] of [
-    [0, -600],
-    [0, 600],
-    [-600, 0],
-    [600, 0],
-  ]) {
-    await page.mouse.wheel(x, y);
-    await page.evaluate(() => new Promise(requestAnimationFrame));
+scroll(
+  "page overscroll is disabled while message history still scrolls",
+  async ({ page, app }) => {
+    await open(page, app);
+    // Headless wheel input does not reproduce macOS trackpad rubber-banding.
+    // Check the viewport policy as well as real panel scrolling and shell bounds.
+    await expect(page.locator("html")).toHaveCSS("overscroll-behavior", "none");
+    const shell = page.locator(".shell-background");
+    const bounds = await box(shell);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await settle(page);
+    const initialOffset = await history.evaluate((el) => el.scrollTop);
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() => history.evaluate((el) => el.scrollTop))
+      .toBeLessThan(initialOffset - 100);
+    await settle(page);
     expect(await box(shell)).toEqual(bounds);
-    expect(await page.evaluate(() => [window.scrollX, window.scrollY])).toEqual(
-      [0, 0],
-    );
-  }
-});
+
+    // Projects has no overflowing content: gestures must leave the shell in place.
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Projects", exact: true })
+      .click();
+    await page.getByRole("heading", { name: "Projects", exact: true }).hover();
+    for (const [x, y] of [
+      [0, -600],
+      [0, 600],
+      [-600, 0],
+      [600, 0],
+    ]) {
+      await page.mouse.wheel(x, y);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      expect(await box(shell)).toEqual(bounds);
+      expect(
+        await page.evaluate(() => [window.scrollX, window.scrollY]),
+      ).toEqual([0, 0]);
+    }
+  },
+);
 
 test("bento surfaces, centered tabs, real link panel and compact community navigation", async ({
   page,
@@ -600,34 +607,32 @@ readingTest(
     const history = page.getByRole("region", {
       name: "Channel message history",
     });
-    const before = await history.evaluate((el) => el.scrollTop);
     await history.hover();
-    await page.mouse.wheel(0, -300);
-    await expect
-      .poll(() => history.evaluate((el) => el.scrollTop))
-      .toBeLessThan(before);
-    await settle(page);
-    // A tall paragraph need not fit wholly in the narrowed viewport. Capture
-    // the visible reading row, including the production clipped-row fallback.
-    const reading = await history.evaluate((el) => {
-      const bounds = el.getBoundingClientRect();
-      const rows = Array.from(el.querySelectorAll("[data-message-id]"));
-      const row =
-        rows.find((row) => {
-          const p = row.querySelector("p").getBoundingClientRect();
-          return p.top >= bounds.top && p.bottom <= bounds.bottom;
-        }) ??
-        rows.find((row) => {
-          const rect = row.getBoundingClientRect();
-          return rect.bottom > bounds.top && rect.top < bounds.bottom;
-        });
-      if (!row) throw new Error("No visible post-gesture reading row");
-      return {
-        id: row.dataset.messageId,
-        y: row.querySelector("p").getBoundingClientRect().top - bounds.top,
-      };
-    });
+    // A tall row above the anchor can exceed one wheel step, and a tall
+    // paragraph need not fit wholly in the narrowed viewport. Keep making real
+    // progress until the visible reading row (including the production
+    // clipped-row fallback) belongs to another message; never repeat a read
+    // until an immobile timeline happens to pass.
+    let reading = original;
+    for (
+      let gesture = 0;
+      gesture < 6 && reading.id === original.id;
+      gesture++
+    ) {
+      const before = await history.evaluate((el) => el.scrollTop);
+      await page.mouse.wheel(0, -300);
+      await expect
+        .poll(() => history.evaluate((el) => el.scrollTop))
+        .toBeLessThan(before);
+      await settle(page);
+      reading = await anchor(page);
+    }
     expect(reading.id).not.toBe(original.id);
+    // An offscreen restored row is ignored even if gesture() fails to clear it.
+    // Keep that row intersecting so the final assertion detects a stale anchor.
+    await expect(
+      history.locator(`[data-message-id="${original.id}"]`),
+    ).toBeInViewport();
     await button(page, "Close Bestie panel").click();
     await settle(page);
     await expectAnchor(page, reading);
@@ -642,7 +647,14 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = ["Home", "Messages", "Projects", "Agents", "Workflows"];
+  const titles = [
+    "Home",
+    "Messages",
+    "Projects",
+    "Agents",
+    "Sessions",
+    "Workflows",
+  ];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -685,6 +697,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Home",
     "Messages",
     "Agents",
+    "Sessions",
     "Workflows",
   ]);
   await projects.click();
@@ -699,6 +712,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Home",
     "Projects",
     "Agents",
+    "Sessions",
     "Workflows",
   ]);
   await channels.click();
@@ -708,6 +722,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Messages",
     "Projects",
     "Agents",
+    "Sessions",
     "Workflows",
     "Make it yoursSettings",
   ]);

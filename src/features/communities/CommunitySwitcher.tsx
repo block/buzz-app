@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
-  IconChevronDown as ChevronDown,
-  IconWorld as Globe2,
-  IconPlus as Plus,
-  IconX as X,
-} from "@tabler/icons-react";
+  CaretDownIcon,
+  GlobeIcon,
+  PlusIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import { CommunityDialog } from "./CommunityDialog";
 import type { Communities } from "./service";
 import styles from "./Communities.module.css";
@@ -62,9 +62,9 @@ export function CommunitySwitcher({
           dialog.current?.showModal();
         }}
       >
-        <Globe2 size={18} aria-hidden="true" />
+        <GlobeIcon size={18} aria-hidden="true" />
         <span>{current?.name ?? "Personal space"}</span>
-        <ChevronDown size={14} aria-hidden="true" />
+        <CaretDownIcon size={14} aria-hidden="true" />
       </button>
       <dialog ref={dialog} className={styles.dialog} aria-label="Communities">
         <header>
@@ -74,7 +74,7 @@ export function CommunitySwitcher({
             aria-label="Close communities"
             onClick={() => dialog.current?.close()}
           >
-            <X size={18} aria-hidden="true" />
+            <XIcon size={18} aria-hidden="true" />
           </button>
         </header>
         <nav className={styles.communityList} aria-label="Communities">
@@ -85,7 +85,7 @@ export function CommunitySwitcher({
             aria-current={client.selected === null ? "true" : undefined}
             onClick={() => select(null)}
           >
-            <Globe2 size={22} aria-hidden="true" />
+            <GlobeIcon size={22} aria-hidden="true" />
             <span>Personal space</span>
           </button>
           {client.memberships.map((m) => (
@@ -115,7 +115,7 @@ export function CommunitySwitcher({
               setJoining(true);
             }}
           >
-            <Plus size={22} aria-hidden="true" />
+            <PlusIcon size={22} aria-hidden="true" />
             <span>Add a community</span>
           </button>
         </nav>

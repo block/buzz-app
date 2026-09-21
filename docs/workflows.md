@@ -37,9 +37,11 @@ Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.
 
 Reads begin on UI interest and stop on unmount or access loss; no background poll.
-Transient socket recovery cancels stale reads but retains the draft and active
-HTTP receipt correlation; refresh checks current data. Actual access loss purges
-private snapshots before callbacks. Drafts are editor-local,
+Transient socket recovery cancels stale reads but retains the draft. Live-session
+commands use the shared socket's result-bearing OK receipt; disconnect after send
+leaves the outcome unknown and never automatically replays the command. The dev broker requires a live owner and matched frontend/host versions; only
+the pre-existing direct signed adapter retains HTTP publication. Refresh checks current data.
+Actual access loss purges private snapshots before callbacks. Drafts are editor-local,
 not durable, and never move between viewers or communities. The broker preserves
 same-origin checks, signature validation, captured principal quotas, cancellation,
 fixed upstream paths and bounded history/receipt bodies.

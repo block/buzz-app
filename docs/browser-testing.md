@@ -20,12 +20,23 @@ bin/pnpm test:browser         # both engines; serial measurements, two functiona
 bin/just scan                # includes browser tests and all existing gates
 ```
 
-Playwright is pinned to 1.60.0; the browser installer downloads its matching
+Playwright is pinned to 1.63.0; the browser installer downloads its matching
 Chromium and WebKit revisions. Do not borrow another checkout's node_modules or
 silently skip an engine when its executable is missing. Linux runners also need
 Playwright's documented system libraries provisioned by their administrator.
 The initial verified runner is Apple Silicon macOS, not a cross-platform result.
 No native application or interactive browser is opened.
+
+The 1.63.0 pin replaces 1.60.0 after an isolated Ubuntu 24.04 ARM64 replay showed
+WebKit 2287 stranding the tail of an open Fetch stream until another write.
+Stock WebKit 2359 consumed it while the server stayed idle, with byte streams
+still enabled, both with and without Playwright interception. The unchanged
+`sidebar-unread.spec.mjs` then passed all ten Chromium/WebKit cases; its two
+previously failing assertions and timeouts are unchanged. The full scroll file
+passed five of six cases: the documented Linux WebKit wheel-edge limitation
+remains. This is bounded test-browser evidence, not a fix for older Safari clients
+or proof of hosted CI success. No browser feature overrides or CI exclusions were
+added by the pin update; existing local-only cases below remain unchanged.
 
 For repeatability and diagnostic baselines:
 

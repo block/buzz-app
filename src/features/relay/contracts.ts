@@ -8,7 +8,11 @@ export type ChannelSummary = Readonly<{
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
-  channelType?: "stream" | "forum" | "dm";
+  channelType?: "stream" | "forum" | "dm" | "session";
+  /** Presentation-only parent from signed channel metadata; never grants access. */
+  parentChannelId?: string | undefined;
+  /** Metadata update time used for stable work-history ordering. */
+  updatedAt?: number;
   archived?: true;
   /** Exact members from the relay-signed roster; absent means unknown. */
   members?: readonly string[];
@@ -19,6 +23,8 @@ export type Profile = Readonly<{
   name: string;
   picture?: string;
   about?: string;
+  /** Self-declared display hint, not proof of ownership, membership or authority. */
+  isAgent?: true;
 }>;
 export type Attachment = Readonly<{
   url: string;
@@ -26,6 +32,8 @@ export type Attachment = Readonly<{
   dimensions?: Readonly<{ width: number; height: number }>;
   /** Validated message-carried BlurHash; decoded locally only for presentation. */
   blurhash?: string;
+  /** Signed video poster or media thumbnail URL. */
+  previewUrl?: string;
 }>;
 /** Relay-authored membership activity, not a membership grant or user message. */
 export type MembershipChange = Readonly<{
@@ -42,6 +50,8 @@ export type ChannelMessage = Readonly<{
   /** Unix seconds from the signed event. Ordering is (createdAt asc, id desc); no clock inference. */
   createdAt: number;
   content: string;
+  /** Original kind 40002, regardless of edits; self-declared display evidence, not authority. */
+  agentEnvelope?: true;
   membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;

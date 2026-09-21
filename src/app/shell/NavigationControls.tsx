@@ -1,9 +1,9 @@
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useSyncExternalStore } from "react";
 import {
-  IconArrowLeft as ArrowLeft,
-  IconArrowRight as ArrowRight,
-} from "@tabler/icons-react";
+  ArrowLeftIcon,
+  ArrowRightIcon,
+} from "../../shared/design-system/icons/index";
 import type { Navigation } from "../../features/navigation/controller";
 export function NavigationControls({ navigation }: { navigation: Navigation }) {
   const state = useSyncExternalStore(navigation.subscribe, navigation.snapshot);
@@ -20,7 +20,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         title="Go back"
         disabled={!state.canGoBack}
         onClick={navigation.back}
-        icon={<ArrowLeft size={16} aria-hidden="true" />}
+        icon={<ArrowLeftIcon size={16} aria-hidden="true" />}
       />
       <IconButton
         type="button"
@@ -30,7 +30,7 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
         title="Go forward"
         disabled={!state.canGoForward}
         onClick={navigation.forward}
-        icon={<ArrowRight size={16} aria-hidden="true" />}
+        icon={<ArrowRightIcon size={16} aria-hidden="true" />}
       />
     </nav>
   );

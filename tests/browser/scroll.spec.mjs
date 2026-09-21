@@ -11,6 +11,7 @@ import {
   edge,
 } from "./timeline.mjs";
 
+test.use({ historyCounts: { alpha: 640, beta: 80 } });
 // Keep non-paging reading gestures outside the unchanged near-top read zone,
 // even with a 20-row head. The cursor journey below keeps ordinary-height rows.
 const readingTest = test.extend({ tallMessages: true });
@@ -125,12 +126,14 @@ readingTest(
       await expectAnchor(page, saved);
     }
     expect(app.report.sessions).toEqual(["primary", "secondary"]);
-    // Each community starts globals, then replaces the POST once with its
-    // discovered interests. Repeated channel/community switches must not churn it.
+    // Each community keeps one stream; discovered interests update that owner
+    // in place. Repeated channel/community switches must not churn either.
     expect(app.report.streamConnections).toEqual([
       { community: "primary", channels: [] },
-      { community: "primary", channels: ["alpha", "beta"] },
       { community: "secondary", channels: [] },
+    ]);
+    expect(app.report.streamInterests).toEqual([
+      { community: "primary", channels: ["alpha", "beta"] },
       { community: "secondary", channels: ["alpha", "beta"] },
     ]);
     const savedOffset = await history(page).evaluate((el) => el.scrollTop);

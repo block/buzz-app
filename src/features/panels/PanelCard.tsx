@@ -1,6 +1,6 @@
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { IconX as X } from "@tabler/icons-react";
+import { XIcon } from "../../shared/design-system/icons/index";
 import type { PanelProps, RegisteredPanel } from "./service";
 import { PanelView } from "./PanelView";
 import styles from "./Panels.module.css";
@@ -33,7 +33,7 @@ export function PanelCard({
             size="toolbar"
             aria-label={closeLabel ?? `Close ${panel.title} panel`}
             onClick={props.close}
-            icon={<X size={18} aria-hidden="true" />}
+            icon={<XIcon size={18} aria-hidden="true" />}
           />
         }
       />

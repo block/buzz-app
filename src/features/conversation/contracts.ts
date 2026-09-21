@@ -9,6 +9,8 @@ export type ComposerToolProps = Readonly<{
   scope: string;
   channelId: string;
   threadRootId?: string | undefined;
+  /** Sessions may offer library agents; the host confirms channel admission before sending. */
+  inviteAgents?: boolean | undefined;
   disabled: boolean;
   /** False after removal, destination change, read-only state or a rejected edit. */
   insertText(text: string): boolean;
@@ -63,7 +65,24 @@ export type ContributionReader<T> = Readonly<{
   snapshot(): readonly Contribution<T>[];
   subscribe(listener: () => void): () => void;
 }>;
+export type ComposerAccessoryProps = Readonly<{
+  session: RelaySession;
+  scope: string;
+  channelId: string;
+  threadRootId?: string | undefined;
+  /** Presentation only; the host re-resolves targets. No editor or access grant. */
+  canOpen(target: string): boolean;
+  /** False after contribution removal or the originating composer retires. */
+  open(target: string): boolean;
+}>;
+export type ComposerAccessory = Readonly<{
+  id: string;
+  title: string;
+  order?: number;
+  component: ComponentType<ComposerAccessoryProps>;
+}>;
 export type ConversationExtensions = Readonly<{
+  accessories?: ContributionReader<ComposerAccessory>;
   tools: ContributionReader<ComposerTool>;
   inline: ContributionReader<InlineRenderer>;
   completions?: ContributionReader<ComposerCompletion>;
@@ -79,7 +98,7 @@ export type ComposerObservation = Readonly<{
 }>;
 export type CompletionContext = Pick<
   ComposerToolProps,
-  "session" | "scope" | "channelId" | "threadRootId"
+  "session" | "scope" | "channelId" | "threadRootId" | "inviteAgents"
 >;
 export type CompletionQuery = Readonly<{
   start: number;

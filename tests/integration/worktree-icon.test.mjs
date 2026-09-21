@@ -12,6 +12,7 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 // Real Git worktrees and subprocesses; only Swift rendering and pnpm are stubs.
 // The macOS-only launcher wiring also runs on a Mac, without opening an app.
@@ -182,4 +183,35 @@ test("macOS launcher combines icon and port before explicit config and runner ar
   const fallback = launch();
   assert.deepEqual(JSON.parse(fallback[3]), { build: config.build });
   assert.deepEqual(fallback.slice(4), forwarded);
+});
+
+test("real macOS renderer accepts long display labels", {
+  skip: process.platform !== "darwin",
+}, (t) => {
+  const directory = mkdtempSync(path.join(tmpdir(), "buzz-icon-render-"));
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const root = fileURLToPath(new URL("../../", import.meta.url));
+  const output = path.join(directory, "icon.icns");
+  // Valid Git suffix, but too long when combined with a prefix and UUID as a path.
+  const label = "a".repeat(220);
+  const result = spawnSync(
+    "swift",
+    [
+      path.join(root, "scripts/generate-dev-icon.swift"),
+      path.join(root, "src-tauri/icons/icon.icns"),
+      output,
+      label,
+    ],
+    { encoding: "utf8", timeout: 60_000 },
+  );
+  assert.ifError(result.error);
+  assert.equal(result.status, 0, result.stderr);
+  // Decode the generated artifact rather than asserting artwork or internal names.
+  execFileSync("/usr/bin/iconutil", [
+    "-c",
+    "iconset",
+    output,
+    "-o",
+    path.join(directory, "decoded.iconset"),
+  ]);
 });

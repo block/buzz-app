@@ -16,25 +16,6 @@ let inputPath = CommandLine.arguments[1]
 let outputPath = CommandLine.arguments[2]
 let label = CommandLine.arguments[3]
 
-func sanitizedPathComponent(_ value: String) -> String {
-    let lowered = value.lowercased()
-    let sanitizedScalars = lowered.unicodeScalars.map { scalar -> Character in
-        switch scalar {
-        case "a"..."z", "0"..."9":
-            return Character(scalar)
-        default:
-            return "-"
-        }
-    }
-    let collapsed = String(sanitizedScalars).replacingOccurrences(
-        of: "-+",
-        with: "-",
-        options: .regularExpression
-    )
-    let trimmed = collapsed.trimmingCharacters(in: CharacterSet(charactersIn: "-"))
-    return trimmed.isEmpty ? "dev" : trimmed
-}
-
 guard let iconImage = NSImage(contentsOfFile: inputPath) else {
     fputs("Failed to load image: \(inputPath)\n", stderr)
     exit(1)
@@ -158,7 +139,7 @@ guard let pngData = bitmapRep.representation(using: .png, properties: [:]) else 
 if outputPath.hasSuffix(".icns") {
     let tempDir = FileManager.default.temporaryDirectory
     let iconsetParent = tempDir.appendingPathComponent(
-        "staged-dev-\(sanitizedPathComponent(label))-\(UUID().uuidString)",
+        "staged-dev-\(UUID().uuidString)",
         isDirectory: true
     )
     let iconsetPath = iconsetParent.appendingPathComponent("icon.iconset", isDirectory: true)

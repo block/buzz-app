@@ -601,8 +601,8 @@ function ChannelWorkspace({
         <div className={styles.search}>
           <MagnifyingGlassIcon size={17} />
           <input
-            aria-label="MagnifyingGlassIcon channels"
-            placeholder="MagnifyingGlassIcon"
+            aria-label="Search channels"
+            placeholder="Search"
             value={search}
             onChange={(event) => sidebar.setSearch(event.target.value)}
           />

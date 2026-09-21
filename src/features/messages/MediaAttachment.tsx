@@ -218,7 +218,7 @@ export function MediaAttachment({
         <button
           type="button"
           className={styles.mediaPlay}
-          aria-label={playing ? "PauseIcon video" : "PlayIcon video"}
+          aria-label={playing ? "Pause video" : "Play video"}
           onClick={() => {
             if (!video.current) return;
             if (video.current.paused) void video.current.play();

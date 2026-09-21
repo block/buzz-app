@@ -1,3 +1,4 @@
+import { expectPhosphor } from "./phosphor.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
@@ -241,13 +242,7 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
-  await expect(sharedSearchIcon).toHaveAttribute("viewBox", "0 0 256 256");
-  await expect(sharedSearchIcon).toHaveAttribute("stroke-width", "2");
-  await expect(sharedSearchIcon.locator("path")).toHaveAttribute(
-    "d",
-    "m21 21-4.34-4.34",
-  );
-  await expect(sharedSearchIcon.locator("circle")).toHaveAttribute("r", "8");
+  await expectPhosphor(sharedSearchIcon, "magnifying-glass");
   expect(await sharedSearchIconNode.evaluate((node) => node.isConnected)).toBe(
     true,
   );
@@ -359,7 +354,8 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(clear).toHaveCSS("width", "16px");
   await expect(clear).toHaveCSS("height", "16px");
   await expect(clear).toHaveCSS("color", "rgb(82, 82, 82)");
-  await expect(clearIcon).toHaveAttribute("viewBox", "0 0 256 256");
+  await expectPhosphor(clearIcon, "x-circle");
+  await expect(clearIcon.locator("path")).toHaveCSS("fill", "rgb(82, 82, 82)");
   const filledSearchPosition = await search.boundingBox();
   const clearIconPosition = await clearIcon.boundingBox();
   expect(

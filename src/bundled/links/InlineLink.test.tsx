@@ -161,3 +161,54 @@ it("does not mistake lookalike hosts or URL paths for Google Drive", () => {
   expect(linkKind("https://drive.google.com.example.com/file")).toBe("web");
   expect(linkKind("https://example.com/drive.google.com")).toBe("web");
 });
+
+it("renders the supplied OneDrive brand asset with separate masks for repeated links", () => {
+  const markup = renderToStaticMarkup(
+    <>
+      <InlineLink href="https://1drv.ms/a">OneDrive A</InlineLink>
+      <InlineLink href="https://1drv.ms/b">OneDrive B</InlineLink>
+    </>,
+  );
+  expect(markup.replace(/<[^>]+>/g, "")).toBe("OneDrive AOneDrive B");
+  expect(markup.match(/aria-hidden="true"/g)).toHaveLength(2);
+  expect(markup.match(/viewBox="0 0 32 32"/g)).toHaveLength(2);
+  expect(markup.match(/mask-type:alpha/g)).toHaveLength(2);
+  const ids = [...markup.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1]);
+  expect(ids).toHaveLength(10);
+  expect(new Set(ids).size).toBe(ids.length);
+  const svgs = [...markup.matchAll(/<svg\b[^>]*>[\s\S]*?<\/svg>/g)].map(
+    (match) => match[0],
+  );
+  expect(svgs).toHaveLength(2);
+  for (const svg of svgs) {
+    const localIds = [...svg.matchAll(/\bid="([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+    const references = [...svg.matchAll(/url\(#([^)]*)\)/g)].map(
+      (match) => match[1],
+    );
+    expect(references).toHaveLength(5);
+    for (const reference of references) expect(localIds).toContain(reference);
+    expect(
+      [...svg.matchAll(/<path\b[^>]* d="([^"]+)"/g)].map((match) => match[1]),
+    ).toEqual([
+      "M7.82979 26C3.50549 26 0 22.5675 0 18.3333C0 14.1921 3.35322 10.8179 7.54613 10.6716C9.27535 7.87166 12.4144 6 16 6C20.6308 6 24.5169 9.12183 25.5829 13.3335C29.1316 13.3603 32 16.1855 32 19.6667C32 23.0527 29 26 25.8723 25.9914L7.82979 26Z",
+      "M7.83017 26.0001C5.37824 26.0001 3.18957 24.8966 1.75391 23.1691L18.0429 16.3335L30.7089 23.4647C29.5926 24.9211 27.9066 26.0001 26.0004 25.9915C23.1254 26.0001 12.0629 26.0001 7.83017 26.0001Z",
+      "M25.5785 13.3149L18.043 16.3334L30.709 23.4647C31.5199 22.4065 32.0004 21.0916 32.0004 19.6669C32.0004 16.1857 29.1321 13.3605 25.5833 13.3337C25.5817 13.3274 25.5801 13.3212 25.5785 13.3149Z",
+      "M7.06445 10.7028L18.0423 16.3333L25.5779 13.3148C24.5051 9.11261 20.6237 6 15.9997 6C12.4141 6 9.27508 7.87166 7.54586 10.6716C7.3841 10.6773 7.22358 10.6877 7.06445 10.7028Z",
+      "M1.7535 23.1687L18.0425 16.3331L7.06471 10.7026C3.09947 11.0792 0 14.3517 0 18.3331C0 20.1665 0.657197 21.8495 1.7535 23.1687Z",
+    ]);
+    expect(
+      [...svg.matchAll(/stop-color="([^"]+)"/g)].map((match) => match[1]),
+    ).toEqual([
+      "#2086B8",
+      "#46D3F6",
+      "#1694DB",
+      "#62C3FE",
+      "#0D3D78",
+      "#063B83",
+      "#16589B",
+      "#1464B7",
+    ]);
+  }
+});

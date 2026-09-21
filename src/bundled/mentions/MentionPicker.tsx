@@ -101,7 +101,7 @@ export function MentionPicker({
           aria-label="Mention a channel member"
         >
           <label>
-            MagnifyingGlassIcon channel members
+            Search channel members
             <input
               type="search"
               value={search}

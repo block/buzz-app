@@ -203,8 +203,8 @@ export function ImageReviewStage({
         <a
           href={source}
           download
-          aria-label="DownloadIcon image"
-          title="DownloadIcon image"
+          aria-label="Download image"
+          title="Download image"
         >
           <DownloadIcon size={17} aria-hidden="true" />
         </a>

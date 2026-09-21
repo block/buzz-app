@@ -38,11 +38,23 @@
               {
                 "group": [
                   "lucide*",
+                  "lucide*/**",
                   "@lucide/**",
                   "@tabler/icons*",
+                  "@tabler/icons*/**",
+                  "react-icons",
                   "react-icons/**",
                   "@heroicons/**",
                   "@fortawesome/**",
+                  "@iconify/**",
+                  "iconoir*",
+                  "iconoir*/**",
+                  "iconsax*",
+                  "iconsax*/**",
+                  "@radix-ui/react-icons",
+                  "@radix-ui/react-icons/**",
+                  "phosphor-react",
+                  "phosphor-react/**",
                   "@phosphor-icons/**"
                 ],
                 "message": "Use the shared design-system/icons gateway; Phosphor only."
@@ -79,10 +91,23 @@
                   {
                     "group": [
                       "lucide*",
+                      "lucide*/**",
+                      "@lucide/**",
                       "@tabler/icons*",
+                      "@tabler/icons*/**",
+                      "react-icons",
                       "react-icons/**",
                       "@heroicons/**",
-                      "@fortawesome/**"
+                      "@fortawesome/**",
+                      "@iconify/**",
+                      "iconoir*",
+                      "iconoir*/**",
+                      "iconsax*",
+                      "iconsax*/**",
+                      "@radix-ui/react-icons",
+                      "@radix-ui/react-icons/**",
+                      "phosphor-react",
+                      "phosphor-react/**"
                     ],
                     "message": "Phosphor only."
                   }

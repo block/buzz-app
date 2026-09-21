@@ -340,7 +340,7 @@ function ThreadMessages({
         onKeyDown={(event) => {
           if (
             [
-              "ArrowUpIcon",
+              "ArrowUp",
               "ArrowDown",
               "PageUp",
               "PageDown",

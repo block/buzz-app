@@ -432,3 +432,5 @@ Every addition lands in `src/shared/design-system/tokens/registry.ts` in the sam
 ## Icons
 
 Phosphor is the only general icon family. Import named icons from `icons/index.ts`, which re-exports individual upstream modules. Add exports as needed; no approval list. SVG-only widgets use individual assets through `icons/svg.ts`. Do not import the upstream packages elsewhere or reintroduce other icon libraries. All six native weights remain designer choices: no size-to-weight or selection-to-fill rules. For chat and conversation metaphors, prefer the rounded `ChatCircle` family (including `ChatsCircle`) over square or teardrop variants; choose the matching dots, text, or slash variant when the meaning requires it. Keep accessible names on controls and decorative artwork hidden from assistive technology.
+
+OneDrive is a designer-approved brand-art exception: its supplied SVG stays in the shared icon gateway with source attribution in `NOTICE.md`, retaining original brand colors. It does not permit another general icon library.

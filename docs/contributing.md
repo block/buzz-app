@@ -159,7 +159,9 @@ custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
 
 Pre-commit runs pinned Biome formatting and safe lint fixes on fully staged
 JS/TS/JSON/CSS files, and rustfmt on individual staged Rust files. Remaining
-warnings/errors block the commit; no unsafe lint fixes are applied. Deletions and
+warnings/errors block the commit; no unsafe lint fixes are applied. The staged
+icon check also rejects known alternate icon families, direct upstream imports
+outside the design-system gateway, and whole-catalog imports. Deletions and
 unsupported formats (including Markdown, HTML and YAML) are not formatted here.
 The hook does **not** run types, tests, builds, Clippy, or a whole-tree formatter.
 `just iterate` remains the fast whole-tree fix/build command; `just scan` remains

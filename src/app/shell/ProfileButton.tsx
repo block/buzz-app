@@ -98,7 +98,7 @@ export function ProfileButton({
           }}
         >
           <GearIcon aria-hidden="true" size={17} />
-          GearIcon
+          Settings
         </button>
       </nav>
     </div>

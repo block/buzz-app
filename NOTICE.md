@@ -28,3 +28,5 @@ The Emoji Mart picker configuration and search-input focus/correction behavior i
 `desktop/src/features/custom-emoji/ui/EmojiPicker.tsx` at revision
 `b9392d9d78744df365f9276e1ffe8c1baa5ea903`. The adapter adds scoped custom IDs,
 explicit dictionary cleanup, and lazy loading for the session-owned catalog.
+
+The OneDrive logo component in `src/shared/design-system/icons/OneDriveLogo.tsx` is adapted from [SVG Repo asset 452065](https://www.svgrepo.com/svg/452065/ms-onedrive). OneDrive is a trademark of Microsoft.

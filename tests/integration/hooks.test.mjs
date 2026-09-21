@@ -376,6 +376,13 @@ function pushFixture(t, changes) {
     path.join(f.dir, "node_modules/typescript"),
     "dir",
   );
+  // The adoption guard parses CSS and scans the plugin examples directory.
+  symlinkSync(
+    path.join(root, "node_modules/postcss"),
+    path.join(f.dir, "node_modules/postcss"),
+    "dir",
+  );
+  mkdirSync(path.join(f.dir, "examples/plugins"), { recursive: true });
   // The icon guard parses real JS/TS using the pinned build-tool parser.
   symlinkSync(
     path.join(root, "node_modules/rolldown"),

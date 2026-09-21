@@ -1,4 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
+import { RobotIcon } from "../../shared/design-system/icons/index";
+import referenceStyles from "../../shared/InlineReference.module.css";
 import { describe, expect, it, vi } from "vitest";
 import {
   isValidElement,
@@ -512,7 +514,9 @@ it("renders tagged agent library names and profile names with the same agent ico
     const html = render(`@${name} can you also join`, options);
     expect(html).toContain('data-mention-kind="agent"');
     expect(html).toContain(`aria-label="View ${name} profile"`);
-    expect(html).toContain("tabler-icon-robot");
+    expect(html).toContain(
+      renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
+    );
   }
   expect(
     render("@Fast Fizz", { ...options, participantProfiles: new Map() }),
@@ -556,7 +560,9 @@ it("keeps the agent icon without presenting an unavailable profile action", () =
     canOpenLink: undefined,
   });
   expect(html).toContain('data-mention-kind="agent"');
-  expect(html).toContain("tabler-icon-robot");
+  expect(html).toContain(
+    renderToStaticMarkup(<RobotIcon className={referenceStyles.icon} />),
+  );
   expect(html).not.toContain("<button");
   expect(html).not.toContain('aria-label="View');
 });

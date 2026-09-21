@@ -1,6 +1,10 @@
+import {
+  CaretDownIcon,
+  CaretRightIcon,
+  DotsThreeVerticalIcon,
+} from "../../shared/design-system/icons/index";
 import { useId, useRef, type ReactElement, type ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
-import { ChevronDown, ChevronRight, MoreVertical } from "lucide-react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import completion from "../../features/conversation/Completions.module.css";
 import styles from "./ChannelSidebarRow.module.css";
@@ -39,7 +43,7 @@ export function ChannelSidebarRow({
   const starting = useRef(false);
   const childrenId = useId();
   const hasChildren = draft || sessions.length > 0;
-  const Chevron = collapsed ? ChevronRight : ChevronDown;
+  const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
   const canParent =
     channel.channelType !== "dm" &&
     channel.channelType !== "session" &&
@@ -102,7 +106,7 @@ export function ChannelSidebarRow({
               className={styles.more}
               aria-label={`More options for ${channel.name}`}
             >
-              <MoreVertical size={15} />
+              <DotsThreeVerticalIcon size={15} />
             </Menu.Trigger>
             <Menu.Portal>
               <Menu.Positioner

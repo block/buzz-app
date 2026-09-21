@@ -41,6 +41,8 @@ import { CaretLeftIcon as PhosphorCaretLeftIcon } from "@phosphor-icons/react/di
 export const CaretLeftIcon = defineIcon("phosphor", PhosphorCaretLeftIcon);
 import { CaretRightIcon as PhosphorCaretRightIcon } from "@phosphor-icons/react/dist/csr/CaretRight";
 export const CaretRightIcon = defineIcon("phosphor", PhosphorCaretRightIcon);
+import { CaretUpIcon as PhosphorCaretUpIcon } from "@phosphor-icons/react/dist/csr/CaretUp";
+export const CaretUpIcon = defineIcon("phosphor", PhosphorCaretUpIcon);
 import { ChatCircleIcon as PhosphorChatCircleIcon } from "@phosphor-icons/react/dist/csr/ChatCircle";
 export const ChatCircleIcon = defineIcon("phosphor", PhosphorChatCircleIcon);
 import { ChatsCircleIcon as PhosphorChatsCircleIcon } from "@phosphor-icons/react/dist/csr/ChatsCircle";
@@ -51,6 +53,11 @@ import { CopyIcon as PhosphorCopyIcon } from "@phosphor-icons/react/dist/csr/Cop
 export const CopyIcon = defineIcon("phosphor", PhosphorCopyIcon);
 import { DotsThreeIcon as PhosphorDotsThreeIcon } from "@phosphor-icons/react/dist/csr/DotsThree";
 export const DotsThreeIcon = defineIcon("phosphor", PhosphorDotsThreeIcon);
+import { DotsThreeVerticalIcon as PhosphorDotsThreeVerticalIcon } from "@phosphor-icons/react/dist/csr/DotsThreeVertical";
+export const DotsThreeVerticalIcon = defineIcon(
+  "phosphor",
+  PhosphorDotsThreeVerticalIcon,
+);
 import { DownloadIcon as PhosphorDownloadIcon } from "@phosphor-icons/react/dist/csr/Download";
 export const DownloadIcon = defineIcon("phosphor", PhosphorDownloadIcon);
 import { DropboxLogoIcon as PhosphorDropboxLogoIcon } from "@phosphor-icons/react/dist/csr/DropboxLogo";

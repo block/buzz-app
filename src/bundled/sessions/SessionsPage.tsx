@@ -1,5 +1,5 @@
+import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { useCallback, useState } from "react";
-import { IconMessageCircle } from "@tabler/icons-react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
@@ -47,7 +47,7 @@ export function SessionsPage({
     />
   ) : (
     <section className={styles.empty} aria-label="Sessions">
-      <IconMessageCircle size={28} />
+      <ChatCircleIcon size={28} />
       <h1>Sessions</h1>
       <p>
         {connection.status === "connecting"

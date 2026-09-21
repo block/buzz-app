@@ -1,6 +1,10 @@
+import {
+  RobotIcon,
+  CheckIcon,
+  CaretUpIcon,
+} from "../../shared/design-system/icons/index";
 import { useEffect, useSyncExternalStore } from "react";
 import { Menu } from "@base-ui/react/menu";
-import { Bot, Check, ChevronUp } from "lucide-react";
 import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
 import { avatarSource } from "../../shared/avatar-source";
@@ -85,12 +89,12 @@ export function AgentChoice({
             className={styles.agentAvatar ?? ""}
           />
         ) : (
-          <Bot size={20} aria-hidden="true" />
+          <RobotIcon size={20} aria-hidden="true" />
         )}
         <span className={styles.agentName}>
           {selected?.name ?? "Choose agent"}
         </span>
-        <ChevronUp size={12} aria-hidden="true" />
+        <CaretUpIcon size={12} aria-hidden="true" />
       </Menu.Trigger>
       <Menu.Portal>
         <Menu.Positioner
@@ -119,10 +123,10 @@ export function AgentChoice({
                 closeOnClick
                 className={`${completion.option} ${styles.agentOption}`}
               >
-                <Bot size={24} aria-hidden="true" />
+                <RobotIcon size={24} aria-hidden="true" />
                 <span>{emptyLabel}</span>
                 <Menu.RadioItemIndicator className={styles.agentCheck}>
-                  <Check size={14} />
+                  <CheckIcon size={14} />
                 </Menu.RadioItemIndicator>
               </Menu.RadioItem>
               {identities.map((agent) => {
@@ -160,7 +164,7 @@ export function AgentChoice({
                             : ""}
                     </span>
                     <Menu.RadioItemIndicator className={styles.agentCheck}>
-                      <Check size={14} />
+                      <CheckIcon size={14} />
                     </Menu.RadioItemIndicator>
                   </Menu.RadioItem>
                 );

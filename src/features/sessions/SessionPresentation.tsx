@@ -1,5 +1,5 @@
+import { HashIcon } from "../../shared/design-system/icons/index";
 import type { ReactNode, RefObject } from "react";
-import { Hash } from "lucide-react";
 import type { ChannelSummary } from "../relay/contracts";
 import styles from "./Sessions.module.css";
 
@@ -47,7 +47,7 @@ export function SessionHeading({
   return (
     <header className={styles.workHeader}>
       <div className={styles.workTitle}>
-        <Hash size={20} aria-hidden="true" />
+        <HashIcon size={20} aria-hidden="true" />
         <h2 ref={headingRef} tabIndex={-1}>
           {channel.name}
         </h2>

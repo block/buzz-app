@@ -1,6 +1,5 @@
+import { HashIcon, PlusIcon } from "../../shared/design-system/icons/index";
 import type { ReactNode } from "react";
-import { Hash } from "lucide-react";
-import { IconPlus } from "@tabler/icons-react";
 import styles from "./SessionsWorkspace.module.css";
 
 /** Presentation only. The caller supplies authorized, saved sessions. */
@@ -30,7 +29,7 @@ export function SessionsWorkspace({
     <section className={styles.workspace} aria-label="Sessions">
       <aside className={styles.sidebar} aria-label="Session history">
         <button className={styles.newSession} type="button" onClick={onNew}>
-          <IconPlus size={18} aria-hidden="true" />
+          <PlusIcon size={18} aria-hidden="true" />
           New session
         </button>
         <h2 className={styles.historyHeading}>Previous sessions</h2>
@@ -44,7 +43,7 @@ export function SessionsWorkspace({
             >
               {session.parentName && (
                 <small className={styles.parentChannel}>
-                  <Hash size={12} aria-hidden="true" />
+                  <HashIcon size={12} aria-hidden="true" />
                   <span>{session.parentName}</span>
                 </small>
               )}

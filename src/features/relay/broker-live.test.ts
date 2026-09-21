@@ -45,7 +45,11 @@ function fixture() {
         interests.push(d);
         return d.promise;
       }
-      if (url.endsWith("/stream-retry") || url.endsWith("/stream-observer")) {
+      if (
+        url.endsWith("/stream-retry") ||
+        url.endsWith("/stream-observer") ||
+        url.endsWith("/stream-presence")
+      ) {
         const d = deferred<Response>();
         controls.push(d);
         signals.push(init.signal as AbortSignal);
@@ -369,6 +373,60 @@ it("coalesced remove/re-add with the same final IDs still advances host interest
     });
     required(f.interests[1]).resolve(new Response(null, { status: 200 }));
     await tick();
+    expect(f.headers).toHaveLength(1);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("preserves locally-unsent presence separately from refusal and unknown responses", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    expect(
+      await owner.publishPresence?.("online", new AbortController().signal),
+    ).toBeNull();
+    f.accept(0);
+    await tick();
+    f.publish(0);
+    await tick();
+    for (const accepted of [null, false, true, undefined, "null"]) {
+      const result = owner.publishPresence?.(
+        "online",
+        new AbortController().signal,
+      );
+      required(f.controls.at(-1)).resolve(Response.json({ accepted }));
+      expect(await result).toBe(accepted === null ? null : accepted === true);
+    }
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("in-place channel interests preserve an outstanding presence publication", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    f.accept(0);
+    await tick();
+    f.publish(0);
+    await tick();
+    const identity = owner.identity?.();
+    const result = required(owner.publishPresence)(
+      "online",
+      new AbortController().signal,
+    );
+    owner.update(["a"]);
+    expect(owner.identity?.()).toBe(identity);
+    expect(required(f.signals[0]).aborted).toBe(false);
+    required(f.interests[0]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    required(f.controls[0]).resolve(Response.json({ accepted: true }));
+    expect(await result).toBe(true);
     expect(f.headers).toHaveLength(1);
   } finally {
     owner.dispose();

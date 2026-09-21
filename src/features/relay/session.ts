@@ -1103,6 +1103,21 @@ export function createRelaySession(
         channels.staleHeads();
         unread.stale();
       }
+      // Access-revoked CLOSED is a refresh hint, not signed archive/membership
+      // authority. Aggregate snapshots repeat failures; only react to a new one.
+      const revoked = (route: LiveSnapshot["routes"][number]) =>
+        route.channelId &&
+        route.status === "error" &&
+        route.error === "restricted: channel access revoked";
+      const previous = new Set(
+        liveSnapshot.routes.filter(revoked).map((r) => r.id),
+      );
+      if (
+        snapshot.routes.some(
+          (route) => revoked(route) && !previous.has(route.id),
+        )
+      )
+        refreshRoster();
       liveSnapshot = snapshot;
       publishLive();
     },

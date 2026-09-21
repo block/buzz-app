@@ -6,6 +6,7 @@ test.use({
   readState: true,
   threadUnread: true,
   pluginFixtures: true,
+  historyCounts: { alpha: 640, beta: 1 },
 });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const state = (page) =>
@@ -45,7 +46,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   ).toBeVisible();
   await expect(preview).toHaveClass(/buzz-preview-card/);
   await expect(preview.getByRole("img")).toHaveClass(/buzz-avatar/);
-  await expect(preview).toHaveCSS("font-size", "14px");
+  await expect(preview).toHaveCSS("font-size", "16px");
   await expect(preview.locator("strong")).not.toBeEmpty();
   await expect(preview.locator("time")).toHaveAttribute(
     "datetime",

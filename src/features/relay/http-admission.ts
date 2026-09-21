@@ -111,17 +111,15 @@ type Ticket = {
   reject(error: Error): void;
   abort(): void;
 };
-/** One host/principal API lane. Two starts/s leaves headroom below the reference
- * 300/min budget. Completion never grants dispatch credit. Server cooldowns reject
- * queued work explicitly instead of silently spending a read's 10s deadline. */
+/** One host/principal API lane, bounded like the broker's six-request ceiling.
+ * Available capacity dispatches immediately; only server cooldowns pause starts.
+ * Cooldowns reject queued work rather than spending a read's 10s deadline. */
 export function createApiAdmission() {
-  let next = 0,
-    pausedUntil = 0,
+  let pausedUntil = 0,
     active = 0,
     preparing = 0,
     presenceBusy = false,
     presenceNext = 0;
-  let timer: ReturnType<typeof setTimeout> | undefined;
   const queue: Ticket[] = [];
   const pauseError = () =>
     new ApiPaused(Math.max(0, pausedUntil - performance.now()));
@@ -131,8 +129,6 @@ export function createApiAdmission() {
     ticket.signal?.removeEventListener("abort", ticket.abort);
   };
   function pump() {
-    clearTimeout(timer);
-    timer = undefined;
     if (!queue.length) return;
     if (performance.now() < pausedUntil) {
       for (const ticket of [...queue]) {
@@ -141,17 +137,12 @@ export function createApiAdmission() {
       }
       return;
     }
-    const wait = next - performance.now();
-    if (wait > 0) {
-      timer = setTimeout(pump, wait);
-      return;
+    while (active < 6 && queue.length) {
+      const ticket = queue.find((t) => t.priority === "foreground") ?? queue[0];
+      if (!ticket) return;
+      remove(ticket);
+      ticket.start();
     }
-    const ticket = queue.find((t) => t.priority === "foreground") ?? queue[0];
-    if (!ticket) return;
-    remove(ticket);
-    next = performance.now() + 500;
-    ticket.start();
-    pump();
   }
   return {
     /** Lossy snapshot lease; never consumes ordinary slots or start credit. */
@@ -185,7 +176,7 @@ export function createApiAdmission() {
       !active &&
       !preparing &&
       !queue.length &&
-      performance.now() >= Math.max(next, pausedUntil),
+      performance.now() >= pausedUntil,
     pause(milliseconds: number) {
       if (!Number.isFinite(milliseconds) || milliseconds < 0)
         throw new Error("Invalid API pause");
@@ -211,6 +202,7 @@ export function createApiAdmission() {
             active++;
             const finish = () => {
               active--;
+              pump();
             };
             try {
               signal?.throwIfAborted();

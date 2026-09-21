@@ -1,8 +1,8 @@
 import { createLiveAdmission } from "./live.ts";
 import { createApiAdmission } from "./http-admission.ts";
 
-/** In-memory host ownership, not a cross-app quota promise. Capacity eviction may
- * forget idle pacing history but never an active stream, queued work or cooldown. */
+/** In-memory host ownership, not a cross-app quota promise. Capacity eviction
+ * never forgets an active stream, queued work or server cooldown. */
 export function createHostAdmission() {
   const principals = new Map<
     string,

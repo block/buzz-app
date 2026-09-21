@@ -1,4 +1,8 @@
 import {
+  createSocketPublications,
+  SocketRequestError,
+} from "./socket-requests.ts";
+import {
   OBSERVER_KIND,
   observerGeneration,
   type ObserverFrame,
@@ -10,19 +14,16 @@ import { EMOJI_SET } from "./emoji.ts";
 export const LIVE_CHANNEL_CAPACITY = 1022; // Reserve two of the relay's 1024 slots.
 export const LIVE_REPLAY_LIMIT = 500;
 const SETUP_CONCURRENCY = 4;
-const REQUEST_INTERVAL_MS = 250; // 4 starts/s leaves room below the reference 10/s quota.
 const MAX_QUOTA_RETRIES = 3;
-/** Host-owned pacing survives socket/POST replacement. The server quota is shared
- * across clients, so local pacing cannot replace honoring an explicit cooldown. */
+/** Host-owned server cooldown survives socket/POST replacement.
+ * Healthy traffic has no inter-request delay; outstanding work is bounded below. */
 export function createLiveAdmission() {
-  let next = 0;
   let cooldown = 0;
   let presenceBusy = false,
     presenceNext = 0;
   const pending = new Set<object>();
   return {
-    delay: () =>
-      Math.max(0, next - performance.now(), cooldown - performance.now()),
+    delay: () => Math.max(0, cooldown - performance.now()),
     setup(owner: object, busy: boolean) {
       if (busy) pending.add(owner);
       else pending.delete(owner);
@@ -40,9 +41,6 @@ export function createLiveAdmission() {
     },
     presenceIdle: () =>
       !presenceBusy && performance.now() >= presenceNext && !pending.size,
-    take() {
-      next = performance.now() + REQUEST_INTERVAL_MS;
-    },
     pause(seconds: number) {
       // Redis reports whole seconds; include a second rather than retry before expiry.
       cooldown = Math.max(cooldown, performance.now() + (seconds + 1) * 1000);
@@ -99,6 +97,9 @@ export type LiveCallbacks = {
   denied(channelId: string, reason: string): void;
 };
 export type LiveSubscription = {
+  /** Local broker handle; not a relay subscription ID. */
+  identity?(): string | undefined;
+  publish?(event: VerifiedEvent, signal: AbortSignal): Promise<string>;
   update(channels: readonly string[]): void;
   /** Host demand only: reorder existing pending routes, never grant new interests. */
   prioritize?(channels: readonly string[]): void;
@@ -199,6 +200,7 @@ export function subscribeRelayTraffic(
   const send = (value: unknown) => {
     if (!closed && socket?.readyState === 1) socket.send(JSON.stringify(value));
   };
+  const requests = createSocketPublications(() => queueMicrotask(pump));
   function remove(route: Route) {
     clearTimeout(route.deadline);
     if (route.wire) {
@@ -302,7 +304,15 @@ export function subscribeRelayTraffic(
   }
   function pump() {
     clearTimeout(dispatchTimer);
-    if (closed || !authenticated) return;
+    if (closed || !authenticated || socket?.readyState !== 1) return;
+    for (let request = requests.next(); request; request = requests.next()) {
+      const delay = admission.delay();
+      if (delay > 0) {
+        dispatchTimer = setTimeout(pump, delay);
+        return;
+      }
+      requests.dispatch(request, send);
+    }
     let active = [...routes.values()].filter(
       (route) => route.wire && route.status === "pending",
     ).length;
@@ -322,7 +332,6 @@ export function subscribeRelayTraffic(
         dispatchTimer = setTimeout(pump, delay);
         break;
       }
-      admission.take();
       // A retry being sent is not recovery. Retain its last failure until EOSE.
       const wire = `live-${++serial}`;
       route.wire = wire;
@@ -345,7 +354,7 @@ export function subscribeRelayTraffic(
         wire,
         {
           ...scope,
-          // Live-only on every actual dispatch, including paced retries.
+          // Live-only on every actual dispatch, including cooldown retries.
           since: route.since,
           ...(route.id === "observer" ? {} : { limit: LIVE_REPLAY_LIMIT }),
         },
@@ -382,6 +391,7 @@ export function subscribeRelayTraffic(
     clearTimeout(deadline);
     for (const route of routes.values()) clearTimeout(route.deadline);
     wires.clear();
+    requests.clear();
     socket?.close();
     socket = undefined;
   }
@@ -502,6 +512,19 @@ export function subscribeRelayTraffic(
         presenceReceipt?.finish(data[2] === true);
         return;
       }
+      if (authenticated && requests.receive(data)) {
+        if (data[2] === false) {
+          const reason = data[3];
+          if (
+            typeof reason === "string" &&
+            reason.startsWith("rate-limited:")
+          ) {
+            const hint = /retry in (\d+)s$/.exec(reason);
+            admission.pause(hint ? Math.min(Number(hint[1]), 86400) : 5);
+          }
+        }
+        return;
+      }
       const route =
         typeof data[1] === "string" ? wires.get(data[1]) : undefined;
       if (!authenticated || !route) return;
@@ -620,6 +643,20 @@ export function subscribeRelayTraffic(
       } finally {
         release();
       }
+    },
+    publish(event, signal) {
+      if (closed)
+        return Promise.reject(
+          new SocketRequestError("Relay session disposed", false),
+        );
+      if (event.pubkey !== viewer)
+        return Promise.reject(
+          new SocketRequestError(
+            "Publication signer does not match viewer",
+            false,
+          ),
+        );
+      return requests.publish(event, signal);
     },
     observe(value) {
       const next = observerGeneration(value);

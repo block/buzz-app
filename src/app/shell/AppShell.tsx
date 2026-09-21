@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { House } from "lucide-react";
+import { HouseIcon } from "../../shared/design-system/icons/index";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
@@ -36,6 +36,7 @@ export function AppShell({
   companion?: ReactNode;
   children: ReactNode;
 }) {
+  const fillsWorkspace = workspace || selected === "settings";
   return (
     <div
       data-shell-tone={tone}
@@ -71,7 +72,7 @@ export function AppShell({
             aria-current={selected === "home" ? "page" : undefined}
             onClick={() => onSelect("home")}
           >
-            <House aria-hidden="true" size={15} strokeWidth={1.7} />
+            <HouseIcon aria-hidden="true" size={15} />
             Home
           </button>
           {orderPages(pages).map((page) => {
@@ -84,7 +85,7 @@ export function AppShell({
                 aria-current={selected === page.key ? "page" : undefined}
                 onClick={() => onSelect(page.key)}
               >
-                <Icon aria-hidden="true" size={15} strokeWidth={1.7} />
+                <Icon aria-hidden="true" size={15} />
                 {label}
               </button>
             );
@@ -109,14 +110,14 @@ export function AppShell({
           <PanelFrame companion={companion}>
             <div
               className={
-                workspace
+                fillsWorkspace
                   ? "h-full min-h-0"
                   : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
               }
             >
               <div
                 className={
-                  workspace ? "h-full min-h-0" : "mx-auto w-full max-w-4xl"
+                  fillsWorkspace ? "h-full min-h-0" : "mx-auto w-full max-w-4xl"
                 }
               >
                 {children}

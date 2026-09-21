@@ -110,12 +110,16 @@ While shaping the first version, default to **edit → human tries the running a
   builds, rather than merely refreshing the app. Local checkpoint commits use
   the existing staged-file hook; no hook bypass is needed.
 - When the human is happy with a coherent batch, finish its regression coverage,
-  self-review, obtain independent review where risk warrants, and run one
-  `just scan` before review/integration. Attribute validation to that snapshot;
-  subsequent edits require appropriate revalidation. Fix failures and rerun the
-  affected gate rather than repeating unchanged successful work just for a
-  handoff. **Validated** means the required checks passed, not merely that the
-  screen looked right.
+  self-review, and obtain independent review where risk warrants. Let mandatory
+  pre-commit/pre-push hooks own their checks; run focused behavior checks they do
+  not cover and use existing CI for broad validation. Do not duplicate hook or
+  CI suites locally by default. Run `just scan` only when explicitly requested or
+  needed to reproduce a broad integration failure, not for every review,
+  integration, or handoff. Attribute validation to the checked snapshot; later
+  edits require appropriate revalidation. Fix failures and rerun the affected
+  gate rather than repeating unchanged successful work. **Validated** means the
+  required checks passed, not merely that the screen looked right; pending CI
+  and untested native/browser behavior remain explicit gaps.
 
 ### Performance is acceptance, not a follow-up
 
@@ -159,11 +163,13 @@ custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
 
 Pre-commit runs pinned Biome formatting and safe lint fixes on fully staged
 JS/TS/JSON/CSS files, and rustfmt on individual staged Rust files. Remaining
-warnings/errors block the commit; no unsafe lint fixes are applied. Deletions and
+warnings/errors block the commit; no unsafe lint fixes are applied. The staged
+icon check also rejects known alternate icon families, direct upstream imports
+outside the design-system gateway, and whole-catalog imports. Deletions and
 unsupported formats (including Markdown, HTML and YAML) are not formatted here.
 The hook does **not** run types, tests, builds, Clippy, or a whole-tree formatter.
-`just iterate` remains the fast whole-tree fix/build command; `just scan` remains
-the full validation gate. Both reject remaining Biome warnings.
+`just iterate` remains the optional whole-tree fix/build command; `just scan` is
+an opt-in broad diagnostic. Both reject remaining Biome warnings.
 
 Before writing, the hook refuses partially staged supported files, non-regular
 files, and differing/untracked formatter configuration in their ancestor paths.
@@ -171,8 +177,9 @@ Format and reselect partial hunks, or stage/restore configuration, then retry.
 Only checked paths are restaged after all checks succeed; a failed check can leave
 safe fixes visible for review but does not update the index. Unrelated changes and
 existing stashes are left alone. Do not edit/stage concurrently with a commit.
-This is a developer guardrail, not a security boundary or a substitute for the full
-scan; changes to tool/config dependencies still require broad validation.
+This is a developer guardrail, not a security boundary or a substitute for CI
+and risk-appropriate behavior checks. Tool/config dependency changes require
+relevant integration evidence, not an automatic local full scan.
 
 ### Fast pre-push feedback
 
@@ -184,14 +191,24 @@ changes, source deletions, or a missing base run the full Vitest suite instead.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
 inputs, and the app composition test for source edits that its Vite loader hides
 from the import graph.
-It never fetches, installs dependencies, formats, builds Rust, or starts browsers.
-Install dependencies when switching branches, not during a push.
+A separate **design-system** job runs `design:typecheck` and `design:check` after
+types/unit tests. The jobs are serialized because pinned Lefthook 2.1.12 shares
+a mutable stdin reader: parallel consumers can lose Git refs and silently skip
+checks. Source CSS/JS/TS, design viewer/guard files, shared
+configuration/dependencies and hook-runner changes select this job; a missing base
+runs it conservatively. Its selection is independent of the unit-test skip, so
+CSS-only and viewer-only errors still block a push. Documentation-only and
+native-only pushes skip both jobs. Both selected jobs must pass.
+Neither job fetches, installs dependencies, formats, builds Rust, or starts browsers.
+The design job disables pnpm dependency auto-repair. Install dependencies when
+switching branches, not during a push.
 
 This is advisory coverage of the current working tree, not a replacement for CI:
 uncommitted edits can affect results, dynamic dependencies may not be selected,
-and non-HEAD refs are explicitly left to CI. Type errors and test failures block
-the push. TypeScript uses the root `tsconfig.json`; it does not typecheck plain
-JavaScript browser tests or prove runtime service provisioning.
+and non-HEAD refs are explicitly left to CI. Type errors, design violations and test
+failures block the push. The type checks use `tsconfig.json` and
+`tsconfig.design.json`; they do not typecheck plain JavaScript browser tests or
+prove runtime service provisioning.
 Do not edit files concurrently with hooks. First-use Hermit tool downloads can
 add setup time; normal warm hooks use the pinned tools already installed.
 
@@ -252,6 +269,58 @@ rewrite just to move. `vitest.config.ts` discovers tests under `src/` and `dev/`
 then Playwright. Updating a test's location must also update discovery, imports,
 fixture URLs and root-path calculations; moving a file must not silently drop it
 from the gate.
+
+### Choosing a test layer
+
+Choose the cheapest layer that can observe the failure, not the tool used by the
+last test in the feature. Regression coverage is about behavior, not test counts
+or a coverage percentage. These rules apply to human and AI contributions alike.
+
+| Contract | Default layer |
+| --- | --- |
+| Parsing, policy, state machines, protocol handling, service coordination | Vitest in Node; use real collaborating services where the boundary matters |
+| Component state, effects, subscriptions, forms, semantic DOM and stale async results | React Testing Library in Vitest with jsdom |
+| Layout, virtualization, scrolling, native editing/focus interactions, real browser storage coordination | Playwright in both engines |
+| App composition across routing, plugins, transport and persistence | Representative Playwright journeys, with permutations in lower layers |
+
+Run JS tests with `bin/pnpm exec vitest run`, optionally followed by a test path.
+For mounted component tests, add `// @vitest-environment jsdom` at the top of the
+colocated test and import `@testing-library/jest-dom/vitest` for DOM assertions.
+Use real React (including StrictMode), role/label queries and `userEvent` for
+interactions. Use `fireEvent` for deliberately low-level events or bulk input
+whose keystrokes are not the contract. Unmount with RTL `cleanup` in `afterEach`;
+clear owned storage and restore spies. Fake external services, not React hooks.
+Keep snapshots stable until a service actually changes, and assert cleanup and
+late-result rejection through real mounting, rerendering and unmounting.
+See the [composer tests](../src/features/messages/MessageComposer.test.tsx).
+
+jsdom is the default DOM emulator, not a second browser gate. Its
+[standards-oriented implementation](https://github.com/jsdom/jsdom#readme) and
+compatibility with Testing Library favor behavioral fidelity over emulator-only
+speed claims. [Vitest supports Happy DOM too](https://vitest.dev/guide/environment),
+but introducing another emulator requires a demonstrated benefit on our actual
+component tests without per-environment workarounds. Neither proves rendering,
+native IME behavior or browser performance. Keep layout shims local and explicit;
+do not treat synthetic dimensions as acceptance evidence.
+
+Before accepting test changes, reviewers should verify:
+
+- Each added browser case identifies a browser-specific behavior or integration
+  boundary that a lower layer cannot establish. Keep failure/recovery coverage,
+  but avoid repeating the same state matrix through full app startup.
+- A moved assertion has a named replacement and evidence that a plausible defect
+  makes it fail. Similar test titles do not establish equivalent coverage.
+- Fixture data matches the test's needs. Share stateless servers/compiled assets,
+  not browser contexts or mutable state; keep scale tests representative.
+- Timing claims distinguish setup, execution, runner/engine and the checked
+  snapshot. Report added/removed cases and deferred checks. Do not impose a
+  flaky wall-clock threshold on ordinary correctness tests.
+
+Follow `AGENTS.md` to record those decisions in the PR description and enforce
+them during agent review. Request a lower-layer test when the browser justification
+is missing, rather than accept unbounded journey growth. Existing broad fixtures and hook-mocked tests are
+migration work, not patterns for new tests; convert them by owner without
+bundling unrelated product changes.
 
 ### Manual browser fixtures
 

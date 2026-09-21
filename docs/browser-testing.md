@@ -20,12 +20,23 @@ bin/pnpm test:browser         # both engines; serial measurements, two functiona
 bin/just scan                # includes browser tests and all existing gates
 ```
 
-Playwright is pinned to 1.60.0; the browser installer downloads its matching
+Playwright is pinned to 1.63.0; the browser installer downloads its matching
 Chromium and WebKit revisions. Do not borrow another checkout's node_modules or
 silently skip an engine when its executable is missing. Linux runners also need
 Playwright's documented system libraries provisioned by their administrator.
 The initial verified runner is Apple Silicon macOS, not a cross-platform result.
 No native application or interactive browser is opened.
+
+The 1.63.0 pin replaces 1.60.0 after an isolated Ubuntu 24.04 ARM64 replay showed
+WebKit 2287 stranding the tail of an open Fetch stream until another write.
+Stock WebKit 2359 consumed it while the server stayed idle, with byte streams
+still enabled, both with and without Playwright interception. The unchanged
+`sidebar-unread.spec.mjs` then passed all ten Chromium/WebKit cases; its two
+previously failing assertions and timeouts are unchanged. The full scroll file
+passed five of six cases: the documented Linux WebKit wheel-edge limitation
+remains. This is bounded test-browser evidence, not a fix for older Safari clients
+or proof of hosted CI success. No browser feature overrides or CI exclusions were
+added by the pin update; existing local-only cases below remain unchanged.
 
 For repeatability and diagnostic baselines:
 
@@ -62,11 +73,25 @@ isolation and one invocation to preserve both engines' evidence.
 
 Compiled frontend assets are worker-scoped, split by `developmentReact` and
 `pluginFixtures`, and removed when that worker ends. They are never reused across
-invocations. Every test still gets a fresh preview server/port, ephemeral signing
-keys, signed histories, relay state and browser context/storage. Evidence records
-the worker and its build time; worker restarts rebuild rather than reuse stale assets.
+invocations. Every built-app test still gets a fresh preview server/port, ephemeral
+signing keys, signed histories, relay state and browser context/storage. Evidence records
+the worker and its build time, plus history counts and signing time; worker
+restarts rebuild rather than reuse stale assets.
 
-Results go to ignored `test-results/browser/`: each test writes `evidence.json`
+Declare `historyCounts` with `test.use` for built-app tests that do not need large
+histories, for example `{ alpha: 1, beta: 0 }`. Counts apply per community. Keep
+pagination, anchor and measurement datasets unchanged unless their behavior is
+revalidated at the new size. The legacy large default remains for unaudited cases;
+new tests should explicitly choose their data rather than inherit it accidentally.
+
+Source-only diagnostic pages can import `test` and `expect` from
+`source-fixture.mjs` and navigate to `/tests/fixtures/example.html`. That fixture
+shares a stateless Vite server and its isolated optimizer cache per worker, with
+fresh browser contexts/storage for every test. Do not use it for custom mutable
+server middleware or a different Vite configuration. The existing `vite-server.mjs`
+helper keeps independently configured servers' caches isolated.
+
+Results go to ignored `test-results/browser/`: each built-app test writes `evidence.json`
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
 measurements. Failure screenshots and traces are retained too. The next invocation
 replaces that output; copy artifacts before a rerun if you need to compare them.

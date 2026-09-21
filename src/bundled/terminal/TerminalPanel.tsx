@@ -1,9 +1,9 @@
 import {
-  IconChevronDown,
-  IconPlayerStop,
-  IconRefresh,
-  IconTerminal2,
-} from "@tabler/icons-react";
+  CaretDownIcon,
+  StopIcon,
+  ArrowsClockwiseIcon,
+  TerminalWindowIcon,
+} from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
@@ -84,7 +84,7 @@ function Content({
       <PanelHeader
         variant="compact"
         icon={
-          <IconTerminal2
+          <TerminalWindowIcon
             size={16}
             aria-hidden="true"
             style={{ flexShrink: 0 }}
@@ -92,7 +92,7 @@ function Content({
         }
         title={
           <div className={styles.identity}>
-            <h2 className="text-heading text-primary">BuzzTerm</h2>
+            <h2 className="text-label text-primary">BuzzTerm</h2>
             <span
               className="text-body-sm text-secondary"
               title={entry?.context.channelId ?? context.channelId}
@@ -122,7 +122,7 @@ function Content({
                   onClick={() => void end(true)}
                   aria-label="Restart"
                   title="Restart terminal"
-                  icon={<IconRefresh size={16} aria-hidden="true" />}
+                  icon={<ArrowsClockwiseIcon size={16} aria-hidden="true" />}
                 />
               ) : (
                 <Button
@@ -146,7 +146,7 @@ function Content({
                 }}
                 aria-label="End session"
                 title="End session"
-                icon={<IconPlayerStop size={16} aria-hidden="true" />}
+                icon={<StopIcon size={16} aria-hidden="true" />}
               />
             )}
             <IconButton
@@ -155,7 +155,7 @@ function Content({
               onClick={close}
               aria-label="Hide terminal"
               title="Hide terminal (Cmd/Ctrl+J)"
-              icon={<IconChevronDown size={16} aria-hidden="true" />}
+              icon={<CaretDownIcon size={16} aria-hidden="true" />}
             />
           </>
         }

@@ -1,0 +1,126 @@
+import type { VerifiedEvent } from "nostr-tools";
+import { eventDto } from "./events.ts";
+
+/** False means proven non-delivery, not merely a negative or missing OK. */
+export class SocketRequestError extends Error {
+  constructor(
+    message: string,
+    readonly sent: boolean,
+  ) {
+    super(message);
+  }
+}
+type Publication = {
+  event: VerifiedEvent;
+  sent: boolean;
+  finish(receipt?: string, error?: Error): void;
+};
+/** Correlation only. The live owner supplies auth, socket, cooldown and recovery;
+ * the existing outbox owns retry. Never replay publications on reconnect. */
+export function createSocketPublications(wake: () => void) {
+  const pending = new Map<string, Publication>();
+  return {
+    async publish(input: VerifiedEvent, signal: AbortSignal): Promise<string> {
+      if (signal.aborted)
+        throw new SocketRequestError("Publication cancelled", false);
+      const event = eventDto(input);
+      if (pending.has(event.id))
+        throw new SocketRequestError("Publication already in flight", false);
+      if (pending.size >= 32)
+        throw new SocketRequestError("Publication capacity reached", false);
+      if (
+        new TextEncoder().encode(JSON.stringify(["EVENT", event])).length >
+        65536
+      )
+        throw new SocketRequestError("Publication exceeds frame limit", false);
+      return new Promise((resolve, reject) => {
+        const abort = () =>
+          job.finish(
+            undefined,
+            new SocketRequestError("Publication cancelled", job.sent),
+          );
+        // Includes time queued before authentication or shared quota admission.
+        const timer = setTimeout(
+          () =>
+            job.finish(
+              undefined,
+              new SocketRequestError("Publication timed out", job.sent),
+            ),
+          10000,
+        );
+        const job: Publication = {
+          event,
+          sent: false,
+          finish(receipt, error) {
+            if (pending.get(event.id) !== job) return;
+            pending.delete(event.id);
+            clearTimeout(timer);
+            signal.removeEventListener("abort", abort);
+            if (error) reject(error);
+            else resolve(receipt ?? "");
+            wake();
+          },
+        };
+        pending.set(event.id, job);
+        signal.addEventListener("abort", abort, { once: true });
+        wake();
+      });
+    },
+    next() {
+      const jobs = [...pending.values()];
+      if (jobs.filter((job) => job.sent).length >= 3) return;
+      return jobs.find((job) => !job.sent);
+    },
+    dispatch(job: Publication, send: (frame: unknown[]) => void) {
+      if (pending.get(job.event.id) !== job) return;
+      job.sent = true; // A throwing send cannot prove no bytes left the process.
+      try {
+        send(["EVENT", job.event]);
+      } catch {
+        job.finish(
+          undefined,
+          new SocketRequestError("Socket send interrupted", true),
+        );
+      }
+    },
+    receive(data: unknown[]): boolean {
+      if (data[0] !== "OK" || typeof data[1] !== "string") return false;
+      const job = pending.get(data[1]);
+      if (!job?.sent) return false;
+      if (
+        data.length !== 4 ||
+        typeof data[2] !== "boolean" ||
+        typeof data[3] !== "string" ||
+        new TextEncoder().encode(data[3]).length > 16384
+      )
+        job.finish(
+          undefined,
+          new SocketRequestError("Invalid publication receipt", true),
+        );
+      else if (data[2]) job.finish(data[3]);
+      else {
+        // Relay internal errors can follow command side effects. Unknown prefixes
+        // are conservative too; only documented admission/validation refusals prove rejection.
+        const rejected =
+          /^(invalid|blocked|restricted|auth-required|rate-limited):/.test(
+            data[3],
+          ) ||
+          // Buzz workflow CAS/authority refusals precede domain mutation.
+          ([30620, 46020].includes(job.event.kind) &&
+            /^(conflict|forbidden):/.test(data[3]));
+        job.finish(
+          undefined,
+          new SocketRequestError("Relay publication not confirmed", !rejected),
+        );
+      }
+      return true;
+    },
+    clear() {
+      for (const job of [...pending.values()])
+        job.finish(
+          undefined,
+          new SocketRequestError("Socket connection interrupted", job.sent),
+        );
+    },
+  };
+}

@@ -12,6 +12,8 @@ export function policyRelay({
   pending,
   discovery,
   acceptPublication,
+  latencyMs = 0,
+  holdOlder = true,
 }) {
   const sockets = [];
   let presenceHeld = false;
@@ -111,6 +113,8 @@ export function policyRelay({
     },
     async fetch(url, init) {
       try {
+        if (latencyMs)
+          await new Promise((resolve) => setTimeout(resolve, latencyMs));
         if (!init?.body && discovery)
           return Response.json(discovery(communityOf(url)));
         expect(["/query", ...(acceptPublication ? ["/events"] : [])]).toContain(
@@ -292,7 +296,7 @@ export function policyRelay({
               resolve(Response.json(result));
             });
           });
-        if (filter.until !== undefined)
+        if (filter.until !== undefined && holdOlder)
           return new Promise((resolve, reject) => {
             const abort = () => reject(init.signal.reason);
             init.signal.addEventListener("abort", abort, { once: true });
@@ -333,7 +337,7 @@ export function policyRelay({
               this.routes.delete(id);
               return;
             }
-            if (kind === "EVENT") {
+            if (kind === "EVENT" && id.kind === 20001) {
               expect(this.authenticated).toBe(true);
               expect(verifyEvent(id)).toBe(true);
               expect(id.pubkey).toBe(viewer);
@@ -345,6 +349,18 @@ export function policyRelay({
                 event: id,
               });
               queueMicrotask(() => emit(this, ["OK", id.id, true]));
+              return;
+            }
+            if (kind === "EVENT" && acceptPublication) {
+              expect(this.authenticated).toBe(true);
+              setTimeout(() => {
+                try {
+                  acceptPublication(this.community, id);
+                  emit(this, ["OK", id.id, true, ""]);
+                } catch (error) {
+                  fault(error);
+                }
+              }, latencyMs);
               return;
             }
             expect(kind).toBe("REQ");

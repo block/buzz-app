@@ -25,6 +25,7 @@ afterEach(() => {
 function fixture() {
   const headers: ReturnType<typeof deferred<Response>>[] = [];
   const controls: ReturnType<typeof deferred<Response>>[] = [];
+  const interests: ReturnType<typeof deferred<Response>>[] = [];
   const signals: AbortSignal[] = [];
   const snapshots: unknown[] = [];
   const bodyControllers: ReadableStreamDefaultController[] = [];
@@ -39,6 +40,11 @@ function fixture() {
             live: true,
           }),
         );
+      if (url.endsWith("/stream-interests")) {
+        const d = deferred<Response>();
+        interests.push(d);
+        return d.promise;
+      }
       if (
         url.endsWith("/stream-retry") ||
         url.endsWith("/stream-observer") ||
@@ -85,6 +91,10 @@ function fixture() {
   return {
     headers,
     controls,
+    interests,
+    disconnect(index: number) {
+      required(bodyControllers[index]).error(new Error("fixture disconnect"));
+    },
     signals,
     snapshots,
     accept,
@@ -181,7 +191,8 @@ for (const finish of ["replacement", "dispose"] as const)
         await tick();
         expect(f.controls).toHaveLength(1);
         if (finish === "replacement") {
-          owner.update(["a"]);
+          f.disconnect(0);
+          await vi.advanceTimersByTimeAsync(500);
           f.accept(1);
           await tick();
           f.publish(1);
@@ -217,7 +228,8 @@ it("late observer 404 from a retired stream cannot interrupt its replacement", a
     required(owner.observe)(1);
     await tick();
     expect(f.controls).toHaveLength(1);
-    owner.update(["a"]);
+    f.disconnect(0);
+    await vi.advanceTimersByTimeAsync(500);
     f.accept(1);
     await tick();
     f.publish(1);
@@ -247,6 +259,9 @@ it("preserves validated replay/live provenance through production broker transpo
   const owner = required(t.subscribe)(f.callbacks);
   try {
     f.accept(0);
+    await tick();
+    owner.update(["a"]);
+    required(f.interests[0]).resolve(new Response(null, { status: 200 }));
     await tick();
     const event = message(keypair(), "a", "incoming", 1700000000);
     f.frame("message", event);
@@ -288,6 +303,82 @@ it.each([undefined, { phase: "fresh" }, { phase: "live", channelId: ["a"] }])(
   },
 );
 
+it("in-place interests fence removed/readded channel frames but retain unchanged-channel traffic", async () => {
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    owner.update(["a", "b"]);
+    f.accept(0);
+    await tick();
+    required(f.interests[0]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    owner.update(["b"]);
+    owner.update(["a", "b"]);
+    const event = message(keypair(), "a", "stale", 1700000000);
+    f.frame("traffic", {
+      event,
+      provenance: { phase: "live", channelId: "a" },
+      interestRevision: 1,
+    });
+    f.frame("traffic", {
+      event: message(keypair(), "b", "unchanged", 1700000000),
+      provenance: { phase: "live", channelId: "b" },
+      interestRevision: 1,
+    });
+    await tick();
+    expect(f.callbacks.receive).toHaveBeenCalledTimes(1);
+    expect(f.callbacks.receive.mock.lastCall?.[1]).toEqual({
+      phase: "live",
+      channelId: "b",
+    });
+    required(f.interests[1]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    expect(f.interests).toHaveLength(3);
+    required(f.interests[2]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    f.frame("traffic", {
+      event,
+      provenance: { phase: "live", channelId: "a" },
+      interestRevision: 3,
+    });
+    await tick();
+    expect(f.callbacks.receive).toHaveBeenCalledTimes(2);
+    expect(f.headers).toHaveLength(1);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("coalesced remove/re-add with the same final IDs still advances host interest revision", async () => {
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    owner.update(["a"]);
+    f.accept(0);
+    await tick();
+    owner.update([]);
+    owner.update(["a"]);
+    required(f.interests[0]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    expect(f.interests).toHaveLength(2);
+    const calls = vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => String(url).endsWith("/stream-interests"));
+    expect(JSON.parse(String(calls[1]?.[1]?.body))).toMatchObject({
+      channels: ["a"],
+      removed: ["a"],
+      interestRevision: 3,
+    });
+    required(f.interests[1]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    expect(f.headers).toHaveLength(1);
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("preserves locally-unsent presence separately from refusal and unknown responses", async () => {
   vi.useFakeTimers();
   const f = fixture();
@@ -309,6 +400,34 @@ it("preserves locally-unsent presence separately from refusal and unknown respon
       required(f.controls.at(-1)).resolve(Response.json({ accepted }));
       expect(await result).toBe(accepted === null ? null : accepted === true);
     }
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("in-place channel interests preserve an outstanding presence publication", async () => {
+  vi.useFakeTimers();
+  const f = fixture();
+  const t = await connectBrokerTransport();
+  const owner = required(t.subscribe)(f.callbacks);
+  try {
+    f.accept(0);
+    await tick();
+    f.publish(0);
+    await tick();
+    const identity = owner.identity?.();
+    const result = required(owner.publishPresence)(
+      "online",
+      new AbortController().signal,
+    );
+    owner.update(["a"]);
+    expect(owner.identity?.()).toBe(identity);
+    expect(required(f.signals[0]).aborted).toBe(false);
+    required(f.interests[0]).resolve(new Response(null, { status: 200 }));
+    await tick();
+    required(f.controls[0]).resolve(Response.json({ accepted: true }));
+    expect(await result).toBe(true);
+    expect(f.headers).toHaveLength(1);
   } finally {
     owner.dispose();
   }

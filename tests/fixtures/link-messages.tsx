@@ -7,6 +7,7 @@ import type { PluginModule } from "../../src/plugins/api";
 import type { ChannelMessage } from "../../src/features/relay/contracts";
 import type { RelaySession } from "../../src/features/relay/session";
 import * as links from "../../src/bundled/links";
+import channelStyles from "../../src/bundled/channels/Channels.module.css";
 import { readView, writeView } from "../../src/shared/view-state";
 import "../../src/shared/styles/globals.css";
 
@@ -120,7 +121,7 @@ const library = {
   identities: [{ pubkey: "b".repeat(64), name: "Build Bot" }],
 };
 const emoji = { status: "ready", entries: [] };
-const typing = Object.freeze([]);
+const typing: readonly never[] = [];
 const sent: Array<{ text: string; mentions: readonly string[] }> = [];
 Object.assign(window, { linkComposerFixture: { sent } });
 const previewSession = {
@@ -132,10 +133,6 @@ const previewSession = {
     RelaySession["presence"],
     "status" | "limited" | "subscribe"
   >,
-  typing: {
-    snapshot: () => typing,
-    subscribe: () => () => {},
-  },
   outbox: { supports: () => true },
   emoji: {
     snapshot: () => emoji,
@@ -147,6 +144,10 @@ const previewSession = {
       sent.push({ text, mentions });
       return `preview-${sent.length}`;
     },
+  },
+  typing: {
+    snapshot: () => typing,
+    subscribe: () => () => {},
   },
   channels: { list: () => directory, subscribeList: () => () => {} },
   profiles: {
@@ -199,6 +200,7 @@ function Preview() {
   const [enabled, setEnabled] = useState("on");
   return (
     <main
+      className={channelStyles.root}
       style={{
         maxWidth: 760,
         margin: "24px auto",

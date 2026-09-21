@@ -3,14 +3,19 @@
 Read [the contribution workflow](docs/contributing.md) for commands and validation.
 For interactive product work, default to edit → human tries the running app →
 adjust in the agreed worktree. Do not gate each feedback round on E2E, native
-builds, or full validation. `just iterate` is optional; reserve `just scan` for
-an agreed batch before review/integration or relevant native/dependency/build
-changes. Track deferred checks: **ready to try** is not **validated**. Check
+builds, or full validation. Use mandatory hooks and focused behavior checks not
+covered by them; use existing CI for broad validation. `just iterate` is optional.
+Run `just scan` only when explicitly requested or needed to reproduce a broad
+integration failure, not as a routine pre-push or handoff gate.
+Track deferred checks: **ready to try** is not **validated**. Check
 auth/signing, persistence/migrations, protocol semantics, and destructive writes
 before live use.
 
 Files marked `FOUNDATION` require explicit human guidance before editing and
 stricter review. Escalate needed changes rather than editing without authorization.
+
+When reviewing CI or test-cost changes, inspect job-summary counts, elapsed wall
+time, summed test execution time, and slowest-test/file evidence for regressions.
 
 ## Worktree creation
 
@@ -88,6 +93,32 @@ Keep reviews convergent: consolidate actionable findings and clear exit criteria
 Block on concrete correctness, security, or agreed-contract defects; unrelated
 hardening is follow-up. Reopen scope only when new evidence warrants it.
 
+## Choose tests by behavior
+
+Default to colocated Vitest tests. Mount React with React Testing Library for
+component behavior; do not mock React hooks or implement a substitute lifecycle.
+Use Node for logic/services and opt into jsdom only when a DOM is needed.
+
+Before adding a browser journey, name the browser behavior or integration boundary
+it proves that lower-layer tests cannot. Keep scenario matrices in the lowest
+layer that preserves that contract; retain representative app wiring coverage.
+Do not infer layout, native editing or cross-window correctness from a DOM emulator.
+When moving coverage, map removed assertions to replacements and demonstrate that
+the replacement catches the regression before deleting the browser case.
+
+Make minimal fixture data the default and opt into larger datasets only for an
+explicit scale, pagination or geometry contract. Share immutable builds and stateless
+servers, never mutable test state, identities or browser contexts. Preserve large
+datasets and isolated runners when scale or performance is the behavior under test.
+Record browser cases added/removed, their browser-only justification, replacement
+coverage and fail-then-pass evidence in the PR description. For test infrastructure
+changes, report before/after setup and execution timings with the command, engine,
+environment and checked snapshots; distinguish local measurements from hosted CI.
+List deferred checks. Do not meet time budgets by skipping engines, dropping
+failure paths or weakening assertions. Enforce these rules during agent review;
+do not rely on contributors filling in a PR template. Follow the
+[test-layer review rules](docs/contributing.md#choosing-a-test-layer).
+
 ## Deterministic tests
 
 Tests must control the ordering they assert, not depend on runner speed.
@@ -143,3 +174,5 @@ After repairs, verify the hosted **DCO Check** at the new head.
 - Inspect current hosted checks and repository rules, including external checks.
   Resolve relevant failures before declaring readiness; obtain required reviewer
   and code-owner approval. This preflight is not automatic permission to merge.
+
+Icons use Phosphor only, through `src/shared/design-system/icons`. Add individual exports as needed; icon and weight choices belong to the designer. The local lint and design checks enforce this import boundary.

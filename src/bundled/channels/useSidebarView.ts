@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
 type SidebarView = { search: string; collapsed: string[]; scrollTop: number };
@@ -63,19 +63,12 @@ export function useSidebarView(scope: string, ready: boolean) {
     };
   }, [scope]);
 
-  const update = (next: SidebarView) => {
+  const update = useCallback((next: SidebarView) => {
     intent.current = next;
     setView(next);
-  };
-  return {
-    list,
-    search: view.search,
-    collapsed: view.collapsed,
-    setSearch: (search: string) => {
-      pending.current = false;
-      update({ ...intent.current, search });
-    },
-    toggle: (key: string, open: boolean) => {
+  }, []);
+  const toggle = useCallback(
+    (key: string, open: boolean) => {
       const collapsed = intent.current.collapsed;
       if (collapsed.includes(key) === !open) return;
       pending.current = false;
@@ -86,5 +79,16 @@ export function useSidebarView(scope: string, ready: boolean) {
           : [...collapsed, key],
       });
     },
+    [update],
+  );
+  return {
+    list,
+    search: view.search,
+    collapsed: view.collapsed,
+    setSearch: (search: string) => {
+      pending.current = false;
+      update({ ...intent.current, search });
+    },
+    toggle,
   };
 }

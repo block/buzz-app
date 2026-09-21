@@ -9,7 +9,7 @@ import {
   buzzLinkTarget,
   isBuzzLink,
 } from "../../features/navigation/buzz-links";
-import { ChannelSidebarRow } from "./ChannelSidebarRow";
+import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
@@ -17,8 +17,7 @@ import {
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
-import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
-import { ChannelActivityPopover } from "./ChannelActivityPopover";
+import { UnreadOptions } from "./UnreadBadge";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
@@ -37,7 +36,6 @@ import {
   DotsThreeIcon,
   PlugIcon,
   ChatCircleIcon,
-  UsersIcon,
 } from "../../shared/design-system/icons/index";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -190,13 +188,16 @@ function ChannelWorkspace({
       ? saved.filter((id): id is string => typeof id === "string")
       : [];
   });
-  const updateDraftParents = (update: (previous: string[]) => string[]) => {
-    setDraftParents((previous) => {
-      const next = update(previous);
-      writeView(scope, "sessions:channel-drafts", next);
-      return next;
-    });
-  };
+  const updateDraftParents = useCallback(
+    (update: (previous: string[]) => string[]) => {
+      setDraftParents((previous) => {
+        const next = update(previous);
+        writeView(scope, "sessions:channel-drafts", next);
+        return next;
+      });
+    },
+    [scope],
+  );
   const navigate = useCallback(
     (id: string) => {
       setSelected(id);
@@ -291,16 +292,6 @@ function ChannelWorkspace({
   const currentId = current?.id;
   const drafting =
     !!draftParent && draftParent === currentId && !requestedMessage;
-  const startSession = (parentId: string) => {
-    select(parentId);
-    setDraftParent(parentId);
-    sidebar.toggle(`session-children:${parentId}`, true);
-    updateDraftParents((previous) =>
-      previous.includes(parentId) ? previous : [...previous, parentId],
-    );
-    setThread(undefined);
-    open(undefined);
-  };
   useEffect(() => {
     if (
       drafting &&
@@ -395,6 +386,19 @@ function ChannelWorkspace({
     opening.current = next;
     setOpened(next);
   }, []);
+  const startSession = useCallback(
+    (parentId: string) => {
+      select(parentId);
+      setDraftParent(parentId);
+      sidebar.toggle(`session-children:${parentId}`, true);
+      updateDraftParents((previous) =>
+        previous.includes(parentId) ? previous : [...previous, parentId],
+      );
+      setThread(undefined);
+      open(undefined);
+    },
+    [select, sidebar.toggle, updateDraftParents, open],
+  );
   const panel =
     opened &&
     opened.channelId === current?.id &&
@@ -717,80 +721,33 @@ function ChannelWorkspace({
                   {section.title}
                 </summary>
                 {section.rows.map((channel) => {
-                  const Icon =
-                    channel.channelType === "dm"
-                      ? (channel.participants?.length ?? 0) > 1
-                        ? UsersIcon
-                        : ChatCircleIcon
-                      : HashIcon;
+                  const sessions = childrenByParent.get(channel.id);
+                  const selected =
+                    current?.id === channel.id ||
+                    sessions?.some((child) => child.id === current?.id)
+                      ? current?.id
+                      : undefined;
                   return (
-                    <ChannelSidebarRow
+                    <ChannelSidebarItem
                       key={channel.id}
                       channel={channel}
-                      icon={<Icon size={17} />}
-                      badge={
-                        <>
-                          {workingChannels.has(channel.id) && (
-                            <span
-                              className={styles.working}
-                              role="img"
-                              aria-label="Agent working"
-                              title="Agent working in this channel"
-                            />
-                          )}
-                          <UnreadBadge
-                            session={queries}
-                            channelId={channel.id}
-                            dm={channel.channelType === "dm"}
-                          />
-                        </>
-                      }
-                      wrapSelect={(trigger) => (
-                        <ChannelActivityPopover
-                          session={queries}
-                          channelId={channel.id}
-                          channelName={channel.name}
-                          onOpenThread={(item) =>
-                            openActivityThread(item.channelId, item.rootId)
-                          }
-                          trigger={trigger}
-                        />
-                      )}
-                      selected={current?.id}
+                      session={queries}
+                      working={workingChannels.has(channel.id)}
+                      selected={selected}
+                      search={search}
                       collapsed={
                         !search &&
                         sidebar.collapsed.includes(
                           `session-children:${channel.id}`,
                         )
                       }
-                      onToggle={(open) => {
-                        if (!search)
-                          sidebar.toggle(
-                            `session-children:${channel.id}`,
-                            open,
-                          );
-                      }}
+                      onToggle={sidebar.toggle}
                       draft={draftParents.includes(channel.id)}
                       draftSelected={drafting && draftParent === channel.id}
-                      sessions={(childrenByParent.get(channel.id) ?? []).filter(
-                        (child) =>
-                          channel.name
-                            .toLowerCase()
-                            .includes(search.toLowerCase()) ||
-                          child.name
-                            .toLowerCase()
-                            .includes(search.toLowerCase()),
-                      )}
-                      childContent={(child) => (
-                        <UnreadBadge
-                          session={queries}
-                          channelId={child.id}
-                          label={child.name}
-                        />
-                      )}
-                      onPrepare={(id) => queries.channels.prepare?.(id)}
+                      sessions={sessions}
                       onSelect={select}
                       onNewSession={startSession}
+                      onOpenThread={openActivityThread}
                     />
                   );
                 })}

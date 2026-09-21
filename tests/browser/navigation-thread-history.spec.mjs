@@ -136,10 +136,13 @@ for (const reading of [false, true]) {
       await route.continue();
     });
     try {
-      await page
+      const trigger = page
         .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-        .getByRole("button", { name: /^View thread:/ })
-        .click();
+        .getByRole("button", { name: /^View thread:/ });
+      // Virtua can retain its pointer lock after geometry stops moving. Wait
+      // for input readiness before Playwright tries alternate scroll alignments.
+      await expect(trigger).toHaveCSS("pointer-events", "auto");
+      await trigger.click();
       await expect.poll(() => requested).toBe(true);
       await expect(region.locator("[data-message-id]")).toHaveCount(51);
       await expect(

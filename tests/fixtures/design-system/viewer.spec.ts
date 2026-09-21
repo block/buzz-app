@@ -362,12 +362,12 @@ test("documentation retains table guidance and storage failure stays usable", as
   });
   await page.goto(`${viewer}#/design/design-guide`);
   // A real cell in a real row, so run-on prose or a dropped table both fail.
-  const stepRow = page
+  const roleRow = page
     .locator("main table tbody tr")
-    .filter({ hasText: "coloured text on a neutral surface" });
-  await expect(stepRow.locator("td").first()).toHaveText("12");
+    .filter({ hasText: "Component recipes and product screens." });
+  await expect(roleRow.locator("td").first()).toHaveText("Roles");
   await expect(
-    page.locator("main table thead th").filter({ hasText: "step" }),
+    page.locator("main table thead th").filter({ hasText: "Layer" }),
   ).toHaveCount(1);
   await expect(page.locator("main")).not.toContainText("|---|");
   // A token is one word: it may sit on its own line, never break across two.
@@ -528,5 +528,8 @@ test("typography shows the size ramp and renders xsmall mono details", async ({
   }
   await expect(
     page.getByRole("link", { name: "Typography source specification" }),
-  ).toHaveAttribute("href", /eff766161ba8aaee3258ca107f0d904dd542c708/);
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/block/buzz-app/blob/main/src/shared/design-system/styles/typography.css",
+  );
 });

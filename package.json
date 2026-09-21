@@ -3,7 +3,7 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@11.8.0",
+  "packageManager": "pnpm@11.27.0",
   "engines": {
     "node": ">=24"
   },
@@ -36,7 +36,7 @@
     "design:test:browser": "pnpm build && pnpm design:build && playwright test --config tests/fixtures/design-system/playwright.config.ts"
   },
   "dependencies": {
-    "@base-ui/react": "1.7.0",
+    "@base-ui/react": "1.8.0",
     "@deepseek-ai/cordis": "4.0.2",
     "@emoji-mart/data": "1.2.1",
     "@fontsource-variable/inter": "^5.2.8",
@@ -47,22 +47,22 @@
     "@xterm/addon-fit": "0.10.0",
     "@xterm/xterm": "5.5.0",
     "blurhash": "2.0.5",
-    "dockview-react": "8.2.0",
+    "dockview-react": "8.3.1",
     "emoji-mart": "5.6.0",
-    "flexlayout-react": "0.10.8",
+    "flexlayout-react": "0.11.0",
     "lucide-react": "1.34.0",
     "mdast-util-from-markdown": "2.0.3",
-    "nostr-tools": "2.25.0",
+    "nostr-tools": "2.25.2",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-markdown": "10.1.0",
     "remark-breaks": "4.0.0",
     "remark-gfm": "4.0.1",
-    "virtua": "0.51.0",
-    "yaml": "2.8.3"
+    "virtua": "0.52.0",
+    "yaml": "2.9.1"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.12",
+    "@biomejs/biome": "2.5.14",
     "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "4.3.3",
     "@tauri-apps/cli": "2.11.4",
@@ -70,16 +70,16 @@
     "@testing-library/jest-dom": "7.0.1",
     "@testing-library/react": "16.3.3",
     "@testing-library/user-event": "14.6.7",
-    "@types/node": "24.13.3",
+    "@types/node": "24.13.6",
     "@types/react": "19.2.18",
     "@types/react-dom": "19.2.7",
     "@vitejs/plugin-react": "6.1.1",
-    "jsdom": "30.0.1",
+    "jsdom": "30.1.0",
     "postcss": "8.5.28",
     "tailwindcss": "4.3.3",
     "typescript": "7.0.2",
-    "undici": "7.16.0",
-    "vite": "8.2.2",
+    "undici": "7.29.1",
+    "vite": "8.3.0",
     "vitest": "4.1.11"
   }
 }

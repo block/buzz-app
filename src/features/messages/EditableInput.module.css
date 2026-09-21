@@ -54,4 +54,6 @@
 .input[data-single-emoji] img {
   width: var(--size-emoji-display);
   height: var(--size-emoji-display);
+  /* Match message artwork: keep large emoji inside the line box. */
+  vertical-align: top;
 }

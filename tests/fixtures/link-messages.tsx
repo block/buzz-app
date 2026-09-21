@@ -125,6 +125,14 @@ const typing: readonly never[] = [];
 const sent: Array<{ text: string; mentions: readonly string[] }> = [];
 Object.assign(window, { linkComposerFixture: { sent } });
 const previewSession = {
+  presence: {
+    status: () => "unknown",
+    limited: () => false,
+    subscribe: () => () => {},
+  } satisfies Pick<
+    RelaySession["presence"],
+    "status" | "limited" | "subscribe"
+  >,
   outbox: { supports: () => true },
   emoji: {
     snapshot: () => emoji,

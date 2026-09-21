@@ -700,6 +700,94 @@ it("observer route is optional, live-only at dispatch/retry, separately fenced a
   expect(vi.getTimerCount()).toBe(0);
 });
 
+it("presence holds its receipt without delaying ordinary setup and shares correlated cooldown", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  expect(
+    await h.owner.publishPresence?.("online", new AbortController().signal),
+  ).toBeNull();
+  await h.first.auth();
+  // No EOSE: ordinary setup is still pending.
+  const abort = new AbortController();
+  const result = h.owner.publishPresence?.("online", abort.signal);
+  await vi.advanceTimersByTimeAsync(0);
+  const event = h.first.sent.find(([kind]) => kind === "EVENT")?.[1] as {
+    id: string;
+    content: string;
+  };
+  assert.exists(event);
+  expect(event.content).toBe("online");
+  h.owner.update(["foreground"]);
+  await vi.advanceTimersByTimeAsync(500);
+  expect(h.first.requests().at(-1)?.[2]["#h"]).toEqual(["foreground"]);
+  abort.abort(); // Keep the receipt correlation after cancellation, to honor late quota.
+  await h.first.receive(["OK", "unrelated", true]);
+  await h.first.receive([
+    "OK",
+    event.id,
+    false,
+    "rate-limited: quota exceeded; retry in 3s",
+  ]);
+  expect(await result).toBe(false);
+  const count = h.first.requests().length;
+  h.owner.update(["foreground", "next"]);
+  expect(h.first.requests()).toHaveLength(count);
+  await vi.advanceTimersByTimeAsync(4000);
+  expect(h.first.requests()).toHaveLength(count + 1);
+  h.owner.dispose();
+});
+
+it("an outstanding presence signer pins its principal flight across socket replacement", async () => {
+  vi.useFakeTimers();
+  const key = keypair(),
+    sockets: Socket[] = [];
+  const admission = createLiveAdmission();
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const callbacks = { receive() {}, state() {}, established() {}, denied() {} };
+  const owner = subscribeRelayTraffic(
+    "wss://relay.test",
+    async (event) => {
+      if (event.kind === 20001) await gate;
+      return signed(key, event);
+    },
+    key.pubkey,
+    callbacks,
+    () => {
+      const s = new Socket();
+      sockets.push(s);
+      return s as unknown as WebSocket;
+    },
+    admission,
+  );
+  const first = sockets[0];
+  assert.exists(first);
+  await first.auth();
+  await vi.advanceTimersByTimeAsync(500);
+  for (const [, id] of first.requests()) await first.receive(["EOSE", id]);
+  const result = owner.publishPresence?.("away", new AbortController().signal);
+  expect(admission.presenceIdle()).toBe(false);
+  first.close();
+  await vi.advanceTimersByTimeAsync(500);
+  const next = sockets[1];
+  assert.exists(next);
+  await next.auth();
+  await vi.advanceTimersByTimeAsync(500);
+  for (const [, id] of next.requests()) await next.receive(["EOSE", id]);
+  expect(
+    await owner.publishPresence?.("online", new AbortController().signal),
+  ).toBeNull();
+  release();
+  expect(await result).toBeNull();
+  expect(
+    sockets.flatMap((s) => s.sent).filter(([kind]) => kind === "EVENT"),
+  ).toEqual([]);
+  expect(admission.presenceIdle()).toBe(true);
+  owner.dispose();
+});
+
 it("admits signed typing only on its authenticated channel route, without extra subscriptions", async () => {
   vi.useFakeTimers();
   const h = setup();
@@ -1024,4 +1112,69 @@ it("fills three publication slots at one clock instant and refills on matching O
     h.owner.dispose();
   }
   expect(vi.getTimerCount()).toBe(0);
+});
+
+it("presence and ordinary publications correlate independently and share only real cooldown", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await h.first.auth();
+    assert.exists(h.owner.publish);
+    assert.exists(h.owner.publishPresence);
+    const presenceDone = vi.fn();
+    const presence = h.owner
+      .publishPresence("online", new AbortController().signal)
+      .then(presenceDone);
+    await vi.advanceTimersByTimeAsync(0);
+    const event = h.first.sent.find(([kind]) => kind === "EVENT")?.[1] as {
+      id: string;
+    };
+    assert.exists(event);
+    const chat = message(h.key, "a", "ordinary", 1700000000);
+    const ordinaryDone = vi.fn();
+    const ordinary = h.owner
+      .publish(chat, new AbortController().signal)
+      .then(ordinaryDone);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(h.first.sent.filter(([kind]) => kind === "EVENT")).toHaveLength(2);
+    expect(performance.now()).toBe(0);
+    await h.first.receive(["OK", event.id, true, ""]);
+    await presence;
+    expect(presenceDone).toHaveBeenCalledWith(true);
+    expect(ordinaryDone).not.toHaveBeenCalled();
+    await h.first.receive(["OK", chat.id, true, "chat accepted"]);
+    await ordinary;
+    expect(ordinaryDone).toHaveBeenCalledWith("chat accepted");
+    await vi.advanceTimersByTimeAsync(5000);
+    const refused = message(h.key, "a", "refused", 1700000001);
+    const result = h.owner
+      .publish(refused, new AbortController().signal)
+      .catch((error) => error);
+    await vi.advanceTimersByTimeAsync(0);
+    await h.first.receive([
+      "OK",
+      refused.id,
+      false,
+      "rate-limited: quota exceeded; retry in 1s",
+    ]);
+    expect(await result).toMatchObject({ sent: false });
+    expect(
+      await h.owner.publishPresence("away", new AbortController().signal),
+    ).toBeNull();
+    await vi.advanceTimersByTimeAsync(2000);
+    const renewal = h.owner.publishPresence(
+      "away",
+      new AbortController().signal,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const last = h.first.sent
+      .filter(([kind]) => kind === "EVENT")
+      .at(-1)?.[1] as { id: string; content: string };
+    expect(last.content).toBe("away");
+    await h.first.receive(["OK", last.id, true, ""]);
+    expect(await renewal).toBe(true);
+    expect(h.sockets).toHaveLength(1);
+  } finally {
+    h.owner.dispose();
+  }
 });

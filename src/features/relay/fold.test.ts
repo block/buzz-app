@@ -189,7 +189,7 @@ describe("message fold", () => {
       const [row] = foldMessages(channel, relay.pubkey, [event]);
       expect(row?.content).toBe("    @Mic");
       expect(row?.attachments).toEqual([
-        { url: "https://x.test/image.png", video: false },
+        { url: "https://x.test/image.png", kind: "image" },
       ]);
     },
   );
@@ -268,13 +268,15 @@ describe("message fold", () => {
     expect(row.attachments).toEqual([
       {
         url: "https://x.test/c.jpg",
-        video: false,
+        kind: "image",
+        mime: "image/jpeg",
+        name: "c.jpg",
         dimensions: { width: 1280, height: 720 },
         previewUrl: "https://x.test/c-poster.jpg",
       },
-      { url: "https://x.test/a.png", video: false },
-      { url: "https://x.test/b.mp4", video: true },
-      { url: "https://x.test/reference.jpg", video: false },
+      { url: "https://x.test/a.png", kind: "image" },
+      { url: "https://x.test/b.mp4", kind: "video" },
+      { url: "https://x.test/reference.jpg", kind: "image" },
     ]);
   });
 });
@@ -351,6 +353,72 @@ it("marks same-label identity replacement as edited without changing notificatio
   ).toBeUndefined();
 });
 
+it("classifies generic imeta files and validates file metadata", () => {
+  const hash = `${"a".repeat(64)}.pdf`;
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/docs/report.pdf",
+      "m application/pdf",
+      "size 1536",
+    ],
+    ["imeta", "url https://x.test/audio.mp3", "m audio/mpeg"],
+    [
+      "imeta",
+      `url https://x.test/relay/${hash}`,
+      "m application/pdf",
+      "size 0",
+    ],
+    [
+      "imeta",
+      "url https://x.test/broken.bin",
+      "m application/octet-stream",
+      "size 1.5",
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/docs/report.pdf",
+      kind: "file",
+      mime: "application/pdf",
+      size: 1536,
+      name: "report.pdf",
+    },
+    {
+      url: "https://x.test/audio.mp3",
+      kind: "file",
+      mime: "audio/mpeg",
+      name: "audio.mp3",
+    },
+    {
+      url: `https://x.test/relay/${hash}`,
+      kind: "file",
+      mime: "application/pdf",
+    },
+    {
+      url: "https://x.test/broken.bin",
+      kind: "file",
+      mime: "application/octet-stream",
+      name: "broken.bin",
+    },
+  ]);
+});
+
+it("classifies legacy extension attachments without a mime type", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", "url https://x.test/photo.avif"],
+    ["imeta", "url https://x.test/movie.webm"],
+    ["imeta", "url https://x.test/archive"],
+    ["imeta", "url https://x.test/archive.bin"],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    { url: "https://x.test/photo.avif", kind: "image", name: "photo.avif" },
+    { url: "https://x.test/movie.webm", kind: "video", name: "movie.webm" },
+    { url: "https://x.test/archive", kind: "file", name: "archive" },
+    { url: "https://x.test/archive.bin", kind: "file", name: "archive.bin" },
+  ]);
+});
+
 it.each([
   ["700x900", { width: 700, height: 900 }],
   ["1x999999", { width: 1, height: 999999 }],
@@ -379,10 +447,12 @@ it.each([
   expect(attachments).toEqual([
     {
       url: "https://x.test/image.png",
-      video: false,
+      kind: "image",
+      mime: "image/png",
+      name: "image.png",
       ...(dimensions ? { dimensions } : {}),
     },
-    { url: "https://x.test/legacy.png", video: false },
+    { url: "https://x.test/legacy.png", kind: "image" },
   ]);
 });
 
@@ -414,10 +484,12 @@ it.each([
   expect(parseAttachments(event, ["https://x.test/legacy.png"])).toEqual([
     {
       url: "https://x.test/original.png",
-      video: false,
+      kind: "image",
+      mime: "image/png",
+      name: "original.png",
       ...(valid ? { blurhash: hash } : {}),
       previewUrl: "https://x.test/thumbnail.png",
     },
-    { url: "https://x.test/legacy.png", video: false },
+    { url: "https://x.test/legacy.png", kind: "image" },
   ]);
 });

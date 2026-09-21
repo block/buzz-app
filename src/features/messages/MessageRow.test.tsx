@@ -333,7 +333,7 @@ it.each([
         row={{
           ...row,
           attachments: [
-            { url: "https://image.test/shot.png", video: false, dimensions },
+            { url: "https://image.test/shot.png", kind: "image", dimensions },
           ],
         }}
         profile={undefined}
@@ -358,7 +358,7 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
         attachments: [
           {
             url: "https://image.test/original.png",
-            video: false,
+            kind: "image",
             blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj",
           },
         ],
@@ -432,7 +432,7 @@ it("requests a small profile image without downsizing message attachments", () =
       row={{
         ...row,
         attachments: [
-          { url: "https://image.test/attachment.png", video: false },
+          { url: "https://image.test/attachment.png", kind: "image" },
         ],
       }}
       profile={{ name: "Author", picture: "https://image.test/avatar.png" }}
@@ -445,4 +445,64 @@ it("requests a small profile image without downsizing message attachments", () =
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
+});
+
+it("renders generic file attachments as download cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/report.pdf",
+            kind: "file",
+            name: "report.pdf",
+            size: 1536,
+            mime: "application/pdf",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `app://media/${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain(
+    'href="app://media/https%3A%2F%2Ffiles.test%2Freport.pdf"',
+  );
+  expect(html).toContain('download="report.pdf"');
+  expect(html).toContain('aria-label="Download report.pdf"');
+  expect(html).toContain("report.pdf");
+  expect(html).toContain("2 KB");
+  expect(html).not.toContain("Open image attachment");
+  expect(html).not.toContain("<img");
+});
+
+it("renders unavailable generic files without a download link", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/missing.pdf",
+            kind: "file",
+            mime: "application/pdf",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain("PDF file");
+  expect(html).toContain("File unavailable");
+  expect(html).toContain('role="status"');
+  expect(html).not.toContain("<a");
+  expect(html).not.toContain("Open image attachment");
 });

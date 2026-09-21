@@ -448,6 +448,49 @@ html[data-keyboard-navigation] button.avatarButton:focus-visible {
   gap: var(--space-2);
   margin-top: var(--space-2);
 }
+.fileAttachment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(24rem, 100%);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text);
+  text-decoration: none;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.fileAttachment:hover {
+  background: var(--surface-hover);
+}
+html[data-keyboard-navigation] .fileAttachment:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.fileAttachmentBody {
+  min-width: 0;
+  display: grid;
+  gap: var(--space-half);
+}
+.fileAttachmentName,
+.fileAttachmentMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileAttachmentName {
+  font-weight: var(--type-weight-medium);
+}
+.fileAttachmentMeta {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
 .mediaPreview {
   position: relative;
   display: block;

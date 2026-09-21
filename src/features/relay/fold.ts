@@ -9,6 +9,30 @@ import { projectMarkdownImages, safeMessageUrl } from "./message-content";
 
 import { channelRowKind, membershipChange } from "./membership";
 const HEX64 = /^[0-9a-f]{64}$/;
+const RELAY_HASH_BASENAME = /^[0-9a-f]{64}(?:\.[^./?#]+)?$/i;
+
+function attachmentKind(
+  fields: Record<string, string>,
+  url: string,
+): Attachment["kind"] {
+  if (fields.m?.startsWith("image/")) return "image";
+  if (fields.m?.startsWith("video/")) return "video";
+  if (fields.m) return "file";
+  if (/\.(mp4|webm)(?:\?|$)/i.test(url)) return "video";
+  if (/\.(png|jpe?g|gif|webp|avif)(?:\?|$)/i.test(url)) return "image";
+  return "file";
+}
+
+function attachmentName(url: string): string | undefined {
+  const segment = new URL(url).pathname.split("/").pop();
+  if (!segment) return undefined;
+  try {
+    const decoded = decodeURIComponent(segment);
+    return decoded && !RELAY_HASH_BASENAME.test(decoded) ? decoded : undefined;
+  } catch {
+    return segment && !RELAY_HASH_BASENAME.test(segment) ? segment : undefined;
+  }
+}
 
 export function parseAttachments(
   event: EventData,
@@ -37,10 +61,20 @@ export function parseAttachments(
       fields.image || fields.thumb
         ? safeMessageUrl(fields.image ?? fields.thumb ?? "")
         : undefined;
+    const parsedSize = /^[1-9]\d*$/.test(fields.size ?? "")
+      ? Number(fields.size)
+      : undefined;
+    const kind = attachmentKind(fields, url);
+    const name = attachmentName(url);
     result.push({
       url,
+      kind,
+      ...(fields.m ? { mime: fields.m } : {}),
+      ...(parsedSize !== undefined && Number.isSafeInteger(parsedSize)
+        ? { size: parsedSize }
+        : {}),
+      ...(name ? { name } : {}),
       ...(blurhash ? { blurhash } : {}),
-      video: fields.m?.startsWith("video/") ?? false,
       ...(previewUrl ? { previewUrl } : {}),
       ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),
     });
@@ -48,7 +82,9 @@ export function parseAttachments(
   for (const url of markdownImages) {
     if (seen.has(url)) continue;
     seen.add(url);
-    result.push({ url, video: /\.(mp4|webm)(?:\?|$)/i.test(url) });
+    if (/\.(mp4|webm)(?:\?|$)/i.test(url)) result.push({ url, kind: "video" });
+    else if (/\.(png|jpe?g|gif|webp|avif)(?:\?|$)/i.test(url))
+      result.push({ url, kind: "image" });
   }
   return result;
 }

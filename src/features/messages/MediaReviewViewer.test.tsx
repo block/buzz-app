@@ -19,7 +19,10 @@ it("keeps fullscreen comment avatar hints in sync without loading the agent libr
     marked = keypair(),
     libraryAgent = keypair(),
     envelope = keypair();
-  const attachment = { url: "https://fixture.test/image.png", video: false };
+  const attachment = {
+    url: "https://fixture.test/image.png",
+    kind: "image" as const,
+  };
   const root = message(viewer, "one", "Image", 1, [
     ["imeta", `url ${attachment.url}`, "m image/png"],
   ]);
@@ -124,4 +127,48 @@ it("keeps fullscreen comment avatar hints in sync without loading the agent libr
     "squircle",
   );
   expect(readAgentLibrary).toHaveBeenCalledTimes(2);
+});
+
+it("excludes generic files from the image review grid", async () => {
+  const viewer = keypair();
+  const image = {
+    url: "https://fixture.test/image.png",
+    kind: "image" as const,
+  };
+  const file = {
+    url: "https://fixture.test/report.pdf",
+    kind: "file" as const,
+  };
+  const root = message(viewer, "one", "Image", 1, [
+    ["imeta", `url ${image.url}`, "m image/png"],
+    ["imeta", `url ${file.url}`, "m application/pdf"],
+  ]);
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: keypair().pubkey,
+    media: (url) => url,
+    async query(filters) {
+      if (filters.some((filter) => filter.ids?.includes(root.id)))
+        return [root];
+      return [];
+    },
+  });
+  owners.push(owner);
+  render(
+    <MediaReviewViewer
+      attachment={image}
+      session={owner.session}
+      scope="file-grid-test"
+      channelId="one"
+      channelName="One"
+      messageId={root.id}
+      initialTime={0}
+      close={() => {}}
+    />,
+  );
+  const imageAttachment = await screen.findByAltText("Attachment preview");
+  expect(imageAttachment).toHaveAttribute("src", image.url);
+  expect(
+    screen.queryByRole("button", { name: "Next image" }),
+  ).not.toBeInTheDocument();
 });

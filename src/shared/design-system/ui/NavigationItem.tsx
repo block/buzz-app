@@ -10,7 +10,7 @@ export function NavigationItem({
   variant = "row",
   ...props
 }: {
-  label: string;
+  label: ReactNode;
   icon?: ReactNode;
   trailing?: ReactNode;
   selected?: boolean;

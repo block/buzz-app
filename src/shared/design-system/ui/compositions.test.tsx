@@ -162,6 +162,32 @@ test("navigation keeps warm-read events and data attributes on the focusable but
   expect(select).toHaveBeenCalledTimes(1);
 });
 
+test("navigation rows keep rich session labels readable and selected", async () => {
+  const user = userEvent.setup();
+  const select = vi.fn();
+  render(
+    <NavigationItem
+      selected
+      label={
+        <>
+          <small>Release planning</small> <span>Review the proposal</span>{" "}
+          <span role="img" aria-label="Unread messages">
+            •
+          </span>
+        </>
+      }
+      onClick={select}
+    />,
+  );
+  const row = screen.getByRole("button", {
+    name: "Release planning Review the proposal Unread messages",
+  });
+  expect(row).toHaveAttribute("aria-current", "page");
+  expect(row).toHaveAttribute("data-buzz-ui");
+  await user.click(row);
+  expect(select).toHaveBeenCalledTimes(1);
+});
+
 test("tooltip adds a dismissible hint without replacing the control name", async () => {
   const user = userEvent.setup();
   render(

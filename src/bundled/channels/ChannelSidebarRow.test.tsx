@@ -4,7 +4,13 @@ import { afterEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
+import type { RelaySession } from "../../features/relay/session";
+import type {
+  ThreadActivitySnapshot,
+  UnreadSnapshot,
+} from "../../features/relay/unread";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
+import { UnreadBadge } from "./UnreadBadge";
 
 afterEach(cleanup);
 const parent = {
@@ -12,9 +18,34 @@ const parent = {
   name: "Engineering",
   channelType: "stream" as const,
 };
-function mount() {
+function unreadSession(observedCount = 1) {
+  const snapshot: UnreadSnapshot = {
+    target: { kind: "channel", channelId: "child" },
+    observedCount,
+    attentionCount: 0,
+    coverage: "observed",
+    freshness: "observed",
+    manual: "none",
+  };
+  const activity: ThreadActivitySnapshot = {
+    channelId: "child",
+    items: [],
+    coverage: "observed",
+    freshness: "observed",
+  };
+  return {
+    unread: {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      activity: () => activity,
+      subscribeActivity: () => () => {},
+    },
+  } as unknown as RelaySession;
+}
+function mount(selected = "child") {
   const onSelect = vi.fn(),
     onNewSession = vi.fn();
+  const session = unreadSession();
   function Row() {
     const [collapsed, setCollapsed] = useState(false);
     return (
@@ -24,8 +55,12 @@ function mount() {
         onToggle={(open) => setCollapsed(!open)}
         icon={<svg data-testid="channel-icon" />}
         badge={<span>3</span>}
-        childBadge={(channel) => (
-          <span data-testid={`${channel.id}-unread`}>Unread</span>
+        childContent={(channel) => (
+          <UnreadBadge
+            session={session}
+            channelId={channel.id}
+            label={channel.name}
+          />
         )}
         sessions={[
           {
@@ -37,7 +72,7 @@ function mount() {
         ]}
         draft={true}
         draftSelected={false}
-        selected="child"
+        selected={selected}
         onSelect={onSelect}
         onPrepare={() => {}}
         onNewSession={onNewSession}
@@ -71,13 +106,26 @@ it("opens saved child sessions and retained drafts without a channel icon", asyn
   });
   expect(child).toHaveAttribute("aria-current", "page");
   expect(child.querySelector("svg")).toBeNull();
-  expect(screen.getByTestId("child-unread")).toBeInTheDocument();
+  expect(child.querySelector("[data-channel-unread]")).toBeInTheDocument();
   await user.click(child);
   expect(callbacks.onSelect).toHaveBeenCalledWith("child");
   await user.click(
     screen.getByRole("button", { name: "New session draft in Engineering" }),
   );
   expect(callbacks.onNewSession).toHaveBeenCalledWith("parent");
+});
+
+it("visibly marks an ordinary unread child session without a priority dot", () => {
+  mount("");
+  const child = screen.getByRole("button", {
+    name: "Plan the release, session in Engineering",
+  });
+  expect(child).not.toHaveAttribute("aria-current");
+  expect(
+    child.querySelector('[data-channel-unread-title="true"]'),
+  ).toHaveTextContent("Plan the release");
+  expect(child.querySelector("[data-channel-unread]")).toBeInTheDocument();
+  expect(child.querySelector("[data-channel-priority]")).toBeNull();
 });
 
 it("collapses child sessions and drafts without navigating and expands with the keyboard", async () => {

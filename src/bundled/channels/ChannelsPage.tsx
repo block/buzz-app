@@ -760,8 +760,12 @@ function ChannelWorkspace({
                           .includes(search.toLowerCase()) ||
                         child.name.toLowerCase().includes(search.toLowerCase()),
                     )}
-                    childBadge={(child) => (
-                      <UnreadBadge session={queries} channelId={child.id} />
+                    childContent={(child) => (
+                      <UnreadBadge
+                        session={queries}
+                        channelId={child.id}
+                        label={child.name}
+                      />
                     )}
                     onPrepare={(id) => queries.channels.prepare?.(id)}
                     onSelect={select}

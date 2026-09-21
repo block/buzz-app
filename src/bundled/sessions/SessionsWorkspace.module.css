@@ -89,6 +89,14 @@
   min-width: 0;
 }
 
+.history
+  button:not([aria-current="page"])
+  .sessionRow
+  > [data-channel-unread-title="true"] {
+  color: var(--primary);
+  font-weight: var(--type-weight-medium);
+}
+
 .history small,
 .listMessage {
   color: var(--text-muted);

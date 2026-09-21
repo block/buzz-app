@@ -45,6 +45,13 @@
 .child.child {
   width: 100%;
 }
+.child > [data-channel-unread-title] {
+  min-width: 0;
+}
+.child:not([aria-current="page"]) > [data-channel-unread-title="true"] {
+  color: var(--primary);
+  font-weight: var(--type-weight-medium);
+}
 .iconSpace {
   width: 17px;
   flex: 0 0 17px;

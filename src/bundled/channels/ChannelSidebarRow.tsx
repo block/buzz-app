@@ -9,7 +9,7 @@ export function ChannelSidebarRow({
   channel,
   icon,
   badge,
-  childBadge,
+  childContent,
   wrapSelect,
   selected,
   sessions,
@@ -24,7 +24,7 @@ export function ChannelSidebarRow({
   channel: ChannelSummary;
   icon: ReactNode;
   badge?: ReactNode;
-  childBadge?: ((channel: ChannelSummary) => ReactNode) | undefined;
+  childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
   sessions: readonly ChannelSummary[];
@@ -167,8 +167,7 @@ export function ChannelSidebarRow({
             onClick={() => onSelect(child.id)}
           >
             <span className={styles.iconSpace} aria-hidden="true" />
-            <span>{child.name}</span>
-            {childBadge?.(child)}
+            {childContent?.(child) ?? <span>{child.name}</span>}
           </button>
         ))}
       </div>

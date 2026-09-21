@@ -8,7 +8,7 @@ export type SessionListItem = Readonly<{
   id: string;
   title: string;
   parentName?: string;
-  badge?: ReactNode;
+  content?: ReactNode;
 }>;
 
 export function SessionsWorkspace({
@@ -49,8 +49,7 @@ export function SessionsWorkspace({
                 </small>
               )}
               <span className={styles.sessionRow}>
-                <span>{session.title}</span>
-                {session.badge}
+                {session.content ?? <span>{session.title}</span>}
               </span>
             </button>
           ))}

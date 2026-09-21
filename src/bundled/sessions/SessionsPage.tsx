@@ -100,7 +100,13 @@ function LiveSessions({
       sessions={sessions.map((item) => ({
         id: item.id,
         title: item.name,
-        badge: <UnreadBadge session={session} channelId={item.id} />,
+        content: (
+          <UnreadBadge
+            session={session}
+            channelId={item.id}
+            label={item.name}
+          />
+        ),
         ...(item.parentChannelId
           ? {
               parentName:

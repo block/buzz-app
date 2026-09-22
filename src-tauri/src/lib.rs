@@ -15,6 +15,8 @@ use buzzodz_plugins::{
 };
 use dock::{dock_permission, unread_indicator_set};
 use notifications::{notification_show, Notifications};
+#[cfg(any(target_os = "macos", test))]
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::Manager as _;
 use tauri_plugin_dialog::DialogExt;
@@ -36,6 +38,56 @@ enum TitleBarDoubleClickAction {
 }
 
 #[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TitleBarFrame {
+    x: f64,
+    y: f64,
+    width: f64,
+    height: f64,
+}
+
+#[cfg(any(target_os = "macos", test))]
+impl TitleBarFrame {
+    fn approximately_equals(self, other: Self) -> bool {
+        const TOLERANCE: f64 = 0.5;
+        (self.x - other.x).abs() <= TOLERANCE
+            && (self.y - other.y).abs() <= TOLERANCE
+            && (self.width - other.width).abs() <= TOLERANCE
+            && (self.height - other.height).abs() <= TOLERANCE
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct TitleBarFillFrame {
+    restore: TitleBarFrame,
+    filled: TitleBarFrame,
+}
+
+#[cfg(any(target_os = "macos", test))]
+#[derive(Default)]
+struct TitleBarFillFrames(Mutex<HashMap<String, TitleBarFillFrame>>);
+
+#[cfg(any(target_os = "macos", test))]
+fn title_bar_fill_target(
+    current: TitleBarFrame,
+    visible: TitleBarFrame,
+    saved: Option<TitleBarFillFrame>,
+) -> (TitleBarFrame, Option<TitleBarFillFrame>) {
+    if let Some(saved) = saved.filter(|saved| current.approximately_equals(saved.filled)) {
+        (saved.restore, None)
+    } else {
+        (
+            visible,
+            Some(TitleBarFillFrame {
+                restore: current,
+                filled: visible,
+            }),
+        )
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
 fn title_bar_double_click_action(preference: Option<&str>) -> TitleBarDoubleClickAction {
     match preference {
         Some("Maximize" | "Fill") => TitleBarDoubleClickAction::Fill,
@@ -45,41 +97,83 @@ fn title_bar_double_click_action(preference: Option<&str>) -> TitleBarDoubleClic
     }
 }
 
-#[tauri::command]
-fn title_bar_double_click<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        use objc2_foundation::{ns_string, NSUserDefaults};
-
-        let preference = NSUserDefaults::standardUserDefaults()
-            .stringForKey(ns_string!("AppleActionOnDoubleClick"))
-            .map(|value| value.to_string());
-        match title_bar_double_click_action(preference.as_deref()) {
-            TitleBarDoubleClickAction::Fill => {
-                if window.is_maximized().map_err(|error| error.to_string())? {
-                    window.unmaximize()
-                } else {
-                    window.maximize()
-                }
-                .map_err(|error| error.to_string())?;
-            }
-            TitleBarDoubleClickAction::Zoom => {
-                let ns_window = window.ns_window().map_err(|error| error.to_string())?;
-                let ns_window: &objc2_app_kit::NSWindow = unsafe { &*ns_window.cast() };
-                ns_window.performZoom(None);
-            }
-            TitleBarDoubleClickAction::Minimize => {
-                window.minimize().map_err(|error| error.to_string())?;
-            }
-            TitleBarDoubleClickAction::None => {}
-        }
+#[cfg(target_os = "macos")]
+fn title_bar_frame(rect: objc2_foundation::NSRect) -> TitleBarFrame {
+    TitleBarFrame {
+        x: rect.origin.x,
+        y: rect.origin.y,
+        width: rect.size.width,
+        height: rect.size.height,
     }
+}
 
-    #[cfg(not(target_os = "macos"))]
-    let _ = window;
+#[cfg(target_os = "macos")]
+fn ns_rect(frame: TitleBarFrame) -> objc2_foundation::NSRect {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    NSRect::new(
+        NSPoint::new(frame.x, frame.y),
+        NSSize::new(frame.width, frame.height),
+    )
+}
+
+#[cfg(target_os = "macos")]
+fn toggle_title_bar_fill<R: tauri::Runtime>(
+    window: &tauri::Window<R>,
+    frames: &TitleBarFillFrames,
+) -> Result<(), String> {
+    let ns_window = window.ns_window().map_err(|error| error.to_string())?;
+    let ns_window: &objc2_app_kit::NSWindow = unsafe { &*ns_window.cast() };
+    let current = title_bar_frame(ns_window.frame());
+    let visible = title_bar_frame(
+        ns_window
+            .screen()
+            .ok_or("Could not resolve the window's current screen")?
+            .visibleFrame(),
+    );
+    let mut frames = frames
+        .0
+        .lock()
+        .map_err(|_| "Title-bar Fill state is unavailable")?;
+    let (target, saved) = title_bar_fill_target(current, visible, frames.remove(window.label()));
+    if let Some(saved) = saved {
+        frames.insert(window.label().to_owned(), saved);
+    }
+    drop(frames);
+    ns_window.setFrame_display_animate(ns_rect(target), true, true);
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[tauri::command]
+fn title_bar_double_click<R: tauri::Runtime>(
+    window: tauri::Window<R>,
+    fill_frames: tauri::State<'_, TitleBarFillFrames>,
+) -> Result<(), String> {
+    use objc2_foundation::{ns_string, NSUserDefaults};
+
+    let preference = NSUserDefaults::standardUserDefaults()
+        .stringForKey(ns_string!("AppleActionOnDoubleClick"))
+        .map(|value| value.to_string());
+    match title_bar_double_click_action(preference.as_deref()) {
+        TitleBarDoubleClickAction::Fill => toggle_title_bar_fill(&window, &fill_frames)?,
+        TitleBarDoubleClickAction::Zoom => {
+            let ns_window = window.ns_window().map_err(|error| error.to_string())?;
+            let ns_window: &objc2_app_kit::NSWindow = unsafe { &*ns_window.cast() };
+            ns_window.performZoom(None);
+        }
+        TitleBarDoubleClickAction::Minimize => {
+            window.minimize().map_err(|error| error.to_string())?;
+        }
+        TitleBarDoubleClickAction::None => {}
+    }
 
     Ok(())
 }
+
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+fn title_bar_double_click<R: tauri::Runtime>(_window: tauri::Window<R>) {}
 
 async fn prepare_import(
     imports: Imports,
@@ -253,7 +347,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
@@ -289,7 +383,10 @@ pub fn run() {
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
             app.manage(AgentHost::initialize(paths, resources));
             Ok(())
-        })
+        });
+    #[cfg(target_os = "macos")]
+    let builder = builder.manage(TitleBarFillFrames::default());
+    builder
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(Notifications::default())
@@ -319,7 +416,19 @@ pub fn run() {
 
 #[cfg(test)]
 mod tests {
-    use super::{title_bar_double_click_action, TitleBarDoubleClickAction};
+    use super::{
+        title_bar_double_click_action, title_bar_fill_target, TitleBarDoubleClickAction,
+        TitleBarFillFrame, TitleBarFrame,
+    };
+
+    fn frame(x: f64, y: f64, width: f64, height: f64) -> TitleBarFrame {
+        TitleBarFrame {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
 
     #[test]
     fn title_bar_double_click_preferences_map_to_native_actions() {
@@ -346,6 +455,33 @@ mod tests {
         assert_eq!(
             title_bar_double_click_action(None),
             TitleBarDoubleClickAction::None
+        );
+    }
+
+    #[test]
+    fn title_bar_fill_restores_only_an_unchanged_filled_window() {
+        let original = frame(100.0, 100.0, 900.0, 700.0);
+        let visible = frame(0.0, 25.0, 1512.0, 920.0);
+        let saved = TitleBarFillFrame {
+            restore: original,
+            filled: visible,
+        };
+
+        assert_eq!(
+            title_bar_fill_target(visible, visible, Some(saved)),
+            (original, None)
+        );
+
+        let moved = frame(20.0, 25.0, 1492.0, 920.0);
+        assert_eq!(
+            title_bar_fill_target(moved, visible, Some(saved)),
+            (
+                visible,
+                Some(TitleBarFillFrame {
+                    restore: moved,
+                    filled: visible,
+                })
+            )
         );
     }
 }

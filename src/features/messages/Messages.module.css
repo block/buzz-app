@@ -400,12 +400,12 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   padding: 0;
   border: 0;
   border-radius: 50%;
-  color: var(--neutral-1);
-  background: var(--neutral-11);
+  color: var(--text-inverse);
+  background: var(--surface-inverse);
   flex-shrink: 0;
 }
 .audioPlay:hover {
-  background: var(--neutral-12);
+  background: var(--affordance-prominent);
 }
 .audioSeek {
   min-width: 0;

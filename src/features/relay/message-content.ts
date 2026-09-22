@@ -87,19 +87,23 @@ function stripRanges(
   content: string,
   ranges: readonly { start: number; end: number }[],
 ): string {
-  let stripped = content;
-  for (const range of [...ranges].sort((a, b) => b.start - a.start))
-    stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
-  return stripped.trimEnd();
-}
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+      continue;
+    }
+    merged.push({ ...range });
+  }
 
-/** Project every CommonMark image from the same bounded parse policy as rendering. */
-export function projectMarkdownImages(content: string): {
-  content: string;
-  urls: readonly string[];
-} {
-  const projected = projectMarkdownAttachments(content, new Set());
-  return { content: projected.content, urls: projected.urls };
+  let stripped = content;
+  for (let index = merged.length - 1; index >= 0; index--) {
+    const range = merged[index];
+    if (range)
+      stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
+  }
+  return stripped.trimEnd();
 }
 
 function nodeText(node: MarkdownNode): string {
@@ -107,16 +111,13 @@ function nodeText(node: MarkdownNode): string {
   return (node.children ?? []).map(nodeText).join("");
 }
 
-function hashShapedLabel(label: string): boolean {
-  if (relayHashBasename(label)) return true;
-  const labelUrl = safeMessageUrl(label);
-  if (!labelUrl) return false;
-  const segment = new URL(labelUrl).pathname.split("/").pop();
-  if (!segment) return false;
+function adoptableAttachmentLabel(label: string, url: string): boolean {
+  if (relayHashBasename(label)) return false;
   try {
-    return relayHashBasename(decodeURIComponent(segment));
+    new URL(label);
+    return false;
   } catch {
-    return relayHashBasename(segment);
+    return label !== url;
   }
 }
 
@@ -171,7 +172,7 @@ export function projectMarkdownAttachments(
         ranges.push({ start, end });
 
       const label = nodeText(link).trim();
-      if (!label || hashShapedLabel(label)) continue;
+      if (!label || !adoptableAttachmentLabel(label, url)) continue;
       names.push({ url, name: label.slice(0, MAX_ATTACHMENT_NAME_LENGTH) });
     }
   }

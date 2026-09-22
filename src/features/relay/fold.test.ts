@@ -332,6 +332,18 @@ describe("message fold", () => {
     ]);
   });
 
+  it("keeps URL-derived names for attachment autolinks with ordinary basenames", () => {
+    const url = "https://relay.test/media/report.pdf";
+    const event = message(alice, channel, `<${url}>`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "report.pdf" },
+    ]);
+  });
+
   it("rejects hash-shaped attachment link labels", () => {
     const hash = "a".repeat(64);
     const url = `https://relay.test/media/${hash}.pdf`;
@@ -397,6 +409,38 @@ describe("message fold", () => {
         name: "the attached brief",
       },
     ]);
+  });
+
+  it("preserves surrounding prose when a stripped attachment link wraps an image", () => {
+    const fileUrl = "https://relay.test/media/file.pdf";
+    const imageUrl = "https://relay.test/i.png";
+    const event = message(
+      alice,
+      channel,
+      `Please see [![thumb](${imageUrl})](${fileUrl}) before Friday.`,
+      10,
+      [["imeta", `url ${fileUrl}`, "m application/pdf"]],
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("Please see  before Friday.");
+    expect(row?.attachments).toEqual([
+      { url: fileUrl, kind: "file", mime: "application/pdf", name: "file.pdf" },
+      { url: imageUrl, kind: "image" },
+    ]);
+  });
+
+  it("keeps a non-attachment link shell when projecting an image in its label", () => {
+    const imageUrl = "https://relay.test/i.png";
+    const linkUrl = "https://relay.test/docs/public";
+    const event = message(
+      alice,
+      channel,
+      `Please see [![thumb](${imageUrl})](${linkUrl}) before Friday.`,
+      10,
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe(`Please see [](${linkUrl}) before Friday.`);
+    expect(row?.attachments).toEqual([{ url: imageUrl, kind: "image" }]);
   });
 
   it("projects link-only attachment messages to empty content", () => {

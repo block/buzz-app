@@ -1175,7 +1175,7 @@ function ChannelComposer({
           ? props.label
           : composerPlaceholder(
               destination,
-              hasSentMessage(window.rows),
+              hasSentMessage(window.rows, window.status),
               props.channelName,
             )
       }

@@ -46,3 +46,20 @@ it("uses delivered messages, not membership events or local attempts", () => {
     ]),
   ).toBe(false);
 });
+
+it.each(["idle", "loading", "error"] as const)(
+  "keeps DM wording neutral when history is %s",
+  (status) => {
+    for (const rows of [[], [row]]) {
+      const evidence = hasSentMessage(rows, status);
+      expect(evidence).toBeUndefined();
+      expect(composerPlaceholder("dm", evidence)).toBe("Message...");
+    }
+    expect(composerPlaceholder("dm", hasSentMessage([], "ready"))).toBe(
+      "Start a new message",
+    );
+    expect(composerPlaceholder("dm", hasSentMessage([row], "ready"))).toBe(
+      "Message...",
+    );
+  },
+);

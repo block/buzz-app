@@ -86,13 +86,12 @@ export function useSearchMessages(
           });
           setResult({ owner, messages });
         })
-        .catch(() => {
+        .catch((error: unknown) => {
           if (!controller.signal.aborted)
             setResult({
               owner,
               messages: [],
-              error:
-                "Message search couldn’t finish. Pages and conversations are still available.",
+              error: `Message search couldn’t finish${error instanceof Error && error.message ? `: ${error.message.slice(0, 240)}` : "."} Pages and conversations are still available.`,
             });
         });
     }, 180);

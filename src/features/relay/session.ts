@@ -1,3 +1,4 @@
+import { UploadError } from "./attachments";
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createPresence } from "../presence/presence";
 import type { PresenceActivity } from "../presence/activity";
@@ -76,6 +77,11 @@ export function createRelaySession(
 ) {
   let closed = false;
   const lifetime = new AbortController();
+  let uploadLifetime = new AbortController();
+  const interruptUploads = () => {
+    uploadLifetime.abort();
+    uploadLifetime = new AbortController();
+  };
   const profiling =
     options.profiling ?? transport?.profiling ?? createRelayProfiler();
   const requests = createRelayReader(transport, { profiling });
@@ -196,6 +202,7 @@ export function createRelaySession(
     revoking++;
     try {
       accessEpoch++;
+      interruptUploads();
       typing.clear();
       // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
       // authoritative access loss cancels them all, not merely explicit #h reads.
@@ -771,6 +778,28 @@ export function createRelaySession(
     agentActivity: activity.queries,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),
+    download: (url: string) => transport?.download?.(url),
+    attachments: transport?.uploadAttachment
+      ? {
+          async upload(file: File, channelId: string, signal: AbortSignal) {
+            if (closed || !canAccess(channelId))
+              throw new UploadError("denied");
+            const epoch = accessEpoch;
+            const upload = transport.uploadAttachment;
+            if (!upload) throw new UploadError("unavailable");
+            const combined = AbortSignal.any([
+              signal,
+              lifetime.signal,
+              uploadLifetime.signal,
+            ]);
+            const result = await upload(file, combined);
+            combined.throwIfAborted();
+            if (closed || epoch !== accessEpoch || !canAccess(channelId))
+              throw new UploadError("cancelled");
+            return result;
+          },
+        }
+      : undefined,
     /** A plugin may request writes from this same interface when the host supports them. */
     outbox: writes?.outbox,
     async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
@@ -1144,6 +1173,7 @@ export function createRelaySession(
         agentLibrary.clear();
         archives.clear();
         workflows.interrupt();
+        interruptUploads();
         channels.staleHeads();
         unread.stale();
       }
@@ -1210,6 +1240,7 @@ export function createRelaySession(
     session,
     async clearCache() {
       accessEpoch++;
+      interruptUploads();
       cacheClearEpoch++;
       activity.clear();
       presence.clear();
@@ -1234,6 +1265,7 @@ export function createRelaySession(
       closed = true;
       typing.dispose();
       lifetime.abort();
+      interruptUploads();
       activity.dispose();
       presence.dispose();
       sidebarPreferences.dispose();

@@ -158,7 +158,7 @@ test("product catalogue uses the production composer and shared navigation", asy
   await expect(send).toHaveAttribute("data-icon-variant", "tint");
   await expect(send).toHaveCSS("background-color", "rgb(247, 237, 254)");
   for (const name of [
-    "Attach file (not connected)",
+    "Attach file",
     "Insert emoji",
     "Toggle formatting",
     "Record voice note (not connected)",
@@ -312,4 +312,136 @@ test("composer surface uses the shared border and fits its conversation inset", 
         .toBe(true);
     }
   }
+});
+
+test("attachments pick real files, show upload failure/retry and allow attachment-only send", async ({
+  page,
+}) => {
+  await page.goto(`${url}#/design/product-ui/composer`);
+  const example = page.getByRole("region", {
+    name: "File selection",
+    exact: true,
+  });
+  const chooserPromise = page.waitForEvent("filechooser");
+  await example
+    .getByRole("button", { name: "Attach file", exact: true })
+    .click();
+  const chooser = await chooserPromise;
+  await chooser.setFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("hello"),
+  });
+  await expect(example.getByText("notes.txt", { exact: true })).toBeVisible();
+  await expect(example.getByText("Uploading…", { exact: true })).toBeVisible();
+  const send = example.getByRole("button", {
+    name: "Send message",
+    exact: true,
+  });
+  await expect(send).toBeDisabled();
+  await example.getByRole("button", { name: "Reject example upload" }).click();
+  await expect(example.getByRole("alert")).toContainText("metadata cleanup");
+  await expect(send).toBeDisabled();
+  await example.getByRole("button", { name: "Retry notes.txt" }).click();
+  await expect(example.getByText("Uploading…", { exact: true })).toBeVisible();
+  await example
+    .getByRole("button", { name: "Complete example upload" })
+    .click();
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(
+    example.getByRole("region", { name: "Selected attachments" }),
+  ).toHaveCount(0);
+  await expect(send).toBeDisabled();
+  await example.locator('input[type="file"]').setInputFiles({
+    name: "notes.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("hello"),
+  });
+  await expect(example.getByText("Uploading…", { exact: true })).toBeVisible();
+  await example
+    .getByRole("button", { name: "Remove notes.txt", exact: true })
+    .click();
+  await expect(
+    example.getByRole("button", { name: "Complete example upload" }),
+  ).toBeDisabled();
+  await expect(
+    example.getByRole("region", { name: "Selected attachments" }),
+  ).toHaveCount(0);
+});
+
+test("attachments use compact wrapping chips and image thumbnails", async ({
+  page,
+}) => {
+  await page.goto(`${url}#/design/product-ui/composer`);
+  const composer = page.getByRole("region", {
+    name: "Composer playground",
+    exact: true,
+  });
+  await composer.locator('input[type="file"]').setInputFiles([
+    {
+      name: "PDF File Name.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("pdf fixture"),
+    },
+    {
+      name: "Document.doc",
+      mimeType: "application/msword",
+      buffer: Buffer.from("document"),
+    },
+    {
+      name: "Plan.md",
+      mimeType: "text/markdown",
+      buffer: Buffer.from("# plan"),
+    },
+    {
+      name: "photo.png",
+      mimeType: "image/png",
+      buffer: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aPd8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+    },
+  ]);
+  const selected = composer.getByRole("region", {
+    name: "Selected attachments",
+  });
+  await expect(
+    selected.getByText("Ready to send", { exact: true }),
+  ).toHaveCount(4);
+  await expect(
+    selected.getByRole("img", { name: "Preview of photo.png" }),
+  ).toBeVisible();
+  await expect(
+    selected.getByRole("button", { name: "Remove all files" }),
+  ).toHaveCount(0);
+  for (const dark of [false, true]) {
+    await page.evaluate((value) => {
+      document.documentElement.classList.toggle("dark", value);
+      document.documentElement.dataset.colorMode = value ? "dark" : "light";
+    }, dark);
+    for (const width of [390, 820, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect
+        .poll(() => selected.evaluate((el) => el.scrollWidth <= el.clientWidth))
+        .toBe(true);
+      await expect(
+        selected.getByRole("button", { name: "Remove photo.png" }),
+      ).toBeVisible();
+      if (width === 1440) {
+        const [first, second] = await selected
+          .locator(".composer-attachment")
+          .evaluateAll((items) =>
+            items.slice(0, 2).map((el) => ({
+              top: el.getBoundingClientRect().top,
+              width: el.getBoundingClientRect().width,
+            })),
+          );
+        expect(first.top).toBe(second.top);
+        expect(first.width).toBeLessThan(260);
+      }
+    }
+  }
+  await selected.getByRole("button", { name: "Remove photo.png" }).click();
+  await expect(selected.getByRole("img")).toHaveCount(0);
 });

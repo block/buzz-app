@@ -1,3 +1,8 @@
+import { uploadAttachment } from "./attachment-upload.mjs";
+import {
+  uploadCode,
+  UPLOAD_FAILURES,
+} from "../src/features/relay/attachments.ts";
 import { validSessionCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
@@ -407,6 +412,7 @@ export function relayBrokerPlugin({
       let inflight = 0;
       let presenceFlight = false;
       let sidebarUploads = 0;
+      let attachmentUploads = 0;
       let libraryRead;
       const streams = new Map();
       const admissions = createHostAdmission();
@@ -622,6 +628,7 @@ export function relayBrokerPlugin({
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
+              attachmentUploads: true,
               workflowReads: true,
               sidebarPreferences: true,
               readState: true,
@@ -904,6 +911,31 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/stats" && req.method === "GET")
             return json(res, 200, { ...stats, connects: upstream.connects() });
+          if (route === "/api/relay/upload" && req.method === "POST") {
+            if (attachmentUploads >= 2)
+              return json(res, 429, { code: "capacity" });
+            attachmentUploads++;
+            try {
+              const result = await uploadAttachment(
+                req,
+                relay,
+                key,
+                fetchUpstream,
+                cancel.signal,
+              );
+              return json(res, 200, result);
+            } catch (error) {
+              const code = uploadCode(error);
+              server.config.logger.info(`[attachment-upload] ${code}`);
+              return json(
+                res,
+                code === "size" ? 413 : code === "denied" ? 403 : 400,
+                { code, error: UPLOAD_FAILURES[code] },
+              );
+            } finally {
+              attachmentUploads--;
+            }
+          }
           if (route === "/api/relay/media" && req.method === "GET") {
             const target = new URL(url.searchParams.get("url") ?? "", relay);
             if (
@@ -947,7 +979,8 @@ export function relayBrokerPlugin({
             const type = upstream.headers.get("content-type") ?? "";
             const image = type.startsWith("image/");
             const video = type.startsWith("video/");
-            if (!image && !video)
+            const download = url.searchParams.get("download") === "1";
+            if (!image && !video && !download)
               return json(res, 415, { error: "Media type rejected" });
             const length = Number(upstream.headers.get("content-length"));
             if (
@@ -957,7 +990,13 @@ export function relayBrokerPlugin({
             )
               return json(res, 413, { error: "Media budget exceeded" });
             const headers = {
-              "Content-Type": type,
+              "Content-Type": download ? "application/octet-stream" : type,
+              ...(download
+                ? {
+                    "Content-Disposition": "attachment",
+                    "Content-Security-Policy": "default-src 'none'; sandbox",
+                  }
+                : {}),
               "Cache-Control": "private, max-age=3600",
               "X-Content-Type-Options": "nosniff",
               ...(upstream.headers.get("content-length")
@@ -973,10 +1012,18 @@ export function relayBrokerPlugin({
                   }
                 : {}),
             };
-            if (video) {
+            if (download || video) {
               res.writeHead(upstream.status, headers);
               if (!upstream.body) return res.end();
               const stream = Readable.fromWeb(upstream.body);
+              if (download) {
+                let received = 0;
+                stream.on("data", (chunk) => {
+                  received += chunk.length;
+                  if (received > MAX_MEDIA_BYTES)
+                    stream.destroy(new Error("Download budget exceeded"));
+                });
+              }
               // A range request may time out or be cancelled after headers. A
               // piped Readable has no automatic error consumer; without this,
               // Node treats the upstream abort as an uncaught process error and

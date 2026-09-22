@@ -42,3 +42,21 @@ it("skips throwing and unmatched renderers, with first matching presentation win
   expect(resolveLink(url, [broken, miss, entry, { ...entry }])).toBe(entry);
   expect(resolveLink(url, [broken, miss])).toBeUndefined();
 });
+
+it("keeps authenticated attachment downloads in the app instead of the external opener", () => {
+  const session = {
+    download: () => "/api/relay/media?download=1",
+  } as unknown as import("../relay/session").RelaySession;
+  const html = renderToStaticMarkup(
+    <MessageLink
+      url="https://relay.test/media/file.txt"
+      label="notes.txt"
+      session={session}
+      registry={undefined}
+      onOpenLink={() => false}
+    />,
+  );
+  expect(html).toContain('target="_self"');
+  expect(html).toContain('download="notes.txt"');
+  expect(html).toContain('href="/api/relay/media?download=1"');
+});

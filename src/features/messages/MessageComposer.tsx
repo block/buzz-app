@@ -2,6 +2,10 @@ import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
+import {
+  ComposerAttachments,
+  useLocalAttachments,
+} from "./ComposerAttachments";
 import { TypingIndicator } from "./TypingIndicator";
 import {
   ArrowUpIcon,
@@ -128,6 +132,12 @@ function Composer({
     if (disabled) sendAttempt.current?.abort();
   }, [disabled]);
   const inputId = useId();
+  const uploadCapability = session.attachments;
+  const attachments = useLocalAttachments(
+    uploadCapability
+      ? (file, signal) => uploadCapability.upload(file, channelId, signal)
+      : undefined,
+  );
   const draftKey =
     submission?.draftKey ??
     (threadRootId
@@ -334,7 +344,8 @@ function Composer({
       admission.current ||
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
-      !draft.trim() ||
+      attachments.blocked ||
+      (!draft.trim() && !attachments.files.length) ||
       sendAttempt.current ||
       !outbox
     )
@@ -343,8 +354,13 @@ function Composer({
     sendAttempt.current = attempt;
     const captured = valueRef.current;
     try {
+      const prepared = attachments.content(captured.text);
+      if (prepared.length > 16000)
+        throw new Error(
+          "Message and attachments exceed the message length limit.",
+        );
       if (submission) {
-        submission.submit(captured);
+        submission.submit({ ...captured, text: prepared });
         return;
       }
       let recipients = captured.recipients.length
@@ -377,11 +393,12 @@ function Composer({
       if (valueRef.current !== captured) return;
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, captured.text)
-          : captured.text;
+          ? mediaTimeReply(mediaTimeSeconds, prepared)
+          : prepared;
       const id = threadRootId
         ? session.messages.reply(channelId, threadRootId, content, recipients)
         : session.messages.send(channelId, content, recipients);
+      attachments.clear();
       onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();
@@ -421,7 +438,7 @@ function Composer({
     return (
       <>
         {accessories}
-        <footer className={styles.composer}>
+        <footer className={`${styles.composer} message-composer`}>
           <TypingIndicator
             session={session}
             channelId={channelId}
@@ -468,6 +485,10 @@ function Composer({
           />
         )}
         {sending && <p role="status">Adding agent to this channel…</p>}
+        <ComposerAttachments
+          selection={attachments}
+          disabled={editingDisabled}
+        />
         <div className={styles.composerInput}>
           <RichComposerInput
             ref={input}
@@ -594,8 +615,9 @@ function Composer({
             ) : (
               <>
                 <IconButton
-                  aria-label="Attach file (not connected)"
-                  disabled
+                  aria-label="Attach file"
+                  disabled={editingDisabled || !uploadCapability}
+                  onClick={() => attachments.input.current?.click()}
                   icon={<PaperclipIcon size={16} aria-hidden="true" />}
                   size="toolbar"
                   variant="ghost"
@@ -656,7 +678,8 @@ function Composer({
               admitting ||
               sending ||
               submission?.disabled ||
-              !draft.trim()
+              attachments.blocked ||
+              (!draft.trim() && !attachments.files.length)
             }
             icon={<ArrowUpIcon size={16} aria-hidden="true" />}
             size="toolbar"

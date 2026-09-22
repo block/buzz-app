@@ -389,3 +389,83 @@ test("selected mentions inside code remain visible through draft restore and cha
     await server.close();
   }
 });
+
+// Browser-only contract: qualifiers remain visible without hover at touch width.
+test("namesake recipient qualifiers remain visible on touch after live name changes", async ({
+  browser,
+}) => {
+  const context = await browser.newContext({
+    viewport: { width: 390, height: 844 },
+    hasTouch: true,
+  });
+  const page = await context.newPage();
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?identity-names`,
+    );
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "dark";
+    });
+    const keys = await page.evaluate(() => [
+      window.mentionFixture.first,
+      window.mentionFixture.second,
+    ]);
+    const choose = async (key) => {
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .tap();
+      await page
+        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("button", { name: new RegExp(key) })
+        .tap();
+    };
+    await choose(keys[0]);
+    await choose(keys[1]);
+    const input = page.getByRole("textbox");
+    const chips = input.locator(".inline-chip");
+    const labels = keys.map((key) => `@Honey · npub…${npubEncode(key).slice(-3)}`);
+    await expect(chips).toHaveText(labels);
+    await page.evaluate(() => window.mentionFixture.collide(true));
+    await expect(chips).toHaveText(labels);
+    for (const chip of await chips.all()) {
+      await expect(chip).toBeVisible();
+      expect(await chip.evaluate((el) => {
+        const rect = el.getBoundingClientRect();
+        return rect.left >= 0 && rect.right <= innerWidth;
+      })).toBe(true);
+    }
+    await page.screenshot({ path: test.info().outputPath("recipient-qualifiers-touch.png") });
+    await input.evaluate((el) => el.setSelectionRange(7, 13));
+    await input.press("Backspace");
+    await expect(chips).toHaveText(["@Honey"]);
+    await choose(keys[1]);
+    await expect(chips).toHaveText(labels);
+    await page.evaluate(() => window.mentionFixture.collide(false));
+    await expect(chips).toHaveText(labels);
+    await expect(input).toHaveJSProperty("value", "@Honey @Honey  ");
+    await page.getByRole("button", { name: "Send message", exact: true }).tap();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.mentionFixture.publications.length),
+      )
+      .toBe(1);
+    const notified = await page.evaluate(() =>
+      window.mentionFixture.publications[0].tags
+        .filter((tag) => tag[0] === "p")
+        .map((tag) => tag[1]),
+    );
+    expect(notified.sort()).toEqual(keys.sort());
+  } finally {
+    await context.close();
+    await server.close();
+  }
+});

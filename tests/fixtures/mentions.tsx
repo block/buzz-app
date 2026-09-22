@@ -7,6 +7,8 @@ import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
+import { bindNames } from "../../src/features/identity-names/service";
+import { createAgentDirectory } from "../../src/bundled/agents/directory";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
   keypair,
@@ -31,6 +33,8 @@ let libraryReads = 0;
 const reads: (readonly number[])[] = [];
 let pendingReads = 0;
 let libraryIncludesFirst = false;
+const naming = new URLSearchParams(location.search).has("identity-names");
+let colliding = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const profileGate = delayed
   ? new Promise<void>((resolve) => {
@@ -47,9 +51,17 @@ const owner = createRelaySession(
       libraryReads++;
       return {
         definitions: [],
-        identities: libraryIncludesFirst
-          ? [{ pubkey: first.pubkey, name: "Honey" }]
-          : [],
+        identities: naming
+          ? [
+              { pubkey: first.pubkey, name: "Honey" },
+              {
+                pubkey: second.pubkey,
+                name: colliding ? "Honey" : "Other Honey",
+              },
+            ]
+          : libraryIncludesFirst
+            ? [{ pubkey: first.pubkey, name: "Honey" }]
+            : [],
       };
     },
     subscribe(callbacks) {
@@ -95,6 +107,14 @@ const owner = createRelaySession(
   },
   { outboxStorage: { load: () => [], save: () => {} } },
 );
+const nameProvider = createAgentDirectory();
+const names = naming
+  ? bindNames(owner.session, {
+      snapshot: () => [nameProvider],
+      subscribe: () => () => {},
+    })
+  : undefined;
+const namedSession = names ? { ...owner.session, names } : owner.session;
 owner.session.channels.ensureList();
 const context = new Context();
 const disabledCalls: {
@@ -145,6 +165,11 @@ const plugins = createPluginManager(context, {
 const conversation = new ConversationService(context);
 Object.assign(window, {
   mentionFixture: {
+    async collide(value: boolean) {
+      colliding = value;
+      await owner.session.agentLibrary.refresh();
+    },
+    qualifier: (key: string) => names?.lookup(key)?.qualifier,
     first: first.pubkey,
     second: second.pubkey,
     publications,
@@ -194,7 +219,7 @@ function Fixture() {
       </button>
       <conversation.ui.Composer
         disabled={disabled}
-        session={owner.session}
+        session={namedSession}
         scope="mentions-fixture"
         channelId="c"
         channelName="General"

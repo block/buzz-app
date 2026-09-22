@@ -355,6 +355,15 @@ broker remains unsupported.
 
 ### Shared identity names
 
+Distinct agent keys with the same displayed name receive a short npub suffix,
+regardless of their profile links. Names are compared after trimming outer
+whitespace, with case preserved. Qualifiers use a middle-dot separator (`Honey · 2abc`) and stay visible beside
+selected recipient avatars, including after a live name change. Unique displayed
+names have no suffix. Collision
+checks include hidden library identities and ready native identities in the
+current community, using the same native/inventory/public-profile precedence.
+Name edits update the suffixes; they never merge identities or profile groups.
+
 The Agents plugin supplies display names through the app-owned identity-name
 service. Each relay session binds its own view. A ready native record takes
 precedence only in its matching community; otherwise the ready legacy display

@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../../bundled/agents/directory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -1406,5 +1408,101 @@ it.each([
       for (const listener of listeners) listener();
     });
     expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  },
+);
+
+it("keeps inline recipient identity and source stable through directory collision changes", async () => {
+  const h = mount();
+  const listeners = new Set<() => void>();
+  let identities = [first, second];
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    {
+      profiles: h.session.profiles,
+      agentLibrary: {
+        snapshot: () => ({ status: "ready", definitions: [], identities }),
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+        refresh: async () => {},
+      },
+    },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  h.retarget({ session: { ...h.session, names } });
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
+  const chips = () => within(h.input()).getAllByRole("img");
+  const labels = () => chips().map((chip) => chip.textContent);
+  expect(labels()).toEqual(["Honey · npub…caj", "Honey · npub…4hu"]);
+  const source = h.input().value;
+  act(() => {
+    identities = [first, { ...second, name: "Renamed Honey" }];
+    for (const notify of listeners) notify();
+  });
+  // Selected chips disclose authored recipients, independently of live directory labels.
+  expect(names.resolve(second.pubkey)).toBe("Renamed Honey");
+  expect(labels()).toEqual(["Honey · npub…caj", "Honey · npub…4hu"]);
+  expect(h.input()).toHaveValue(source);
+  act(() => {
+    identities = [first, second];
+    for (const notify of listeners) notify();
+  });
+  expect(names.lookup(first.pubkey)?.qualifier).toBeTruthy();
+  expect(labels()).toEqual(["Honey · npub…caj", "Honey · npub…4hu"]);
+  h.input().setSelectionRange(7, 13);
+  act(() => h.commands().insertText(""));
+  expect(labels()).toEqual(["Honey"]);
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  h.unmount();
+  names.dispose();
+});
+
+it.each([undefined, "root"])(
+  "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
+  (root) => {
+    const h = mount(root ? { threadRootId: root } : {});
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertText("can you see this is's");
+    });
+    const input = h.input();
+    const text = input.querySelector("[data-editor-text]")?.firstChild;
+    if (!(text instanceof Text)) throw new Error("Missing editable text");
+    const quote = text.data.indexOf("'");
+    expect(quote).toBeGreaterThan(0);
+    const target = document.createRange();
+    target.setStart(text, quote);
+    target.setEnd(text, quote + 1);
+    // WebKit's replacement range is behind the caret, not the selection.
+    input.setSelectionRange(input.value.length, input.value.length);
+    const before = new InputEvent("beforeinput", {
+      bubbles: true,
+      inputType: "insertReplacementText",
+      data: "’",
+    });
+    Object.defineProperty(before, "getTargetRanges", {
+      value: () => [target],
+    });
+    fireEvent(input, before);
+    text.replaceData(quote, 1, "’");
+    fireEvent.input(input, {
+      inputType: "insertReplacementText",
+      data: "’",
+    });
+    expect(input).toHaveValue("@Honey can you see this is’s");
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    ).toBeVisible();
+    h.submit();
+    expect(
+      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
+    ).toEqual([first.pubkey]);
   },
 );

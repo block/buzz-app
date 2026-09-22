@@ -12,18 +12,18 @@ function sameCommunity(left: string, right: string) {
   }
 }
 
-/** Shared profiles in the full snapshot, including hidden rows, need suffixes. */
+/** Equal display names in the full snapshot, including hidden rows, need suffixes. */
 export function identitySuffixes(identities: AgentLibrary["identities"]) {
-  const profiles = new Map<string, Set<string>>();
+  const names = new Map<string, Set<string>>();
   for (const row of identities) {
-    if (!row.definitionId) continue;
-    const keys = profiles.get(row.definitionId) ?? new Set<string>();
+    const name = row.name.trim();
+    const keys = names.get(name) ?? new Set<string>();
     keys.add(row.pubkey.toLowerCase());
-    profiles.set(row.definitionId, keys);
+    names.set(name, keys);
   }
   const keys = [
     ...new Set(
-      [...profiles.values()]
+      [...names.values()]
         .filter((group) => group.size > 1)
         .flatMap((group) => [...group]),
     ),
@@ -50,15 +50,18 @@ export function identitySuffixes(identities: AgentLibrary["identities"]) {
   }
   return result;
 }
-const suffixCache = new WeakMap<
-  AgentLibrary["identities"],
-  Map<string, string>
->();
 
 /** Native configuration wins only in its community. Names never grant control. */
 export function createAgentDirectory(
   control?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ): NameProvider {
+  let cached:
+    | {
+        inputs: readonly unknown[];
+        names: Map<string, string>;
+        suffixes: Map<string, string>;
+      }
+    | undefined;
   return {
     id: "agents",
     ...(control ? { subscribe: control.subscribe } : {}),
@@ -70,29 +73,48 @@ export function createAgentDirectory(
       const key = pubkey.toLowerCase();
       const native = control?.snapshot();
       const relayUrl = source.relayUrl;
-      const managed =
-        relayUrl && native?.status === "ready"
-          ? native.data?.agents.find(
-              (agent) =>
-                agent.pubkey.toLowerCase() === key &&
-                sameCommunity(agent.relayUrl, relayUrl),
-            )
-          : undefined;
       const library = source.agentLibrary.snapshot();
-      const identity =
-        library.status === "ready"
-          ? library.identities.find((row) => row.pubkey.toLowerCase() === key)
-          : undefined;
-      const base = managed?.name.trim() || identity?.name.trim();
-      if (!identity) return base || undefined;
-      let suffixes = suffixCache.get(library.identities);
-      if (!suffixes) {
-        suffixes = identitySuffixes(library.identities);
-        suffixCache.set(library.identities, suffixes);
+      const profiles = source.profiles.snapshot();
+      const inputs = [library, native, profiles, relayUrl];
+      if (
+        !cached ||
+        inputs.some((input, index) => input !== cached?.inputs[index])
+      ) {
+        const names = new Map<string, string>();
+        if (library.status === "ready") {
+          for (const row of library.identities) {
+            const key = row.pubkey.toLowerCase();
+            if (!names.has(key))
+              names.set(
+                key,
+                row.name.trim() || profiles.get(key)?.name.trim() || "Agent",
+              );
+          }
+        }
+        if (relayUrl && native?.status === "ready") {
+          const seen = new Set<string>();
+          for (const agent of native.data?.agents ?? []) {
+            const key = agent.pubkey.toLowerCase();
+            if (seen.has(key) || !sameCommunity(agent.relayUrl, relayUrl))
+              continue;
+            seen.add(key);
+            const name = agent.name.trim();
+            if (name) names.set(key, name);
+          }
+        }
+        const suffixes = identitySuffixes(
+          [...names].map(([pubkey, name]) => ({ pubkey, name })),
+        );
+        for (const [key, suffix] of suffixes) {
+          names.set(key, `${names.get(key)} · ${suffix}`);
+        }
+        cached = { inputs, names, suffixes };
       }
-      const name = base || source.profiles.snapshot().get(key)?.name || "Agent";
-      const suffix = suffixes.get(key);
-      return suffix ? `${name} ${suffix}` : name;
+      return cached.names.get(key);
+    },
+    qualifier(source, pubkey) {
+      this.resolve(source, pubkey);
+      return cached?.suffixes.get(pubkey.toLowerCase());
     },
   };
 }

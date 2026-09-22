@@ -77,6 +77,31 @@ for (const cold of [false, true]) {
           .getByRole("heading", { level: 2 }),
       ).toHaveText("Alice Fixture");
       expect(labelReads()).toHaveLength(before + 1);
+      if (!cold) {
+        // Real channel-window updates change copy without replacing the editor.
+        const editor = page
+          .getByRole("article", { name: "Conversation" })
+          .getByRole("textbox");
+        await expect(editor).toHaveAttribute(
+          "data-placeholder",
+          "Start a new message",
+        );
+        await editor.fill("Keep my unsent draft");
+        const original = await editor.elementHandle();
+        app.append("primary", "dm-peer", "First delivered DM", true, false);
+        await expect(
+          page.getByText("First delivered DM", { exact: true }),
+        ).toBeVisible();
+        await expect(editor).toHaveAttribute("data-placeholder", "Message...");
+        await expect(editor).toHaveJSProperty("value", "Keep my unsent draft");
+        expect(
+          await editor.evaluate(
+            (element, previous) => element === previous,
+            original,
+          ),
+        ).toBe(true);
+        await expect(editor).toBeFocused();
+      }
     } finally {
       app.relay.releaseProfiles();
     }

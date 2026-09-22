@@ -8,7 +8,7 @@ test.use({
 });
 
 // Native details toggle events and hidden descendants need real browser coverage.
-test("child-only search temporarily opens both collapsed sidebar levels", async ({
+test("global search opens a child session without changing collapsed sidebar levels", async ({
   page,
   app,
 }) => {
@@ -21,7 +21,6 @@ test("child-only search temporarily opens both collapsed sidebar levels", async 
   const parentRow = page.locator(`button[data-channel-id="${parent}"]`);
   const child = sidebar.locator('button[data-channel-id="alpha"]');
   const section = sidebar.locator("details").filter({ has: parentRow });
-  const search = page.getByRole("searchbox", { name: "Search channels" });
   await expect(child).toBeVisible();
   await sidebar
     .getByRole("button", { name: `Collapse sessions in ${parent}` })
@@ -30,11 +29,25 @@ test("child-only search temporarily opens both collapsed sidebar levels", async 
   await section.locator("summary").click();
   await expect(section).not.toHaveAttribute("open");
 
+  await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  const search = dialog.getByRole("combobox", { name: "Search Buzz" });
   await search.fill("Alpha");
-  await expect(child).toBeVisible();
-  await section.locator("summary").click();
-  await expect(child).toBeVisible();
-  await child.click();
+  const result = dialog
+    .locator("[data-search-result]")
+    .filter({ hasText: "Alpha" })
+    .first();
+  await expect(result).toBeVisible();
+  await search.press("ArrowDown");
+  await expect(search).toBeFocused();
+  await expect(result).toHaveAttribute("aria-selected", "true");
+  await expect(search).toHaveAttribute(
+    "aria-activedescendant",
+    await result.getAttribute("id"),
+  );
+  await page.keyboard.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await expect(child).toBeHidden();
   await expect(
     page.getByRole("textbox", { name: "Message this session", exact: true }),
   ).toBeVisible();
@@ -45,9 +58,6 @@ test("child-only search temporarily opens both collapsed sidebar levels", async 
     .getByRole("button", { name: "Messages", exact: true })
     .first()
     .click();
-  await expect(search).toHaveValue("Alpha");
-  await expect(child).toBeVisible();
-  await search.fill("");
   await expect(section).not.toHaveAttribute("open");
   await section.locator("summary").focus();
   await page.keyboard.press("Enter");

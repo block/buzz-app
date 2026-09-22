@@ -7,6 +7,7 @@ import {
   keypair,
   message,
   profile,
+  roster,
   scriptedTransport,
 } from "./testing";
 const relay = keypair(),
@@ -47,6 +48,10 @@ it.each([{ search: "design" }, { feed_types: ["mentions", "activity"] }])(
     const older = message(alice, "c", "design match", 10);
     const newer = message(alice, "c", "design update", 20);
     const filters: ReadFilter[] = [{ kinds: [9], limit: 20, ...ranked }];
+    // Ranked messages are admitted only after channel authority is known.
+    const membership = queries.read([{ kinds: [39002], limit: 1 }]);
+    next().respond([roster(relay, "c", [viewer.pubkey])]);
+    await membership;
     const first = queries.read(filters);
     next().respond([older, newer]);
     expect((await first).map((event) => event.id)).toEqual([

@@ -4,6 +4,7 @@ import { subscribeRelayTraffic, type LiveCallbacks } from "./live";
 import { createRelaySession } from "./session";
 import {
   keypair,
+  message,
   metadata,
   roster,
   scriptedTransport,
@@ -324,3 +325,160 @@ it("refreshes again after deliberate route retry receives a fresh restriction", 
   }
   expect(vi.getTimerCount()).toBe(0);
 });
+
+it("purges a public nonmember after real CLOSED and omitted metadata, without a metadata EVENT", async () => {
+  const h = await setup();
+  try {
+    // Only a demanded preview enters the existing live transport.
+    const resolve = h.owner.session.channels.resolve?.(["open"]);
+    await settle();
+    h.wire.next().respond([
+      signed(h.relay, {
+        kind: 39000,
+        content: "",
+        tags: [["d", "open"], ["public"]],
+      }),
+    ]);
+    await resolve;
+    const hit = message(h.viewer, "open", "public content", 1700000000);
+    h.owner.session.channels.ensure("open");
+    const route = h.socket
+      .requests()
+      .find(([, , filter]) => filter["#h"]?.includes("open"));
+    expect(route).toBeDefined();
+    await h.socket.receive(["EVENT", route?.[1], hit]);
+    const view = h.owner.session.observe([
+      { kinds: [9], "#h": ["open"], limit: 20 },
+    ]);
+    expect(view.snapshot().events).toHaveLength(1);
+    await settle();
+    // Finish the demand-owned head before exercising closure.
+    h.wire.next().respond([]);
+    await settle();
+    await h.socket.receive([
+      "CLOSED",
+      route?.[1],
+      "restricted: channel access revoked",
+    ]);
+    await settle();
+    const pending = h.wire.pending.splice(0);
+    const resolution = pending.find(({ filters }) =>
+      filters.some((filter) => filter["#d"]?.includes("open")),
+    );
+    expect(resolution?.filters).toMatchObject([
+      { kinds: [39000], "#d": ["open"], limit: 2 },
+      { kinds: [39002], "#d": ["open"], "#p": [h.viewer.pubkey], limit: 2 },
+    ]);
+    // Close-before-broadcast means neither membership nor metadata is served.
+    resolution?.respond([]);
+    await settle();
+    expect(h.owner.session.channels.get?.("open")).toBeUndefined();
+    expect(
+      h.owner.session.channels.list().channels.map(({ id }) => id),
+    ).toEqual(["a", "b"]);
+    expect(view.snapshot().events).toEqual([]);
+    expect(h.owner.session.channels.window("open").rows).toEqual([]);
+    for (const request of pending)
+      if (request !== resolution) request.respond(h.memberships);
+    await settle();
+    for (const request of h.wire.pending.splice(0)) request.respond(h.active);
+    view.dispose();
+  } finally {
+    h.owner.dispose();
+  }
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+it.each(["cancelled", "unavailable"])(
+  "keeps two CLOSED public previews hidden through %s rechecks and supports deliberate recovery",
+  async (failure) => {
+    const h = await setup();
+    try {
+      const ids = ["open-one", "open-two"];
+      const metadata = ids.map((id) =>
+        signed(h.relay, {
+          kind: 39000,
+          content: "",
+          tags: [["d", id], ["public"]],
+        }),
+      );
+      const resolve = h.owner.session.channels.resolve?.(ids);
+      await settle();
+      h.wire.next().respond(metadata);
+      await resolve;
+      const views = [];
+      const routes = [];
+      for (const id of ids) {
+        h.owner.session.channels.ensure(id);
+        const route = h.socket
+          .requests()
+          .find(([, , filter]) => filter["#h"]?.includes(id));
+        routes.push(route);
+        await h.socket.receive([
+          "EVENT",
+          route?.[1],
+          message(h.viewer, id, "preview content", 1700000000),
+        ]);
+        const view = h.owner.session.observe([
+          { kinds: [9], "#h": [id], limit: 20 },
+        ]);
+        expect(view.snapshot().events).toHaveLength(1);
+        views.push(view);
+        await settle();
+        h.wire.next().respond([]);
+        await settle();
+      }
+      // Both routes were live before the relay closed them without metadata EVENTs.
+      await h.socket.receive([
+        "CLOSED",
+        routes[0]?.[1],
+        "restricted: channel access revoked",
+      ]);
+      await settle();
+      const first = h.wire.pending.splice(0);
+      await h.socket.receive([
+        "CLOSED",
+        routes[1]?.[1],
+        "restricted: channel access revoked",
+      ]);
+      await settle();
+      const second = h.wire.pending.splice(0);
+      for (const request of first) request.respond([]);
+      if (failure === "cancelled") {
+        // The independently scheduled roster revocation invalidates outstanding reads.
+        h.live.denied("a", "restricted: not a channel member");
+      } else {
+        for (const request of second)
+          request.fail(new Error("metadata offline"));
+      }
+      await settle();
+      for (const id of ids)
+        expect(h.owner.session.channels.get?.(id)).toBeUndefined();
+      for (const view of views) expect(view.snapshot().events).toEqual([]);
+      expect(h.owner.session.live.snapshot().error).toContain(
+        "Public preview access needs rechecking",
+      );
+      // A failed recheck is not a signed denial: the identical signed public version
+      // can restore access on explicit retry, but it cannot resurrect purged content.
+      h.owner.session.live.retry();
+      await settle();
+      const retry = h.wire.pending.splice(0);
+      const preview = retry.find(({ filters }) =>
+        filters.some((filter) => filter["#d"]?.includes("open-two")),
+      );
+      expect(preview).toBeDefined();
+      preview?.respond(metadata);
+      await settle();
+      for (const id of ids)
+        expect(h.owner.session.channels.get?.(id)?.readOnly).toBe(true);
+      expect(h.owner.session.live.snapshot().error).toBeUndefined();
+      for (const view of views) {
+        expect(view.snapshot().events).toEqual([]);
+        view.dispose();
+      }
+    } finally {
+      h.owner.dispose();
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  },
+);

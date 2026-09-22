@@ -68,6 +68,7 @@ export function App({ services }: { services: AppServices }) {
           select("buzz.channels/channels");
         }}
         communities={services.communities}
+        searchServices={services}
         launchers={
           <PanelLaunchers
             panels={launcher.available}

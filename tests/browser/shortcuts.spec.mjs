@@ -31,9 +31,9 @@ test("real Settings keys respect dialogs and modifiers, focus main, and preserve
   await composer.fill("Keep my draft");
   await page.keyboard.press(`${modifier}+Shift+,`);
   await expect(composer).toBeVisible();
-  await button(page, "Find a page").click();
+  await button(page, "Search Buzz").click();
   await page.keyboard.press(`${modifier}+,`);
-  await expect(page.getByRole("dialog", { name: "Find a page" })).toBeVisible();
+  await expect(page.getByRole("dialog", { name: "Search Buzz" })).toBeVisible();
   await expect(
     page.getByRole("heading", {
       name: "Settings",
@@ -43,9 +43,9 @@ test("real Settings keys respect dialogs and modifiers, focus main, and preserve
   ).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(
-    page.getByRole("dialog", { name: "Find a page", includeHidden: true }),
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
   ).toHaveCount(0);
-  await expect(button(page, "Find a page")).toBeFocused();
+  await expect(button(page, "Search Buzz")).toBeFocused();
   await composer.focus();
   await page.keyboard.press(`${modifier}+,`);
   await expect(
@@ -176,7 +176,7 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   await scale(page, 1.1);
   await page.keyboard.press(`${modifier}+0`);
   await scale(page, 1);
-  await button(page, "Find a page").click();
+  await button(page, "Search Buzz").click();
   await page.keyboard.press(`${modifier}+Shift+k`);
   // Base UI hides the background from assistive technology while modal.
   await expect(page.getByRole("status", { includeHidden: true })).toHaveText(
@@ -186,9 +186,9 @@ test("independent plugin consumes injected shortcuts; disable/re-enable and edit
   // Dismissal and focus restoration finish asynchronously. The host correctly
   // suppresses Settings while a closing modal still owns the keyboard.
   await expect(
-    page.getByRole("dialog", { name: "Find a page", includeHidden: true }),
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
   ).toHaveCount(0);
-  await expect(button(page, "Find a page")).toBeFocused();
+  await expect(button(page, "Search Buzz")).toBeFocused();
   await page.keyboard.press(`${modifier}+,`);
   await button(page, "Plugins").click();
   const toggle = page.getByRole("switch", { name: "Enable Shortcut counter" });

@@ -35,9 +35,6 @@
 .sidebar {
   padding: var(--space-2);
 }
-.search {
-  margin-bottom: var(--space-4);
-}
 .channelListFrame {
   position: relative;
   min-height: 0;

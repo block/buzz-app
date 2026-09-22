@@ -7,6 +7,7 @@ import { createHash } from "node:crypto";
  * The production broker owns all pacing, signing, SSE and retry controls. */
 export function policyRelay({
   viewer,
+  relayAuthor,
   answer,
   report,
   pending,
@@ -152,6 +153,39 @@ export function policyRelay({
             });
           return Response.json(
             filters.flatMap((filter) => answer(communityOf(url), filter)),
+          );
+        }
+        if (filters.length === 2 && filters[0].kinds?.includes(39000)) {
+          // Exact channel authority lookup, distinct from sidebar preferences.
+          const ids = filters[0]["#d"];
+          expect(Array.isArray(ids)).toBe(true);
+          expect(ids.length).toBeGreaterThan(0);
+          expect(ids.length).toBeLessThanOrEqual(128);
+          expect(new Set(ids).size).toBe(ids.length);
+          expect(filters).toEqual([
+            {
+              kinds: [39000],
+              authors: [relayAuthor],
+              "#d": ids,
+              limit: ids.length + 1,
+            },
+            {
+              kinds: [39002],
+              authors: [relayAuthor],
+              "#d": ids,
+              "#p": [viewer],
+              limit: ids.length + 1,
+            },
+          ]);
+          const community = communityOf(url);
+          for (const filter of filters)
+            report.queries.push({ community, filter, at: performance.now() });
+          return Response.json(
+            filters.flatMap((filter) =>
+              emptyRoster && filter.kinds.includes(39002)
+                ? []
+                : answer(community, filter),
+            ),
           );
         }
         if (filters.length !== 1) {

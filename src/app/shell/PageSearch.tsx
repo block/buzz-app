@@ -7,7 +7,6 @@ import {
 } from "react";
 import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -21,7 +20,7 @@ import {
 } from "./presentation";
 import {
   SearchChoices,
-  searchKeys,
+  type SearchInputProps,
   type SearchDestination,
 } from "./SearchChoices";
 import { SearchResults } from "./SearchResults";
@@ -106,47 +105,30 @@ export function PageSearch({
         initialFocus={input}
         finalFocus={returnFocus}
       >
-        {open && (
-          <>
-            {/* biome-ignore lint/a11y/noStaticElementInteractions: Delegated arrow/Enter handling for native search controls. */}
-            <div onKeyDown={searchKeys}>
-              <SearchField
-                inputRef={input}
-                label="Search Buzz"
-                placeholder="Search pages, conversations and messages…"
-                value={query}
-                onValueChange={setQuery}
-                spellCheck={false}
-                autoCorrect="off"
-                autoCapitalize="off"
-                autoComplete="off"
-                maxLength={256}
-              />
-              <div className="mt-3 max-h-[55vh] space-y-3 overflow-y-auto">
-                {services ? (
-                  <CommunitySearch
-                    services={services}
-                    pages={destinations}
-                    query={query}
-                    enabled={pages.some(
-                      (page) => page.key === "buzz.channels/channels",
-                    )}
-                    close={() => {
-                      returnFocus.current =
-                        document.getElementById("main-content");
-                      setOpen(false);
-                    }}
-                  />
-                ) : (
-                  <SearchChoices groups={[{ label: "Pages", destinations }]} />
-                )}
-              </div>
-              <p className="mt-3 px-3 text-caption text-metadata">
-                ↑ ↓ to move · Enter to open · Esc to close
-              </p>
-            </div>
-          </>
-        )}
+        {open &&
+          (services ? (
+            <CommunitySearch
+              services={services}
+              pages={destinations}
+              query={query}
+              onQueryChange={setQuery}
+              input={input}
+              enabled={pages.some(
+                (page) => page.key === "buzz.channels/channels",
+              )}
+              close={() => {
+                returnFocus.current = document.getElementById("main-content");
+                setOpen(false);
+              }}
+            />
+          ) : (
+            <SearchChoices
+              query={query}
+              onQueryChange={setQuery}
+              input={input}
+              groups={[{ label: "Pages", destinations }]}
+            />
+          ))}
       </Dialog>
     </>
   );
@@ -156,15 +138,16 @@ function CommunitySearch({
   services,
   pages,
   query,
+  onQueryChange,
+  input,
   enabled,
   close,
 }: {
   services: SearchServices;
   pages: readonly SearchDestination[];
-  query: string;
   enabled: boolean;
   close: () => void;
-}) {
+} & SearchInputProps) {
   const client = useSyncExternalStore(
     services.communities.subscribe,
     services.communities.snapshot,
@@ -177,8 +160,12 @@ function CommunitySearch({
     connection.status !== "ready"
   ) {
     return (
-      <>
-        <SearchChoices groups={[{ label: "Pages", destinations: pages }]} />
+      <SearchChoices
+        query={query}
+        onQueryChange={onQueryChange}
+        input={input}
+        groups={[{ label: "Pages", destinations: pages }]}
+      >
         <div className="px-3 text-body-sm text-subtle" aria-live="polite">
           {!enabled ? (
             "Enable Messages to search conversations."
@@ -202,7 +189,7 @@ function CommunitySearch({
             "Connecting to this community…"
           )}
         </div>
-      </>
+      </SearchChoices>
     );
   }
   const scope = {
@@ -214,6 +201,8 @@ function CommunitySearch({
       key={`${client.selected}:${connection.scope}:${connection.generation}`}
       session={connection.session}
       query={query}
+      onQueryChange={onQueryChange}
+      input={input}
       pages={pages}
       openConversation={(channelId, messageId) => {
         const current = services.communities.snapshot();

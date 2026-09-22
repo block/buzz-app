@@ -254,7 +254,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   await button(page, "Search Buzz").click();
   await page
     .getByRole("dialog", { name: "Search Buzz" })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("option", { name: "Home", exact: true })
     .click();
   await expect(
     page
@@ -731,10 +731,10 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   const pageResults = search.locator("section").filter({
     has: page.getByRole("heading", { name: "Pages", exact: true }),
   });
-  await expect(pageResults.getByRole("button")).toHaveText([
+  await expect(pageResults.getByRole("option")).toHaveText([
     ...titles,
     "Settings",
   ]);
-  await search.getByRole("button", { name: "Projects", exact: true }).click();
+  await search.getByRole("option", { name: "Projects", exact: true }).click();
   await expect(title).toBeVisible();
 });

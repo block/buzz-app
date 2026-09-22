@@ -4,7 +4,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { useChannelList } from "../../features/relay/react";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
-import type { SearchDestination } from "./SearchChoices";
+import type { SearchDestination, SearchInputProps } from "./SearchChoices";
 import { SearchChoices } from "./SearchChoices";
 import { useSearchMessages } from "./useSearchMessages";
 
@@ -24,14 +24,15 @@ function conversationName(
 export function SearchResults({
   session,
   query,
+  onQueryChange,
+  input,
   pages,
   openConversation,
 }: {
   session: RelaySession;
-  query: string;
   pages: readonly SearchDestination[];
   openConversation: (channelId: string, messageId?: string) => void;
-}) {
+} & SearchInputProps) {
   const list = useChannelList(session.channels);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -97,14 +98,16 @@ export function SearchResults({
     run: () => openConversation(message.channelId, message.id),
   }));
   return (
-    <>
-      <SearchChoices
-        groups={[
-          { label: "Pages", destinations: pages },
-          { label: "Conversations", destinations: conversations },
-          { label: "Messages", destinations: messages },
-        ]}
-      />
+    <SearchChoices
+      query={query}
+      onQueryChange={onQueryChange}
+      input={input}
+      groups={[
+        { label: "Pages", destinations: pages },
+        { label: "Conversations", destinations: conversations },
+        { label: "Messages", destinations: messages },
+      ]}
+    >
       <div
         className="space-y-2 px-3 text-body-sm text-subtle"
         aria-live="polite"
@@ -147,6 +150,6 @@ export function SearchResults({
           )}
         {!query.trim() && <p>Type to search messages in this community.</p>}
       </div>
-    </>
+    </SearchChoices>
   );
 }

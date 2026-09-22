@@ -1,7 +1,7 @@
 import { test, expect } from "./fixture.mjs";
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
-// Browser layout and native focus across the portal cannot be proved in jsdom.
+// Browser layout and DOM focus across the portal cannot be proved in jsdom.
 test("top-bar search and avatar share a vertical center", async ({
   page,
   app,
@@ -45,21 +45,32 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
   const trigger = button(page, "Search Buzz");
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
-  const input = dialog.getByRole("searchbox", { name: "Search Buzz" });
+  const input = dialog.getByRole("combobox", { name: "Search Buzz" });
   await expect(input).toHaveAttribute("spellcheck", "false");
   await expect(input).toHaveAttribute("autocorrect", "off");
   await expect(input).toHaveAttribute("autocapitalize", "off");
   await expect(input).toHaveAttribute("autocomplete", "off");
   await expect(input).toBeFocused();
-  const home = button(dialog, "Home");
-  await input.press("ArrowDown");
-  await expect(home).toBeFocused();
-  await home.press("ArrowDown");
-  await expect(button(dialog, "Messages")).toBeFocused();
-  await page.keyboard.press("ArrowUp");
-  await expect(home).toBeFocused();
-  await page.keyboard.press("ArrowUp");
-  await expect(input).toBeFocused();
+  const home = dialog.getByRole("option", { name: "Home", exact: true });
+  const messages = dialog.getByRole("option", {
+    name: "Messages",
+    exact: true,
+  });
+  for (const [key, result] of [
+    ["ArrowDown", home],
+    ["ArrowDown", messages],
+    ["ArrowUp", home],
+    ["ArrowUp", home],
+  ]) {
+    await input.press(key);
+    await expect(input).toBeFocused();
+    await expect(result).toHaveAttribute("aria-selected", "true");
+    await expect(result).toHaveAttribute("data-selected", "true");
+    await expect(input).toHaveAttribute(
+      "aria-activedescendant",
+      await result.getAttribute("id"),
+    );
+  }
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
   await expect(trigger).toBeFocused();
@@ -68,6 +79,7 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
   );
   await page.keyboard.press(`${modifier}+k`);
   await expect(input).toBeFocused();
+  await expect(input).not.toHaveAttribute("aria-activedescendant");
   await input.fill("Alpha");
   const alpha = dialog
     .locator("[data-search-result]")
@@ -75,7 +87,12 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
     .first();
   await expect(alpha).toBeVisible();
   await input.press("ArrowDown");
-  await expect(alpha).toBeFocused();
+  await expect(input).toBeFocused();
+  await expect(alpha).toHaveAttribute("aria-selected", "true");
+  await expect(input).toHaveAttribute(
+    "aria-activedescendant",
+    await alpha.getAttribute("id"),
+  );
   await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
   await expect(

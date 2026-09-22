@@ -31,7 +31,7 @@ test("global search opens a child session without changing collapsed sidebar lev
 
   await page.getByRole("button", { name: "Search Buzz", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "Search Buzz" });
-  const search = dialog.getByRole("searchbox", { name: "Search Buzz" });
+  const search = dialog.getByRole("combobox", { name: "Search Buzz" });
   await search.fill("Alpha");
   const result = dialog
     .locator("[data-search-result]")
@@ -39,7 +39,12 @@ test("global search opens a child session without changing collapsed sidebar lev
     .first();
   await expect(result).toBeVisible();
   await search.press("ArrowDown");
-  await expect(result).toBeFocused();
+  await expect(search).toBeFocused();
+  await expect(result).toHaveAttribute("aria-selected", "true");
+  await expect(search).toHaveAttribute(
+    "aria-activedescendant",
+    await result.getAttribute("id"),
+  );
   await page.keyboard.press("Enter");
   await expect(dialog).toHaveCount(0);
   await expect(child).toBeHidden();

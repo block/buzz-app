@@ -60,8 +60,10 @@ export const beaconStyles = `
 .pr-beacon .beacon-tabs button:hover:not(:disabled) { color: var(--beacon-text); background: transparent; }
 .pr-beacon .beacon-tabs button[aria-current="page"] { color: var(--beacon-accent); }
 .pr-beacon .beacon-tabs button[aria-current="page"]::after { content: ""; position: absolute; height: 2px; background: var(--beacon-accent); bottom: -1px; left: 0; right: 0; }
-.pr-beacon .beacon-fetched { margin: -12px 0 18px; }
-.pr-beacon .beacon-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
+.pr-beacon .beacon-refresh { display: flex; align-items: center; justify-content: flex-end; gap: 10px; margin-left: auto; min-width: 0; max-width: 100%; }
+.pr-beacon .beacon-refresh button { flex-shrink: 0; }
+.pr-beacon .beacon-fetched { margin: 0; text-align: right; }
+.pr-beacon .beacon-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
 .pr-beacon .beacon-group-title { margin: 24px 0 10px; font-size: calc(13px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); }
 .pr-beacon .beacon-inbox > section:first-of-type .beacon-group-title { margin-top: 0; }
 .pr-beacon .beacon-pr-list { list-style: none; padding: 0; margin: 0; border: 1px solid var(--beacon-border); border-radius: 10px; overflow: hidden; background: var(--beacon-surface); }

@@ -393,13 +393,15 @@ export function createApp(
               ? `${visible.length} open request${visible.length === 1 ? "" : "s"} for your review`
               : "Your review inbox"}
           </p>
-          <button type="button" onClick={refresh} disabled={state.isFetching}>
-            Refresh
-          </button>
+          <div className="beacon-refresh">
+            <p className="beacon-muted beacon-fetched">
+              <LastFetched timestamp={state.lastFetchedAt} />
+            </p>
+            <button type="button" onClick={refresh} disabled={state.isFetching}>
+              Refresh
+            </button>
+          </div>
         </div>
-        <p className="beacon-muted beacon-fetched">
-          <LastFetched timestamp={state.lastFetchedAt} />
-        </p>
         {state.isFetching && (
           <p role="status">
             {result
@@ -513,13 +515,15 @@ export function createApp(
               ? `${result.items.length} open pull request${result.items.length === 1 ? "" : "s"}`
               : "Your open pull requests"}
           </p>
-          <button type="button" onClick={refresh} disabled={state.isFetching}>
-            Refresh
-          </button>
+          <div className="beacon-refresh">
+            <p className="beacon-muted beacon-fetched">
+              <LastFetched timestamp={state.lastFetchedAt} />
+            </p>
+            <button type="button" onClick={refresh} disabled={state.isFetching}>
+              Refresh
+            </button>
+          </div>
         </div>
-        <p className="beacon-muted beacon-fetched">
-          <LastFetched timestamp={state.lastFetchedAt} />
-        </p>
         {state.isFetching && (
           <p role="status">
             {result

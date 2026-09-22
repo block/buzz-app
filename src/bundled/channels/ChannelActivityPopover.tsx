@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Popover } from "@base-ui/react/popover";
 import {
@@ -40,7 +41,8 @@ function ActivityRow({
     selection.snapshot,
   );
   const profile = profiles.get(item.authorId);
-  const name = profile?.name ?? "Someone";
+  const resolveName = useIdentityNames(session.names);
+  const name = resolveName(item.authorId, profile?.name ?? "Someone");
   return (
     <div className={styles.activityItem}>
       <NavigationItem

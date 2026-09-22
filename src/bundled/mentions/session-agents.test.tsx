@@ -41,6 +41,11 @@ function setup(parent: boolean | null = true) {
       subscribe: () => () => {},
       ensure: async () => {},
     },
+    names: {
+      subscribe: () => () => {},
+      snapshot: () => 0,
+      resolve: (_key: string, fallback: string) => fallback,
+    },
     agentLibrary: library.queries,
     media: () => undefined,
   } as unknown as RelaySession;

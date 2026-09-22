@@ -26,7 +26,7 @@ export function RichComposerInput({
   extensions: ConversationExtensions | undefined;
   emoji: readonly CustomEmoji[];
 }) {
-  const directory = useReferenceDirectory(session, draft.recipients.length > 0);
+  const directory = useReferenceDirectory(session);
   const profiles = new Map(directory.profiles);
   for (const recipient of draft.recipients)
     profiles.set(recipient.pubkey, {

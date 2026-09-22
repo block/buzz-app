@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useMentionAgents } from "../agents/mention-context";
@@ -117,6 +118,7 @@ function Composer({
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
+  const resolveName = useIdentityNames(session.names);
   const { control } = useMentionAgents(scope);
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
@@ -660,7 +662,7 @@ function Composer({
                 type="button"
                 key={`${recipient.pubkey}:${recipient.start}`}
                 title={recipient.pubkey}
-                aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
+                aria-label={`Remove mention ${resolveName(recipient.pubkey, recipient.name)} ${recipient.pubkey}`}
                 disabled={editingDisabled}
                 onClick={() =>
                   saveDraft({
@@ -671,7 +673,8 @@ function Composer({
                   })
                 }
               >
-                {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
+                {resolveName(recipient.pubkey, recipient.name)}{" "}
+                <code>{recipient.pubkey.slice(0, 8)}</code>
                 <XIcon size={12} aria-hidden="true" />
               </Button>
             ))}

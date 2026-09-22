@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -78,7 +79,8 @@ export const MessageRow = memo(function MessageRow({
   onOpenMediaReview,
   agentPubkeys,
 }: MessageRowProps) {
-  const directory = useReferenceDirectory(session, row.mentions.length > 0);
+  const resolveName = useIdentityNames(session?.names);
+  const directory = useReferenceDirectory(session);
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -97,7 +99,10 @@ export const MessageRow = memo(function MessageRow({
         : (threadUnread?.observedCount ?? 0) > 0
           ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
           : undefined;
-  const name = profile?.name ?? row.authorId.slice(0, 10);
+  const name = resolveName(
+    row.authorId,
+    profile?.name ?? row.authorId.slice(0, 10),
+  );
   const picture = profile?.picture
     ? media(profile.picture, "small")
     : undefined;
@@ -293,7 +298,10 @@ export const MessageRow = memo(function MessageRow({
                 <span className={styles.threadAvatars} aria-hidden="true">
                   {row.participants.slice(0, 3).map((id) => {
                     const participant = participantProfiles?.get(id);
-                    const name = participant?.name ?? id.slice(0, 10);
+                    const name = resolveName(
+                      id,
+                      participant?.name ?? id.slice(0, 10),
+                    );
                     const picture = participant?.picture
                       ? media(participant.picture, "small")
                       : undefined;

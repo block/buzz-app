@@ -1,14 +1,16 @@
+// @vitest-environment jsdom
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render as mount,
+} from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { RobotIcon } from "../../shared/design-system/icons/index";
 import referenceStyles from "../../shared/InlineReference.module.css";
-import { describe, expect, it, vi } from "vitest";
-import {
-  isValidElement,
-  type ComponentProps,
-  type ReactElement,
-  type ReactNode,
-} from "react";
-import Markdown, { type Components } from "react-markdown";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import type { ComponentProps } from "react";
+afterEach(cleanup);
 import type {
   ConversationExtensions,
   InlineRenderer,
@@ -21,6 +23,9 @@ import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
+import { createRelaySession } from "../relay/session";
+import { createAgentDirectory } from "../../bundled/agents/directory";
+import { bindNames } from "../identity-names/service";
 import type { ChannelMessage } from "../relay/contracts";
 
 const mic = "b".repeat(64),
@@ -65,32 +70,6 @@ function props(
 }
 function render(content: string, options: RenderOptions = {}) {
   return renderToStaticMarkup(<MessageMarkdown {...props(content, options)} />);
-}
-
-// Invoke the real parser and component callbacks for handler evidence, without
-// replacing Markdown or claiming this server-side test establishes DOM focus.
-function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
-  if (Array.isArray(node)) return node.flatMap(elements);
-  if (!isValidElement<Record<string, unknown>>(node)) return [];
-  return [node, ...elements(node.props.children as ReactNode)];
-}
-function profileButtons(content: string, options: RenderOptions = {}) {
-  const rendered = elements(MessageMarkdown(props(content, options)));
-  const markdown = rendered.find((node) => node.type === Markdown);
-  if (!markdown) throw new Error("Missing Markdown");
-  const parsed = Markdown(markdown.props as ComponentProps<typeof Markdown>);
-  const Span = (markdown.props.components as Components).span;
-  const renderSpan = (
-    rendered.find((node) =>
-      Boolean((node.props.value as Components | undefined)?.span),
-    )?.props.value as Components | undefined
-  )?.span as (props: ComponentProps<"span">) => ReactNode;
-  if (typeof renderSpan !== "function")
-    throw new Error("Missing inline renderer");
-  return elements(parsed)
-    .filter((node) => node.type === Span)
-    .flatMap((node) => elements(renderSpan(node.props)))
-    .filter((node) => node.type === "button");
 }
 
 const party = {
@@ -249,28 +228,82 @@ describe("Markdown profile mentions", () => {
     },
   );
 
+  it("updates a mounted mention label without changing signed binding or profile target", () => {
+    const owned = createRelaySession(null);
+    const session = owned.session;
+    const listeners = new Set<() => void>();
+    let localName = "Local Mic";
+    const provider = createAgentDirectory();
+    const names = bindNames(
+      {
+        profiles: session.profiles,
+        agentLibrary: {
+          snapshot: () => ({
+            status: "ready",
+            definitions: [],
+            identities: [{ id: "mic", pubkey: mic, name: localName }],
+          }),
+          subscribe: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+          refresh: async () => {},
+        },
+      },
+      { snapshot: () => [provider], subscribe: () => () => {} },
+    );
+    const open = vi.fn(() => true);
+    const mounted = mount(
+      <MessageMarkdown
+        {...props("@Mic and @Local Mic", {
+          session: { ...session, names },
+          onOpenLink: open,
+        })}
+      />,
+    );
+    const button = mounted.getByRole("button", {
+      name: "View Local Mic profile",
+    });
+    expect(mounted.getAllByRole("button")).toHaveLength(1);
+    act(() => {
+      localName = "Renamed Mic";
+      for (const notify of listeners) notify();
+    });
+    expect(
+      mounted.getByRole("button", { name: "View Renamed Mic profile" }),
+    ).toBe(button);
+    expect(button.textContent).toBe("Renamed Mic");
+    fireEvent.click(button);
+    expect(open).toHaveBeenCalledWith(profileTarget(mic));
+    expect(profiles.get(mic)?.name).toBe("Mic");
+    mounted.unmount();
+    names.dispose();
+    owned.dispose();
+  });
+
   it("focuses the clicked mention before opening its exact profile target", () => {
     const calls: string[] = [];
     const canOpenLink = vi.fn((_target: string) => true);
-    const buttons = profileButtons("**@Mic Smith** then @Mic", {
-      canOpenLink,
-      onOpenLink: (target) => {
-        calls.push(target);
-        return true;
-      },
-    });
+    const mounted = mount(
+      <MessageMarkdown
+        {...props("**@Mic Smith** then @Mic", {
+          canOpenLink,
+          onOpenLink: (target) => {
+            expect(document.activeElement?.getAttribute("aria-label")).toBe(
+              `View ${target === profileTarget(smith) ? "Mic Smith" : "Mic"} profile`,
+            );
+            calls.push(target);
+            return true;
+          },
+        })}
+      />,
+    );
+    const buttons = mounted.getAllByRole("button");
     expect(buttons).toHaveLength(2);
-    for (const button of buttons) {
-      (button.props.onClick as (event: unknown) => void)({
-        currentTarget: { focus: () => calls.push("focus") },
-      });
-    }
-    expect(calls).toEqual([
-      "focus",
-      profileTarget(smith),
-      "focus",
-      profileTarget(mic),
-    ]);
+    for (const button of buttons) fireEvent.click(button);
+    expect(calls).toEqual([profileTarget(smith), profileTarget(mic)]);
     expect(canOpenLink.mock.calls.map(([target]) => target)).toEqual([
       profileTarget(smith),
       profileTarget(mic),

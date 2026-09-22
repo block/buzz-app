@@ -539,6 +539,57 @@ it.each([undefined, "root"])(
   },
 );
 
+// Explicit notification intent must remain visible even where Markdown previews are suppressed.
+it.each([
+  ["inline code", "`", " `"],
+  ["fenced code", "```\n", "\n```"],
+  ["indented code", "    ", ""],
+  ["image", "![", "](https://example.test/image.png)"],
+  [
+    "image reference",
+    "![",
+    "][image]\n\n[image]: https://example.test/image.png",
+  ],
+  ["definition", '[image]: https://example.test/image.png "', '"'],
+  ["HTML", "<!-- ", " -->"],
+  ["link label", "[", "](https://example.test)"],
+  ["deep Markdown", "> ".repeat(101), ""],
+])(
+  "discloses selected namesakes in %s before and after restoring a draft",
+  (_kind, prefix, suffix) => {
+    let h = mount();
+    h.fill(`${prefix}@Honey ${suffix}`);
+    expect(h.input().querySelector(".inline-chip")).toBeNull();
+    h.submit();
+    expect(h.messages.send.mock.calls.at(-1)?.at(-1)).toEqual([]);
+    h.fill(`${prefix}${suffix}`);
+    h.input().setSelectionRange(prefix.length, prefix.length);
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+    });
+    const text = `${prefix}@Honey @Honey ${suffix}`;
+    const labels = [
+      "Person Honey, public key ending c a j",
+      "Person Honey, public key ending 4 h u",
+    ];
+    const check = () => {
+      expect(h.input()).toHaveValue(text);
+      for (const name of labels)
+        expect(within(h.input()).getByRole("img", { name })).toBeVisible();
+    };
+    check();
+    h.unmount();
+    h = mount();
+    check();
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledWith("channel", text, [
+      first.pubkey,
+      second.pubkey,
+    ]);
+  },
+);
+
 it.each([undefined, "root"])(
   "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
   (root) => {

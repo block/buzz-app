@@ -299,3 +299,93 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await server.close();
   }
 });
+
+test("selected mentions inside code remain visible through draft restore and channel/reply publication", async ({
+  page,
+}) => {
+  // Browser-only boundary: real picker insertion and source selection in a code literal.
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
+    );
+    const keys = await page.evaluate(() => [
+      window.mentionFixture.first,
+      window.mentionFixture.second,
+    ]);
+    const input = page.getByRole("textbox");
+    const labels = keys.map(
+      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
+    );
+    for (const reply of [false, true]) {
+      await input.fill("` `");
+      await input.evaluate((element) => element.setSelectionRange(1, 1));
+      for (const key of keys) {
+        await page
+          .getByRole("button", { name: "Mention a member", exact: true })
+          .click();
+        await page
+          .getByRole("region", { name: "Mention a member or agent" })
+          .getByRole("button", { name: `Honey ${key}`, exact: true })
+          .click();
+      }
+      const source = "`@Honey @Honey  `";
+      await expect(input).toHaveJSProperty("value", source);
+      await expect(input.locator(".inline-chip")).toHaveText(labels);
+      // Retargeting unmounts the destination's composer and restores its saved draft.
+      await page.getByRole("button", { name: "Toggle thread" }).click();
+      await expect(input).toHaveJSProperty("value", "");
+      await page.getByRole("button", { name: "Toggle thread" }).click();
+      await expect(input).toHaveJSProperty("value", source);
+      await expect(input.locator(".inline-chip")).toHaveText(labels);
+      await input.focus();
+      await input.press("ControlOrMeta+a");
+      const copied = await input.evaluate((element) => {
+        const clipboardData = new DataTransfer();
+        element.dispatchEvent(
+          new ClipboardEvent("copy", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+        return clipboardData.getData("text/plain");
+      });
+      expect(copied).toBe(source);
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.mentionFixture.publications.length),
+        )
+        .toBe(reply ? 2 : 1);
+      const sent = await page.evaluate(() =>
+        window.mentionFixture.publications.at(-1),
+      );
+      expect(sent.content).toBe(source);
+      expect(sent.tags.filter(([tag]) => tag === "p")).toEqual(
+        keys.map((key) => ["p", key]),
+      );
+      expect(sent.tags.filter(([tag]) => tag === "h")).toEqual([["h", "c"]]);
+      expect(sent.tags.filter(([tag]) => tag === "e")).toEqual(
+        reply ? [["e", "a".repeat(64), "", "reply"]] : [],
+      );
+      if (!reply)
+        await page.getByRole("button", { name: "Toggle thread" }).click();
+    }
+  } finally {
+    await server.close();
+  }
+});

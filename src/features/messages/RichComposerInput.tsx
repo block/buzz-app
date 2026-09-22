@@ -123,18 +123,19 @@ export function RichComposerInput({
     editAsText = false,
   ) => {
     if (
-      !tooDeep &&
-      ![...literals, ...ranges].some(
-        (range) => start < range.end && end > range.start,
-      )
+      // Explicit recipients disclose notification intent even inside Markdown literals.
+      (mention ||
+        (!tooDeep &&
+          !literals.some((range) => start < range.end && end > range.start))) &&
+      !ranges.some((range) => start < range.end && end > range.start)
     )
       ranges.push({ start, end, editAsText, ...(mention ? { mention } : {}) });
   };
+  for (const recipient of draft.recipients)
+    add(recipient.start, recipient.end, recipient.pubkey);
   messageLinkParts(draft.text, undefined, (start, end) =>
     add(start, end, undefined, true),
   );
-  for (const recipient of draft.recipients)
-    add(recipient.start, recipient.end, recipient.pubkey);
   for (const reference of messageReferences(
     draft.text,
     [],

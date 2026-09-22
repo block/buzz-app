@@ -144,6 +144,14 @@ export class ConversationService extends Service implements Conversation {
   }
   registerChannelDirectory(value: ChannelThreadDirectory) {
     validate(value);
+    if (
+      value.create !== undefined &&
+      (!value.create ||
+        typeof value.create.title !== "string" ||
+        !value.create.title.trim() ||
+        typeof value.create.component !== "function")
+    )
+      throw new Error("A channel draft needs a title and component");
     this.directoryEntries.register(this.ctx, value);
   }
   registerAccessory(value: ComposerAccessory) {

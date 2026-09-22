@@ -252,7 +252,12 @@ it("matches only supported shared canonical same-channel replies, including a hu
     ]),
   ];
   expect(sessionReplies(events, "channel", new Set([id(1)]))).toEqual(
-    [0, 1, 11].map(() => ({ rootId: id(1), identities: [key.pubkey, agent] })),
+    [0, 1, 11].map((i) => ({
+      id: events[i]?.id,
+      createdAt: 100,
+      rootId: id(1),
+      identities: [key.pubkey, agent],
+    })),
   );
   expect(
     sessionReplies(
@@ -573,5 +578,225 @@ it("a signed same-text root edit removes mention-only classification using the a
   });
   h.rows(foldMessages("channel", authority.pubkey, [event, edit]));
   expect(row(1)).toBeNull();
+  expect(h.observe).toHaveBeenCalledTimes(1);
+});
+
+it("a zero-reply quiet root keeps signed recipient evidence independently of edits, but a marker alone never grants agent classification", async () => {
+  const h = harness([
+    root(91, { quietSession: true, edited: true, mentions: [agent] }),
+    root(92, { quietSession: true, mentions: [human] }),
+  ]);
+  h.mount();
+  await screen.findByRole("button", { name: /Thread 91/ });
+  expect(
+    screen.queryByRole("button", { name: /Thread 92/ }),
+  ).not.toBeInTheDocument();
+});
+
+it("orders eligible threads by all shared conversational replies, never summary receipts or other event kinds", async () => {
+  const h = harness([
+    root(1, { authorId: agent }),
+    root(2, { authorId: agent }),
+    root(3),
+  ]);
+  h.mount(true);
+  await settled();
+  const order = () =>
+    screen
+      .getAllByRole("button", { name: /^Thread / })
+      .map((button) => button.querySelector("strong")?.textContent);
+  const key = keypair();
+  const reply = message(key, "channel", "Human follow-up", 100, [
+    ["e", id(1), "", "reply"],
+  ]);
+  const at = () => row(1)?.querySelector("time")?.dateTime;
+  expect(order()).toEqual(["Thread 2", "Thread 1"]);
+  const reads = h.observe.mock.calls.length;
+  h.emit({ events: [reply] });
+  await settled();
+  expect(order()).toEqual(["Thread 1", "Thread 2"]);
+  expect(at()).toBe(new Date(100_000).toISOString());
+  // New human-only conversations never become eligible merely by being newer.
+  h.emit({
+    events: [
+      reply,
+      message(key, "channel", "Human only", 200, [["e", id(3), "", "reply"]]),
+    ],
+  });
+  expect(order()).toEqual(["Thread 1", "Thread 2"]);
+  for (const kind of [0, 7, 1111, 20002, 40003, 39005, 24200]) {
+    h.emit({ events: [reply, { ...reply, kind, created_at: 300 }] });
+    expect(at()).toBe(new Date(100_000).toISOString());
+  }
+  h.rows([
+    root(1, {
+      authorId: agent,
+      edited: true,
+      replyCount: 9,
+      participants: [agent],
+    }),
+    root(2, { authorId: agent }),
+    root(3),
+  ]);
+  h.profiles([
+    [human, { name: "New name" }],
+    [agent, { name: "New agent name", isAgent: true }],
+  ]);
+  expect(at()).toBe(new Date(100_000).toISOString());
+  expect(h.observe).toHaveBeenCalledTimes(reads);
+  // Eviction/reset drops the sample rather than retaining a sticky high-water mark.
+  h.emit({ status: "idle", events: [] });
+  expect(order()).toEqual(["Thread 2", "Thread 1"]);
+  expect(at()).toBe(new Date(1_000).toISOString());
+});
+
+it("only advances with accepted, seen or remote valid reply times, maxed with the actual root", async () => {
+  const h = harness([root(1, { authorId: agent, createdAt: 50 })]);
+  h.mount();
+  await settled();
+  const key = keypair();
+  const reply = message(key, "channel", "Follow-up", 100, [
+    ["e", id(1), "", "reply"],
+  ]);
+  const at = () => row(1)?.querySelector("time")?.dateTime;
+  for (const delivery of ["sending", "failed", "unknown"] as const) {
+    h.emit({ events: [{ ...reply, delivery }] });
+    expect(at()).toBe(new Date(50_000).toISOString());
+  }
+  for (const created_at of [
+    0,
+    49,
+    NaN,
+    Infinity,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER,
+    8_640_000_000_001,
+  ]) {
+    h.emit({ events: [{ ...reply, created_at }] });
+    expect(at()).toBe(new Date(50_000).toISOString());
+  }
+  for (const tags of [
+    [
+      ["h", "other"],
+      ["e", id(1), "", "reply"],
+    ],
+    [
+      ["h", "channel"],
+      ["e", id(2), "", "reply"],
+    ],
+    [
+      ["h", "channel"],
+      ["e", id(1)],
+    ],
+    [
+      ["h", "channel"],
+      ["e", id(1), "", "mention"],
+    ],
+    [
+      ["h", "channel"],
+      ["e", id(1), "", "root"],
+    ],
+  ]) {
+    h.emit({ events: [{ ...reply, tags }] });
+    expect(at()).toBe(new Date(50_000).toISOString());
+  }
+  for (const delivery of [undefined, "accepted", "seen"] as const) {
+    h.emit({ events: [delivery ? { ...reply, delivery } : reply] });
+    expect(at()).toBe(new Date(100_000).toISOString());
+  }
+  h.emit({
+    events: [
+      {
+        ...reply,
+        kind: 40002,
+        created_at: 200,
+        tags: [
+          ["h", "channel"],
+          ["e", id(1), "", "root"],
+          ["e", id(99), "", "reply"],
+        ],
+      },
+    ],
+  });
+  expect(at()).toBe(new Date(200_000).toISOString());
+  h.emit({ events: [{ ...reply, id: "invalid" }] });
+  expect(at()).toBe(new Date(50_000).toISOString());
+});
+
+it("the actual session's live receive bumps an old eligible root without a new read, and cache clear drops it", async () => {
+  const data = sessionsData({ rowCount: 4 });
+  const view = render(
+    <RecentChannelThreads
+      session={data.session}
+      scope="test"
+      channelId="general"
+      channelName="General"
+      openThread={() => true}
+    />,
+  );
+  try {
+    await screen.findByRole("button", { name: /Investigate task 4/ });
+    await settled();
+    const queries = data.report.queries.length;
+    const older = data.rows[3];
+    if (!older) throw new Error("Missing older fixture root");
+    act(() => data.replyTo(older.rootId, data.now + 60));
+    expect(
+      screen
+        .getAllByRole("button")
+        .find((button) => button.id.startsWith("session-row-")),
+    ).toHaveTextContent("Investigate task 4");
+    expect(data.report.queries).toHaveLength(queries);
+    await act(async () => {
+      await data.owner.clearCache();
+    });
+    expect(
+      screen.queryByRole("button", { name: /Investigate task 4/ }),
+    ).toBeNull();
+  } finally {
+    view.unmount();
+    data.dispose();
+  }
+});
+
+it("actual folded signed edits and relay summary last_reply_at never become conversational recency", async () => {
+  const author = keypair(),
+    authority = keypair();
+  const original = message(author, "channel", "Thread 1", 100);
+  const h = harness(foldMessages("channel", authority.pubkey, [original]), [
+    [author.pubkey, { name: "Agent", isAgent: true }],
+  ]);
+  h.mount();
+  await settled();
+  const edit = signed(author, {
+    kind: 40003,
+    created_at: 300,
+    content: "Thread 1",
+    tags: [
+      ["h", "channel"],
+      ["e", original.id],
+    ],
+  });
+  const snapshot = signed(authority, {
+    kind: 39005,
+    created_at: 400,
+    content: JSON.stringify({
+      reply_count: 9,
+      last_reply_at: 999999,
+      participants: [author.pubkey],
+    }),
+    tags: [
+      ["h", "channel"],
+      ["e", original.id],
+      ["d", original.id],
+    ],
+  });
+  h.rows(foldMessages("channel", authority.pubkey, [original, edit, snapshot]));
+  h.emit({ events: [edit, snapshot] });
+  expect(row(1)?.querySelector("time")).toHaveAttribute(
+    "datetime",
+    new Date(100_000).toISOString(),
+  );
   expect(h.observe).toHaveBeenCalledTimes(1);
 });

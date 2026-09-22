@@ -150,6 +150,8 @@ it("removal validates every loaded author and conversation before queuing one de
   const messages = createMessages(
     {
       ready: async () => {},
+      sendDraft: vi.fn(),
+      findDraft: vi.fn(),
       recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,

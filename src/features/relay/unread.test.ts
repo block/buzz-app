@@ -1962,6 +1962,34 @@ it("queued message read does not consume a reply arriving after the click", asyn
   expect(unread.attention("room", late.id).unread).toBe(true);
 });
 
+it("A, hidden quiet Q, B: dwelling B acknowledges only B, not Q or the channel frontier", async () => {
+  const h = setup();
+  h.grant("room");
+  const a = message(h.alice, "room", "A", 11);
+  const quiet = message(h.alice, "room", "quiet Q", 12, [
+    ["buzz-session", "1", "quiet"],
+    ["p", h.relay.pubkey],
+  ]);
+  const b = message(h.alice, "room", "B", 13);
+  h.emit([a, quiet, b]);
+  expect(h.snapshot().observedCount).toBe(3);
+  const lease = h.session.unread.reading("room");
+  lease.view([b.id], () => true);
+  await lease.observe([b.id]);
+  expect(h.journal()?.state.frontiers).toEqual({ [`msg:${b.id}`]: 13 });
+  expect(h.snapshot().observedCount).toBe(2);
+  lease.dispose();
+  // Revealing Q explicitly or disabling the plugin permits the ordinary row dwell.
+  const revealed = h.session.unread.reading("room");
+  await revealed.observe([quiet.id]);
+  expect(h.journal()?.state.frontiers).toEqual({
+    [`msg:${b.id}`]: 13,
+    [`msg:${quiet.id}`]: 12,
+  });
+  expect(h.snapshot().observedCount).toBe(1);
+  revealed.dispose();
+});
+
 it.each(["markMessageRead", "markMessageUnread"] as const)(
   "%s rejects invalid targets asynchronously",
   async (action) => {

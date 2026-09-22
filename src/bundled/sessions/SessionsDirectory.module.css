@@ -1,6 +1,6 @@
 .directory {
   overflow-y: auto;
-  padding: var(--space-panel-inset);
+  padding: var(--space-4) var(--space-8);
   color: var(--text-primary);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
@@ -29,7 +29,7 @@
   letter-spacing: var(--text-label-sm--letter-spacing);
   font-weight: var(--type-weight-medium);
 }
-.group ul {
+.list {
   list-style: none;
   margin: 0;
   padding: 0;
@@ -41,7 +41,8 @@
   width: 100%;
   border: 0;
   border-radius: var(--radius-control);
-  padding: var(--space-3) var(--space-2);
+  min-height: 54px;
+  padding: var(--space-2) 0;
   background: transparent;
   color: inherit;
   font: inherit;
@@ -63,14 +64,20 @@ html[data-keyboard-navigation] .row:focus-visible {
   flex: 1;
   min-width: 0;
   display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
+  align-items: baseline;
+  gap: var(--space-3);
 }
 .text strong {
   font-weight: var(--type-weight-medium);
-  overflow-wrap: anywhere;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .text > span {
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  flex-shrink: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -83,16 +90,19 @@ html[data-keyboard-navigation] .row:focus-visible {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+@media (max-width: 1000px) {
+  .directory {
+    padding-inline: var(--space-6);
+  }
+}
 @media (max-width: 650px) {
   .directory {
-    padding: var(--space-3);
+    padding-inline: var(--space-4);
   }
-  .row {
-    flex-wrap: wrap;
-  }
-  .row time {
-    width: 100%;
-    padding-left: var(--space-8);
+  .text {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
   }
 }
 

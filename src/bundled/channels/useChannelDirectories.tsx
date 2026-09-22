@@ -10,6 +10,7 @@ import type { Contribution } from "../../plugins/contributions";
 import type {
   ChannelThreadDirectory,
   ChannelThreadDirectoryProps,
+  ChannelThreadDraftProps,
   ContributionReader,
 } from "../../features/conversation/contracts";
 import {
@@ -42,6 +43,7 @@ type Opening = {
   access: string;
   connection: string;
   rootId?: string;
+  draft?: true;
   unavailable?: true;
   focusId?: string;
 };
@@ -149,6 +151,7 @@ export function useChannelDirectories({
     if (
       restore.current === undefined ||
       opening?.rootId ||
+      opening?.draft ||
       opening?.unavailable
     )
       return;
@@ -203,8 +206,59 @@ export function useChannelDirectories({
     },
     [selected, valid, update],
   );
+  function select(
+    entry: Contribution<ChannelThreadDirectory> | undefined,
+    draft = false,
+  ) {
+    if (!destination) return;
+
+    const connection = relay.snapshot();
+    if (
+      !entry ||
+      !registry.snapshot().includes(entry) ||
+      current.current !== destination ||
+      destination.isCurrent?.() === false ||
+      destination.signal?.aborted ||
+      connection.status !== "ready" ||
+      connection.session !== destination.session ||
+      connection.scope !== destination.scope ||
+      access(destination) === "unavailable"
+    )
+      return;
+    onSelect();
+    update({
+      entry,
+      destination,
+      generation: connection.generation,
+      access: access(destination),
+      connection: destination.session.live.snapshot().status,
+      ...(draft ? { draft: true as const } : {}),
+    });
+  }
+  const back = useCallback(() => {
+    if (!selected || !valid(selected)) return false;
+    const { draft: _draft, rootId: _root, ...directory } = selected;
+    restore.current = "";
+    update(directory);
+    return true;
+  }, [selected, valid, update]);
   return {
     selected: !!selected,
+    launchers:
+      !selected?.rootId &&
+      !selected?.draft &&
+      destination &&
+      ordered
+        .filter((entry) => entry.create)
+        .map((entry) => (
+          <Button
+            key={entry.key}
+            size="compact"
+            onClick={() => select(entry, true)}
+          >
+            {entry.create?.title}
+          </Button>
+        )),
     tabs: destination && (entries.length > 0 || selected) && (
       <div ref={tabs} className={styles.tabs}>
         <Tabs
@@ -218,27 +272,7 @@ export function useChannelDirectories({
               return;
             }
             if (selected?.entry.key === key) return;
-            const entry = registry.snapshot().find((item) => item.key === key);
-            const connection = relay.snapshot();
-            if (
-              !entry ||
-              current.current !== destination ||
-              destination.isCurrent?.() === false ||
-              destination.signal?.aborted ||
-              connection.status !== "ready" ||
-              connection.session !== destination.session ||
-              connection.scope !== destination.scope ||
-              access(destination) === "unavailable"
-            )
-              return;
-            onSelect();
-            update({
-              entry,
-              destination,
-              generation: connection.generation,
-              access: access(destination),
-              connection: destination.session.live.snapshot().status,
-            });
+            select(registry.snapshot().find((item) => item.key === key));
           }}
         />
       </div>
@@ -256,11 +290,18 @@ export function useChannelDirectories({
               ? renderThread(selected.rootId, () => {
                   if (!valid(selected)) return;
                   restore.current = selected.focusId ?? "";
-                  const { rootId: _root, ...directory } = selected;
+                  const {
+                    rootId: _root,
+                    draft: _draft,
+                    ...directory
+                  } = selected;
                   update(directory);
                 })
               : destination && (
                   <OwnedDirectory
+                    key={selected.draft ? "draft" : "directory"}
+                    draft={!!selected.draft}
+                    back={back}
                     entry={selected.entry}
                     restoreFocus={restoreFocus}
                     session={destination.session}
@@ -281,25 +322,35 @@ export function useChannelDirectories({
 function OwnedDirectory({
   entry,
   restoreFocus,
+  draft,
+  back,
   ...props
 }: ChannelThreadDirectoryProps & {
   entry: Contribution<ChannelThreadDirectory>;
   restoreFocus(): void;
+  draft: boolean;
+  back: ChannelThreadDraftProps["back"];
 }) {
   const [command, setCommand] = useState<{
     openThread: ChannelThreadDirectoryProps["openThread"];
+    back: ChannelThreadDraftProps["back"];
   }>();
   useLayoutEffect(() => {
     let mounted = true;
-    setCommand({ openThread: (id) => mounted && props.openThread(id) });
+    setCommand({
+      openThread: (id) => mounted && props.openThread(id),
+      back: () => mounted && back(),
+    });
     return () => {
       mounted = false;
     };
-  }, [props.openThread]);
+  }, [props.openThread, back]);
   useLayoutEffect(() => {
     if (command) restoreFocus();
   }, [command, restoreFocus]);
   const Directory = entry.component;
+  const Draft = entry.create?.component;
+  if (draft && Draft) return command ? <Draft {...props} {...command} /> : null;
   return command ? (
     <Directory {...props} openThread={command.openThread} />
   ) : null;

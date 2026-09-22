@@ -45,6 +45,8 @@ function fixture() {
     subscribe: () => () => {},
     observeSend: () => () => {},
     ready: async () => {},
+    sendDraft: vi.fn(),
+    findDraft: vi.fn(),
     recover: async () => {},
     acknowledge: async () => {},
     supports: () => true,

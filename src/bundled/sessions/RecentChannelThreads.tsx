@@ -30,7 +30,10 @@ export function RecentChannelThreads({
       rootId: row.id,
       title: row.content.trim().replace(/\s+/g, " ").slice(0, 160) || "Thread",
       replyCount: row.replyCount,
-      startedAt: row.createdAt,
+      lastMessageAt: Math.max(
+        row.createdAt,
+        evidence.latestMessages.get(row.id) ?? row.createdAt,
+      ),
     }));
   const loading = window.status === "idle" || window.status === "loading";
   return (

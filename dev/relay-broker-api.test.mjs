@@ -2849,6 +2849,86 @@ test("private feedback crosses the real broker and session without a readback or
   }
 });
 
+test("shared session domain -> durable outbox -> HTTP broker preserves the quiet marker and exact retry identity", async () => {
+  const { roster, metadata } = await import("../src/features/relay/testing.ts");
+  const { matchesEvent } = await import("../src/features/relay/projection.ts");
+  const secret = new Uint8Array(32);
+  secret[31] = 7;
+  const authority = { secret, pubkey: getPublicKey(secret) };
+  const agent = "b".repeat(64);
+  const h = await harness((call) =>
+    Response.json(
+      call.url.endsWith("/query")
+        ? [
+            roster(authority, "c", [authority.pubkey, agent]),
+            metadata(authority, "c", "General"),
+          ].filter((event) =>
+            call.body.some((filter) => matchesEvent(event, filter)),
+          )
+        : { accepted: true, event_id: call.body?.id },
+    ),
+  );
+  let owner;
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    owner = createRelaySession(transport, {
+      warm: false,
+      outboxStorage: { load: () => [], save() {} },
+    });
+    await vi.waitFor(() =>
+      expect(owner.session.live.snapshot().status).toBe("connected"),
+    );
+    await owner.session.read([
+      { kinds: [39000, 39002], "#d": ["c"], limit: 2 },
+    ]);
+    const draft = {
+      id: "12345678-abcd-4000-8000-123456789abc",
+      createdAt: Math.floor(Date.now() / 1000),
+    };
+    const id = await owner.session.messages.startChannelSession(
+      "c",
+      "@Agent shared work",
+      [agent],
+      draft,
+    );
+    await vi.waitFor(() =>
+      expect(owner.session.outbox.snapshot()[0]).toMatchObject({
+        delivery: "accepted",
+        error: undefined,
+      }),
+    );
+    expect(h.publications).toHaveLength(1);
+    const event = h.publications[0];
+    expect(event.id).toBe(id);
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.tags).toEqual([
+      ["h", "c"],
+      ["p", agent],
+      ["buzz-session", "1", "quiet"],
+      ["client-id", draft.id],
+    ]);
+    expect(
+      await owner.session.messages.startChannelSession(
+        "c",
+        "@Agent shared work",
+        [agent],
+        draft,
+      ),
+    ).toBe(id);
+    expect(h.publications).toHaveLength(1);
+    expect(
+      h.calls.some(
+        (call) =>
+          call.body?.[0]?.kinds?.includes(39002) &&
+          call.body[0].authors?.includes(authority.pubkey),
+      ),
+    ).toBe(true);
+  } finally {
+    owner?.dispose();
+    await h.close();
+  }
+});
+
 test("broker HTTP summaries respect live levels and trace excludes private filters", async () => {
   const logger = getLogger("relay-broker");
   const reporters = [...logger.options.reporters];

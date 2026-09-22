@@ -12,6 +12,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  useSyncExternalStore,
 } from "react";
 import { Virtualizer, type VirtualizerHandle } from "virtua";
 import { MessageRow } from "./MessageRow";
@@ -65,6 +66,9 @@ function scrollsHistoryUp(event: KeyboardEvent<HTMLElement>): boolean {
   }
   return target === event.currentTarget;
 }
+const emptyDirectories = [] as const;
+const noDirectories = () => emptyDirectories;
+const noSubscription = () => () => {};
 
 type ReadingPosition = {
   offset: number;
@@ -183,14 +187,49 @@ function Timeline({
   );
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<ReadingPosition["anchor"]>(undefined);
-  const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const directories = useSyncExternalStore(
+    extensions?.channelDirectories?.subscribe ?? noSubscription,
+    extensions?.channelDirectories?.snapshot ?? noDirectories,
+  );
+  const channelList = useSyncExternalStore(
+    queries.channels.subscribeList,
+    queries.channels.list,
+  );
+  const channelType = channelList.channels.find(
+    (channel) => channel.id === channelId,
+  )?.channelType;
+  const quietAvailable =
+    (channelType === "stream" || channelType === "forum") &&
+    directories.some(
+      (entry) => entry.pluginId === "buzz.sessions" && entry.id === "sessions",
+    );
+  const exactTarget =
+    navigation?.target.kind === "conversation"
+      ? navigation.target.messageId
+      : undefined;
+  // Classify from the full retained window: hidden roots must keep their
+  // original recipients in the existing optional profile demand.
   const resolveName = useChannelIdentityNames(queries, channelId);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
+  const presented = useMemo(
+    () =>
+      window.rows.filter(
+        (row) =>
+          !quietAvailable ||
+          !row.quietSession ||
+          !row.mentions.some((key) => agentPubkeys.has(key)) ||
+          row.id === exactTarget ||
+          row.id === revealMessageId,
+      ),
+    [window.rows, quietAvailable, agentPubkeys, exactTarget, revealMessageId],
+  );
+  const rows = useMemo(() => membershipRows(presented), [presented]);
   const [geometry] = useState(() => geometryFor(queries.channels));
   const signature = useMemo(
-    () => geometrySignature(window.rows, profiles, resolveName),
-    [window.rows, profiles, resolveName],
+    () => geometrySignature(presented, profiles, resolveName),
+    [presented, profiles, resolveName],
+
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   // Holders are counted per row: a report notice and an image viewer can hold

@@ -28,6 +28,8 @@ import { useRowProfiles } from "../relay/react";
 import { MessageRow } from "./MessageRow";
 import { continuesMessageGroup } from "./message-grouping";
 import { MessageComposer } from "./MessageComposer";
+import { SessionConversationHeader } from "./SessionConversationHeader";
+import sessionStyles from "./SessionConversation.module.css";
 import styles from "./Messages.module.css";
 import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { Reading, readingPositioned } from "./use-reading";
@@ -45,6 +47,7 @@ export type ThreadPanelProps = {
   channelName: string;
   channelId: string;
   sessionConversation?: boolean | undefined;
+  presentation?: "thread" | "session" | undefined;
   messageId: string;
   replyRequest?: number | undefined;
   /** Inline Inbox visit retains and reveals its exact selected message. */
@@ -79,14 +82,12 @@ export function ThreadPanel(props: ThreadPanelProps) {
   );
   return (
     <aside
-      className={
-        close ? styles.thread : `${styles.thread} ${styles.embeddedThread}`
-      }
+      className={`${styles.thread} ${!close ? styles.embeddedThread : ""} ${props.presentation === "session" ? sessionStyles.conversation : ""}`}
       data-attachment-drop-zone=""
       data-reading-surface=""
       onDragOver={rejectUnhandledFileDrop}
       onDrop={rejectUnhandledFileDrop}
-      aria-label="Thread"
+      aria-label={props.presentation === "session" ? "Session" : "Thread"}
       onKeyDown={(event) => {
         // Portalled viewers bubble here through React but own their Escape.
         if (
@@ -100,7 +101,7 @@ export function ThreadPanel(props: ThreadPanelProps) {
         }
       }}
     >
-      {!tabbed && close && (
+      {props.presentation !== "session" && !tabbed && close && (
         <ThreadHeader
           key={`header:${viewKey}`}
           close={close}
@@ -152,12 +153,15 @@ function OwnedThreadPanel({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  presentation,
   replyRequest,
   active = true,
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
+  close,
 }: ThreadPanelProps) {
+  const [title, setTitle] = useState("Session");
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
@@ -199,37 +203,46 @@ function OwnedThreadPanel({
     revealSelected,
     requireReadyRoot,
   ]);
-  return error ? (
-    <div className={styles.empty} role="alert">
-      <p>{error}</p>
-      <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
-        Retry thread
-      </Button>
-    </div>
-  ) : view ? (
-    <ThreadMessages
-      sessionConversation={sessionConversation}
-      extensions={extensions}
-      session={session}
-      scope={scope}
-      channelId={channelId}
-      channelName={channelName}
-      view={view}
-      navigation={navigation}
-      messageId={messageId}
-      replyRequest={replyRequest}
-      active={active}
-      revealSelected={revealSelected}
-      requireReadyRoot={requireReadyRoot}
-      onDraftSaved={onDraftSaved}
-      onOpenLink={onOpenLink}
-      onOpenMediaReview={onOpenMediaReview}
-      canOpenLink={canOpenLink}
-    />
-  ) : (
-    <p className={styles.empty} role="status">
-      Loading thread…
-    </p>
+  return (
+    <>
+      {presentation === "session" && (
+        <SessionConversationHeader title={title} back={close} />
+      )}
+      {error ? (
+        <div className={styles.empty} role="alert">
+          <p>{error}</p>
+          <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
+            {presentation === "session" ? "Retry session" : "Retry thread"}
+          </Button>
+        </div>
+      ) : view ? (
+        <ThreadMessages
+          sessionConversation={sessionConversation}
+          presentation={presentation}
+          onTitle={setTitle}
+          extensions={extensions}
+          session={session}
+          scope={scope}
+          channelId={channelId}
+          channelName={channelName}
+          view={view}
+          navigation={navigation}
+          messageId={messageId}
+          replyRequest={replyRequest}
+          active={active}
+          revealSelected={revealSelected}
+          requireReadyRoot={requireReadyRoot}
+          onDraftSaved={onDraftSaved}
+          onOpenLink={onOpenLink}
+          onOpenMediaReview={onOpenMediaReview}
+          canOpenLink={canOpenLink}
+        />
+      ) : (
+        <p className={styles.empty} role="status">
+          {presentation === "session" ? "Loading session…" : "Loading thread…"}
+        </p>
+      )}
+    </>
   );
 }
 function ThreadMessages({
@@ -245,6 +258,8 @@ function ThreadMessages({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  presentation,
+  onTitle,
   replyRequest,
   active,
   revealSelected,
@@ -252,6 +267,8 @@ function ThreadMessages({
   onDraftSaved,
 }: {
   sessionConversation?: boolean | undefined;
+  presentation?: ThreadPanelProps["presentation"];
+  onTitle(title: string): void;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
@@ -279,6 +296,15 @@ function ThreadMessages({
     const current = view.snapshot();
     return current.status === "ready" ? current.root : undefined;
   }, [view]);
+  useEffect(() => {
+    if (presentation !== "session") return;
+    // Plain text only, bounded independently of profiles and title enrichment.
+    const excerpt = snapshot.root?.content
+      .slice(0, 4096)
+      .trim()
+      .replace(/\s+/g, " ");
+    onTitle(excerpt ? excerpt.slice(0, 160) : "Session");
+  }, [presentation, snapshot.root?.content, onTitle]);
   const tree = useMemo(
     () => replyTree(snapshot.replies, snapshot.root?.id),
     [snapshot.replies, snapshot.root?.id],
@@ -928,7 +954,7 @@ function ThreadMessages({
         ref={scroller}
         data-message-scroller
         className={styles.threadHistory}
-        aria-label="Thread messages"
+        aria-label={presentation === "session" ? "Session messages" : "Thread messages"}
         aria-busy={positioning}
         data-positioning={positioning || undefined}
         onScroll={(event) => {
@@ -1038,7 +1064,7 @@ function ThreadMessages({
             </p>
           )}
         {positioning || (snapshot.status === "loading" && !rows.length) ? (
-          <p role="status">Loading thread…</p>
+          <p role="status">{presentation === "session" ? "Loading session…" : "Loading thread…"}</p>
         ) : null}
         {snapshot.targetStatus === "unavailable" && (
           <p role="status">Selected message unavailable.</p>
@@ -1047,13 +1073,17 @@ function ThreadMessages({
           <p role="alert">{snapshot.error}</p>
         )}
         {snapshot.limited && !snapshot.error && (
-          <p className={styles.threadNote}>Thread history limit reached.</p>
+          <p className={styles.threadNote}>
+            {presentation === "session"
+              ? "Session history limit reached."
+              : "Thread history limit reached."}
+          </p>
         )}
         {((snapshot.error && !showOlderPageStatus) ||
           snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
             <Button type="button" onClick={() => void view.refresh()}>
-              Retry thread
+              {presentation === "session" ? "Retry session" : "Retry thread"}
             </Button>
           </div>
         )}
@@ -1064,6 +1094,7 @@ function ThreadMessages({
             snapshot.targetStatus === "ready")) && (
           <MessageComposer
             sessionConversation={sessionConversation}
+            label={presentation === "session" ? "Message this session" : undefined}
             key={`${scope}:${channelId}:${snapshot.root.id}`}
             extensions={extensions}
             session={session}

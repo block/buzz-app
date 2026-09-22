@@ -7,7 +7,6 @@ import {
   fireEvent,
   render,
   screen,
-  within,
 } from "@testing-library/react";
 import type {
   ChannelMessage,
@@ -64,13 +63,13 @@ it("selects shared exact roots, including zero replies, without trusting envelop
     ).map((row) => row.id),
   ).toEqual([0, 1, 2, 3, 4].map((i) => i.toString(16).padStart(64, "0")));
 });
-it("groups and sorts explicitly by root start, with exact-root ties, never reply activity", () => {
+it("groups and sorts latest observed messages with deterministic exact-root ties", () => {
   const now = new Date(2026, 8, 21, 14).getTime() / 1000;
-  const make = (id: string, startedAt: number) => ({
+  const make = (id: string, lastMessageAt: number) => ({
     rootId: id.repeat(64),
     title: id,
     replyCount: 1,
-    startedAt,
+    lastMessageAt,
   });
   const openThread = vi.fn(() => true);
   render(
@@ -85,22 +84,19 @@ it("groups and sorts explicitly by root start, with exact-root ties, never reply
       openThread={openThread}
     />,
   );
-  expect(screen.getByText(/Ordered by thread start/)).toHaveTextContent(
-    "not the latest reply",
-  );
-  const today = within(screen.getByRole("region", { name: "Started Today" }));
+  expect(screen.getByText("Latest messages in checked history")).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Today" })).toBeVisible();
   expect(
-    today
+    screen
       .getAllByRole("button")
+      .slice(0, 2)
       .map((row) => row.querySelector("strong")?.textContent),
   ).toEqual(["a", "b"]);
+  expect(screen.getByRole("heading", { name: "Yesterday" })).toBeVisible();
   expect(
-    screen.getByRole("region", { name: "Started Yesterday" }),
-  ).toHaveTextContent("y");
-  expect(
-    screen.getByRole("region", { name: "Started September 18, 2026" }),
-  ).toHaveTextContent("c");
-  fireEvent.click(today.getByRole("button", { name: /^a1 reply/ }));
+    screen.getByRole("heading", { name: "September 18, 2026" }),
+  ).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: /^a1 reply/ }));
   expect(openThread).toHaveBeenCalledWith("a".repeat(64));
 });
 
@@ -222,4 +218,86 @@ it("labels cached bounded evidence and delegates refresh and older recovery to t
     screen.queryByRole("button", { name: "Load older history" }),
   ).not.toBeInTheDocument();
   expect(h.session.thread).not.toHaveBeenCalled();
+});
+
+it("keeps the same focused row when a new reply moves it across day groups", () => {
+  const now = new Date(2026, 8, 21, 14).getTime() / 1000;
+  const rows = [
+    { rootId: "a", title: "Newer root", replyCount: 0, lastMessageAt: now },
+    {
+      rootId: "b",
+      title: "Older root",
+      replyCount: 1,
+      lastMessageAt: now - 86400,
+    },
+  ];
+  const openThread = vi.fn(() => true);
+  const view = render(
+    <SessionsDirectory rows={rows} now={now} openThread={openThread} />,
+  );
+  const older = screen.getByRole("button", { name: /Older root/ });
+  older.focus();
+  view.rerender(
+    <SessionsDirectory
+      rows={rows.map((row) =>
+        row.rootId === "b" ? { ...row, lastMessageAt: now + 1 } : row,
+      )}
+      now={now}
+      openThread={openThread}
+    />,
+  );
+  expect(screen.getByRole("button", { name: /Older root/ })).toBe(older);
+  expect(older).toHaveFocus();
+  expect(screen.getAllByRole("button")[0]).toBe(older);
+});
+
+it("uses calendar dates for future days, rejects unrenderable times, and re-groups on a midnight rerender", () => {
+  const now = new Date(2026, 8, 21, 23, 59).getTime() / 1000;
+  const rows = [now, now + 86400, 0, NaN, Infinity, -1, 8_640_000_000_001].map(
+    (lastMessageAt, i) => ({
+      rootId: String(i),
+      title: `Time ${i}`,
+      replyCount: 0,
+      lastMessageAt,
+    }),
+  );
+  const props = { rows, now, openThread: () => true };
+  const view = render(<SessionsDirectory {...props} />);
+  expect(screen.getAllByRole("button")).toHaveLength(3);
+  expect(
+    screen.getByRole("heading", { name: "September 22, 2026" }),
+  ).toBeVisible();
+  expect(screen.getByRole("heading", { name: "Today" })).toBeVisible();
+  expect(
+    screen.getByRole("button", { name: /Time 0/ }).querySelector("time"),
+  ).toHaveAttribute("dateTime", new Date(now * 1000).toISOString());
+  view.rerender(<SessionsDirectory {...props} now={now + 120} />);
+  expect(
+    screen.queryByRole("heading", { name: "September 22, 2026" }),
+  ).toBeNull();
+  expect(screen.getByRole("heading", { name: "Yesterday" })).toBeVisible();
+  expect(
+    screen
+      .getAllByRole("button")
+      .map((button) => button.querySelector("strong")?.textContent),
+  ).toEqual(["Time 1", "Time 0", "Time 2"]);
+});
+
+it("rejects invalid root dates before sorting or formatting while retaining epoch zero", () => {
+  const values = [
+    0,
+    100,
+    NaN,
+    Infinity,
+    -1,
+    1.5,
+    Number.MAX_SAFE_INTEGER,
+    8_640_000_000_001,
+  ];
+  expect(
+    sessionRoots(
+      values.map((createdAt) => ({ ...root, createdAt })),
+      "channel",
+    ).map((row) => row.createdAt),
+  ).toEqual([100, 0]);
 });

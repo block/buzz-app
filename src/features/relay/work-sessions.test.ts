@@ -1016,6 +1016,8 @@ function setup(
   const outbox: Outbox = {
     observeSend: () => () => {},
     ready: async () => {},
+    sendDraft: vi.fn(),
+    findDraft: vi.fn(),
     recover: async () => {},
     acknowledge: async () => {},
     snapshot: () => [],
@@ -1605,6 +1607,8 @@ it.each([true, false])(
       const outbox: Outbox = {
         observeSend: () => () => {},
         ready: async () => {},
+        sendDraft: vi.fn(),
+        findDraft: vi.fn(),
         recover: async () => {},
         acknowledge: async () => {},
         supports: () => true,

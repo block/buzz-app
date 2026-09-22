@@ -52,6 +52,11 @@ async function mount(options: Parameters<typeof sessionsData>[0] = {}) {
   ctx.provide("relay", data.relay);
   const extensions = new ConversationService(ctx);
   const panels = new PanelsService(ctx);
+  const providers = {
+    snapshot: () => [],
+    subscribe: () => () => {},
+    register: () => {},
+  };
   const plugin = {
     manifest: {
       id: "buzz.sessions",
@@ -63,6 +68,7 @@ async function mount(options: Parameters<typeof sessionsData>[0] = {}) {
     revision: "one",
     previous: null,
     error: null,
+    reloadable: false,
   };
   cleanups.push(async () => {
     data.dispose();
@@ -70,7 +76,13 @@ async function mount(options: Parameters<typeof sessionsData>[0] = {}) {
     await ctx.fiber.dispose();
   });
   const view = render(
-    <ChannelsPage relay={data.relay} panels={panels} extensions={extensions} />,
+    <ChannelsPage
+      relay={data.relay}
+      panels={panels}
+      pages={pages}
+      providers={providers}
+      extensions={extensions}
+    />,
     { reactStrictMode: true },
   );
   await screen.findByRole("textbox", {
@@ -146,7 +158,7 @@ it("real host directory mounts no hidden timeline/composer/readers, then owns ex
   expect(
     screen.queryByRole("region", { name: "Sessions" }),
   ).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+  fireEvent.click(screen.getByRole("button", { name: "Back to Sessions" }));
   await waitFor(() =>
     expect(
       screen.getByRole("button", { name: /Review the release checklist/ }),
@@ -232,7 +244,7 @@ it("revocation during a held real thread read disposes it and fences the late re
     });
   }
   expect(
-    screen.queryByRole("complementary", { name: "Thread" }),
+    screen.queryByRole("complementary", { name: "Session" }),
   ).not.toBeInTheDocument();
   expect(
     screen.queryByText(
@@ -272,7 +284,7 @@ it.each([
     const directory = screen.queryByRole("region", {
       name: "Sessions",
     });
-    const thread = screen.queryByRole("complementary", { name: "Thread" });
+    const thread = screen.queryByRole("complementary", { name: "Session" });
     const { readers, activeReaders, readingLeases } = h.data.report;
     act(() => {
       if (source === "member profile") h.data.renameMember("Updated member");
@@ -301,11 +313,11 @@ it.each([
         "Fixture reply for task 1. The conversation stays in its original thread.",
       );
     } else {
-      expect(screen.getByRole("complementary", { name: "Thread" })).toBe(
+      expect(screen.getByRole("complementary", { name: "Session" })).toBe(
         thread,
       );
     }
-    fireEvent.click(screen.getByRole("button", { name: "Close thread" }));
+    fireEvent.click(screen.getByRole("button", { name: "Back to Sessions" }));
     await waitFor(() =>
       expect(
         screen.getByRole("button", { name: /Review the release checklist/ }),
@@ -349,7 +361,7 @@ it("fixture thread traversal settles without pagination errors, including a repl
   fireEvent.click(
     screen.getByRole("button", { name: /Review the release checklist/ }),
   );
-  const thread = await screen.findByRole("complementary", { name: "Thread" });
+  const thread = await screen.findByRole("complementary", { name: "Session" });
   const settled = async () => {
     // Visible replies precede the automatic continuation. Observe the real
     // reader's terminal state before negative UI assertions; errors also settle.
@@ -483,6 +495,7 @@ it("channel preview follow-ups use exact explicit mentions, never private-sessio
       h.plugin,
       {
         ...h.plugin,
+        reloadable: false,
         manifest: {
           ...h.plugin.manifest,
           id: "buzz.mentions",
@@ -495,7 +508,7 @@ it("channel preview follow-ups use exact explicit mentions, never private-sessio
   fireEvent.click(
     await screen.findByRole("button", { name: /Review the release checklist/ }),
   );
-  const thread = await screen.findByRole("complementary", { name: "Thread" });
+  const thread = await screen.findByRole("complementary", { name: "Session" });
   const content = within(thread);
   fireEvent.click(
     await content.findByRole("button", { name: "Mention a member" }),
@@ -633,4 +646,29 @@ it("revocation fences a held real classification read without leaking the former
     screen.queryByText("Explore the onboarding flow"),
   ).not.toBeInTheDocument();
   expect(h.data.report.readers).toBe(0);
+});
+
+it("header creation is a distinct local blank draft; backing out restores directory focus and ordinary channel text", async () => {
+  const h = await mount();
+  const input = screen.getByRole<
+    import("../../features/messages/composer-dom").ComposerInputElement
+  >("textbox", { name: "Message #General" });
+  input.value = "keep the channel draft";
+  fireEvent.input(input);
+  fireEvent.click(screen.getByRole("button", { name: "New session" }));
+  const draft = screen.getByRole("textbox", {
+    name: "Message this session",
+  });
+  expect(draft).toHaveProperty("value", "");
+  expect(
+    screen.queryByRole("textbox", { name: "Message #General" }),
+  ).not.toBeInTheDocument();
+  expect(h.data.report.published).toHaveLength(0);
+  expect(h.data.report.readingLeases).toBe(0);
+  fireEvent.click(screen.getByRole("button", { name: "Back to Sessions" }));
+  expect(screen.getByRole("tab", { name: "Sessions" })).toHaveFocus();
+  fireEvent.click(screen.getByRole("tab", { name: "Channel" }));
+  expect(
+    screen.getByRole("textbox", { name: "Message #General" }),
+  ).toHaveTextContent("keep the channel draft");
 });

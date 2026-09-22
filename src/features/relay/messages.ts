@@ -4,7 +4,8 @@ import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
-import type { Outbox, OutboxRecovery } from "./outbox";
+import { quietSessionTag } from "./channel-session";
+import type { DraftIdentity, Outbox, OutboxRecovery } from "./outbox";
 
 /** NIP-56 types accepted by the Buzz relay for message reports. */
 export const REPORT_TYPES = [
@@ -164,6 +165,29 @@ export function createMessages(
           ),
         ],
       });
+    },
+    startChannelSession(
+      channelId: string,
+      content: string,
+      mentions: readonly string[],
+      draft: DraftIdentity,
+    ) {
+      if (!channelId) throw new Error("A channel is required");
+      if (!mentions.length)
+        throw new Error("Explicitly mention an agent to start a session");
+      return writer(9, channelId).sendDraft(
+        {
+          kind: 9,
+          content: text(content),
+          tags: [
+            ["h", channelId],
+            ...mentionTags(channelId, mentions),
+            ...emojiTags(content),
+            quietSessionTag(),
+          ],
+        },
+        draft,
+      );
     },
     reply(
       channelId: string,

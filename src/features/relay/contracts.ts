@@ -98,6 +98,8 @@ export type ChannelMessage = Readonly<{
     description?: string | undefined;
     truncated: boolean;
   }>;
+  /** Valid presentation marker on the original root, independently of edits. */
+  quietSession?: true;
   membership?: MembershipChange;
   /** Current body came from a replacement edit; original recipients do not bind its prose. */
   edited?: true;

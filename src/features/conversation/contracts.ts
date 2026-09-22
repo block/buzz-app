@@ -104,10 +104,19 @@ export type ChannelThreadDirectoryProps = Readonly<{
    * with the exact registration, destination, connection and access lifetime. */
   openThread(rootId: string): boolean;
 }>;
+export type ChannelThreadDraftProps = ChannelThreadDirectoryProps &
+  Readonly<{
+    /** Return to this directory; false after this exact draft lifetime retires. */
+    back(): boolean;
+  }>;
 export type ChannelThreadDirectory = Readonly<{
   id: string;
   title: string;
   component: ComponentType<ChannelThreadDirectoryProps>;
+  create?: Readonly<{
+    title: string;
+    component: ComponentType<ChannelThreadDraftProps>;
+  }>;
 }>;
 export type ConversationExtensions = Readonly<{
   messages?: ContributionReader<MessageRenderer>;

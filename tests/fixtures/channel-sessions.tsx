@@ -1,3 +1,6 @@
+import type { Key } from "../../src/features/relay/testing";
+import { getPublicKey } from "nostr-tools";
+import { readChannelSessionDraft } from "../../src/bundled/sessions/channel-session-draft";
 import { Context } from "@deepseek-ai/cordis";
 import { StrictMode, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
@@ -5,15 +8,26 @@ import { PluginRuntime } from "../../src/plugins/runtime";
 import { ConversationService } from "../../src/features/conversation/service";
 import { PanelsService } from "../../src/features/panels/service";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
+import * as mentionsPlugin from "../../src/bundled/mentions/index";
 import * as sessionsPlugin from "../../src/bundled/sessions/index";
 import { PagesService } from "../../src/features/pages/service";
 import { provideNavigation } from "../../src/features/navigation/service";
 import { sessionsData } from "./channel-sessions-data";
 import "../../src/shared/styles/globals.css";
 
-const data = sessionsData({ rowCount: 18 });
+const seeds = (window as unknown as { fixtureSeeds?: number[][] }).fixtureSeeds;
+const identities = seeds?.map((seed) => {
+  const secret = Uint8Array.from(seed);
+  return { secret, pubkey: getPublicKey(secret) };
+}) as [Key, Key, Key, Key] | undefined;
+const data = sessionsData({
+  rowCount: seeds ? 0 : 18,
+  ...(identities ? { identities } : {}),
+});
 const ctx = new Context();
-const runtime = new PluginRuntime(ctx, async () => sessionsPlugin);
+const runtime = new PluginRuntime(ctx, async (plugin) =>
+  plugin.manifest.id === "buzz.mentions" ? mentionsPlugin : sessionsPlugin,
+);
 const pages = new PagesService(ctx);
 provideNavigation(ctx, undefined);
 ctx.provide("relay", data.relay);
@@ -31,16 +45,26 @@ const plugin = {
   previous: null,
   error: null,
 };
-runtime.reconcile([plugin]);
+const mentions = {
+  ...plugin,
+  manifest: { ...plugin.manifest, id: "buzz.mentions", name: "Mentions" },
+};
+runtime.reconcile([plugin, mentions]);
 Object.assign(window, {
   sessionsFixture: {
     report: data.report,
+    viewer: data.viewer,
+    holdPublication: data.holdPublication,
+    ingest: data.ingest,
+    replyTo: data.replyTo,
+    saved: () => readChannelSessionDraft("sessions-fixture", "general"),
+    member: data.member,
     rows: data.rows,
     threadSnapshot: data.threadSnapshot,
     refreshThread: data.refreshThread,
     failThread: data.failThread,
-    disable: () => runtime.reconcile([]),
-    enable: () => runtime.reconcile([plugin]),
+    disable: () => runtime.reconcile([mentions]),
+    enable: () => runtime.reconcile([plugin, mentions]),
     replace: data.replace,
     revoke: data.revoke,
     renameChannel: data.renameChannel,

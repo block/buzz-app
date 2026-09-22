@@ -13,13 +13,15 @@ import { useChannelDirectories } from "./useChannelDirectories";
 import type {
   ChannelThreadDirectory,
   ChannelThreadDirectoryProps,
+  ChannelThreadDraftProps,
 } from "../../features/conversation/contracts";
 import type { Contribution } from "../../plugins/contributions";
 import type { RelaySession } from "../../features/relay/session";
 import type { RelaySnapshot } from "../../features/relay/service";
 afterEach(cleanup);
 const rootId = "a".repeat(64);
-function harness() {
+function harness(creation = false) {
+  let draftCommands: ChannelThreadDraftProps | undefined;
   let commands!: ChannelThreadDirectoryProps;
   let throws = false;
   function Directory(props: ChannelThreadDirectoryProps) {
@@ -40,6 +42,21 @@ function harness() {
     pluginId: "fixture",
     revision: "one",
     component: Directory,
+    ...(creation
+      ? {
+          create: {
+            title: "New session",
+            component: (props: ChannelThreadDraftProps) => {
+              draftCommands = props;
+              return (
+                <button type="button" onClick={props.back}>
+                  Back to Sessions
+                </button>
+              );
+            },
+          },
+        }
+      : {}),
   };
   let entries = [entry];
   const registryListeners = new Set<() => void>();
@@ -132,6 +149,7 @@ function harness() {
     });
     return (
       <>
+        {view.launchers}
         {view.tabs}
         {view.selected ? view.content : <p>Channel body</p>}
       </>
@@ -150,6 +168,7 @@ function harness() {
     liveListeners,
     dispose,
     command: () => commands.openThread,
+    draftCommands: () => draftCommands,
     select: () =>
       fireEvent.click(screen.getByRole("tab", { name: "Sessions" })),
     entries(next: typeof entries) {
@@ -408,3 +427,37 @@ it.each(["dm", "session", undefined])(
     expect(stale(rootId)).toBe(false);
   },
 );
+
+it("optional creation selects a distinct draft and back retires both commands before returning to the directory", () => {
+  const h = harness(true);
+  fireEvent.click(screen.getByRole("button", { name: "New session" }));
+  expect(screen.getByRole("tab", { name: "Sessions" })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  expect(screen.queryByText("Open fixture root")).not.toBeInTheDocument();
+  const stale = h.draftCommands();
+  fireEvent.click(screen.getByRole("button", { name: "Back to Sessions" }));
+  expect(screen.getByText("Open fixture root")).toBeInTheDocument();
+  expect(stale?.openThread(rootId)).toBe(false);
+  expect(stale?.back()).toBe(false);
+  fireEvent.click(screen.getByRole("button", { name: "New session" }));
+  const next = h.draftCommands();
+  act(() => expect(next?.openThread(rootId)).toBe(true));
+  expect(
+    screen.getByRole("button", { name: "Close detail" }),
+  ).toBeInTheDocument();
+  expect(next?.back()).toBe(false);
+});
+it("draft navigation is revoked synchronously by exact plugin removal", () => {
+  const h = harness(true);
+  fireEvent.click(screen.getByRole("button", { name: "New session" }));
+  const stale = h.draftCommands();
+  act(() => {
+    h.entries([]);
+    expect(stale?.openThread(rootId)).toBe(false);
+    expect(stale?.back()).toBe(false);
+    h.publish();
+  });
+  expect(screen.getByText(/Sessions unavailable/)).toBeInTheDocument();
+});

@@ -250,7 +250,15 @@ function setup({
   const queries =
     session ??
     ({
-      channels: { loadOlder, window: snapshot },
+      channels: {
+        loadOlder,
+        window: snapshot,
+        list: () => ({
+          status: "ready",
+          channels: [{ id: "channel", channelType: "stream" }],
+        }),
+        subscribeList: () => () => {},
+      },
       profiles: {},
       agentChoices: createAgentLibrary(undefined).queries,
       // Geometry fixtures are read-only; reading behavior has its own boundary tests.

@@ -1126,7 +1126,6 @@ function ChannelWorkspace({
   );
   const directoryChannelId =
     !drafting &&
-    !placeholder &&
     !composingMessage &&
     (current?.channelType === "stream" || current?.channelType === "forum")
       ? current.id
@@ -1165,6 +1164,7 @@ function ChannelWorkspace({
     },
     renderThread: (rootId, closeDirectoryThread) => (
       <ThreadPanel
+        presentation="session"
         extensions={extensions}
         session={queries}
         scope={scope}

@@ -18,6 +18,9 @@ export const ROOT_LIMIT = 200;
 export const REPLY_LIMIT = 200;
 export const PROFILE_LIMIT = 1024;
 const keyPattern = /^[0-9a-f]{64}$/;
+// Verified event seconds may still exceed the range supported by Date/Intl.
+const validMessageTime = (seconds: number) =>
+  Number.isSafeInteger(seconds) && seconds >= 0 && seconds <= 8_640_000_000_000;
 const shared = (delivery: ChannelMessage["delivery"]) =>
   delivery === undefined || delivery === "accepted" || delivery === "seen";
 
@@ -33,6 +36,7 @@ export function sessionRoots(
         !row.threadRootId &&
         !row.membership &&
         keyPattern.test(row.id) &&
+        validMessageTime(row.createdAt) &&
         shared(row.delivery),
     )
     .sort((a, b) => b.createdAt - a.createdAt || a.id.localeCompare(b.id));
@@ -41,7 +45,7 @@ export function sessionRoots(
 export function rootIdentities(root: ChannelMessage) {
   return [
     root.authorId,
-    ...(root.edited ? [] : root.mentions),
+    ...(root.edited && !root.quietSession ? [] : root.mentions),
     ...root.participants,
   ].filter((key) => keyPattern.test(key));
 }
@@ -57,6 +61,8 @@ export function sessionReplies(
   return events.slice(0, REPLY_LIMIT).flatMap((event) => {
     if (
       ![9, 40002].includes(event.kind) ||
+      !keyPattern.test(event.id) ||
+      !validMessageTime(event.created_at) ||
       !shared(event.delivery) ||
       !event.tags.some(([name, value]) => name === "h" && value === channelId)
     )
@@ -70,6 +76,8 @@ export function sessionReplies(
       return [];
     return [
       {
+        id: event.id,
+        createdAt: event.created_at,
         rootId: reference.rootId,
         identities: [
           event.pubkey,
@@ -257,8 +265,17 @@ export function useSessionEvidence(
   for (const root of roots)
     if (rootIdentities(root).some((key) => known.has(key)))
       eligible.add(root.id);
+  // Recompute from the current bounded sample, not a sticky maximum. Any shared
+  // conversational reply can advance an eligible thread, including human follow-ups.
+  const latestMessages = new Map<string, number>();
+  for (const reply of replies)
+    latestMessages.set(
+      reply.rootId,
+      Math.max(latestMessages.get(reply.rootId) ?? 0, reply.createdAt),
+    );
   return {
     eligible,
+    latestMessages,
     loading:
       pending || (!!rootKey && (!snapshot || snapshot.status === "loading")),
     partial:

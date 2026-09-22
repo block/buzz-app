@@ -1,4 +1,5 @@
 import type { PluginModule } from "../../plugins/api";
+import { NewChannelSession } from "./NewChannelSession";
 import { RecentChannelThreads } from "./RecentChannelThreads";
 import { SessionsPage } from "./SessionsPage";
 
@@ -11,6 +12,12 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "sessions",
     title: "Sessions",
     component: RecentChannelThreads,
+    create: {
+      title: "New session",
+      component: (props) => (
+        <NewChannelSession {...props} extensions={extensions} />
+      ),
+    },
   });
   ctx.pages.register({
     id: "sessions",

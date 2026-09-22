@@ -10,7 +10,9 @@ import {
   summary,
   profile,
   signed,
+  type Key,
 } from "../../src/features/relay/testing";
+import type { OutboxStorage } from "../../src/features/relay/outbox";
 import type { ReadFilter, RelayEvent } from "../../src/features/relay/events";
 import type {
   RelayData,
@@ -20,14 +22,20 @@ import type {
 export function sessionsData({
   channelType = "stream",
   rowCount = 2,
+  identities,
+  outboxStorage = { load: () => [], save() {} },
 }: {
   channelType?: "stream" | "forum" | "dm" | "session";
   rowCount?: number;
+  identities?: readonly [Key, Key, Key, Key];
+  outboxStorage?: OutboxStorage;
 } = {}) {
-  const viewer = keypair(),
-    authority = keypair(),
-    member = keypair(),
-    human = keypair();
+  const [viewer, authority, member, human] = identities ?? [
+    keypair(),
+    keypair(),
+    keypair(),
+    keypair(),
+  ];
   const now = Date.UTC(2026, 8, 21, 14) / 1000;
   const report = {
     queries: [] as (readonly ReadFilter[])[],
@@ -101,6 +109,9 @@ export function sessionsData({
   let threadGate: ReturnType<typeof deferred> | undefined;
   let threadStarted: ReturnType<typeof deferred> | undefined;
   let denied = false;
+  let publicationGate: ReturnType<typeof deferred> | undefined;
+  let publicationStarted: ReturnType<typeof deferred> | undefined;
+  let failPublication = false;
   let evidenceGate: ReturnType<typeof deferred> | undefined;
   let evidenceStarted: ReturnType<typeof deferred> | undefined;
   let profilesMissing = false;
@@ -267,13 +278,16 @@ export function sessionsData({
           return signed(viewer, template);
         },
         async publish(event) {
+          publicationStarted?.resolve();
+          if (publicationGate) await publicationGate.promise;
+          if (failPublication) throw new Error("Fixture publication unknown");
           report.published.push(event);
           events.push(event);
           receive([event]);
         },
       },
     },
-    { warm: false, outboxStorage: { load: () => [], save() {} } },
+    { warm: false, outboxStorage },
   );
   let activeThread: ThreadView | undefined;
   // Wrap only allocation to measure the real reader lifetime, not substitute it.
@@ -327,6 +341,22 @@ export function sessionsData({
   };
   return {
     owner,
+    viewer: viewer.pubkey,
+    ingest(incoming: readonly RelayEvent[]) {
+      events.push(...incoming);
+      receive(incoming);
+    },
+    replyTo(rootId: string, createdAt = now + 60) {
+      const reply = message(
+        human,
+        "general",
+        "A later human follow-up",
+        createdAt,
+        [["e", rootId, "", "reply"]],
+      );
+      events.push(reply);
+      receive([reply]);
+    },
     member: member.pubkey,
     human: human.pubkey,
     humanRoot: humanRoot.id,
@@ -339,6 +369,20 @@ export function sessionsData({
     refreshThread() {
       if (!activeThread) throw new Error("No active fixture thread");
       return activeThread.refresh();
+    },
+    failPublication(value: boolean) {
+      failPublication = value;
+    },
+    holdPublication() {
+      publicationGate = deferred();
+      publicationStarted = deferred();
+      return {
+        started: publicationStarted.promise,
+        release() {
+          publicationGate?.resolve();
+          publicationGate = undefined;
+        },
+      };
     },
     holdProfiles() {
       profilesGate = deferred();

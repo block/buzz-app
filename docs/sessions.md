@@ -1,6 +1,6 @@
 # Channel Sessions: shared thread-backed V1 contract
 
-Status: **product direction agreed; bounded agent-thread Sessions implemented, not full V1**.
+Status: **bounded agent-thread Sessions and shared creation enabled, ready to try; user-reported live creation succeeded; independent live trace deferred, not full V1**.
 Updated 2026-09-21 from the Sessions design discussion. Current-app inspection:
 `333c4f287241868d9bb734ac466e98260c0a1824`. Existing Buzz inspection:
 `4472da6491f7d76ebcffed4b65c341a3278aa25f`. Neither source inspection nor this
@@ -9,9 +9,12 @@ spec establishes deployed relay/runner behavior or live acceptance.
 **Approval update, 2026-09-21:** the user approved the first fixture-backed
 Channel/Sessions directory and existing full-width thread slice. FOUNDATION
 permission is limited to the exact channel-directory contribution in conversation
-`contracts.ts` and `service.tsx`. The broader product behavior below is unchanged;
-channel-session creation, shared metadata and directory completeness remain
-future work, not claims of this preview. The later all-thread preview was incorrect and is withdrawn by the agent-only
+`contracts.ts` and `service.tsx`. The broader product behavior below is unchanged.
+The later approval extends only to the optional directory `create` contribution,
+quiet-root marker and focused outbox support. Following final independent review
+and parent authorization, shared creation is enabled as recorded in the final
+checkpoint below; shared metadata and directory completeness remain future work,
+not claims of this increment. The later all-thread preview was incorrect and is withdrawn by the agent-only
 correction below. Bounded coverage is not a reduction of the full V1 contract.
 
 **Scope correction, 2026-09-21:** Sessions is a new presentation of existing
@@ -46,7 +49,7 @@ session channels, metadata-unknown destinations or private draft views.
 
 **Correction, 2026-09-21:** the all-human **Recent channel threads** preview was
 wrong for Sessions and has been removed. The header is **Sessions**, described as
-“Threads that mention or include an agent. Showing loaded history.” Only positive
+“Latest messages in checked history”, with a visible sampled-reply caveat. Only positive
 exact-key evidence qualifies: a root author, unedited root's signed `p` recipients,
 relay-signed summary participants, or a supported same-channel reply's author / exact
 `p` recipients intersects `useKnownAgentPubkeys`. That helper combines current signed
@@ -58,8 +61,9 @@ and unresolved candidates are omitted, never replaced with an all-thread fallbac
 Candidate roots are current-channel actual roots with valid hex IDs and remote or
 accepted/seen evidence. Unanswered agent mentions qualify; pending, failed and
 unknown local root/reply intents do not. Root eligibility is recomputed from current
-folded rows; edited prose does not inherit the original root's mention classification.
-Author/participant evidence remains independent. Later human replies mentioning an
+folded rows; ordinary edited prose does not inherit the original root's mention
+classification. A valid quiet root retains its original marker and exact original
+`p` recipients across edits. Author/participant evidence remains independent. Later human replies mentioning an
 agent qualify before any agent response. This changes display, not invocation.
 
 Only while the tab is mounted, one owned `session.observe` batch for the stable,
@@ -81,10 +85,21 @@ Cache/access/session cleanup is owned by existing stores and mounted-generation
 fences; eligibility is never a sticky cache. The shared channel window still owns
 history refresh/load-older. No new socket, storage, startup scan or periodic work.
 
-Start time is explicitly labelled **Started** and drives provisional ordering/date
-groups. This does **not** fulfill or reduce V1's latest-conversational-message ordering
-or complete historical eligible-agent-thread coverage. The bounded reply sample is
-not a complete transcript; missing historical/nested evidence remains a gap.
+Ordering/date groups now use the latest **observed conversational message**:
+`max(actual root.createdAt, supported shared sampled reply.created_at)`, with exact
+root ID ascending for ties. Once a thread qualifies, human follow-ups advance it
+too. Today/Yesterday/date labels and row times describe that observed time, not
+thread start. Later calendar dates are shown as dates, not mislabelled Today.
+Invalid/unrenderable timestamps are omitted. No summary receipt, edit publication,
+reaction, profile, typing or telemetry time advances this value. Zero replies use
+the actual root time. Sample eviction or cleanup can lower known recency; no sticky
+maximum or additional journal is retained.
+
+This is bounded ordering, **not** complete historical latest-message ordering.
+The root cap still selects the newest 200 roots by creation, not by reply activity;
+the one 200-event reply sample can omit busy/old conversations and unresolved nested
+evidence. Existing refresh/older/retry/limit controls remain visible. No additional
+query, subscription, timer or storage was added.
 
 Selecting a root opens the existing full-width **ThreadPanel** without hidden
 channel timeline/composer and without `sessionConversation` or `inviteAgents`.
@@ -101,10 +116,11 @@ runtime; upstream direct private integrations in Channels remain as before. A
 selected removed contribution has an explicit unavailable/return state and does not
 resurrect on re-enable. New selection is required.
 
-No session creation/marker write, rename, chip, participation sidebar or activity
-correlation is added. The earlier isolated marker feasibility probe is not copied:
-there is no production marker caller in this increment. Synthetic events exist
-only in source-fixture tests, never the normal app or feedback path.
+The original browsing increment added no writes. The subsequent shared creation
+increment below now includes a domain-specific marker caller, with production
+submission enabled after independent review and parent authorization. Rename, chips, participation
+sidebar and activity correlation remain out of scope. Tests use isolated synthetic
+identities, not the running native app or a deployed relay.
 
 ## Purpose and design references
 
@@ -119,6 +135,34 @@ channel is separate from conducting its conversation.
 The six original screens and the blank draft were visually reviewed. Discussion
 supersedes the original **Active / Past** list with a chronological directory.
 This is a channel-local tab, **not a new top-level application destination**.
+
+## Visual acceptance for this and future Sessions UI changes
+
+**User requirement, 2026-09-21 at 17:07:** match the actual Figma design closely
+now and in future iterations, rather than approximating Sessions as a stretched
+thread panel. Review the relevant nodes before editing, then compare screenshots
+of the actual implementation before handoff:
+
+- [Session detail, 1357:14501](https://www.figma.com/design/uhFH3LPsy6HMqzoATFgWKl/buzz-?node-id=1357-14501).
+- [Blank draft, 1392:2554](https://www.figma.com/design/uhFH3LPsy6HMqzoATFgWKl/buzz-?node-id=1392-2554).
+- [Surrounding Sessions flow, 1357:15648](https://www.figma.com/design/uhFH3LPsy6HMqzoATFgWKl/buzz-?node-id=1357-15648).
+
+Use the shared design system's current tokens, components and type roles. Keep the
+existing global navigation and sidebar. Preserve agreed product decisions over old
+Figma placeholders: chronological rather than Active/Past grouping, existing
+permissions, no invented people/agent counts or activity status, no fake controls,
+and explicit agent recipients on every invocation. Record intentional visual
+differences instead of silently approximating them.
+
+Acceptance includes light/dark screenshots at narrow, intermediate and wide widths,
+keyboard back/focus restoration, inline wide channel/tab navigation, a flat detail
+with the actual root excerpt and a continuous message stream, and consistent
+message/composer insets. Native running-app feedback remains separate from fixture
+screenshots and automated checks.
+
+The same feedback reported that creation worked and Blossom reacted with emoji.
+It did **not** confirm a text reply. This is user-reported live feedback, not an
+independently observed ACP trace or broader release acceptance.
 
 ## Agreed product behavior
 
@@ -636,3 +680,362 @@ history. The next shared **New session** flow remains a separate increment,
 gated on its metadata and retry contracts. The historical checkpoints above are
 unchanged; full scan/hosted CI, packaged acceptance, live ACP and the remaining
 shared V1 contracts remain deferred.
+
+
+### Shared New session safety checkpoint (2026-09-21, task 54)
+
+**Gated, ready for independent review — not ready for live submission.** The first
+edit restored `CHANNEL_SESSION_CREATION_READY = false` in `NewChannelSession`.
+Only isolated tests inject `creationReady`; production registration does not.
+Parent approval after independent review is required to remove the gate. The
+existing native HMR process (reported PID 70281) was not restarted or exercised;
+this task performed no live writes, native builds, commits or pushes.
+
+Once separately enabled, the channel header **New session** opens a full-width
+local draft in Sessions. Back preserves that draft independently of the ordinary
+channel composer. Blank drafts and typed names alone create nothing. First send
+requires an explicitly selected known current agent, then publishes one kind-9
+root with exact `h`/`p`, stable `client-id` and `["buzz-session","1","quiet"]`.
+The actual accepted root opens in the existing ThreadPanel. Follow-ups remain
+ordinary replies with explicit recipients, never implicit agent re-invocation.
+Private Sessions and DMs keep their current behavior.
+
+Safety corrections from independent findings:
+
+- An exclusive browser Web Lock named by scope/channel/viewer covers the
+  re-read/claim, message-ID update and accepted-record cleanup. Only a fresh
+  claimant sends; another window recovers the existing intent without delivery.
+  Lifetime and current agent membership are rechecked after lock wait. Missing
+  Web Locks fail visibly closed. Updates/cleanup check the expected draft UUID;
+  stale completion cannot erase a newer record. An already-cleared accepted
+  record still permits another window to open that same verified root.
+- The existing bounded outbox retains its exact immutable candidate when initial
+  persistence rejects, marks it failed/undispatched and attempts to save that
+  status. Explicit retry reuses the same event ID, timestamp, content and tags,
+  including the original emoji URLs. Restored retained intent never auto-sends.
+  Unknown delivery stays unknown after dispatch. No second delivery journal or
+  general raw-tag API was added. If persistent storage never succeeded and the
+  process is lost, or retained intent is genuinely absent/evicted, recovery is
+  conservative **Check saved session**, not a new root or automatic replay.
+- Quiet hiding requires both a valid original marker and a positively known
+  original `p` agent recipient. Unknown/nonagent roots stay ordinary. Existing
+  full-window profile projection is retained; late profiles and actual profile
+  budget eviction change presentation without mutating original rows. Plugin
+  disable, exact-message navigation and explicit reveal retain readable fallback;
+  private Sessions and DMs never use this quiet filter.
+- Reading remains DOM-ID based. The real hook excludes hidden Q between A and B;
+  the real unread service regression confirms dwelling B writes only `msg:B`,
+  leaves Q unread and advances no channel frontier. No unread-engine change.
+
+**Isolated protocol evidence:** `/tmp/channel-sessions-marker-proof.json` reports
+PASS at `2026-09-21T20:24:42.306Z`, source-built old Buzz relay
+`4472da6491f7d76ebcffed4b65c341a3278aa25f`, app base `3418bd9`. It exercised authenticated
+creation/invitation/root admission, a teammate's exact signed query, exact stored
+ID/content/tags/signature in disposable Postgres, same-signed retry producing one
+stored root, nonmember read denial, and fresh-process/reconnect durable roundtrip.
+This task read that artifact; it did not rerun the proof. It is **not deployed-relay
+parity, app recovery acceptance, live ACP reply or exactly-once execution**.
+
+Task 54 checks on its then-current uncommitted tree based on `3418bd9`
+(superseded for the final claimant fix by the task 56 checkpoint below):
+
+- TypeScript and changed-file Biome `--error-on-warnings` pass; `design:check`
+  passes. No shared design-system source changed.
+- **498 tests across 32 full affected Vitest files** passed on the final source
+  in 5.66s wall / 22.26s summed execution. Slowest was `MessageComposer.test.tsx`
+  at 3.102s. Coverage includes broker/domain/outbox,
+  save-before/after-commit and receipt failures, retained restore/caps, membership
+  fences, real React lifetime/claim/cleanup, quiet fallback and per-message read state.
+- All four `channel-sessions.spec.mjs` cases pass in Chromium and WebKit:
+  **8 checks**, 8.6s wall, approximately 14.9s summed execution (rounded reporter
+  values), slowest 2.3s. The creation journey adds native editor/focus and quiet
+  layout wiring; one additional two-page case proves actual origin-wide locks,
+  shared localStorage and distinct outbox owners. Claims are held until both lock
+  requests queue, not raced using sleeps; recovery ingests the same signed event,
+  never corrupts an app journal. No browser case was removed. The cross-window
+  case failed before correcting already-cleared acceptance recovery; unit tests
+  cover the failure/status matrix. Screenshots wait for real tab/theme settling;
+  final wide-dark Chromium and narrow-light WebKit screenshots were inspected.
+- Existing cold/warm channel-opening cases pass in both engines (2 checks,
+  6.8s wall). Warm samples were 41.0–50.2ms Chromium and 40–55ms WebKit, with no
+  new head read and the unchanged 100ms budget. Cold visible upper bounds were
+  34.4ms / 55ms and include the Playwright roundtrip. These are local Apple Silicon
+  synthetic measurements, not hosted CI or a network SLA.
+- The broker fixture initially returned unrelated metadata to a roster-only
+  preflight; it now honors exact request filters. Production admission was not
+  relaxed. Final full broker file passes.
+
+Exact test commands use the pinned `bin/pnpm`; logs are under
+`/tmp/channel-sessions-final-vitest.log`, `/tmp/sessions-final-newdraft.log`,
+`/tmp/channel-sessions-final-browser.log`, `/tmp/channel-sessions-opening.log` and
+`/tmp/channel-sessions-design.log`. Full scan, hosted CI, independent approval of
+these fixes, deployed relay parity, attended native/live ACP and packaged acceptance
+remain deferred. Full V1 still needs the separate rename/chip/participation,
+complete last-conversation-ordered directory and activity contracts above.
+
+
+### Stale queued claimant correction (2026-09-21, task 56)
+
+**Production remains gated; ready for final independent review, not live use.**
+Task 55 found one remaining ordering bug: accepted cleanup could erase the record
+before an already-mounted losing editor acquired its claim lock, permitting a
+second root. The task 56 correction is limited to the Sessions draft owner,
+colocated tests and the existing cross-window browser journey. No FOUNDATION file,
+production enablement, runtime restart, live write, commit or push was added.
+
+A durable numeric editor generation is scoped by scope/channel/viewer. An opening
+captures it before mounting its editor and initializes it under the same Web Lock;
+Send waits for that initialization, while local editing remains usable. The lock
+rechecks the captured generation, so cleanup during initialization cannot rebind
+old input to a newer generation. Existing creation records take precedence and
+always enter recovery without automatically sending. Accepted cleanup removes
+editor storage, advances the generation, then removes the expected creation
+record, all while holding the lock; any failed write retains the creation record.
+Claims compare their opening's generation even when that record is now absent.
+Retyping identical text does not refresh the mounted generation. A genuine new
+opening can create a new intent. Expected-ID update/cleanup guards and post-lock
+lifetime/current-agent membership checks are unchanged.
+
+Final focused evidence on the uncommitted tree based on `3418bd9`:
+
+- The deterministic mounted regression **failed before the fix**, producing two
+  thread openings instead of one after cleanup queued before the stale claim
+  (`/tmp/sessions-generation-before.log`). It now passes with exactly one
+  published root, absent creation storage and a visible stale-editor failure;
+  it also covers same-text ABA and a genuine new opening. Six mounted cases were
+  added in total, including initialization ordering, editable loading, visible
+  generation persistence failure and recoverable invalidation failure.
+- TypeScript and changed-file Biome `--error-on-warnings` pass. The same **32 full
+  affected Vitest files now pass 504 tests**, 5.28s wall / 23.08s summed execution;
+  slowest file is `NewChannelSession.test.tsx`, 28 tests / 3.460s. This supersedes
+  task 54's 498-test count, not its separate historical design/performance checks.
+- The full `channel-sessions.spec.mjs` passes in Chromium and WebKit: **8 checks**,
+  10.3s wall / approximately 17.1s summed execution, slowest 3.6s. No browser case
+  was added or removed. Its existing real-page Web Locks/localStorage case retains
+  pending-record recovery and now also proves cleanup queued before a stale claim,
+  an absent record, and only one publication for that genuine opening. Lock queue
+  inspection establishes ordering; no sleeps or retries were added. These local
+  fixture runs are not an apples-to-apples performance benchmark or hosted CI.
+- `git diff --check` passes. Logs: `/tmp/sessions-generation-types.log`,
+  `/tmp/sessions-generation-final-vitest.log`, and
+  `/tmp/sessions-generation-browser.log`. No cold-channel owner changed; the
+  prior cold/warm evidence is unchanged, not rerun for this draft-only correction.
+
+Final independent approval and parent authorization to enable creation remain
+pending. Native user feedback on creation, deployed-relay parity, live ACP,
+packaged acceptance, hosted CI and full scan remain deferred. The isolated real
+marker proof above is unchanged and was not rerun.
+
+
+### Shared creation enabled — ready to try (2026-09-21, task 58)
+
+Eugene's final independent review in task `20260921_57` returned **APPROVE**
+for the stale-claim blocker closure; task 55 had otherwise cleared the change.
+The parent authorized final enablement following the user's full-flow approval.
+These are review/authorization evidence, not attended acceptance of live creation.
+The gated task 54/56 checkpoints above remain historical records.
+
+The temporary production constant, `creationReady` prop and awaiting-review copy
+are removed. The browser fixture now loads the actual Sessions plugin directly,
+without a registration proxy or test-only creation override. The obsolete gated
+component case is removed; the existing accepted-root test now explicitly checks
+default production props. No browser cases were added or removed. Real Web Locks,
+editor-generation fencing, permission/membership checks, busy/disabled state and
+outbox recovery guards remain intact. Private Sessions and native/server code
+are unchanged.
+
+The isolated real-protocol artifact `/tmp/channel-sessions-marker-proof.json` was
+read and still reports PASS for the exact quiet marker, signed admission/query,
+durable stored event, same-signed retry, nonmember denial and fresh-process
+roundtrip described above. It was not rerun. Task 56's 504 tests across 32 files
+and eight browser checks remain the preceding broader focused checkpoint, not
+a claim that those 32 files were rerun for enablement.
+
+Final enablement checks on this uncommitted tree based on `3418bd9`:
+
+- `bin/pnpm typecheck` passed.
+- `bin/pnpm exec vitest run src/bundled/sessions/NewChannelSession.test.tsx`
+  passed **27 tests in the full file**, 4.32s wall / 3.255s test execution.
+  The count is one lower solely because the obsolete closed-gate case was removed;
+  the default working-flow and all safety/recovery cases pass without opt-in.
+- `bin/pnpm test:browser tests/browser/channel-sessions.spec.mjs --project chromium
+  --project webkit --no-deps` passed **all 8 checks**, 10.2s wall / approximately
+  16.9s summed execution (rounded reporter values); slowest was the WebKit
+  two-window case at 3.6s. The unchanged browser-only contracts cover real plugin
+  wiring, focus/layout and origin-wide Web Locks/localStorage across windows.
+  This is a local fixture run, not a hosted timing comparison or live acceptance.
+- Biome `check --error-on-warnings` passed for the three source/test files changed
+  by enablement; `git diff --check` passed.
+
+Logs: `/tmp/sessions-enable-types.log`, `/tmp/sessions-enable-vitest.log`,
+`/tmp/sessions-enable-browser.log`. Earlier task 56 fail-then-pass evidence remains
+the regression proof for the unchanged stale-claim logic.
+
+Attended native/live creation, deployed-relay parity, live ACP response, packaged
+acceptance, hosted CI, full scan and remaining full-V1 contracts are deferred.
+This enablement task made no live writes, native builds, process restarts, commits
+or pushes. The parent owns native-process verification and user try instructions.
+
+### Figma parity feedback pass, 2026-09-21
+
+Reviewed the actual detail (`1357:14501`) and blank-draft (`1392:2554`) PNG exports
+and node context before editing. Shared Sessions now opt into a presentation-only
+`ThreadPanel` variant: flat surface, root-content excerpt title, accessible back
+arrow, continuous root/reply stream without a count divider, and a session-labelled
+existing composer. The ordinary thread presentation and private Sessions are not
+changed. Title/profile changes allocate no new reader. Blank drafts use the same
+header and content insets, with one centered prompt and compact explicit-agent
+instructions next to the composer; saved intent, failure and recovery controls stay.
+
+The channel name and one shared Base UI tablist sit in an 80px wide header. Real
+creation/actions sit at the right, with New session omitted inside detail/draft;
+back returns to the directory and its launcher. Narrow layouts wrap tabs below.
+Message and composer insets are 32px wide, 24px intermediate, 16px narrow. The
+composer rests 24px above the panel bottom and is approximately 100px tall empty.
+
+Intentional differences from the old Figma: retained host navigation/sidebar and
+panel shell, actual prompt excerpts instead of invented numbered session names,
+current design-system neutral controls and keyboard tab indicator, existing
+message typography/timestamps/avatars, real available composer tools only, and
+compact agent/visibility guidance. No fake attachment/format/headphone controls,
+people/agent counts or activity labels. The current theme remains host-owned.
+
+Local fixture screenshots cover 1512×982, 1280×850, 740×850 and 390×850, both
+modes and both browser engines. The existing browser cases were extended, with
+**zero cases added or removed**: they prove native focus, app/plugin wiring,
+message/composer alignment and responsive header geometry, which jsdom cannot.
+Creation and cross-window assertions remain intact. New mounted StrictMode
+component coverage checks ordinary/session presentation, zero replies, held
+loading/failure/retry, focus and single-reader disposal without mocking React.
+This is ready-to-try evidence, not native/package/full-scan validation.
+
+For this uncommitted visual snapshot based on `3418bd9`: root TypeScript,
+changed-file Biome and `design:check` passed; **104 focused Vitest checks in seven
+files** passed (4.38s wall, 6.72s summed test execution). The updated browser file
+passed **8 checks** in Chromium/WebKit (13.4s wall, about 24.2s summed execution;
+slowest WebKit creation/layout journey 4.7s). No browser cases were added or removed.
+An intermediate specificity change was caught by the narrow-inset assertion in both
+engines and fixed at the CSS owner; assertions were not relaxed. These timings are
+local fixture evidence, not hosted CI comparisons. Logs are
+`/tmp/sessions-visual-{types,biome,design,vitest,browser}.log`; screenshots are in
+`test-results/browser/channel-sessions-*`.
+
+No live writes, native restarts/builds, commits, pushes or full scan were performed
+for this pass. PID 70281 remained running. Native attended visual feedback,
+independent final visual review, packaged acceptance and hosted CI remain separate.
+
+### Final visual review and recovery correction, 2026-09-21
+
+Xela's task 61 visual review returned **PASS**, with the intentional differences
+listed above accepted; the parent's own image review also returned **PASS**.
+Eugene's task 62 source review found the visual changes safe but identified one
+recovery defect: a restored creation record without `session.outbox` could leave
+“Checking saved intent…” displayed indefinitely. This final correction reports
+unconfirmed intent and unavailable outbox recovery, without claiming the prompt
+was never sent. The existing explicit read-only **Check saved session** and
+**Back to Sessions** remain available; there is no automatic read, resend or fake
+activity. The ordinary composer continues its existing read-only behavior.
+
+The session presentation now says “Loading session…”, “Retry session” and
+“Session history limit reached.” Ordinary thread copy is unchanged. There are no
+title/parser, relay, private Sessions or four-flow scope changes.
+
+On this uncommitted tree based on `3418bd9`, the missing-outbox mounted StrictMode
+regression failed before the correction and now passes. It asserts the settled
+status synchronously, checks absence of checking/sending text, and exercises
+read-only checking, uncertain absence, retained intent and Back without publishing.
+The affected full component files pass **55 Vitest tests across three files**
+(4.36s wall, 4.09s summed execution; slowest file NewChannelSession, 3.308s).
+Root TypeScript and changed-file Biome pass. The existing browser file's single
+loading selector now follows the session contract; all **8 checks** pass in
+Chromium and WebKit (13.7s wall, approximately 24.2s summed execution; slowest
+WebKit creation/layout check, 4.9s). No browser cases were added or removed.
+These are local fixture results, not hosted CI or live acceptance. Logs:
+`/tmp/sessions-finalfix-{red,types,biome,vitest,browser}.log`.
+
+The parent's prior native feedback reported Blossom emoji without text. That
+remains feedback evidence, not a newly observed live trace or a claim of a textual
+agent response. Native PID 70281 is left unchanged for frontend HMR. No live writes,
+process restarts, native builds, full scan, commits or pushes were performed.
+Packaged acceptance, hosted CI and independently traced live ACP behavior remain
+deferred. The task 62 correction has focused regression evidence and self-review;
+no new independent review of that correction is claimed.
+
+
+## Bounded conversational recency checkpoint, 2026-09-21
+
+This increment supersedes the provisional **Started** ordering recorded in the
+older checkpoint above. It reuses the already-mounted batch of actual signed
+kind-9/40002 replies. Remote and accepted/seen shared intent qualify; sending,
+failed and unknown local intents do not. A canonical marked root plus nested
+parent is supported; bare/quote/lone-root/wrong-channel references are not.
+Eligibility is unchanged, so a newer human-only conversation cannot create a row.
+Roots and reply timestamps are safe nonnegative integer seconds within JavaScript's
+representable Date range. Cache/session disposal drops the snapshot through the
+existing owner, without persistent recency evidence.
+
+**Source correction:** legacy Buzz at
+`4472da6491f7d76ebcffed4b65c341a3278aa25f` updates `last_reply_at = NOW()` for the
+**direct parent**, not `MAX(descendant.created_at)` for the conversation root:
+[thread.rs, lines 210 and 262](https://github.com/block/buzz/blob/4472da6491f7d76ebcffed4b65c341a3278aa25f/crates/buzz-db/src/thread.rs#L210-L283),
+called from [event.rs, line 1292](https://github.com/block/buzz/blob/4472da6491f7d76ebcffed4b65c341a3278aa25f/crates/buzz-db/src/event.rs#L1292).
+Root descendant accounting updates counts. That summary field is receipt evidence,
+not an exact conversational timestamp; it is neither projected nor used here.
+This finding does not justify a backend change for this bounded increment.
+Complete-history ordering remains separate work.
+
+The inspected reference is the
+[directory frame 1357:15191](https://www.figma.com/design/uhFH3LPsy6HMqzoATFgWKl/buzz-?node-id=1357-15191),
+with screenshot/design context at `/tmp/sessions-figma-directory{.png,-context.txt}`.
+Compact 54px minimum rows, quiet dates and 32/24/16px responsive insets follow its
+density and the existing session header. Intentional differences: agreed calendar
+groups replace Active/Past; real reply counts and observed timestamps replace fake
+LI-124 identifiers, green states and avatar counts; the existing ChatCircle icon
+and flat groups remain. No close/status action is invented. The coverage notice
+and functional history/recovery controls remain visible. Header/detail/draft and
+host appearance are unchanged. Flat root-keyed list children preserve native
+button identity and focus when a live reply moves a row between date groups;
+there is no focus-restoration hook or focus stealing.
+
+Focused validation and screenshot comparison are recorded below for this
+uncommitted tree based on `3418bd9`, not inherited from earlier checkpoints.
+
+Validation of this recency increment (local Apple Silicon, synthetic identities):
+
+- Root `bin/pnpm typecheck`, changed-file Biome with `--error-on-warnings`,
+  `bin/pnpm design:check` and `git diff --check` pass. No shared design-system
+  source was edited.
+- Full affected Vitest files `session-evidence.test.tsx`,
+  `RecentChannelThreads.test.tsx` and `ChannelDirectories.integration.test.tsx`
+  pass **43 tests / 3 files**, **3.69s wall / 3.09s summed execution**; slowest file
+  is the directory integration, **2.482s**. Coverage includes human follow-ups,
+  remote/accepted/seen versus failed/unknown/sending, nested/wrong/quote references,
+  zero/older replies, ties, invalid/future dates, midnight rerender, actual signed
+  root edits/summary receipt rejection, live session receive and cache clearing.
+- The cross-day focused-row regression first failed with nested date groups
+  (button remount), then passed with flat keyed rows. Browser native focus also
+  passes in both engines during that reorder, with unchanged query counts.
+- Existing `channel-sessions.spec.mjs` passes **8 checks**, Chromium + WebKit,
+  **15.9s wall / approximately 29.1s summed execution**. Slowest checks are the
+  layout journeys at **5.4s per engine**. No browser cases were added or removed:
+  the existing wiring journey covers live reorder/focus/no extra read, and the
+  existing layout journey checks 54px rows and responsive insets. The initial
+  narrow layout failed at 55.97px; caption-role reply metadata fixed the owner
+  without relaxing the assertion. Screenshot capture now waits for the host's
+  actual final button colors, not an intermediate theme transition. This adds
+  observable settling time (the preceding run was 13.1s), not product work.
+- Light/dark screenshots at **390, 740, 1280 and 1512px** were captured in both
+  engines. The 390/740/1512 light/dark views were inspected against the Figma
+  directory frame; final WebKit captures confirm settled colors. Intentional
+  differences are listed above; this is not a pixel-identical Figma claim.
+
+Logs: `/tmp/sessions-recency-{red,types,biome,design,vitest,browser}.log`.
+Screenshots: `test-results/browser/channel-sessions-fixture-l-c98f8-row-intermediate-wide-views-{chromium,webkit}/sessions-*.png`.
+The parent may seek independent review; none is newly claimed here. Full scan,
+hosted CI, native compilation, packaged acceptance, independent live trace and
+complete-history ordering remain deferred. No startup/channel-opening owner
+changed, so no cold-opening performance check was repeated. No live send,
+restart, commit or push was performed; native PID 70281 remains under the human's
+control and frontend changes are ready for HMR feedback. To try the change, keep
+Sessions open and have a reply arrive in an older eligible conversation already
+inside its checked sample; its row should move to the latest observed date/time.

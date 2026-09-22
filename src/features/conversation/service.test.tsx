@@ -388,3 +388,20 @@ it("does not expose a channel directory from a failed activation", async () => {
   );
   expect(h.service.channelDirectories.snapshot()).toHaveLength(0);
 });
+
+it.each([
+  { title: "", component: Component },
+  { title: "New session", component: null },
+])("rejects invalid optional creation registration %j", (create) => {
+  const h = harness({ apply() {} });
+  expect(() =>
+    h.service.registerChannelDirectory({
+      id: "sessions",
+      title: "Sessions",
+      component: Component,
+      create: create as unknown as NonNullable<
+        import("./contracts").ChannelThreadDirectory["create"]
+      >,
+    }),
+  ).toThrow(/draft needs/);
+});

@@ -35,6 +35,8 @@ export type OutgoingEvent = Readonly<{
   delivery: Delivery;
   error?: string | undefined;
 }>;
+export type DraftIdentity = Readonly<{ id: string; createdAt: number }>;
+type MessageInput = Pick<EventTemplate, "kind" | "content" | "tags">;
 export interface Outbox {
   /** Outstanding operations only. Confirmed events live in the session's retained data. */
   snapshot(): readonly OutgoingEvent[];
@@ -49,6 +51,9 @@ export interface Outbox {
     recovery?: OutboxRecovery,
     active?: () => boolean,
   ): string;
+  /** Commits one stable intent before delivery; duplicates never schedule delivery. */
+  sendDraft(input: MessageInput, draft: DraftIdentity): Promise<string>;
+  findDraft(draftId: string): Promise<string | undefined>;
   /** Attach caller-owned recovery to an existing receipt before resuming it. */
   recover(id: string, recovery: OutboxRecovery): Promise<void>;
   acknowledge(id: string): Promise<void>;
@@ -559,6 +564,52 @@ export function createOutbox(
       set.delete(listener);
     };
   };
+  const draftCommits = new Map<
+    string,
+    { eventId: string; work: Promise<string> }
+  >();
+  function validateDraftInput(input: MessageInput) {
+    if (
+      !Number.isInteger(input.kind) ||
+      input.kind < 0 ||
+      input.kind > 65535 ||
+      !outbox.supports(input.kind)
+    )
+      throw new Error("This relay connection cannot publish that event kind");
+    if (
+      (input.kind === 9 && !input.content.trim()) ||
+      byteSize(input) > OUTBOX_INPUT_MAX_BYTES
+    )
+      throw new Error("Message is empty or too large");
+  }
+  function eventForDraft(input: MessageInput, draft: DraftIdentity) {
+    const template = {
+      ...input,
+      pubkey: viewer,
+      created_at: draft.createdAt,
+      tags: [...input.tags.map((tag) => [...tag]), ["client-id", draft.id]],
+    };
+    return Object.freeze({
+      ...template,
+      tags: Object.freeze(
+        template.tags.map((tag) => Object.freeze(tag)),
+      ) as unknown as string[][],
+      id: getEventHash(template),
+    });
+  }
+  function retainedDraft(id: string) {
+    const matches = visible.filter((item) =>
+      item.event.tags.some((tag) => tag[0] === "client-id" && tag[1] === id),
+    );
+    if (matches.length > 1)
+      throw new Error("Conflicting saved draft identities");
+    return matches[0];
+  }
+  async function waitHydrated() {
+    await ready;
+    if (closed) throw abortError();
+    if (storageError) throw new Error(storageError);
+  }
   const outbox: Outbox = Object.freeze({
     snapshot: () => finalSnapshot ?? snapshot,
     subscribe: (listener: () => void) => subscribe(listeners, listener),
@@ -727,6 +778,81 @@ export function createOutbox(
       schedule(event.id, intent);
       return event.id;
     },
+    async sendDraft(input: MessageInput, draft: DraftIdentity) {
+      if (
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+          draft.id,
+        ) ||
+        !Number.isSafeInteger(draft.createdAt) ||
+        draft.createdAt < 0 ||
+        input.tags.some((tag) => tag[0] === "client-id")
+      )
+        throw new Error("Invalid draft identity");
+      // Capture immutable inputs before hydration or joining another caller.
+      validateDraftInput(input);
+      const event = eventForDraft(input, draft);
+      const draftId = draft.id;
+      await waitHydrated();
+      const committing = draftCommits.get(draftId);
+      if (committing) {
+        if (committing.eventId !== event.id)
+          throw new Error("Draft inputs conflict with saved intent");
+        return committing.work;
+      }
+      const retained = retainedDraft(draftId);
+      if (retained) {
+        if (retained.event.id !== event.id)
+          throw new Error("Draft inputs conflict with saved intent");
+        return retained.event.id;
+      }
+      if (snapshot.length >= MAX_PENDING)
+        throw new Error(
+          "Too many outstanding operations; resolve or dismiss a pending operation",
+        );
+      snapshot = Object.freeze([
+        ...snapshot,
+        Object.freeze({ event, delivery: "sending" as const }),
+      ]);
+      // Install the commit lease before notifying consumers (including explicit retry).
+      const work = Promise.resolve().then(async () => {
+        try {
+          await persist(event.id);
+          if (!closed) schedule(event.id, Promise.resolve());
+          return event.id;
+        } catch (error) {
+          // No dispatch occurred. Retain the immutable candidate so an explicit
+          // retry uses this exact ID/tags, including after a recoverable save error.
+          // A save may have committed before rejecting; never invent a replacement.
+          if (!closed) {
+            const item = find(event.id);
+            if (item)
+              saveStatus({
+                ...item,
+                delivery: "failed",
+                error: `Session intent was not dispatched: ${error instanceof Error ? error.message : String(error)}`,
+              });
+          }
+          throw error;
+        } finally {
+          draftCommits.delete(draftId);
+        }
+      });
+      draftCommits.set(draftId, { eventId: event.id, work });
+      notify();
+      return work;
+    },
+    async findDraft(draftId: string) {
+      await waitHydrated();
+      const committing = draftCommits.get(draftId);
+      if (committing) {
+        try {
+          return await committing.work;
+        } catch {
+          // Failed durable preparation still retains a known-unsent candidate.
+        }
+      }
+      return retainedDraft(draftId)?.event.id;
+    },
     retry(id: string, active?: () => boolean) {
       const item = find(id);
       if (item?.guarded && (active ?? admissionGates.get(id))?.() !== true)
@@ -738,7 +864,8 @@ export function createOutbox(
         !(item.event.kind === 9000 && item.acknowledged) &&
         !isWorkflowOperation(item.event) &&
         !attempts.has(id) &&
-        !dismissing.has(id)
+        !dismissing.has(id) &&
+        ![...draftCommits.values()].some((commit) => commit.eventId === id)
       ) {
         // A profile retry can reuse an older, unguarded saved invitation.
         // Promote that intent before scheduling so signing and publication honor
@@ -758,7 +885,12 @@ export function createOutbox(
     dismiss(id: string) {
       const pending = dismissing.get(id);
       if (pending) return pending;
-      if (closed || attempts.has(id)) return Promise.resolve();
+      if (
+        closed ||
+        attempts.has(id) ||
+        [...draftCommits.values()].some((commit) => commit.eventId === id)
+      )
+        return Promise.resolve();
       const item = visible.find((item) => item.event.id === id);
       if (item?.recovery && item.delivery !== "failed")
         return Promise.reject(
@@ -859,6 +991,7 @@ export function createOutbox(
       finalVisible = visible;
       closed = true;
       admissionGates.clear();
+      draftCommits.clear();
       lifetime.abort();
       for (const attempt of attempts.values()) {
         attempt.controller?.abort(abortError());

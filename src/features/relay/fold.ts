@@ -1,3 +1,4 @@
+import { isQuietSessionRoot } from "./channel-session";
 import type { CustomEmoji } from "./emoji";
 import { validatedBlurhash } from "./blurhash";
 import { threadReference } from "./thread-reference";
@@ -318,6 +319,7 @@ export function foldMessages(
               }),
             }
           : {}),
+        ...(isQuietSessionRoot(event) ? { quietSession: true as const } : {}),
         ...(edits.length ? { edited: true as const } : {}),
         ...(projected.content !== content &&
         projected.content !== content.trimEnd()

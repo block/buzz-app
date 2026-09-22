@@ -1006,7 +1006,8 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(draft()).toHaveCSS("font-size", "42px");
     await draft().fill("😀 🙏 👏 hello");
     await expect(draft()).not.toHaveAttribute("data-single-emoji", "true");
-    await expect(draft()).toHaveCSS("font-size", "14px");
+    // Mixed text returns to the shared composer text-body role, not legacy label-sm.
+    await expect(draft()).toHaveCSS("font-size", "16px");
     const publicationCount = await page.evaluate(
       () => window.emojiFixture.report.publications.length,
     );

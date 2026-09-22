@@ -15,6 +15,10 @@ export const beaconStyles = `
   --beacon-add-soft: #e7f5ec;
   --beacon-remove: #a44343;
   --beacon-remove-soft: #fff0ef;
+  --beacon-waiting: #2569a5;
+  --beacon-waiting-soft: #edf5fc;
+  --beacon-draft: #7550a3;
+  --beacon-draft-soft: #f5effb;
   box-sizing: border-box;
   min-height: calc(100vh - 56px);
   padding: 24px 32px 48px;
@@ -25,11 +29,11 @@ export const beaconStyles = `
   font: calc(14px * var(--buzz-text-scale, 1))/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 :root[data-color-mode="dark"] .pr-beacon {
-  --beacon-background: #171e22; --beacon-surface: #202a2f; --beacon-text: #e6edf0; --beacon-muted: #a2b2ba; --beacon-border: #35434a; --beacon-hover: #2a373d; --beacon-accent: #70d2b8; --beacon-accent-soft: #253e37; --beacon-warning: #e7c57c; --beacon-warning-soft: #3c3425; --beacon-add: #97dfb6; --beacon-add-soft: #253d31; --beacon-remove: #efa5a0; --beacon-remove-soft: #432d30;
+  --beacon-background: #171e22; --beacon-surface: #202a2f; --beacon-text: #e6edf0; --beacon-muted: #a2b2ba; --beacon-border: #35434a; --beacon-hover: #2a373d; --beacon-accent: #70d2b8; --beacon-accent-soft: #253e37; --beacon-warning: #e7c57c; --beacon-warning-soft: #3c3425; --beacon-add: #97dfb6; --beacon-add-soft: #253d31; --beacon-remove: #efa5a0; --beacon-remove-soft: #432d30; --beacon-waiting: #8bc7ff; --beacon-waiting-soft: #263949; --beacon-draft: #d0aff5; --beacon-draft-soft: #382e46;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-color-mode]) .pr-beacon {
-    --beacon-background: #171e22; --beacon-surface: #202a2f; --beacon-text: #e6edf0; --beacon-muted: #a2b2ba; --beacon-border: #35434a; --beacon-hover: #2a373d; --beacon-accent: #70d2b8; --beacon-accent-soft: #253e37; --beacon-warning: #e7c57c; --beacon-warning-soft: #3c3425; --beacon-add: #97dfb6; --beacon-add-soft: #253d31; --beacon-remove: #efa5a0; --beacon-remove-soft: #432d30;
+    --beacon-background: #171e22; --beacon-surface: #202a2f; --beacon-text: #e6edf0; --beacon-muted: #a2b2ba; --beacon-border: #35434a; --beacon-hover: #2a373d; --beacon-accent: #70d2b8; --beacon-accent-soft: #253e37; --beacon-warning: #e7c57c; --beacon-warning-soft: #3c3425; --beacon-add: #97dfb6; --beacon-add-soft: #253d31; --beacon-remove: #efa5a0; --beacon-remove-soft: #432d30; --beacon-waiting: #8bc7ff; --beacon-waiting-soft: #263949; --beacon-draft: #d0aff5; --beacon-draft-soft: #382e46;
   }
 }
 .pr-beacon *, .pr-beacon *::before, .pr-beacon *::after { box-sizing: border-box; }
@@ -73,6 +77,15 @@ export const beaconStyles = `
 .pr-beacon .beacon-badge { display: inline-flex; align-items: center; border: 1px solid var(--beacon-border); border-radius: 5px; padding: 2px 7px; font-size: calc(11px * var(--buzz-text-scale, 1)); font-weight: 550; line-height: 1.5; color: var(--beacon-muted); background: var(--beacon-background); overflow-wrap: anywhere; }
 .pr-beacon .beacon-accent, .pr-beacon .beacon-status-ready-to-merge { background: var(--beacon-accent-soft); color: var(--beacon-accent); border-color: transparent; }
 .pr-beacon .beacon-status-failing-checks, .pr-beacon .beacon-status-needs-response { color: var(--beacon-warning); background: var(--beacon-warning-soft); border-color: transparent; }
+.pr-beacon .beacon-status-filters { display: flex; flex-wrap: wrap; gap: 7px; min-inline-size: 0; margin: 0 0 20px; padding: 0; border: 0; }
+.pr-beacon .beacon-status-filter { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 4px 9px; border-radius: 999px; color: var(--beacon-muted); white-space: nowrap; }
+.pr-beacon .beacon-status-filter strong { min-width: 1.3em; text-align: center; font-size: calc(12px * var(--buzz-text-scale, 1)); }
+.pr-beacon .beacon-status-filter[aria-pressed="true"] { border-color: currentColor; box-shadow: inset 0 0 0 1px currentColor; }
+.pr-beacon .beacon-status-filter-ready-to-merge { color: var(--beacon-accent); background: var(--beacon-accent-soft); }
+.pr-beacon .beacon-status-filter-failing-checks { color: var(--beacon-remove); background: var(--beacon-remove-soft); }
+.pr-beacon .beacon-status-filter-needs-response, .pr-beacon .beacon-status-filter-unknown { color: var(--beacon-muted); background: var(--beacon-hover); }
+.pr-beacon .beacon-status-filter-awaiting-review { color: var(--beacon-waiting); background: var(--beacon-waiting-soft); }
+.pr-beacon .beacon-status-filter-draft { color: var(--beacon-draft); background: var(--beacon-draft-soft); }
 .pr-beacon .beacon-hidden { margin-top: 22px; color: var(--beacon-muted); font-size: calc(13px * var(--buzz-text-scale, 1)); }
 .pr-beacon .beacon-hidden summary { cursor: pointer; padding: 8px 0; }
 .pr-beacon .beacon-hidden ul { padding-left: 20px; }

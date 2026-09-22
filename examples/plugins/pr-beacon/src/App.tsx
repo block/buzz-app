@@ -28,6 +28,22 @@ const OWN_STATUS_LABELS: Record<OwnPullRequestStatus, string> = {
   unknown: "Unresolved",
 };
 
+type OwnPullRequestFilter = OwnPullRequestStatus | "all";
+
+const OWN_STATUS_FILTERS: {
+  status: OwnPullRequestFilter;
+  label: string;
+  icon: string;
+}[] = [
+  { status: "all", label: "All", icon: "●" },
+  { status: "ready-to-merge", label: "Ready to merge", icon: "✓" },
+  { status: "failing-checks", label: "Checks failing", icon: "×" },
+  { status: "needs-response", label: "Feedback", icon: "!" },
+  { status: "awaiting-review", label: "Waiting", icon: "○" },
+  { status: "draft", label: "Draft", icon: "◇" },
+  { status: "unknown", label: "Unresolved", icon: "?" },
+];
+
 // PR Beacon's own default poll interval.
 const POLL_INTERVAL_MS = 60_000;
 
@@ -464,6 +480,8 @@ export function createApp(
   function OwnPullRequests(props: {
     token: string;
     pollingEnabled: boolean;
+    selectedStatus: OwnPullRequestFilter;
+    onSelectedStatusChange: (status: OwnPullRequestFilter) => void;
     onSelect: (pullRequest: PullRequestSummary) => void;
   }) {
     const { state, refresh } = useQueue(
@@ -480,6 +498,12 @@ export function createApp(
         grouped.set(status, [...(grouped.get(status) ?? []), item]);
       }
     }
+    const visibleStatuses = (
+      Object.keys(OWN_STATUS_LABELS) as OwnPullRequestStatus[]
+    ).filter(
+      (status) =>
+        props.selectedStatus === "all" || status === props.selectedStatus,
+    );
 
     return (
       <div className="beacon-inbox">
@@ -511,6 +535,36 @@ export function createApp(
         )}
         {result !== null && (
           <>
+            <fieldset
+              className="beacon-status-filters"
+              aria-label="Filter pull requests by status"
+            >
+              {OWN_STATUS_FILTERS.map((filter) => {
+                const count =
+                  filter.status === "all"
+                    ? result.items.length
+                    : (grouped.get(filter.status)?.length ?? 0);
+                const fullLabel =
+                  filter.status === "all"
+                    ? filter.label
+                    : OWN_STATUS_LABELS[filter.status];
+                return (
+                  <button
+                    key={filter.status}
+                    type="button"
+                    className={`beacon-status-filter beacon-status-filter-${filter.status}`}
+                    aria-label={`${fullLabel}: ${count} pull request${count === 1 ? "" : "s"}`}
+                    aria-pressed={props.selectedStatus === filter.status}
+                    title={fullLabel}
+                    onClick={() => props.onSelectedStatusChange(filter.status)}
+                  >
+                    <span aria-hidden="true">{filter.icon}</span>
+                    <span>{filter.label}</span>
+                    <strong>{count}</strong>
+                  </button>
+                );
+              })}
+            </fieldset>
             {result.truncated && (
               <p role="alert">
                 Showing the first {result.items.length} pull requests; more may
@@ -520,29 +574,32 @@ export function createApp(
             {result.items.length === 0 && (
               <p>You have no open pull requests.</p>
             )}
-            {(Object.keys(OWN_STATUS_LABELS) as OwnPullRequestStatus[]).map(
-              (status) => {
-                const items = grouped.get(status);
-                if (!items?.length) return null;
-                return (
-                  <section key={status} aria-label={OWN_STATUS_LABELS[status]}>
-                    <h3 className="beacon-group-title">
-                      {OWN_STATUS_LABELS[status]}
-                    </h3>
-                    <ul className="beacon-pr-list">
-                      {items.map((item) => (
-                        <PullRequestRow
-                          key={item.url}
-                          item={item}
-                          onSelect={props.onSelect}
-                          status={status}
-                        />
-                      ))}
-                    </ul>
-                  </section>
-                );
-              },
-            )}
+            {result.items.length > 0 &&
+              props.selectedStatus !== "all" &&
+              (grouped.get(props.selectedStatus)?.length ?? 0) === 0 && (
+                <p>No pull requests match this status.</p>
+              )}
+            {visibleStatuses.map((status) => {
+              const items = grouped.get(status);
+              if (!items?.length) return null;
+              return (
+                <section key={status} aria-label={OWN_STATUS_LABELS[status]}>
+                  <h3 className="beacon-group-title">
+                    {OWN_STATUS_LABELS[status]}
+                  </h3>
+                  <ul className="beacon-pr-list">
+                    {items.map((item) => (
+                      <PullRequestRow
+                        key={item.url}
+                        item={item}
+                        onSelect={props.onSelect}
+                        status={status}
+                      />
+                    ))}
+                  </ul>
+                </section>
+              );
+            })}
           </>
         )}
       </div>
@@ -568,6 +625,11 @@ export function createApp(
     const [selected, setSelected] = React.useState<PullRequestSummary | null>(
       null,
     );
+    const [ownPullRequestFilter, setOwnPullRequestFilter] =
+      React.useState<OwnPullRequestFilter>("all");
+    React.useEffect(() => {
+      setOwnPullRequestFilter("all");
+    }, [token]);
     const [tab, setTab] = React.useState<"review" | "own" | "settings">(
       token ? "review" : "settings",
     );
@@ -696,6 +758,8 @@ export function createApp(
               <OwnPullRequests
                 token={token}
                 pollingEnabled={preferences.pollingEnabled}
+                selectedStatus={ownPullRequestFilter}
+                onSelectedStatusChange={setOwnPullRequestFilter}
                 onSelect={setSelected}
               />
             ) : (

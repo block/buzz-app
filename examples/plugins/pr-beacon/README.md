@@ -19,7 +19,11 @@ built from public GitHub REST/GraphQL API documentation.
   into Draft / Awaiting review / Reviewed with feedback / Approved-but-failing
   / Ready to merge, using only evidence GitHub's API actually reports (see
   [Known limitations](#known-limitations) — this is a portable subset, not a
-  full parity implementation of any particular status engine).
+  full parity implementation of any particular status engine). A compact
+  status summary shows each group’s count. Select a status to filter the
+  cached list, or **All** to restore it. Zero-count groups stay visible;
+  filtering makes no GitHub request. The green group means **Ready to merge**
+  under the checks above, rather than every PR with an approval.
 - **Pull request detail** — an **Open on GitHub** link, title, branches, and a changed-files diff fetched
   via GitHub's compare API, pinned to the exact base and head commit SHAs you
   loaded (not "whatever the PR looks like right now"). See
@@ -289,6 +293,8 @@ to avoid installing an older bundle. Import the updated folder in Buzz again.
   multiple sequential replies keep updating the displayed content instead of
   disposing on the first one; and the included/omitted file coverage is
   shown before the user clicks Send, not only after.
+- `App.statusFilters.test.tsx` — status counts and filtering, empty groups,
+  refresh updates, and preserving selection during navigation.
 - `queueCache.test.ts` — cached empty results, request deduplication, successful-fetch
   timestamps, failed-refresh retention, and clearing on token change/disposal.
 - `App.test.tsx` — reuse across tabs, PR visits, and page remounts; relative

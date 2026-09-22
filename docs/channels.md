@@ -233,6 +233,11 @@ Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
 Delete requires a direct owner role; the last owner cannot Leave. DMs offer Hide
 only. Delegated owner-agent authority and community-admin overrides are not
 inferred or supported by this slice; the relay remains the final authority.
+Membership accepts NIP-29 `p` tags with optional relay and role fields
+(`["p", pubkey, relay_hint?, role?]`), including the relay's four-field roster.
+These fields never substitute for the separate administrator record. Invalid
+member keys and duplicate entries still fail closed. Failed menu permission reads
+show "Channel actions unavailable" with retry, not raw protocol errors.
 
 Each command has explicit confirmation; Delete additionally requires the channel
 name. The lifecycle owner rechecks authority before signing and again before

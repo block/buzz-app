@@ -106,7 +106,10 @@ export function lifecycleSettings(
   for (const entry of roster.tags.filter(([key]) => key === "p")) {
     const member = entry[1];
     if (
-      entry.length !== 2 ||
+      // NIP-29 membership permits ["p", key, relay_hint?, role?].
+      // These hints do not grant authority; roles come from the 39001 record.
+      entry.length < 2 ||
+      entry.length > 4 ||
       !member ||
       !PUBKEY.test(member) ||
       members.has(member)

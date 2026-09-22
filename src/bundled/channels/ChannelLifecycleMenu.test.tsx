@@ -73,7 +73,9 @@ it("shows fresh loading and the last-owner boundary", async () => {
 it("failed permission reads offer retry rather than stale destructive actions", async () => {
   const user = userEvent.setup();
   const lifecycle = capability();
-  lifecycle.load.mockRejectedValueOnce(new Error("permissions offline"));
+  lifecycle.load.mockRejectedValueOnce(
+    new Error("Malformed channel membership state"),
+  );
   render(
     <ContextMenuRoot open>
       <MenuPopup>
@@ -87,7 +89,7 @@ it("failed permission reads offer retry rather than stale destructive actions", 
     </ContextMenuRoot>,
   );
   expect((await screen.findByRole("alert")).textContent).toBe(
-    "permissions offline",
+    "Channel actions unavailable",
   );
   expect(
     screen.queryByRole("menuitem", { name: "Archive channel…" }),

@@ -554,10 +554,15 @@ export const test = base.extend({
           .map((id) =>
             sign(39002, [
               ["d", id],
-              ["p", viewer],
+              [
+                "p",
+                viewer,
+                "",
+                lifecycleRows.some((row) => row.id === id) ? "owner" : "member",
+              ],
               ...participants
                 .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-                .map((pubkey) => ["p", pubkey]),
+                .map((pubkey) => ["p", pubkey, "", "member"]),
             ]),
           );
       if (filter.kinds?.includes(39000))

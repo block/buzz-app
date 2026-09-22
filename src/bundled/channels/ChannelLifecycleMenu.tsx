@@ -19,21 +19,20 @@ export function ChannelLifecycleMenu({
   disabled: boolean;
 }) {
   const [state, setState] = useState<ChannelLifecycleSettings>();
-  const [error, setError] = useState("");
+  const [failed, setFailed] = useState(false);
   const [retry, setRetry] = useState(0);
   // biome-ignore lint/correctness/useExhaustiveDependencies: explicit retry starts a fresh permission lookup.
   useEffect(() => {
     if (!lifecycle.available) return;
     const controller = new AbortController();
     setState(undefined);
-    setError("");
+    setFailed(false);
     void lifecycle.load(channelId, controller.signal).then(
       (settings) => {
         if (!controller.signal.aborted) setState(settings);
       },
-      (error: unknown) => {
-        if (!controller.signal.aborted)
-          setError(error instanceof Error ? error.message : String(error));
+      () => {
+        if (!controller.signal.aborted) setFailed(true);
       },
     );
     return () => controller.abort();
@@ -44,10 +43,10 @@ export function ChannelLifecycleMenu({
         Channel actions unavailable on this connection
       </MenuItem>
     );
-  if (error)
+  if (failed)
     return (
       <>
-        <p role="alert">{error}</p>
+        <p role="alert">Channel actions unavailable</p>
         <MenuItem
           closeOnClick={false}
           disabled={disabled}

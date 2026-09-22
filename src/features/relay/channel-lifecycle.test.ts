@@ -47,8 +47,8 @@ function harness(role = "owner", type = "stream", owners = 1) {
     roles(role),
     record(39002, [
       ["d", id],
-      ["p", viewer],
-      ["p", other],
+      ["p", viewer, "", role],
+      ["p", other, "", owners > 1 ? "owner" : "member"],
     ]),
   ];
   let visible: RelayEvent[] = [];
@@ -132,6 +132,53 @@ describe("type and role boundaries", () => {
         canLeave,
         canHide,
       });
+      h.owner.dispose();
+    },
+  );
+  it.each(
+    [[], ["wss://relay.example"], ["", "owner"]].map((hints) => ({ hints })),
+  )(
+    "accepts membership hints %j without granting administrator authority",
+    async ({ hints }) => {
+      const h = harness("member");
+      h.setEvents([
+        ...h.getEvents().filter((event) => event.kind !== 39002),
+        h.record(39002, [
+          ["d", id],
+          ["p", viewer, ...hints],
+        ]),
+      ]);
+      expect(await h.owner.capability.load(id)).toMatchObject({
+        canArchive: false,
+        canDelete: false,
+        canLeave: true,
+      });
+      h.owner.dispose();
+    },
+  );
+  it.each(
+    [
+      [["p"]],
+      [["p", "not-a-key"]],
+      [["p", viewer, "", "owner", "unexpected"]],
+      [
+        ["p", viewer],
+        ["p", viewer, "", "owner"],
+      ],
+    ].map((entries) => ({ entries })),
+  )(
+    "rejects malformed or duplicate member entries %j before signing",
+    async ({ entries }) => {
+      const h = harness();
+      h.setEvents([
+        ...h.getEvents().filter((event) => event.kind !== 39002),
+        h.record(39002, [["d", id], ...entries]),
+      ]);
+      await expect(h.owner.capability.run("delete", id)).rejects.toThrow(
+        "Malformed",
+      );
+      expect(h.sign).not.toHaveBeenCalled();
+      expect(h.publish).not.toHaveBeenCalled();
       h.owner.dispose();
     },
   );

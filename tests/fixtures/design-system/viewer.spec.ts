@@ -54,7 +54,7 @@ test("built viewer loads every specimen and foundation without app connections",
           await page.setViewportSize({ width, height: 900 });
           const row = page
             .getByRole("row")
-            .filter({ hasText: "bg-item-hover" });
+            .filter({ hasText: "bg-affordance-panel-hover" });
           const status = row
             .getByText("proposed", { exact: true })
             .filter({ visible: true });

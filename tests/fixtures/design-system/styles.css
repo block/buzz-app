@@ -73,11 +73,11 @@
   }
 
   .design-system-nav-link:hover:not(.design-system-nav-link-active) {
-    background: var(--bg-item-hover);
+    background: var(--affordance-panel-hover);
   }
 
   .design-system-nav-link-active {
-    background: var(--bg-item-selected);
+    background: var(--affordance-selected);
   }
 
   .design-system-content {

@@ -22,6 +22,10 @@ an actual use, document it in the registry and measure its intended pairings.
 Legacy utilities and host aliases remain while their callers migrate. Do not
 add new uses. Whole materials such as glass still travel as one shared recipe.
 
+Panel navigation uses `affordance-panel-hover` for its quiet hover and the shared
+`affordance-selected` for persistent selection. In dark mode, the unfilled panel
+row needs a quieter hover than a filled subtle control; these are distinct roles.
+
 ## Foundations
 
 The interface uses shared color, type, spacing and shape roles. Primary actions

@@ -195,6 +195,7 @@ function Composer({
           return false;
         return owner.insertMention(recipient.pubkey, recipient.name);
       }
+      if (!range) return owner.insertText(text);
       const observation = owner.observation();
       if (!observation) return false;
       return owner.replaceEditingRange(

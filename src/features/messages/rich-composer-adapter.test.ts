@@ -270,19 +270,28 @@ it("locks direct commands and undo while disabled, then restores editing", () =>
   expect(value.snapshot().draft.text).toBe("saved");
 });
 
-it("keeps catalog-only emoji changes out of undo and preserves literal source and marks", () => {
-  const value = adapter(mentionDraft("**:party:**"));
-  const entries = [{ shortcode: "party", url: "https://emoji.test/party.png" }];
-  value.setEmoji(entries, (url) => url);
-  expect(
-    value.editor.view.dom.querySelectorAll("img[data-composer-emoji]"),
-  ).toHaveLength(1);
-  expect(value.snapshot().draft.text).toBe("**:party:**");
-  expect(value.editor.commands.undo()).toBe(false);
-  value.setEmoji([], (url) => url);
-  expect(value.snapshot().draft.text).toBe("**:party:**");
-  expect(value.editor.commands.undo()).toBe(false);
-});
+it.each([
+  "**:party:**",
+  "before **:party:**",
+  "before [:party:](https://example.com)",
+])(
+  "keeps catalog-only emoji changes out of undo and preserves source and marks: %s",
+  (source) => {
+    const value = adapter(mentionDraft(source));
+    const entries = [
+      { shortcode: "party", url: "https://emoji.test/party.png" },
+    ];
+    value.setEmoji(entries, (url) => url);
+    expect(
+      value.editor.view.dom.querySelectorAll("img[data-composer-emoji]"),
+    ).toHaveLength(1);
+    expect(value.snapshot().draft.text).toBe(source);
+    expect(value.editor.commands.undo()).toBe(false);
+    value.setEmoji([], (url) => url);
+    expect(value.snapshot().draft.text).toBe(source);
+    expect(value.editor.commands.undo()).toBe(false);
+  },
+);
 
 it("preserves authored trailing breaks when sending and restoring a draft", () => {
   const value = adapter(mentionDraft("line"));
@@ -318,4 +327,19 @@ it("refreshes read-only emoji previews without editing content or decorating cod
   );
   expect(code.editor.view.dom.querySelectorAll("img")).toHaveLength(0);
   expect(code.snapshot().draft.text).toBe("```\n:party:\n```");
+});
+
+it("preserves literal code line continuations when serializing and restoring", () => {
+  const source = "```sh\necho first\\\n  && echo second\n```";
+  const value = adapter(mentionDraft(source));
+  expect(value.snapshot().draft.text).toBe(source);
+  expect(adapter(value.snapshot().draft).snapshot().draft.text).toBe(source);
+});
+
+it("restores recipient marks from the replaced text rather than its preceding boundary", () => {
+  const source = mentionDraft({
+    text: "before **@Alex**",
+    recipients: [{ pubkey: "a".repeat(64), name: "Alex", start: 9, end: 14 }],
+  });
+  expect(adapter(source).snapshot().draft).toEqual(source);
 });

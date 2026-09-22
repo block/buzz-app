@@ -65,7 +65,7 @@ export class RichComposerAdapter {
                 // The default serializer drops breaks at the end of a paragraph.
                 // In a message these are authored content, not layout padding.
                 serialize(state: { write(text: string): void }) {
-                  state.write("\\\n");
+                  state.write("\n");
                 },
               },
             };
@@ -193,6 +193,16 @@ export class RichComposerAdapter {
     return true;
   }
 
+  insertText(text: string) {
+    if (!this.editor.isEditable) return false;
+    this.#rejected = false;
+    this.editor.view.dispatch(this.editor.state.tr.insertText(text));
+    if (this.#rejected) return false;
+    this.editor.view.dispatch(closeHistory(this.editor.state.tr));
+    this.editor.view.focus();
+    return true;
+  }
+
   insertMention(pubkey: string, name: string) {
     if (
       !this.editor.isEditable ||
@@ -278,7 +288,7 @@ export class RichComposerAdapter {
     if (!replacements.length) return null;
     const transaction = state.tr.setMeta("emojiDecoration", true);
     for (const { from, to, source, url } of replacements.reverse()) {
-      const marks = state.doc.resolve(from).marks();
+      const marks = state.doc.nodeAt(from)?.marks ?? [];
       transaction.replaceWith(
         from,
         to,
@@ -399,10 +409,9 @@ export class RichComposerAdapter {
       const from = this.#documentPosition(start);
       const to = this.#documentPosition(start + marker.length);
       if (from === undefined || to === undefined) continue;
-      const marks = this.editor.state.doc
-        .resolve(from)
-        .marks()
-        .map((mark) => mark.toJSON());
+      const marks = (this.editor.state.doc.nodeAt(from)?.marks ?? []).map(
+        (mark) => mark.toJSON(),
+      );
       this.editor
         .chain()
         .setTextSelection({ from, to })
@@ -498,10 +507,9 @@ export class RichComposerAdapter {
         },
       );
     const serializedDoc = serializationTransaction.doc;
-    let serialized =
+    const serialized =
       storage.markdown?.serializer?.serialize(serializedDoc.content) ??
       this.#editingText();
-    serialized = serialized.replace(/\\\n/g, "\n");
 
     const occurrences = nodes
       .map((node) => ({ ...node, start: serialized.indexOf(node.marker) }))

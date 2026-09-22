@@ -1113,3 +1113,15 @@ it("keeps retry submission available while a new-session draft is locked", () =>
   });
   expect(h.messages.send).not.toHaveBeenCalled();
 });
+
+it("lets an ordinary emoji tool replace the current selection and delivers that edit", () => {
+  const h = mount();
+  h.fill("replace this");
+  act(() => {
+    h.input().setSelectionRange(0, 12);
+    expect(h.commands().insertText("😀")).toBe(true);
+  });
+  expect(h.input()).toHaveTextContent("😀");
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith("channel", "😀", []);
+});

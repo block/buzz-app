@@ -832,14 +832,23 @@ test("recovery is a keyboard-selectable action without transferring editor focus
   const input = page.getByRole("textbox", { name: "Message #Test" });
   for (const withChoice of [false, true]) {
     await input.fill(`!retry-${withChoice}`);
+    // fill() finishes before React necessarily mounts the next provider. Wait
+    // for this query, not whichever historical request happened to be last.
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.completionFixture.queries().at(-1)),
+      )
+      .toBe(`retry-${withChoice}`);
     const index = await page.evaluate(
       () => window.completionFixture.queries().length - 1,
     );
-    await page.evaluate(
-      ({ index, withChoice }) =>
-        window.completionFixture.fail(index, withChoice),
-      { index, withChoice },
-    );
+    expect(
+      await page.evaluate(
+        ({ index, withChoice }) =>
+          window.completionFixture.fail(index, withChoice),
+        { index, withChoice },
+      ),
+    ).toBe(true);
     const retry = page.getByRole("option", { name: "Retry suggestions" });
     // Publishing updates React state; wait for the options and keyboard handler
     // to commit before ArrowUp, or the browser moves the caret instead.
@@ -880,6 +889,8 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
   await expect(main).toHaveJSProperty("value", ":smile");
   await main.focus();
+  await expect(main).toHaveJSProperty("selectionStart", 6);
+  await expect(main).toHaveJSProperty("selectionEnd", 6);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await main.press("Tab");
   await expect(main).toHaveJSProperty("value", "😄");

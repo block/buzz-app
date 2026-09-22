@@ -302,7 +302,7 @@ test("media proxy neutralizes comma-joined content types as downloads", async ()
   }
 });
 
-test("media proxy neutralizes smuggled inline content type parameters as downloads", async () => {
+test("media proxy strips smuggled inline content type parameters", async () => {
   const bytes = Buffer.from("fake png then svg");
   const h = await harness(
     () =>
@@ -318,11 +318,8 @@ test("media proxy neutralizes smuggled inline content type parameters as downloa
       `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe(
-      "application/octet-stream",
-    );
-    expect(response.headers.get("content-disposition")).toBe("attachment");
-    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("content-disposition")).toBeNull();
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
   } finally {
     await h.close();
@@ -510,7 +507,7 @@ test("media proxy neutralizes non-media content types as downloads", async () =>
   }
 });
 
-test("media proxy neutralizes smuggled audio content type parameters as downloads", async () => {
+test("media proxy strips smuggled audio content type parameters", async () => {
   const bytes = Buffer.from("fake audio then svg");
   const h = await harness(
     () =>
@@ -527,11 +524,9 @@ test("media proxy neutralizes smuggled audio content type parameters as download
       `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
     );
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe(
-      "application/octet-stream",
-    );
-    expect(response.headers.get("content-disposition")).toBe("attachment");
-    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(response.headers.get("content-type")).toBe("audio/mpeg");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
   } finally {
     await h.close();

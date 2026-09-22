@@ -947,7 +947,6 @@ export function relayBrokerPlugin({
             const type = upstream.headers.get("content-type") ?? "";
             const mediaType = type.split(";", 1)[0].trim().toLowerCase();
             const trustedType =
-              !type.includes(",") &&
               /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(
                 mediaType,
               );

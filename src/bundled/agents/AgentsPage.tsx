@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useSyncExternalStore } from "react";
 import type {
   AgentControl,
@@ -108,6 +109,7 @@ function ManagedAgents({
   control: AgentControl;
   connection: RelaySnapshot;
 }) {
+  const resolveName = useIdentityNames(connection.session.names);
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
     library.subscribe,
@@ -140,7 +142,7 @@ function ManagedAgents({
           return (
             <AgentCard
               key={agent.id}
-              name={agent.name}
+              name={resolveName(agent.pubkey, agent.name)}
               avatar={avatar}
               identities={[agent]}
               session={connection.session}

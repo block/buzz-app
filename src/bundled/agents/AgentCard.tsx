@@ -1,9 +1,6 @@
 import { useRef, type ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
-import {
-  DotsThreeIcon,
-  UsersIcon,
-} from "../../shared/design-system/icons/index";
+import { DotsThreeIcon } from "../../shared/design-system/icons/index";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
@@ -138,28 +135,19 @@ export function AgentCard({
         <Accordion
           items={[
             {
-              value: "identities",
-              title: (
-                <span className="flex items-center gap-2">
-                  <UsersIcon size={16} aria-hidden="true" />
-                  <span className="sr-only">{name}: </span>
-                  {identities.length}{" "}
-                  {identities.length === 1 ? "identity" : "identities"}
-                </span>
-              ),
+              value: "key",
+              title: "Public key",
               content: (
-                <ul className="mt-2 space-y-3 border-t border-primary pt-3">
+                <>
                   {identities.map((identity) => (
-                    <li key={identity.pubkey}>
-                      <span className="font-semibold text-primary">
-                        {identity.name}
-                      </span>
-                      <p className="m-0 mt-1 select-all break-all text-mono-sm">
-                        {identity.pubkey}
-                      </p>
-                    </li>
+                    <p
+                      key={identity.pubkey}
+                      className="m-0 mt-1 select-all break-all text-mono-sm"
+                    >
+                      {identity.pubkey}
+                    </p>
                   ))}
-                </ul>
+                </>
               ),
             },
           ]}

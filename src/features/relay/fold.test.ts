@@ -838,17 +838,20 @@ it("classifies voice-note mp4 metadata as audio with validated duration and file
   ]);
 });
 
-it("classifies voice-note mp4 metadata case-insensitively", () => {
+it.each([
+  ["Video/MP4", "Voice-Note-1.MP4"],
+  ['video/mp4; codecs="avc1.42E01E,mp4a.40.2"', "voice-note-parameterized.mp4"],
+])("classifies voice-note mp4 metadata as audio for mime %s", (mime, name) => {
   const url = "https://x.test/media/hash";
   const event = message(keypair(), "channel", "", 1, [
-    ["imeta", `url ${url}`, "m Video/MP4", "filename Voice-Note-1.MP4"],
+    ["imeta", `url ${url}`, `m ${mime}`, `filename ${name}`],
   ]);
   expect(parseAttachments(event, [])).toEqual([
     {
       url,
       kind: "audio",
-      mime: "Video/MP4",
-      name: "Voice-Note-1.MP4",
+      mime,
+      name,
     },
   ]);
 });
@@ -895,32 +898,17 @@ it.each(["audio/mpeg", "Audio/MPEG"])(
   },
 );
 
-it.each(["0", "-1", "Infinity", "NaN", "not-a-number"])(
-  "rejects invalid attachment duration %s",
-  (duration) => {
-    const event = message(keypair(), "channel", "", 1, [
-      [
-        "imeta",
-        "url https://x.test/song.mp3",
-        "m audio/mpeg",
-        `duration ${duration}`,
-      ],
-    ]);
-    expect(parseAttachments(event, [])).toEqual([
-      {
-        url: "https://x.test/song.mp3",
-        kind: "audio",
-        mime: "audio/mpeg",
-        name: "song.mp3",
-      },
-    ]);
-  },
-);
-
 it.each([
-  [" 12 ", 12],
-  ["1e9", 1e9],
-])("accepts Number-compatible attachment duration %s", (duration, expected) => {
+  "0",
+  "-1",
+  "Infinity",
+  "NaN",
+  "not-a-number",
+  " 12 ",
+  "0x10",
+  "1e9",
+  "86400.1",
+])("rejects invalid attachment duration %s", (duration) => {
   const event = message(keypair(), "channel", "", 1, [
     [
       "imeta",
@@ -935,7 +923,6 @@ it.each([
       kind: "audio",
       mime: "audio/mpeg",
       name: "song.mp3",
-      duration: expected,
     },
   ]);
 });

@@ -27,9 +27,18 @@ export function AudioAttachment({
   const [isPlaying, setIsPlaying] = useState(false);
   const [failedSource, setFailedSource] = useState<string | null>(null);
   const failed = failedSource === source;
-  const total = duration;
+  const playLabel = attachment.name ? `Play ${attachment.name}` : "Play audio";
+  const pauseLabel = attachment.name
+    ? `Pause ${attachment.name}`
+    : "Pause audio";
+  const seekLabel = attachment.name ? `Seek ${attachment.name}` : "Seek audio";
+  const valueText =
+    duration !== undefined
+      ? `${formatMediaTime(currentTime)} of ${formatMediaTime(duration)}`
+      : formatMediaTime(currentTime);
 
   const setAudio = useCallback((element: HTMLAudioElement | null) => {
+    // Callback refs are required because React detaches refs before passive effect cleanup, so cleanup cannot clear the module playback singleton.
     if (playing === audio.current) playing = null;
     audio.current = element;
   }, []);
@@ -59,6 +68,7 @@ export function AudioAttachment({
           setCurrentTime(event.currentTarget.currentTime)
         }
         onPlay={(event) => {
+          // Set the singleton after pausing the previous element so exclusivity is correct for both synchronous jsdom and asynchronous browser pause events.
           if (playing && playing !== event.currentTarget) playing.pause();
           playing = event.currentTarget;
           setIsPlaying(true);
@@ -75,7 +85,7 @@ export function AudioAttachment({
       <button
         type="button"
         className={styles.audioPlay}
-        aria-label={isPlaying ? "Pause audio" : "Play audio"}
+        aria-label={isPlaying ? pauseLabel : playLabel}
         onClick={() => {
           const element = audio.current;
           if (!element) return;
@@ -92,13 +102,13 @@ export function AudioAttachment({
       <input
         className={styles.audioSeek}
         type="range"
-        aria-label="Seek audio"
+        aria-label={seekLabel}
         min={0}
-        max={total ?? 0}
+        max={duration ?? 0}
         step={1}
-        value={total === undefined ? 0 : Math.min(currentTime, total)}
-        disabled={total === undefined}
-        aria-valuetext={formatMediaTime(currentTime)}
+        value={duration === undefined ? 0 : Math.min(currentTime, duration)}
+        disabled={duration === undefined}
+        aria-valuetext={valueText}
         onChange={(event) => {
           const next = Number(event.currentTarget.value);
           const element = audio.current;
@@ -107,8 +117,8 @@ export function AudioAttachment({
         }}
       />
       <span className={styles.audioTime}>
-        {total !== undefined
-          ? `${formatMediaTime(currentTime)} / ${formatMediaTime(total)}`
+        {duration !== undefined
+          ? `${formatMediaTime(currentTime)} / ${formatMediaTime(duration)}`
           : formatMediaTime(currentTime)}
       </span>
     </div>

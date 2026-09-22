@@ -14,6 +14,17 @@ import {
 
 import { channelRowKind, membershipChange } from "./membership";
 const HEX64 = /^[0-9a-f]{64}$/;
+const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
+
+function isLegacyVoiceNote(mime: string | undefined, name: string | undefined) {
+  // Old Buzz uploads voice notes as video/mp4: a 16x16 H.264 black track plus AAC
+  // because the relay video validator requires a video track; classify by filename convention.
+  return (
+    mime?.startsWith("video/mp4") === true &&
+    name?.startsWith("voice-note-") === true &&
+    name.endsWith(".mp4")
+  );
+}
 
 function attachmentKind(
   fields: Record<string, string>,
@@ -23,12 +34,7 @@ function attachmentKind(
   const mime = fields.m?.toLowerCase();
   const voiceNoteName = detectionName?.toLowerCase();
   if (mime?.startsWith("image/")) return "image";
-  if (
-    mime?.startsWith("audio/") ||
-    (mime === "video/mp4" &&
-      voiceNoteName?.startsWith("voice-note-") &&
-      voiceNoteName.endsWith(".mp4"))
-  )
+  if (mime?.startsWith("audio/") || isLegacyVoiceNote(mime, voiceNoteName))
     return "audio";
   if (mime?.startsWith("video/")) return "video";
   if (fields.m) return "file";
@@ -99,13 +105,15 @@ export function parseAttachments(
     const parsedSize = /^[1-9]\d*$/.test(fields.size ?? "")
       ? Number(fields.size)
       : undefined;
-    const parsedDuration = fields.duration
+    // Treat signed metadata as untrusted layout input. Invalid/unbounded duration
+    // uses the player fallback rather than sender-controlled text width.
+    const parsedDuration = /^\d+(?:\.\d+)?$/.test(fields.duration ?? "")
       ? Number(fields.duration)
       : undefined;
     const duration =
       parsedDuration !== undefined &&
-      Number.isFinite(parsedDuration) &&
-      parsedDuration > 0
+      parsedDuration > 0 &&
+      parsedDuration <= MAX_ATTACHMENT_DURATION_SECONDS
         ? parsedDuration
         : undefined;
     const filename = fields.filename

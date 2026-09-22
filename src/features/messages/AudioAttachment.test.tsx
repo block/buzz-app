@@ -7,6 +7,7 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AudioAttachment } from "./AudioAttachment";
@@ -67,6 +68,27 @@ it("toggles the accessible play control name", () => {
   fireEvent.pause(audio);
   expect(
     screen.getByRole("button", { name: "Play audio" }),
+  ).toBeInTheDocument();
+});
+
+it("uses attachment names in audio control labels", () => {
+  render(
+    <AudioAttachment
+      attachment={{
+        url: "https://fixture.test/voice-note-1.mp4",
+        kind: "audio",
+        name: "voice-note-1.mp4",
+        duration: 83,
+      }}
+      source={source}
+    />,
+  );
+
+  expect(
+    screen.getByRole("button", { name: "Play voice-note-1.mp4" }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("slider", { name: "Seek voice-note-1.mp4" }),
   ).toBeInTheDocument();
 });
 
@@ -156,7 +178,7 @@ it("updates slider value text from playback time", () => {
   fireEvent.timeUpdate(audio);
   expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
     "aria-valuetext",
-    "0:42",
+    "0:42 of 1:23",
   );
 });
 
@@ -218,7 +240,7 @@ it("resets load failure when the source changes", async () => {
   expect(container.querySelector("audio")).toBeInTheDocument();
 });
 
-it("toggles playback from the play/pause button", () => {
+it("toggles playback from the play/pause button", async () => {
   const { container } = render(
     <AudioAttachment
       attachment={{ url: "https://fixture.test/audio.mp3", kind: "audio" }}
@@ -227,15 +249,16 @@ it("toggles playback from the play/pause button", () => {
   );
   const audio = container.querySelector("audio");
   if (!audio) throw new Error("Missing audio element");
+  const user = userEvent.setup();
   const button = screen.getByRole("button", { name: "Play audio" });
 
   setPaused(audio, true);
-  fireEvent.click(button);
+  await user.click(button);
   expect(play).toHaveBeenCalledExactlyOnceWith();
   expect(play.mock.instances[0]).toBe(audio);
 
   setPaused(audio, false);
-  fireEvent.click(screen.getByRole("button", { name: "Pause audio" }));
+  await user.click(screen.getByRole("button", { name: "Pause audio" }));
   expect(pause).toHaveBeenCalledExactlyOnceWith();
   expect(pause.mock.instances[0]).toBe(audio);
 });

@@ -4,15 +4,17 @@ An external API-v1 plugin that opens HTTP(S) links in a Buzz-owned desktop brows
 
 ## Install
 
+First build and run Buzz from the Browser plugin branch in [PR #100](https://github.com/block/buzz-app/pull/100). Installing or reimporting this plugin alone cannot add the native `browser` capability to an older Buzz build. An older host rejects activation with `Browser plugin requires a Buzz build with the browser capability`.
+
 In desktop Settings → Plugins, load this folder, install **Browser**, then enable it. The included `manifest.json` and `plugin.js` need no build tools.
 
-Requires the matching host revision with `browser` support. In the web application the capability reports unavailable and this plugin leaves existing link handling unchanged. Earlier matching panels, including GitHub, retain precedence. Modifier-key and middle-click behavior is unchanged.
+In the web application the capability reports unavailable and this plugin leaves existing link handling unchanged. Earlier matching panels, including GitHub, retain precedence. Modifier-key and middle-click behavior is unchanged.
 
 Disabling the plugin removes its link interception. A browser window already opened by the user stays open until closed. One window is reused; there are no tabs, bookmarks or saved browsing history. See the [host browser contract and limits](../../../docs/browser.md).
 
 ## Authoring example
 
-The plugin declares `react`, `panels` and `browser` dependencies, registers a panel, and calls `ctx.browser.open(target)`. It displays opening, opened or failed status with the host's error message. Opening occurs once per target per panel mount, including React StrictMode. HTTP(S), credential and normalized URL-length validation happen before it claims a link; native validation still owns the final decision.
+The plugin checks that the host provides `browser`, binds its panel registration to `react`, `panels` and `browser`, and calls `ctx.browser.open(target)`. It displays opening, opened or failed status with the host's error message. Opening occurs once per target per panel mount, including React StrictMode. HTTP(S), credential and normalized URL-length validation happen before it claims a link; native validation still owns the final decision.
 
 ## Build from source
 

@@ -17,6 +17,13 @@ function setup(open: (url: string) => Promise<unknown>) {
   let registered: FakePanel | undefined;
   const ctx = {
     react: React,
+    get(name: string) {
+      return name === "browser" ? ctx.browser : undefined;
+    },
+    inject(_dependencies: string[], callback: (scope: typeof ctx) => void) {
+      callback(ctx);
+      return { await: async () => {} };
+    },
     panels: {
       register(panel: FakePanel) {
         registered = panel;
@@ -24,7 +31,7 @@ function setup(open: (url: string) => Promise<unknown>) {
     },
     browser: { available: true, open },
   };
-  apply(ctx as never);
+  void apply(ctx as never);
   if (!registered) throw new Error("Panel was not registered");
   return registered;
 }

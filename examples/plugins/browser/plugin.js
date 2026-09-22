@@ -1,6 +1,6 @@
 // Type-only author contract. The installed artifact has no private paths, React
 // copy, or runtime dependencies beyond what the host injects.
-export const inject = ["react", "panels", "browser"];
+export const inject = ["react", "panels"];
 const MAX_URL_BYTES = 2048;
 /** http(s) only: rejects javascript:, data:, file:, and malformed input. */
 export function isBrowsableUrl(url) {
@@ -17,7 +17,15 @@ export function isBrowsableUrl(url) {
     return false;
   }
 }
-export function apply(ctx) {
+export async function apply(ctx) {
+  if (!ctx.get("browser", false)) {
+    throw new Error(
+      "Browser plugin requires a Buzz build with the browser capability",
+    );
+  }
+  await ctx.inject(["browser"], registerPanel).await();
+}
+function registerPanel(ctx) {
   const React = ctx.react;
   ctx.panels.register({
     id: "open-link",

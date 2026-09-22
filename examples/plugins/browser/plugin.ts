@@ -2,7 +2,7 @@ import type { Context } from "@buzz/author";
 
 // Type-only author contract. The installed artifact has no private paths, React
 // copy, or runtime dependencies beyond what the host injects.
-export const inject = ["react", "panels", "browser"];
+export const inject = ["react", "panels"];
 
 const MAX_URL_BYTES = 2048;
 
@@ -27,7 +27,16 @@ export type BrowseState =
   | { status: "opened" }
   | { status: "failed"; reason: string };
 
-export function apply(ctx: Context) {
+export async function apply(ctx: Context) {
+  if (!ctx.get("browser", false)) {
+    throw new Error(
+      "Browser plugin requires a Buzz build with the browser capability",
+    );
+  }
+  await ctx.inject(["browser"], registerPanel).await();
+}
+
+function registerPanel(ctx: Context) {
   const React = ctx.react;
 
   ctx.panels.register({

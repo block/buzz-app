@@ -54,7 +54,7 @@
 
 .row .disclosure {
   position: absolute;
-  left: var(--space-1);
+  left: calc(var(--space-control-inset) - (var(--size-row) - 17px) / 2);
   z-index: 1;
 }
 .hashIcon {

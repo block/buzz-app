@@ -58,7 +58,6 @@ it("keeps live unread updates and uses replacement session callbacks across row 
     session: first.session,
     working: false,
     selected: undefined,
-    search: "",
     collapsed: false,
     onToggle: vi.fn(),
     draft: false,

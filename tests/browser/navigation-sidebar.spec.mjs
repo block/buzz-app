@@ -6,6 +6,12 @@ test.use({
   historyCounts: { alpha: 1, beta: 1 },
 });
 
+const sessionParent = "11111111-1111-4111-8111-111111111111";
+const sessionSidebar = test.extend({
+  sessionChannels: ["alpha"],
+  sessionParents: { alpha: sessionParent },
+});
+
 test("channel sidebar resizes from the full gutter and persists", async ({
   page,
   app,
@@ -115,6 +121,42 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeCloseTo(260, 0);
 });
+
+sessionSidebar(
+  "parent disclosures and child sessions share the channel icon and label columns",
+  async ({ page, app }) => {
+    await page.goto(app.origin);
+    await button(page, "Messages").first().click();
+    const parent = page.locator(`[data-channel-id="${sessionParent}"]`);
+    const child = page.locator('[data-channel-id="alpha"]');
+    const regular = page.locator('[data-channel-id="beta"]');
+    const disclosure = page.getByRole("button", { name: /sessions in/ });
+    const x = async (locator) => (await locator.boundingBox())?.x;
+    const label = (row) => row.locator(".navigation-item-label");
+
+    await expect(parent).toBeVisible();
+    await expect(child).toBeVisible();
+    await expect(regular).toBeVisible();
+    const regularIconX = await x(regular.locator("svg").first());
+    const parentIconX = await x(disclosure.locator("svg:visible"));
+    expect(parentIconX).toBeCloseTo(regularIconX, 0);
+
+    await parent.hover();
+    const chevronX = await x(disclosure.locator("svg:visible"));
+    expect(chevronX).toBeCloseTo(regularIconX, 0);
+    expect(await x(label(parent))).toBeCloseTo(await x(label(regular)), 0);
+    expect(await x(label(child))).toBeCloseTo(await x(label(regular)), 0);
+
+    await page
+      .getByRole("button", { name: /More options for/ })
+      .first()
+      .click();
+    await page.getByRole("menuitem", { name: "New session" }).click();
+    const draft = page.getByRole("button", { name: /New session draft in/ });
+    await expect(draft).toBeVisible();
+    expect(await x(label(draft))).toBeCloseTo(await x(label(regular)), 0);
+  },
+);
 
 test("channel navigation preserves sidebar DOM, group state and scroll", async ({
   page,

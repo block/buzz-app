@@ -161,7 +161,7 @@ export function ChannelSidebarRow({
       <div id={childrenId} hidden={collapsed}>
         {draft && (
           <NavigationItem
-            inset
+            icon={<span className={styles.iconSpace} aria-hidden="true" />}
             label="New session"
             trailing={<small>Draft</small>}
             aria-label={`New session draft in ${channel.name}`}
@@ -171,9 +171,9 @@ export function ChannelSidebarRow({
         )}
         {sessions.map((child) => (
           <NavigationItem
-            inset
             key={child.id}
             type="button"
+            icon={<span className={styles.iconSpace} aria-hidden="true" />}
             data-channel-id={child.id}
             aria-label={`${child.name}, session in ${channel.name}`}
             aria-current={selected === child.id ? "page" : undefined}

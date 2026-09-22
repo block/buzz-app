@@ -3,7 +3,7 @@ import { parseBuzzLink } from "../navigation/buzz-links";
 type LinkPart = { text: string; url?: string; label?: string };
 
 export function isSupportedMessageLink(url: string): boolean {
-  if (/\s/.test(url)) return false;
+  if (/[\s\\]/.test(url)) return false;
   try {
     const parsed = new URL(url);
     return parsed.protocol === "buzz:"

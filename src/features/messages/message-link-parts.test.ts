@@ -201,9 +201,10 @@ it("bounds repeated unfinished wrappers while retaining a later valid link", () 
 
 it.each([
   "https://example.com/hello world",
+  "https://example.com/a\\b?x=1&copy;=2",
   "https://example.com/hello\tworld",
   "https://example.com/hello\nworld",
-])("rejects whitespace in link destination %s", (url) => {
+])("rejects ambiguous link destination %s", (url) => {
   expect(isSupportedMessageLink(url)).toBe(false);
 });
 it("accepts explicitly encoded spaces in a link destination", () => {

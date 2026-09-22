@@ -1208,6 +1208,7 @@ it.each([
   "https://user:secret@example.com",
   "buzz://invalid",
   "https://example.com/hello world",
+  "https://example.com/a\\b?x=1&copy;=2",
 ])(
   "keeps invalid link %s and selection available for correction",
   async (url) => {

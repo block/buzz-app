@@ -427,6 +427,112 @@ test("media proxy streams authenticated video ranges and preserves seek headers"
   }
 });
 
+test("media proxy streams authenticated audio ranges and preserves seek headers", async () => {
+  const bytes = Buffer.from("audio-range");
+  const h = await harness((call) => {
+    expect(call.url).toBe(`${fixtureRelayUrl}/media/audio.mp3`);
+    expect(call.headers.Range).toBe("bytes=100-");
+    return new Response(bytes, {
+      status: 206,
+      headers: {
+        "Content-Type": "Audio/MPEG; charset=utf-8",
+        "Content-Length": String(bytes.length),
+        "Content-Range": "bytes 100-110/1000",
+        "Accept-Ranges": "bytes",
+      },
+    });
+  });
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+      { headers: { Range: "bytes=100-" } },
+    );
+    expect(response.status).toBe(206);
+    expect(response.headers.get("content-type")).toBe("audio/mpeg");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(response.headers.get("content-range")).toBe("bytes 100-110/1000");
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy rejects oversized non-range audio", async () => {
+  const h = await harness(
+    () =>
+      new Response("too large", {
+        headers: {
+          "Content-Type": "audio/mpeg",
+          "Content-Length": String(20 * 1024 * 1024 + 1),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+    );
+    expect(response.status).toBe(413);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy neutralizes non-media content types as downloads", async () => {
+  const bytes = Buffer.from("plain");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "text/plain",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file.txt`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe("attachment");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy strips smuggled audio content type parameters", async () => {
+  const bytes = Buffer.from("fake audio then svg");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "audio/mpeg;x, image/svg+xml",
+          "Content-Length": String(bytes.length),
+          "Accept-Ranges": "bytes",
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/audio.mp3`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("audio/mpeg");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
 test("an upstream video stream error closes only that response, not the broker", async () => {
   const h = await harness(() => {
     let controller;

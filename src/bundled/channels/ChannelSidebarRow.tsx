@@ -18,6 +18,7 @@ export function ChannelSidebarRow({
   childContent,
   wrapSelect,
   selected,
+  sessionsEnabled,
   sessions,
   draft,
   draftSelected,
@@ -33,6 +34,7 @@ export function ChannelSidebarRow({
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
+  sessionsEnabled: boolean;
   sessions: readonly ChannelSummary[];
   draft: boolean;
   draftSelected: boolean;
@@ -47,13 +49,13 @@ export function ChannelSidebarRow({
   const hasChildren = draft || sessions.length > 0;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
   const canParent =
+    sessionsEnabled &&
     channel.channelType !== "dm" &&
     channel.channelType !== "session" &&
     !channel.archived;
   const selectButton = (
     <NavigationItem
       type="button"
-      title={channel.name}
       data-channel-id={channel.id}
       aria-current={
         selected === channel.id && !draftSelected ? "page" : undefined
@@ -77,6 +79,7 @@ export function ChannelSidebarRow({
     <>
       <div
         className={styles.row}
+        data-channel-sidebar-row=""
         data-selected={(selected === channel.id && !draftSelected) || undefined}
       >
         {hasChildren && (
@@ -162,7 +165,7 @@ export function ChannelSidebarRow({
       <div id={childrenId} hidden={collapsed}>
         {draft && (
           <NavigationItem
-            inset
+            icon={<span className={styles.iconSpace} aria-hidden="true" />}
             label="New session"
             trailing={<small>Draft</small>}
             aria-label={`New session draft in ${channel.name}`}
@@ -172,10 +175,9 @@ export function ChannelSidebarRow({
         )}
         {sessions.map((child) => (
           <NavigationItem
-            inset
             key={child.id}
             type="button"
-            title={child.name}
+            icon={<span className={styles.iconSpace} aria-hidden="true" />}
             data-channel-id={child.id}
             aria-label={`${child.name}, session in ${channel.name}`}
             aria-current={selected === child.id ? "page" : undefined}

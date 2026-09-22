@@ -955,12 +955,14 @@ export function relayBrokerPlugin({
               mediaType.startsWith("image/") &&
               mediaType !== "image/svg+xml";
             const video = trustedType && mediaType.startsWith("video/");
-            const download = !image && !video;
+            const audio = trustedType && mediaType.startsWith("audio/");
+            const streamable = video || audio;
+            const download = !image && !streamable;
             const length = Number(upstream.headers.get("content-length"));
             if (
               Number.isFinite(length) &&
               length > MAX_MEDIA_BYTES &&
-              !(video && upstream.status === 206)
+              !(streamable && upstream.status === 206)
             )
               return json(res, 413, { error: "Media budget exceeded" });
             const headers = {
@@ -974,14 +976,14 @@ export function relayBrokerPlugin({
               ...(!download && upstream.headers.get("content-range")
                 ? { "Content-Range": upstream.headers.get("content-range") }
                 : {}),
-              ...(video
+              ...(streamable
                 ? {
                     "Accept-Ranges":
                       upstream.headers.get("accept-ranges") ?? "bytes",
                   }
                 : {}),
             };
-            if (video) {
+            if (streamable) {
               res.writeHead(upstream.status, headers);
               if (!upstream.body) return res.end();
               const stream = Readable.fromWeb(upstream.body);

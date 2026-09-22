@@ -186,8 +186,8 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   await expect(row(page, "dm-030")).toBeFocused();
   await expect(list(page).locator('[aria-current="page"]')).toHaveAttribute(
-    "title",
-    "Alpha",
+    "data-channel-id",
+    "alpha",
   );
   await cue(page, "below").focus();
   await cue(page, "below").press("Enter");

@@ -752,6 +752,95 @@
 }
 
 @layer components {
+  /* The positioned portal owns the stacking context, not its popup child. */
+  .buzz-menu-positioner {
+    z-index: var(--layer-popover);
+  }
+  .buzz-menu-popup {
+    min-width: 11.5rem;
+    max-width: min(20rem, calc(100vw - var(--space-4)));
+    max-height: var(--available-height);
+    overflow-y: auto;
+    padding: var(--space-1);
+    @apply floating-surface;
+    color: var(--text-standard);
+    transform-origin: var(--transform-origin);
+    transition:
+      opacity var(--duration-state) var(--easing-state),
+      transform var(--duration-state) var(--easing-state);
+  }
+  .buzz-menu-popup[data-starting-style],
+  .buzz-menu-popup[data-ending-style] {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+  .buzz-menu-item {
+    display: flex;
+    min-height: var(--size-row);
+    align-items: center;
+    gap: var(--space-row-gap);
+    border-radius: var(--radius-row);
+    padding: var(--space-1) var(--space-2);
+    color: var(--text-standard);
+    cursor: default;
+    outline: none;
+    user-select: none;
+  }
+  html[data-keyboard-navigation] .buzz-menu-item:focus-visible {
+    outline: 2px solid var(--border-focus);
+    /* Keep the ring inside the scrollable popup's clipping edge. */
+    outline-offset: -2px;
+  }
+  .buzz-menu-item[data-highlighted] {
+    background: var(--affordance-subtle-hover);
+  }
+  .buzz-menu-item[data-disabled] {
+    color: var(--text-unavailable);
+  }
+  .buzz-menu-icon,
+  .buzz-menu-item-indicator {
+    display: grid;
+    width: 1rem;
+    height: 1rem;
+    flex: 0 0 auto;
+    place-items: center;
+    color: var(--text-subtle);
+  }
+  .buzz-menu-choice-label {
+    display: contents;
+  }
+  .buzz-menu-item-indicator:not([data-checked]) {
+    visibility: hidden;
+  }
+  .buzz-menu-radio-dot {
+    width: 0.375rem;
+    height: 0.375rem;
+    border-radius: var(--radius-pill);
+    background: currentColor;
+  }
+  .buzz-menu-submenu-arrow,
+  .buzz-menu-trailing {
+    margin-inline-start: auto;
+    flex: 0 0 auto;
+    color: var(--text-subtle);
+  }
+  .buzz-menu-group-label {
+    padding: var(--space-2) var(--space-2) var(--space-1);
+    color: var(--text-subtle);
+  }
+  .buzz-menu-separator {
+    height: 1px;
+    margin: var(--space-1) 0;
+    background: var(--border-standard);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-menu-popup {
+      transition-duration: 0ms;
+    }
+  }
+}
+
+@layer components {
   .buzz-select {
     display: flex;
     flex-wrap: wrap;

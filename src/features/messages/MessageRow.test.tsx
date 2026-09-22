@@ -509,3 +509,80 @@ it("renders unavailable generic files without a download link", () => {
   expect(container.querySelector("a")).toBeNull();
   expect(html).not.toContain("Open image attachment");
 });
+
+it("renders proxy audio attachments with an inline player", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            duration: 12,
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('aria-label="Play audio"');
+  expect(html).toContain('aria-label="Seek audio"');
+  expect(html).toContain("0:00 / 0:12");
+  expect(html).not.toContain("Download file");
+});
+
+it("renders external audio sources as open file cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            name: "audio.mp3",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('aria-label="Open audio.mp3"');
+  expect(html).toContain("Open file");
+  expect(html).not.toContain('aria-label="Play audio"');
+});
+
+it("renders missing audio sources as unavailable file cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            mime: "audio/mpeg",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain("MPEG file");
+  expect(html).toContain("File unavailable");
+  expect(html).toContain('role="status"');
+  expect(html).not.toContain('aria-label="Play audio"');
+});

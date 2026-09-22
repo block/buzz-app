@@ -22,7 +22,7 @@ function mimeLabel(mime: string | undefined): string | undefined {
   return `${subtype.toUpperCase()} file`;
 }
 
-function isProxySource(source: string): boolean {
+export function isProxySource(source: string): boolean {
   try {
     const hasWindow = typeof window !== "undefined";
     const url = new URL(

@@ -37,6 +37,7 @@ const SECTIONS: NavSection[] = [
       ["Spacing", "/design/spacing"],
       ["Radius", "/design/radius"],
       ["Elevation", "/design/elevation"],
+      ["Floating surfaces", "/design/floating-surfaces"],
       ["Glass", "/design/glass"],
       ["Motion", "/design/motion"],
       ["Base UI backing", "/design/components/base-ui"],

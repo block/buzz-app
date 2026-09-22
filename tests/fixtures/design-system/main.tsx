@@ -24,6 +24,7 @@ import { TypographyPage } from "./ui/TypographyPage";
 import { SpacingPage } from "./ui/SpacingPage";
 import { RadiusPage } from "./ui/RadiusPage";
 import { IconsPage } from "./ui/IconsPage";
+import { FloatingSurfacesPage } from "./ui/FloatingSurfacesPage";
 import { ElevationPage } from "./ui/ElevationPage";
 import { GlassPage } from "./ui/GlassPage";
 import { MotionPage } from "./ui/MotionPage";
@@ -97,6 +98,11 @@ const pages = [
     getParentRoute: () => design,
     path: "elevation",
     component: ElevationPage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
+    path: "floating-surfaces",
+    component: FloatingSurfacesPage,
   }),
   createRoute({
     getParentRoute: () => design,

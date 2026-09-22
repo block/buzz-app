@@ -1,4 +1,5 @@
 // No broker, credentials or remote writes: real UI/session, ephemeral signed fixture events.
+import "../../src/shared/styles/globals.css";
 import { Context } from "@deepseek-ai/cordis";
 import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
@@ -14,7 +15,6 @@ import { mediaUrl } from "../../src/features/relay/transport";
 import { keypair, message, signed } from "../../src/features/relay/testing";
 import type { RelayEvent } from "../../src/features/relay/events";
 import type { LiveCallbacks } from "../../src/features/relay/live";
-import "../../src/shared/styles/globals.css";
 
 const ctx = new Context();
 const manager = createPluginManager(ctx, {

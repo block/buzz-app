@@ -1,7 +1,23 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
-type SidebarView = { search: string; collapsed: string[]; scrollTop: number };
+export const CHANNEL_SIDEBAR_DEFAULT_WIDTH = 260;
+export const CHANNEL_SIDEBAR_MIN_WIDTH = 124;
+export const CHANNEL_SIDEBAR_MAX_WIDTH = 520;
+
+export function clampChannelSidebarWidth(width: number) {
+  return Math.min(
+    CHANNEL_SIDEBAR_MAX_WIDTH,
+    Math.max(CHANNEL_SIDEBAR_MIN_WIDTH, Math.round(width)),
+  );
+}
+
+type SidebarView = {
+  search: string;
+  collapsed: string[];
+  scrollTop: number;
+  width: number;
+};
 
 function restore(scope: string): SidebarView {
   const raw = readView<unknown>(scope, "channel-sidebar", null);
@@ -18,6 +34,10 @@ function restore(scope: string): SidebarView {
       saved.scrollTop >= 0
         ? saved.scrollTop
         : 0,
+    width:
+      typeof saved.width === "number" && Number.isFinite(saved.width)
+        ? clampChannelSidebarWidth(saved.width)
+        : CHANNEL_SIDEBAR_DEFAULT_WIDTH,
   };
 }
 
@@ -71,6 +91,7 @@ export function useSidebarView(scope: string, ready: boolean) {
     list,
     search: view.search,
     collapsed: view.collapsed,
+    width: view.width,
     setSearch: (search: string) => {
       pending.current = false;
       update({ ...intent.current, search });
@@ -85,6 +106,12 @@ export function useSidebarView(scope: string, ready: boolean) {
           ? collapsed.filter((id) => id !== key)
           : [...collapsed, key],
       });
+    },
+    setWidth: (width: number) => {
+      const next = clampChannelSidebarWidth(width);
+      if (intent.current.width === next) return;
+      update({ ...intent.current, width: next });
+      writeView(scope, "channel-sidebar", { ...intent.current, width: next });
     },
   };
 }

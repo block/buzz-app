@@ -6,6 +6,95 @@ test.use({
   historyCounts: { alpha: 1, beta: 1 },
 });
 
+test("channel sidebar resizes from the full gutter and persists", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const sidebar = page.getByRole("complementary", {
+    name: "Channel sidebar",
+  });
+  const handle = page.getByRole("separator", {
+    name: "Resize channel sidebar",
+  });
+  const channelList = page.getByRole("navigation", {
+    name: "Subscribed channels",
+  });
+  const before = await sidebar.boundingBox();
+  const grip = await handle.boundingBox();
+  const listBox = await channelList.boundingBox();
+  expect(before).not.toBeNull();
+  expect(grip).not.toBeNull();
+  expect(listBox).not.toBeNull();
+  expect(grip.width).toBeGreaterThanOrEqual(16);
+  expect(grip.height).toBeGreaterThan(500);
+  expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(
+    1,
+    0,
+  );
+  await expect(handle).not.toHaveAttribute("title");
+  await expect(button(page, "Alpha")).not.toHaveAttribute("title");
+  await expect(handle).toHaveAttribute(
+    "data-tooltip",
+    "Drag to resize · Double-click to reset",
+  );
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  expect(
+    await handle.evaluate(
+      (element) => getComputedStyle(element, "::before").opacity,
+    ),
+  ).toBe("0");
+  await expect
+    .poll(
+      () =>
+        handle.evaluate(
+          (element) => getComputedStyle(element, "::before").opacity,
+        ),
+      { timeout: 1_000 },
+    )
+    .toBe("1");
+
+  await handle.press("ArrowRight");
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeGreaterThan(before.width);
+  const keyboardWidth = (await sidebar.boundingBox()).width;
+  const movedGrip = await handle.boundingBox();
+  await page.mouse.move(
+    movedGrip.x + movedGrip.width / 2,
+    movedGrip.y + movedGrip.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    movedGrip.x + movedGrip.width / 2 + 120,
+    movedGrip.y + movedGrip.height / 2,
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => {
+        const hovered = document.querySelector(":hover");
+        return hovered ? getComputedStyle(hovered).cursor : undefined;
+      }),
+    )
+    .toBe("col-resize");
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe("");
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeGreaterThan(keyboardWidth + 100);
+  const resized = await sidebar.boundingBox();
+  await button(page, "Home").first().click();
+  await button(page, "Messages").first().click();
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeCloseTo(resized.width, 0);
+
+  await handle.dblclick();
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeCloseTo(260, 0);
+});
+
 test("channel navigation preserves sidebar search, DOM, group state and scroll", async ({
   page,
   app,

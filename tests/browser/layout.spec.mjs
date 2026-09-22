@@ -145,7 +145,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   });
   const before = await box(conversation);
   near(sidebar.x, 16);
-  near(before.x - sidebar.x - sidebar.width, 4);
+  near(before.x - sidebar.x - sidebar.width, 16);
   near(before.y, 56);
   near(before.height, 760);
   const background = await page

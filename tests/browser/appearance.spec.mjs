@@ -323,7 +323,11 @@ test("shared type and spacing reach Home and the real message timeline", async (
   await expect(
     sidebar.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCSS("font-size", "14px");
-  await expect(sidebar.locator("..")).toHaveCSS("column-gap", "4px");
+  await expect(
+    sidebar.locator("..").getByRole("separator", {
+      name: "Resize channel sidebar",
+    }),
+  ).toHaveCSS("width", "16px");
   const back = button(page, "Go back").locator("svg");
   await expect(button(page, "Find a page").locator("svg")).toHaveCSS(
     "width",

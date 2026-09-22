@@ -26,9 +26,11 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
+  CaretRightIcon,
   HashIcon,
   MagnifyingGlassIcon,
   DotsThreeIcon,
@@ -57,8 +59,14 @@ import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
-import { useSidebarView } from "./useSidebarView";
 import { sidebarSections } from "./sidebar-sections";
+import { SidebarSectionIcon } from "./SidebarSectionIcon";
+import {
+  CHANNEL_SIDEBAR_DEFAULT_WIDTH,
+  CHANNEL_SIDEBAR_MAX_WIDTH,
+  CHANNEL_SIDEBAR_MIN_WIDTH,
+  useSidebarView,
+} from "./useSidebarView";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
@@ -169,6 +177,9 @@ function ChannelWorkspace({
       .map((entry) => entry.channelId),
   ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  useEffect(() => {
+    void queries.emoji.ensure();
+  }, [queries]);
   useEffect(() => {
     if (list.status === "ready") void queries.unread.ensure();
   }, [queries, list.status]);
@@ -677,6 +688,11 @@ function ChannelWorkspace({
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
+      style={
+        {
+          "--channel-sidebar-width": `${sidebar.width}px`,
+        } as CSSProperties
+      }
     >
       <aside className={styles.sidebar} aria-label="Channel sidebar">
         <div className={styles.search}>
@@ -707,10 +723,15 @@ function ChannelWorkspace({
                     );
                 }}
               >
+                <CaretRightIcon
+                  className={styles.sectionChevron}
+                  size={17}
+                  aria-hidden="true"
+                />
                 {section.icon && (
-                  <span aria-hidden="true">{section.icon} </span>
+                  <SidebarSectionIcon icon={section.icon} session={queries} />
                 )}
-                {section.title}
+                <span>{section.title}</span>
               </summary>
               {section.rows.map((channel) => {
                 const Icon =
@@ -816,6 +837,10 @@ function ChannelWorkspace({
           </div>
         )}
       </aside>
+      <ChannelSidebarResizeHandle
+        width={sidebar.width}
+        setWidth={sidebar.setWidth}
+      />
       <article className={styles.conversation} aria-label="Conversation">
         {drafting && current ? (
           <NewSessionView parentName={current.name}>
@@ -1046,6 +1071,73 @@ function ChannelWorkspace({
         </div>
       )}
     </div>
+  );
+}
+
+function ChannelSidebarResizeHandle({
+  width,
+  setWidth,
+}: {
+  width: number;
+  setWidth(width: number): void;
+}) {
+  const drag = useRef<
+    { pointerId: number; startX: number; width: number } | undefined
+  >(undefined);
+  const resize = useRef(setWidth);
+  resize.current = setWidth;
+  const move = useCallback((event: PointerEvent) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    resize.current(drag.current.width + event.clientX - drag.current.startX);
+  }, []);
+  const finish = useCallback(() => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", finish);
+    window.removeEventListener("pointercancel", finish);
+    drag.current = undefined;
+    delete document.documentElement.dataset.sidebarResizing;
+    document.documentElement.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+  }, [move]);
+  useEffect(() => () => finish(), [finish]);
+
+  return (
+    <hr
+      className={styles.sidebarResizeHandle}
+      aria-label="Resize channel sidebar"
+      aria-orientation="vertical"
+      aria-valuemin={CHANNEL_SIDEBAR_MIN_WIDTH}
+      aria-valuemax={CHANNEL_SIDEBAR_MAX_WIDTH}
+      aria-valuenow={width}
+      tabIndex={0}
+      data-tooltip="Drag to resize · Double-click to reset"
+      onDoubleClick={() => setWidth(CHANNEL_SIDEBAR_DEFAULT_WIDTH)}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 48 : 16;
+        if (event.key === "ArrowLeft") setWidth(width - step);
+        else if (event.key === "ArrowRight") setWidth(width + step);
+        else if (event.key === "Home") setWidth(CHANNEL_SIDEBAR_MIN_WIDTH);
+        else if (event.key === "End") setWidth(CHANNEL_SIDEBAR_MAX_WIDTH);
+        else return;
+        event.preventDefault();
+      }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        drag.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          width,
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", finish, { once: true });
+        window.addEventListener("pointercancel", finish, { once: true });
+        document.documentElement.dataset.sidebarResizing = "true";
+        document.documentElement.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      }}
+    />
   );
 }
 

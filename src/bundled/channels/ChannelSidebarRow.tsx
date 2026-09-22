@@ -52,7 +52,6 @@ export function ChannelSidebarRow({
     <button
       className={styles.select}
       type="button"
-      title={channel.name}
       data-channel-id={channel.id}
       aria-current={
         selected === channel.id && !draftSelected ? "page" : undefined
@@ -162,7 +161,6 @@ export function ChannelSidebarRow({
             key={child.id}
             type="button"
             className={styles.child}
-            title={child.name}
             data-channel-id={child.id}
             aria-label={`${child.name}, session in ${channel.name}`}
             aria-current={selected === child.id ? "page" : undefined}

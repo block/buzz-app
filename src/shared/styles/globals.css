@@ -92,6 +92,9 @@
     scrollbar-width: thin;
     box-sizing: border-box;
   }
+  html[data-sidebar-resizing] * {
+    cursor: col-resize;
+  }
   :where(strong, b) {
     font-weight: var(--type-weight-medium);
   }

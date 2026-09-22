@@ -162,9 +162,6 @@ export function mountEmojiMart({
     }
     #root {
       --padding: var(--space-2);
-      --buzz-emoji-row-gap: calc(
-        (100% - ${perLine * emojiButtonSize}px) / ${Math.max(perLine - 1, 1)}
-      );
       position: relative;
       width: 100% !important;
     }
@@ -263,8 +260,9 @@ export function mountEmojiMart({
       max-height: 32px !important;
     }
     .scroll .category > :not(.sticky) > .flex {
-      justify-content: flex-start;
-      column-gap: var(--buzz-emoji-row-gap);
+      display: grid;
+      grid-template-columns: repeat(${perLine}, ${emojiButtonSize}px);
+      justify-content: space-between;
     }
     .scroll .category button {
       flex-shrink: 0;

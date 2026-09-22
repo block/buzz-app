@@ -620,6 +620,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     expect(rowGaps[0]).toBeCloseTo(9.6, 1);
     expect(rowGaps.every((gap) => Math.abs(gap - rowGaps[0]) < 0.1)).toBe(true);
     const frequentRow = frequent.first().locator("..");
+    await expect(frequentRow).toHaveCSS("display", "grid");
+    await expect(frequentRow).toHaveCSS(
+      "grid-template-columns",
+      "48px 48px 48px 48px 48px 48px",
+    );
     await frequentRow.locator("button").evaluateAll((buttons) => {
       for (const button of buttons.slice(4)) button.style.display = "none";
     });

@@ -38,6 +38,11 @@ export const BASE_UI_PARTS = {
     docs: "accordion",
     module: "@base-ui/react/accordion",
   },
+  tooltip: {
+    name: "Tooltip",
+    docs: "tooltip",
+    module: "@base-ui/react/tooltip",
+  },
   dialog: { name: "Dialog", docs: "dialog", module: "@base-ui/react/dialog" },
   popover: {
     name: "Popover",
@@ -89,6 +94,32 @@ export type ComponentDefinition = {
 };
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
+  {
+    slug: "tooltip",
+    name: "Tooltip",
+    purpose: "A short hint for an already labelled control.",
+    behavior: "Base UI owns focus, positioning and dismissal",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Tooltip.tsx",
+    baseUi: [BASE_UI_PARTS.tooltip],
+    composes: [],
+  },
+
+  {
+    slug: "dialog",
+    name: "Dialog",
+    purpose: "A shared modal frame with title, content and actions.",
+    behavior: "Base UI owns focus, positioning and dismissal",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Dialog.tsx",
+    baseUi: [BASE_UI_PARTS.dialog],
+    composes: ["icon-button"],
+  },
+
   {
     slug: "checkbox",
     name: "Checkbox",
@@ -403,9 +434,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "navigation-item",
     name: "NavigationItem",
-    purpose: "A selectable destination row with optional icon and metadata.",
+    purpose:
+      "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button",
-    variants: ["default", "inset", "selected"],
+    variants: ["row", "pill", "inset", "selected"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

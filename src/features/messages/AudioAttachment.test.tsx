@@ -240,6 +240,195 @@ it("sets currentTime when the seek slider changes", () => {
   expect(audio.currentTime).toBe(17);
 });
 
+it("allows sub-second seeking to the end of non-integer durations", () => {
+  const { container } = render(
+    <AudioAttachment
+      attachment={{
+        url: "https://fixture.test/audio.mp3",
+        kind: "audio",
+        duration: 5.4,
+      }}
+      source={source}
+    />,
+  );
+  const audio = container.querySelector("audio");
+  if (!audio) throw new Error("Missing audio element");
+  const slider = screen.getByRole("slider", { name: "Seek audio" });
+
+  expect(slider).toHaveAttribute("max", "5.4");
+  expect(slider).toHaveAttribute("step", "any");
+
+  fireEvent.change(slider, { target: { value: "5.4" } });
+  expect(audio.currentTime).toBe(5.4);
+  expect(slider).toHaveValue("5.4");
+
+  fireEvent.change(slider, { target: { value: "2.75" } });
+  expect(audio.currentTime).toBe(2.75);
+});
+
+it("completes progress, resets the play label, and releases playback when audio ends", () => {
+  const { container } = render(
+    <>
+      <AudioAttachment
+        attachment={{
+          url: "https://fixture.test/one.mp3",
+          kind: "audio",
+          duration: 5.4,
+        }}
+        source="/api/relay/media?url=https%3A%2F%2Ffixture.test%2Fone.mp3"
+      />
+      <AudioAttachment
+        attachment={{ url: "https://fixture.test/two.mp3", kind: "audio" }}
+        source="/api/relay/media?url=https%3A%2F%2Ffixture.test%2Ftwo.mp3"
+      />
+    </>,
+  );
+  const [ended, next] = Array.from(container.querySelectorAll("audio"));
+  if (!ended || !next) throw new Error("Missing audio elements");
+
+  fireEvent.play(ended);
+  ended.currentTime = 5.4;
+  fireEvent.ended(ended);
+
+  expect(screen.getAllByText("0:05 / 0:05")[0]).toBeInTheDocument();
+  expect(
+    screen.getAllByRole("button", { name: "Play audio" })[0],
+  ).toBeInTheDocument();
+
+  fireEvent.play(next);
+  expect(pause).not.toHaveBeenCalled();
+});
+
+it("keeps ended cleanup idempotent when pause fires after ended", () => {
+  const { container } = render(
+    <>
+      <AudioAttachment
+        attachment={{
+          url: "https://fixture.test/one.mp3",
+          kind: "audio",
+          duration: 5.4,
+        }}
+        source="/api/relay/media?url=https%3A%2F%2Ffixture.test%2Fone.mp3"
+      />
+      <AudioAttachment
+        attachment={{ url: "https://fixture.test/two.mp3", kind: "audio" }}
+        source="/api/relay/media?url=https%3A%2F%2Ffixture.test%2Ftwo.mp3"
+      />
+    </>,
+  );
+  const [ended, next] = Array.from(container.querySelectorAll("audio"));
+  if (!ended || !next) throw new Error("Missing audio elements");
+
+  fireEvent.play(ended);
+  ended.currentTime = 5.4;
+  fireEvent.ended(ended);
+  fireEvent.pause(ended);
+  fireEvent.play(next);
+
+  expect(
+    screen.getAllByRole("button", { name: "Play audio" })[0],
+  ).toBeInTheDocument();
+  expect(pause).not.toHaveBeenCalled();
+});
+
+it("keeps ended cleanup idempotent when pause fires before ended", () => {
+  const { container } = render(
+    <>
+      <AudioAttachment
+        attachment={{
+          url: "https://fixture.test/one.mp3",
+          kind: "audio",
+          duration: 5.4,
+        }}
+        source="/api/relay/media?url=https%3A%2F%2Ffixture.test%2Fone.mp3"
+      />
+      <AudioAttachment
+        attachment={{ url: "https://fixture.test/two.mp3", kind: "audio" }}
+        source="/api/relay/media?url=https%3A%2F%2Ffixture.test%2Ftwo.mp3"
+      />
+    </>,
+  );
+  const [ended, next] = Array.from(container.querySelectorAll("audio"));
+  if (!ended || !next) throw new Error("Missing audio elements");
+
+  fireEvent.play(ended);
+  fireEvent.pause(ended);
+  ended.currentTime = 5.4;
+  fireEvent.ended(ended);
+  fireEvent.play(next);
+
+  expect(
+    screen.getAllByRole("button", { name: "Play audio" })[0],
+  ).toBeInTheDocument();
+  expect(screen.getAllByText("0:05 / 0:05")[0]).toBeInTheDocument();
+  expect(pause).not.toHaveBeenCalled();
+});
+
+it("corrects duration to the observed end without resetting it on replay", () => {
+  const { container } = render(
+    <AudioAttachment
+      attachment={{
+        url: "https://fixture.test/voice-note.mp4",
+        kind: "audio",
+        duration: 5.4,
+      }}
+      source={source}
+    />,
+  );
+  const audio = container.querySelector("audio");
+  if (!audio) throw new Error("Missing audio element");
+
+  fireEvent.play(audio);
+  audio.currentTime = 4.6;
+  fireEvent.ended(audio);
+
+  expect(screen.getByText("0:04 / 0:04")).toBeInTheDocument();
+  expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
+    "max",
+    "4.6",
+  );
+
+  setDuration(audio, 5.4);
+  fireEvent.durationChange(audio);
+  expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
+    "max",
+    "4.6",
+  );
+
+  audio.currentTime = 0;
+  fireEvent.play(audio);
+  expect(
+    screen.getByRole("button", { name: "Pause audio" }),
+  ).toBeInTheDocument();
+  expect(screen.getByText("0:00 / 0:04")).toBeInTheDocument();
+});
+
+it("does not correct duration on a normal mid-clip pause and seek", () => {
+  const { container } = render(
+    <AudioAttachment
+      attachment={{
+        url: "https://fixture.test/audio.mp3",
+        kind: "audio",
+        duration: 5.4,
+      }}
+      source={source}
+    />,
+  );
+  const audio = container.querySelector("audio");
+  if (!audio) throw new Error("Missing audio element");
+
+  fireEvent.change(screen.getByRole("slider", { name: "Seek audio" }), {
+    target: { value: "2.75" },
+  });
+  fireEvent.pause(audio);
+
+  expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
+    "max",
+    "5.4",
+  );
+  expect(screen.getByText("0:02 / 0:05")).toBeInTheDocument();
+});
+
 it("renders an unavailable card on load errors", () => {
   const { container } = render(
     <AudioAttachment

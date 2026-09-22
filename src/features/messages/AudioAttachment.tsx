@@ -8,6 +8,7 @@ import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
 
 let playing: HTMLAudioElement | null = null;
+const ENDED_DURATION_CORRECTION_SECONDS = 0.05;
 
 function finiteDuration(value: number | undefined): number | undefined {
   return value !== undefined &&
@@ -26,6 +27,8 @@ export function AudioAttachment({
   source: string;
 }) {
   const audio = useRef<HTMLAudioElement>(null);
+  const endedDuration = useRef<number | undefined>(undefined);
+  const previousSource = useRef(source);
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(() =>
     finiteDuration(attachment.duration),
@@ -49,6 +52,11 @@ export function AudioAttachment({
     audio.current = element;
   }, []);
 
+  if (previousSource.current !== source) {
+    previousSource.current = source;
+    endedDuration.current = undefined;
+  }
+
   if (failed)
     return (
       <span className={styles.attachmentUnavailable} role="status">
@@ -58,7 +66,16 @@ export function AudioAttachment({
 
   const syncDuration = (element: HTMLAudioElement) => {
     const measured = finiteDuration(element.duration);
-    if (measured !== undefined) setDuration(measured);
+    if (measured === undefined) return;
+    const corrected = endedDuration.current;
+    if (
+      corrected !== undefined &&
+      measured > corrected + ENDED_DURATION_CORRECTION_SECONDS
+    ) {
+      setDuration(corrected);
+      return;
+    }
+    setDuration(measured);
   };
 
   return (
@@ -77,9 +94,30 @@ export function AudioAttachment({
           // Set the singleton after pausing the previous element so exclusivity is correct for both synchronous jsdom and asynchronous browser pause events.
           if (playing && playing !== event.currentTarget) playing.pause();
           playing = event.currentTarget;
+          setCurrentTime(event.currentTarget.currentTime);
           setIsPlaying(true);
         }}
         onPause={(event) => {
+          if (playing === event.currentTarget) playing = null;
+          setIsPlaying(false);
+        }}
+        onEnded={(event) => {
+          const measured = finiteDuration(event.currentTarget.currentTime);
+          const nextDuration =
+            measured !== undefined &&
+            duration !== undefined &&
+            measured < duration - ENDED_DURATION_CORRECTION_SECONDS
+              ? measured
+              : (duration ?? measured);
+          if (
+            measured !== undefined &&
+            duration !== undefined &&
+            measured < duration - ENDED_DURATION_CORRECTION_SECONDS
+          ) {
+            endedDuration.current = measured;
+            setDuration(measured);
+          }
+          if (nextDuration !== undefined) setCurrentTime(nextDuration);
           if (playing === event.currentTarget) playing = null;
           setIsPlaying(false);
         }}
@@ -111,7 +149,7 @@ export function AudioAttachment({
         aria-label={seekLabel}
         min={0}
         max={duration ?? 0}
-        step={1}
+        step="any"
         value={duration === undefined ? 0 : Math.min(currentTime, duration)}
         disabled={duration === undefined}
         aria-valuetext={valueText}

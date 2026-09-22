@@ -31,11 +31,13 @@ export type Profile = Readonly<{
 }>;
 export type Attachment = Readonly<{
   url: string;
-  kind: "image" | "video" | "file"; // "audio" reserved for BOT-1934
+  kind: "image" | "video" | "audio" | "file";
   /** Sender-supplied presentation metadata; `size` is a claim, `name` is display/download only. */
   mime?: string;
   size?: number;
   name?: string;
+  /** Sender/relay-claimed duration in seconds; display hint, corrected by the element. */
+  duration?: number;
   dimensions?: Readonly<{ width: number; height: number }>;
   /** Validated message-carried BlurHash; decoded locally only for presentation. */
   blurhash?: string;

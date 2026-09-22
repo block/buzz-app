@@ -18,9 +18,17 @@ const HEX64 = /^[0-9a-f]{64}$/;
 function attachmentKind(
   fields: Record<string, string>,
   url: string,
+  detectionName: string | undefined,
 ): Attachment["kind"] {
   const mime = fields.m?.toLowerCase();
   if (mime?.startsWith("image/")) return "image";
+  if (
+    mime?.startsWith("audio/") ||
+    (mime === "video/mp4" &&
+      detectionName?.startsWith("voice-note-") &&
+      detectionName.endsWith(".mp4"))
+  )
+    return "audio";
   if (mime?.startsWith("video/")) return "video";
   if (fields.m) return "file";
   if (/\.(mp4|webm)(?:\?|$)/i.test(url)) return "video";
@@ -90,8 +98,22 @@ export function parseAttachments(
     const parsedSize = /^[1-9]\d*$/.test(fields.size ?? "")
       ? Number(fields.size)
       : undefined;
-    const kind = attachmentKind(fields, url);
-    const name = markdownLinkNames.get(url) ?? attachmentName(url);
+    const parsedDuration = fields.duration
+      ? Number(fields.duration)
+      : undefined;
+    const duration =
+      parsedDuration !== undefined &&
+      Number.isFinite(parsedDuration) &&
+      parsedDuration > 0
+        ? parsedDuration
+        : undefined;
+    const filename = fields.filename
+      ? safeAttachmentName(fields.filename)
+      : undefined;
+    const basename = attachmentName(url);
+    const name = markdownLinkNames.get(url) ?? filename ?? basename;
+    const detectionName = filename ?? markdownLinkNames.get(url) ?? basename;
+    const kind = attachmentKind(fields, url, detectionName);
     result.push({
       url,
       kind,
@@ -100,6 +122,7 @@ export function parseAttachments(
         ? { size: parsedSize }
         : {}),
       ...(name ? { name } : {}),
+      ...(duration !== undefined ? { duration } : {}),
       ...(blurhash ? { blurhash } : {}),
       ...(previewUrl ? { previewUrl } : {}),
       ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),

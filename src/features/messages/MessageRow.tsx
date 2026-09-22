@@ -13,7 +13,8 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
-import { FileAttachment } from "./FileAttachment";
+import { AudioAttachment } from "./AudioAttachment";
+import { FileAttachment, isProxySource } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
@@ -217,6 +218,24 @@ export const MessageRow = memo(function MessageRow({
                   onOpenLink={onOpenLink}
                 />
               );
+            if (attachment.kind === "audio") {
+              if (source && isProxySource(source))
+                return (
+                  <AudioAttachment
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                  />
+                );
+              return (
+                <FileAttachment
+                  key={url}
+                  attachment={{ ...attachment, url }}
+                  source={source}
+                  onOpenLink={onOpenLink}
+                />
+              );
+            }
             if (attachment.kind === "image" && source)
               return (
                 <AttachmentImage

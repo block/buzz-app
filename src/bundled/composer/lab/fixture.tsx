@@ -30,6 +30,17 @@ const channelList = {
 };
 const library = { status: "ready" as const, identities: [] };
 const session = {
+  attachments: {
+    upload: async (file: File, _channelId: string, signal: AbortSignal) => {
+      signal.throwIfAborted();
+      return {
+        url: `https://preview.invalid/media/${"a".repeat(64)}.txt`,
+        sha256: "a".repeat(64),
+        size: file.size,
+        type: file.type || "application/octet-stream",
+      };
+    },
+  },
   messages: {
     send: () => "preview-send",
     reply: () => "preview-reply",

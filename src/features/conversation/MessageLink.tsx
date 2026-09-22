@@ -63,6 +63,7 @@ export function MessageLink({
   const [unavailable, setUnavailable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const trigger = useRef<HTMLAnchorElement>(null);
+  const download = session?.download?.(url);
   const internal = isBuzzLink(url);
   const parsed = internal ? parseBuzzLink(url) : null;
   const destination =
@@ -77,9 +78,10 @@ export function MessageLink({
       ? { channelId: destination.channelId, messageId: destination.messageId }
       : undefined;
   const navigation = {
-    target: "_blank",
+    target: download ? "_self" : "_blank",
     rel: "noopener noreferrer",
     onClick: (event: MouseEvent<HTMLAnchorElement>) => {
+      if (download) return;
       if (internal) {
         event.preventDefault();
         if (trigger.current?.isConnected)
@@ -121,7 +123,8 @@ export function MessageLink({
     const element = interactive ? (
       <a
         ref={trigger}
-        href={url}
+        href={download ?? url}
+        download={download ? (label ?? "attachment") : undefined}
         aria-label={label}
         title={!preview ? url : undefined}
         className={entry?.className}

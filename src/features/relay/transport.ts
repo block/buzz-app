@@ -1,3 +1,4 @@
+import { brokerUpload, type AttachmentUpload } from "./attachments";
 import { workflowHost } from "../workflows/http";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
@@ -48,6 +49,8 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  readonly uploadAttachment?: AttachmentUpload;
+  download?(url: string): string | undefined;
   readonly workflows?: WorkflowHost;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
@@ -221,6 +224,7 @@ export async function connectBrokerTransport(
     relayAuthor?: unknown;
     archiveAuthority?: unknown;
     writeKinds?: number[];
+    attachmentUploads?: boolean;
     workflowReads?: boolean;
     relayUrl?: string;
     live?: boolean;
@@ -251,6 +255,28 @@ export async function connectBrokerTransport(
   });
   return {
     profiling,
+    ...(session.attachmentUploads && session.relayUrl
+      ? {
+          uploadAttachment: brokerUpload(endpoint, session.relayUrl),
+          download: (url: string) => {
+            try {
+              const target = new URL(url);
+              return target.origin === session.relayUrl &&
+                /^\/media\/[0-9a-f]{64}(?:\.[a-z0-9]{1,8})?$/.test(
+                  target.pathname,
+                ) &&
+                !target.search &&
+                !target.hash &&
+                !target.username &&
+                !target.password
+                ? `${endpoint}/media?download=1&url=${encodeURIComponent(url)}`
+                : undefined;
+            } catch {
+              return undefined;
+            }
+          },
+        }
+      : {}),
     ...(session.presence && session.live
       ? {
           async presenceSnapshot(

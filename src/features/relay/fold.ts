@@ -4,7 +4,11 @@ import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { newer } from "./events";
 import type { EventData } from "./events";
-import type { Attachment, ChannelMessage } from "./contracts";
+import {
+  MAX_ATTACHMENT_DURATION_SECONDS,
+  type Attachment,
+  type ChannelMessage,
+} from "./contracts";
 import {
   projectMarkdownAttachments,
   relayHashBasename,
@@ -15,12 +19,26 @@ import {
 import { channelRowKind, membershipChange } from "./membership";
 const HEX64 = /^[0-9a-f]{64}$/;
 
+function isLegacyVoiceNote(mime: string | undefined, name: string | undefined) {
+  // Old Buzz uploads voice notes as video/mp4: a 16x16 H.264 black track plus AAC
+  // because the relay video validator requires a video track; classify by filename convention.
+  return (
+    (mime === "video/mp4" || mime?.startsWith("video/mp4;") === true) &&
+    name?.startsWith("voice-note-") === true &&
+    name.endsWith(".mp4")
+  );
+}
+
 function attachmentKind(
   fields: Record<string, string>,
   url: string,
+  detectionName: string | undefined,
 ): Attachment["kind"] {
   const mime = fields.m?.toLowerCase();
+  const voiceNoteName = detectionName?.toLowerCase();
   if (mime?.startsWith("image/")) return "image";
+  if (mime?.startsWith("audio/") || isLegacyVoiceNote(mime, voiceNoteName))
+    return "audio";
   if (mime?.startsWith("video/")) return "video";
   if (fields.m) return "file";
   if (/\.(mp4|webm)(?:\?|$)/i.test(url)) return "video";
@@ -90,8 +108,24 @@ export function parseAttachments(
     const parsedSize = /^[1-9]\d*$/.test(fields.size ?? "")
       ? Number(fields.size)
       : undefined;
-    const kind = attachmentKind(fields, url);
-    const name = markdownLinkNames.get(url) ?? attachmentName(url);
+    // Treat signed metadata as untrusted layout input. Invalid/unbounded duration
+    // uses a stable unknown-duration fallback.
+    const parsedDuration = /^\d+(?:\.\d+)?$/.test(fields.duration ?? "")
+      ? Number(fields.duration)
+      : undefined;
+    const duration =
+      parsedDuration !== undefined &&
+      parsedDuration > 0 &&
+      parsedDuration <= MAX_ATTACHMENT_DURATION_SECONDS
+        ? parsedDuration
+        : undefined;
+    const filename = fields.filename
+      ? safeAttachmentName(fields.filename)
+      : undefined;
+    const basename = attachmentName(url);
+    const name = markdownLinkNames.get(url) ?? filename ?? basename;
+    const detectionName = filename ?? markdownLinkNames.get(url) ?? basename;
+    const kind = attachmentKind(fields, url, detectionName);
     result.push({
       url,
       kind,
@@ -100,6 +134,7 @@ export function parseAttachments(
         ? { size: parsedSize }
         : {}),
       ...(name ? { name } : {}),
+      ...(duration !== undefined ? { duration } : {}),
       ...(blurhash ? { blurhash } : {}),
       ...(previewUrl ? { previewUrl } : {}),
       ...(width > 0 && height > 0 ? { dimensions: { width, height } } : {}),

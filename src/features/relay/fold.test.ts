@@ -641,7 +641,7 @@ it("classifies generic imeta files and validates file metadata", () => {
     },
     {
       url: "https://x.test/audio.mp3",
-      kind: "file",
+      kind: "audio",
       mime: "audio/mpeg",
       name: "audio.mp3",
     },
@@ -813,5 +813,199 @@ it.each([
       previewUrl: "https://x.test/thumbnail.png",
     },
     { url: "https://x.test/legacy.png", kind: "image" },
+  ]);
+});
+
+it("classifies voice-note mp4 metadata as audio with validated duration and filename", () => {
+  const url = "https://x.test/media/hash";
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      `url ${url}`,
+      "m video/mp4",
+      "filename voice-note-1.mp4",
+      "duration 12.3",
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url,
+      kind: "audio",
+      mime: "video/mp4",
+      name: "voice-note-1.mp4",
+      duration: 12.3,
+    },
+  ]);
+});
+
+it.each([
+  ["Video/MP4", "Voice-Note-1.MP4"],
+  ['video/mp4; codecs="avc1.42E01E,mp4a.40.2"', "voice-note-parameterized.mp4"],
+])("classifies voice-note mp4 metadata as audio for mime %s", (mime, name) => {
+  const url = "https://x.test/media/hash";
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", `url ${url}`, `m ${mime}`, `filename ${name}`],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url,
+      kind: "audio",
+      mime,
+      name,
+    },
+  ]);
+});
+
+it("detects legacy voice-note mp4s from the link label when filename is absent", () => {
+  const url = "https://x.test/media/hash";
+  const event = message(keypair(), "channel", `[voice-note-2.mp4](${url})`, 1, [
+    ["imeta", `url ${url}`, "m video/mp4"],
+  ]);
+  const [row] = foldMessages("channel", relay.pubkey, [event]);
+  expect(row?.attachments).toEqual([
+    { url, kind: "audio", mime: "video/mp4", name: "voice-note-2.mp4" },
+  ]);
+});
+
+it("keeps plain video/mp4 attachments classified as video", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", "url https://x.test/clip.mp4", "m video/mp4"],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/clip.mp4",
+      kind: "video",
+      mime: "video/mp4",
+      name: "clip.mp4",
+    },
+  ]);
+});
+
+it("keeps video/mp4V-ES voice-note-shaped attachments classified as video", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/voice-note-fallback.mp4",
+      "m video/mp4V-ES",
+      "filename voice-note-1.mp4",
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/voice-note-fallback.mp4",
+      kind: "video",
+      mime: "video/mp4V-ES",
+      name: "voice-note-1.mp4",
+    },
+  ]);
+});
+
+it.each(["audio/mpeg", "Audio/MPEG"])(
+  "classifies %s attachments as audio",
+  (mime) => {
+    const event = message(keypair(), "channel", "", 1, [
+      ["imeta", "url https://x.test/song.mp3", `m ${mime}`],
+    ]);
+    expect(parseAttachments(event, [])).toEqual([
+      {
+        url: "https://x.test/song.mp3",
+        kind: "audio",
+        mime,
+        name: "song.mp3",
+      },
+    ]);
+  },
+);
+
+it("accepts maximum bounded attachment duration", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", "url https://x.test/song.mp3", "m audio/mpeg", "duration 86400"],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/song.mp3",
+      kind: "audio",
+      mime: "audio/mpeg",
+      name: "song.mp3",
+      duration: 86400,
+    },
+  ]);
+});
+
+it.each([
+  "0",
+  "-1",
+  "Infinity",
+  "NaN",
+  "not-a-number",
+  " 12 ",
+  "0x10",
+  "1e9",
+  "86400.1",
+])("rejects invalid attachment duration %s", (duration) => {
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/song.mp3",
+      "m audio/mpeg",
+      `duration ${duration}`,
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/song.mp3",
+      kind: "audio",
+      mime: "audio/mpeg",
+      name: "song.mp3",
+    },
+  ]);
+});
+
+it("rejects control characters in imeta filenames", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/hash",
+      "m application/pdf",
+      "filename report\nfinal.pdf",
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/hash",
+      kind: "file",
+      mime: "application/pdf",
+      name: "hash",
+    },
+  ]);
+});
+
+it("uses attachment name precedence link label before filename before basename", () => {
+  const event = message(
+    keypair(),
+    "channel",
+    "[Link Name](https://x.test/one.pdf)",
+    1,
+    [
+      [
+        "imeta",
+        "url https://x.test/one.pdf",
+        "m application/pdf",
+        "filename File Name.pdf",
+      ],
+      [
+        "imeta",
+        "url https://x.test/two.pdf",
+        "m application/pdf",
+        "filename File Name.pdf",
+      ],
+      ["imeta", "url https://x.test/three.pdf", "m application/pdf"],
+    ],
+  );
+  const [row] = foldMessages("channel", relay.pubkey, [event]);
+  expect(row?.attachments.map((attachment) => attachment.name)).toEqual([
+    "Link Name",
+    "File Name.pdf",
+    "three.pdf",
   ]);
 });

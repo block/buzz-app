@@ -416,6 +416,62 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+.audioAttachment {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(24rem, 100%);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text);
+}
+.audioAttachment audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.audioPlay {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-inverse);
+  background: var(--surface-inverse);
+  flex-shrink: 0;
+}
+.audioPlay:hover {
+  background: var(--affordance-prominent);
+}
+.audioSeek {
+  min-width: 0;
+  flex: 1;
+  accent-color: var(--action);
+}
+.audioSeek:disabled {
+  cursor: not-allowed;
+}
+.audioTime {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+html[data-keyboard-navigation] .audioPlay:focus-visible,
+html[data-keyboard-navigation] .audioSeek:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
 .mediaPreview {
   position: relative;
   display: block;
@@ -547,6 +603,9 @@ button.mediaPreview {
   }
   .mediaPreview {
     max-height: 18rem;
+  }
+  .audioAttachment {
+    max-width: 100%;
   }
 }
 

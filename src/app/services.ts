@@ -1,4 +1,5 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { IdentityNamesService } from "../features/identity-names/service";
 import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
@@ -32,9 +33,11 @@ export function createServices() {
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const conversation = new ConversationService(ctx);
+  const identityNames = new IdentityNamesService(ctx);
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
+    identityNames,
   );
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));

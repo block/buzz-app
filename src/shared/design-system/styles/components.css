@@ -2,13 +2,16 @@
   .buzz-button {
     display: inline-flex;
     min-width: 0;
-    height: var(--size-control);
+    /* Text controls grow with enlarged or wrapped labels; icons stay square. */
+    min-height: var(--size-control);
+    flex-wrap: wrap;
+    overflow-wrap: anywhere;
     align-items: center;
     justify-content: center;
     gap: var(--space-row-gap);
     border: 0;
     border-radius: var(--radius-control);
-    padding: 0 var(--space-control-inset);
+    padding: var(--space-1h) var(--space-control-inset);
     background: transparent;
     color: var(--text-primary);
     font-family: inherit;
@@ -23,9 +26,9 @@
 
   .buzz-button[data-size="compact"] {
     @apply text-label-sm;
-    height: var(--size-row);
+    min-height: var(--size-row);
     border-radius: var(--radius-row);
-    padding-inline: var(--space-control-inset);
+    padding-block: var(--space-1);
   }
 
   .buzz-button[data-variant="primary"] {
@@ -65,7 +68,9 @@
   }
 
   .buzz-button[data-icon-variant] {
+    min-height: 0;
     width: var(--size-control);
+    height: var(--size-control);
     flex: 0 0 auto;
     padding: 0;
   }

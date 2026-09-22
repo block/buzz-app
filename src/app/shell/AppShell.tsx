@@ -9,8 +9,10 @@ import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
+import { macTitleBarDragHandlers } from "./title-bar";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
+const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
 export function AppShell({
   pages,
@@ -58,10 +60,15 @@ export function AppShell({
         Skip to content
       </a>
       <header
-        data-tauri-drag-region
+        data-tauri-drag-region={macDesktop ? undefined : true}
+        {...titleBarDragProps}
         className={`shell-header ${macDesktop ? "shell-header-mac" : ""}`}
       >
-        <div className="shell-communities" data-tauri-drag-region>
+        <div
+          className="shell-communities"
+          data-tauri-drag-region={macDesktop ? undefined : true}
+          {...titleBarDragProps}
+        >
           {navigationControls}
           <CommunitySwitcher
             communities={communities}
@@ -94,7 +101,11 @@ export function AppShell({
             );
           })}
         </nav>
-        <div className="shell-actions" data-tauri-drag-region>
+        <div
+          className="shell-actions"
+          data-tauri-drag-region={macDesktop ? undefined : true}
+          {...titleBarDragProps}
+        >
           {launchers}
           <PageSearch
             pages={pages}

@@ -718,7 +718,8 @@ function Composer({
               </span>
             ))}
           <IconButton
-            variant="solid"
+            variant="tint"
+            size="toolbar"
             shape="round"
             type="submit"
             aria-label="Send message"
@@ -730,7 +731,7 @@ function Composer({
               submission?.disabled ||
               !draft.trim()
             }
-            icon={<ArrowUpIcon size={18} />}
+            icon={<ArrowUpIcon size={16} />}
           />
         </div>
         {error && <p role="alert">{error}</p>}

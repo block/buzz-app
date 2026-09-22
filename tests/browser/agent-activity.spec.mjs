@@ -234,7 +234,9 @@ for (const mode of ["light", "dark"]) {
         .boundingBox();
       expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
       const avatarBox = await entry.locator(".buzz-avatar").boundingBox();
-      expect(avatarBox.x).toBeCloseTo(formBox.x, 0);
+      // Shared buttons keep a 1px border even when the ghost fill is clear.
+      await expect(entry).toHaveCSS("border-left-width", "1px");
+      expect(avatarBox.x).toBeCloseTo(formBox.x + 1, 0);
       const lastRow = await channelActivity(page)
         .getByRole("button")
         .last()
@@ -468,8 +470,9 @@ test.describe("thread activity", () => {
       formBox = await form.boundingBox();
     expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
     expect(formBox.y - entryBox.y - entryBox.height).toBeCloseTo(4, 0);
+    await expect(entry).toHaveCSS("border-left-width", "1px");
     expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      formBox.x,
+      formBox.x + 1,
       0,
     );
     await entry.hover();
@@ -493,7 +496,7 @@ test.describe("thread activity", () => {
     );
     expect(narrowForm.y - narrowEntry.y - narrowEntry.height).toBeCloseTo(4, 0);
     expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      narrowForm.x,
+      narrowForm.x + 1,
       0,
     );
     await page.screenshot({

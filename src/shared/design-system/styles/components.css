@@ -81,7 +81,7 @@
         [data-variant="outline"],
         [data-variant="ghost"],
         [data-variant="inverted"]
-      ):hover:not([data-disabled]) {
+      ):hover:not([data-disabled], [data-icon-variant="chrome"]) {
       background: var(--affordance-subtle-hover);
     }
     .buzz-button[data-variant="destructive"]:hover:not([data-disabled]) {

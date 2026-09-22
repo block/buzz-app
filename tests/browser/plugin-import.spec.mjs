@@ -182,7 +182,7 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       // Shared IconButton must not inherit the enlarged text button's minimum.
       await expect(
         page.getByRole("button", { name: "Search Buzz", exact: true }),
-      ).toHaveAttribute("data-icon-size", "default");
+      ).toHaveAttribute("data-icon-size", "md");
       await expect
         .poll(() =>
           page.locator("button[data-icon-size]").evaluateAll((buttons) =>
@@ -191,6 +191,9 @@ test("Settings text buttons contain enlarged labels without resizing icon button
               .map((button) => {
                 const box = button.getBoundingClientRect();
                 const sizes = {
+                  sm: 32,
+                  md: 40,
+                  lg: 52,
                   compact: 32,
                   toolbar: 32,
                   default: 40,

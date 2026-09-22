@@ -66,6 +66,17 @@ mod macos {
         unsafe { guest.webview().isLoading() }
     }
 
+    pub fn current_url(guest: &WebView) -> Result<Option<String>, String> {
+        // WKWebView has no URL before its first navigation; Wry 0.55.1 unwraps it.
+        Ok(unsafe {
+            guest
+                .webview()
+                .URL()
+                .and_then(|url| url.absoluteString())
+                .map(|url| url.to_string())
+        })
+    }
+
     pub fn back(guest: &WebView) -> Result<(), String> {
         unsafe {
             guest.webview().goBack();
@@ -162,12 +173,17 @@ pub(super) fn resize_guest(
 }
 
 #[cfg(target_os = "macos")]
-pub(super) use macos::{back, deny_permissions, forward, loading};
+pub(super) use macos::{back, current_url, deny_permissions, forward, loading};
 #[cfg(target_os = "macos")]
 pub(super) type Permissions = objc2::rc::Retained<macos::PermissionDelegate>;
 
 #[cfg(not(target_os = "macos"))]
 pub(super) struct Permissions;
+
+#[cfg(not(target_os = "macos"))]
+pub(super) fn current_url(guest: &WebView) -> Result<Option<String>, String> {
+    guest.url().map(Some).map_err(|error| error.to_string())
+}
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 pub(super) fn build_guest(builder: WebViewBuilder<'_>, window: &Window) -> Result<WebView, String> {

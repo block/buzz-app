@@ -50,6 +50,7 @@ impl BrowserSession {
             .load_url(url.as_str())
             .map_err(|error| error.to_string())?;
         let mut snapshot = self.snapshot.borrow_mut();
+        snapshot.url = url.to_string();
         snapshot.loading = true;
         snapshot.error = None;
         Ok(())
@@ -57,7 +58,9 @@ impl BrowserSession {
 
     fn snapshot(&self) -> Result<BrowserSnapshot, String> {
         let mut snapshot = self.snapshot.borrow().clone();
-        snapshot.url = self.guest.url().map_err(|error| error.to_string())?;
+        if let Some(url) = platform::current_url(&self.guest)? {
+            snapshot.url = url;
+        }
         #[cfg(target_os = "macos")]
         {
             snapshot.loading = platform::loading(&self.guest);

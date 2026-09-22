@@ -20,7 +20,7 @@ export function IconButton({
   icon,
   variant = "ghost",
   size = "default",
-  shape = "control",
+  shape = "round",
   ...props
 }: IconButtonProps) {
   return (

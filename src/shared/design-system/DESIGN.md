@@ -88,6 +88,9 @@ increase height at larger text settings. Text buttons use pill corners. Fields
 use the shared control corner. Legacy Button names map to these variants during
 migration; do not add new primary/quiet or compact/default call sites.
 
+IconButton defaults to round across all sizes and variants. Use `shape="control"`
+only when a rectangular control shape is explicitly needed.
+
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
@@ -109,6 +112,17 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
+title. Group the title and optional description with `--space-2` (8px), beside
+the close button so its hit area does not enlarge the text gap. The body owns
+vertical padding matching the dialog's horizontal padding: `--space-6` (24px),
+or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
+on top of that body padding.
+The shared Dialog uses state opacity and settling transform tokens for a centered
+0.98-scale entrance, with fast timing on exit. Base UI owns transition presence;
+keep the controlled component mounted while setting `open={false}` for an exit.
+Reduced motion, keyboard navigation, and Escape dismissal are immediate. Pass
+`motion="none"` for frequently used surfaces such as the search palette.
 
 Use Accordion for collapsible sections. Form sections pass `keepMounted` so
 collapsing them preserves local input state; leave the default for static content.

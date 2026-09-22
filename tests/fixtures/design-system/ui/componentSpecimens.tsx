@@ -1,6 +1,6 @@
 import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
-import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
+import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
@@ -979,33 +979,6 @@ function ComboboxSpecimen() {
   );
 }
 
-function DialogSpecimen() {
-  const [open, setOpen] = useState(false);
-  return (
-    <SpecimenFrame>
-      <Button onClick={() => setOpen(true)}>Edit workspace</Button>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Edit workspace"
-        description="Change the name used in this example."
-        actions={
-          <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="prominent" onClick={() => setOpen(false)}>
-              Save
-            </Button>
-          </>
-        }
-      >
-        <Field label="Workspace name">
-          <Input defaultValue="Project notes" />
-        </Field>
-      </Dialog>
-    </SpecimenFrame>
-  );
-}
-
 function AlertDialogSpecimen() {
   const [open, setOpen] = useState(false);
   return (
@@ -1106,7 +1079,7 @@ function RadioGroupSpecimen() {
 
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "alert-dialog": AlertDialogSpecimen,
-  dialog: DialogSpecimen,
+  dialog: DialogSpecimens,
   tooltip: () => (
     <SpecimenFrame>
       <Tooltip content="Create a note">

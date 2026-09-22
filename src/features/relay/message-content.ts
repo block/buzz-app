@@ -16,6 +16,7 @@ export function safeMessageUrl(value: string): string | undefined {
 
 type MarkdownNode = {
   type: string;
+  value?: string;
   url?: string;
   identifier?: string;
   children?: MarkdownNode[];
@@ -27,13 +28,22 @@ type MarkdownScan = {
   tooDeep: boolean;
   definitions: Map<string, string>;
   images: MarkdownNode[];
+  links: MarkdownNode[];
 };
+
+export const MAX_ATTACHMENT_NAME_LENGTH = 256;
+export const RELAY_HASH_BASENAME = /^[0-9a-f]{64}(?:\.[^./?#]+)?$/i;
+
+export function relayHashBasename(value: string): boolean {
+  return RELAY_HASH_BASENAME.test(value);
+}
 
 /** Parse once and bound attacker-controlled nesting before recursive render stages. */
 export function scanMarkdown(content: string): MarkdownScan {
   const tree = fromMarkdown(content) as MarkdownNode;
   const definitions = new Map<string, string>();
   const images: MarkdownNode[] = [];
+  const links: MarkdownNode[] = [];
   const pending = [{ node: tree, depth: 0 }];
   let tooDeep = false;
   while (pending.length) {
@@ -53,12 +63,34 @@ export function scanMarkdown(content: string): MarkdownScan {
       definitions.set(node.identifier.toLowerCase(), node.url);
     if (node.type === "image" || node.type === "imageReference")
       images.push(node);
+    if (node.type === "link" || node.type === "linkReference") links.push(node);
     for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) {
       const child = node.children?.[index];
       if (child) pending.push({ node: child, depth: depth + 1 });
     }
   }
-  return { tree, tooDeep, definitions, images };
+  return { tree, tooDeep, definitions, images, links };
+}
+
+function resolvedNodeUrl(
+  node: MarkdownNode,
+  definitions: ReadonlyMap<string, string>,
+): string | undefined {
+  return node.type === "link" || node.type === "image"
+    ? node.url
+    : typeof node.identifier === "string"
+      ? definitions.get(node.identifier.toLowerCase())
+      : undefined;
+}
+
+function stripRanges(
+  content: string,
+  ranges: readonly { start: number; end: number }[],
+): string {
+  let stripped = content;
+  for (const range of [...ranges].sort((a, b) => b.start - a.start))
+    stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
+  return stripped.trimEnd();
 }
 
 /** Project every CommonMark image from the same bounded parse policy as rendering. */
@@ -66,23 +98,60 @@ export function projectMarkdownImages(content: string): {
   content: string;
   urls: readonly string[];
 } {
-  const { tooDeep, definitions, images } = scanMarkdown(content);
-  if (tooDeep) return { content, urls: Object.freeze([]) };
+  const projected = projectMarkdownAttachments(content, new Set());
+  return { content: projected.content, urls: projected.urls };
+}
+
+function nodeText(node: MarkdownNode): string {
+  if (typeof node.value === "string") return node.value;
+  return (node.children ?? []).map(nodeText).join("");
+}
+
+function hashShapedLabel(label: string): boolean {
+  if (relayHashBasename(label)) return true;
+  const labelUrl = safeMessageUrl(label);
+  if (!labelUrl) return false;
+  const segment = new URL(labelUrl).pathname.split("/").pop();
+  if (!segment) return false;
+  try {
+    return relayHashBasename(decodeURIComponent(segment));
+  } catch {
+    return relayHashBasename(segment);
+  }
+}
+
+export type ProjectedAttachmentLinkName = Readonly<{
+  url: string;
+  name: string;
+}>;
+
+export function projectMarkdownAttachments(
+  content: string,
+  attachmentUrls: ReadonlySet<string>,
+): {
+  content: string;
+  urls: readonly string[];
+  names: readonly ProjectedAttachmentLinkName[];
+} {
+  const { tooDeep, definitions, images, links } = scanMarkdown(content);
+  if (tooDeep)
+    return {
+      content,
+      urls: Object.freeze([]),
+      names: Object.freeze([]),
+    };
 
   const urls: string[] = [];
   const seen = new Set<string>();
+  const names: ProjectedAttachmentLinkName[] = [];
   const ranges: Array<{ start: number; end: number }> = [];
+
   for (const image of images) {
-    const raw =
-      image.type === "image"
-        ? image.url
-        : typeof image.identifier === "string"
-          ? definitions.get(image.identifier.toLowerCase())
-          : undefined;
-    const url = raw ? safeMessageUrl(raw) : undefined;
-    if (url && !seen.has(url)) {
-      seen.add(url);
-      urls.push(url);
+    const url = resolvedNodeUrl(image, definitions);
+    const safeUrl = url ? safeMessageUrl(url) : undefined;
+    if (safeUrl && !seen.has(safeUrl)) {
+      seen.add(safeUrl);
+      urls.push(safeUrl);
     }
     const start = image.position?.start.offset;
     const end = image.position?.end.offset;
@@ -90,8 +159,26 @@ export function projectMarkdownImages(content: string): {
       ranges.push({ start, end });
   }
 
-  let stripped = content;
-  for (const range of ranges.sort((a, b) => b.start - a.start))
-    stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
-  return { content: stripped.trimEnd(), urls: Object.freeze(urls) };
+  if (attachmentUrls.size) {
+    for (const link of links) {
+      const raw = resolvedNodeUrl(link, definitions);
+      const url = raw ? safeMessageUrl(raw) : undefined;
+      if (!url || !attachmentUrls.has(url)) continue;
+
+      const start = link.position?.start.offset;
+      const end = link.position?.end.offset;
+      if (typeof start === "number" && typeof end === "number")
+        ranges.push({ start, end });
+
+      const label = nodeText(link).trim();
+      if (!label || hashShapedLabel(label)) continue;
+      names.push({ url, name: label.slice(0, MAX_ATTACHMENT_NAME_LENGTH) });
+    }
+  }
+
+  return {
+    content: stripRanges(content, ranges),
+    urls: Object.freeze(urls),
+    names: Object.freeze(names),
+  };
 }

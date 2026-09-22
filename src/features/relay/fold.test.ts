@@ -249,6 +249,168 @@ describe("message fold", () => {
     },
   );
 
+  it("projects attachment markdown links as file names without rendering duplicate links", () => {
+    const url =
+      "https://relay.test/media/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf";
+    const event = message(
+      alice,
+      channel,
+      `See [Aidys Cap - EU.bebe5b6f.pdf](${url}) now`,
+      10,
+      [["imeta", `url ${url}`, "m application/pdf", "size 1536"]],
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("See  now");
+    expect(row?.attachments).toEqual([
+      {
+        url,
+        kind: "file",
+        mime: "application/pdf",
+        size: 1536,
+        name: "Aidys Cap - EU.bebe5b6f.pdf",
+      },
+    ]);
+    expect(row?.attachmentContentRemoved).toBe(true);
+  });
+
+  it("projects attachment link references as file names", () => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(
+      alice,
+      channel,
+      `Download [Quarterly Summary][file].\n\n[file]: ${url}`,
+      10,
+      [["imeta", `url ${url}`, "m application/pdf"]],
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe(`Download .\n\n[file]: ${url}`);
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "Quarterly Summary" },
+    ]);
+  });
+
+  it("strips attachment autolinks while rejecting hash-shaped URL labels", () => {
+    const url =
+      "https://relay.test/media/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.pdf";
+    const event = message(alice, channel, `<${url}>`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf" },
+    ]);
+  });
+
+  it("leaves non-attachment markdown links untouched", () => {
+    const attached = "https://relay.test/media/file.pdf";
+    const linked = "https://relay.test/docs/file.pdf";
+    const event = message(alice, channel, `[Public copy](${linked})`, 10, [
+      ["imeta", `url ${attached}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe(`[Public copy](${linked})`);
+    expect(row?.attachments).toEqual([
+      {
+        url: attached,
+        kind: "file",
+        mime: "application/pdf",
+        name: "file.pdf",
+      },
+    ]);
+  });
+
+  it("ignores empty attachment link labels and preserves URL-derived names", () => {
+    const url = "https://relay.test/media/report.pdf";
+    const event = message(alice, channel, `[](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "report.pdf" },
+    ]);
+  });
+
+  it("rejects hash-shaped attachment link labels", () => {
+    const hash = "a".repeat(64);
+    const url = `https://relay.test/media/${hash}.pdf`;
+    const event = message(alice, channel, `[${hash}.pdf](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf" },
+    ]);
+  });
+
+  it("caps over-length attachment link names", () => {
+    const url = "https://relay.test/media/file.pdf";
+    const label = "n".repeat(300);
+    const event = message(alice, channel, `[${label}](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.attachments).toEqual([
+      {
+        url,
+        kind: "file",
+        mime: "application/pdf",
+        name: "n".repeat(256),
+      },
+    ]);
+  });
+
+  it("uses the first projected name when multiple links target the same attachment", () => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(
+      alice,
+      channel,
+      `[First name](${url}) and [Second name](${url})`,
+      10,
+      [["imeta", `url ${url}`, "m application/pdf"]],
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe(" and");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "First name" },
+    ]);
+  });
+
+  it("preserves surrounding prose when stripping a mid-sentence attachment link", () => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(
+      alice,
+      channel,
+      `Please review [the attached brief](${url}) before Friday.`,
+      10,
+      [["imeta", `url ${url}`, "m application/pdf"]],
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("Please review  before Friday.");
+    expect(row?.attachments).toEqual([
+      {
+        url,
+        kind: "file",
+        mime: "application/pdf",
+        name: "the attached brief",
+      },
+    ]);
+  });
+
+  it("projects link-only attachment messages to empty content", () => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(alice, channel, `[Only attachment](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "Only attachment" },
+    ]);
+  });
+
   it("unwraps agent envelopes and projects valid CommonMark images through one safe URL policy", () => {
     const agent = signed(bob, {
       kind: 40002,

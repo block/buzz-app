@@ -473,6 +473,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
 }
 .fileAttachmentBody {
   min-width: 0;
+  max-width: 100%;
   display: grid;
   gap: var(--space-half);
 }

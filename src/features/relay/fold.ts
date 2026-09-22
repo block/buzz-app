@@ -5,11 +5,14 @@ import { objectBody } from "./body";
 import { newer } from "./events";
 import type { EventData } from "./events";
 import type { Attachment, ChannelMessage } from "./contracts";
-import { projectMarkdownImages, safeMessageUrl } from "./message-content";
+import {
+  projectMarkdownAttachments,
+  relayHashBasename,
+  safeMessageUrl,
+} from "./message-content";
 
 import { channelRowKind, membershipChange } from "./membership";
 const HEX64 = /^[0-9a-f]{64}$/;
-const RELAY_HASH_BASENAME = /^[0-9a-f]{64}(?:\.[^./?#]+)?$/i;
 
 function attachmentKind(
   fields: Record<string, string>,
@@ -29,15 +32,32 @@ function attachmentName(url: string): string | undefined {
   if (!segment) return undefined;
   try {
     const decoded = decodeURIComponent(segment);
-    return decoded && !RELAY_HASH_BASENAME.test(decoded) ? decoded : undefined;
+    return decoded && !relayHashBasename(decoded) ? decoded : undefined;
   } catch {
-    return segment && !RELAY_HASH_BASENAME.test(segment) ? segment : undefined;
+    return segment && !relayHashBasename(segment) ? segment : undefined;
   }
+}
+
+export function imetaAttachmentUrls(event: EventData): ReadonlySet<string> {
+  const urls = new Set<string>();
+  for (const entry of event.tags) {
+    if (entry[0] !== "imeta") continue;
+    const fields = Object.fromEntries(
+      entry.slice(1).map((field) => {
+        const split = field.indexOf(" ");
+        return [field.slice(0, split), field.slice(split + 1)];
+      }),
+    );
+    const url = fields.url ? safeMessageUrl(fields.url) : undefined;
+    if (url) urls.add(url);
+  }
+  return urls;
 }
 
 export function parseAttachments(
   event: EventData,
   markdownImages: readonly string[],
+  markdownLinkNames: ReadonlyMap<string, string> = new Map(),
 ): Attachment[] {
   const result: Attachment[] = [];
   const seen = new Set<string>();
@@ -66,7 +86,7 @@ export function parseAttachments(
       ? Number(fields.size)
       : undefined;
     const kind = attachmentKind(fields, url);
-    const name = attachmentName(url);
+    const name = markdownLinkNames.get(url) ?? attachmentName(url);
     result.push({
       url,
       kind,
@@ -193,11 +213,20 @@ export function foldMessages(
       const body = objectBody(content);
       if (typeof body?.content === "string") content = body.content;
     }
-    // Every CommonMark image begins with `![`; avoid a second Markdown parse for
-    // ordinary messages, while sharing the parser with every supported image form.
-    const projected = content.includes("![")
-      ? projectMarkdownImages(content)
-      : { content, urls: Object.freeze([] as string[]) };
+    const imetaUrls = imetaAttachmentUrls(event);
+    // Every CommonMark image begins with `![`, and every attachment title link
+    // needs an imeta URL match; avoid parsing ordinary messages.
+    const projected =
+      content.includes("![") || imetaUrls.size
+        ? projectMarkdownAttachments(content, imetaUrls)
+        : {
+            content,
+            urls: Object.freeze([] as string[]),
+            names: Object.freeze([]),
+          };
+    const attachmentNames = new Map<string, string>();
+    for (const { url, name } of projected.names)
+      if (!attachmentNames.has(url)) attachmentNames.set(url, name);
     rows.push(
       Object.freeze({
         id: event.id,
@@ -219,7 +248,9 @@ export function foldMessages(
             ),
           ),
         ]),
-        attachments: Object.freeze(parseAttachments(event, projected.urls)),
+        attachments: Object.freeze(
+          parseAttachments(event, projected.urls, attachmentNames),
+        ),
         emoji: emojiTags(
           edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,
         ),

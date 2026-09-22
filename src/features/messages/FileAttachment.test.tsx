@@ -64,6 +64,25 @@ it("keeps nameless downloads on the media href", () => {
   );
 });
 
+it("renders long names as the title while keeping full download semantics", () => {
+  const name = `${"Very long report name ".repeat(12)}.pdf`;
+  render(
+    <FileAttachment
+      attachment={{
+        url: "https://fixture.test/file",
+        kind: "file",
+        name,
+        size: 1536,
+      }}
+      source="app://media/file"
+    />,
+  );
+  const link = screen.getByRole("link", { name: `Download ${name}` });
+  expect(link).toHaveAttribute("download", name);
+  expect(screen.getByText(name).className).toContain("fileAttachmentName");
+  expect(screen.getByText("2 KB")).toBeInTheDocument();
+});
+
 it.each(["application/octet-stream", "application/vnd.ms-excel"])(
   "does not derive noisy labels from %s",
   (mime) => {

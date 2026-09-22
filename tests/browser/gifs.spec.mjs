@@ -1,3 +1,4 @@
+import { expectPhosphor } from "./phosphor.mjs";
 import { test, expect } from "./fixture.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
@@ -106,12 +107,46 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     exact: true,
   });
   const emojiSearchPosition = await emojiSearch.boundingBox();
+  await expect(emojiSearch).toHaveCSS(
+    "box-shadow",
+    "rgb(0, 0, 0) 0px 0px 0px 2px",
+  );
+  const emojiSearchStyle = await emojiSearch.evaluate((input) => {
+    const style = getComputedStyle(input);
+    return {
+      height: style.height,
+      padding: style.padding,
+      borderRadius: style.borderRadius,
+      backgroundColor: style.backgroundColor,
+      boxShadow: style.boxShadow,
+      color: style.color,
+      fontFamily: style.fontFamily,
+      fontSize: style.fontSize,
+      lineHeight: style.lineHeight,
+    };
+  });
   await expect(emojiSearch).toBeFocused();
   await expect(emojiTab).toHaveAttribute("aria-selected", "true");
+  await expect(emojiTab).toHaveCSS("color", "rgb(0, 0, 0)");
+  await expect(gifTab).toHaveCSS("color", "rgb(102, 102, 102)");
   await expect(emojiTab).toHaveAttribute("aria-controls", /.+/);
   await expect(
     picker.getByRole("tabpanel", { name: "Emoji", exact: true }),
   ).toBeVisible();
+  await picker.screenshot({
+    path: testInfo.outputPath("emoji-picker-light.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "dark";
+  });
+  await expect(emojiTab).toHaveCSS("color", "rgb(255, 255, 255)");
+  await expect(gifTab).toHaveCSS("color", "rgb(164, 164, 164)");
+  await picker.screenshot({
+    path: testInfo.outputPath("emoji-picker-dark.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "light";
+  });
   await emojiSearch.fill("hello");
   // Base UI owns the tab keyboard model; the selected panel focuses its search.
   await emojiTab.focus();
@@ -125,9 +160,26 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(
     picker.getByRole("tabpanel", { name: "Emoji", exact: true }),
   ).toHaveCount(0);
-  const tabIndicator = picker.locator(".buzz-tabs-indicator");
-  await expect(tabIndicator).toHaveCSS("height", "2px");
-  await expect(tabIndicator).toHaveCSS("background-color", "rgb(0, 0, 0)");
+  const tabIndicator = page.getByTestId("picker-tab-indicator");
+  await expect(tabIndicator).toHaveCSS("height", "30px");
+  await expect(tabIndicator).toHaveCSS(
+    "background-color",
+    "rgb(240, 240, 240)",
+  );
+  await picker.screenshot({
+    path: testInfo.outputPath("emoji-gif-picker-light.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "dark";
+  });
+  await expect(picker).toHaveCSS("background-color", "rgb(0, 0, 0)");
+  await expect(tabIndicator).toHaveCSS("background-color", "rgb(35, 35, 35)");
+  await picker.screenshot({
+    path: testInfo.outputPath("emoji-gif-picker-dark.png"),
+  });
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "light";
+  });
   const search = page.getByRole("searchbox", { name: "Search GIFs" });
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("hello");
@@ -164,17 +216,37 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
-  const searchFrame = search.locator("..");
-  await expect(searchFrame).toHaveClass(/search-field/);
-  await expect(searchFrame).toHaveCSS("background-color", "rgb(255, 255, 255)");
-  await expect(searchFrame).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
+  const sharedSearchIcon = picker.locator(":scope > svg");
+  await expectPhosphor(sharedSearchIcon, "magnifying-glass");
+  const gifSearchPosition = await search.boundingBox();
+  await expect(search).toHaveCSS("box-shadow", "rgb(0, 0, 0) 0px 0px 0px 2px");
+  expect(
+    await search.evaluate((input) => {
+      const style = getComputedStyle(input);
+      return {
+        height: style.height,
+        padding: style.padding,
+        borderRadius: style.borderRadius,
+        backgroundColor: style.backgroundColor,
+        boxShadow: style.boxShadow,
+        color: style.color,
+        fontFamily: style.fontFamily,
+        fontSize: style.fontSize,
+        lineHeight: style.lineHeight,
+      };
+    }),
+  ).toEqual(emojiSearchStyle);
+  await expect(search).toHaveCSS("height", "28px");
+  await expect(search).toHaveCSS("margin-left", "2px");
+  await expect(search).toHaveCSS("margin-right", "2px");
+  await expect(search).toHaveCSS("border-top-width", "0px");
+  await expect(search).toHaveCSS("border-radius", "10px");
+  await expect(search).toHaveCSS("background-color", "rgb(240, 240, 240)");
   await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
   await expect(search).toHaveCSS("font-family", /Inter Variable/);
-  const gifSearchPosition = await searchFrame.boundingBox();
-  expect(gifSearchPosition.width).toBeGreaterThan(0);
-  expect(gifSearchPosition.x).toBeGreaterThanOrEqual(
-    (await picker.boundingBox()).x,
-  );
+  expect(gifSearchPosition.x).toBeCloseTo(emojiSearchPosition.x, 1);
+  expect(gifSearchPosition.y).toBeCloseTo(emojiSearchPosition.y, 1);
+  expect(gifSearchPosition.width).toBeCloseTo(emojiSearchPosition.width, 1);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await expect(tabIndicator).toHaveCSS("transition-duration", "0s");
   await page.emulateMedia({ reducedMotion: "no-preference" });
@@ -243,12 +315,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await search.fill("hello");
   await expect.poll(() => requests.length).toBe(reopenRequests + 1);
   expect(requests.at(-1)).toMatchObject({ query: "hello" });
-  const clear = picker.getByRole("button", {
-    name: "Clear search gifs",
-    exact: true,
-  });
-  await expect(clear).toHaveCSS("width", "32px");
-  await expect(clear).toHaveCSS("height", "32px");
+  const clear = picker.getByRole("button", { name: "Clear", exact: true });
+  await expect(clear).toHaveCSS("right", "10px");
+  await expect(clear).toHaveCSS("width", "16px");
+  await expect(clear).toHaveCSS("height", "16px");
+  await expect(clear).toHaveCSS("color", "rgb(82, 82, 82)");
+  await expectPhosphor(clear.locator("svg"), "x-circle", "fill");
   await clear.click();
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();

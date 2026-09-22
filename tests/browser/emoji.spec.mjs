@@ -334,7 +334,27 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
           (button) => getComputedStyle(button, "::before").backgroundColor,
         ),
       )
-      .toBe("rgb(232, 232, 232)");
+      .toBe("rgb(240, 240, 240)");
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "dark";
+    });
+    await expect
+      .poll(() =>
+        skinTone.evaluate(
+          (button) => getComputedStyle(button, "::before").backgroundColor,
+        ),
+      )
+      .toBe("rgb(35, 35, 35)");
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "light";
+    });
+    await expect
+      .poll(() =>
+        skinTone.evaluate(
+          (button) => getComputedStyle(button, "::before").backgroundColor,
+        ),
+      )
+      .toBe("rgb(240, 240, 240)");
     await skinTone.click();
     await expect(skinTone).toHaveAttribute("aria-selected", "");
     const toneMenu = page.locator("em-emoji-picker #root > .menu");
@@ -383,13 +403,13 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(search).toHaveCSS("margin-left", "2px");
     await expect(search).toHaveCSS("margin-right", "2px");
     await expect(search).toHaveCSS("border-top-width", "0px");
-    await expect(search).toHaveCSS("border-radius", "10px");
+    await expect(search).toHaveCSS("border-radius", "14px");
     await expect(search).toHaveCSS("background-color", "rgb(240, 240, 240)");
     await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
     await expect(search).toHaveCSS("outline-style", "none");
     await expect(search).toHaveCSS(
       "box-shadow",
-      "rgb(240, 240, 240) 0px 0px 0px 1px",
+      "rgb(0, 0, 0) 0px 0px 0px 2px",
     );
     const surface = page.locator("em-emoji-picker #root");
     const region = page.getByRole("region", { name: "Emoji picker" });
@@ -452,7 +472,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(emojiClear.locator("svg")).toHaveCSS("width", "16px");
     await expect(emojiClear.locator("svg")).toHaveCSS("height", "16px");
     await expect(emojiClear).toHaveCSS("color", "rgb(82, 82, 82)");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expectPhosphor(emojiClear.locator("svg"), "x-circle", "fill");
     await expect(emojiClear.locator("svg path")).toHaveCSS(
       "fill",
       "rgb(82, 82, 82)",
@@ -461,12 +481,12 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await search.fill("");
     await expect(emojiClear).toHaveCount(0);
     await search.fill("party");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expectPhosphor(emojiClear.locator("svg"), "x-circle", "fill");
     await picker.click();
     await expect(page.locator("em-emoji-picker")).toHaveCount(0);
     await picker.click();
     await search.fill("party");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expectPhosphor(emojiClear.locator("svg"), "x-circle", "fill");
     await expect(
       page.locator(
         '[aria-label="Emoji picker"] svg[class*="sharedSearchIcon"]:visible',
@@ -491,19 +511,30 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       await expect(surface).toHaveAttribute("data-theme", mode);
       await expect(search).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(16, 16, 16)" : "rgb(240, 240, 240)",
+        mode === "dark" ? "rgb(35, 35, 35)" : "rgb(240, 240, 240)",
+      );
+      await expect(region).toHaveCSS(
+        "background-color",
+        mode === "dark" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
+      );
+      await expect(surface).toHaveCSS(
+        "background-color",
+        mode === "dark" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
       );
       await expect(search).toHaveCSS(
         "box-shadow",
         mode === "dark"
-          ? "rgb(16, 16, 16) 0px 0px 0px 1px"
-          : "rgb(240, 240, 240) 0px 0px 0px 1px",
+          ? "rgb(115, 115, 115) 0px 0px 0px 2px"
+          : "rgb(0, 0, 0) 0px 0px 0px 2px",
       );
       await expect(search).toHaveCSS("font-family", /Inter Variable/);
 
       await expect(search).toHaveValue("party");
       await expect(search).toBeFocused();
       expect(await searchNode.evaluate((node) => node.isConnected)).toBe(true);
+      await region.screenshot({
+        path: test.info().outputPath(`emoji-picker-${mode}.png`),
+      });
     }
     // Exercise the shared composer's containing-block sizing in a clipped 300px pane.
     await page.locator("main").evaluate((el) => {
@@ -588,6 +619,26 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       .map((item, index) => item.x - firstRow[index].x - firstRow[index].width);
     expect(rowGaps[0]).toBeCloseTo(9.6, 1);
     expect(rowGaps.every((gap) => Math.abs(gap - rowGaps[0]) < 0.1)).toBe(true);
+    const frequentRow = frequent.first().locator("..");
+    await frequentRow.locator("button").evaluateAll((buttons) => {
+      for (const button of buttons.slice(4)) button.style.display = "none";
+    });
+    const partialRow = await frequentRow
+      .locator("button:visible")
+      .evaluateAll((buttons) =>
+        buttons.map((button) => {
+          const bounds = button.getBoundingClientRect();
+          return { x: bounds.x, width: bounds.width };
+        }),
+      );
+    expect(partialRow).toHaveLength(4);
+    for (const [index, item] of partialRow.entries()) {
+      expect(item.x).toBeCloseTo(firstRow[index].x, 1);
+      expect(item.width).toBeCloseTo(firstRow[index].width, 1);
+    }
+    await frequentRow.locator("button").evaluateAll((buttons) => {
+      for (const button of buttons) button.style.removeProperty("display");
+    });
     const emojiGridGutters = await surface.evaluate((root) => {
       const buttons = root.querySelectorAll('[data-id="frequent"] button');
       const first = buttons[0].getBoundingClientRect();
@@ -680,7 +731,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         };
       });
     expect(await selectedBackground()).toMatchObject({
-      background: "rgb(232, 232, 232)",
+      background: "rgb(240, 240, 240)",
       duration: "0.12s",
       height: "28px",
       width: "28px",
@@ -709,7 +760,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toEqual(categoryPositions);
     await expect
       .poll(() => selectedBackground().then(({ background }) => background))
-      .toBe("rgb(232, 232, 232)");
+      .toBe("rgb(240, 240, 240)");
     await page.emulateMedia({ reducedMotion: "reduce" });
     expect((await selectedBackground()).duration).toBe("0s");
     await page.emulateMedia({ reducedMotion: "no-preference" });

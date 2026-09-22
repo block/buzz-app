@@ -15,7 +15,15 @@ const viewerStyles = new Set([
 const nativeRecipes = new Map([
   [
     "src/bundled/emoji/Emoji.module.css",
-    new Set([".gifGrid button", ".gifGrid button:hover"]),
+    new Set([
+      ".pickerTabs button",
+      ".pickerTabs button:first-of-type",
+      ".pickerTabs button:last-of-type",
+      ".gifSearch input",
+      ".gifSearch input:focus",
+      ".gifGrid button",
+      ".gifGrid button:hover",
+    ]),
   ],
   [
     "src/features/messages/Messages.module.css",

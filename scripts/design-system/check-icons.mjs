@@ -25,6 +25,7 @@ const nonIconDependencies = new Set([
   "@tiptap/core",
   "@tiptap/extension-hard-break",
   "@tiptap/extension-link",
+  "@tiptap/extension-text",
   "@tiptap/pm",
   "@tiptap/starter-kit",
   "@testing-library/dom",

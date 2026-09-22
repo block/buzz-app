@@ -2,6 +2,7 @@ import { Editor } from "@tiptap/core";
 import { closeHistory } from "@tiptap/pm/history";
 import { EditorState, Plugin } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import Text from "@tiptap/extension-text";
 import HardBreak from "@tiptap/extension-hard-break";
 import Link from "@tiptap/extension-link";
 import { defaultMarkdownSerializer } from "prosemirror-markdown";
@@ -58,7 +59,40 @@ export class RichComposerAdapter {
       extensions: [
         RecipientNode,
         CustomEmojiNode,
-        StarterKit.configure({ heading: false, link: false, hardBreak: false }),
+        StarterKit.configure({
+          heading: false,
+          link: false,
+          hardBreak: false,
+          text: false,
+        }),
+        Text.extend({
+          addStorage() {
+            return {
+              markdown: {
+                serialize(
+                  state: {
+                    inAutolink?: boolean;
+                    text(value: string, shouldEscape?: boolean): void;
+                  },
+                  node: ProseMirrorNode,
+                ) {
+                  // Escape literal entities before angle brackets. Code and plain-URL
+                  // serialization use their existing literal paths, not this text node.
+                  if (state.inAutolink) {
+                    state.text(node.text ?? "", false);
+                    return;
+                  }
+                  state.text(
+                    node.text
+                      ?.replace(/&/g, "&amp;")
+                      .replace(/</g, "&lt;")
+                      .replace(/>/g, "&gt;") ?? "",
+                  );
+                },
+              },
+            };
+          },
+        }),
         HardBreak.extend({
           addStorage() {
             return {

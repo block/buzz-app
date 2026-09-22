@@ -349,6 +349,7 @@ it("restores recipient marks from the replaced text rather than its preceding bo
 
 // Exercise both consumers of the outgoing draft: persisted editor and message renderer.
 it.each([
+  { href: "https://example.com/", label: "&copy; <tag> &amp; &#169;" },
   { href: "https://example.com/?x=1&copy;=2", label: "design" },
   { href: "https://example.com/?x=1&#169;=2", label: "design" },
   { href: "https://example.com/a(b)?x=1&other=2", label: "design" },
@@ -407,3 +408,27 @@ it.each([
     expect(restored.snapshot().draft).toEqual(draft);
   },
 );
+
+it.each(["paragraph", "codeBlock"])(
+  "preserves literal character references in %s",
+  (type) => {
+    const value = adapter();
+    const text = "&copy; <tag> &amp; &#169;";
+    value.editor.commands.setContent({
+      type: "doc",
+      content: [{ type, content: [{ type: "text", text }] }],
+    });
+    const restored = adapter(value.snapshot().draft);
+    expect(restored.editor.state.doc.firstChild?.textContent).toBe(text);
+  },
+);
+it("preserves character references in inline code", () => {
+  const value = adapter();
+  const text = "&copy; <tag> &amp; &#169;";
+  value.editor.commands.insertContent({
+    type: "text",
+    text,
+    marks: [{ type: "code" }],
+  });
+  expect(adapter(value.snapshot().draft).snapshot().editingText).toBe(text);
+});

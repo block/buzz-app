@@ -52,6 +52,7 @@
     "@tiptap/core": "3.31.3",
     "@tiptap/extension-hard-break": "3.31.3",
     "@tiptap/extension-link": "3.31.3",
+    "@tiptap/extension-text": "3.31.3",
     "@tiptap/pm": "^3.31.3",
     "@tiptap/starter-kit": "3.31.3",
     "@xterm/addon-fit": "0.10.0",

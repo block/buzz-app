@@ -180,6 +180,7 @@
 }
 /* Conversation placement only; the shared composer stylesheet owns its surface. */
 .composer {
+  position: relative;
   margin: var(--space-3) var(--space-4) var(--space-4);
   flex-shrink: 0;
 }

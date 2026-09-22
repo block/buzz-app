@@ -1,12 +1,11 @@
 .typing {
-  height: 0;
-  margin-bottom: calc(-1 * var(--space-1h));
-  flex-shrink: 0;
-  overflow: visible;
+  position: absolute;
+  inset-inline: var(--space-3);
+  bottom: calc(100% + var(--space-2));
+  overflow: hidden;
   color: var(--text-muted);
   font-size: var(--text-caption);
   line-height: 1.5;
   white-space: nowrap;
   text-overflow: ellipsis;
-  transform: translateY(calc(-1lh - var(--space-2)));
 }

@@ -29,7 +29,8 @@ struct Imports(Arc<Mutex<Option<PreparedImport>>>);
 #[cfg(any(target_os = "macos", test))]
 #[derive(Debug, PartialEq, Eq)]
 enum TitleBarDoubleClickAction {
-    Maximize,
+    Fill,
+    Zoom,
     Minimize,
     None,
 }
@@ -37,7 +38,8 @@ enum TitleBarDoubleClickAction {
 #[cfg(any(target_os = "macos", test))]
 fn title_bar_double_click_action(preference: Option<&str>) -> TitleBarDoubleClickAction {
     match preference {
-        Some("Maximize" | "Zoom" | "Fill") => TitleBarDoubleClickAction::Maximize,
+        Some("Maximize" | "Fill") => TitleBarDoubleClickAction::Fill,
+        Some("Zoom") => TitleBarDoubleClickAction::Zoom,
         Some("Minimize") => TitleBarDoubleClickAction::Minimize,
         _ => TitleBarDoubleClickAction::None,
     }
@@ -53,13 +55,18 @@ fn title_bar_double_click<R: tauri::Runtime>(window: tauri::Window<R>) -> Result
             .stringForKey(ns_string!("AppleActionOnDoubleClick"))
             .map(|value| value.to_string());
         match title_bar_double_click_action(preference.as_deref()) {
-            TitleBarDoubleClickAction::Maximize => {
+            TitleBarDoubleClickAction::Fill => {
                 if window.is_maximized().map_err(|error| error.to_string())? {
                     window.unmaximize()
                 } else {
                     window.maximize()
                 }
                 .map_err(|error| error.to_string())?;
+            }
+            TitleBarDoubleClickAction::Zoom => {
+                let ns_window = window.ns_window().map_err(|error| error.to_string())?;
+                let ns_window: &objc2_app_kit::NSWindow = unsafe { &*ns_window.cast() };
+                ns_window.performZoom(None);
             }
             TitleBarDoubleClickAction::Minimize => {
                 window.minimize().map_err(|error| error.to_string())?;
@@ -318,11 +325,15 @@ mod tests {
     fn title_bar_double_click_preferences_map_to_native_actions() {
         assert_eq!(
             title_bar_double_click_action(Some("Maximize")),
-            TitleBarDoubleClickAction::Maximize
+            TitleBarDoubleClickAction::Fill
         );
         assert_eq!(
             title_bar_double_click_action(Some("Fill")),
-            TitleBarDoubleClickAction::Maximize
+            TitleBarDoubleClickAction::Fill
+        );
+        assert_eq!(
+            title_bar_double_click_action(Some("Zoom")),
+            TitleBarDoubleClickAction::Zoom
         );
         assert_eq!(
             title_bar_double_click_action(Some("Minimize")),

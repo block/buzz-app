@@ -1,12 +1,15 @@
 import { Node } from "@tiptap/core";
 
 export const CUSTOM_EMOJI_NODE = "customEmoji";
-export const CustomEmojiNode = Node.create({
+export const CustomEmojiNode = Node.create<{ onError: (url: string) => void }>({
   name: CUSTOM_EMOJI_NODE,
   group: "inline",
   inline: true,
   atom: true,
   selectable: false,
+  addOptions() {
+    return { onError: () => {} };
+  },
   addAttributes() {
     return { source: { default: "" }, url: { default: "" } };
   },
@@ -30,7 +33,7 @@ export const CustomEmojiNode = Node.create({
       image.alt = image.title = String(node.attrs.source);
       image.draggable = false;
       image.dataset.composerEmoji = "";
-      const showSource = () => image.replaceWith(String(node.attrs.source));
+      const showSource = () => this.options.onError(String(node.attrs.url));
       image.addEventListener("error", showSource, { once: true });
       image.src = String(node.attrs.url);
       dom.append(image);

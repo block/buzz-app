@@ -459,7 +459,7 @@ it("pastes emoji as current-catalog text without trusting clipboard image URLs",
   ).toHaveLength(0);
 });
 
-it("keeps failed emoji previews readable without changing authored content", () => {
+it("keeps failed emoji previews editable without changing authored content", () => {
   const value = adapter(mentionDraft("before :party: after"));
   value.setEmoji(
     [{ shortcode: "party", url: "https://current.test/party.png" }],
@@ -471,6 +471,11 @@ it("keeps failed emoji previews readable without changing authored content", () 
   image?.dispatchEvent(new Event("error"));
   expect(value.editor.view.dom.textContent).toBe("before :party: after");
   expect(value.snapshot().draft).toEqual(before);
+  expect(value.setEditingSelection(7, 8)).toBe(true);
+  expect(value.snapshot().selectionStart).toBe(7);
+  expect(value.snapshot().selectionEnd).toBe(8);
+  expect(value.editor.state.doc.textContent).toBe("before :party: after");
+  expect(value.editor.commands.undo()).toBe(false);
   value.setEmoji(
     [{ shortcode: "party", url: "https://current.test/recovered.png" }],
     (url) => url,
@@ -482,3 +487,55 @@ it("keeps failed emoji previews readable without changing authored content", () 
   ).toBe("https://current.test/recovered.png");
   expect(value.snapshot().draft).toEqual(before);
 });
+
+// Image errors are presentation changes, not authored edits or new undo steps.
+it.each([true, false])(
+  "preserves failed emoji marks, recipients, selection and history (editable=%s)",
+  (editable) => {
+    const value = adapter();
+    // jsdom has no selection geometry; native scrolling is covered in browsers.
+    value.editor.setOptions({
+      editorProps: { handleScrollToSelection: () => true },
+    });
+    value.setEmoji(
+      [{ shortcode: "party", url: "https://current.test/party.png" }],
+      (url) => url,
+    );
+    value.insertMention("a".repeat(64), "Alex");
+    value.editor.commands.toggleBold();
+    value.insertText(":party:");
+    const before = value.snapshot();
+    value.setEditable(editable);
+    value.editor.view.dom
+      .querySelector("img[data-composer-emoji]")
+      ?.dispatchEvent(new Event("error"));
+    expect(value.snapshot().draft).toEqual(before.draft);
+    expect(value.snapshot().selectionStart).toBe(before.selectionStart);
+    expect(value.snapshot().selectionEnd).toBe(before.selectionEnd);
+    expect(value.editor.view.dom.querySelector("strong")?.textContent).toBe(
+      ":party:",
+    );
+    value.setEditable(true);
+    expect(value.editor.commands.undo()).toBe(true);
+    expect(value.snapshot().editingText).toBe("@Alex ");
+    expect(value.editor.commands.redo()).toBe(true);
+    expect(value.snapshot().draft).toEqual(before.draft);
+    expect(
+      value.editor.view.dom.querySelector("img[data-composer-emoji]"),
+    ).toBeNull();
+    // Further edits and the same catalog must not repeatedly recreate a failed image.
+    value.setEmoji(
+      [{ shortcode: "party", url: "https://current.test/party.png" }],
+      (url) => url,
+    );
+    expect(
+      value.setEditingSelection(
+        before.editingText.length - 1,
+        before.editingText.length,
+      ),
+    ).toBe(true);
+    expect(value.insertText("!")).toBe(true);
+    expect(value.snapshot().editingText).toBe("@Alex :party!");
+    expect(value.snapshot().draft.recipients).toEqual(before.draft.recipients);
+  },
+);

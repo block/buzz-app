@@ -929,6 +929,25 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(search).toHaveAttribute("data-buzz-search-ready", "true");
     await search.fill("party");
     await expect(insert).toBeVisible();
+    await draft().fill(":broken:");
+    await expect(draft()).toContainText(":broken:");
+    await draft().focus();
+    await draft().press("ControlOrMeta+a");
+    await draft().press("ArrowRight");
+    await draft().press("Shift+ArrowLeft");
+    await expect
+      .poll(() =>
+        draft().evaluate((element) =>
+          element.value.slice(element.selectionStart, element.selectionEnd),
+        ),
+      )
+      .toBe(":");
+    await draft().press("Backspace");
+    await expect(draft()).toHaveJSProperty("value", ":broken");
+    // Native fill and immediate deletion share an Undo group. History isolation
+    // is asserted at the adapter's explicit edit boundary in the unit tests.
+    await draft().press(":");
+    await expect(draft()).toHaveJSProperty("value", ":broken:");
     await draft().fill(":broken: readable");
     await expect(draft()).toContainText(":broken: readable");
     await draft().fill(":broken: :nosource:");

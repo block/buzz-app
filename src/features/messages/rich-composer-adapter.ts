@@ -45,6 +45,7 @@ export class RichComposerAdapter {
   #revision = 0;
   #nextToken = 0;
   #emoji = new Map<string, string>();
+  #failedEmoji = new Set<string>();
   #restoring = false;
   #rejected = false;
   #listeners = new Set<(documentChanged: boolean) => void>();
@@ -58,7 +59,17 @@ export class RichComposerAdapter {
       element,
       extensions: [
         RecipientNode,
-        CustomEmojiNode,
+        CustomEmojiNode.configure({
+          onError: (url) => {
+            if (this.editor.isDestroyed || this.#failedEmoji.has(url)) return;
+            this.#failedEmoji.add(url);
+            this.editor.view.dispatch(
+              this.editor.state.tr
+                .setMeta("emojiCatalog", true)
+                .setMeta("addToHistory", false),
+            );
+          },
+        }),
         StarterKit.configure({
           heading: false,
           link: false,
@@ -321,11 +332,20 @@ export class RichComposerAdapter {
         return url ? [[entry.shortcode.toLowerCase(), url] as const] : [];
       }),
     );
+    const urls = new Set(this.#emoji.values());
+    for (const url of this.#failedEmoji) {
+      if (!urls.has(url)) this.#failedEmoji.delete(url);
+    }
     this.editor.view.dispatch(
       this.editor.state.tr
         .setMeta("emojiCatalog", true)
         .setMeta("addToHistory", false),
     );
+  }
+
+  #emojiUrl(shortcode: string) {
+    const url = this.#emoji.get(shortcode.toLowerCase());
+    return url && !this.#failedEmoji.has(url) ? url : undefined;
   }
 
   #decorateEmoji(state: EditorState) {
@@ -339,7 +359,7 @@ export class RichComposerAdapter {
       if (node.type.name === "codeBlock") return false;
       if (node.type.name === CUSTOM_EMOJI_NODE) {
         const source = String(node.attrs.source);
-        const url = this.#emoji.get(source.slice(1, -1).toLowerCase());
+        const url = this.#emojiUrl(source.slice(1, -1));
         if (url !== node.attrs.url)
           replacements.push({
             from: position,
@@ -354,7 +374,7 @@ export class RichComposerAdapter {
         for (const match of (node.text ?? "").matchAll(
           /:([a-z0-9_-]{1,64}):/gi,
         )) {
-          const url = this.#emoji.get((match[1] ?? "").toLowerCase());
+          const url = this.#emojiUrl(match[1] ?? "");
           if (url)
             replacements.push({
               from: position + match.index,

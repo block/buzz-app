@@ -74,7 +74,10 @@ test("thread buttons show observed unread independently, clear only after readin
   const alpha = page.locator('button[data-channel-id="alpha"]');
   const activity = alpha.getByRole("img", { name: /unread threads?/ });
   await expect(activity).toBeVisible();
-  await expect(alpha.locator("span").first()).toHaveCSS("font-weight", "500");
+  await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
+    "font-weight",
+    "500",
+  );
   await page.getByLabel("Conversation options", { exact: true }).click();
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
@@ -131,7 +134,7 @@ test("thread buttons show observed unread independently, clear only after readin
     const s = getComputedStyle(el);
     return { border: s.borderTopColor, radius: s.borderTopLeftRadius };
   });
-  expect(hover.border).not.toBe("rgba(0, 0, 0, 0)");
+  expect(hover.border).toBe("rgba(0, 0, 0, 0)");
   expect(hover.radius).not.toBe("0px");
   await first.screenshot({
     path: testInfo.outputPath("thread-button-hover.png"),

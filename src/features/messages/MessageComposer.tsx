@@ -1,3 +1,7 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { useMentionAgents } from "../agents/mention-context";
+import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
@@ -42,7 +46,7 @@ import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
-import type { ComposerInputElement } from "./composer-dom";
+import { sourceOffset, type ComposerInputElement } from "./composer-dom";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
   status: "idle",
@@ -113,6 +117,13 @@ function Composer({
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
+  const { control } = useMentionAgents(scope);
+  const [sending, setSending] = useState(false);
+  const sendAttempt = useRef<AbortController | null>(null);
+  useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
+  useLayoutEffect(() => {
+    if (disabled) sendAttempt.current?.abort();
+  }, [disabled]);
   const inputId = useId();
   const draftKey =
     submission?.draftKey ??
@@ -142,7 +153,8 @@ function Composer({
     (item) => item.id === channelId,
   )?.parentChannelId;
   const agentChoices = inviteAgents || !!sessionConversation;
-  const editingDisabled = disabled || admitting || !!submission?.locked;
+  const editingDisabled =
+    disabled || admitting || sending || !!submission?.locked;
   const label =
     customLabel ??
     (threadRootId ? "Reply to thread" : `Message #${channelName}`);
@@ -214,10 +226,21 @@ function Composer({
     const element = input.current;
     if (!element) return;
     const capture = (event: InputEvent) => {
+      const target = event.getTargetRanges?.()[0];
+      const targeted =
+        target &&
+        element.contains(target.startContainer) &&
+        element.contains(target.endContainer);
+      // Smart punctuation/autocorrect can replace text behind the caret.
+      // Only the browser's target range identifies which spans were touched.
       edit.current = {
         text: element.value,
-        start: element.selectionStart,
-        end: element.selectionEnd,
+        start: targeted
+          ? sourceOffset(element, target.startContainer, target.startOffset)
+          : element.selectionStart,
+        end: targeted
+          ? sourceOffset(element, target.endContainer, target.endOffset)
+          : element.selectionEnd,
         inputType: event.isComposing
           ? "insertCompositionText"
           : event.inputType,
@@ -343,6 +366,7 @@ function Composer({
   const currentAdmission = () =>
     live.current &&
     permitted.current &&
+    !sendAttempt.current?.signal.aborted &&
     session.channels.list().channels.find((item) => item.id === channelId)
       ?.parentChannelId === parentChannelId;
   async function prepareRecipients(explicit: readonly string[]) {
@@ -385,16 +409,20 @@ function Composer({
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
       !draft.trim() ||
+      sendAttempt.current ||
       !outbox
     )
       return;
+    const attempt = new AbortController();
+    sendAttempt.current = attempt;
+    const captured = valueRef.current;
     try {
       if (submission) {
-        submission.submit(valueRef.current);
+        submission.submit(captured);
         return;
       }
-      let recipients = valueRef.current.recipients.length
-        ? valueRef.current.recipients.map((item) => item.pubkey)
+      let recipients = captured.recipients.length
+        ? captured.recipients.map((item) => item.pubkey)
         : selectedAgent
           ? [selectedAgent]
           : [];
@@ -402,14 +430,32 @@ function Composer({
         admission.current = true;
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
+      } else if (control && recipients.length) {
+        const members = session.channels
+          .list()
+          .channels.find((item) => item.id === channelId)?.members;
+        if (recipients.some((key) => !members?.includes(key))) {
+          setSending(true);
+          setError(undefined);
+          await enrollMentionedAgents(
+            session,
+            scope,
+            channelId,
+            recipients,
+            control,
+            attempt.signal,
+          );
+        }
       }
+      attempt.signal.throwIfAborted();
+      if (valueRef.current !== captured) return;
       const content =
         threadRootId && mediaTimeSeconds !== undefined
-          ? mediaTimeReply(mediaTimeSeconds, draft)
-          : draft;
+          ? mediaTimeReply(mediaTimeSeconds, captured.text)
+          : captured.text;
       const id = threadRootId
         ? session.messages.reply(channelId, threadRootId, content, recipients)
-        : session.messages.send(channelId, draft, recipients);
+        : session.messages.send(channelId, content, recipients);
       onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();
@@ -418,11 +464,17 @@ function Composer({
       input.current?.focus();
       setError(undefined);
     } catch (reason) {
-      if (live.current)
+      if (live.current && !attempt.signal.aborted)
         setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
       admission.current = false;
-      if (live.current) setAdmitting(false);
+      if (sendAttempt.current === attempt) {
+        sendAttempt.current = null;
+        if (live.current) {
+          setSending(false);
+          setAdmitting(false);
+        }
+      }
     }
   }
   const accessories = extensions?.accessories && (
@@ -486,6 +538,7 @@ function Composer({
             replace={replaceCompletion}
           />
         )}
+        {sending && <p role="status">Adding agent to this channel…</p>}
         <div className={styles.composerInput}>
           <RichComposerInput
             ref={input}
@@ -587,13 +640,13 @@ function Composer({
           !hideMediaTimeIndicator && (
             <div className={styles.mediaComposerAnchor}>
               <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
-              <button
+              <IconButton
+                size="compact"
                 type="button"
                 onClick={clearMediaTime}
                 aria-label="Remove video time"
-              >
-                <XIcon size={13} aria-hidden="true" />
-              </button>
+                icon={<XIcon size={13} />}
+              />
             </div>
           )}
         {!!value.recipients.length && (
@@ -603,7 +656,7 @@ function Composer({
           >
             <span>Notify:</span>
             {value.recipients.map((recipient) => (
-              <button
+              <Button
                 type="button"
                 key={`${recipient.pubkey}:${recipient.start}`}
                 title={recipient.pubkey}
@@ -620,7 +673,7 @@ function Composer({
               >
                 {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
                 <XIcon size={12} aria-hidden="true" />
-              </button>
+              </Button>
             ))}
           </section>
         )}
@@ -655,21 +708,25 @@ function Composer({
                 Shift + Enter for a new line
               </span>
             ))}
-          <button
-            className={styles.sendButton}
+          <IconButton
+            variant="solid"
+            shape="round"
             type="submit"
             aria-label="Send message"
             title="Send message"
             disabled={
-              disabled || admitting || submission?.disabled || !draft.trim()
+              disabled ||
+              admitting ||
+              sending ||
+              submission?.disabled ||
+              !draft.trim()
             }
-          >
-            <ArrowUpIcon size={18} aria-hidden="true" />
-          </button>
+            icon={<ArrowUpIcon size={18} />}
+          />
         </div>
         {error && <p role="alert">{error}</p>}
         {error && session.emoji?.snapshot().status === "error" && (
-          <button
+          <Button
             type="button"
             disabled={editingDisabled}
             onClick={() => {
@@ -683,7 +740,7 @@ function Composer({
             }}
           >
             Retry message preparation
-          </button>
+          </Button>
         )}
       </form>
     </>

@@ -79,6 +79,7 @@ export function editMentionDraft(
   ) {
     const insertion = [
       "insertText",
+      "insertReplacementText",
       "insertFromPaste",
       "insertLineBreak",
     ].includes(edit.inputType);

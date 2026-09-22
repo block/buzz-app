@@ -124,7 +124,7 @@ test("real xterm retains output across detach, handles input and resize, and rel
       expect(actual.renderedSize).toBe(actual.size);
       return Number.parseFloat(actual.size);
     };
-    expect(await assertSystemAppearance()).toBe(13);
+    expect(await assertSystemAppearance()).toBe(12);
     const lightBackground = await xterm.evaluate(
       (el) => getComputedStyle(el).backgroundColor,
     );
@@ -139,7 +139,7 @@ test("real xterm retains output across detach, handles input and resize, and rel
     await expect(splash).toHaveCSS("--splash-lightness", "80%");
     await expect(splash).toHaveCSS("--splash-chroma", "0.16");
     await assertAnsiContrast();
-    expect(await assertSystemAppearance()).toBe(13);
+    expect(await assertSystemAppearance()).toBe(12);
     await page.screenshot({
       path: test.info().outputPath("buzzterm-dark.png"),
     });
@@ -174,7 +174,7 @@ test("real xterm retains output across detach, handles input and resize, and rel
           .evaluate((el) => getComputedStyle(el).fontSize),
       )
       .not.toBe(fontSize);
-    expect(await assertSystemAppearance()).toBe(19.5);
+    expect(await assertSystemAppearance()).toBe(18);
     const dimensions = await page.getByLabel("Dimensions").textContent();
     await page.setViewportSize({ width: 800, height: 600 });
     await expect(page.getByLabel("Dimensions")).not.toHaveText(dimensions);
@@ -266,7 +266,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expect(launcher).toHaveCSS("padding-left", "0px");
     await expect(launcher).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await launcher.hover();
-    await expect(launcher).toHaveCSS("background-color", "rgb(218, 218, 218)");
+    await expect(launcher).toHaveCSS("background-color", "rgb(232, 232, 232)");
     await launcher.click();
     const drawer = page.getByRole("region", { name: "Terminal drawer" });
     await expect(drawer.locator(".xterm-rows")).toContainText(
@@ -296,7 +296,7 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expectToken(launcher, "background-color", "--purple-3");
     const restart = button("Restart");
     await expect(restart).toHaveClass("buzz-button");
-    await expect(restart).toHaveCSS("border-top-width", "0px");
+    await expect(restart).toHaveCSS("border-top-width", "1px");
     const hide = button("Hide terminal");
     // Pointer focus is quiet; keyboard navigation paints the actual control.
     await button("Enlarge text").click();

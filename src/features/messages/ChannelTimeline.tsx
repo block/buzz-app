@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { Button } from "../../shared/design-system/ui/Button";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
 import type { ConversationExtensions } from "../conversation/contracts";
@@ -448,7 +449,7 @@ function Timeline({
         {window.historyLimited ? (
           <span>History window limit reached</span>
         ) : window.hasMore ? (
-          <button
+          <Button
             type="button"
             disabled={window.loadingOlder}
             onClick={() => {
@@ -459,7 +460,7 @@ function Timeline({
             }}
           >
             {window.loadingOlder ? "Loading older…" : "Load older messages"}
-          </button>
+          </Button>
         ) : null}
       </div>
       {width > 0 && (

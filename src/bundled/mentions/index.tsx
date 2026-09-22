@@ -18,6 +18,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     order: -10,
     component: ({
       session,
+      scope,
       channelId,
       disabled,
       insertMention,
@@ -25,6 +26,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     }) => (
       <MentionPicker
         session={session}
+        scope={scope}
         channelId={channelId}
         disabled={disabled}
         inviteAgents={inviteAgents}

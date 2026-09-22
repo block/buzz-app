@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import {
   useCallback,
   useMemo,
@@ -114,17 +115,17 @@ export function UnreadOptions({
   return (
     <>
       {channelId && (
-        <button
+        <Button
           type="button"
           onClick={() =>
             run(session.unread.markUnreadLocal({ kind: "channel", channelId }))
           }
         >
           Mark unread on this device
-        </button>
+        </Button>
       )}
       {channelId && sync.capability === "frontier-sync" && (
-        <button
+        <Button
           type="button"
           onClick={() => {
             const last = session.channels
@@ -142,7 +143,7 @@ export function UnreadOptions({
           }}
         >
           Mark read through loaded messages
-        </button>
+        </Button>
       )}
       {error && <p role="alert">{error}</p>}
       <details>
@@ -156,13 +157,13 @@ export function UnreadOptions({
           Read sync: {sync.capability} · {sync.status}
         </p>
         {sync.error && <p role="alert">{sync.error}</p>}
-        <button type="button" onClick={() => run(session.unread.refresh())}>
+        <Button type="button" onClick={() => run(session.unread.refresh())}>
           Refresh unread observations
-        </button>
+        </Button>
         {sync.capability === "frontier-sync" && (
-          <button type="button" onClick={() => run(session.unread.retrySync())}>
+          <Button type="button" onClick={() => run(session.unread.retrySync())}>
             Retry read sync
-          </button>
+          </Button>
         )}
       </details>
     </>

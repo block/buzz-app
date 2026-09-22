@@ -67,7 +67,11 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/avatar-shapes.html`,
     );
-    const avatars = page.locator("[data-avatar-shape]");
+    // Group wrappers and their shared artwork both carry the shape; count each
+    // displayed identity once, while retaining the inset paint assertions.
+    const avatars = page.locator(
+      "[data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
+    );
     await expect(avatars).toHaveCount(15);
     for (const image of await avatars.locator("img").all()) {
       await expect
@@ -77,7 +81,7 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     }
     const system = page.getByRole("region", { name: "System avatars" });
     const insetAvatars = page.locator(
-      "button[aria-label^='View thread:'] [data-avatar-shape], [data-membership-row] [data-avatar-shape]",
+      "button[aria-label^='View thread:'] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape]), [data-membership-row] [data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
     );
     await expect(insetAvatars).toHaveCount(4);
     async function expectInsetArtwork(pictures = true) {
@@ -185,7 +189,8 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     const button = page.getByRole("button", { name: "View Agent profile" });
     await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await button.hover();
-    await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    // The shared ghost IconButton supplies its semantic dark hover treatment.
+    await expect(button).toHaveCSS("background-color", "rgb(64, 64, 64)");
     await button.click();
     await expect(page.getByRole("status")).toHaveText("Profile opened");
     await expect(button).toHaveCSS("outline-style", "none");

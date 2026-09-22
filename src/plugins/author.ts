@@ -73,3 +73,14 @@ export type {
   WindowLayout,
   WindowSnapshot,
 } from "../features/windows/service";
+
+export type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+  AgentEdit,
+  AgentAction,
+  ControlSnapshot,
+  AgentImportPreview,
+  ImportSource,
+} from "../features/agents/control";

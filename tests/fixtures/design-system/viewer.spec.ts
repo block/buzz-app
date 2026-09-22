@@ -45,6 +45,40 @@ test("built viewer loads every specimen and foundation without app connections",
     await expect(page.locator("main h1")).toBeVisible();
     await page.reload();
     await expect(page.locator("main h1")).toBeVisible();
+    if (name === "Token table") {
+      // Document width alone misses status text colliding with a swatch.
+      for (const mode of ["dark", "light"]) {
+        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+        if (await toggle.count()) await toggle.click();
+        for (const width of [390, 800, 1280]) {
+          await page.setViewportSize({ width, height: 900 });
+          const row = page
+            .getByRole("row")
+            .filter({ hasText: "bg-affordance-panel-hover" });
+          const status = row
+            .getByText("proposed", { exact: true })
+            .filter({ visible: true });
+          await expect(status).toHaveCount(1);
+          const swatch = row
+            .locator("td")
+            .last()
+            .locator("[aria-hidden]")
+            .first();
+          await expect(swatch).toBeVisible();
+          await expect
+            .poll(async () => {
+              const labelBox = await status.boundingBox();
+              const swatchBox = await swatch.boundingBox();
+              return (
+                !!labelBox &&
+                !!swatchBox &&
+                labelBox.x + labelBox.width <= swatchBox.x
+              );
+            })
+            .toBe(true);
+        }
+      }
+    }
   }
   await expect(
     nav.getByRole("link", { name: /Composer|Conversation|Agent work/ }),
@@ -223,9 +257,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       ),
     ).toBe(true);
   }
-  const primary = page
-    .getByRole("button", { name: "Save", exact: true })
-    .first();
+  const primary = page.getByRole("button", { name: "prominent", exact: true });
   await primary.click();
   await expect(page.locator("html")).not.toHaveAttribute(
     "data-keyboard-navigation",
@@ -236,7 +268,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       : "Tab";
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "Save", exact: true }).nth(1),
+    page.getByRole("button", { name: "subtle", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -248,7 +280,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
   );
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "Save", exact: true }).nth(1),
+    page.getByRole("button", { name: "subtle", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -362,12 +394,12 @@ test("documentation retains table guidance and storage failure stays usable", as
   });
   await page.goto(`${viewer}#/design/design-guide`);
   // A real cell in a real row, so run-on prose or a dropped table both fail.
-  const stepRow = page
+  const roleRow = page
     .locator("main table tbody tr")
-    .filter({ hasText: "coloured text on a neutral surface" });
-  await expect(stepRow.locator("td").first()).toHaveText("12");
+    .filter({ hasText: "Component recipes and product screens." });
+  await expect(roleRow.locator("td").first()).toHaveText("Roles");
   await expect(
-    page.locator("main table thead th").filter({ hasText: "step" }),
+    page.locator("main table thead th").filter({ hasText: "Layer" }),
   ).toHaveCount(1);
   await expect(page.locator("main")).not.toContainText("|---|");
   // A token is one word: it may sit on its own line, never break across two.
@@ -398,7 +430,7 @@ test("built component references retain anatomy and fallback identity", async ({
     .locator("tbody tr")
     .filter({ hasText: "Unselected tab" })
     .first();
-  await expect(selectedTabRow).toContainText("text-secondary");
+  await expect(selectedTabRow).toContainText("text-subtle");
   await expect(selectedTabRow.locator("td")).toHaveCount(6);
 
   await page.goto(`${viewer}#/design/components/avatar`);
@@ -456,4 +488,237 @@ test("a stale or renamed link explains itself instead of rendering blank", async
     ).toBeVisible();
   }
   expect(failures).toEqual([]);
+});
+
+test("switch labels activate the control and busy switches preserve focus", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/switch`);
+  const control = page
+    .getByRole("switch", { name: "Show agent activity" })
+    .first();
+  await expect(control).not.toBeChecked();
+  await page
+    .locator("label")
+    .filter({ hasText: "Show agent activity" })
+    .first()
+    .click();
+  await expect(control).toBeChecked();
+  const busy = page.getByRole("switch", { name: "Enable busy plugin" });
+  await expect(busy).toHaveAttribute("aria-disabled", "true");
+  await busy.focus();
+  await expect(busy).toBeFocused();
+  for (const key of ["Space", "Enter"]) {
+    await page.keyboard.press(key);
+    await expect(busy).toBeChecked();
+    await expect(busy).toBeFocused();
+  }
+  await busy.click({ force: true });
+  await expect(busy).toBeChecked();
+});
+
+test("avatar specimens preserve human and agent identity shapes in both modes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  for (const mode of ["light", "dark"]) {
+    const change = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await change.count()) await change.click();
+    const agent = page.getByRole("img", { name: "Brain", exact: true });
+    await expect(agent).toHaveCSS("border-radius", "0px");
+    await expect(agent).toHaveCSS("mask-image", /^url\(/);
+    const human = page.getByRole("img", { name: "Alex Lee", exact: true });
+    expect(
+      await human.evaluate(
+        (element) =>
+          parseFloat(getComputedStyle(element).borderTopLeftRadius) >=
+          element.clientWidth / 2,
+      ),
+    ).toBe(true);
+    for (const name of ["View Morgan profile", "View Alex profile"]) {
+      const button = page.getByRole("button", { name, exact: true });
+      await button.scrollIntoViewIfNeeded();
+      const artwork = button.locator(".buzz-avatar");
+      const inner = await button.evaluate((element) => ({
+        width: element.clientWidth,
+        height: element.clientHeight,
+      }));
+      await expect(artwork).toHaveCSS("width", `${inner.width}px`);
+      await expect(artwork).toHaveCSS("height", `${inner.height}px`);
+      if (name === "View Morgan profile") {
+        await expect(artwork.locator("img")).toHaveAttribute(
+          "data-loaded",
+          "true",
+        );
+        await expect(artwork.locator("img")).toHaveCSS("opacity", "1");
+      } else {
+        await expect(artwork).toHaveText("A");
+      }
+    }
+    const sizes = page.getByRole("img", { name: "Morgan Martin", exact: true });
+    for (const [index, size] of [24, 32, 40].entries()) {
+      await expect(sizes.nth(index)).toHaveCSS("width", `${size}px`);
+    }
+  }
+});
+
+test("typography shows the size ramp and renders xsmall mono details", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/typography`);
+  for (const size of [12, 14, 16, 18, 20, 24, 28, 32, 36, 44, 56, 72, 96]) {
+    await expect(page.getByText(`size.${size}`, { exact: true })).toBeVisible();
+  }
+  const samples = page.getByText("createChannel(name, members)", {
+    exact: true,
+  });
+  await expect(samples).toHaveCount(3);
+  for (const sample of await samples.all()) {
+    await expect(sample).toHaveCSS("font-size", "12px");
+    await expect(sample).toHaveCSS("line-height", "16px");
+    await expect(sample).toHaveCSS("font-family", /JetBrains Mono/);
+  }
+  await expect(
+    page.getByRole("link", { name: "Typography source specification" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json",
+  );
+});
+
+// Native label focus and reset/FormData behavior must agree in real engines.
+// Detailed cancellation, controlled state and external form cases live in RTL.
+test("textarea labels focus explicit IDs and preserve edits", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/textarea`);
+  const textarea = page.getByRole("textbox", {
+    name: "Description",
+    exact: true,
+  });
+  await page
+    .locator("label")
+    .filter({ hasText: /^Description$/ })
+    .click();
+  await expect(textarea).toBeFocused();
+  await textarea.fill("Updated summary");
+  await expect(textarea).toHaveValue("Updated summary");
+});
+
+test("native form reset keeps choice appearance and submitted values together", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Notification preferences" });
+  const checkbox = form.getByRole("checkbox", { name: "Include a summary" });
+  const all = form.getByRole("radio", { name: "All updates" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await checkbox.click();
+  await mentions.click();
+  await expect(checkbox).not.toBeChecked();
+  await expect(mentions).toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ notifications: "mentions" });
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(checkbox).toBeChecked();
+  await expect(all).toBeChecked();
+  await expect(mentions).not.toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ notifications: "all", summary: "yes" });
+});
+
+test("invalid input and textarea boundaries remain visible in both themes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/field`);
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    const controls = page.getByRole("textbox");
+    await expect(controls).toHaveCount(2);
+    for (const control of await controls.all()) {
+      await expect(control).toHaveAttribute("aria-invalid", "true");
+      const ratio = await control.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const luminance = (color: string) => {
+          const components = color
+            .match(/[\d.]+/g)
+            ?.slice(0, 3)
+            .map(Number);
+          if (components?.length !== 3)
+            throw new Error(`Unexpected color ${color}`);
+          const linear = components.map((component) => {
+            const value = component / 255;
+            return value <= 0.04045
+              ? value / 12.92
+              : ((value + 0.055) / 1.055) ** 2.4;
+          });
+          const [red = 0, green = 0, blue = 0] = linear;
+          return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        };
+        const border = luminance(style.borderTopColor);
+        const background = luminance(style.backgroundColor);
+        return (
+          (Math.max(border, background) + 0.05) /
+          (Math.min(border, background) + 0.05)
+        );
+      });
+      expect(ratio).toBeGreaterThanOrEqual(3);
+    }
+  }
+});
+
+// These cases verify native reset against actual hidden form inputs, not only ARIA.
+test("controlled choices keep the owner's unchanged values after native reset", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Controlled preferences" });
+  const checkbox = form.getByRole("checkbox", { name: "Include a summary" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await checkbox.click();
+  await mentions.click();
+  await expect(checkbox).toBeChecked();
+  await expect(mentions).toBeChecked();
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(checkbox).toBeChecked();
+  await expect(mentions).toBeChecked();
+  await expect(
+    form.locator('input[type="radio"][value="mentions"]'),
+  ).toBeChecked();
+  await expect(
+    form.locator('input[type="checkbox"][name="summary"]'),
+  ).toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ delivery: "mentions", summary: "yes" });
+});
+
+test("radios enabled after mount remain synchronized on native reset", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Deferred preferences" });
+  const all = form.getByRole("radio", { name: "All updates" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await expect(all).toBeDisabled();
+  await form.getByRole("button", { name: "Enable choices" }).click();
+  await mentions.click();
+  await expect(mentions).toBeChecked();
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(all).toBeChecked();
+  await expect(mentions).not.toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ delivery: "all" });
 });

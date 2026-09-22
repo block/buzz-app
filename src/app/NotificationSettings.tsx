@@ -1,5 +1,9 @@
+import { Switch } from "../shared/design-system/ui/Switch";
+import { Button } from "../shared/design-system/ui/Button";
+import { UnreadIndicatorSettings } from "./UnreadIndicatorSettings";
 import { useSyncExternalStore } from "react";
 import type { NotificationsService } from "../features/notifications/service";
+import styles from "./NotificationSettings.module.css";
 
 export function NotificationSettings({
   notifications,
@@ -12,57 +16,65 @@ export function NotificationSettings({
   );
   const { preferences, permission } = state;
   return (
-    <section aria-labelledby="notification-settings-title">
+    <section
+      className={styles.root}
+      aria-labelledby="notification-settings-title"
+    >
       <h2 id="notification-settings-title" className="mt-0 mb-6 text-label">
         Notifications
       </h2>
-      <div className="space-y-5">
+      <div className="grid gap-5">
         <p className="text-body-sm text-muted">
           Choices are saved for this account on this device. System permission
           is separate.
         </p>
-        <Toggle
+        <Switch
           label="Desktop alerts"
-          checked={preferences.enabled}
-          onChange={(enabled) => notifications.updatePreferences({ enabled })}
+          checked={!state.developmentPaused && preferences.enabled}
+          disabled={state.developmentPaused}
+          onCheckedChange={(enabled) =>
+            notifications.updatePreferences({ enabled })
+          }
         />
         <p role="status" className="text-body-sm text-muted">
-          {state.requesting
-            ? "Waiting for system permission…"
-            : permission === "granted"
-              ? "Permission granted. Your alert choices still apply."
-              : permission === "denied"
-                ? "Blocked. Allow notifications in your browser or system settings."
-                : permission === "unsupported"
-                  ? "System notifications are unavailable in this build."
-                  : permission === "unknown"
-                    ? "Permission is controlled by system notification settings."
-                    : "Allow notifications to receive alerts."}
+          {state.developmentPaused
+            ? "Notifications are paused by your local development setting. Remove BUZZ_DEV_NOTIFICATIONS=0 from .env.local and restart the dev server to resume normal behavior. Your saved alert choices are unchanged."
+            : state.requesting
+              ? "Waiting for system permission…"
+              : permission === "granted"
+                ? "Permission granted. Your alert choices still apply."
+                : permission === "denied"
+                  ? "Blocked. Allow notifications in your browser or system settings."
+                  : permission === "unsupported"
+                    ? "System notifications are unavailable in this build."
+                    : permission === "unknown"
+                      ? "Permission is controlled by system notification settings."
+                      : "Allow notifications to receive alerts."}
         </p>
-        {!state.systemManaged && (
-          <div className="flex gap-2">
+        {!state.systemManaged && !state.developmentPaused && (
+          <div className={styles.actions}>
             {permission === "default" && (
-              <button
+              <Button
                 type="button"
                 disabled={state.requesting}
                 onClick={() => void notifications.requestPermission()}
               >
                 Allow notifications
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
               disabled={state.requesting}
               onClick={() => void notifications.refreshPermission()}
             >
               Check permission
-            </button>
+            </Button>
           </div>
         )}
-        <Toggle
+        <Switch
           label="Notify while viewing"
           checked={preferences.notifyWhileViewing}
-          onChange={(notifyWhileViewing) =>
+          onCheckedChange={(notifyWhileViewing) =>
             notifications.updatePreferences({ notifyWhileViewing })
           }
         />
@@ -74,10 +86,12 @@ export function NotificationSettings({
           </p>
         ) : (
           <>
-            <Toggle
+            <Switch
               label="Sound"
               checked={preferences.sound}
-              onChange={(sound) => notifications.updatePreferences({ sound })}
+              onCheckedChange={(sound) =>
+                notifications.updatePreferences({ sound })
+              }
             />
             <p className="text-body-sm text-muted">
               Sound uses the system default where supported. Turning it off
@@ -85,14 +99,14 @@ export function NotificationSettings({
             </p>
           </>
         )}
-        <fieldset className="m-0 space-y-3 border-0 p-0">
+        <fieldset className="m-0 grid gap-3 border-0 p-0">
           <legend className="mb-3 font-medium">Notify me about</legend>
           {state.categories.map(({ key, label }) => (
-            <Toggle
+            <Switch
               key={key}
               label={label}
               checked={preferences.categories[key] !== false}
-              onChange={(enabled) =>
+              onCheckedChange={(enabled) =>
                 notifications.updatePreferences({
                   categories: { ...preferences.categories, [key]: enabled },
                 })
@@ -104,21 +118,22 @@ export function NotificationSettings({
           Message alerts cover the selected community while Buzz is running.
           Reading history and reconnecting stay quiet.
         </p>
+        <UnreadIndicatorSettings indicator={notifications.indicator} />
         {state.preferencesError && (
           <div role="alert" className="notice">
             <p>{state.preferencesError}</p>
-            <button
+            <Button
               type="button"
               onClick={() => notifications.updatePreferences({})}
             >
               Retry saving choices
-            </button>{" "}
-            <button
+            </Button>{" "}
+            <Button
               type="button"
               onClick={() => notifications.reloadPreferences()}
             >
               Reload saved choices
-            </button>
+            </Button>
           </div>
         )}
         {state.error && (
@@ -128,27 +143,5 @@ export function NotificationSettings({
         )}
       </div>
     </section>
-  );
-}
-function Toggle({
-  label,
-  checked,
-  onChange,
-}: {
-  label: string;
-  checked: boolean;
-  onChange(checked: boolean): void;
-}) {
-  return (
-    <label className="flex items-center justify-between gap-3">
-      <span>{label}</span>
-      <input
-        type="checkbox"
-        role="switch"
-        checked={checked}
-        aria-checked={checked}
-        onChange={(event) => onChange(event.target.checked)}
-      />
-    </label>
   );
 }

@@ -1,6 +1,8 @@
 import type React from "react";
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactElement } from "react";
 import { createPortal } from "react-dom";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import {
   type GhostSpec,
   type WindowHost,
@@ -58,30 +60,31 @@ export function releasedInStrip(
   );
 }
 
+/** The selected page pill: the opaque surface every lifted tab borrows. */
+const SELECTED_TAB = '.navigation-item[data-variant="pill"][data-selected]';
+
 /**
  * What the native pill needs to look exactly like `tab`: its size, its icon
  * markup and the resolved styles of a selected tab, read from the live DOM so
- * the ghost follows the theme without mirroring tokens.
+ * the ghost follows the theme without mirroring tokens. Launchers lift as an
+ * icon-only disc.
  */
 export function ghostSpec(
   tab: HTMLElement,
   title: string,
   rect: { width: number; height: number },
+  launcher = false,
 ): GhostSpec {
   const own = getComputedStyle(tab);
   // Unselected tabs are transparent and launchers are translucent glass that
   // relies on a backdrop the floating pill does not have; both lift with the
   // opaque selected-tab surface.
   const selected = translucent(own.backgroundColor)
-    ? tab.ownerDocument.querySelector<HTMLElement>(
-        '.shell-tab[aria-current="page"]',
-      )
+    ? tab.ownerDocument.querySelector<HTMLElement>(SELECTED_TAB)
     : undefined;
-  const icon = tab.querySelector<SVGElement | HTMLImageElement>(
-    ":scope > svg, :scope > img",
-  );
+  const icon = tab.querySelector<SVGElement | HTMLImageElement>("svg, img");
   return {
-    title: tab.classList.contains("shell-icon") ? "" : title,
+    title: launcher ? "" : title,
     ...(icon
       ? { icon: icon.outerHTML, iconSize: getComputedStyle(icon).width }
       : {}),
@@ -115,27 +118,29 @@ export function translucent(color: string): boolean {
 }
 
 /**
- * A tab (page) or launcher (panel) with a browser-like context menu for moving
- * it between windows. `tabKey` is the layout key: a page contribution key or
- * `panel:<contribution key>`.
+ * A tab (page pill) or launcher (round icon button for a panel) with a
+ * browser-like context menu for moving it between windows. `tabKey` is the
+ * layout key: a page contribution key or `panel:<contribution key>`.
  */
 export function PageTab({
   tabKey,
   name,
+  icon,
+  launcher = false,
   selected,
   onSelect,
   windows,
   layout,
   tabsHere,
   detachable,
-  className = "shell-tab",
-  label,
   expanded,
-  children,
 }: {
   tabKey: string;
-  /** Shown in the native drag ghost. */
+  /** Tab label; the launcher's accessible name and the native drag ghost's title. */
   name: string;
+  icon: ReactElement;
+  /** Render as a launcher disc instead of a page pill. */
+  launcher?: boolean;
   selected: boolean;
   onSelect(event: React.MouseEvent<HTMLButtonElement>): void;
   windows: WindowHost;
@@ -143,10 +148,7 @@ export function PageTab({
   tabsHere: number;
   /** Whether moving between windows is available (desktop with the plugin on). */
   detachable: boolean;
-  className?: string;
-  label?: string;
   expanded?: boolean;
-  children: ReactNode;
 }) {
   // Anchored below the tab but rendered in a portal: the tab strip scrolls
   // horizontally, which would otherwise clip anything hanging below it.
@@ -225,107 +227,119 @@ export function PageTab({
     const dy = event.screenY - event.clientY;
     windows.drag?.begin(
       tabKey,
-      ghostSpec(tab, name, rect),
+      ghostSpec(tab, name, rect, launcher),
       rect.left + dx,
       rect.top + dy,
     );
     setLifted(true);
     return grab;
   };
+  const control = {
+    ref: trigger,
+    "aria-expanded": expanded,
+    "aria-haspopup": targets.length ? ("menu" as const) : undefined,
+    "aria-controls": open ? id : undefined,
+    "data-lifted": lifted || undefined,
+    // Native drag-and-drop of any child (images, selected text) would take
+    // the gesture away from the pointer-based tab drag.
+    onDragStart: (event: React.DragEvent) => event.preventDefault(),
+    onClick: (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (dragged.current) {
+        dragged.current = false;
+        return;
+      }
+      onSelect(event);
+    },
+    onContextMenu: (event: React.MouseEvent<HTMLButtonElement>) => {
+      if (!targets.length) return;
+      event.preventDefault();
+      event.currentTarget.focus();
+      setOpen(true);
+    },
+    onPointerDown: (event: React.PointerEvent<HTMLButtonElement>) => {
+      if (!detachable || !windows.dropTab || event.button !== 0) return;
+      drag.current = {
+        x: event.clientX,
+        y: event.clientY,
+        active: false,
+        grab: { x: 0, y: 0 },
+      };
+      event.currentTarget.setPointerCapture(event.pointerId);
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLButtonElement>) => {
+      const state = drag.current;
+      if (!state) return;
+      if (!state.active) {
+        if (Math.hypot(event.clientX - state.x, event.clientY - state.y) < 6)
+          return;
+        state.active = true;
+        setAnchor(undefined);
+        state.grab = lift(event);
+      } else
+        windows.drag?.move(
+          event.screenX - state.grab.x,
+          event.screenY - state.grab.y,
+        );
+    },
+    onPointerUp: (event: React.PointerEvent<HTMLButtonElement>) => {
+      const state = drag.current;
+      // The drop command hides the ghost itself; only a cancel needs an explicit end.
+      if (state?.active) drag.current = undefined;
+      else endDrag();
+      if (!state?.active) return;
+      // The click that follows this release is the drag's, not a selection.
+      dragged.current = true;
+      setTimeout(() => {
+        dragged.current = false;
+      }, 0);
+      const header = event.currentTarget
+        .closest("header")
+        ?.getBoundingClientRect();
+      if (
+        releasedInStrip({ x: event.clientX, y: event.clientY }, header, {
+          width: window.innerWidth,
+          height: window.innerHeight,
+        })
+      ) {
+        windows.drag?.end();
+        setLifted(false);
+        return;
+      }
+      setError(undefined);
+      // A successful drop unmounts this tab here; only failure puts it back.
+      windows
+        .dropTab?.(tabKey, event.screenX, event.screenY)
+        .catch((reason) => {
+          windows.drag?.end();
+          setLifted(false);
+          report(reason);
+        });
+    },
+    onPointerCancel: endDrag,
+  };
   return (
     <>
-      <button
-        type="button"
-        ref={trigger}
-        className={className}
-        aria-label={label}
-        title={label}
-        aria-current={selected ? "page" : undefined}
-        aria-expanded={expanded}
-        aria-haspopup={targets.length ? "menu" : undefined}
-        aria-controls={open ? id : undefined}
-        data-lifted={lifted || undefined}
-        // Native drag-and-drop of any child (images, selected text) would take
-        // the gesture away from the pointer-based tab drag.
-        onDragStart={(event) => event.preventDefault()}
-        onClick={(event) => {
-          if (dragged.current) {
-            dragged.current = false;
-            return;
-          }
-          onSelect(event);
-        }}
-        onContextMenu={(event) => {
-          if (!targets.length) return;
-          event.preventDefault();
-          event.currentTarget.focus();
-          setOpen(true);
-        }}
-        onPointerDown={(event) => {
-          if (!detachable || !windows.dropTab || event.button !== 0) return;
-          drag.current = {
-            x: event.clientX,
-            y: event.clientY,
-            active: false,
-            grab: { x: 0, y: 0 },
-          };
-          event.currentTarget.setPointerCapture(event.pointerId);
-        }}
-        onPointerMove={(event) => {
-          const state = drag.current;
-          if (!state) return;
-          if (!state.active) {
-            if (
-              Math.hypot(event.clientX - state.x, event.clientY - state.y) < 6
-            )
-              return;
-            state.active = true;
-            setAnchor(undefined);
-            state.grab = lift(event);
-          } else
-            windows.drag?.move(
-              event.screenX - state.grab.x,
-              event.screenY - state.grab.y,
-            );
-        }}
-        onPointerUp={(event) => {
-          const state = drag.current;
-          // The drop command hides the ghost itself; only a cancel needs an explicit end.
-          if (state?.active) drag.current = undefined;
-          else endDrag();
-          if (!state?.active) return;
-          // The click that follows this release is the drag's, not a selection.
-          dragged.current = true;
-          setTimeout(() => {
-            dragged.current = false;
-          }, 0);
-          const header = event.currentTarget
-            .closest("header")
-            ?.getBoundingClientRect();
-          if (
-            releasedInStrip({ x: event.clientX, y: event.clientY }, header, {
-              width: window.innerWidth,
-              height: window.innerHeight,
-            })
-          ) {
-            windows.drag?.end();
-            setLifted(false);
-            return;
-          }
-          setError(undefined);
-          // A successful drop unmounts this tab here; only failure puts it back.
-          windows
-            .dropTab?.(tabKey, event.screenX, event.screenY)
-            .catch((reason) => {
-              windows.drag?.end();
-              setLifted(false);
-              report(reason);
-            });
-        }}
-        onPointerCancel={endDrag}
-      >
-        {children}
-      </button>
+      {launcher ? (
+        <IconButton
+          {...control}
+          type="button"
+          variant="chrome"
+          shape="round"
+          aria-label={name}
+          title={name}
+          icon={icon}
+        />
+      ) : (
+        <NavigationItem
+          {...control}
+          type="button"
+          variant="pill"
+          aria-current={selected ? "page" : undefined}
+          selected={selected}
+          label={name}
+          icon={icon}
+        />
+      )}
       {targets.length > 0 &&
         anchor &&
         createPortal(

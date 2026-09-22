@@ -1,8 +1,9 @@
+import { MagnifyingGlassIcon } from "../../shared/design-system/icons/index";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { SearchField } from "../../shared/design-system/ui/SearchField";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useRef, useState } from "react";
-import {
-  MagnifyingGlassIcon,
-  XIcon,
-} from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 import {
   orderPages,
@@ -17,7 +18,9 @@ export function PageSearch({
   pages: readonly RegisteredPage[];
   onSelect: (key: string) => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
+  const [open, setOpen] = useState(false);
+  const input = useRef<HTMLElement>(null);
+  const trigger = useRef<HTMLElement>(null);
   const [query, setQuery] = useState("");
   const destinations = [
     { key: "home", ...shellPresentation.home },
@@ -31,55 +34,46 @@ export function PageSearch({
   );
   return (
     <>
-      <button
+      <IconButton
+        ref={trigger}
         type="button"
-        className="shell-icon"
+        variant="chrome"
+        shape="round"
         aria-label="Find a page"
         title="Find a page"
         onClick={() => {
           setQuery("");
-          dialog.current?.showModal();
+          setOpen(true);
         }}
+        icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+      />
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Find a page"
+        closeLabel="Close search"
+        initialFocus={input}
+        finalFocus={trigger}
       >
-        <MagnifyingGlassIcon size={19} aria-hidden="true" />
-      </button>
-      <dialog
-        ref={dialog}
-        aria-label="Find a page"
-        className="m-auto w-[calc(100%-2rem)] max-w-md rounded-3xl border border-line bg-surface p-4 text-ink shadow-surface backdrop:bg-overlay"
-      >
-        <div className="mb-3 flex items-center gap-3 border-b border-line pb-3">
-          <MagnifyingGlassIcon size={18} aria-hidden="true" />
-          <input
-            aria-label="Find a page"
-            placeholder="Find a page…"
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            className="min-w-0 flex-1 rounded bg-transparent py-2 text-body-sm"
-          />
-          <button
-            type="button"
-            aria-label="Close search"
-            className="shell-icon"
-            onClick={() => dialog.current?.close()}
-          >
-            <XIcon size={18} aria-hidden="true" />
-          </button>
-        </div>
+        <SearchField
+          inputRef={input}
+          label="Find a page"
+          placeholder="Find a page…"
+          value={query}
+          onValueChange={setQuery}
+        />
         <div className="max-h-72 overflow-y-auto">
           {destinations.map(({ key, label, icon: Icon }) => (
-            <button
+            <NavigationItem
               type="button"
               key={key}
-              className="flex w-full items-center gap-3 border-0 px-3 py-2.5 text-left text-ink"
+              label={label}
+              icon={<Icon size={17} aria-hidden="true" />}
               onClick={() => {
                 onSelect(key);
-                dialog.current?.close();
+                setOpen(false);
               }}
-            >
-              <Icon size={17} aria-hidden="true" />
-              {label}
-            </button>
+            />
           ))}
           {!destinations.length && (
             <p role="status" className="px-3 text-body-sm text-muted">
@@ -87,7 +81,7 @@ export function PageSearch({
             </p>
           )}
         </div>
-      </dialog>
+      </Dialog>
     </>
   );
 }

@@ -8,7 +8,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Mutex,
 };
-use tauri::{Emitter as _, Manager as _};
+use tauri::{Emitter as _, Manager as _, Runtime};
 
 pub(crate) const MAIN: &str = "main";
 /// The bundled plugin that switches detaching on; see `src/bundled/windows`.
@@ -211,7 +211,7 @@ impl Windows {
         }
     }
     /// Point the drop-target highlight at `next`; only changes are broadcast.
-    fn set_drop_target(&self, app: &tauri::AppHandle, next: Option<String>) {
+    fn set_drop_target<R: Runtime>(&self, app: &tauri::AppHandle<R>, next: Option<String>) {
         let Ok(mut current) = self.drop_target.lock() else {
             return;
         };
@@ -265,7 +265,11 @@ impl Windows {
     }
 }
 
-fn create(app: &tauri::AppHandle, label: &str, at: Option<(f64, f64)>) -> tauri::Result<()> {
+fn create<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    label: &str,
+    at: Option<(f64, f64)>,
+) -> tauri::Result<()> {
     let builder =
         tauri::WebviewWindowBuilder::new(app, label, tauri::WebviewUrl::App("index.html".into()))
             .title("Buzz Foundation")
@@ -284,14 +288,14 @@ fn create(app: &tauri::AppHandle, label: &str, at: Option<(f64, f64)>) -> tauri:
     builder.build().map(|_| ())
 }
 
-fn publish(app: &tauri::AppHandle, layout: &Layout) {
+fn publish<R: Runtime>(app: &tauri::AppHandle<R>, layout: &Layout) {
     if let Err(error) = app.emit(EVENT, layout) {
         eprintln!("Window layout broadcast failed: {error}");
     }
 }
 
 /// Recreate saved detached windows. Entries whose window cannot open return to main.
-pub(crate) fn restore(app: &tauri::AppHandle) {
+pub(crate) fn restore<R: Runtime>(app: &tauri::AppHandle<R>) {
     let state = app.state::<Windows>();
     let saved = state.layout();
     let mut failed = Vec::new();
@@ -316,7 +320,7 @@ pub(crate) fn restore(app: &tauri::AppHandle) {
 }
 
 /// Closing main quits the whole app; closing a detached window returns its tabs.
-pub(crate) fn window_closing(app: &tauri::AppHandle, label: &str) {
+pub(crate) fn window_closing<R: Runtime>(app: &tauri::AppHandle<R>, label: &str) {
     if label == MAIN {
         app.exit(0);
         return;
@@ -336,8 +340,8 @@ pub(crate) fn windows_layout(state: tauri::State<'_, Windows>) -> Layout {
 
 /// The `buzz.windows` plugin was switched off: gather every tab into main.
 #[tauri::command]
-pub(crate) async fn windows_reset(
-    app: tauri::AppHandle,
+pub(crate) async fn windows_reset<R: Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, Windows>,
 ) -> Result<Layout, String> {
     let (closed, layout) = state.update(|layout| Ok(layout.reset()))?;
@@ -365,8 +369,8 @@ pub(crate) fn plugin_enabled(manager: Option<&buzzodz_plugins::Manager>) -> bool
     }
 }
 
-fn apply_move(
-    app: &tauri::AppHandle,
+fn apply_move<R: Runtime>(
+    app: &tauri::AppHandle<R>,
     state: &Windows,
     page_key: &str,
     destination: &str,
@@ -401,8 +405,8 @@ fn apply_move(
 }
 
 #[tauri::command]
-pub(crate) async fn windows_move_tab(
-    app: tauri::AppHandle,
+pub(crate) async fn windows_move_tab<R: Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, Windows>,
     page_key: String,
     destination: String,
@@ -425,11 +429,11 @@ struct GhostSize {
     height: f64,
 }
 
-fn ghost(
-    app: &tauri::AppHandle,
+fn ghost<R: Runtime>(
+    app: &tauri::AppHandle<R>,
     spec: &str,
     size: &GhostSize,
-) -> tauri::Result<tauri::WebviewWindow> {
+) -> tauri::Result<tauri::WebviewWindow<R>> {
     let outer =
         tauri::LogicalSize::new(size.width + 2.0 * GHOST_PAD, size.height + 2.0 * GHOST_PAD);
     if let Some(window) = app.get_webview_window(GHOST) {
@@ -471,15 +475,15 @@ fn ghost_position(x: f64, y: f64) -> tauri::LogicalPosition<f64> {
     tauri::LogicalPosition::new(x - GHOST_PAD, y - GHOST_PAD)
 }
 
-fn hide_ghost(app: &tauri::AppHandle) {
+fn hide_ghost<R: Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window(GHOST) {
         let _ = window.hide();
     }
 }
 
 #[tauri::command]
-pub(crate) async fn windows_drag_begin(
-    app: tauri::AppHandle,
+pub(crate) async fn windows_drag_begin<R: Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, Windows>,
     tab_key: String,
     spec: String,
@@ -504,9 +508,9 @@ pub(crate) async fn windows_drag_begin(
 }
 
 #[tauri::command]
-pub(crate) async fn windows_drag_move(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+pub(crate) async fn windows_drag_move<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    window: tauri::WebviewWindow<R>,
     state: tauri::State<'_, Windows>,
     x: f64,
     y: f64,
@@ -524,8 +528,8 @@ pub(crate) async fn windows_drag_move(
 }
 
 #[tauri::command]
-pub(crate) async fn windows_drag_end(
-    app: tauri::AppHandle,
+pub(crate) async fn windows_drag_end<R: Runtime>(
+    app: tauri::AppHandle<R>,
     state: tauri::State<'_, Windows>,
 ) -> Result<(), String> {
     state.set_drop_target(&app, None);
@@ -535,7 +539,12 @@ pub(crate) async fn windows_drag_end(
 }
 
 /// Which Buzz window, other than `source` and the drag ghost, is under a logical screen point.
-fn window_at(app: &tauri::AppHandle, source: &str, x: f64, y: f64) -> Option<String> {
+fn window_at<R: Runtime>(
+    app: &tauri::AppHandle<R>,
+    source: &str,
+    x: f64,
+    y: f64,
+) -> Option<String> {
     app.webview_windows()
         .into_iter()
         .filter(|(label, _)| label != source && label != GHOST)
@@ -559,9 +568,9 @@ fn window_at(app: &tauri::AppHandle, source: &str, x: f64, y: f64) -> Option<Str
 /// A tab dragged out of its strip and released at a screen point joins the
 /// window under the pointer, or opens a new window there.
 #[tauri::command]
-pub(crate) async fn windows_drop_tab(
-    app: tauri::AppHandle,
-    window: tauri::WebviewWindow,
+pub(crate) async fn windows_drop_tab<R: Runtime>(
+    app: tauri::AppHandle<R>,
+    window: tauri::WebviewWindow<R>,
     state: tauri::State<'_, Windows>,
     page_key: String,
     x: f64,

@@ -1,4 +1,8 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { memo, useCallback, useSyncExternalStore } from "react";
+import { PresenceIndicator } from "../presence/react";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
@@ -99,7 +103,10 @@ export const MessageRow = memo(function MessageRow({
     : undefined;
   const target = profileTarget(row.authorId);
   const clickable = target && canOpenLink?.(target);
-  const AvatarTag = clickable ? "button" : "div";
+  const avatarShape =
+    row.agentEnvelope || agentPubkeys?.has(row.authorId)
+      ? "squircle"
+      : "circle";
   const timeReply = parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
@@ -126,37 +133,43 @@ export const MessageRow = memo(function MessageRow({
         </div>
       )}
       <div className={styles.message}>
-        <AvatarTag
-          className={styles.avatarButton}
-          {...(clickable
-            ? {
-                type: "button" as const,
-                "aria-label": `View ${name} profile`,
-                onClick: (event: import("react").MouseEvent<HTMLElement>) => {
-                  event.currentTarget.focus();
-                  onOpenLink(target);
-                },
-              }
-            : {})}
-        >
-          <span
-            className={styles.avatar}
-            data-avatar-shape={
-              row.agentEnvelope || agentPubkeys?.has(row.authorId)
-                ? "squircle"
-                : "circle"
+        {clickable ? (
+          <IconButton
+            size="large"
+            shape="round"
+            aria-label={`View ${name} profile`}
+            onClick={(event) => {
+              event.currentTarget.focus();
+              onOpenLink(target);
+            }}
+            icon={
+              <Avatar
+                src={picture}
+                alt=""
+                fallback={name}
+                size="fill"
+                shape={avatarShape}
+              />
             }
-          >
-            {picture ? (
-              <img src={picture} alt="" loading="lazy" />
-            ) : (
-              name.slice(0, 2).toUpperCase()
-            )}
-          </span>
-        </AvatarTag>
+          />
+        ) : (
+          <Avatar
+            src={picture}
+            alt=""
+            fallback={name}
+            size="large"
+            shape={avatarShape}
+          />
+        )}
         <div className={styles.messageBody}>
           <div className={styles.byline}>
             <strong>{name}</strong>
+            {session && (
+              <PresenceIndicator
+                presence={session.presence}
+                pubkey={row.authorId}
+              />
+            )}
             <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",
@@ -165,13 +178,15 @@ export const MessageRow = memo(function MessageRow({
             </time>
           </div>
           {timeReply && onMediaTime && (
-            <button
-              type="button"
-              className={styles.mediaTimeLink}
-              onClick={() => onMediaTime(timeReply.anchor.seconds)}
-            >
-              {timeReply.label}
-            </button>
+            <span className={styles.mediaTimeLink}>
+              <Button
+                size="sm"
+                type="button"
+                onClick={() => onMediaTime(timeReply.anchor.seconds)}
+              >
+                {timeReply.label}
+              </Button>
+            </span>
           )}
           <MessageMarkdown
             directory={directory}
@@ -264,9 +279,10 @@ export const MessageRow = memo(function MessageRow({
             </div>
           )}
           {row.replyCount > 0 && onOpenThread && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               type="button"
-              className={styles.replies}
               aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               onClick={(event) => {
                 event.currentTarget.focus();
@@ -290,31 +306,19 @@ export const MessageRow = memo(function MessageRow({
                         }
                         title={name}
                       >
-                        <span className={styles.insetAvatarArtwork}>
-                          {name.slice(0, 2).toUpperCase()}
-                          {picture && (
-                            <img
-                              key={picture}
-                              src={picture}
-                              alt=""
-                              loading="lazy"
-                              onError={(event) => {
-                                event.currentTarget.hidden = true;
-                              }}
-                            />
-                          )}
-                        </span>
+                        <Avatar
+                          src={picture}
+                          alt=""
+                          fallback={name}
+                          size="fill"
+                          shape={agentPubkeys?.has(id) ? "squircle" : "circle"}
+                        />
                       </span>
                     );
                   })}
                   {row.participants.length > 3 && (
-                    <span
-                      className={styles.threadAvatar}
-                      data-avatar-shape="circle"
-                    >
-                      <span className={styles.insetAvatarArtwork}>
-                        +{row.participants.length - 3}
-                      </span>
+                    <span className={styles.threadAvatarCount}>
+                      +{row.participants.length - 3}
                     </span>
                   )}
                 </span>
@@ -329,7 +333,7 @@ export const MessageRow = memo(function MessageRow({
                   title={unreadLabel}
                 />
               )}
-            </button>
+            </Button>
           )}
         </div>
       </div>

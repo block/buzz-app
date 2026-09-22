@@ -30,13 +30,19 @@ test("Channels renders grouped history and live membership without turning activ
     "Pinky added by you, along with Brain",
   );
   await expect(groups.locator("button")).toHaveCount(0);
-  const avatars = groups.first().locator("[data-avatar-shape]");
+  // Count each identity once; its overlap frame and shared artwork both
+  // carry the shape. Shared Avatar owns the single-letter fallback.
+  const avatars = groups
+    .first()
+    .locator(
+      "[data-avatar-shape]:not([data-avatar-shape] [data-avatar-shape])",
+    );
   await expect(avatars).toHaveCount(2);
-  await expect(avatars.filter({ hasText: "PI" })).toHaveAttribute(
+  await expect(avatars.filter({ hasText: /^P$/ })).toHaveAttribute(
     "data-avatar-shape",
     "circle",
   );
-  await expect(avatars.filter({ hasText: "BR" })).toHaveAttribute(
+  await expect(avatars.filter({ hasText: /^B$/ })).toHaveAttribute(
     "data-avatar-shape",
     "squircle",
   );

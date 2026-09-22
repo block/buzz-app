@@ -1,4 +1,7 @@
+import { Button } from "../shared/design-system/ui/Button";
 // FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { AgentMentionContext } from "../features/agents/mention-context";
+import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
 import type { AppServices } from "./services";
@@ -98,93 +101,96 @@ export function App({ services }: { services: AppServices }) {
   );
   const pageOwnsCompanion = !home && !!route.page?.companion;
   return (
-    <AppShell
-      navigationControls={
-        <NavigationControls navigation={services.navigation} />
-      }
-      onCommunitySelect={(id) => {
-        services.communities.select(id);
-        select("buzz.channels/channels");
-      }}
-      communities={services.communities}
-      windows={windows}
-      launchers={
-        <PanelLaunchers
-          panels={panels}
-          selected={panelTab ?? selectedPanel}
-          launch={(panel, trigger) =>
-            fullPanelMode
-              ? setPanelChoice(panelTabKey(panel))
-              : launcher.launch(panel, trigger)
-          }
-          windows={windows}
-          layout={layout.layout}
-          tabsHere={route.pages.length + panels.length}
-          detachable={layout.enabled}
-        />
-      }
-      companion={pageOwnsCompanion ? undefined : companion}
-      pages={startup === "ready" ? route.pages : []}
-      panelCount={panels.length}
-      selected={panelTab ? panelTabKey(panelTab) : route.selected}
-      onSelect={select}
-      tone={panelTab ? shellPresentation.home.tone : presentation.tone}
-      workspace={
-        !!panelTab ||
-        (startup === "ready" && !home && route.page?.layout === "workspace")
-      }
-    >
-      {emptyWindow ? (
-        <EmptyWindow windows={windows} />
-      ) : panelTab ? (
-        <PanelView
-          panel={panelTab}
-          target={panelTab.launcher?.target ?? ""}
-          close={() => void windows.moveTab?.(panelTabKey(panelTab), "main")}
-        />
-      ) : route.failure || route.state.status === "failed" ? (
-        <div role="alert" className="notice">
-          <h1>This destination couldn’t open</h1>
-          <p>
-            {route.failure === "denied"
-              ? "This target needs its original account and an already joined community."
-              : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
-          </p>
-          <button type="button" onClick={route.retry}>
-            Retry navigation
-          </button>
-          <button type="button" onClick={() => select("home")}>
-            Go Home
-          </button>
-        </div>
-      ) : settings ? (
-        <Settings
-          plugins={plugins}
-          communities={services.communities}
-          appearance={services.appearance}
-          notifications={services.notifications}
-          navigation={route.request}
-          onSection={(section) =>
-            void services.navigation.open({
-              version: 1,
-              kind: "settings",
-              section,
-            })
-          }
-        />
-      ) : home ? (
-        <Home pages={route.pages} onSelect={select} />
-      ) : startup === "recovery" ? (
-        <RecoveryScreen plugins={plugins} />
-      ) : route.waiting || startup === "loading" ? (
-        <p role="status">Opening destination…</p>
-      ) : route.page ? (
-        <PageView
-          page={route.page}
-          navigation={route.request}
-          companion={pageOwnsCompanion ? companion : undefined}
-        />
-      ) : null}
-    </AppShell>
+    <AgentMentionContext.Provider value={services.agentControl}>
+      <AppShell
+        navigationControls={
+          <NavigationControls navigation={services.navigation} />
+        }
+        onCommunitySelect={(id) => {
+          services.communities.select(id);
+          select("buzz.channels/channels");
+        }}
+        communities={services.communities}
+        windows={windows}
+        launchers={
+          <PanelLaunchers
+            panels={panels}
+            selected={panelTab ?? selectedPanel}
+            launch={(panel, trigger) =>
+              fullPanelMode
+                ? setPanelChoice(panelTabKey(panel))
+                : launcher.launch(panel, trigger)
+            }
+            windows={windows}
+            layout={layout.layout}
+            tabsHere={route.pages.length + panels.length}
+            detachable={layout.enabled}
+          />
+        }
+        companion={pageOwnsCompanion ? undefined : companion}
+        pages={startup === "ready" ? route.pages : []}
+        panelCount={panels.length}
+        selected={panelTab ? panelTabKey(panelTab) : route.selected}
+        onSelect={select}
+        tone={panelTab ? shellPresentation.home.tone : presentation.tone}
+        workspace={
+          !!panelTab ||
+          (startup === "ready" && !home && route.page?.layout === "workspace")
+        }
+      >
+        <AgentWakeNotice control={services.agentControl} />
+        {emptyWindow ? (
+          <EmptyWindow windows={windows} />
+        ) : panelTab ? (
+          <PanelView
+            panel={panelTab}
+            target={panelTab.launcher?.target ?? ""}
+            close={() => void windows.moveTab?.(panelTabKey(panelTab), "main")}
+          />
+        ) : route.failure || route.state.status === "failed" ? (
+          <div role="alert" className="notice">
+            <h1>This destination couldn’t open</h1>
+            <p>
+              {route.failure === "denied"
+                ? "This target needs its original account and an already joined community."
+                : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
+            </p>
+            <Button type="button" onClick={route.retry}>
+              Retry navigation
+            </Button>
+            <Button type="button" onClick={() => select("home")}>
+              Go Home
+            </Button>
+          </div>
+        ) : settings ? (
+          <Settings
+            plugins={plugins}
+            communities={services.communities}
+            appearance={services.appearance}
+            notifications={services.notifications}
+            navigation={route.request}
+            onSection={(section) =>
+              void services.navigation.open({
+                version: 1,
+                kind: "settings",
+                section,
+              })
+            }
+          />
+        ) : home ? (
+          <Home pages={route.pages} onSelect={select} />
+        ) : startup === "recovery" ? (
+          <RecoveryScreen plugins={plugins} />
+        ) : route.waiting || startup === "loading" ? (
+          <p role="status">Opening destination…</p>
+        ) : route.page ? (
+          <PageView
+            page={route.page}
+            navigation={route.request}
+            companion={pageOwnsCompanion ? companion : undefined}
+          />
+        ) : null}
+      </AppShell>
+    </AgentMentionContext.Provider>
   );
 }

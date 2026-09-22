@@ -4,15 +4,14 @@
   gap: var(--space-2);
   height: 100%;
   min-height: 0;
-  color: var(--text);
+  color: var(--text-standard);
 }
 
 .sidebar,
 .content {
-  background: var(--surface);
-  border-radius: var(--radius-card);
   min-width: 0;
   min-height: 0;
+  height: 100%;
 }
 
 .sidebar {
@@ -21,26 +20,9 @@
   padding: var(--space-3);
 }
 
-.newSession {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  width: 100%;
-  padding: var(--space-3) var(--space-3);
-  border-radius: var(--radius-control);
-  background: var(--selected);
-  color: var(--on-selected);
-  font-weight: var(--type-weight-medium);
-  cursor: pointer;
-}
-
-.newSession:hover {
-  filter: brightness(0.97);
-}
-
 .historyHeading {
   margin: var(--space-6) var(--space-3) var(--space-2);
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   font-weight: var(--type-weight-medium);
 }
@@ -51,31 +33,6 @@
   display: flex;
   flex-direction: column;
   gap: var(--space-chip-inset);
-}
-
-.history button {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: var(--space-1);
-  padding: var(--space-3);
-  border-radius: var(--radius-control);
-  text-align: left;
-  cursor: pointer;
-}
-
-.history button:hover {
-  background: var(--surface-hover);
-}
-
-.history button[aria-current] {
-  background: var(--selected);
-  color: var(--on-selected);
-}
-
-.history span {
-  overflow-wrap: anywhere;
-  line-height: 1.4;
 }
 
 .sessionRow {
@@ -93,13 +50,13 @@
   button:not([aria-current="page"])
   .sessionRow
   > [data-channel-unread-title="true"] {
-  color: var(--primary);
+  color: var(--affordance-prominent);
   font-weight: var(--type-weight-medium);
 }
 
 .history small,
 .listMessage {
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: 1.6;
 }
@@ -143,4 +100,10 @@
   .historyHeading {
     display: none;
   }
+}
+
+.historyLabel {
+  display: grid;
+  gap: var(--space-1);
+  overflow-wrap: anywhere;
 }

@@ -167,6 +167,10 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       renderToStaticMarkup(createElement(agents.component)),
       /Connect to a community/,
     );
+    const agentMarkup = renderToStaticMarkup(createElement(agents.component));
+    assert.match(agentMarkup, /Local agent controls/);
+    assert.match(agentMarkup, /Local agent controls require the desktop app/);
+    const localControl = services.agentControl;
     const session = services.relay.snapshot().session;
     const sessionsPage = services.pages
       .snapshot()
@@ -190,6 +194,17 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       false,
     );
     assert.equal(services.relay.snapshot().session, session);
+    assert.equal(services.agentControl, localControl);
+    await services.plugins.change("enable", "buzz.agents");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.pages
+          .snapshot()
+          .some((page) => page.pluginId === "buzz.agents"),
+      ),
+    );
+    assert.equal(services.agentControl, localControl);
+    await services.plugins.change("disable", "buzz.agents");
     assert.ok(session.agentLibrary);
     const workflows = services.pages
       .snapshot()
@@ -227,7 +242,7 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(projects.layout, "workspace");
     assert.match(
       renderToStaticMarkup(createElement(projects.component)),
-      /^<div class="[^"]*"><section aria-label="Projects" data-buzz-ui="" class="panel"><div[^>]*><h1[^>]*>Projects<\/h1><\/div><\/section><\/div>$/,
+      /^<div class="[^"]*"><section aria-label="Projects" data-buzz-surface="" class="panel"><div[^>]*><h1[^>]*>Projects<\/h1><\/div><\/section><\/div>$/,
     );
     await services.plugins.change("disable", "buzz.projects");
     assert.deepEqual(services.pages.snapshot(), []);

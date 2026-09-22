@@ -8,15 +8,15 @@ const ghostPage = readFileSync("public/drag-ghost.js", "utf8");
 function strip(selectedFirst = true) {
   document.body.innerHTML = `
     <style>
-      .shell-tab { background-color: transparent; color: rgb(1, 2, 3); font: 500 14px Inter; padding: 6px 16px; gap: 6px; border-radius: 999px; }
-      .shell-tab[aria-current="page"] { background-color: rgb(10, 20, 30); }
-      .shell-icon { background-color: rgba(40, 50, 60, 0.4); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255, 255, 255); }
-      .shell-icon > img { width: 17px; height: 17px; }
+      .navigation-item { background-color: transparent; color: rgb(1, 2, 3); font: 500 14px Inter; padding: 6px 16px; gap: 6px; border-radius: 999px; }
+      .navigation-item[data-selected] { background-color: rgb(10, 20, 30); }
+      .buzz-button { background-color: rgba(40, 50, 60, 0.4); border-radius: 999px; box-shadow: inset 0 1px 0 rgb(255, 255, 255); }
+      .buzz-button img { width: 16px; height: 16px; }
     </style>
     <nav>
-      <button class="shell-tab" ${selectedFirst ? 'aria-current="page"' : ""} id="home"><svg width="15" height="15"></svg>Home</button>
-      <button class="shell-tab" id="messages"><svg width="15" height="15"><path d="M0"/></svg>Messages</button>
-      <button class="shell-icon" id="bestie"><img src="/bestie.png" alt="" /></button>
+      <button class="navigation-item" data-variant="pill" ${selectedFirst ? "data-selected" : ""} id="home"><svg width="15" height="15"></svg><span>Home</span></button>
+      <button class="navigation-item" data-variant="pill" id="messages"><svg width="15" height="15"><path d="M0"/></svg><span>Messages</span></button>
+      <button class="buzz-button" id="bestie"><span><img src="/bestie.png" alt="" /></span></button>
     </nav>`;
   const by = (id: string) => document.getElementById(id) as HTMLElement;
   return { home: by("home"), messages: by("messages"), bestie: by("bestie") };
@@ -55,13 +55,13 @@ it("an opaque tab keeps its background; glass launchers lift as an opaque icon p
   expect(ghostSpec(home, "Home", { width: 90, height: 32 }).background).toBe(
     "rgb(10, 20, 30)",
   );
-  const launcher = ghostSpec(bestie, "Bestie", { width: 36, height: 36 });
+  const launcher = ghostSpec(bestie, "Bestie", { width: 36, height: 36 }, true);
   expect(launcher.title).toBe("");
   // Translucent glass would wash out over the desktop; borrow the selected surface.
   expect(launcher.background).toBe("rgb(10, 20, 30)");
   expect(launcher.shadow).toContain("inset");
   expect(launcher.icon).toMatch(/^<img/);
-  expect(launcher.iconSize).toBe("17px");
+  expect(launcher.iconSize).toBe("16px");
 });
 
 it("recognises every translucent computed colour form", () => {

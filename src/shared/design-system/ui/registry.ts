@@ -15,6 +15,22 @@ export type BaseUiPart = {
 };
 
 export const BASE_UI_PARTS = {
+  alertDialog: {
+    name: "Alert Dialog",
+    docs: "alert-dialog",
+    module: "@base-ui/react/alert-dialog",
+  },
+  radio: { name: "Radio", docs: "radio", module: "@base-ui/react/radio" },
+  radioGroup: {
+    name: "Radio Group",
+    docs: "radio-group",
+    module: "@base-ui/react/radio-group",
+  },
+  checkbox: {
+    name: "Checkbox",
+    docs: "checkbox",
+    module: "@base-ui/react/checkbox",
+  },
   avatar: { name: "Avatar", docs: "avatar", module: "@base-ui/react/avatar" },
   button: { name: "Button", docs: "button", module: "@base-ui/react/button" },
   field: { name: "Field", docs: "field", module: "@base-ui/react/field" },
@@ -26,6 +42,11 @@ export const BASE_UI_PARTS = {
     name: "Accordion",
     docs: "accordion",
     module: "@base-ui/react/accordion",
+  },
+  tooltip: {
+    name: "Tooltip",
+    docs: "tooltip",
+    module: "@base-ui/react/tooltip",
   },
   dialog: { name: "Dialog", docs: "dialog", module: "@base-ui/react/dialog" },
   popover: {
@@ -78,6 +99,113 @@ export type ComponentDefinition = {
 };
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
+  {
+    slug: "alert-dialog",
+    name: "AlertDialog",
+    purpose: "Confirm a consequential action before continuing.",
+    behavior: "Base UI owns modal focus and alert-dialog semantics",
+    variants: ["default", "pending"],
+    status: "core",
+    collection: "components",
+    source: "shared/design-system/ui/AlertDialog.tsx",
+    baseUi: [BASE_UI_PARTS.alertDialog],
+    composes: [],
+  },
+  {
+    slug: "tooltip",
+    name: "Tooltip",
+    purpose: "A short hint for an already labelled control.",
+    behavior: "Base UI owns focus, positioning and dismissal",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Tooltip.tsx",
+    baseUi: [BASE_UI_PARTS.tooltip],
+    composes: [],
+  },
+
+  {
+    slug: "dialog",
+    name: "Dialog",
+    purpose: "A shared modal frame with title, content and actions.",
+    behavior: "Base UI owns focus, positioning and dismissal",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Dialog.tsx",
+    baseUi: [BASE_UI_PARTS.dialog],
+    composes: ["icon-button"],
+  },
+
+  {
+    slug: "checkbox",
+    name: "Checkbox",
+    purpose: "Choose an independent option.",
+    behavior: "Base UI owns form and keyboard semantics",
+    variants: ["default", "disabled", "invalid"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Checkbox.tsx",
+    baseUi: [BASE_UI_PARTS.checkbox],
+    composes: [],
+  },
+
+  {
+    slug: "radio-group",
+    name: "RadioGroup",
+    purpose: "Choose one option, including labelled settings cards.",
+    behavior: "Base UI owns form and keyboard semantics",
+    variants: ["default", "disabled", "invalid"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/RadioGroup.tsx",
+    baseUi: [
+      BASE_UI_PARTS.radioGroup,
+      BASE_UI_PARTS.radio,
+      BASE_UI_PARTS.field,
+    ],
+    composes: [],
+  },
+
+  {
+    slug: "textarea",
+    name: "Textarea",
+    purpose: "A multiline field with shared label and validation behavior.",
+    behavior: "Base UI owns form and keyboard semantics",
+    variants: ["default", "disabled", "invalid"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Textarea.tsx",
+    baseUi: [BASE_UI_PARTS.field],
+    composes: [],
+  },
+
+  {
+    slug: "input",
+    name: "Input",
+    purpose: "A single-line text field.",
+    behavior: "Base UI owns form and keyboard semantics",
+    variants: ["default", "disabled", "invalid"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Input.tsx",
+    baseUi: [BASE_UI_PARTS.input],
+    composes: [],
+  },
+
+  {
+    slug: "field",
+    name: "Field",
+    purpose: "Label, description and error for a form control.",
+    behavior: "Base UI owns form and keyboard semantics",
+    variants: ["default", "disabled", "invalid"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Field.tsx",
+    baseUi: [BASE_UI_PARTS.field],
+    composes: [],
+  },
+
   {
     slug: "swap-workspace",
     name: "Panel Swap",
@@ -132,7 +260,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Switch",
     purpose: "A labelled setting that is on or off.",
     behavior: "Base UI owns checked state and keyboard behavior",
-    variants: ["off", "on", "disabled"],
+    variants: ["off", "on", "disabled", "visible or accessible-only label"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Design system",
@@ -143,9 +271,18 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "button",
     name: "Button",
-    purpose: "A labeled action with primary, quiet, or unfilled emphasis.",
+    purpose:
+      "A labelled action with shared emphasis, loading and destructive states.",
     behavior: "Base UI Button",
-    variants: ["primary", "quiet", "ghost"],
+    variants: [
+      "prominent",
+      "subtle",
+      "ghost",
+      "destructive",
+      "outline",
+      "size: sm | md | lg",
+      "loading",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",
@@ -165,7 +302,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "tint",
       "chrome",
       "shape: control | round",
-      "compact: 16px artwork, 30px target, Phosphor artwork",
+      "compact: 16px artwork, 32px target, Phosphor artwork",
       "toolbar: 16px artwork, 32px target, Phosphor artwork",
     ],
     status: "proposed",
@@ -314,9 +451,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "navigation-item",
     name: "NavigationItem",
-    purpose: "A selectable destination row with optional icon and metadata.",
+    purpose:
+      "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button",
-    variants: ["default", "inset", "selected"],
+    variants: ["row", "pill", "inset", "selected"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

@@ -30,13 +30,14 @@
     "design:build": "pnpm design:typecheck && vite build --config vite.design.config.ts",
     "design:preview": "vite preview --config vite.design.config.ts",
     "design:typecheck": "tsc -p tsconfig.design.json",
-    "design:check": "node scripts/design-system/check-type.mjs && node scripts/design-system/check-color.mjs && node scripts/design-system/check-contrast.mjs && node scripts/design-system/check-app-foundations.mjs && node scripts/design-system/check-icons.mjs",
+    "design:check": "node scripts/design-system/check-type.mjs && node scripts/design-system/check-color.mjs && node scripts/design-system/check-contrast.mjs && node scripts/design-system/check-app-foundations.mjs && node scripts/design-system/check-icons.mjs && node scripts/design-system/check-adoption.mjs",
     "design:census": "node scripts/design-system/token-consumers.mjs",
     "design:test": "vitest run --config vitest.design.config.ts",
     "design:test:browser": "pnpm build && pnpm design:build && playwright test --config tests/fixtures/design-system/playwright.config.ts"
   },
   "dependencies": {
     "@base-ui/react": "1.8.0",
+    "@noble/curves": "2.0.1",
     "@deepseek-ai/cordis": "4.0.2",
     "@emoji-mart/data": "1.2.1",
     "@fontsource-variable/inter": "^5.2.8",

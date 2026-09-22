@@ -72,7 +72,7 @@ function RunPage({
         <p role="status">History cleared. Refresh to read it again.</p>
       )}
       {snapshot.status === "error" && (
-        <p role="alert" className="text-red-12">
+        <p role="alert" className="text-danger">
           {snapshot.error ??
             "Run history could not be read. Retry with Refresh runs."}
         </p>
@@ -90,7 +90,7 @@ function RunPage({
             Current step: {run.currentStep}
           </p>
           {(run.errorCode || run.errorMessage) && (
-            <p className="text-red-12">
+            <p className="text-danger">
               {run.errorCode}: {run.errorMessage}
             </p>
           )}

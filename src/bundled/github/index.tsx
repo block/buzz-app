@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useMemo, useState } from "react";
 import {
   ArrowSquareOutIcon,
@@ -77,7 +78,7 @@ function ObjectPanel({
     <div className={styles.root}>
       <div className={styles.identity}>
         <span className={styles.icon}>
-          <Icon size={22} />
+          <Icon size={22} aria-hidden="true" />
         </span>
         <div>
           <small>{reference.repository}</small>
@@ -99,9 +100,9 @@ function ObjectPanel({
       ) : typeof result === "string" ? (
         <div role="alert">
           <p>{result}</p>
-          <button type="button" onClick={retry}>
+          <Button type="button" onClick={retry}>
             Try again
-          </button>
+          </Button>
         </div>
       ) : (
         <>

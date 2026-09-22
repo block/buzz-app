@@ -5,6 +5,8 @@
 @import "../design-system/styles/typography.css";
 @import "../design-system/styles/materials.css";
 @import "../design-system/styles/components.css";
+@import "../design-system/styles/forms.css";
+@import "../design-system/styles/overlays.css";
 @import "../design-system/styles/chips.css";
 @import "./tokens.css";
 
@@ -53,7 +55,7 @@
   --radius-sm: var(--radius-chip);
   --radius-md: var(--radius-chip);
   --radius-lg: var(--radius-row);
-  --radius-xl: var(--radius-control);
+  --radius-xl: var(--radius-legacy-control);
   --radius-2xl: var(--radius-panel);
   --radius-3xl: var(--radius-panel);
   --color-ink: var(--text);
@@ -128,9 +130,10 @@
   button:not(:where([data-buzz-ui], [data-buzz-ui] *)):hover {
     background: var(--surface-accent);
   }
-  :where(button, a, input, textarea, select, summary, [tabindex]):not(
-    :where([data-buzz-ui], [data-buzz-ui] *)
-  ):focus-visible {
+  html[data-keyboard-navigation]
+    :where(button, a, input, textarea, select, summary, [tabindex]):not(
+      :where([data-buzz-ui], [data-buzz-ui] *)
+    ):focus-visible {
     outline: 2px solid var(--focus);
     outline-offset: 3px;
   }
@@ -173,24 +176,6 @@
     background: var(--surface);
     box-shadow: var(--elevation-surface);
   }
-  .ui-choice {
-    border: 1px solid var(--border-input);
-    border-radius: var(--radius-legacy-control);
-    background: var(--surface);
-    color: var(--text);
-  }
-  .ui-choice:hover {
-    background: var(--surface-hover);
-  }
-  .ui-choice:has(:checked) {
-    border-color: var(--focus);
-    background: var(--selected);
-    color: var(--on-selected);
-  }
-  .ui-choice:has(:focus-visible) {
-    outline: 2px solid var(--focus);
-    outline-offset: 3px;
-  }
   .shell-background {
     background: var(--bg-app);
   }
@@ -201,6 +186,9 @@
   }
   .shell-communities {
     @apply flex min-w-0 items-center justify-start;
+  }
+  .shell-communities > .navigation-item {
+    flex-shrink: 1;
   }
   .shell-header-mac .shell-communities {
     padding-left: var(--space-16);
@@ -213,14 +201,13 @@
       background-color 120ms ease-out;
   }
   /* Tabs move with pointer events; their contents must not start a native drag. */
-  .shell-tab > *,
-  .shell-icon > * {
+  .shell-pages *,
+  .shell-actions-group * {
     -webkit-user-drag: none;
     user-select: none;
   }
   /* A tab being dragged has left its slot for the native pill; the slot waits. */
-  .shell-tab[data-lifted],
-  .shell-icon[data-lifted] {
+  .shell-header [data-lifted] {
     opacity: 0;
   }
   .shell-actions {
@@ -252,20 +239,6 @@
       justify-self: center;
       max-width: 100%;
     }
-  }
-  .shell-tab {
-    @apply flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border-0 bg-transparent px-4 py-1.5 text-label-sm text-ink hover:bg-neutral-3 hover:text-ink;
-  }
-  .shell-icon {
-    @apply glass-primary-interactive flex size-9 items-center justify-center rounded-full border-0 p-0 text-ink hover:text-ink;
-  }
-  .shell-icon > :is(svg, img) {
-    width: 17px;
-    height: 17px;
-  }
-  .shell-tab[aria-current="page"],
-  .shell-icon[aria-current="page"] {
-    @apply bg-surface text-ink;
   }
   .muted {
     @apply text-body-sm text-muted;
@@ -325,8 +298,9 @@
     font: inherit;
   }
 
-  html:not([data-keyboard-navigation])
-    :where([data-buzz-ui], [data-buzz-ui] *):focus-visible {
+  /* Text inputs may match :focus-visible after a pointer click too. Apply the
+     host modality rule to legacy controls as well as design-system controls. */
+  html:not([data-keyboard-navigation]) :focus-visible {
     outline: none;
   }
 }
@@ -344,5 +318,5 @@
   background-color: var(--primary);
 }
 @utility bg-primary-hover {
-  background-color: var(--neutral-12);
+  background-color: var(--affordance-prominent-hover);
 }

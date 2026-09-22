@@ -1,3 +1,6 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { Panel } from "../../shared/design-system/ui/Panel";
 import { HashIcon, PlusIcon } from "../../shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import styles from "./SessionsWorkspace.module.css";
@@ -27,40 +30,48 @@ export function SessionsWorkspace({
 }) {
   return (
     <section className={styles.workspace} aria-label="Sessions">
-      <aside className={styles.sidebar} aria-label="Session history">
-        <button className={styles.newSession} type="button" onClick={onNew}>
-          <PlusIcon size={18} aria-hidden="true" />
-          New session
-        </button>
-        <h2 className={styles.historyHeading}>Previous sessions</h2>
-        <nav className={styles.history} aria-label="Previous sessions">
-          {sessions.map((session) => (
-            <button
-              type="button"
-              key={session.id}
-              aria-current={session.id === selected ? "page" : undefined}
-              onClick={() => onSelect(session.id)}
-            >
-              {session.parentName && (
-                <small className={styles.parentChannel}>
-                  <HashIcon size={12} aria-hidden="true" />
-                  <span>{session.parentName}</span>
-                </small>
-              )}
-              <span className={styles.sessionRow}>
-                {session.content ?? <span>{session.title}</span>}
-              </span>
-            </button>
-          ))}
-          {listStatus ??
-            (!sessions.length && (
-              <p className={styles.listMessage}>
-                Your conversations will appear here after your first message.
-              </p>
+      <Panel as="aside" aria-label="Session history">
+        <div className={styles.sidebar}>
+          <Button variant="prominent" type="button" onClick={onNew}>
+            <PlusIcon size={18} aria-hidden="true" />
+            New session
+          </Button>
+          <h2 className={styles.historyHeading}>Previous sessions</h2>
+          <nav className={styles.history} aria-label="Previous sessions">
+            {sessions.map((session) => (
+              <NavigationItem
+                type="button"
+                key={session.id}
+                aria-current={session.id === selected ? "page" : undefined}
+                selected={session.id === selected}
+                onClick={() => onSelect(session.id)}
+                label={
+                  <span className={styles.historyLabel}>
+                    {session.parentName && (
+                      <small className={styles.parentChannel}>
+                        <HashIcon size={12} aria-hidden="true" />
+                        <span>{session.parentName}</span>
+                      </small>
+                    )}
+                    <span className={styles.sessionRow}>
+                      {session.content ?? <span>{session.title}</span>}
+                    </span>
+                  </span>
+                }
+              />
             ))}
-        </nav>
-      </aside>
-      <div className={styles.content}>{children}</div>
+            {listStatus ??
+              (!sessions.length && (
+                <p className={styles.listMessage}>
+                  Your conversations will appear here after your first message.
+                </p>
+              ))}
+          </nav>
+        </div>
+      </Panel>
+      <Panel as="div">
+        <div className={styles.content}>{children}</div>
+      </Panel>
     </section>
   );
 }

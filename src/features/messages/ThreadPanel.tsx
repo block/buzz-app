@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { Button } from "../../shared/design-system/ui/Button";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -140,9 +141,9 @@ function OwnedThreadPanel({
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{error}</p>
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+      <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
         Retry thread
-      </button>
+      </Button>
     </div>
   ) : view ? (
     <ThreadMessages
@@ -244,10 +245,9 @@ function ThreadMessages({
     scroller,
     settled: positioned,
     messageId,
-    signal: navigation?.signal,
-    ready: rootTarget
-      ? snapshot.root?.id === messageId
-      : snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+    signal: rootTarget ? undefined : navigation?.signal,
+    ready:
+      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
     complete: completeTarget,
     prepare: prepareTarget,
   });
@@ -289,9 +289,20 @@ function ThreadMessages({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
+    if (!element || navigation?.signal.aborted) return;
+    // A mounted ordinary thread acknowledges the visit before slow history can
+    // exhaust navigation's deadline. Positioning still waits for bounded loading.
     if (
-      !element ||
-      (navigation && revealed.current !== navigation.signal) ||
+      rootTarget &&
+      snapshot.status !== "error" &&
+      snapshot.root?.id === messageId &&
+      revealed.current !== navigation.signal
+    ) {
+      revealed.current = navigation.signal;
+      navigation.complete({ status: "opened" });
+    }
+    if (
+      (navigation && !rootTarget && revealed.current !== navigation.signal) ||
       (!positioned.current &&
         (snapshot.status !== "ready" || snapshot.canLoadMore))
     )
@@ -313,10 +324,13 @@ function ThreadMessages({
   }, [
     snapshot.status,
     snapshot.canLoadMore,
+    snapshot.root,
+    messageId,
     rows,
     profiles,
     sent,
     navigation,
+    rootTarget,
     revealed,
     selectedRow,
   ]);
@@ -386,13 +400,15 @@ function ThreadMessages({
                 : {})}
             />
             {videoAttachment && mediaPlayback && (
-              <button
-                type="button"
-                className={styles.mediaCommentAction}
-                onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
-              >
-                Comment at {formatMediaTime(mediaPlayback.seconds)}
-              </button>
+              <span className={styles.mediaCommentAction}>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
+                >
+                  Comment at {formatMediaTime(mediaPlayback.seconds)}
+                </Button>
+              </span>
             )}
           </>
         ) : (
@@ -449,9 +465,9 @@ function ThreadMessages({
         )}
         {(snapshot.error || snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
-            <button type="button" onClick={() => void view.refresh()}>
+            <Button type="button" onClick={() => void view.refresh()}>
               Retry thread
-            </button>
+            </Button>
           </div>
         )}
       </section>

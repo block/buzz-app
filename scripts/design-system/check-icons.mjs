@@ -16,6 +16,7 @@ const nonIconDependencies = new Set([
   "@emoji-mart/data",
   "@fontsource-variable/inter",
   "@fontsource/jetbrains-mono",
+  "@noble/curves",
   "@playwright/test",
   "@tailwindcss/postcss",
   "@tanstack/react-router",

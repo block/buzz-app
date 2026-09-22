@@ -31,7 +31,9 @@ test("mention completion distinguishes exact agent identity without reshaping a 
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
-  const picker = page.getByRole("region", { name: "Mention a channel member" });
+  const picker = page.getByRole("region", {
+    name: "Mention a member or agent",
+  });
   await expectAvatarShape(
     picker.getByRole("button", { name: `Honey ${keys.human}`, exact: true }),
     "circle",
@@ -111,7 +113,7 @@ for (const mode of ["light", "dark"]) {
       await expect(selected).toBeInViewport({ ratio: 1 });
       await expect(selected).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(51, 51, 51)" : "rgb(232, 232, 232)",
+        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)",
       );
       const surface = await popup.evaluate(
         (element) => getComputedStyle(element).backgroundColor,
@@ -443,17 +445,30 @@ test("selection follows IDs through reordering and rejected replacement never fa
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "B ");
   await input.fill("!limit");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("limit");
   const next = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );
-  await page.evaluate(
-    (index) =>
-      window.completionFixture.publish(index, {
-        items: [
-          { id: "long", label: "Too long", edit: { text: "x".repeat(16001) } },
-        ],
-      }),
-    next,
+  expect(
+    await page.evaluate(
+      (index) =>
+        window.completionFixture.publish(index, {
+          items: [
+            {
+              id: "long",
+              label: "Too long",
+              edit: { text: "x".repeat(16001) },
+            },
+          ],
+        }),
+      next,
+    ),
+  ).toBe(true);
+  await expect(page.getByRole("option", { name: "Too long" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "!limit");

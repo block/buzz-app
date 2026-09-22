@@ -1,8 +1,9 @@
+import { useMentionAgents } from "../../features/agents/mention-context";
 import { useAgentChoices } from "./use-agent-choices";
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { Avatar } from "../../shared/Avatar";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { matchesMentionQuery } from "./mention-query";
 
@@ -11,6 +12,7 @@ import { matchesMentionQuery } from "./mention-query";
 const demands = new WeakMap<RelaySession, Set<string>>();
 export function MentionCompletion({
   session,
+  scope,
   channelId,
   inviteAgents,
   query,
@@ -29,6 +31,20 @@ export function MentionCompletion({
   const agents = useAgentChoices(session, inviteAgents);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
+  const { agents: localAgents } = useMentionAgents(scope);
+  const available = useMemo(
+    () =>
+      !inviteAgents &&
+      channel?.members &&
+      !channel.archived &&
+      (channel.channelType === "stream" || channel.channelType === "forum") &&
+      session.outbox?.supports(9000)
+        ? localAgents
+            .filter((agent) => !channel.members?.includes(agent.pubkey))
+            .map(({ pubkey, name }) => ({ pubkey, name }))
+        : [],
+    [channel, localAgents, session.outbox, inviteAgents],
+  );
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
@@ -57,7 +73,7 @@ export function MentionCompletion({
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const choices = new Map(
-      agents.identities.map((agent) => [
+      [...agents.identities, ...available].map((agent) => [
         agent.pubkey,
         { pubkey: agent.pubkey, name: agent.name },
       ]),
@@ -96,18 +112,26 @@ export function MentionCompletion({
       items: matching.slice(0, 20).map((recipient) => ({
         id: recipient.pubkey,
         label: recipient.name,
-        detail: !members.includes(recipient.pubkey)
-          ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
-          : recipient.pubkey,
+        detail: members.includes(recipient.pubkey)
+          ? recipient.pubkey
+          : inviteAgents
+            ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
+            : "Adds to channel when you send",
         preview: (
           <Avatar
-            name={recipient.name}
+            alt=""
+            fallback={recipient.name}
             src={session.media(
               profiles.get(recipient.pubkey)?.picture ?? "",
               "small",
             )}
-            className="size-7 rounded-lg text-caption"
-            shape={agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"}
+            size="small"
+            shape={
+              agentPubkeys.has(recipient.pubkey) ||
+              !members.includes(recipient.pubkey)
+                ? "squircle"
+                : "circle"
+            }
           />
         ),
         edit: { mention: recipient },
@@ -175,6 +199,7 @@ export function MentionCompletion({
     channel,
     channelId,
     memberKey,
+    available,
     parentAdmission,
     profiles,
     agentPubkeys,

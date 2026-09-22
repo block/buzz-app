@@ -49,6 +49,8 @@ import {
   ApiPaused,
   ApiCapacity,
   apiFailure,
+  presenceFilter,
+  presenceText,
 } from "../src/features/relay/http-admission.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
@@ -56,6 +58,7 @@ import { Readable } from "node:stream";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
@@ -271,6 +274,36 @@ export function validMessageTemplate(event) {
     })()
   );
 }
+/** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
+export function validAgentEnrollment(event) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (
+    event?.kind !== 9000 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length !== 4
+  )
+    return false;
+  const validators = {
+    h: uuid,
+    p: /^[0-9a-f]{64}$/,
+    role: /^bot$/,
+    "client-id": uuid,
+  };
+  return (
+    new Set(event.tags.map((tag) => tag?.[0])).size === 4 &&
+    event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        typeof tag[1] === "string" &&
+        Object.hasOwn(validators, tag[0]) &&
+        validators[tag[0]].test(tag[1]),
+    )
+  );
+}
 export function validFilters(filters) {
   return (
     Array.isArray(filters) &&
@@ -372,6 +405,7 @@ export function relayBrokerPlugin({
       };
       const stats = { queries: 0, errors: 0, media: 0, connects: 0 };
       let inflight = 0;
+      let presenceFlight = false;
       let sidebarUploads = 0;
       let libraryRead;
       const streams = new Map();
@@ -584,16 +618,16 @@ export function relayBrokerPlugin({
               writeKinds: [
                 7,
                 9,
+                9000,
                 ...WORKFLOW_KINDS,
-                ...((await getAuthority(relay)).channelCreation
-                  ? [9000, 9007]
-                  : []),
+                ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               workflowReads: true,
               sidebarPreferences: true,
               readState: true,
               agentLibrary: true,
               live: true,
+              presence: true,
               agentActivity: true,
             });
           }
@@ -603,9 +637,11 @@ export function relayBrokerPlugin({
               "/api/relay/stream-priority",
               "/api/relay/stream-interests",
               "/api/relay/stream-observer",
+              "/api/relay/stream-presence",
             ].includes(route) &&
             req.method === "POST"
           ) {
+            const publishingPresence = route === "/api/relay/stream-presence";
             const prioritizing = route === "/api/relay/stream-priority";
             const observing = route === "/api/relay/stream-observer";
             const updating = route === "/api/relay/stream-interests";
@@ -621,12 +657,18 @@ export function relayBrokerPlugin({
             let streamId,
               priority,
               observer,
+              status,
               interests,
               removed,
               interestRevision;
             try {
               const body = JSON.parse(raw);
               streamId = body.streamId;
+              if (publishingPresence) {
+                status = body.status;
+                if (status !== "online" && status !== "away")
+                  throw new Error("Invalid presence");
+              }
               if (observing) observer = observerGeneration(body.observer);
               if (updating) {
                 interests = liveChannels(body.channels);
@@ -653,10 +695,27 @@ export function relayBrokerPlugin({
             )
               return json(res, 400, { error: "Invalid live control" });
             const stream = streams.get(streamId);
+            if (publishingPresence && (!stream || stream.relay !== relay))
+              return json(res, 200, { accepted: null });
             if (!stream || stream.relay !== relay)
               return json(res, 404, {
                 error: "Live stream no longer available",
               });
+            if (publishingPresence) {
+              const cancel = new AbortController();
+              const abort = () => cancel.abort();
+              res.once("close", abort);
+              try {
+                const accepted = await stream.traffic.publishPresence(
+                  status,
+                  cancel.signal,
+                );
+                if (!res.destroyed) return json(res, 200, { accepted });
+              } finally {
+                res.off("close", abort);
+              }
+              return;
+            }
             if (updating) {
               if (interestRevision <= stream.interestRevision)
                 return json(res, 409, { error: "Stale interest control" });
@@ -936,11 +995,13 @@ export function relayBrokerPlugin({
           if (
             ![
               "/api/relay/query",
+              "/api/relay/presence-snapshot",
               "/api/relay/sign",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
+              "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/gifs",
@@ -949,10 +1010,13 @@ export function relayBrokerPlugin({
             req.method !== "POST"
           )
             return json(res, 404, { error: "Unknown broker route" });
+          const presence = route === "/api/relay/presence-snapshot";
           let raw = "";
           for await (const part of req) {
             raw += part;
-            if (raw.length > 65536)
+            if (
+              presence ? Buffer.byteLength(raw) > 20 * 1024 : raw.length > 65536
+            )
               return json(res, 413, { error: "Filter body too large" });
           }
           let filters;
@@ -961,6 +1025,28 @@ export function relayBrokerPlugin({
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
           }
+          if (route === "/api/relay/authorize-agent") {
+            if (
+              !scoped ||
+              filters?.owner !== viewer ||
+              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+              filters.pubkey === viewer ||
+              Object.keys(filters).length !== 2
+            )
+              return json(res, 400, {
+                error: "Invalid agent owner authorization",
+              });
+            cancel.signal.throwIfAborted();
+            const digest = createHash("sha256")
+              .update(`nostr:agent-auth:${filters.pubkey}:`)
+              .digest();
+            const signature = Buffer.from(schnorr.sign(digest, key)).toString(
+              "hex",
+            );
+            return json(res, 200, { auth: ["auth", viewer, "", signature] });
+          }
+          if (presence && !presenceFilter(filters))
+            return json(res, 400, { error: "Invalid presence filter" });
           let workflowPath;
           if (route === "/api/relay/workflow-runs") {
             try {
@@ -1071,11 +1157,15 @@ export function relayBrokerPlugin({
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
             if ([9000, 9007].includes(filters?.kind)) {
+              const enrollment = validAgentEnrollment(filters);
               const authority = await getAuthority(relay);
-              const supported = authority.channelCreation;
-              if (!supported || !validSessionCommand(filters))
+              if (
+                !enrollment &&
+                !(authority.channelCreation && validSessionCommand(filters))
+              )
                 return json(res, 400, {
-                  error: "Session operation unavailable or invalid",
+                  error:
+                    "Agent enrollment or session operation unavailable or invalid",
                   sent: false,
                 });
             } else if (![7, 9].includes(filters?.kind)) {
@@ -1170,83 +1260,96 @@ export function relayBrokerPlugin({
                     ? "/api/invites/accept-policy"
                     : "/query");
           const method = workflowPath ? "GET" : "POST";
-          if (inflight >= MAX_INFLIGHT)
+          const lane = admissions(relay, viewer).api;
+          let releasePresence;
+          if (presence) {
+            releasePresence = !presenceFlight ? lane.tryPresence() : undefined;
+            if (!releasePresence) {
+              res.writeHead(204);
+              return res.end();
+            }
+            presenceFlight = true;
+          }
+          if (!presence && inflight >= MAX_INFLIGHT)
             return json(res, 429, {
               error: "Query concurrency limit",
               sent: false,
             });
-          inflight++;
+          if (!presence) inflight++;
           try {
-            const lane = admissions(relay, viewer).api;
             const body = workflowPath ? undefined : JSON.stringify(filters);
             const admissionStart = performance.now();
             let connectsBefore, upstreamStart;
             let response;
             const requestSignal = AbortSignal.any([
               cancel.signal,
-              AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              AbortSignal.timeout(presence ? 10000 : UPSTREAM_TIMEOUT_MS),
             ]);
-            response = await admittedApiRequest(
-              lane,
-              () => {
-                // Auth freshness and network timings begin at dispatch, not queue entry.
-                requestSignal.throwIfAborted();
+            const request = () => {
+              // Auth freshness and network timings begin at dispatch, not queue entry.
+              requestSignal.throwIfAborted();
+              timings.push(
+                `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
+              );
+              const authStart = performance.now();
+              const auth = finalizeEvent(
+                {
+                  kind: 27235,
+                  created_at: Math.floor(Date.now() / 1000),
+                  content: "",
+                  tags: [
+                    ["u", `${relay}${upstreamPath}`],
+                    ["method", method],
+                    ...(body === undefined
+                      ? []
+                      : [
+                          [
+                            "payload",
+                            createHash("sha256").update(body).digest("hex"),
+                          ],
+                        ]),
+                    ["nonce", randomBytes(16).toString("hex")],
+                  ],
+                },
+                key,
+              );
+              timings.push(
+                `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
+              );
+              connectsBefore = upstream.connects();
+              upstreamStart = performance.now();
+              return fetchUpstream(`${relay}${upstreamPath}`, {
+                method,
+                headers: {
+                  "Content-Type": "application/json",
+                  Authorization:
+                    "Nostr " +
+                    Buffer.from(JSON.stringify(auth)).toString("base64"),
+                },
+                body,
+                redirect: "error",
+                signal: requestSignal,
+              }).then((response) => {
                 timings.push(
-                  `admission;dur=${(performance.now() - admissionStart).toFixed(2)}`,
+                  `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
                 );
-                const authStart = performance.now();
-                const auth = finalizeEvent(
-                  {
-                    kind: 27235,
-                    created_at: Math.floor(Date.now() / 1000),
-                    content: "",
-                    tags: [
-                      ["u", `${relay}${upstreamPath}`],
-                      ["method", method],
-                      ...(body === undefined
-                        ? []
-                        : [
-                            [
-                              "payload",
-                              createHash("sha256").update(body).digest("hex"),
-                            ],
-                          ]),
-                      ["nonce", randomBytes(16).toString("hex")],
-                    ],
-                  },
-                  key,
+                return response;
+              });
+            };
+            response = presence
+              ? await request()
+              : await admittedApiRequest(
+                  lane,
+                  request,
+                  requestSignal,
+                  route === "/api/relay/query" &&
+                    req.headers["x-buzz-read-priority"] === "background"
+                    ? "background"
+                    : "foreground",
                 );
-                timings.push(
-                  `auth;dur=${(performance.now() - authStart).toFixed(2)}`,
-                );
-                connectsBefore = upstream.connects();
-                upstreamStart = performance.now();
-                return fetchUpstream(`${relay}${upstreamPath}`, {
-                  method,
-                  headers: {
-                    "Content-Type": "application/json",
-                    Authorization:
-                      "Nostr " +
-                      Buffer.from(JSON.stringify(auth)).toString("base64"),
-                  },
-                  body,
-                  redirect: "error",
-                  signal: requestSignal,
-                }).then((response) => {
-                  timings.push(
-                    `ttfb;dur=${(performance.now() - upstreamStart).toFixed(2)}`,
-                  );
-                  return response;
-                });
-              },
-              requestSignal,
-              route === "/api/relay/query" &&
-                req.headers["x-buzz-read-priority"] === "background"
-                ? "background"
-                : "foreground",
-            );
-            const text =
-              snapshot && response.ok
+            const text = presence
+              ? await presenceText(response)
+              : snapshot && response.ok
                 ? await readSnapshotText(response)
                 : workflowPath && response.ok
                   ? await workflowReadText(response)
@@ -1273,6 +1376,8 @@ export function relayBrokerPlugin({
               } catch {
                 failure = apiFailure(response.status, undefined);
               }
+              if (presence && failure.quota === "api")
+                lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);
             }
             if (profile) {
@@ -1291,7 +1396,10 @@ export function relayBrokerPlugin({
             });
             res.end(text);
           } finally {
-            inflight--;
+            if (presence) {
+              presenceFlight = false;
+              releasePresence();
+            } else inflight--;
           }
         } catch (error) {
           if (res.destroyed) return; // The browser gave up first; nothing to answer.

@@ -5,14 +5,14 @@ export function terminalAppearance(element: HTMLElement) {
   const css = getComputedStyle(element);
   const color = (role: string) => css.getPropertyValue(role).trim();
   const theme: ITheme = {
-    background: color("--bg-panel"),
-    foreground: color("--text-primary"),
-    cursor: color("--text-primary"),
-    cursorAccent: color("--bg-panel"),
-    selectionBackground: color("--purple-3"),
-    selectionForeground: color("--text-primary"),
+    background: color("--surface-panel"),
+    foreground: color("--text-standard"),
+    cursor: color("--text-standard"),
+    cursorAccent: color("--surface-panel"),
+    selectionBackground: color("--affordance-accent"),
+    selectionForeground: color("--text-standard"),
     // Leave explicit ANSI colors to xterm's distinct palette: UI roles such as
-    // --text-primary can coincide and make a CLI's foreground/background pair invisible.
+    // --text-standard can coincide and make a CLI's foreground/background pair invisible.
   };
   return {
     theme,

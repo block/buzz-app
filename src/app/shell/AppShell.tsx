@@ -1,4 +1,5 @@
 import { type ReactNode, useSyncExternalStore } from "react";
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { HouseIcon } from "../../shared/design-system/icons/index";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
@@ -89,15 +90,15 @@ export function AppShell({
           data-drop-target={(!!hovering && !landsInLaunchers) || undefined}
         >
           {main && (
-            <button
+            <NavigationItem
               type="button"
-              className="shell-tab"
+              variant="pill"
               aria-current={selected === "home" ? "page" : undefined}
               onClick={() => onSelect("home")}
-            >
-              <HouseIcon aria-hidden="true" size={15} />
-              Home
-            </button>
+              selected={selected === "home"}
+              label="Home"
+              icon={<HouseIcon aria-hidden="true" size={15} />}
+            />
           )}
           {ordered.map((page) => {
             const { label, icon: Icon } = pagePresentation(page);
@@ -106,16 +107,14 @@ export function AppShell({
                 key={page.key}
                 tabKey={page.key}
                 name={label}
+                icon={<Icon aria-hidden="true" size={15} />}
                 selected={selected === page.key}
                 onSelect={() => onSelect(page.key)}
                 windows={windows}
                 layout={layout.layout}
                 tabsHere={tabsHere}
                 detachable={layout.enabled}
-              >
-                <Icon aria-hidden="true" size={15} />
-                {label}
-              </PageTab>
+              />
             );
           })}
         </nav>

@@ -32,8 +32,13 @@ export function PanelLaunchers({
         key={`${panel.key}:${panel.revision}`}
         tabKey={panelTabKey(panel)}
         name={panel.title}
-        className="shell-icon"
-        label={panel.title}
+        launcher
+        icon={
+          <LauncherIcon
+            key={panel.launcher?.icon}
+            src={panel.launcher?.icon ?? ""}
+          />
+        }
         selected={false}
         expanded={panel === selected}
         onSelect={(event) => launch(panel, event.currentTarget)}
@@ -41,16 +46,10 @@ export function PanelLaunchers({
         layout={layout}
         tabsHere={tabsHere}
         detachable={detachable}
-      >
-        <LauncherIcon
-          key={panel.launcher?.icon}
-          src={panel.launcher?.icon ?? ""}
-        />
-      </PageTab>
+      />
     ));
 }
-/** Sized by `.shell-icon`. */
-export function LauncherIcon({ src }: { src: string }) {
+function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);
   return failed ? (
     <SidebarIcon size={18} aria-hidden="true" />
@@ -60,7 +59,7 @@ export function LauncherIcon({ src }: { src: string }) {
       alt=""
       // Images are natively draggable; that would hijack the tab's pointer drag.
       draggable={false}
-      className="object-contain"
+      className="size-4 object-contain"
       onError={() => setFailed(true)}
     />
   );

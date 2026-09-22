@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { ChatCircleIcon } from "../../shared/design-system/icons/index";
 import { useCallback, useState } from "react";
 import type { RelayData } from "../../features/relay/service";
@@ -57,9 +58,9 @@ export function SessionsPage({
       {connection.status === "error" && (
         <>
           <p role="alert">{connection.error ?? "The connection failed."}</p>
-          <button type="button" onClick={relay.retry}>
+          <Button type="button" onClick={relay.retry}>
             Retry connection
-          </button>
+          </Button>
         </>
       )}
     </section>
@@ -127,12 +128,12 @@ function LiveSessions({
         ) : list.status === "error" ? (
           <div role="alert">
             <p>{list.error ?? "Sessions couldn’t load."}</p>
-            <button
+            <Button
               type="button"
               onClick={() => session.channels.refreshList?.()}
             >
               Retry
-            </button>
+            </Button>
           </div>
         ) : undefined
       }
@@ -207,12 +208,12 @@ function SessionWork({
           {window.status === "error" && !window.rows.length ? (
             <div className={styles.empty} role="alert">
               <p>{window.error}</p>
-              <button
+              <Button
                 type="button"
                 onClick={() => session.channels.ensure(channel.id)}
               >
                 Retry messages
-              </button>
+              </Button>
             </div>
           ) : window.status !== "ready" && !window.rows.length ? (
             <p className={styles.empty} role="status">

@@ -233,8 +233,31 @@ for (const mode of ["light", "dark"]) {
         .getByRole("form", { name: "Send a message to Alpha", exact: true })
         .boundingBox();
       expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
-      const avatarBox = await entry.locator(".buzz-avatar").boundingBox();
-      expect(avatarBox.x).toBeCloseTo(formBox.x, 0);
+      const avatar = entry.locator(".buzz-avatar");
+      // Production CSS must retain a loadable SVG mask after bundling. A valid
+      // mask-image string alone can still point to the HTML fallback route.
+      await expect
+        .poll(() =>
+          avatar.evaluate(async (element) => {
+            const mask = getComputedStyle(element).maskImage;
+            const image = new Image();
+            image.src = mask.slice(4, -1).replace(/^["']|["']$/g, "");
+            try {
+              await image.decode();
+              return image.naturalWidth > 0;
+            } catch {
+              return false;
+            }
+          }),
+        )
+        .toBe(true);
+      const avatarBox = await avatar.boundingBox();
+      // Shared navigation owns its inset; the row still aligns with the composer.
+      const inset = await entry.evaluate((element) =>
+        parseFloat(getComputedStyle(element).paddingLeft),
+      );
+      expect(entryBox.x).toBeCloseTo(formBox.x, 0);
+      expect(avatarBox.x).toBeCloseTo(formBox.x + inset, 0);
       const lastRow = await channelActivity(page)
         .getByRole("button")
         .last()
@@ -258,6 +281,11 @@ for (const mode of ["light", "dark"]) {
         path: testInfo.outputPath(`activity-entry-${mode}-${width}.png`),
       });
       await page.keyboard.press("Escape");
+      // Escape starts Base UI's asynchronous unmount. The closing portal still
+      // has its wide-screen position and can overflow the next narrow viewport.
+      await expect(
+        page.getByRole("tooltip", { includeHidden: true }),
+      ).toHaveCount(0);
     }
 
     await entry.click();
@@ -463,8 +491,12 @@ test.describe("thread activity", () => {
       formBox = await form.boundingBox();
     expect(entryBox.y + entryBox.height).toBeLessThanOrEqual(formBox.y);
     expect(formBox.y - entryBox.y - entryBox.height).toBeCloseTo(4, 0);
+    const inset = await entry.evaluate((element) =>
+      parseFloat(getComputedStyle(element).paddingLeft),
+    );
+    expect(entryBox.x).toBeCloseTo(formBox.x, 0);
     expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      formBox.x,
+      formBox.x + inset,
       0,
     );
     await entry.hover();
@@ -488,7 +520,10 @@ test.describe("thread activity", () => {
     );
     expect(narrowForm.y - narrowEntry.y - narrowEntry.height).toBeCloseTo(4, 0);
     expect((await entry.locator(".buzz-avatar").boundingBox()).x).toBeCloseTo(
-      narrowForm.x,
+      narrowForm.x +
+        (await entry.evaluate((element) =>
+          parseFloat(getComputedStyle(element).paddingLeft),
+        )),
       0,
     );
     await page.screenshot({

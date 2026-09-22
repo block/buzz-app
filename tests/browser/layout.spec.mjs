@@ -5,7 +5,8 @@ const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
 // Resize tests must not enter the fixture’s deliberately held paging path.
 const readingTest = test.extend({
   tallMessages: true,
-  historyCounts: { alpha: 20, beta: 1 },
+  // Keep the old restored row visible when wheel input selects another row.
+  historyCounts: { alpha: 24, beta: 1 },
 });
 async function expectNonPaging(page, app) {
   expect(
@@ -627,6 +628,11 @@ readingTest(
       reading = await anchor(page);
     }
     expect(reading.id).not.toBe(original.id);
+    // An offscreen restored row is ignored even if gesture() fails to clear it.
+    // Keep that row intersecting so the final assertion detects a stale anchor.
+    await expect(
+      history.locator(`[data-message-id="${original.id}"]`),
+    ).toBeInViewport();
     await button(page, "Close Bestie panel").click();
     await settle(page);
     await expectAnchor(page, reading);
@@ -718,7 +724,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Agents",
     "Sessions",
     "Workflows",
-    "Make it yoursSettings",
+    "Make it yours · Settings",
   ]);
   await button(page, "Find a page").click();
   const search = page.getByRole("dialog", { name: "Find a page", exact: true });

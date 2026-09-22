@@ -1,10 +1,25 @@
-# Virtua 0.51.0 macOS WebKit correction boundary
+# Virtua 0.51.0 scroll correction boundaries
 
 The application imports the React ESM entry (`virtua` → `lib/index.js`) from
 `src/features/messages/ChannelTimeline.tsx`. Only that entry's element scroller is
 patched; CommonJS, window scrolling, and other-framework exports are untouched.
 Keep the dependency pinned to 0.51.0 and review the patch plus version-coupled
 installed-bundle tests before upgrading or adding a different import.
+
+## Fractional end offsets
+
+Text layout can produce fractional row heights. WebKit can truncate an absolute
+scroll offset before clamping it, leaving the final row partly outside the
+viewport even when Virtua requests the end of the list. A focused notification
+target then correctly remains unread under the full-row visibility policy.
+
+The element driver rounds end-boundary targets upward before RTL normalization,
+for both imperative scrolling and automatic resize compensation. The browser
+clamps that target to its actual scroll range. Interior reading offsets remain
+fractional, and the existing scheduling, focus and dwell rules are unchanged.
+Installed-driver regressions cover both entry points and RTL; a browser regression
+sets a fractional list height explicitly and requires the final row to be fully
+visible without a pixel tolerance.
 
 ## Failure and chosen boundary
 
@@ -39,10 +54,10 @@ gesture must continue to work; sustained real-history/media acceptance must asse
 whether repeated braking is acceptable. No wheel ownership, permanent scrolling
 CSS, forced layout, alternate store sizing, or new scroll scheduler is introduced.
 
-The platform predicate requires MacIntel and Apple vendor, excluding Virtua's iOS
-detector (including desktop-mode iPad). Chrome/Firefox, non-Mac WebKit and iOS keep
-existing policy. Store/layout/observer timing and imperative smooth/instant
-navigation remain stock. Scheduler-driven reveal/restore/bottom navigation is a
+The momentum-interruption predicate requires MacIntel and Apple vendor, excluding
+Virtua's iOS detector (including desktop-mode iPad). Chrome/Firefox, non-Mac WebKit
+and iOS keep existing momentum policy. Store/layout/observer timing and imperative
+smooth/instant scheduling remain stock. Scheduler-driven reveal/restore/bottom navigation is a
 separate acceptance path, not implicitly repaired by the automatic-correction fix.
 Native reveal controls showed one/two transient blank interior source frames
 before immediate recovery, despite valid sampled DOM coverage. This remaining
@@ -61,7 +76,7 @@ bin/pnpm test:browser history-loading.spec.mjs image-scroll.spec.mjs initial-pos
   --project chromium --project webkit --no-deps --workers=1
 ```
 
-The 13 driver/store/observer contracts evaluate the installed React ESM, not a
+The driver/store/observer contracts evaluate the installed React ESM, not a
 copied implementation. They cover active and inferred-idle corrections, zero
 jumps, positive/negative measurements, absolute edges, horizontal RTL, overlapping
 restoration, CSS priority, disposal/remount, later declarations, platform controls,
@@ -99,3 +114,34 @@ movie and JavaScript clocks are not synchronized. These bounded results are not
 signed-package/cross-platform acceptance or verification of the original user's
 sustained real-message incident. Keep the change draft until that acceptance is
 completed; do not restart a running app without coordination.
+
+
+## Base UI 1.8.0: native choice reset
+
+`@base-ui__react@1.8.0.patch` adds native form-reset listeners to Checkbox.Root
+and Radio.Root, with RadioGroup supplying its existing state reset, in their
+shipped ESM and CommonJS modules. Without it, resetting
+an uncontrolled choice restores the hidden native input but leaves Base UI's
+visible checked state unchanged. The shared Buzz wrappers continue to delegate
+choice state, keyboard handling and form participation to Base UI.
+
+The listeners run in the next task, after native reset and ancestor cancellation;
+a microtask can run before the browser completes its default reset action. Each actual
+input owns its `form` binding, including external `form=` associations, disabled
+radios and radios mounted after their group. Cleanup prevents queued work after
+unmount. The group retains its existing uncontrolled state setter; repeated
+radio notifications are idempotent. Controlled values remain with the caller,
+and each hidden input restores its current checked state if the owner leaves
+that value unchanged. Stable callbacks read the latest values when the owner
+updates them during reset. No synthetic change event or ordinary change callback
+is emitted. No other primitives are patched.
+
+Remove the patch when a pinned Base UI release passes the reset regressions in
+`src/shared/design-system/ui/controls.test.tsx` and the design viewer's native
+reset browser check without it. A frozen install must reproduce the patch:
+
+```sh
+bin/pnpm install --frozen-lockfile
+bin/pnpm exec vitest run src/shared/design-system/ui/controls.test.tsx
+bin/pnpm design:test:browser
+```

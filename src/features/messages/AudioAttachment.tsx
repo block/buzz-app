@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import { PauseIcon, PlayIcon } from "../../shared/design-system/icons/index";
 import type { Attachment } from "../relay/contracts";
 import { formatMediaTime } from "./media-timecode";
@@ -29,11 +29,9 @@ export function AudioAttachment({
   const failed = failedSource === source;
   const total = duration;
 
-  useEffect(() => {
-    const element = audio.current;
-    return () => {
-      if (playing === element) playing = null;
-    };
+  const setAudio = useCallback((element: HTMLAudioElement | null) => {
+    if (playing === audio.current) playing = null;
+    audio.current = element;
   }, []);
 
   if (failed)
@@ -52,7 +50,7 @@ export function AudioAttachment({
     <div className={styles.audioAttachment}>
       {/* biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL. */}
       <audio
-        ref={audio}
+        ref={setAudio}
         src={source}
         preload="metadata"
         onLoadedMetadata={(event) => syncDuration(event.currentTarget)}

@@ -297,6 +297,61 @@ it("does not pause a failed StrictMode audio after it errors while playing", () 
   expect(pause).not.toHaveBeenCalled();
 });
 
+it("does not pause a recovered audio after unmounting it mid-playback", () => {
+  const failedSource =
+    "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Ffailed.mp3";
+  const recoveredSource =
+    "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Frecovered.mp3";
+  const nextSource =
+    "/api/relay/media?url=https%3A%2F%2Ffixture.test%2Fnext.mp3";
+  const attachment = {
+    url: "https://fixture.test/audio.mp3",
+    kind: "audio",
+  } as const;
+  const { container, rerender } = render(
+    <StrictMode>
+      <AudioAttachment
+        key="recovering"
+        attachment={attachment}
+        source={failedSource}
+      />
+    </StrictMode>,
+  );
+  const failed = container.querySelector("audio");
+  if (!failed) throw new Error("Missing failed audio element");
+  fireEvent.error(failed);
+  expect(screen.getByRole("status")).toHaveTextContent("Audio unavailable");
+
+  rerender(
+    <StrictMode>
+      <AudioAttachment
+        key="recovering"
+        attachment={attachment}
+        source={recoveredSource}
+      />
+    </StrictMode>,
+  );
+  const recovered = container.querySelector("audio");
+  if (!recovered) throw new Error("Missing recovered audio element");
+  fireEvent.play(recovered);
+
+  rerender(
+    <StrictMode>
+      <AudioAttachment
+        key="next"
+        attachment={{ url: "https://fixture.test/next.mp3", kind: "audio" }}
+        source={nextSource}
+      />
+    </StrictMode>,
+  );
+  expect(recovered).not.toBeInTheDocument();
+  const next = container.querySelector("audio");
+  if (!next) throw new Error("Missing next audio element");
+  fireEvent.play(next);
+
+  expect(pause).not.toHaveBeenCalled();
+});
+
 it("pauses another audio element when playback starts", () => {
   const { container } = render(
     <>

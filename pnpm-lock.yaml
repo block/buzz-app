@@ -81,6 +81,9 @@ importers:
       nostr-tools:
         specifier: 2.25.2
         version: 2.25.2(typescript@7.0.2)
+      prosemirror-markdown:
+        specifier: 1.13.7
+        version: 1.13.7
       react:
         specifier: 19.2.8
         version: 19.2.8

@@ -349,22 +349,30 @@ it("restores recipient marks from the replaced text rather than its preceding bo
 
 // Exercise both consumers of the outgoing draft: persisted editor and message renderer.
 it.each([
-  "https://example.com/?x=1&copy;=2",
-  "https://example.com/?x=1&#169;=2",
-  "https://example.com/a(b)?x=1&other=2",
-  "https://example.com/hello%20world",
+  { href: "https://example.com/?x=1&copy;=2", label: "design" },
+  { href: "https://example.com/?x=1&#169;=2", label: "design" },
+  { href: "https://example.com/a(b)?x=1&other=2", label: "design" },
+  { href: "https://example.com/hello%20world", label: "design" },
+  {
+    href: "https://example.com/?x=1&copy;=2",
+    label: "https://example.com/?x=1&copy;=2",
+  },
+  {
+    href: "https://example.com/?x=1&#169;=2",
+    label: "https://example.com/?x=1&#169;=2",
+  },
 ])(
-  "preserves link destination %s through delivery and draft restoration",
-  (href) => {
+  "preserves link text and destination $href ($label) through delivery and draft restoration",
+  ({ href, label }) => {
     const value = adapter();
     value.editor.commands.insertContent({
       type: "text",
-      text: "design",
+      text: label,
       marks: [{ type: "link", attrs: { href } }],
     });
     const draft = value.snapshot().draft;
     const restored = adapter(draft);
-    expect(restored.editor.getHTML()).toContain("design");
+    expect(restored.snapshot().editingText).toBe(label);
     expect(
       restored.editor.getJSON().content?.[0]?.content?.[0]?.marks,
     ).toContainEqual(
@@ -395,6 +403,7 @@ it.each([
       }),
     );
     expect(output.querySelector("a")?.getAttribute("href")).toBe(href);
+    expect(output.textContent).toBe(label);
     expect(restored.snapshot().draft).toEqual(draft);
   },
 );

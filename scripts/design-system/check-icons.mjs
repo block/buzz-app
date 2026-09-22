@@ -47,6 +47,7 @@ const nonIconDependencies = new Set([
   "postcss",
   "react",
   "react-dom",
+  "prosemirror-markdown",
   "react-markdown",
   "remark-breaks",
   "remark-gfm",

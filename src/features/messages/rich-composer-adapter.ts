@@ -4,6 +4,7 @@ import { EditorState, Plugin } from "@tiptap/pm/state";
 import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
 import HardBreak from "@tiptap/extension-hard-break";
 import Link from "@tiptap/extension-link";
+import { defaultMarkdownSerializer } from "prosemirror-markdown";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown as TiptapMarkdown } from "tiptap-markdown";
 import type { ComposerObservation } from "../conversation/contracts";
@@ -73,25 +74,30 @@ export class RichComposerAdapter {
         }),
         Link.extend({
           addStorage() {
+            const linkSerializer = defaultMarkdownSerializer.marks.link;
+            if (!linkSerializer) throw new Error("Missing link serializer");
             return {
               markdown: {
                 serialize: {
-                  open: "[",
-                  close: (
-                    _state: unknown,
-                    mark: { attrs: { href: string; title?: string } },
-                  ) => {
-                    // Markdown decodes character references in destinations and titles.
-                    // Escape at this mark boundary, never across authored message text.
-                    const escapeLink = (text: string) =>
-                      text.replace(/[\\&()"]/g, "\\$&");
-                    const title = mark.attrs.title
-                      ? ` "${escapeLink(mark.attrs.title)}"`
-                      : "";
-                    return `](${escapeLink(mark.attrs.href)}${title})`;
+                  ...linkSerializer,
+                  close(state, mark, parent, index) {
+                    // Keep the library's plain-URL path; only labeled destinations
+                    // and titles need protection from Markdown character references.
+                    const escapeReferences = (value: string) =>
+                      value.replace(/[\\&]/g, "\\$&");
+                    const escaped = mark.type.create({
+                      ...mark.attrs,
+                      href: escapeReferences(mark.attrs.href),
+                      title: mark.attrs.title
+                        ? escapeReferences(mark.attrs.title)
+                        : mark.attrs.title,
+                    });
+                    const close = linkSerializer.close;
+                    return typeof close === "function"
+                      ? close(state, escaped, parent, index)
+                      : close;
                   },
-                  mixable: true,
-                },
+                } satisfies (typeof defaultMarkdownSerializer.marks)[string],
               },
             };
           },

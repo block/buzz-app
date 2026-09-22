@@ -77,7 +77,7 @@ function ObjectPanel({
     <div className={styles.root}>
       <div className={styles.identity}>
         <span className={styles.icon}>
-          <Icon size={22} />
+          <Icon size={22} aria-hidden="true" />
         </span>
         <div>
           <small>{reference.repository}</small>

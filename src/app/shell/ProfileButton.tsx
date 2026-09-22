@@ -1,3 +1,5 @@
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   useEffect,
   useId,
@@ -22,7 +24,6 @@ export function ProfileButton({
     communities.snapshot,
   );
   const [open, setOpen] = useState(false);
-  const [failed, setFailed] = useState<string>();
   const container = useRef<HTMLDivElement>(null);
   const trigger = useRef<HTMLButtonElement>(null);
   const id = useId();
@@ -47,7 +48,7 @@ export function ProfileButton({
   }, [open]);
   return (
     <div ref={container} className="relative">
-      <button
+      <IconButton
         type="button"
         ref={trigger}
         onClick={(event) => {
@@ -58,26 +59,28 @@ export function ProfileButton({
         aria-expanded={open}
         aria-controls={id}
         title={profile.name || "Your profile"}
-        className="flex size-9 shrink-0 items-center justify-center overflow-hidden rounded-full border-0 glass-primary-interactive p-0 text-ink"
-      >
-        {/* Keep mouse-origin Tab traversal rooted at the button in WebKit. */}
-        <span className="pointer-events-none flex size-full items-center justify-center">
-          {profile.picture.startsWith("https://") &&
-          failed !== profile.picture ? (
-            <img
-              src={profile.picture}
-              alt=""
-              referrerPolicy="no-referrer"
-              className="size-full object-cover"
-              onError={() => setFailed(profile.picture)}
-            />
-          ) : profile.name ? (
-            profile.name.slice(0, 1).toUpperCase()
-          ) : (
-            <UserIcon aria-hidden="true" size={19} />
-          )}
-        </span>
-      </button>
+        variant="chrome"
+        shape="round"
+        icon={
+          /* Keep pointer-origin Tab traversal rooted at the button in WebKit. */
+          <span className="pointer-events-none flex size-full items-center justify-center rounded-full">
+            {profile.picture.startsWith("https://") || profile.name ? (
+              <Avatar
+                src={
+                  profile.picture.startsWith("https://")
+                    ? profile.picture
+                    : undefined
+                }
+                alt=""
+                fallback={profile.name || "?"}
+                size="fill"
+              />
+            ) : (
+              <UserIcon aria-hidden="true" size={19} />
+            )}
+          </span>
+        }
+      />
       <nav
         id={id}
         aria-label="Your account"

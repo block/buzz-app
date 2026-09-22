@@ -1,3 +1,4 @@
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useRef, useState } from "react";
 import {
   MagnifyingGlassIcon,
@@ -31,18 +32,18 @@ export function PageSearch({
   );
   return (
     <>
-      <button
+      <IconButton
         type="button"
-        className="shell-icon"
+        variant="chrome"
+        shape="round"
         aria-label="Find a page"
         title="Find a page"
         onClick={() => {
           setQuery("");
           dialog.current?.showModal();
         }}
-      >
-        <MagnifyingGlassIcon size={19} aria-hidden="true" />
-      </button>
+        icon={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+      />
       <dialog
         ref={dialog}
         aria-label="Find a page"
@@ -57,14 +58,12 @@ export function PageSearch({
             onChange={(event) => setQuery(event.target.value)}
             className="min-w-0 flex-1 rounded bg-transparent py-2 text-body-sm"
           />
-          <button
+          <IconButton
             type="button"
             aria-label="Close search"
-            className="shell-icon"
             onClick={() => dialog.current?.close()}
-          >
-            <XIcon size={18} aria-hidden="true" />
-          </button>
+            icon={<XIcon size={16} aria-hidden="true" />}
+          />
         </div>
         <div className="max-h-72 overflow-y-auto">
           {destinations.map(({ key, label, icon: Icon }) => (

@@ -2,6 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { cleanup, render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { provideNavigation } from "../features/navigation/service";
 import { NotificationsService } from "../features/notifications/service";
@@ -48,7 +49,9 @@ it.each([true, false])(
     render(<NotificationSettings notifications={service} />);
     const toggle = screen.getByRole("switch", { name: "Desktop alerts" });
     if (paused) {
-      expect(toggle).toBeDisabled();
+      expect(toggle).toHaveAttribute("aria-disabled", "true");
+      await userEvent.setup().click(toggle);
+      expect(service.snapshot().preferences.enabled).toBe(true);
       expect(toggle).not.toBeChecked();
       expect(screen.getByRole("status")).toHaveTextContent(
         "Remove BUZZ_DEV_NOTIFICATIONS=0",
@@ -57,7 +60,7 @@ it.each([true, false])(
         screen.queryByRole("button", { name: "Allow notifications" }),
       ).not.toBeInTheDocument();
     } else {
-      expect(toggle).toBeEnabled();
+      expect(toggle).not.toHaveAttribute("aria-disabled", "true");
       expect(toggle).toBeChecked();
       expect(
         screen.getByRole("button", { name: "Allow notifications" }),

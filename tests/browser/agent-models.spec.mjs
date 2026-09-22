@@ -44,10 +44,23 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     const browse = editor.getByRole("button", { name: "Browse models" });
     const host = editor.getByLabel("Databricks workspace (HTTPS origin)");
     await model.fill("custom.keep");
-    await browse.click();
-    await expect(page.getByRole("listbox")).toBeVisible();
-    await search.press("Escape");
-    await expect(page.getByRole("listbox")).toHaveCount(0);
+    // Escape as soon as Browse exposes the list, even before its pending frame.
+    // Base UI defers pointer opening to rAF; a second, immediate open owner can
+    // expose the list early and let that stale frame reopen it after Escape.
+    await page.clock.install();
+    await page.clock.pauseAt(new Date());
+    try {
+      await browse.click();
+      if ((await search.getAttribute("aria-expanded")) === "false")
+        await page.clock.runFor(16);
+      await expect(page.getByRole("listbox")).toBeVisible();
+      await search.press("Escape");
+      await page.clock.runFor(100);
+      await expect(search).toHaveAttribute("aria-expanded", "false");
+      await expect(page.getByRole("listbox")).toHaveCount(0);
+    } finally {
+      await page.clock.resume();
+    }
     await expect(editor.getByRole("status")).toContainText(
       "Set your Databricks workspace",
     );

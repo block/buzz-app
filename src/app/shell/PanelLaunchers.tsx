@@ -1,3 +1,4 @@
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useState } from "react";
 import { SidebarIcon } from "../../shared/design-system/icons/index";
 import type { RegisteredPanel } from "../../features/panels/service";
@@ -14,20 +15,22 @@ export function PanelLaunchers({
   return panels
     .filter((panel) => panel.launcher)
     .map((panel) => (
-      <button
+      <IconButton
         type="button"
         key={`${panel.key}:${panel.revision}`}
-        className="shell-icon"
+        variant="chrome"
+        shape="round"
         aria-label={panel.title}
         title={panel.title}
         aria-expanded={panel === selected}
         onClick={(event) => launch(panel, event.currentTarget)}
-      >
-        <LauncherIcon
-          key={panel.launcher?.icon}
-          src={panel.launcher?.icon ?? ""}
-        />
-      </button>
+        icon={
+          <LauncherIcon
+            key={panel.launcher?.icon}
+            src={panel.launcher?.icon ?? ""}
+          />
+        }
+      />
     ));
 }
 function LauncherIcon({ src }: { src: string }) {
@@ -38,7 +41,7 @@ function LauncherIcon({ src }: { src: string }) {
     <img
       src={src}
       alt=""
-      className="object-contain"
+      className="size-4 object-contain"
       onError={() => setFailed(true)}
     />
   );

@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { end } from "./timeline.mjs";
+import { end, settle } from "./timeline.mjs";
 
 test.use({ historyCounts: { alpha: 1, beta: 0 } });
 const github = "https://github.com/block/buzz/pull/1";
@@ -17,6 +17,7 @@ async function openMessages(page) {
   await page
     .getByRole("textbox", { name: "Message #Alpha", exact: true })
     .waitFor();
+  await settle(page);
 }
 
 async function popup(page, anchor) {

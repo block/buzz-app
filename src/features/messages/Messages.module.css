@@ -70,34 +70,6 @@
   gap: var(--space-4);
   padding: var(--space-2) 0 var(--space-section-gap);
 }
-.avatarButton {
-  flex-shrink: 0;
-  align-self: flex-start;
-  border-radius: var(--radius-sm);
-}
-html[data-keyboard-navigation] button.avatarButton:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
-}
-
-.avatar {
-  width: 40px;
-  height: 40px;
-  flex-shrink: 0;
-  background: var(--surface-accent);
-  color: var(--text-muted);
-  display: grid;
-  place-items: center;
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  overflow: hidden;
-}
-.avatar img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
 .messageBody {
   flex: 1;
   min-width: 0;
@@ -406,13 +378,6 @@ html[data-keyboard-navigation] button.avatarButton:focus-visible {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-}
-.threadAvatar img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
 }
 
 .mentionRecipients {
@@ -1060,16 +1025,6 @@ button.mediaPreview {
   font-style: italic;
 }
 
-button.avatarButton {
-  padding: 0;
-  border: 0;
-  background: transparent;
-  cursor: pointer;
-}
-button.avatarButton:hover {
-  background: transparent;
-  box-shadow: 0 0 0 2px var(--border);
-}
 .mention {
   display: inline;
   padding: 0 var(--space-half);
@@ -1125,25 +1080,28 @@ button.avatarButton:hover {
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
-.membershipAvatars .membershipAvatar img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
 
-/* The overlap border and its inset artwork need independently scaled curves. */
-.insetAvatarArtwork {
-  position: relative;
-  display: grid;
+/* Overflow counts are group metadata, not profile artwork. */
+.threadAvatarCount,
+.membershipAvatarCount {
+  display: inline-grid;
   place-items: center;
-  width: 100%;
-  height: 100%;
-  overflow: hidden;
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
   background: var(--surface-accent);
-  border-radius: inherit;
-  mask: inherit;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.threadAvatarCount {
+  margin-right: calc(-1 * var(--space-half));
+}
+.membershipAvatarCount {
+  margin-right: calc(-1 * var(--space-1h));
 }
 
 .typing {

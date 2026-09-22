@@ -3,7 +3,7 @@ import { useAgentChoices } from "./use-agent-choices";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { Avatar } from "../../shared/Avatar";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { matchesMentionQuery } from "./mention-query";
 
@@ -119,12 +119,13 @@ export function MentionCompletion({
             : "Adds to channel when you send",
         preview: (
           <Avatar
-            name={recipient.name}
+            alt=""
+            fallback={recipient.name}
             src={session.media(
               profiles.get(recipient.pubkey)?.picture ?? "",
               "small",
             )}
-            className="size-7 rounded-lg text-caption"
+            size="small"
             shape={
               agentPubkeys.has(recipient.pubkey) ||
               !members.includes(recipient.pubkey)

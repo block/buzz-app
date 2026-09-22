@@ -1,3 +1,4 @@
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useSyncExternalStore } from "react";
 import {
   ArrowLeftIcon,
@@ -11,26 +12,26 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
       className="mr-2 flex shrink-0 items-center gap-0.5"
       aria-label="Navigation history"
     >
-      <button
+      <IconButton
         type="button"
-        className="shell-icon disabled:opacity-30"
+        variant="chrome"
+        shape="round"
         aria-label="Go back"
         title="Go back"
         disabled={!state.canGoBack}
         onClick={navigation.back}
-      >
-        <ArrowLeftIcon size={17} aria-hidden="true" />
-      </button>
-      <button
+        icon={<ArrowLeftIcon size={16} aria-hidden="true" />}
+      />
+      <IconButton
         type="button"
-        className="shell-icon disabled:opacity-30"
+        variant="chrome"
+        shape="round"
         aria-label="Go forward"
         title="Go forward"
         disabled={!state.canGoForward}
         onClick={navigation.forward}
-      >
-        <ArrowRightIcon size={17} aria-hidden="true" />
-      </button>
+        icon={<ArrowRightIcon size={16} aria-hidden="true" />}
+      />
     </nav>
   );
 }

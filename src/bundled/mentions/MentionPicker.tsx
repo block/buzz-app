@@ -1,6 +1,6 @@
 import { useMentionAgents } from "../../features/agents/mention-context";
 import { useAgentChoices } from "./use-agent-choices";
-import { Avatar } from "../../shared/Avatar";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { AtIcon } from "../../shared/design-system/icons/index";
 import {
@@ -188,12 +188,13 @@ export function MentionPicker({
                 }}
               >
                 <Avatar
-                  name={recipient.name}
+                  alt=""
+                  fallback={recipient.name}
                   src={session.media(
                     profiles.get(recipient.pubkey)?.picture ?? "",
                     "small",
                   )}
-                  className="size-8 rounded-lg text-caption"
+                  size="default"
                   shape={
                     agentPubkeys.has(recipient.pubkey) ||
                     !channel?.members?.includes(recipient.pubkey)

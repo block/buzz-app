@@ -39,21 +39,22 @@ export function Avatar({
   size = "default",
   shape = "circle",
 }: {
-  src?: string | null;
+  src?: string | null | undefined;
   alt: string;
   fallback: string;
   size?: AvatarSize;
   shape?: "circle" | "squircle";
 }) {
-  const initial = fallback.slice(0, 1).toUpperCase();
+  const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   return (
     <BaseAvatar.Root
       data-buzz-ui=""
       className="buzz-avatar"
       data-size={size}
       data-avatar-shape={shape}
-      role="img"
-      aria-label={alt}
+      role={alt ? "img" : undefined}
+      aria-label={alt || undefined}
+      aria-hidden={!alt || undefined}
     >
       {src ? (
         <AvatarArtwork key={src} src={src} fallback={initial} />

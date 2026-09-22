@@ -375,6 +375,10 @@ function Fixture() {
           }
           initialTime={0}
           restoreFocus={reviewTrigger}
+          onOpenLink={(url) => {
+            report.links.push(url);
+            return !url.includes("unhandled");
+          }}
           close={() => setReview(undefined)}
         />
       )}

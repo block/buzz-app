@@ -1060,6 +1060,7 @@ function ChannelWorkspace({
           messageId={showingMediaReview.messageId}
           initialTime={showingMediaReview.initialTime}
           restoreFocus={mediaReviewTrigger}
+          onOpenLink={openLink}
           close={() => setMediaReview(undefined)}
         />
       )}

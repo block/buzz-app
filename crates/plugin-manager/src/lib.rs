@@ -84,8 +84,27 @@ fn is_bundled(id: &str) -> bool {
 struct Installed {
     manifest: Manifest,
     current: String,
+    #[serde(default)]
+    current_source: Option<ReloadSource>,
     previous: Option<String>,
+    #[serde(default)]
+    previous_source: Option<ReloadSource>,
     enabled: bool,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReloadSource {
+    root: PathBuf,
+    path: String,
+}
+impl ReloadSource {
+    pub fn folder(root: PathBuf, path: String) -> Result<Self> {
+        if !root.is_absolute() {
+            return Err("Reload source root must be absolute".into());
+        }
+        validate_candidate_path(&path)?;
+        Ok(Self { root, path })
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -284,20 +303,21 @@ impl Manager {
         })
     }
     pub fn install(&self, directory: &Path) -> Result<Catalog> {
-        self.install_artifact(&prepare_artifact(directory)?)
+        let source = ReloadSource::folder(directory.canonicalize().map_err(err)?, ".".into())?;
+        self.install_artifact(&prepare_artifact(directory)?, Some(source))
     }
-    fn install_artifact(&self, bytes: &[u8]) -> Result<Catalog> {
+    fn install_artifact(&self, bytes: &[u8], source: Option<ReloadSource>) -> Result<Catalog> {
         let Artifact { manifest, .. } = serde_json::from_slice(bytes).map_err(err)?;
         let revision = hash(bytes);
         {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
             let old = registry.installed.get(&manifest.id);
-            let previous = old.and_then(|p| {
+            let (previous, previous_source) = old.map_or((None, None), |p| {
                 if p.current == revision {
-                    p.previous.clone()
+                    (p.previous.clone(), p.previous_source.clone())
                 } else {
-                    Some(p.current.clone())
+                    (Some(p.current.clone()), p.current_source.clone())
                 }
             });
             let enabled = old.is_some_and(|p| p.enabled);
@@ -307,7 +327,9 @@ impl Manager {
                 Installed {
                     manifest,
                     current: revision,
+                    current_source: source,
                     previous,
+                    previous_source,
                     enabled,
                 },
             );
@@ -347,8 +369,11 @@ impl Manager {
                     "rollback" => {
                         let previous = p.previous.clone().ok_or("No previous revision")?;
                         let a = self.artifact(id, &previous)?;
+                        let previous_source = p.previous_source.clone();
                         p.previous = Some(p.current.clone());
+                        p.previous_source = p.current_source.clone();
                         p.current = previous;
+                        p.current_source = previous_source;
                         p.manifest = a.manifest;
                     }
                     _ => return Err("Unknown management action".into()),
@@ -402,6 +427,30 @@ fn prepare_artifact(directory: &Path) -> Result<Vec<u8>> {
         &read_limited(&directory.join("manifest.json"))?,
         read_limited(&directory.join("plugin.js"))?,
     )
+}
+fn validate_candidate_path(path: &str) -> Result<PathBuf> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Reload source path is empty".into());
+    }
+    if path == "." {
+        return Ok(PathBuf::new());
+    }
+    let path = Path::new(path);
+    if !path.is_relative() {
+        return Err("Reload source path must be relative".into());
+    }
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => relative.push(part),
+            _ => return Err("Reload source path must stay inside its folder".into()),
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("Reload source path is empty".into());
+    }
+    Ok(relative)
 }
 fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
     let manifest: Manifest = serde_json::from_str(manifest).map_err(err)?;

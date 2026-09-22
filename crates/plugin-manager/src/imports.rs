@@ -1,5 +1,7 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
-use crate::{artifact_from_text, err, hash, Catalog, Manager, Manifest, Result, LIMIT};
+use crate::{
+    artifact_from_text, err, hash, Catalog, Manager, Manifest, ReloadSource, Result, LIMIT,
+};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -35,10 +37,11 @@ pub struct Preview {
 
 pub struct PreparedImport {
     pub preview: Preview,
+    folder_root: Option<PathBuf>,
     artifacts: BTreeMap<String, Vec<u8>>,
 }
 impl PreparedImport {
-    fn new(source: String, commit: Option<String>) -> Result<Self> {
+    fn new(source: String, commit: Option<String>, folder_root: Option<PathBuf>) -> Result<Self> {
         // An opaque per-preview identity, independent of plugin IDs or source paths.
         let nonce = tempfile::NamedTempFile::new().map_err(err)?;
         Ok(Self {
@@ -49,6 +52,7 @@ impl PreparedImport {
                 candidates: vec![],
                 warnings: vec![],
             },
+            folder_root,
             artifacts: BTreeMap::new(),
         })
     }
@@ -88,7 +92,12 @@ impl PreparedImport {
             .artifacts
             .get(path)
             .ok_or("Choose a listed plugin folder")?;
-        manager.install_artifact(bytes)
+        let source = self
+            .folder_root
+            .clone()
+            .map(|root| ReloadSource::folder(root, path.to_owned()))
+            .transpose()?;
+        manager.install_artifact(bytes, source)
     }
 }
 
@@ -102,7 +111,7 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
     }
     let root = directory.canonicalize().map_err(err)?;
     let deadline = Instant::now() + Duration::from_secs(60);
-    let mut prepared = PreparedImport::new(root.display().to_string(), None)?;
+    let mut prepared = PreparedImport::new(root.display().to_string(), None, Some(root.clone()))?;
     let directory =
         cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).map_err(err)?;
     let mut pending = vec![(PathBuf::new(), 0)];
@@ -375,7 +384,7 @@ impl Git {
                 blobs.insert(path.to_string(), oid.to_string());
             }
         }
-        let mut prepared = PreparedImport::new(source, Some(commit))?;
+        let mut prepared = PreparedImport::new(source, Some(commit), None)?;
         for (path, manifest_oid) in &blobs {
             if path != "manifest.json" && !path.ends_with("/manifest.json") {
                 continue;
@@ -543,6 +552,16 @@ mod tests {
             .find(|p| p.manifest.id == "example.one")
             .unwrap();
         assert!(!installed.enabled);
+        let registry: serde_json::Value = serde_json::from_slice(
+            &fs::read(home.path().join("profiles/test/registry.json")).unwrap(),
+        )
+        .unwrap();
+        let source = &registry["installed"]["example.one"]["currentSource"];
+        assert_eq!(
+            source["root"],
+            serde_json::to_value(root.path().canonicalize().unwrap()).unwrap()
+        );
+        assert_eq!(source["path"], "pages/one/dist");
         manager.change("enable", "example.one").unwrap();
         assert!(manager
             .module("example.one", &installed.revision)
@@ -725,6 +744,24 @@ mod tests {
         let text = String::from_utf8(prepared.artifacts["plugins/one/dist"].clone()).unwrap();
         assert!(text.contains("first"));
         assert!(!text.contains("uncommitted"));
+        let home = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(home.path().into()), "test", false).unwrap();
+        let folder_source = tempfile::tempdir().unwrap();
+        plugin(folder_source.path(), ".", "example.one");
+        manager.install(folder_source.path()).unwrap();
+        let registry_path = home.path().join("profiles/test/registry.json");
+        let registry: serde_json::Value =
+            serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+        assert!(registry["installed"]["example.one"]["currentSource"].is_object());
+        prepared
+            .install(&manager, &prepared.preview.token, "plugins/one/dist")
+            .unwrap();
+        let registry: serde_json::Value =
+            serde_json::from_slice(&fs::read(registry_path).unwrap()).unwrap();
+        assert_eq!(
+            registry["installed"]["example.one"]["currentSource"],
+            serde_json::Value::Null
+        );
     }
     #[test]
     fn git_deadline_and_output_limits_fail() {

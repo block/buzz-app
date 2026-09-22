@@ -81,6 +81,142 @@ fn install_enable_update_rollback_and_remove_survive_restart() {
     );
 }
 #[test]
+fn source_metadata_from_newer_writer_survives_management_changes() {
+    let (temp, manager, source) = fixture();
+    manager.install(&source).unwrap();
+    let registry_path = temp.path().join("profiles/test/registry.json");
+    let mut registry: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    let installed = &mut registry["installed"]["example.page"];
+    installed.as_object_mut().unwrap().remove("currentSource");
+    installed.as_object_mut().unwrap().remove("previousSource");
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).unwrap(),
+    )
+    .unwrap();
+    assert!(manager.catalog().is_ok());
+
+    let installed = &mut registry["installed"]["example.page"];
+    installed["currentSource"] = serde_json::Value::Null;
+    installed["previousSource"] = serde_json::Value::Null;
+    fs::write(
+        &registry_path,
+        serde_json::to_vec_pretty(&registry).unwrap(),
+    )
+    .unwrap();
+
+    manager.change("enable", "example.page").unwrap();
+
+    let saved: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    let installed = &saved["installed"]["example.page"];
+    assert_eq!(installed["currentSource"], serde_json::Value::Null);
+    assert_eq!(installed["previousSource"], serde_json::Value::Null);
+
+    let mut invalid = saved;
+    invalid["installed"]["example.page"]["currentSource"] = serde_json::json!({
+        "root": source,
+        "path": ".",
+        "unexpected": true
+    });
+    fs::write(&registry_path, serde_json::to_vec_pretty(&invalid).unwrap()).unwrap();
+    assert!(manager.catalog().is_err());
+}
+#[test]
+fn source_metadata_follows_its_revision_across_install_and_rollback() {
+    let (temp, manager, first_source) = fixture();
+    let first = manager
+        .install(&first_source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap()
+        .revision;
+    let first_source = first_source.canonicalize().unwrap();
+    let second_source = temp.path().join("second-build");
+    fs::create_dir(&second_source).unwrap();
+    fs::write(
+        second_source.join("manifest.json"),
+        r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+    )
+    .unwrap();
+    fs::write(
+        second_source.join("plugin.js"),
+        "export const second = true;",
+    )
+    .unwrap();
+    let second = manager
+        .install(&second_source)
+        .unwrap()
+        .plugins
+        .into_iter()
+        .find(|plugin| plugin.manifest.id == "example.page")
+        .unwrap()
+        .revision;
+    let second_source = second_source.canonicalize().unwrap();
+    manager.change("enable", "example.page").unwrap();
+    manager.change("disable", "example.page").unwrap();
+    let registry_path = temp.path().join("profiles/test/registry.json");
+    let registry: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    let installed = &registry["installed"]["example.page"];
+    assert_eq!(installed["current"], second);
+    assert_eq!(
+        installed["currentSource"]["root"],
+        serde_json::to_value(&second_source).unwrap()
+    );
+    assert_eq!(installed["currentSource"]["path"], ".");
+    assert_eq!(installed["previous"], first);
+    assert_eq!(
+        installed["previousSource"]["root"],
+        serde_json::to_value(&first_source).unwrap()
+    );
+
+    manager.change("rollback", "example.page").unwrap();
+    let registry: serde_json::Value =
+        serde_json::from_slice(&fs::read(&registry_path).unwrap()).unwrap();
+    let installed = &registry["installed"]["example.page"];
+    assert_eq!(installed["current"], first);
+    assert_eq!(
+        installed["currentSource"]["root"],
+        serde_json::to_value(&first_source).unwrap()
+    );
+    assert_eq!(installed["previous"], second);
+    assert_eq!(
+        installed["previousSource"]["root"],
+        serde_json::to_value(&second_source).unwrap()
+    );
+
+    let replacement_source = temp.path().join("replacement-build");
+    fs::create_dir(&replacement_source).unwrap();
+    fs::write(
+        replacement_source.join("manifest.json"),
+        r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+    )
+    .unwrap();
+    fs::write(
+        replacement_source.join("plugin.js"),
+        "export function apply() {}",
+    )
+    .unwrap();
+    manager.install(&replacement_source).unwrap();
+    let registry: serde_json::Value =
+        serde_json::from_slice(&fs::read(registry_path).unwrap()).unwrap();
+    let installed = &registry["installed"]["example.page"];
+    assert_eq!(installed["current"], first);
+    assert_eq!(
+        installed["currentSource"]["root"],
+        serde_json::to_value(replacement_source.canonicalize().unwrap()).unwrap()
+    );
+    assert_eq!(installed["previous"], second);
+    assert_eq!(
+        installed["previousSource"]["root"],
+        serde_json::to_value(second_source).unwrap()
+    );
+}
+#[test]
 fn invalid_install_preserves_working_revision() {
     let (_temp, manager, source) = fixture();
     let before = manager

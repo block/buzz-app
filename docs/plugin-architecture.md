@@ -181,6 +181,12 @@ Installation uses the exact captured bytes and retains the existing artifact has
 profile locking, rollback, recovery and safe-mode behavior. An uncertain write retains
 the preview identity for same-artifact retry; it does not refetch or rebuild.
 
+The saved registry also accepts optional source-folder metadata written by builds
+with reload support. That metadata stays with its installed revision during updates
+and rollback, and survives enable/disable changes. Folder installs record their
+source; Git imports have no local-folder source. Reading these fields does not add
+a reload action or start watching files in this build.
+
 Local discovery skips symlink directories, `node_modules`, `.git` and `target`, and
 uses `cap-std` directory-relative reads to confine descendant path resolution. Files
 must be regular, non-symlink UTF-8 text; candidate folder names must be UTF-8 and are

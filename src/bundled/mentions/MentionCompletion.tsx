@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useMentionAgents } from "../../features/agents/mention-context";
 import { useAgentChoices } from "./use-agent-choices";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -18,6 +19,7 @@ export function MentionCompletion({
   query,
   publish,
 }: ComposerCompletionProps) {
+  const resolveName = useIdentityNames(session.names);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -75,16 +77,18 @@ export function MentionCompletion({
     const choices = new Map(
       [...agents.identities, ...available].map((agent) => [
         agent.pubkey,
-        { pubkey: agent.pubkey, name: agent.name },
+        { pubkey: agent.pubkey, name: resolveName(agent.pubkey, agent.name) },
       ]),
     );
     for (const pubkey of members)
       choices.set(pubkey, {
         pubkey,
-        name:
+        name: resolveName(
+          pubkey,
           profiles.get(pubkey)?.name ??
-          choices.get(pubkey)?.name ??
-          pubkey.slice(0, 12),
+            choices.get(pubkey)?.name ??
+            pubkey.slice(0, 12),
+        ),
       });
     const candidates = [...choices.values()];
     const needle = query.query.toLowerCase();
@@ -183,16 +187,19 @@ export function MentionCompletion({
     const profilesChanged = session.profiles.subscribe(() => {
       if (session.profiles.snapshot() !== profiles) revoke();
     });
+    const namesChanged = session.names.subscribe(revoke);
     const agentsChanged = inviteAgents
       ? session.agentLibrary.subscribe(revoke)
       : () => {};
     return () => {
+      namesChanged();
       agentsChanged();
       rosterChanged();
       profilesChanged();
       revoke();
     };
   }, [
+    resolveName,
     session,
     agents,
     inviteAgents,

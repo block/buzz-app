@@ -258,7 +258,11 @@ function ChannelWorkspace({
     scope,
     list.status === "ready" && preferences.status !== "loading",
   );
-  const channels = useChannelLabels(list.channels, queries.profiles);
+  const channels = useChannelLabels(
+    list.channels,
+    queries.profiles,
+    queries.names,
+  );
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
     for (const item of channels) {

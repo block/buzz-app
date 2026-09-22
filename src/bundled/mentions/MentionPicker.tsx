@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -36,6 +37,7 @@ export function MentionPicker({
   inviteAgents?: boolean | undefined;
   select: ComposerToolProps["insertMention"];
 }) {
+  const resolveName = useIdentityNames(session.names);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
@@ -90,16 +92,18 @@ export function MentionPicker({
   const choices = new Map(
     [...agents.identities, ...available].map((agent) => [
       agent.pubkey,
-      { pubkey: agent.pubkey, name: agent.name },
+      { pubkey: agent.pubkey, name: resolveName(agent.pubkey, agent.name) },
     ]),
   );
   for (const pubkey of channel?.members ?? [])
     choices.set(pubkey, {
       pubkey,
-      name:
+      name: resolveName(
+        pubkey,
         profiles.get(pubkey)?.name ??
-        choices.get(pubkey)?.name ??
-        pubkey.slice(0, 12),
+          choices.get(pubkey)?.name ??
+          pubkey.slice(0, 12),
+      ),
     });
   const candidates = [...choices.values()].filter(({ name, pubkey }) =>
     `${name} ${pubkey}`.toLowerCase().includes(search.trim().toLowerCase()),

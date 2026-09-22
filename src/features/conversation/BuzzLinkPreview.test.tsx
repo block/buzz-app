@@ -1,76 +1,14 @@
-import { beforeEach, expect, it, vi } from "vitest";
-import { isValidElement, type ReactElement, type ReactNode } from "react";
+// @vitest-environment jsdom
+import { cleanup, render } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
 import { BuzzLinkPreview } from "./BuzzLinkPreview";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot, ThreadView } from "../relay/threads";
 import type { ChannelMessage } from "../relay/contracts";
 
-// Shallow production-boundary checks. These invoke returned handlers and effect
-// lifetimes; they do not claim browser layout, focus, or React StrictMode validation.
-const hooks = vi.hoisted(() => ({
-  refs: [] as { current: unknown }[],
-  ref: 0,
-  states: [] as unknown[],
-  index: 0,
-  effects: [] as {
-    deps: readonly unknown[];
-    cleanup?: (() => void) | undefined;
-  }[],
-  effect: 0,
-  pending: [] as (() => void)[],
-}));
-vi.mock("react", async (original) => ({
-  ...(await original<typeof import("react")>()),
-  useRef(initial: unknown) {
-    const index = hooks.ref++;
-    hooks.refs[index] ??= { current: initial };
-    return hooks.refs[index];
-  },
-  useState(initial: unknown) {
-    const index = hooks.index++;
-    if (!(index in hooks.states)) hooks.states[index] = initial;
-    return [
-      hooks.states[index],
-      (next: unknown) => {
-        hooks.states[index] =
-          typeof next === "function" ? next(hooks.states[index]) : next;
-      },
-    ];
-  },
-  useEffect(create: () => (() => void) | undefined, deps: readonly unknown[]) {
-    const index = hooks.effect++;
-    const old = hooks.effects[index];
-    if (!old || deps.some((value, i) => value !== old.deps[i]))
-      hooks.pending.push(() => {
-        old?.cleanup?.();
-        hooks.effects[index] = { deps, cleanup: create() };
-      });
-  },
-  useSyncExternalStore: (_subscribe: unknown, snapshot: () => unknown) =>
-    snapshot(),
-}));
-beforeEach(() =>
-  Object.assign(hooks, {
-    refs: [],
-    ref: 0,
-    states: [],
-    index: 0,
-    effects: [],
-    effect: 0,
-    pending: [],
-  }),
-);
-function elements(node: ReactNode): ReactElement<Record<string, unknown>>[] {
-  if (Array.isArray(node)) return node.flatMap(elements);
-  if (!isValidElement<Record<string, unknown>>(node)) return [];
-  return [node, ...elements(node.props.children as ReactNode)];
-}
-function text(node: ReactNode) {
-  return elements(node)
-    .filter((e) => e.props.role === "status")
-    .map((e) => e.props.children)
-    .join("");
-}
+afterEach(cleanup);
+const text = (tree: HTMLElement) =>
+  tree.querySelector('[role="status"]')?.textContent;
 const root: ChannelMessage = {
   id: "a".repeat(64),
   channelId: "channel",
@@ -84,15 +22,6 @@ const root: ChannelMessage = {
   replyCount: 0,
 };
 function setup(snapshot: ThreadSnapshot, messageId = root.id) {
-  Object.assign(hooks, {
-    refs: [],
-    ref: 0,
-    states: [],
-    index: 0,
-    effects: [],
-    effect: 0,
-    pending: [],
-  });
   const view = {
     snapshot: () => snapshot,
     subscribe: () => () => {},
@@ -101,41 +30,29 @@ function setup(snapshot: ThreadSnapshot, messageId = root.id) {
     dispose: vi.fn(),
   } satisfies ThreadView;
   const thread = vi.fn(() => view);
+  const profiles = new Map();
+  const list = { channels: [{ id: "channel", name: "General" }] };
   const session = {
     thread,
     profiles: {
       subscribe: () => () => {},
-      snapshot: () => new Map(),
+      snapshot: () => profiles,
       ensure: vi.fn(async () => {}),
     },
     channels: {
       subscribeList: () => () => {},
-      list: () => ({ channels: [{ id: "channel", name: "General" }] }),
+      list: () => list,
     },
     media: () => undefined,
   } as unknown as RelaySession;
-  hooks.ref = hooks.index = hooks.effect = 0;
-  BuzzLinkPreview({
-    session,
-    channelId: "channel",
-    messageId,
-  });
-  for (const effect of hooks.pending.splice(0)) effect();
-  // Re-render the outer component now that the effect allocated the view, then
-  // drive the inner PreviewContent with the shared hook registers.
-  hooks.ref = hooks.index = hooks.effect = 0;
-  const rendered = BuzzLinkPreview({
-    session,
-    channelId: "channel",
-    messageId,
-  }) as ReactElement;
-  const child = elements(rendered).find((e) => typeof e.type === "function");
-  if (!child) throw new Error("Missing preview content");
-  hooks.ref = hooks.index = hooks.effect = 0;
-  const render = child.type as (props: unknown) => ReactElement;
-  const tree = render(child.props);
-  for (const effect of hooks.pending.splice(0)) effect();
-  return { tree, thread };
+  const mounted = render(
+    <BuzzLinkPreview
+      session={session}
+      channelId="channel"
+      messageId={messageId}
+    />,
+  );
+  return { tree: mounted.container, thread };
 }
 const base: ThreadSnapshot = {
   status: "idle",
@@ -155,11 +72,11 @@ it("does not paint the seed root until the snapshot reconciles edits and deletio
     canLoadMore: true,
   }).tree;
   expect(text(seeded)).toBe("Loading message…");
-  expect(elements(seeded).some((e) => e.type === "strong")).toBe(false);
+  expect(seeded.querySelector("strong")).toBeNull();
   const idleSeed = setup({ ...base, status: "idle", root }).tree;
   expect(text(idleSeed)).toBe("Loading message…");
   const ready = setup({ ...base, status: "ready", root }).tree;
-  expect(elements(ready).some((e) => e.type === "strong")).toBe(true);
+  expect(ready.querySelector("strong")).not.toBeNull();
 });
 it("reports terminal unavailability instead of loading forever", () => {
   // purge() on a denied or revoked channel publishes idle + an error string,
@@ -211,11 +128,7 @@ it("renders the exact target independently of bounded thread replies", () => {
   expect(result.thread).toHaveBeenCalledWith("channel", target.id, {
     exact: true,
   });
-  expect(
-    elements(result.tree).some(
-      (element) => element.props.children === "reply beyond bounded traversal",
-    ),
-  ).toBe(true);
+  expect(result.tree.textContent).toContain("reply beyond bounded traversal");
 });
 it("renders a reconciled exact target when its thread root is unavailable", () => {
   const target = {
@@ -234,11 +147,7 @@ it("renders a reconciled exact target when its thread root is unavailable", () =
     },
     target.id,
   );
-  expect(
-    elements(result.tree).some(
-      (element) => element.props.children === "reply with unavailable root",
-    ),
-  ).toBe(true);
+  expect(result.tree.textContent).toContain("reply with unavailable root");
 });
 it("fails safely when an exact target timestamp is outside Date range", () => {
   const target = { ...root, createdAt: 8_640_000_000_001 };

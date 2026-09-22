@@ -175,11 +175,7 @@ test("typeahead replaces only the query and publishes selected namesake identity
   await option.click();
   await expect(input).toBeFocused();
   await expect(input).toHaveJSProperty("value", "Before @Honey  after");
-  await expect(
-    page
-      .getByRole("region", { name: "Notification recipients" })
-      .getByRole("button"),
-  ).toHaveCount(1);
+  await expect(input.locator(".inline-chip")).toHaveCount(1);
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -948,9 +944,7 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "@Honey 😄");
-  await expect(
-    page.getByRole("region", { name: "Notification recipients" }),
-  ).toHaveCount(0);
+  await expect(input.locator(".inline-chip")).toHaveCount(0);
 });
 
 test("portal bounds hold when the focused composer moves outside the viewport", async ({

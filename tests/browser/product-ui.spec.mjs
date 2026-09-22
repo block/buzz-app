@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
@@ -97,4 +98,38 @@ test("catalogue preserves disabled, read-only and failed-send recovery examples"
     "value",
     "Retry this message",
   );
+});
+
+// Browser-only: choose real picker entries and observe inline chip relabeling.
+test("playground distinguishes same-name people and agents in the real composer", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const playground = page.getByRole("region", { name: "Composer playground" });
+  const chips = playground.getByRole("textbox").locator(".inline-chip");
+  const labels = [];
+  for (const [name, keys] of [
+    ["Alice", ["a".repeat(64), "c".repeat(64)]],
+    ["Honey", ["b".repeat(64), "d".repeat(64)]],
+  ]) {
+    for (const [index, key] of keys.entries()) {
+      await playground
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      await page
+        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("button", { name: `${name} ${key}`, exact: true })
+        .click();
+      if (index === 0) {
+        await expect(chips).toHaveText([...labels, `@${name}`]);
+      } else {
+        labels.push(
+          ...keys.map(
+            (value) => `@${name} · npub…${npubEncode(value).slice(-3)}`,
+          ),
+        );
+        await expect(chips).toHaveText(labels);
+      }
+    }
+  }
 });

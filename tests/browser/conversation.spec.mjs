@@ -218,18 +218,9 @@ test("independent packed author consumer and native-installed contribution survi
       .getByRole("button", { name: "Insert mixed", exact: true })
       .click();
     await expect(draft).toHaveJSProperty("value", "Hi @Member and @Member ");
-    // Two authored spans refer to one notification identity and removal control.
+    // Two authored spans preserve one exact notification identity.
     const member = await page.evaluate(() => window.conversationFixture.member);
-    const mixedRecipients = page.getByRole("region", {
-      name: "Notification recipients",
-    });
-    await expect(mixedRecipients.getByRole("button")).toHaveCount(1);
-    await expect(
-      mixedRecipients.getByRole("button", {
-        name: `Remove mention Member ${member}`,
-        exact: true,
-      }),
-    ).toBeVisible();
+    await expect(draft.locator(".inline-chip")).toHaveCount(2);
     await expect
       .poll(() =>
         page.evaluate(() =>
@@ -282,10 +273,8 @@ test("independent packed author consumer and native-installed contribution survi
     await page
       .getByRole("button", { name: `Member ${member}`, exact: true })
       .click();
-    const recipients = page.getByRole("region", {
-      name: "Notification recipients",
-    });
-    await expect(recipients.getByRole("button")).toHaveCount(1);
+    const recipients = draft.locator(".inline-chip");
+    await expect(recipients).toHaveCount(1);
     const withMention = await draft.evaluate((element) => element.value);
     const textarea = await draft.elementHandle();
     await page.evaluate(() =>
@@ -295,11 +284,19 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("button", { name: "Mention a member", exact: true }),
     ).toHaveCount(0);
     await expect(draft).toHaveJSProperty("value", withMention);
-    await expect(recipients.getByRole("button")).toHaveCount(1);
+    await expect(recipients).toHaveCount(1);
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
-    await recipients.getByRole("button").click();
+    await draft.focus();
+    await draft.evaluate((element) => {
+      const start = element.value.indexOf("@Member");
+      element.setSelectionRange(start, start + "@Member".length);
+    });
+    await draft.press("Backspace");
     await expect(recipients).toHaveCount(0);
-    await expect(draft).toHaveJSProperty("value", withMention);
+    await expect(draft).toHaveJSProperty(
+      "value",
+      withMention.replace("@Member", ""),
+    );
     await page.evaluate(() =>
       window.conversationFixture.change("enable", "buzz.mentions"),
     );

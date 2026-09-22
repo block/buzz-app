@@ -517,10 +517,13 @@ it.each([undefined, "root"])(
     h.unmount();
     h = mount(options);
     expect(
-      screen.getByRole("button", {
-        name: `Remove mention Honey ${second.pubkey}`,
+      within(h.input()).getAllByRole("img", {
+        name: /^Person Honey, public key ending/,
       }),
-    ).toBeVisible();
+    ).toHaveLength(2);
+    expect(
+      screen.queryByRole("region", { name: "Notification recipients" }),
+    ).not.toBeInTheDocument();
     h.submit();
     expect(
       (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
@@ -570,9 +573,7 @@ it.each([undefined, "root"])(
     });
     expect(input).toHaveValue("@Honey can you see this is’s");
     expect(
-      screen.getByRole("button", {
-        name: `Remove mention Honey ${first.pubkey}`,
-      }),
+      within(input).getByRole("img", { name: "Person Honey" }),
     ).toBeVisible();
     h.submit();
     expect(
@@ -581,18 +582,91 @@ it.each([undefined, "root"])(
   },
 );
 
-it("deleting a mention or removing its chip removes notification intent", async () => {
+it("qualifies both namesakes retroactively without changing source and removes qualifiers with ambiguity", () => {
+  const h = mount();
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  expect(
+    within(h.input()).getByRole("img", { name: "Person Honey" }),
+  ).toBeVisible();
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  expect(h.input().textContent).not.toContain("npub");
+  act(() => {
+    h.commands().insertMention({ ...second, name: "honey" });
+  });
+  expect(h.input()).toHaveValue("@Honey @Honey @honey ");
+  expect(
+    within(h.input()).getAllByRole("img", {
+      name: "Person Honey, public key ending c a j",
+    }),
+  ).toHaveLength(2);
+  expect(
+    within(h.input()).getByRole("img", {
+      name: "Person honey, public key ending 4 h u",
+    }),
+  ).toHaveTextContent("honey · npub…4hu");
+  h.input().setSelectionRange(14, 20);
+  act(() => {
+    h.commands().insertText("");
+  });
+  expect(h.input()).toHaveValue("@Honey @Honey  ");
+  expect(h.input().textContent).not.toContain("npub");
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "@Honey @Honey  ", [
+    first.pubkey,
+    first.pubkey,
+  ]);
+});
+
+it.each([0, 7])(
+  "does not replay qualifier motion after removing at %i or restoring a destination draft",
+  (start) => {
+    const h = mount();
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    act(() => {
+      h.commands().insertMention(second);
+    });
+    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(1);
+    h.input().setSelectionRange(start, start + 6);
+    act(() => {
+      h.commands().insertText("");
+    });
+    act(() => {
+      h.commands().insertMention(start === 0 ? first : second);
+    });
+    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
+    h.retarget({ channelId: "other" });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    h.retarget({ channelId: "channel" });
+    expect(h.input().querySelectorAll(".inline-chip-qualifier")).toHaveLength(
+      2,
+    );
+    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
+  },
+);
+
+it("replacing an inline mention with ordinary prose removes notification intent", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   h.fill("no recipient now");
   h.submit();
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  await h.user.click(
-    screen.getByRole("button", {
-      name: `Remove mention Honey ${first.pubkey}`,
-    }),
-  );
+  expect(
+    within(h.input()).getByRole("img", { name: "Person Honey" }),
+  ).toBeVisible();
+  h.input().setSelectionRange(0, 6);
+  act(() => {
+    h.commands().insertText("Honey");
+  });
+  expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
   h.submit();
   expect(h.messages.send.mock.calls[1]?.at(-1)).toEqual([]);
 });
@@ -1190,20 +1264,23 @@ it.each([undefined, "root"])(
     ]);
     expect(h.input()).toHaveValue("@Honey ");
     expect(
-      screen.getAllByRole("button", { name: /^Remove mention/ }),
+      within(h.input()).getAllByRole("img", { name: "Agent Honey" }),
     ).toHaveLength(1);
+    expect(
+      h.input().querySelector("button, a, [tabindex], [title]"),
+    ).toBeNull();
     h.retarget({ channelId: "other" });
     expect(h.input()).toHaveValue("");
     h.retarget({ channelId: "channel" });
     expect(h.input()).toHaveValue("@Honey ");
     h.submit();
     expect(send.mock.calls.at(-1)?.at(-1)).toEqual([second.pubkey]);
-    fireEvent.click(
-      screen.getByRole("button", {
-        name: `Remove mention Honey ${second.pubkey}`,
-      }),
-    );
-    expect(h.input()).toHaveValue("@Honey ");
+    h.input().setSelectionRange(0, 6);
+    act(() => {
+      h.commands().insertText("Honey");
+    });
+    expect(h.input()).toHaveValue("Honey ");
+    expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
     h.submit();
     expect(send.mock.calls.at(-1)?.at(-1)).toEqual([]);
     expect(h.input()).toHaveValue("");

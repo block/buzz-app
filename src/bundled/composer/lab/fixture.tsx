@@ -16,16 +16,24 @@ import { writeView } from "../../../shared/view-state";
 const empty = () => () => {};
 const alice = "a".repeat(64);
 const honey = "b".repeat(64);
+const otherAlice = "c".repeat(64);
+const otherHoney = "d".repeat(64);
 const profiles = new Map([
   [alice, { name: "Alice" }],
   [honey, { name: "Honey", isAgent: true as const }],
+  [otherAlice, { name: "Alice" }],
+  [otherHoney, { name: "Honey", isAgent: true as const }],
 ]);
 const emptyList: readonly never[] = [];
 const emojiSnapshot = { status: "ready" as const, entries: emptyList };
 const channelList = {
   status: "ready" as const,
   channels: [
-    { id: "buzz-design", name: "buzz-design", members: [alice, honey] },
+    {
+      id: "buzz-design",
+      name: "buzz-design",
+      members: [alice, honey, otherAlice, otherHoney],
+    },
   ],
 };
 const library = { status: "ready" as const, identities: [] };

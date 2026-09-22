@@ -1,3 +1,6 @@
+import { useLayoutEffect, useMemo, useRef } from "react";
+import { publicKeyLabels } from "../../shared/identity/public-key";
+import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
@@ -33,6 +36,58 @@ export function RichComposerInput({
       ...profiles.get(recipient.pubkey),
       name: recipient.name,
     });
+  const qualifiers = useMemo(() => {
+    // Presentation groups authored names, never resolves notification identity.
+    const nameKeys = new Map<string, Set<string>>();
+    for (const recipient of draft.recipients) {
+      const name = draft.text
+        .slice(recipient.start + 1, recipient.end)
+        .trim()
+        .toLowerCase();
+      const keys = nameKeys.get(name) ?? new Set<string>();
+      keys.add(recipient.pubkey);
+      nameKeys.set(name, keys);
+    }
+    const result = new Map<string, ReadonlyMap<string, string>>();
+    for (const [name, keys] of nameKeys)
+      if (keys.size > 1) result.set(name, publicKeyLabels(keys));
+    return result;
+  }, [draft]);
+  const previous = useRef({ draft, qualifiers });
+  // Composer is keyed by draft destination. Restored qualifiers start at rest.
+  const revealed = useRef(
+    new Set(
+      [...qualifiers].flatMap(([name, keys]) =>
+        [...keys.keys()].map((key) => `${name}:${key}`),
+      ),
+    ),
+  );
+  const reveal = useMemo(() => {
+    const reveal = new Set<string>();
+    if (previous.current.draft !== draft) {
+      for (const recipient of previous.current.draft.recipients) {
+        const name = previous.current.draft.text
+          .slice(recipient.start + 1, recipient.end)
+          .trim()
+          .toLowerCase();
+        const identity = `${name}:${recipient.pubkey}`;
+        if (
+          !previous.current.qualifiers.has(name) &&
+          qualifiers.has(name) &&
+          !revealed.current.has(identity)
+        )
+          reveal.add(identity);
+      }
+    }
+    return reveal;
+  }, [draft, qualifiers]);
+  useLayoutEffect(() => {
+    previous.current = { draft, qualifiers };
+    if (!draft.text) revealed.current.clear();
+    // A qualifier shown at rest is already revealed too; either namesake may be removed.
+    for (const [name, keys] of qualifiers)
+      for (const key of keys.keys()) revealed.current.add(`${name}:${key}`);
+  });
   const { tree, tooDeep } = scanMarkdown(draft.text);
   const literals: { start: number; end: number }[] = [];
   const pending = [tree];
@@ -97,35 +152,69 @@ export function RichComposerInput({
       add(match.index, match.index + match[0].length);
   const decorations = ranges
     .sort((a, b) => a.start - b.start)
-    .map(({ start, end, mention, editAsText }) => ({
-      start,
-      end,
-      editAsText: !!editAsText,
-      content: (
-        <MessageMarkdown
-          row={{
-            id: "composer",
-            authorId: "",
-            createdAt: 0,
-            channelId,
-            content: draft.text.slice(start, end),
-            mentions: mention ? [mention] : [],
-            emoji: renderableEmoji,
-            participants: [],
-            attachments: [],
-            reactions: [],
-            replyCount: 0,
-          }}
-          directory={directory}
-          participantProfiles={profiles}
-          session={session}
-          scope={scope}
-          extensions={extensions}
-          media={session.media}
-          onOpenLink={() => false}
-          interactive={false}
-        />
-      ),
-    }));
+    .map(({ start, end, mention, editAsText }) => {
+      const label = draft.text.slice(start + 1, end);
+      const qualifier = mention
+        ? qualifiers.get(label.trim().toLowerCase())?.get(mention)
+        : undefined;
+      return {
+        start,
+        end,
+        editAsText: !!editAsText,
+        content: mention ? (
+          <InlineChip
+            address={{
+              kind:
+                directory.profiles.get(mention)?.isAgent ||
+                directory.agents.some((agent) => agent.pubkey === mention)
+                  ? "agent"
+                  : "person",
+              id: mention,
+            }}
+            face={{
+              label,
+              loading: false,
+              resolved: true,
+            }}
+            qualifier={
+              qualifier
+                ? {
+                    text: `· ${qualifier}`,
+                    reveal: reveal.has(
+                      `${label.trim().toLowerCase()}:${mention}`,
+                    ),
+                    accessibleLabel: `public key ending ${qualifier.slice("npub…".length).split("").join(" ")}`,
+                  }
+                : undefined
+            }
+            interactive={false}
+          />
+        ) : (
+          <MessageMarkdown
+            row={{
+              id: "composer",
+              authorId: "",
+              createdAt: 0,
+              channelId,
+              content: draft.text.slice(start, end),
+              mentions: mention ? [mention] : [],
+              emoji: renderableEmoji,
+              participants: [],
+              attachments: [],
+              reactions: [],
+              replyCount: 0,
+            }}
+            directory={directory}
+            participantProfiles={profiles}
+            session={session}
+            scope={scope}
+            extensions={extensions}
+            media={session.media}
+            onOpenLink={() => false}
+            interactive={false}
+          />
+        ),
+      };
+    });
   return <EditableInput {...input} decorations={decorations} />;
 }

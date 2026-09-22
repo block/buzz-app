@@ -105,10 +105,9 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   expect(after.kinds).toEqual(warm.kinds);
   expect(report.libraryReads).toBe(warmLibraryReads);
   expect(sample).toEqual({ popups: 0, geometryReads: 0 });
+  await expect(input.locator(".inline-chip")).toHaveCount(1);
   await expect(
-    page
-      .getByRole("region", { name: "Notification recipients" })
-      .getByRole("button"),
-  ).toHaveCount(1);
+    input.getByRole("img", { name: "Person Mary Jane" }),
+  ).toBeVisible();
   await expect(input).not.toHaveAttribute("aria-controls");
 });

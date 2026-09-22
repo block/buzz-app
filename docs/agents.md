@@ -339,3 +339,13 @@ These are targeted integration checks, not a completed `just scan`. The earlier
 scan was interrupted during browser tests; broader hosted CI, DCO and required
 review remain separate gates. Packaged native activity without the development
 broker remains unsupported.
+
+### Shared identity names
+
+The Agents plugin supplies display names through the app-owned identity-name
+service. Each relay session binds its own view. A ready native record takes
+precedence only in its matching community; otherwise the ready legacy display
+inventory supplies the name, then the public profile. Plugin disable restores
+public-profile names. These labels never change identity keys, membership,
+credentials, or runtime admission. Profile panels consume this view; other name
+surfaces are being migrated separately.

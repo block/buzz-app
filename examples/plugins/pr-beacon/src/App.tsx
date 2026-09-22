@@ -112,7 +112,6 @@ export function createApp(
     const channelListSnapshot = session.channels.list();
     const agentPubkey = props.selection?.agentPubkey ?? "";
     const channelId = props.selection?.channelId ?? "";
-
     // Agent identities load asynchronously. Kick off a load whenever the
     // library hasn't started one on this session yet; the status-gated
     // dependency means this only fires once per idle state, never repeats
@@ -130,13 +129,14 @@ export function createApp(
         aria-label="AI summary agent"
       >
         <div className="beacon-section-heading">
-          <h3>AI summary agent</h3>
-          <span className="beacon-badge">Buzz agent</span>
+          <h3>AI summaries with a Buzz agent</h3>
+          <span className="beacon-badge">Optional</span>
         </div>
         <p>
-          Pick an existing Buzz agent and a channel it's a member of. Sending a
-          diff for a summary posts it as a normal channel message — every other
-          member of that channel can read it too.
+          Review requests and approvals work without this. Pick an existing,
+          running Buzz agent and a channel it's a member of to get AI-written PR
+          summaries. Sending a diff for a summary posts it as a normal channel
+          message — everyone else in that channel can read it too.
         </p>
         {agentLibrarySnapshot.status === "loading" && <p>Loading agents…</p>}
         {agentLibrarySnapshot.status === "error" && (
@@ -156,6 +156,14 @@ export function createApp(
         {agentLibrarySnapshot.status === "unavailable" && (
           <p role="alert">Agents are unavailable in this Buzz build.</p>
         )}
+        {agentLibrarySnapshot.status === "ready" &&
+          agentLibrarySnapshot.identities.length === 0 && (
+            <p>
+              No Buzz agents are available yet. Ask your community administrator
+              to connect an agent and add it to a channel you can use. You can
+              review and approve pull requests without an agent.
+            </p>
+          )}
         <div>
           <label>
             Summary agent
@@ -178,6 +186,12 @@ export function createApp(
             </select>
           </label>
         </div>
+        {channelListSnapshot.channels.length === 0 && (
+          <p>
+            No channels are available. Join a channel with your agent in Buzz,
+            then return here.
+          </p>
+        )}
         <div>
           <label>
             Summary channel
@@ -201,6 +215,11 @@ export function createApp(
             </select>
           </label>
         </div>
+        <p className="beacon-muted">
+          When you open a pull request, choose Send diff to agent. Nothing is
+          sent from Settings. Choose your agent and channel again after
+          reconnecting or switching communities.
+        </p>
       </section>
     );
   }

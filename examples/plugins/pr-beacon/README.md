@@ -163,20 +163,47 @@ required no CSP or host-capability changes to build. Concretely:
 
 ## Try it
 
-Ready to install without a build: this folder ships a prebuilt `plugin.js` and
-`manifest.json` (Page API v1). In desktop Settings → Plugins → Load from
-folder, select this directory (or `buzzodz plugin install .`). New installs
-start disabled.
+In desktop Settings → Plugins → Load from folder, select
+**`examples/plugins/pr-beacon`**. This folder contains the checked-in
+`manifest.json` and `plugin.js`; no build is needed. New installs start disabled.
+Enable **PR Beacon**, then open its page.
 
-1. Enable **PR Beacon** and open its page.
-2. In Settings, paste a GitHub personal access token with `repo` scope (or
-   fine-grained pull-request read/write). Use a test token against a repo
-   you're comfortable exercising real GitHub reads/an approval against — this
-   plugin performs real API calls, not a mock. It never auto-submits a real
-   approval; approving requires clicking the button after reviewing the diff.
+Buzz copies the selected artifact; it does not watch or link the source folder.
+To install a newer build, import the folder again and choose **Update**.
+Reloading Buzz alone does not update an installed plugin.
 
-Refresh the checked-in `plugin.js` from `dist/plugin.js` after changing the
-source (see below).
+### Connect GitHub
+
+1. Open PR Beacon's **Settings** and follow **Create a GitHub token**.
+2. Choose the **Resource owner** and the repositories you want to review.
+   The fine-grained token link suggests **Contents: Read-only** for diffs,
+   **Pull requests: Read and write** for reviews and approvals, and
+   **Checks / Commit statuses: Read-only** for check results. The latter two
+   are conservative recommendations from GitHub's REST permissions; the
+   exact minimum for this plugin's GraphQL check-status query is not verified.
+3. Set an expiration, generate the token, and paste it into **GitHub token**.
+   Click **Connect GitHub**. The plugin checks your GitHub identity before
+   opening your review requests. Repository and approval permissions are
+   checked when those operations run.
+
+The token stays in memory. Re-enter it after reloading Buzz or re-enabling
+the plugin. Highlighting preferences and agent summaries are optional; neither
+is needed to browse pull requests. Approvals require a separate explicit click
+after reviewing the diff.
+
+Fine-grained tokens cover one resource owner. Organization approval may be
+required before private repositories are accessible. Multiple organizations
+or outside-collaborator access may require a classic token instead, subject to
+organization policy. Classic tokens use `public_repo` for public repositories
+or the broader `repo` scope for private ones; SAML organizations may also
+require **Configure SSO**. See GitHub's
+[token setup guide](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens)
+and [SSO instructions](https://docs.github.com/en/enterprise-cloud@latest/authentication/authenticating-with-single-sign-on/authorizing-a-personal-access-token-for-use-with-single-sign-on).
+
+Permission references: [compare commits](https://docs.github.com/en/rest/commits/commits#compare-two-commits),
+[create a review](https://docs.github.com/en/rest/pulls/reviews#create-a-review-for-a-pull-request),
+[check runs](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference),
+and [commit statuses](https://docs.github.com/en/rest/commits/statuses#get-the-combined-status-for-a-specific-reference).
 
 ## Building from source
 
@@ -216,14 +243,18 @@ registry release, so it's intentionally left out of this package's tracked
 `examples/plugins/composer-lab` does. `pnpm build` runs `tsc` then `vite
 build`; the Vite config enforces the Page API v1 contract (one
 self-contained `plugin.js` chunk, no bundled React/`@buzz/author`/Cordis,
-must export `apply`) and builds unminified. Copy `dist/plugin.js` and
-`dist/manifest.json` back over this directory's checked-in copies when
-you're done.
+must export `apply`) and builds unminified. The copied project's `dist/`
+folder is installable after a successful build. Copy its `plugin.js` and
+`manifest.json` back over this directory's checked-in copies when you're done.
+If you also keep a local `dist/` folder in this checkout, refresh both copies
+to avoid installing an older bundle. Import the updated folder in Buzz again.
 
 ## Tests
 
 `pnpm test` runs the Vitest suite (`src/**/*.test.{ts,tsx}`):
 
+- `SettingsPanel.test.tsx` — token verification, pending/error feedback,
+  duplicate-submit prevention, cancellation on unmount, and optional preferences.
 - `classify.test.ts` — VIP/label matching and own-PR status partitioning,
   including the "don't guess ready-to-merge" cases.
 - `github.test.ts` — GraphQL/REST request shape, auth headers, pagination

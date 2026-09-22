@@ -1,4 +1,5 @@
 import type { Context } from "@buzz/author";
+import { GitHubError, fetchViewerLogin } from "./github";
 import type { Preferences } from "./preferences";
 
 type ReactRuntime = Context["react"];
@@ -10,6 +11,11 @@ function parseList(value: string): string[] {
     .filter(Boolean);
 }
 
+type ConnectState =
+  | { status: "idle" }
+  | { status: "pending" }
+  | { status: "error"; message: string };
+
 export function createSettingsPanel(React: ReactRuntime) {
   return function SettingsPanel(props: {
     hasToken: boolean;
@@ -20,6 +26,9 @@ export function createSettingsPanel(React: ReactRuntime) {
     saveError: string | null;
   }) {
     const [tokenInput, setTokenInput] = React.useState("");
+    const [connectState, setConnectState] = React.useState<ConnectState>({
+      status: "idle",
+    });
     const [vipInput, setVipInput] = React.useState(
       props.preferences.vipLogins.join(", "),
     );
@@ -27,9 +36,50 @@ export function createSettingsPanel(React: ReactRuntime) {
       props.preferences.watchedLabels.join(", "),
     );
 
+    const controllerRef = React.useRef<AbortController | null>(null);
+    // Aborts an in-flight connection test on unmount so a slow GitHub
+    // response can never call onSubmitToken or setState after teardown.
+    React.useEffect(() => () => controllerRef.current?.abort(), []);
+
+    async function handleConnect(event: { preventDefault: () => void }) {
+      event.preventDefault();
+      const value = tokenInput.trim();
+      if (!value || connectState.status === "pending") return;
+      const controller = new AbortController();
+      controllerRef.current = controller;
+      setConnectState({ status: "pending" });
+      try {
+        await fetchViewerLogin(value, controller.signal);
+        if (controller.signal.aborted) return;
+        setConnectState({ status: "idle" });
+        setTokenInput("");
+        props.onSubmitToken(value);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setConnectState({
+          status: "error",
+          message:
+            error instanceof GitHubError
+              ? error.message
+              : "Could not verify this token with GitHub.",
+        });
+      }
+    }
+
+    function handleClear() {
+      setConnectState({ status: "idle" });
+      props.onClearToken();
+    }
+
     return (
       <section className="beacon-settings" aria-label="PR Beacon settings">
-        <h2 className="beacon-group-title">Connections & preferences</h2>
+        <div className="beacon-settings-intro">
+          <h2>Set up PR Beacon</h2>
+          <p className="beacon-muted">
+            Connect GitHub to see your pull requests. Everything else is
+            optional.
+          </p>
+        </div>
         {props.saveError && (
           <p role="alert">
             Couldn't save your preferences: {props.saveError}. Changes apply for
@@ -38,53 +88,121 @@ export function createSettingsPanel(React: ReactRuntime) {
         )}
         <div className="beacon-card beacon-settings-card">
           <div className="beacon-section-heading">
-            <h3>GitHub connection</h3>
-            <span className="beacon-badge">Session only</span>
+            <h3>Connect GitHub</h3>
+            <span className="beacon-badge beacon-accent">Required</span>
           </div>
-          <p>
-            GitHub personal access token. Kept in memory for this session only —
-            never saved to disk, never logged. You'll re-enter it each time you
-            enable this plugin or reload Buzz.
-          </p>
           {props.hasToken ? (
             <p>
-              Token loaded for this session.{" "}
-              <button type="button" onClick={props.onClearToken}>
-                Clear token
+              Token loaded for this session. Repository access depends on its
+              permissions.{" "}
+              <button type="button" onClick={handleClear}>
+                Disconnect
               </button>
             </p>
           ) : (
             <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (tokenInput.trim()) props.onSubmitToken(tokenInput.trim());
-                setTokenInput("");
-              }}
+              onSubmit={handleConnect}
+              aria-busy={connectState.status === "pending"}
             >
+              <ol className="beacon-setup-steps">
+                <li>
+                  <a
+                    href="https://github.com/settings/personal-access-tokens/new?name=PR%20Beacon&contents=read&pull_requests=write&checks=read&statuses=read"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    Create a GitHub token
+                  </a>
+                  . Choose the account or organization that owns your
+                  repositories, select the repositories to review, and set an
+                  expiration.
+                </li>
+                <li>
+                  Review the suggested repository permissions:
+                  <ul className="beacon-token-permissions">
+                    <li>
+                      <strong>Pull requests: Read and write</strong> — view and
+                      approve PRs
+                    </li>
+                    <li>
+                      <strong>Contents: Read-only</strong> — view code diffs
+                    </li>
+                    <li>
+                      <strong>Checks and Commit statuses: Read-only</strong> —
+                      read check results
+                    </li>
+                  </ul>
+                </li>
+                <li>Generate the token, copy it, and paste it below.</li>
+              </ol>
               <label>
                 GitHub token
                 <input
                   type="password"
                   autoComplete="off"
+                  placeholder="Paste your GitHub token"
                   value={tokenInput}
-                  onChange={(event) => setTokenInput(event.target.value)}
+                  disabled={connectState.status === "pending"}
+                  onChange={(event) => {
+                    setTokenInput(event.target.value);
+                    if (connectState.status === "error")
+                      setConnectState({ status: "idle" });
+                  }}
                 />
               </label>
-              <button className="beacon-primary" type="submit">
-                Use token
+              {connectState.status === "error" && (
+                <p role="alert">{connectState.message}</p>
+              )}
+              <button
+                className="beacon-primary"
+                type="submit"
+                disabled={
+                  !tokenInput.trim() || connectState.status === "pending"
+                }
+              >
+                {connectState.status === "pending"
+                  ? "Connecting…"
+                  : "Connect GitHub"}
               </button>
+              <p className="beacon-muted beacon-token-note">
+                Kept in memory only. Re-enter it after reloading Buzz or
+                re-enabling this plugin. Connecting checks your GitHub identity;
+                repository permissions are checked when used.
+              </p>
+              <details className="beacon-token-help">
+                <summary>Need help accessing your repositories?</summary>
+                <p>
+                  Your organization may need to approve the token before private
+                  repositories appear. Fine-grained tokens cover one repository
+                  owner. For multiple organizations or outside-collaborator
+                  access, see{" "}
+                  <a
+                    href="https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    GitHub’s token guide
+                  </a>
+                  .
+                </p>
+              </details>
             </form>
           )}
         </div>
         <div className="beacon-card beacon-settings-card">
-          <h3>Review priorities</h3>
+          <div className="beacon-section-heading">
+            <h3>Highlight review requests</h3>
+            <span className="beacon-badge">Optional</span>
+          </div>
           <p className="beacon-muted">
-            Highlight requests from these people or with these labels.
+            Highlight requests from these people or with these labels. Separate
+            multiple entries with commas; leave blank to skip.
           </p>
           <label>
-            VIP GitHub usernames (comma-separated)
+            VIP GitHub usernames
             <input
               type="text"
+              placeholder="octocat, hubot"
               value={vipInput}
               onChange={(event) => setVipInput(event.target.value)}
               onBlur={() =>
@@ -96,9 +214,10 @@ export function createSettingsPanel(React: ReactRuntime) {
             />
           </label>
           <label>
-            Watched labels (comma-separated)
+            Watched labels
             <input
               type="text"
+              placeholder="urgent, security"
               value={labelInput}
               onChange={(event) => setLabelInput(event.target.value)}
               onBlur={() =>
@@ -109,9 +228,15 @@ export function createSettingsPanel(React: ReactRuntime) {
               }
             />
           </label>
+          <p className="beacon-muted">
+            Saved automatically when you leave a field.
+          </p>
         </div>
         <div className="beacon-card beacon-settings-card">
-          <h3>Refresh</h3>
+          <div className="beacon-section-heading">
+            <h3>Automatic refresh</h3>
+            <span className="beacon-badge">Optional</span>
+          </div>
           <label className="beacon-checkbox">
             <input
               type="checkbox"
@@ -123,8 +248,7 @@ export function createSettingsPanel(React: ReactRuntime) {
                 })
               }
             />
-            Refresh review requests and your pull requests automatically while
-            this page is open (every minute)
+            Auto-refresh every minute while this page is open
           </label>
         </div>
       </section>

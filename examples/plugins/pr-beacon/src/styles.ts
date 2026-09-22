@@ -123,6 +123,18 @@ export const beaconStyles = `
 .pr-beacon .beacon-approval-note { font-size: calc(11px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); margin-top: 13px; }
 .pr-beacon .beacon-approved { padding: 9px 12px; border-radius: 7px; background: var(--beacon-accent-soft); color: var(--beacon-accent); font-weight: 600; }
 .pr-beacon .beacon-settings { max-width: 760px; }
+.pr-beacon .beacon-settings-intro { margin-bottom: 20px; }
+.pr-beacon .beacon-settings-intro h2 { font-size: calc(22px * var(--buzz-text-scale, 1)); margin-bottom: 5px; }
+.pr-beacon .beacon-settings a { color: var(--beacon-accent); text-decoration: underline; text-underline-offset: 3px; }
+.pr-beacon .beacon-setup-steps { list-style: decimal outside; padding-left: 22px; margin: 18px 0; font-size: calc(13px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); }
+.pr-beacon .beacon-setup-steps > li { margin: 12px 0; padding-left: 4px; }
+.pr-beacon .beacon-setup-steps strong { color: var(--beacon-text); font-weight: 550; }
+.pr-beacon .beacon-token-permissions { list-style: none; padding: 8px 0 0; }
+.pr-beacon .beacon-token-permissions li { margin: 4px 0; }
+.pr-beacon .beacon-token-note { margin-top: 14px; }
+.pr-beacon .beacon-token-help { font-size: calc(12px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); margin-top: 14px; }
+.pr-beacon .beacon-token-help summary { cursor: pointer; }
+.pr-beacon .beacon-token-help p { margin-top: 8px; }
 .pr-beacon .beacon-settings-card { margin: 16px 0; max-width: 760px; }
 .pr-beacon .beacon-settings-card > p { color: var(--beacon-muted); font-size: calc(13px * var(--buzz-text-scale, 1)); margin: 10px 0 16px; }
 .pr-beacon .beacon-settings-card label { display: flex; flex-direction: column; gap: 7px; font-size: calc(13px * var(--buzz-text-scale, 1)); font-weight: 550; margin-top: 16px; }

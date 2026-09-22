@@ -123,6 +123,18 @@ var beaconStyles = `
 .pr-beacon .beacon-approval-note { font-size: calc(11px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); margin-top: 13px; }
 .pr-beacon .beacon-approved { padding: 9px 12px; border-radius: 7px; background: var(--beacon-accent-soft); color: var(--beacon-accent); font-weight: 600; }
 .pr-beacon .beacon-settings { max-width: 760px; }
+.pr-beacon .beacon-settings-intro { margin-bottom: 20px; }
+.pr-beacon .beacon-settings-intro h2 { font-size: calc(22px * var(--buzz-text-scale, 1)); margin-bottom: 5px; }
+.pr-beacon .beacon-settings a { color: var(--beacon-accent); text-decoration: underline; text-underline-offset: 3px; }
+.pr-beacon .beacon-setup-steps { list-style: decimal outside; padding-left: 22px; margin: 18px 0; font-size: calc(13px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); }
+.pr-beacon .beacon-setup-steps > li { margin: 12px 0; padding-left: 4px; }
+.pr-beacon .beacon-setup-steps strong { color: var(--beacon-text); font-weight: 550; }
+.pr-beacon .beacon-token-permissions { list-style: none; padding: 8px 0 0; }
+.pr-beacon .beacon-token-permissions li { margin: 4px 0; }
+.pr-beacon .beacon-token-note { margin-top: 14px; }
+.pr-beacon .beacon-token-help { font-size: calc(12px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); margin-top: 14px; }
+.pr-beacon .beacon-token-help summary { cursor: pointer; }
+.pr-beacon .beacon-token-help p { margin-top: 8px; }
 .pr-beacon .beacon-settings-card { margin: 16px 0; max-width: 760px; }
 .pr-beacon .beacon-settings-card > p { color: var(--beacon-muted); font-size: calc(13px * var(--buzz-text-scale, 1)); margin: 10px 0 16px; }
 .pr-beacon .beacon-settings-card label { display: flex; flex-direction: column; gap: 7px; font-size: calc(13px * var(--buzz-text-scale, 1)); font-weight: 550; margin-top: 16px; }
@@ -1240,12 +1252,43 @@ function parseList(value) {
 function createSettingsPanel(React) {
   return function SettingsPanel(props) {
     const [tokenInput, setTokenInput] = React.useState("");
+    const [connectState, setConnectState] = React.useState({ status: "idle" });
     const [vipInput, setVipInput] = React.useState(
       props.preferences.vipLogins.join(", "),
     );
     const [labelInput, setLabelInput] = React.useState(
       props.preferences.watchedLabels.join(", "),
     );
+    const controllerRef = React.useRef(null);
+    React.useEffect(() => () => controllerRef.current?.abort(), []);
+    async function handleConnect(event) {
+      event.preventDefault();
+      const value = tokenInput.trim();
+      if (!value || connectState.status === "pending") return;
+      const controller = new AbortController();
+      controllerRef.current = controller;
+      setConnectState({ status: "pending" });
+      try {
+        await fetchViewerLogin(value, controller.signal);
+        if (controller.signal.aborted) return;
+        setConnectState({ status: "idle" });
+        setTokenInput("");
+        props.onSubmitToken(value);
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setConnectState({
+          status: "error",
+          message:
+            error instanceof GitHubError
+              ? error.message
+              : "Could not verify this token with GitHub.",
+        });
+      }
+    }
+    function handleClear() {
+      setConnectState({ status: "idle" });
+      props.onClearToken();
+    }
     return /* @__PURE__ */ React.createElement(
       "section",
       {
@@ -1253,9 +1296,14 @@ function createSettingsPanel(React) {
         "aria-label": "PR Beacon settings",
       },
       /* @__PURE__ */ React.createElement(
-        "h2",
-        { className: "beacon-group-title" },
-        "Connections & preferences",
+        "div",
+        { className: "beacon-settings-intro" },
+        /* @__PURE__ */ React.createElement("h2", null, "Set up PR Beacon"),
+        /* @__PURE__ */ React.createElement(
+          "p",
+          { className: "beacon-muted" },
+          "Connect GitHub to see your pull requests. Everything else is optional.",
+        ),
       ),
       props.saveError &&
         /* @__PURE__ */ React.createElement(
@@ -1271,42 +1319,96 @@ function createSettingsPanel(React) {
         /* @__PURE__ */ React.createElement(
           "div",
           { className: "beacon-section-heading" },
-          /* @__PURE__ */ React.createElement("h3", null, "GitHub connection"),
+          /* @__PURE__ */ React.createElement("h3", null, "Connect GitHub"),
           /* @__PURE__ */ React.createElement(
             "span",
-            { className: "beacon-badge" },
-            "Session only",
+            { className: "beacon-badge beacon-accent" },
+            "Required",
           ),
-        ),
-        /* @__PURE__ */ React.createElement(
-          "p",
-          null,
-          "GitHub personal access token. Kept in memory for this session only — never saved to disk, never logged. You'll re-enter it each time you enable this plugin or reload Buzz.",
         ),
         props.hasToken
           ? /* @__PURE__ */ React.createElement(
               "p",
               null,
-              "Token loaded for this session.",
+              "Token loaded for this session. Repository access depends on its permissions.",
               " ",
               /* @__PURE__ */ React.createElement(
                 "button",
                 {
                   type: "button",
-                  onClick: props.onClearToken,
+                  onClick: handleClear,
                 },
-                "Clear token",
+                "Disconnect",
               ),
             )
           : /* @__PURE__ */ React.createElement(
               "form",
               {
-                onSubmit: (event) => {
-                  event.preventDefault();
-                  if (tokenInput.trim()) props.onSubmitToken(tokenInput.trim());
-                  setTokenInput("");
-                },
+                onSubmit: handleConnect,
+                "aria-busy": connectState.status === "pending",
               },
+              /* @__PURE__ */ React.createElement(
+                "ol",
+                { className: "beacon-setup-steps" },
+                /* @__PURE__ */ React.createElement(
+                  "li",
+                  null,
+                  /* @__PURE__ */ React.createElement(
+                    "a",
+                    {
+                      href: "https://github.com/settings/personal-access-tokens/new?name=PR%20Beacon&contents=read&pull_requests=write&checks=read&statuses=read",
+                      target: "_blank",
+                      rel: "noreferrer",
+                    },
+                    "Create a GitHub token",
+                  ),
+                  ". Choose the account or organization that owns your repositories, select the repositories to review, and set an expiration.",
+                ),
+                /* @__PURE__ */ React.createElement(
+                  "li",
+                  null,
+                  "Review the suggested repository permissions:",
+                  /* @__PURE__ */ React.createElement(
+                    "ul",
+                    { className: "beacon-token-permissions" },
+                    /* @__PURE__ */ React.createElement(
+                      "li",
+                      null,
+                      /* @__PURE__ */ React.createElement(
+                        "strong",
+                        null,
+                        "Pull requests: Read and write",
+                      ),
+                      " — view and approve PRs",
+                    ),
+                    /* @__PURE__ */ React.createElement(
+                      "li",
+                      null,
+                      /* @__PURE__ */ React.createElement(
+                        "strong",
+                        null,
+                        "Contents: Read-only",
+                      ),
+                      " — view code diffs",
+                    ),
+                    /* @__PURE__ */ React.createElement(
+                      "li",
+                      null,
+                      /* @__PURE__ */ React.createElement(
+                        "strong",
+                        null,
+                        "Checks and Commit statuses: Read-only",
+                      ),
+                      " — read check results",
+                    ),
+                  ),
+                ),
+                /* @__PURE__ */ React.createElement(
+                  "li",
+                  null,
+                  "Generate the token, copy it, and paste it below.",
+                ),
+              ),
               /* @__PURE__ */ React.createElement(
                 "label",
                 null,
@@ -1314,35 +1416,95 @@ function createSettingsPanel(React) {
                 /* @__PURE__ */ React.createElement("input", {
                   type: "password",
                   autoComplete: "off",
+                  placeholder: "Paste your GitHub token",
                   value: tokenInput,
-                  onChange: (event) => setTokenInput(event.target.value),
+                  disabled: connectState.status === "pending",
+                  onChange: (event) => {
+                    setTokenInput(event.target.value);
+                    if (connectState.status === "error")
+                      setConnectState({ status: "idle" });
+                  },
                 }),
               ),
+              connectState.status === "error" &&
+                /* @__PURE__ */ React.createElement(
+                  "p",
+                  { role: "alert" },
+                  connectState.message,
+                ),
               /* @__PURE__ */ React.createElement(
                 "button",
                 {
                   className: "beacon-primary",
                   type: "submit",
+                  disabled:
+                    !tokenInput.trim() || connectState.status === "pending",
                 },
-                "Use token",
+                connectState.status === "pending"
+                  ? "Connecting…"
+                  : "Connect GitHub",
+              ),
+              /* @__PURE__ */ React.createElement(
+                "p",
+                { className: "beacon-muted beacon-token-note" },
+                "Kept in memory only. Re-enter it after reloading Buzz or re-enabling this plugin. Connecting checks your GitHub identity; repository permissions are checked when used.",
+              ),
+              /* @__PURE__ */ React.createElement(
+                "details",
+                { className: "beacon-token-help" },
+                /* @__PURE__ */ React.createElement(
+                  "summary",
+                  null,
+                  "Need help accessing your repositories?",
+                ),
+                /* @__PURE__ */ React.createElement(
+                  "p",
+                  null,
+                  "Your organization may need to approve the token before private repositories appear. Fine-grained tokens cover one repository owner. For multiple organizations or outside-collaborator access, see",
+                  " ",
+                  /* @__PURE__ */ React.createElement(
+                    "a",
+                    {
+                      href: "https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens",
+                      target: "_blank",
+                      rel: "noreferrer",
+                    },
+                    "GitHub’s token guide",
+                  ),
+                  ".",
+                ),
               ),
             ),
       ),
       /* @__PURE__ */ React.createElement(
         "div",
         { className: "beacon-card beacon-settings-card" },
-        /* @__PURE__ */ React.createElement("h3", null, "Review priorities"),
+        /* @__PURE__ */ React.createElement(
+          "div",
+          { className: "beacon-section-heading" },
+          /* @__PURE__ */ React.createElement(
+            "h3",
+            null,
+            "Highlight review requests",
+          ),
+          /* @__PURE__ */ React.createElement(
+            "span",
+            { className: "beacon-badge" },
+            "Optional",
+          ),
+        ),
         /* @__PURE__ */ React.createElement(
           "p",
           { className: "beacon-muted" },
-          "Highlight requests from these people or with these labels.",
+          "Highlight requests from these people or with these labels. Separate multiple entries with commas; leave blank to skip.",
         ),
         /* @__PURE__ */ React.createElement(
           "label",
           null,
-          "VIP GitHub usernames (comma-separated)",
+          "VIP GitHub usernames",
           /* @__PURE__ */ React.createElement("input", {
             type: "text",
+            placeholder: "octocat, hubot",
             value: vipInput,
             onChange: (event) => setVipInput(event.target.value),
             onBlur: () =>
@@ -1355,9 +1517,10 @@ function createSettingsPanel(React) {
         /* @__PURE__ */ React.createElement(
           "label",
           null,
-          "Watched labels (comma-separated)",
+          "Watched labels",
           /* @__PURE__ */ React.createElement("input", {
             type: "text",
+            placeholder: "urgent, security",
             value: labelInput,
             onChange: (event) => setLabelInput(event.target.value),
             onBlur: () =>
@@ -1367,11 +1530,25 @@ function createSettingsPanel(React) {
               }),
           }),
         ),
+        /* @__PURE__ */ React.createElement(
+          "p",
+          { className: "beacon-muted" },
+          "Saved automatically when you leave a field.",
+        ),
       ),
       /* @__PURE__ */ React.createElement(
         "div",
         { className: "beacon-card beacon-settings-card" },
-        /* @__PURE__ */ React.createElement("h3", null, "Refresh"),
+        /* @__PURE__ */ React.createElement(
+          "div",
+          { className: "beacon-section-heading" },
+          /* @__PURE__ */ React.createElement("h3", null, "Automatic refresh"),
+          /* @__PURE__ */ React.createElement(
+            "span",
+            { className: "beacon-badge" },
+            "Optional",
+          ),
+        ),
         /* @__PURE__ */ React.createElement(
           "label",
           { className: "beacon-checkbox" },
@@ -1384,7 +1561,7 @@ function createSettingsPanel(React) {
                 pollingEnabled: event.target.checked,
               }),
           }),
-          "Refresh review requests and your pull requests automatically while this page is open (every minute)",
+          "Auto-refresh every minute while this page is open",
         ),
       ),
     );
@@ -1461,17 +1638,21 @@ function createApp(React, tokenStore, preferencesStore, relay) {
       /* @__PURE__ */ React.createElement(
         "div",
         { className: "beacon-section-heading" },
-        /* @__PURE__ */ React.createElement("h3", null, "AI summary agent"),
+        /* @__PURE__ */ React.createElement(
+          "h3",
+          null,
+          "AI summaries with a Buzz agent",
+        ),
         /* @__PURE__ */ React.createElement(
           "span",
           { className: "beacon-badge" },
-          "Buzz agent",
+          "Optional",
         ),
       ),
       /* @__PURE__ */ React.createElement(
         "p",
         null,
-        "Pick an existing Buzz agent and a channel it's a member of. Sending a diff for a summary posts it as a normal channel message — every other member of that channel can read it too.",
+        "Review requests and approvals work without this. Pick an existing, running Buzz agent and a channel it's a member of to get AI-written PR summaries. Sending a diff for a summary posts it as a normal channel message — everyone else in that channel can read it too.",
       ),
       agentLibrarySnapshot.status === "loading" &&
         /* @__PURE__ */ React.createElement("p", null, "Loading agents…"),
@@ -1496,6 +1677,13 @@ function createApp(React, tokenStore, preferencesStore, relay) {
           "p",
           { role: "alert" },
           "Agents are unavailable in this Buzz build.",
+        ),
+      agentLibrarySnapshot.status === "ready" &&
+        agentLibrarySnapshot.identities.length === 0 &&
+        /* @__PURE__ */ React.createElement(
+          "p",
+          null,
+          "No Buzz agents are available yet. Ask your community administrator to connect an agent and add it to a channel you can use. You can review and approve pull requests without an agent.",
         ),
       /* @__PURE__ */ React.createElement(
         "div",
@@ -1536,6 +1724,12 @@ function createApp(React, tokenStore, preferencesStore, relay) {
           ),
         ),
       ),
+      channelListSnapshot.channels.length === 0 &&
+        /* @__PURE__ */ React.createElement(
+          "p",
+          null,
+          "No channels are available. Join a channel with your agent in Buzz, then return here.",
+        ),
       /* @__PURE__ */ React.createElement(
         "div",
         null,
@@ -1575,6 +1769,11 @@ function createApp(React, tokenStore, preferencesStore, relay) {
             ),
           ),
         ),
+      ),
+      /* @__PURE__ */ React.createElement(
+        "p",
+        { className: "beacon-muted" },
+        "When you open a pull request, choose Send diff to agent. Nothing is sent from Settings. Choose your agent and channel again after reconnecting or switching communities.",
       ),
     );
   }

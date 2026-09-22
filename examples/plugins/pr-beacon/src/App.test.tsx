@@ -428,4 +428,37 @@ describe("App agent summary settings", () => {
       agentLibrary.deliver([{ pubkey: "agent-pubkey", name: "Review Bot" }]),
     ).not.toThrow();
   });
+
+  it("shows an explicit empty state when no Buzz agents exist yet", async () => {
+    const tokenStore = createTokenStore();
+    tokenStore.setToken("test-token");
+    const preferencesStore = createPreferencesStore();
+    const agentLibrary = createFakeAgentLibrary();
+    const session = createFakeSession({ agentLibrary: agentLibrary.api });
+    const relay = createFakeRelay({ session });
+    const App = createApp(React as never, tokenStore, preferencesStore, relay);
+
+    render(<App />);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+
+    await act(async () => {
+      agentLibrary.deliver([]);
+    });
+
+    expect(
+      screen.getByText(/No Buzz agents are available yet/i),
+    ).toBeInTheDocument();
+  });
+
+  it("explains how to continue when no summary channels are available", async () => {
+    const App = createApp(
+      React as never,
+      createTokenStore(),
+      createPreferencesStore(),
+      createFakeRelay({ session: createFakeSession({ channels: [] }) }),
+    );
+    render(<App />);
+    expect(screen.getByText(/No channels are available/)).toBeInTheDocument();
+    expect(screen.getByLabelText("Summary channel")).toBeDisabled();
+  });
 });

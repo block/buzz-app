@@ -22,15 +22,35 @@ builds still require the [Tauri prerequisites](https://v2.tauri.app/start/prereq
 See [contributing](docs/contributing.md) for exact pins, registry settings,
 and the pinned pnpm package's Intel Mac limitation.
 
-Browser servers prefer port 1430 and automatically use the next open port, so
-`just web` can run from multiple worktrees. `just desktop` requires port 1430
-because its native window uses that fixed development URL.
+Both commands forward arguments to their development tool (Vite or Tauri).
+Select a port (default: 1430) with `just web --port 1431` or
+`just desktop --port 1432`. Browser servers prefer the requested port and
+use the next open port automatically; desktop requires the exact port to be free and keeps
+Vite and the native window on the same URL. To run multiple desktop copies,
+use a different port in each terminal/worktree:
+
+```sh
+just desktop --port 1430
+# In another terminal/worktree:
+just desktop --port 1431
+```
+
+Ports do not isolate account credentials or native plugin data. For separate
+plugin profiles, use the existing `BUZZODZ_PROFILE` setting described below.
 Without live opt-in they run the shell without relay identity access.
 `just iterate` applies formatting and runs fast checks plus the frontend build.
 `just scan` adds tests and native checks. [PR CI](.github/workflows/ci.yml) runs
 those checks in cached, parallel jobs with sharded browser journeys.
 Install the fast staged-file pre-commit and related-test pre-push hooks once per worktree with
 `bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#git-hooks).
+
+### Design system
+
+Run `just design` (or `bin/just design` without activation) to install locked
+dependencies, start the standalone design-system viewer, and open it in your
+browser. It uses port 1442 and does not start the desktop app or live relay broker.
+If that port is occupied, choose another with `just design --port 1444`.
+Press Ctrl+C to stop the server.
 
 ## Relay channels
 
@@ -65,7 +85,8 @@ in the non-live shell/fixture state.
    ```
 
    Open the Local URL printed by `just web`; parallel worktrees may use a port
-   above 1430. Stop the process using 1430 before starting `just desktop`.
+   above the requested port. If 1430 is busy, use `just desktop --port 1431`
+   (or another free port) instead of stopping the other copy.
 
 The broker reads the existing Keychain credential only after validating the
 public pin, refuses mismatches and never falls back to another credential. If it
@@ -137,9 +158,9 @@ Browser installation is not supported; the browser shows a desktop-only explanat
 
 Emoji is independently toggleable in Settings. Its picker and custom rendering
 plug into shared conversation surfaces; catalog, event tags and delivery stay
-session-owned. The independent Composer Lab example reuses those surfaces in a
-test page without adding tools to normal composers. Automated tests use a separate
-external-tool fixture to exercise contribution lifecycle.
+session-owned. The standard composer remains shared host UI, independent of any
+example plugin. Automated tests use source-only external consumer and tool fixtures
+to exercise component reuse and contribution lifecycle.
 
 ## Plugin contract
 

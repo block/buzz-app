@@ -4,6 +4,7 @@
     display: inline-grid;
     place-items: center;
     min-width: 0;
+    /* Text controls grow with enlarged or wrapped labels; icons stay square. */
     min-height: var(--size-control);
     border: 1px solid transparent;
     border-radius: var(--radius-pill);

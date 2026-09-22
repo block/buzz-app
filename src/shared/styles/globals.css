@@ -55,7 +55,7 @@
   --radius-sm: var(--radius-chip);
   --radius-md: var(--radius-chip);
   --radius-lg: var(--radius-row);
-  --radius-xl: var(--radius-control);
+  --radius-xl: var(--radius-legacy-control);
   --radius-2xl: var(--radius-panel);
   --radius-3xl: var(--radius-panel);
   --color-ink: var(--text);

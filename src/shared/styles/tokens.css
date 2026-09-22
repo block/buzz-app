@@ -43,7 +43,7 @@
     --elevation-dock: var(--shadow-sm);
     --radius-card: var(--radius-panel);
     --radius-card-compact: var(--radius-panel);
-    --radius-legacy-control: var(--radius-control);
+    --radius-legacy-control: var(--corner-control);
   }
   :root[data-color-mode="dark"] {
     color-scheme: dark;

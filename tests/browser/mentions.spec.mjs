@@ -30,7 +30,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
       const picker = page.getByRole("region", {
-        name: "Mention a channel member",
+        name: "Mention a member or agent",
       });
       await expect(
         picker.getByRole("button", { name: `Honey ${key}`, exact: true }),

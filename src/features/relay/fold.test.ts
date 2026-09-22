@@ -357,6 +357,32 @@ describe("message fold", () => {
     ]);
   });
 
+  it.each([
+    ["RLO", "report\u202eexe.pdf"],
+    ["newline", "report\nfinal.pdf"],
+  ])("rejects %s attachment link labels", (_case, label) => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(alice, channel, `[${label}](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("");
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "file.pdf" },
+    ]);
+  });
+
+  it("accepts ordinary unicode attachment link labels", () => {
+    const url = "https://relay.test/media/file.pdf";
+    const event = message(alice, channel, `[résumé-月報.pdf](${url})`, 10, [
+      ["imeta", `url ${url}`, "m application/pdf"],
+    ]);
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.attachments).toEqual([
+      { url, kind: "file", mime: "application/pdf", name: "résumé-月報.pdf" },
+    ]);
+  });
+
   it("caps over-length attachment link names", () => {
     const url = "https://relay.test/media/file.pdf";
     const label = "n".repeat(300);
@@ -678,6 +704,40 @@ it("classifies legacy extension attachments without a mime type", () => {
     { url: "https://x.test/movie.webm", kind: "video", name: "movie.webm" },
     { url: "https://x.test/archive", kind: "file", name: "archive" },
     { url: "https://x.test/archive.bin", kind: "file", name: "archive.bin" },
+  ]);
+});
+
+it.each([
+  ["RLO", "report%E2%80%AEexe.pdf"],
+  ["newline", "report%0Afinal.pdf"],
+])("rejects %s URL-derived attachment names", (_case, segment) => {
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", `url https://x.test/${segment}`, "m application/pdf"],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: `https://x.test/${segment}`,
+      kind: "file",
+      mime: "application/pdf",
+    },
+  ]);
+});
+
+it("accepts ordinary unicode URL-derived attachment names", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/r%C3%A9sum%C3%A9-%E6%9C%88%E5%A0%B1.pdf",
+      "m application/pdf",
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/r%C3%A9sum%C3%A9-%E6%9C%88%E5%A0%B1.pdf",
+      kind: "file",
+      mime: "application/pdf",
+      name: "résumé-月報.pdf",
+    },
   ]);
 });
 

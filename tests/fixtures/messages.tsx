@@ -36,12 +36,12 @@ const viewer = keypair(),
   agent = keypair(),
   relay = keypair();
 const media = [
-  { url: "https://fixture.test/media/one.png", video: false },
-  { url: "https://fixture.test/media/two.png", video: false },
+  { url: "https://fixture.test/media/one.png", kind: "image" },
+  { url: "https://fixture.test/media/two.png", kind: "image" },
 ] as const satisfies readonly Attachment[];
 const replyAttachment = {
   url: "https://fixture.test/media/reply.png",
-  video: false,
+  kind: "image",
 } as const satisfies Attachment;
 const roots = [
   signed(viewer, {

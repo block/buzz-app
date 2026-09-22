@@ -464,14 +464,14 @@ it("renders generic file attachments as download cards", () => {
         ],
       }}
       profile={undefined}
-      media={(url) => `app://media/${encodeURIComponent(url)}`}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
       onOpenLink={() => false}
       day={false}
       retry={undefined}
     />,
   );
   expect(html).toContain(
-    'href="app://media/https%3A%2F%2Ffiles.test%2Freport.pdf"',
+    'href="/api/relay/media?url=https%3A%2F%2Ffiles.test%2Freport.pdf"',
   );
   expect(html).toContain('download="report.pdf"');
   expect(html).toContain('aria-label="Download report.pdf"');

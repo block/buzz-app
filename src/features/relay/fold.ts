@@ -8,6 +8,7 @@ import type { Attachment, ChannelMessage } from "./contracts";
 import {
   projectMarkdownAttachments,
   relayHashBasename,
+  safeAttachmentName,
   safeMessageUrl,
 } from "./message-content";
 
@@ -32,9 +33,13 @@ function attachmentName(url: string): string | undefined {
   if (!segment) return undefined;
   try {
     const decoded = decodeURIComponent(segment);
-    return decoded && !relayHashBasename(decoded) ? decoded : undefined;
+    return !relayHashBasename(decoded)
+      ? safeAttachmentName(decoded)
+      : undefined;
   } catch {
-    return segment && !relayHashBasename(segment) ? segment : undefined;
+    return !relayHashBasename(segment)
+      ? safeAttachmentName(segment)
+      : undefined;
   }
 }
 

@@ -204,6 +204,7 @@ export const MessageRow = memo(function MessageRow({
                   key={url}
                   attachment={{ ...attachment, url }}
                   source={source}
+                  onOpenLink={onOpenLink}
                 />
               );
             if (attachment.kind === "image" && source)

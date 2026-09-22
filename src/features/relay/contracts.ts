@@ -29,6 +29,7 @@ export type Profile = Readonly<{
 export type Attachment = Readonly<{
   url: string;
   kind: "image" | "video" | "file"; // "audio" reserved for BOT-1934
+  /** Sender-supplied presentation metadata; `size` is a claim, `name` is display/download only. */
   mime?: string;
   size?: number;
   name?: string;

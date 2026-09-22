@@ -22,14 +22,41 @@ function mimeLabel(mime: string | undefined): string | undefined {
   return `${subtype.toUpperCase()} file`;
 }
 
+function isProxySource(source: string): boolean {
+  try {
+    const hasWindow = typeof window !== "undefined";
+    const url = new URL(
+      source,
+      hasWindow ? window.location.href : "https://app.test",
+    );
+    const sameOrigin =
+      source.startsWith("/") ||
+      (hasWindow && url.origin === window.location.origin);
+    return (
+      sameOrigin &&
+      url.pathname.startsWith("/api/relay") &&
+      url.pathname.endsWith("/media")
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function FileAttachment({
   attachment,
   source,
+  onOpenLink,
 }: {
   attachment: Attachment;
   source: string | undefined;
+  onOpenLink(url: string): boolean;
 }) {
   const displayName = attachment.name ?? mimeLabel(attachment.mime) ?? "File";
+  const proxySource = source ? isProxySource(source) : false;
+  const externalSource = !!source && safeOpenUrl(source) && !proxySource;
+  if (source && !proxySource && !externalSource)
+    return <UnavailableFileAttachment displayName={displayName} />;
+
   const content = (
     <>
       <FileTextIcon size={24} aria-hidden="true" />
@@ -39,18 +66,32 @@ export function FileAttachment({
           {source
             ? attachment.size
               ? formatFileSize(attachment.size)
-              : "Download file"
+              : proxySource
+                ? "Download file"
+                : "Open file"
             : "File unavailable"}
         </span>
       </span>
-      {source && <DownloadIcon size={20} aria-hidden="true" />}
+      {proxySource && <DownloadIcon size={20} aria-hidden="true" />}
     </>
   );
-  if (!source)
+  if (!source) return <UnavailableFileAttachment displayName={displayName} />;
+  if (externalSource)
     return (
-      <span className={styles.fileAttachment} role="status">
+      <a
+        className={styles.fileAttachment}
+        href={source}
+        target="_blank"
+        rel="noreferrer"
+        aria-label={`Open ${displayName}`}
+        title={displayName}
+        onClick={(event) => {
+          if (event.metaKey || event.ctrlKey || event.shiftKey) return;
+          if (onOpenLink(source)) event.preventDefault();
+        }}
+      >
         {content}
-      </span>
+      </a>
     );
   return (
     <a
@@ -58,8 +99,30 @@ export function FileAttachment({
       href={source}
       download={attachment.name ?? ""}
       aria-label={`Download ${displayName}`}
+      title={displayName}
     >
       {content}
     </a>
   );
+}
+
+function UnavailableFileAttachment({ displayName }: { displayName: string }) {
+  return (
+    <span className={styles.fileAttachment} role="status" title={displayName}>
+      <FileTextIcon size={24} aria-hidden="true" />
+      <span className={styles.fileAttachmentBody}>
+        <span className={styles.fileAttachmentName}>{displayName}</span>
+        <span className={styles.fileAttachmentMeta}>File unavailable</span>
+      </span>
+    </span>
+  );
+}
+
+function safeOpenUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:";
+  } catch {
+    return false;
+  }
 }

@@ -464,7 +464,7 @@ html[data-keyboard-navigation] button.avatarButton:focus-visible {
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
 }
-.fileAttachment:hover {
+a.fileAttachment:hover {
   background: var(--surface-hover);
 }
 html[data-keyboard-navigation] .fileAttachment:focus-visible {

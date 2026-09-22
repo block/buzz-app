@@ -38,6 +38,23 @@ export function relayHashBasename(value: string): boolean {
   return RELAY_HASH_BASENAME.test(value);
 }
 
+export function safeAttachmentName(value: string): string | undefined {
+  const name = value.slice(0, MAX_ATTACHMENT_NAME_LENGTH);
+  return name && !hasUnsafeAttachmentNameCharacter(name) ? name : undefined;
+}
+
+function hasUnsafeAttachmentNameCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code === undefined) continue;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+    if (code === 0x200e || code === 0x200f) return true;
+    if (code >= 0x202a && code <= 0x202e) return true;
+    if (code >= 0x2066 && code <= 0x2069) return true;
+  }
+  return false;
+}
+
 /** Parse once and bound attacker-controlled nesting before recursive render stages. */
 export function scanMarkdown(content: string): MarkdownScan {
   const tree = fromMarkdown(content) as MarkdownNode;
@@ -171,9 +188,9 @@ export function projectMarkdownAttachments(
       if (typeof start === "number" && typeof end === "number")
         ranges.push({ start, end });
 
-      const label = nodeText(link).trim();
+      const label = safeAttachmentName(nodeText(link).trim());
       if (!label || !adoptableAttachmentLabel(label, url)) continue;
-      names.push({ url, name: label.slice(0, MAX_ATTACHMENT_NAME_LENGTH) });
+      names.push({ url, name: label });
     }
   }
 

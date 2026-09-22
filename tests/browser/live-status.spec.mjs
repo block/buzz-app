@@ -13,7 +13,11 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     window.__bannerSeen = [];
     window.__bannerObserver = new MutationObserver(() => {
       for (const status of document.querySelectorAll('[role="status"]')) {
-        if (status.textContent.includes("Retained messages remain readable."))
+        if (
+          status.textContent.includes(
+            "Only currently accessible messages remain readable.",
+          )
+        )
           window.__bannerSeen.push(status.textContent);
       }
     });
@@ -33,7 +37,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
   ).toBeVisible();
   const warning = page
     .getByRole("status")
-    .filter({ hasText: "Retained messages remain readable." });
+    .filter({ hasText: "Only currently accessible messages remain readable." });
   await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
   await expect(warning).toHaveCount(0);
   const streams = () =>
@@ -91,9 +95,9 @@ for (const target of ["alpha", "profiles"]) {
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
     await expect.poll(() => app.relay.hasRoute("primary", target)).toBe(true);
-    const warning = page
-      .getByRole("status")
-      .filter({ hasText: "Retained messages remain readable." });
+    const warning = page.getByRole("status").filter({
+      hasText: "Only currently accessible messages remain readable.",
+    });
     await expect(warning).toHaveCount(0);
     await page.getByLabel("Conversation options", { exact: true }).click();
     await page.getByText("Diagnostics", { exact: true }).click();

@@ -55,6 +55,18 @@ export function registerAppShortcuts(
       }),
     ),
   ];
+  if (import.meta.env.DEV) {
+    remove.push(
+      shortcuts.registerHost({
+        id: "development-reload",
+        title: "Reload development app",
+        binding: { key: "r", mod: true },
+        allowInEditable: true,
+        allowInModal: true,
+        run: () => window.location.reload(),
+      }),
+    );
+  }
   return () => {
     for (const dispose of remove) dispose();
   };

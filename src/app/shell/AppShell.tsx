@@ -6,7 +6,7 @@ import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
 import { CommunitySwitcher } from "../../features/communities/CommunitySwitcher";
 import { ProfileButton } from "./ProfileButton";
-import { PageSearch } from "./PageSearch";
+import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { macTitleBarDragHandlers } from "./title-bar";
@@ -21,6 +21,7 @@ export function AppShell({
   tone,
   workspace,
   communities,
+  searchServices,
   navigationControls,
   onCommunitySelect,
   launchers,
@@ -33,6 +34,7 @@ export function AppShell({
   tone: string;
   workspace?: boolean;
   communities: Communities;
+  searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
   launchers?: ReactNode;
@@ -105,7 +107,11 @@ export function AppShell({
           {...titleBarDragProps}
         >
           {launchers}
-          <PageSearch pages={pages} onSelect={onSelect} />
+          <PageSearch
+            pages={pages}
+            onSelect={onSelect}
+            services={searchServices}
+          />
           <ProfileButton
             communities={communities}
             settingsSelected={selected === "settings"}

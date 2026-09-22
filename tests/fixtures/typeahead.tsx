@@ -9,7 +9,13 @@ import type {
   CompletionResult,
 } from "../../src/features/conversation/contracts";
 import { createRelaySession } from "../../src/features/relay/session";
-import { keypair, signed } from "../../src/features/relay/testing";
+import {
+  keypair,
+  metadata,
+  roster,
+  signed,
+} from "../../src/features/relay/testing";
+import { matchesEvent } from "../../src/features/relay/projection";
 const viewer = keypair(),
   relay = keypair();
 const publications: unknown[] = [];
@@ -57,8 +63,15 @@ const owners = ["a", "b"].map((scope) =>
       scope,
       viewer: viewer.pubkey,
       relayAuthor: relay.pubkey,
-      async query() {
-        return [];
+      async query(filters) {
+        return [
+          roster(relay, "c", [viewer.pubkey]),
+          metadata(relay, "c", "Test"),
+          roster(relay, "other", [viewer.pubkey]),
+          metadata(relay, "other", "Other"),
+        ].filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
       },
       writer: {
         kinds: [9],
@@ -73,6 +86,7 @@ const owners = ["a", "b"].map((scope) =>
     { outboxStorage: { load: () => [], save() {} } },
   ),
 );
+for (const owner of owners) owner.session.channels.ensureList();
 Object.assign(window, {
   completionFixture: {
     queries: () => requests.map((request) => request.query),

@@ -73,9 +73,10 @@ late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. There is no new disk cache or automatic cross-device sync.
 
-Search, collapsed section keys and sidebar scroll remain separate, scoped view
-intent. They are saved on page exit and restored before paint when the roster and
-groups are available; navigation history does not own them. The saved-groups
+Collapsed section keys and sidebar scroll remain separate, scoped view intent.
+They are saved on page exit and restored before paint when the roster and groups
+are available; navigation history does not own them. Search lives in the top-bar
+palette; legacy sidebar filters are ignored. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
 

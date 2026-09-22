@@ -252,6 +252,11 @@ configuration/dependencies and hook-runner changes select this job; a missing ba
 runs it conservatively. Its selection is independent of the unit-test skip, so
 CSS-only and viewer-only errors still block a push. Documentation-only and
 native-only pushes skip both jobs. Both selected jobs must pass.
+On a busy machine, set `BUZZ_TEST_WORKERS=2 git push` to limit Vitest worker
+concurrency in the hook. The optional value must be a positive integer; leaving
+it unset preserves Vitest's default. This also applies to direct Vitest runs and
+does not change test selection, timeouts, assertions, or retries.
+
 Neither job fetches, installs dependencies, formats, builds Rust, or starts browsers.
 The design job disables pnpm dependency auto-repair. Install dependencies when
 switching branches, not during a push.

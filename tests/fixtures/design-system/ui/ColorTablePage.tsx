@@ -35,6 +35,8 @@ interface TableRow {
   /** Which layer this row belongs to. */
   layer: "role" | "ramp" | "backdrop" | "choice";
   group: string;
+  /** Lifecycle label applies to public roles; raw values have no lifecycle. */
+  status?: "core" | "proposed" | "deprecated";
 }
 
 function collectRows(): TableRow[] {
@@ -47,6 +49,7 @@ function collectRows(): TableRow[] {
         variable: role.variable,
         layer: "role",
         group: group.name,
+        status: role.status,
       });
     }
   }
@@ -228,19 +231,19 @@ function TokenTable({
   let lastGroup: string | null = null;
 
   return (
-    /* `table-fixed` with three equal columns: the natural `auto` layout gives
-       the value column most of the width, because one gradient literal is longer
-       than every other cell in the table combined. Fixed makes the thirds hold
-       regardless of content, and cells wrap instead of scrolling. */
+    /* Fixed columns keep long gradient values from consuming the table.
+       On narrow screens, status shares the token cell instead of competing
+       with the swatch for a fourth column. */
     <table className="w-full table-fixed border-collapse text-left">
       <caption className="sr-only">
         Colour tokens, the base token each resolves through, and the value it
         paints
       </caption>
       <colgroup>
-        <col className="w-1/3" />
-        <col className="w-1/3" />
-        <col className="w-1/3" />
+        <col className="w-1/3 sm:w-[29%]" />
+        <col className="w-1/3 sm:w-[25%]" />
+        <col className="hidden sm:table-column sm:w-[16%]" />
+        <col className="w-1/3 sm:w-[30%]" />
       </colgroup>
       <thead>
         <tr className="border-primary border-b">
@@ -249,6 +252,12 @@ function TokenTable({
           </th>
           <th scope="col" className="py-2 pr-4 text-body text-tertiary">
             Base
+          </th>
+          <th
+            scope="col"
+            className="hidden py-2 pr-4 text-body text-tertiary sm:table-cell"
+          >
+            Status
           </th>
           <th scope="col" className="py-2 text-body text-tertiary">
             Value
@@ -268,7 +277,7 @@ function TokenTable({
                 <tr>
                   <th
                     scope="colgroup"
-                    colSpan={3}
+                    colSpan={4}
                     className="pt-6 pb-1 text-body-sm text-tertiary"
                   >
                     {headingRow}
@@ -280,6 +289,11 @@ function TokenTable({
                   <code className="break-words text-mono text-primary">
                     {row.token}
                   </code>
+                  {row.status ? (
+                    <span className="mt-1 block break-words text-body-sm text-secondary sm:hidden">
+                      {row.status}
+                    </span>
+                  ) : null}
                 </td>
                 <td className="py-2.5 pr-4 align-top">
                   {token?.pointsAtVariable ? (
@@ -289,6 +303,11 @@ function TokenTable({
                   ) : (
                     <span className="text-body-sm text-tertiary">—</span>
                   )}
+                </td>
+                <td className="hidden py-2.5 pr-4 align-top sm:table-cell">
+                  <span className="break-words text-body-sm text-secondary">
+                    {row.status ?? "—"}
+                  </span>
                 </td>
                 <td className="py-2.5 align-top">
                   <span className="flex min-w-0 items-start gap-2">

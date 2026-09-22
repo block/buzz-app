@@ -230,6 +230,21 @@ test("independent packed author consumer and native-installed contribution survi
         exact: true,
       }),
     ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(
+            localStorage.getItem('buzz-view.v1:["a","draft:general"]'),
+          ),
+        ),
+      )
+      .toEqual({
+        text: "Hi @Member and @Member ",
+        recipients: [
+          { pubkey: member, name: "Member", start: 3, end: 10 },
+          { pubkey: member, name: "Member", start: 15, end: 22 },
+        ],
+      });
     await page.evaluate(() => window.conversationFixture.saveEdit());
     await page.evaluate(() => window.conversationFixture.removeProbe());
     expect(

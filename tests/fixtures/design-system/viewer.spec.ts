@@ -722,3 +722,165 @@ test("radios enabled after mount remain synchronized on native reset", async ({
     ),
   ).toEqual({ delivery: "all" });
 });
+
+// Real engines own :focus-visible, input modality and portal focus transfer.
+test("menu items retain keyboard-only focus rings through choices and submenus in both modes", async ({
+  page,
+  browserName,
+}) => {
+  await page.goto(`${viewer}#/design/components/menu`);
+  const trigger = page.getByRole("button", {
+    name: "More actions",
+    exact: true,
+  });
+  const action = page.getByRole("menuitem", {
+    name: "Mark all as read",
+    exact: true,
+  });
+  const checkbox = page.getByRole("menuitemcheckbox", {
+    name: "Notifications",
+  });
+  const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
+  const recent = page.getByRole("menuitemradio", { name: "Recent" });
+  const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    await trigger.click();
+    await expect(page.getByRole("menu")).toHaveCSS("transform", "none");
+    await page.mouse.move(0, 0);
+    await action.hover();
+    // Programmatic focus following a pointer open must stay quiet too.
+    await action.focus();
+    await expect(action).toBeFocused();
+    await expect(action).toHaveCSS("outline-style", "none");
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press(tab);
+    await page.keyboard.press(`Shift+${tab}`);
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    for (const item of [action, checkbox, submenu]) {
+      await expect(item).toBeFocused();
+      await expect(item).toHaveCSS("outline-style", "solid");
+      await expect(item).toHaveCSS("outline-width", "2px");
+      if (item !== submenu) await page.keyboard.press("ArrowDown");
+    }
+    await page.keyboard.press("ArrowRight");
+    await expect(recent).toBeFocused();
+    await expect(recent).toHaveCSS("outline-style", "solid");
+    await expect(recent).toHaveCSS("outline-width", "2px");
+    await page.keyboard.press("ArrowDown");
+    await expect(alpha).toBeFocused();
+    await expect(alpha).toHaveCSS("outline-style", "solid");
+    await page.keyboard.press("Escape");
+    await expect(submenu).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // Returning to pointer input must remove the ring even after keyboard use.
+    await trigger.click();
+    await submenu.hover();
+    await expect(recent).toBeVisible();
+    await expect(page.getByRole("menu").last()).toHaveCSS("transform", "none");
+    await recent.hover();
+    await recent.focus();
+    await expect(recent).toBeFocused();
+    await expect(recent).toHaveCSS("outline-style", "none");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  }
+});
+
+// Geometry and hit testing cannot be established by a DOM emulator.
+test("shared menus stay reachable near viewport edges and above a dialog", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/menu`);
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 700 });
+    const context = page.getByRole("button", { name: "Context actions" });
+    // Put the real trigger at the collision boundary, without replacing menu behavior.
+    await context.evaluate((element) => {
+      Object.assign(element.style, {
+        position: "fixed",
+        right: "0",
+        bottom: "0",
+        zIndex: "1",
+      });
+    });
+    await context.click({ button: "right", position: { x: 4, y: 4 } });
+    const popup = page.getByRole("menu");
+    await expect(popup).toBeVisible();
+    await expect(popup).toHaveCSS("transform", "none");
+    const box = await popup.boundingBox();
+    if (!box) throw new Error("Context menu has no visible bounds");
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.y + box.height).toBeLessThanOrEqual(700);
+    await page
+      .getByRole("menuitem", { name: "Copy link", exact: true })
+      .click();
+    await expect(popup).toHaveCount(0);
+    const trigger = page.getByRole("button", {
+      name: "More actions",
+      exact: true,
+    });
+    await trigger.evaluate((element) => {
+      Object.assign(element.style, {
+        position: "fixed",
+        right: "0",
+        top: "0",
+        zIndex: "1",
+      });
+    });
+    await trigger.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      page.getByRole("menuitem", { name: "Mark all as read", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("End");
+    await expect(
+      page.getByRole("menuitem", { name: "Sort", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    const nested = page.getByRole("menu", { name: "Sort", exact: true });
+    await expect(nested).toBeVisible();
+    await expect(nested).toHaveCSS("transform", "none");
+    const nestedBox = await nested.boundingBox();
+    if (!nestedBox) throw new Error("Submenu has no visible bounds");
+    expect(nestedBox.x).toBeGreaterThanOrEqual(0);
+    expect(nestedBox.y).toBeGreaterThanOrEqual(0);
+    expect(nestedBox.x + nestedBox.width).toBeLessThanOrEqual(width);
+    expect(nestedBox.y + nestedBox.height).toBeLessThanOrEqual(700);
+    const choice = page.getByRole("menuitemradio", { name: "A–Z" });
+    await choice.click();
+    await expect(choice).toBeChecked();
+    // Base UI choices stay open by default; dismiss each level explicitly.
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("menuitem", { name: "Sort", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  }
+  await page.getByRole("button", { name: "Open menu dialog" }).click();
+  const dialog = page.getByRole("dialog", { name: "Menu composition" });
+  const trigger = dialog.getByRole("button", { name: "More actions" });
+  await trigger.click();
+  const action = page.getByRole("menuitem", {
+    name: "Mark all as read",
+    exact: true,
+  });
+  await expect(action).toBeVisible();
+  await action.click(); // Playwright hit testing rejects an obscured portal.
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(trigger).toBeFocused();
+});

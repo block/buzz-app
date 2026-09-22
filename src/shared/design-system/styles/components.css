@@ -753,8 +753,11 @@
 }
 
 @layer components {
-  .buzz-menu-popup {
+  /* The positioned portal owns the stacking context, not its popup child. */
+  .buzz-menu-positioner {
     z-index: var(--layer-popover);
+  }
+  .buzz-menu-popup {
     min-width: 11.5rem;
     max-width: min(20rem, calc(100vw - var(--space-4)));
     max-height: var(--available-height);
@@ -783,6 +786,11 @@
     cursor: default;
     outline: none;
     user-select: none;
+  }
+  html[data-keyboard-navigation] .buzz-menu-item:focus-visible {
+    outline: 2px solid var(--border-focus);
+    /* Keep the ring inside the scrollable popup's clipping edge. */
+    outline-offset: -2px;
   }
   .buzz-menu-item[data-highlighted] {
     background: var(--affordance-subtle-hover);

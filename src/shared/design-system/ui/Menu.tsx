@@ -40,6 +40,7 @@ function PositionedPopup({
   return (
     <BaseMenu.Portal>
       <BaseMenu.Positioner
+        className="buzz-menu-positioner"
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}

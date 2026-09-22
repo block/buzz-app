@@ -28,6 +28,8 @@ import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 import { Select } from "../../../../src/shared/design-system/ui/Select";
 import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
   MenuCheckboxItem,
   MenuIcon,
   MenuItem,
@@ -923,7 +925,7 @@ function SwitchSpecimen() {
   );
 }
 
-function MenuSpecimen() {
+function ActionMenuSpecimen() {
   const [sort, setSort] = useState("recent");
   const [notifications, setNotifications] = useState(true);
   return (
@@ -954,9 +956,7 @@ function MenuSpecimen() {
         </MenuCheckboxItem>
         <MenuSeparator />
         <MenuSubmenu>
-          <MenuSubmenuTrigger>
-            Sort
-          </MenuSubmenuTrigger>
+          <MenuSubmenuTrigger>Sort</MenuSubmenuTrigger>
           <MenuSubmenuPopup>
             <MenuRadioGroup value={sort} onValueChange={setSort}>
               <MenuRadioItem value="recent">Recent</MenuRadioItem>
@@ -971,6 +971,26 @@ function MenuSpecimen() {
         </MenuSubmenu>
       </MenuPopup>
     </MenuRoot>
+  );
+}
+
+function MenuSpecimen() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="component-specimen-stack">
+      <ActionMenuSpecimen />
+      <ContextMenuRoot>
+        <ContextMenuTrigger render={<Button>Context actions</Button>} />
+        <MenuPopup>
+          <MenuItem>Copy link</MenuItem>
+          <MenuItem disabled>Unavailable action</MenuItem>
+        </MenuPopup>
+      </ContextMenuRoot>
+      <Button onClick={() => setOpen(true)}>Open menu dialog</Button>
+      <Dialog open={open} onOpenChange={setOpen} title="Menu composition">
+        <ActionMenuSpecimen />
+      </Dialog>
+    </div>
   );
 }
 

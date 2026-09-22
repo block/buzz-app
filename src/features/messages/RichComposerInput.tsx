@@ -1,6 +1,4 @@
 import { useLayoutEffect, useRef } from "react";
-import styles from "./Messages.module.css";
-import "./composer.css";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
@@ -75,12 +73,7 @@ export function RichComposerInput({
     const input = owner.editor.view.dom as ComposerInputElement;
     input.richComposer = owner;
     input.id = id ?? "";
-    input.classList.add(
-      "message-composer-editor",
-      ...[styles.input, ...(className ?? "").split(" ")].filter(
-        (name): name is string => Boolean(name),
-      ),
-    );
+    input.classList.add(...(className ?? "").split(" ").filter(Boolean));
 
     input.setAttribute("aria-multiline", "true");
     Object.defineProperties(input, {

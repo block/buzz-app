@@ -3,7 +3,14 @@ import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
-import { ArrowUpIcon, XIcon } from "../../shared/design-system/icons/index";
+import {
+  ArrowUpIcon,
+  MicrophoneIcon,
+  PaperclipIcon,
+  TextTIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
   useId,
@@ -35,6 +42,13 @@ import { ComposerCompletions } from "../conversation/ComposerCompletions";
 import { useCompletionEditor } from "../conversation/useCompletionEditor";
 import { formatMediaTime, mediaTimeReply } from "./media-timecode";
 import { RichComposerInput } from "./RichComposerInput";
+import {
+  ComposerFormattingBar,
+  type ComposerFormat,
+} from "./ComposerFormattingBar";
+import { ComposerLinkDialog } from "./ComposerLinkDialog";
+import { formatComposerDraft, markdownLink } from "./composer-format";
+import "./composer.css";
 import type { ComposerInputElement } from "./composer-dom";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
@@ -156,6 +170,8 @@ function Composer({
   const valueRef = useRef(value);
   const input = useRef<ComposerInputElement>(null);
   const [error, setError] = useState<string>();
+  const [formattingOpen, setFormattingOpen] = useState(false);
+  const [linkOpen, setLinkOpen] = useState(false);
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -279,6 +295,98 @@ function Composer({
     setSelectedAgent(key);
     setError(undefined);
   }
+
+  function commitEdit(
+    edit: Readonly<{
+      draft: MentionDraft;
+      selectionStart: number;
+      selectionEnd: number;
+    }>,
+  ) {
+    const element = input.current;
+    if (
+      disabled ||
+      !outbox?.supports(9) ||
+      !element?.isConnected ||
+      element.disabled ||
+      element.readOnly
+    )
+      return false;
+    if (edit.draft.text.length > 16000) {
+      setError("Message is too long to edit");
+      return false;
+    }
+    completion.invalidate();
+    saveDraft(edit.draft);
+    restoreSelection.current = {
+      start: edit.selectionStart,
+      end: edit.selectionEnd,
+    };
+    setError(undefined);
+    return true;
+  }
+  function format(format: ComposerFormat) {
+    const element = input.current;
+    if (!element || disabled || element.disabled || element.readOnly) return;
+    const owner = element.richComposer;
+    if (owner) {
+      const chain = owner.editor.chain().focus();
+      if (format === "link") {
+        setLinkOpen(true);
+        return;
+      }
+      if (format === "bold") chain.toggleBold().run();
+      if (format === "italic") chain.toggleItalic().run();
+      if (format === "strike") chain.toggleStrike().run();
+      if (format === "code") chain.toggleCode().run();
+      if (format === "quote") chain.toggleBlockquote().run();
+      if (format === "bullet") chain.toggleBulletList().run();
+      if (format === "number") chain.toggleOrderedList().run();
+      return;
+    }
+    if (format === "link") {
+      setLinkOpen(true);
+      return;
+    }
+    commitEdit(
+      formatComposerDraft(
+        valueRef.current,
+        element.selectionStart,
+        element.selectionEnd,
+        format,
+      ),
+    );
+  }
+  function insertLink({
+    label: linkLabel,
+    url,
+  }: {
+    label: string;
+    url: string;
+  }) {
+    const element = input.current;
+    if (!element) return false;
+    const owner = element.richComposer;
+    if (owner) {
+      owner.editor
+        .chain()
+        .focus()
+        .extendMarkRange("link")
+        .setLink({ href: url })
+        .insertContent(linkLabel)
+        .run();
+      return true;
+    }
+    const text = markdownLink(linkLabel, url);
+    const start = element.selectionStart;
+    const end = element.selectionEnd;
+    const edited = replaceMentionDraft(valueRef.current, start, end, text);
+    return commitEdit({
+      draft: edited,
+      selectionStart: start + 1,
+      selectionEnd: start + text.lastIndexOf("]("),
+    });
+  }
   async function send() {
     if (
       disabled ||
@@ -386,7 +494,7 @@ function Composer({
     <>
       {accessories}
       <form
-        className={styles.composer}
+        className={`${styles.composer} message-composer`}
         aria-label={
           threadRootId ? "Reply to thread" : `Send a message to ${channelName}`
         }
@@ -423,6 +531,7 @@ function Composer({
           <RichComposerInput
             ref={input}
             id={inputId}
+            className="message-composer-editor"
             disabled={editingDisabled}
             value={draft}
             draft={value}
@@ -529,19 +638,49 @@ function Composer({
         )}
         <div className={styles.composerActions}>
           <div className={styles.composerTools}>
-            {extensions && (
-              <ComposerTools
-                registry={extensions.tools}
-                session={session}
-                scope={scope}
-                channelId={channelId}
-                threadRootId={threadRootId}
+            {formattingOpen ? (
+              <ComposerFormattingBar
                 disabled={editingDisabled}
-                inviteAgents={agentChoices}
-                insertText={(text) => insert(text)}
-                insertMention={insertMention}
-                focus={() => input.current?.focus()}
+                onFormat={format}
+                onClose={() => {
+                  setFormattingOpen(false);
+                  input.current?.focus();
+                }}
               />
+            ) : (
+              <>
+                <IconButton
+                  aria-label="Attach file (not connected)"
+                  disabled
+                  icon={<PaperclipIcon size={16} aria-hidden="true" />}
+                  size="toolbar"
+                  variant="ghost"
+                />
+                {extensions && (
+                  <ComposerTools
+                    registry={extensions.tools}
+                    session={session}
+                    scope={scope}
+                    channelId={channelId}
+                    threadRootId={threadRootId}
+                    inviteAgents={agentChoices}
+                    disabled={editingDisabled}
+                    insertText={(text) => insert(text)}
+                    insertMention={insertMention}
+                    focus={() => input.current?.focus()}
+                  />
+                )}
+                <IconButton
+                  aria-label="Toggle formatting"
+                  aria-expanded={formattingOpen}
+                  disabled={disabled}
+                  icon={<TextTIcon size={16} aria-hidden="true" />}
+                  size="toolbar"
+                  variant="ghost"
+                  onMouseDown={(event) => event.preventDefault()}
+                  onClick={() => setFormattingOpen(true)}
+                />
+              </>
             )}
           </div>
           {trailingTool ??
@@ -553,13 +692,15 @@ function Composer({
                 onChange={selectAgent}
                 disabled={editingDisabled}
               />
-            ) : (
-              <span className={styles.composerHint}>
-                Shift + Enter for a new line
-              </span>
-            ))}
-          <button
-            className={styles.sendButton}
+            ) : null)}
+          <IconButton
+            aria-label="Record voice note (not connected)"
+            disabled
+            icon={<MicrophoneIcon size={16} aria-hidden="true" />}
+            size="toolbar"
+            variant="ghost"
+          />
+          <IconButton
             type="submit"
             aria-label="Send message"
             title="Send message"
@@ -570,9 +711,11 @@ function Composer({
               submission?.disabled ||
               !draft.trim()
             }
-          >
-            <ArrowUpIcon size={18} aria-hidden="true" />
-          </button>
+            icon={<ArrowUpIcon size={16} aria-hidden="true" />}
+            size="toolbar"
+            shape="round"
+            variant="tint"
+          />
         </div>
         {error && <p role="alert">{error}</p>}
         {error && session.emoji?.snapshot().status === "error" && (
@@ -593,6 +736,11 @@ function Composer({
           </button>
         )}
       </form>
+      <ComposerLinkDialog
+        open={linkOpen}
+        onOpenChange={setLinkOpen}
+        onSubmit={insertLink}
+      />
     </>
   );
 }

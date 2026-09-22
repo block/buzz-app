@@ -253,13 +253,12 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await expect(draft).toHaveJSProperty("value", "Channels draft");
-    // The independently built page consumes the host's registered Mentions tool.
-    await page
-      .getByRole("button", { name: "Mention a member", exact: true })
-      .click();
+    // The independently built page consumes the host's registered mention completion.
+    await draft.press("ControlOrMeta+End");
+    await draft.pressSequentially(" @Mem");
     const member = await page.evaluate(() => window.conversationFixture.member);
     await page
-      .getByRole("button", { name: `Member ${member}`, exact: true })
+      .getByRole("option", { name: `Member ${member}`, exact: true })
       .click();
     const recipients = page.getByRole("region", {
       name: "Notification recipients",
@@ -282,9 +281,10 @@ test("independent packed author consumer and native-installed contribution survi
     await page.evaluate(() =>
       window.conversationFixture.change("enable", "buzz.mentions"),
     );
+    await draft.fill("@Mem");
     await expect(
-      page.getByRole("button", { name: "Mention a member", exact: true }),
-    ).toHaveCount(1);
+      page.getByRole("option", { name: `Member ${member}`, exact: true }),
+    ).toBeVisible();
     await draft.fill("Channels draft");
     await draft.focus();
     await draft.evaluate((el) => el.setSelectionRange(2, 5));

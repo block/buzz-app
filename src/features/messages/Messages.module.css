@@ -179,8 +179,8 @@
   object-fit: scale-down;
 }
 .composer {
-  border: 1px solid var(--border-input);
-  background: var(--surface);
+  border: 1px solid var(--border-input, var(--border-control));
+  background: var(--surface, var(--bg-panel));
   border-radius: var(--radius-control);
   padding: var(--space-3) var(--space-3) var(--space-2);
   margin: var(--space-3) var(--space-4) var(--space-4);
@@ -188,7 +188,7 @@
   flex-shrink: 0;
   flex-direction: column;
   gap: var(--space-1h);
-  color: var(--text);
+  color: var(--text, var(--text-primary));
   font-size: var(--text-label-sm);
   line-height: var(--text-label-sm--line-height);
   letter-spacing: var(--text-label-sm--letter-spacing);
@@ -224,17 +224,6 @@
   gap: var(--space-half);
   flex: 1;
 }
-.composerHint {
-  color: var(--text-muted);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-}
-@media (max-width: 850px) {
-  .composerHint {
-    display: none;
-  }
-}
 .delivery {
   display: flex;
   align-items: center;
@@ -250,46 +239,6 @@
   border: 1px solid var(--border);
   border-radius: var(--radius-pill);
   padding: var(--space-1h) var(--space-3);
-}
-.composer:focus-within {
-  border-color: var(--focus);
-  box-shadow: 0 0 0 1px var(--focus);
-}
-.composer:has(
-  .composerTools > :where(fieldset) > button[aria-expanded="true"]
-):focus-within {
-  border-color: var(--border-input);
-  box-shadow: none;
-}
-.composerTools > :where(fieldset) > button,
-.composerActions > .sendButton {
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: var(--radius-row);
-  width: 34px;
-  height: 34px;
-  padding: 0;
-  background: transparent;
-  color: var(--text-muted);
-}
-.composerTools > :where(fieldset) > button:hover,
-.composerTools > :where(fieldset) > button[aria-expanded="true"] {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-.composerActions > .sendButton {
-  border-radius: 50%;
-  background: var(--action);
-  color: var(--on-action);
-}
-.composerActions > .sendButton:hover:not(:disabled) {
-  background: var(--neutral-4);
-}
-.composerActions > .sendButton:disabled {
-  background: var(--surface-control);
-  color: var(--text-muted);
-  opacity: 1;
 }
 .delivery button {
   border: 0;

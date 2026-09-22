@@ -45,7 +45,26 @@ test("product catalogue uses the production composer and shared navigation", asy
   await page
     .getByRole("link", { name: "Text formatting", exact: true })
     .click();
+  await page
+    .getByRole("button", { name: "Toggle formatting", exact: true })
+    .click();
+  await expect(
+    page.getByRole("group", { name: "Formatting", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Link", exact: true }).click();
+  await expect(page.getByRole("dialog")).toBeVisible();
+  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page
+    .getByRole("button", { name: "Close formatting", exact: true })
+    .click();
   const composer = page.getByRole("form");
+  await expect(composer).toHaveCSS("background-color", "rgb(255, 255, 255)");
+  await expect(
+    composer.getByRole("button", { name: "Mention a member" }),
+  ).toHaveCount(0);
+  await expect(composer.getByText("Shift + Enter for a new line")).toHaveCount(
+    0,
+  );
   const editor = composer.getByRole("textbox");
   await editor.fill("@Ali");
   await page
@@ -53,6 +72,23 @@ test("product catalogue uses the production composer and shared navigation", asy
     .click();
   await expect(
     composer.getByRole("region", { name: "Notification recipients" }),
+  ).toBeVisible();
+  const send = composer.getByRole("button", { name: "Send message" });
+  await expect(send).toHaveAttribute("data-icon-variant", "tint");
+  await expect(send).toHaveCSS("background-color", "rgb(247, 237, 254)");
+  for (const name of [
+    "Attach file (not connected)",
+    "Insert emoji",
+    "Toggle formatting",
+    "Record voice note (not connected)",
+    "Send message",
+  ]) {
+    const button = composer.getByRole("button", { name, exact: true });
+    await expect(button).toHaveAttribute("data-icon-size", "toolbar");
+    await expect(button.locator("svg")).toHaveAttribute("width", "16");
+  }
+  await expect(
+    composer.getByRole("button", { name: "Insert emoji" }),
   ).toBeVisible();
   for (const width of [390, 820, 1440]) {
     await page.setViewportSize({ width, height: 1000 });

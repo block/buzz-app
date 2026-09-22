@@ -26,17 +26,13 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       second: window.mentionFixture.second,
     }));
     const choose = async (key) => {
-      await page
-        .getByRole("button", { name: "Mention a member", exact: true })
-        .click();
-      const picker = page.getByRole("region", {
-        name: "Mention a member or agent",
+      const field = page.getByRole("textbox", {
+        name: /^(Message #General|Reply to thread)$/,
       });
-      await expect(
-        picker.getByRole("button", { name: `Honey ${key}`, exact: true }),
-      ).toBeVisible();
-      await picker
-        .getByRole("button", { name: `Honey ${key}`, exact: true })
+      await field.press("ControlOrMeta+End");
+      await field.pressSequentially("@Ho");
+      await page
+        .getByRole("option", { name: `Honey ${key}`, exact: true })
         .click();
     };
     const order = () =>
@@ -45,7 +41,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         .evaluateAll((buttons) =>
           buttons.map((button) => button.getAttribute("aria-label")),
         );
-    await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
+    await expect.poll(order).toEqual(["Insert emoji"]);
     await choose(keys.first);
     await choose(keys.second);
     // The merged toolbar must preserve exact recipients while the new picker
@@ -133,7 +129,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await page.evaluate(() =>
       window.mentionFixture.change("enable", "buzz.mentions"),
     );
-    await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
+    await expect.poll(order).toEqual(["Insert emoji"]);
     await choose(keys.first);
     await page
       .getByRole("button", { name: "Remove first Honey", exact: true })

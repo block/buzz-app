@@ -44,11 +44,9 @@ test("editing selected name plus pasting same name cannot transfer notification 
     },
   ];
   for (const [index, scenario] of cases.entries()) {
+    await input.fill("@Ho");
     await page
-      .getByRole("button", { name: "Mention a member", exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: `Honey ${first}`, exact: true })
+      .getByRole("option", { name: `Honey ${first}`, exact: true })
       .click();
     await expect(input).toHaveJSProperty("value", "@Honey ");
     // The picker restores focus/caret on the next animation frame. Let that

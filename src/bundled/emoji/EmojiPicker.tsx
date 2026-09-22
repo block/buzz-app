@@ -11,6 +11,7 @@ import {
   SmileyIcon,
   SmileyStickerIcon,
 } from "../../shared/design-system/icons/index";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Popover } from "@base-ui/react/popover";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -305,39 +306,47 @@ export function EmojiPicker({
       )}
     </section>
   );
-  const button = (
+  const triggerProps = {
+    ref: trigger,
+    "aria-expanded": open && !disabled,
+    "aria-busy": (gifDiscoveryRequested && gifs === undefined) || undefined,
+    "aria-controls": id,
+    disabled,
+    onPointerEnter: () => setGifDiscoveryRequested(true),
+    onFocus: () => setGifDiscoveryRequested(true),
+    onClick: () => {
+      if (open) {
+        setOpen(false);
+        return;
+      }
+      setAnimateTab(false);
+      setPressedTab(undefined);
+      void session.emoji.ensure();
+      if (gifs !== true && gifAvailability?.community === community)
+        setGifAvailability(undefined);
+      setGifDiscoveryRequested(true);
+      setOpen(true);
+    },
+  };
+  const button = reaction ? (
     <button
-      ref={trigger}
-      className={reaction ? styles.reactionTrigger : undefined}
+      {...triggerProps}
+      className={styles.reactionTrigger}
       type="button"
-      aria-label={reaction ? "Add reaction" : "Insert emoji"}
-      title={reaction ? "Add reaction" : "Insert emoji"}
-      aria-expanded={open && !disabled}
-      aria-busy={(gifDiscoveryRequested && gifs === undefined) || undefined}
-      aria-controls={id}
-      disabled={disabled}
-      onPointerEnter={() => setGifDiscoveryRequested(true)}
-      onFocus={() => setGifDiscoveryRequested(true)}
-      onClick={() => {
-        if (open) {
-          setOpen(false);
-          return;
-        }
-        setAnimateTab(false);
-        setPressedTab(undefined);
-        void session.emoji.ensure();
-        if (gifs !== true && gifAvailability?.community === community)
-          setGifAvailability(undefined);
-        setGifDiscoveryRequested(true);
-        setOpen(true);
-      }}
+      aria-label="Add reaction"
+      title="Add reaction"
     >
-      {reaction ? (
-        <SmileyStickerIcon size={18} aria-hidden="true" />
-      ) : (
-        <SmileyIcon size={20} aria-hidden="true" />
-      )}
+      <SmileyStickerIcon size={18} aria-hidden="true" />
     </button>
+  ) : (
+    <IconButton
+      {...triggerProps}
+      aria-label="Insert emoji"
+      title="Insert emoji"
+      icon={<SmileyIcon size={16} aria-hidden="true" />}
+      size="toolbar"
+      variant="ghost"
+    />
   );
   const controlsView = (
     <fieldset

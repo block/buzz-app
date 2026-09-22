@@ -175,6 +175,29 @@ export const VideoConferenceIcon = defineIcon(
 );
 import { WrenchIcon as PhosphorWrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
 export const WrenchIcon = defineIcon("phosphor", PhosphorWrenchIcon);
+import { CodeIcon as PhosphorCodeIcon } from "@phosphor-icons/react/dist/csr/Code";
+export const CodeIcon = defineIcon("phosphor", PhosphorCodeIcon);
+import { ListBulletsIcon as PhosphorListBulletsIcon } from "@phosphor-icons/react/dist/csr/ListBullets";
+export const ListBulletsIcon = defineIcon("phosphor", PhosphorListBulletsIcon);
+import { ListNumbersIcon as PhosphorListNumbersIcon } from "@phosphor-icons/react/dist/csr/ListNumbers";
+export const ListNumbersIcon = defineIcon("phosphor", PhosphorListNumbersIcon);
+import { PaperclipIcon as PhosphorPaperclipIcon } from "@phosphor-icons/react/dist/csr/Paperclip";
+export const PaperclipIcon = defineIcon("phosphor", PhosphorPaperclipIcon);
+import { MicrophoneIcon as PhosphorMicrophoneIcon } from "@phosphor-icons/react/dist/csr/Microphone";
+export const MicrophoneIcon = defineIcon("phosphor", PhosphorMicrophoneIcon);
+import { QuotesIcon as PhosphorQuotesIcon } from "@phosphor-icons/react/dist/csr/Quotes";
+export const QuotesIcon = defineIcon("phosphor", PhosphorQuotesIcon);
+import { TextTIcon as PhosphorTextTIcon } from "@phosphor-icons/react/dist/csr/TextT";
+export const TextTIcon = defineIcon("phosphor", PhosphorTextTIcon);
+import { TextBIcon as PhosphorTextBIcon } from "@phosphor-icons/react/dist/csr/TextB";
+export const TextBIcon = defineIcon("phosphor", PhosphorTextBIcon);
+import { TextItalicIcon as PhosphorTextItalicIcon } from "@phosphor-icons/react/dist/csr/TextItalic";
+export const TextItalicIcon = defineIcon("phosphor", PhosphorTextItalicIcon);
+import { TextStrikethroughIcon as PhosphorTextStrikethroughIcon } from "@phosphor-icons/react/dist/csr/TextStrikethrough";
+export const TextStrikethroughIcon = defineIcon(
+  "phosphor",
+  PhosphorTextStrikethroughIcon,
+);
 import { XIcon as PhosphorXIcon } from "@phosphor-icons/react/dist/csr/X";
 export const XIcon = defineIcon("phosphor", PhosphorXIcon);
 import { XCircleIcon as PhosphorXCircleIcon } from "@phosphor-icons/react/dist/csr/XCircle";

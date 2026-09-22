@@ -1125,3 +1125,43 @@ it("lets an ordinary emoji tool replace the current selection and delivers that 
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith("channel", "😀", []);
 });
+
+it("formats the production draft reversibly without losing explicit notification intent", async () => {
+  const h = mount();
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  const input = h.input();
+  input.setSelectionRange(0, input.value.length);
+  await h.user.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  await h.user.click(screen.getByRole("button", { name: "Bold" }));
+  expect(input).toHaveValue("**@Honey** ");
+  await h.user.click(screen.getByRole("button", { name: "Bold" }));
+  expect(input).toHaveValue("@Honey ");
+  await h.user.click(screen.getByRole("button", { name: "Bold" }));
+  await h.user.click(screen.getByRole("button", { name: "Send message" }));
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "**@Honey** ",
+    [first.pubkey],
+  );
+});
+
+it("rejects formatting and link edits when guards change", async () => {
+  const h = mount();
+  const input = h.input();
+  h.fill("x".repeat(16000));
+  input.setSelectionRange(0, input.value.length);
+  await h.user.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  await h.user.click(screen.getByRole("button", { name: "Bold" }));
+  expect(input).toHaveValue("x".repeat(16000));
+  expect(screen.getByRole("alert")).toHaveTextContent("too long");
+
+  h.fill("original");
+  input.setSelectionRange(0, input.value.length);
+  await h.user.click(screen.getByRole("button", { name: "Link" }));
+  await h.user.type(screen.getByLabelText("Link text"), "changed");
+  await h.user.type(screen.getByLabelText("Address"), "https://example.com");
+  input.readOnly = true;
+  await h.user.click(screen.getByRole("button", { name: "Add link" }));
+  expect(input).toHaveValue("original");
+  expect(screen.getByRole("dialog")).toBeVisible();
+});

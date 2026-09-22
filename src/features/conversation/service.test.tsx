@@ -155,15 +155,19 @@ it("validates ranges, skips failures, and deterministically resolves overlap", (
   ]);
 });
 
-it("bundled Mentions registers only a chooser and removal leaves the host UI available", async () => {
+it("bundled Mentions registers typeahead without a toolbar button and removal leaves the host UI available", async () => {
   const h = harness(mentions);
   const composer = h.service.ui.Composer;
   h.runtime.reconcile([h.plugin]);
-  await vi.waitFor(() => expect(h.service.tools.snapshot()).toHaveLength(1));
-  expect(h.service.tools.snapshot()[0]?.title).toBe("Mentions");
+  await vi.waitFor(() =>
+    expect(h.service.completions.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.tools.snapshot()).toHaveLength(0);
   expect(h.service.inline.snapshot()).toHaveLength(0);
   h.runtime.reconcile([]);
-  await vi.waitFor(() => expect(h.service.tools.snapshot()).toHaveLength(0));
+  await vi.waitFor(() =>
+    expect(h.service.completions.snapshot()).toHaveLength(0),
+  );
   expect(h.service.ui.Composer).toBe(composer);
 });
 

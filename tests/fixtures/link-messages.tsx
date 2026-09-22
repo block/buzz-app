@@ -1,5 +1,6 @@
 import { Context } from "@deepseek-ai/cordis";
 import { useState } from "react";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { createRoot } from "react-dom/client";
 import { PluginRuntime } from "../../src/plugins/runtime";
 import { ConversationService } from "../../src/features/conversation/service";
@@ -196,6 +197,7 @@ if (readView(composerScope, "draft:design", null) === null) {
   });
 }
 function Preview() {
+  useKeyboardFocusVisibility();
   const [opened, setOpened] = useState("No link opened");
   const [enabled, setEnabled] = useState("on");
   return (

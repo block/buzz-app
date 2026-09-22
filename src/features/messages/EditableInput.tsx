@@ -55,6 +55,7 @@ export function EditableInput({
   maxLength,
   onUndo,
   decorations,
+  className,
   ...events
 }: EditableInputProps & { decorations: readonly EditorDecoration[] }) {
   const element = useRef<ComposerInputElement>(null);
@@ -394,7 +395,7 @@ export function EditableInput({
         contentEditable={!disabled}
         suppressContentEditableWarning
         tabIndex={disabled ? -1 : 0}
-        className={styles.input}
+        className={`${styles.input ?? ""} ${className ?? ""}`}
         data-placeholder={placeholder}
         data-empty={!value || undefined}
         onPaste={(event) => {

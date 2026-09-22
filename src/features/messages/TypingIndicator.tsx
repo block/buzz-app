@@ -30,6 +30,7 @@ export function TypingIndicator({
     .slice(0, 3)
     .map(({ pubkey }) => profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
   const others = matching.length - names.length;
+  if (!matching.length) return null;
   return (
     <div className={styles.typing}>
       <span role="status" aria-label="Typing activity">

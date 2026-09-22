@@ -27,21 +27,9 @@ test("mention completion distinguishes exact agent identity without reshaping a 
     page.getByRole("option", { name: `Honey ${keys.agent}`, exact: true }),
     "squircle",
   );
-  await input.fill("");
-  await page
-    .getByRole("button", { name: "Mention a member", exact: true })
-    .click();
-  const picker = page.getByRole("region", {
-    name: "Mention a member or agent",
-  });
-  await expectAvatarShape(
-    picker.getByRole("button", { name: `Honey ${keys.human}`, exact: true }),
-    "circle",
-  );
-  await expectAvatarShape(
-    picker.getByRole("button", { name: `Honey ${keys.agent}`, exact: true }),
-    "squircle",
-  );
+  await expect(
+    page.getByRole("button", { name: "Mention a member", exact: true }),
+  ).toHaveCount(0);
 });
 test("open completion republishes library-only display hints without changing the query", async ({
   page,

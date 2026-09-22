@@ -123,3 +123,56 @@
     outline-offset: 2px;
   }
 }
+
+@layer components {
+  .buzz-select[data-variant="field"] {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .buzz-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    text-align: start;
+    cursor: pointer;
+  }
+  .buzz-select-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .buzz-select-trigger > :last-child {
+    display: flex;
+    flex-shrink: 0;
+  }
+  .buzz-select-positioner {
+    z-index: var(--layer-popover);
+  }
+  .buzz-select-popup[data-variant="field"] {
+    width: var(--anchor-width);
+    overflow-wrap: anywhere;
+  }
+  .buzz-combobox-control {
+    position: relative;
+    min-width: 0;
+  }
+  .buzz-combobox-control > .buzz-input {
+    padding-inline-end: calc(var(--size-control-sm) + var(--space-2));
+  }
+  .buzz-combobox-trigger {
+    position: absolute;
+    inset-inline-end: var(--space-1);
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  .buzz-combobox-empty:not(:empty) {
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-subtle);
+  }
+  .buzz-combobox-option {
+    flex-direction: column;
+    align-items: start;
+    gap: var(--space-1);
+  }
+}

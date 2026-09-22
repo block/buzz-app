@@ -1,3 +1,4 @@
+import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
@@ -906,24 +907,75 @@ function SwitchSpecimen() {
   );
 }
 
+const CHOICE_OPTIONS = [
+  { value: "channel", label: "Channel" },
+  { value: "session", label: "Session" },
+  { value: "dm", label: "Direct message" },
+];
+
 function SelectSpecimen() {
   const [value, setValue] = useState("channel");
+  const groups = [{ label: "Destination", options: CHOICE_OPTIONS }];
   return (
-    <Select
-      label="Preview context"
-      value={value}
-      onValueChange={setValue}
-      groups={[
-        {
-          label: "Destination",
-          options: [
-            { value: "channel", label: "Channel" },
-            { value: "session", label: "Session" },
-            { value: "dm", label: "Direct message" },
-          ],
-        },
-      ]}
-    />
+    <div className="component-specimen-stack">
+      <Select
+        label="Preview context"
+        value={value}
+        onValueChange={setValue}
+        groups={groups}
+      />
+      <Select
+        variant="field"
+        label="Destination"
+        value={value}
+        onValueChange={setValue}
+        groups={groups}
+      />
+      <Select
+        variant="field"
+        label="Destination (disabled)"
+        disabled
+        value={value}
+        onValueChange={setValue}
+        groups={groups}
+      />
+    </div>
+  );
+}
+
+function ComboboxSpecimen() {
+  return (
+    <div className="component-specimen-stack">
+      {(["default", "loading", "disabled"] as const).map((state) => (
+        <Combobox.Root
+          key={state}
+          items={state === "loading" ? [] : CHOICE_OPTIONS}
+          disabled={state === "disabled"}
+        >
+          <Combobox.Control
+            label={`Destination (${state})`}
+            triggerLabel={`Browse destinations (${state})`}
+            placeholder="Choose or search…"
+            loading={state === "loading"}
+          />
+          <Combobox.Popup
+            empty={
+              state === "loading"
+                ? "Loading destinations…"
+                : "No matching destinations."
+            }
+          >
+            <Combobox.List>
+              {(item: (typeof CHOICE_OPTIONS)[number]) => (
+                <Combobox.Item key={item.value} value={item}>
+                  {item.label}
+                </Combobox.Item>
+              )}
+            </Combobox.List>
+          </Combobox.Popup>
+        </Combobox.Root>
+      ))}
+    </div>
   );
 }
 
@@ -1113,31 +1165,61 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   panel: PanelSpecimen,
   tabs: TabsSpecimen,
   select: SelectSpecimen,
+  combobox: ComboboxSpecimen,
   switch: SwitchSpecimen,
   accordion: () => (
-    <Accordion
-      items={[
-        {
-          value: "purpose",
-          title: "When to use an accordion",
-          content: (
-            <p className="text-body">
-              Use a disclosure for supporting content that does not need to be
-              visible all the time.
-            </p>
-          ),
-        },
-        {
-          value: "behavior",
-          title: "Keyboard behavior",
-          content: (
-            <p className="text-body">
-              Focus a heading and press Enter or Space to expand it.
-            </p>
-          ),
-        },
-      ]}
-    />
+    <>
+      <Accordion
+        items={[
+          {
+            value: "purpose",
+            title: "When to use an accordion",
+            content: (
+              <p className="text-body">
+                Use a disclosure for supporting content that does not need to be
+                visible all the time.
+              </p>
+            ),
+          },
+          {
+            value: "behavior",
+            title: "Keyboard behavior",
+            content: (
+              <p className="text-body">
+                Focus a heading and press Enter or Space to expand it.
+              </p>
+            ),
+          },
+        ]}
+      />
+      <h3 className="text-label">
+        Form disclosures · spacing owned by the form
+      </h3>
+      <Accordion
+        variant="form"
+        keepMounted
+        items={[
+          {
+            value: "advanced",
+            title: "Advanced",
+            content: (
+              <Field label="Label">
+                <Input placeholder="Draft stays when collapsed" />
+              </Field>
+            ),
+          },
+          {
+            value: "details",
+            title: "Technical details",
+            content: (
+              <p className="text-body-sm text-subtle">
+                Supporting information shares the same row rhythm.
+              </p>
+            ),
+          },
+        ]}
+      />
+    </>
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchFieldSpecimen,

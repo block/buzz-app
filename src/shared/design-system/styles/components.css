@@ -273,6 +273,7 @@
   }
 
   .buzz-avatar[data-size="small"] {
+    @apply text-caption;
     width: 1.5rem;
     height: 1.5rem;
   }
@@ -826,6 +827,7 @@
   .buzz-accordion-panel {
     padding: var(--space-2);
   }
+  .buzz-accordion[data-variant="form"],
   .buzz-accordion[data-variant="navigation"] {
     margin: 0;
   }

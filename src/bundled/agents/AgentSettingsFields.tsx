@@ -1,3 +1,7 @@
+import { Accordion } from "../../shared/design-system/ui/Accordion";
+import { Textarea } from "../../shared/design-system/ui/Textarea";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
 import type {
   AgentControl,
   AgentControlState,
@@ -28,33 +32,37 @@ export function AgentSettingsFields({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   return (
-    <>
-      <fieldset disabled={disabled} className="min-w-0 space-y-4">
-        <label className="agent-control-field">
-          Name
-          <input
-            value={draft.name}
-            onChange={(event) => onChange({ name: event.target.value })}
-          />
-        </label>
-        <label className="agent-control-field">
-          Agent instructions
-          <textarea
-            rows={6}
-            value={draft.systemPrompt}
-            onChange={(event) => onChange({ systemPrompt: event.target.value })}
-          />
-        </label>
+    <div className="min-w-0">
+      <div className="min-w-0 space-y-section-gap">
+        <div className="space-y-4">
+          <Field label="Name">
+            <Input
+              disabled={disabled}
+              value={draft.name}
+              onChange={(event) => onChange({ name: event.target.value })}
+            />
+          </Field>
+          <Field label="Agent instructions">
+            <Textarea
+              disabled={disabled}
+              rows={6}
+              value={draft.systemPrompt}
+              onChange={(event) =>
+                onChange({ systemPrompt: event.target.value })
+              }
+            />
+          </Field>
+        </div>
         <fieldset className="min-w-0 space-y-4">
-          <legend className="mb-4 text-body-sm text-secondary">
-            AI configuration
-          </legend>
+          <legend className="mb-4 text-label">AI configuration</legend>
           <AgentHarnessEditor
+            disabled={disabled}
             draft={draft}
             options={state.data?.harnessOptions ?? []}
             onChange={onChange}
           />
           <AgentModelPicker
+            disabled={disabled}
             id={id}
             savedRevision={savedRevision}
             control={control}
@@ -63,38 +71,54 @@ export function AgentSettingsFields({
             onChange={onChange}
           />
         </fieldset>
-      </fieldset>
-      <details className="space-y-4">
-        <summary className="cursor-pointer text-body-sm">Advanced</summary>
-        <label className="agent-control-field">
-          Workspace
-          <input
-            value={draft.workspace}
-            disabled={disabled}
-            spellCheck={false}
-            onChange={(event) => onChange({ workspace: event.target.value })}
-          />
-        </label>
-        <label className="agent-control-field">
-          Arguments (JSON array)
-          <textarea
-            rows={3}
-            value={draft.args}
-            disabled={disabled}
-            onChange={(event) => onChange({ args: event.target.value })}
-          />
-        </label>
-        <AgentEnvironmentEditor
-          keys={environmentKeys}
-          patch={draft.environment}
-          disabled={disabled}
-          onChange={(environment) => onChange({ environment })}
+      </div>
+      <div className="-mx-2">
+        <Accordion
+          variant="form"
+          keepMounted
+          items={[
+            {
+              value: "advanced",
+              title: "Environment",
+              content: (
+                <div className="space-y-4">
+                  <Field label="Workspace">
+                    <Input
+                      value={draft.workspace}
+                      disabled={disabled}
+                      spellCheck={false}
+                      onChange={(event) =>
+                        onChange({ workspace: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <Field label="Arguments (JSON array)">
+                    <Textarea
+                      rows={3}
+                      value={draft.args}
+                      disabled={disabled}
+                      onChange={(event) =>
+                        onChange({ args: event.target.value })
+                      }
+                    />
+                  </Field>
+                  <AgentEnvironmentEditor
+                    keys={environmentKeys}
+                    patch={draft.environment}
+                    disabled={disabled}
+                    onChange={(environment) => onChange({ environment })}
+                  />
+                  <p className="text-body-sm text-secondary">
+                    Environment overrides take precedence over provider and
+                    model selections. Arguments are passed literally, not
+                    through a shell.
+                  </p>
+                </div>
+              ),
+            },
+          ]}
         />
-        <p className="text-body-sm text-secondary">
-          Environment overrides take precedence over provider and model
-          selections. Arguments are passed literally, not through a shell.
-        </p>
-      </details>
-    </>
+      </div>
+    </div>
   );
 }

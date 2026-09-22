@@ -93,6 +93,15 @@ carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
+For finite choices, use Select: its inline layout fits compact toolbars and
+`variant="field"` fits labelled forms. Pass `disabled` explicitly when the choice
+is unavailable. For searchable choices, use the shared Combobox parts; keep
+filtering, custom-value commits, and async requests with the feature. Its Control
+owns the label, input and integrated browse caret; Popup and Item own the shared
+menu presentation. Use its loading state while discovering options, and keep
+retry/cancel actions with the feature. Do not style a native select as an Input
+or attach a separate round button to mimic a combobox.
+
 ## Compositions
 
 Dialog composes a Base UI modal with a shared title, optional description, body,
@@ -100,6 +109,12 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+
+Use Accordion for collapsible sections. Form sections pass `keepMounted` so
+collapsing them preserves local input state; leave the default for static content.
+Use `variant="form"` when the surrounding form owns spacing. It removes outer
+margins while keeping the shared row and panel padding. Adjacent disclosure rows
+form one stack; avoid inserting form-section gaps between individual rows.
 
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
@@ -109,6 +124,30 @@ Tabs with content use renderPanel, which lets Base UI connect each tab and panel
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+
+## Align row content, not state backgrounds
+
+When composing NavigationItem lists inside dialogs or padded panels, align the
+leading content column with the heading. With icons, this means the icon slot;
+labels form a second consistent column. Give mixed icons and identity fallbacks
+the same slot (24px in the community chooser and page search), retaining each
+icon's intended size within it.
+
+The hover and selected backgrounds may extend beyond that content edge. Offset
+the list wrapper by the existing `--space-control-inset` rather than removing
+NavigationItem padding, moving the heading, or overriding the row's paint. The
+surrounding composition owns this offset; it is not a global navigation change.
+
+Preserve at least `--space-2` of outer gutter. At the dialog's compact breakpoint
+(480px), its padding is 16px, so reduce the outward offset from 16px to 8px. That
+small content inset is intentional: the row background and keyboard focus must
+stay clear of the dialog edge. Scrollable lists also need space inside their
+scroll container for the focus outline; account for that space in the offset.
+Align empty-state text with the same leading content column.
+
+Check the composition with no highlighted row, hover, selection and keyboard
+focus, in both themes and at narrow widths and enlarged text. Content alignment
+should remain legible without a state background to explain it.
 
 ## State
 

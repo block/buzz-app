@@ -1,3 +1,5 @@
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
 
@@ -22,8 +24,8 @@ export function AgentEnvironmentEditor({
     onChange(next);
   };
   return (
-    <fieldset disabled={disabled} className="min-w-0 space-y-3">
-      <legend className="text-heading">Environment overrides</legend>
+    <fieldset disabled={disabled} className="min-w-0 space-y-4">
+      <legend className="mb-4 text-label">Environment overrides</legend>
       <p className="text-body-sm text-secondary">
         Saved values stay on the host. Leave unchanged to preserve them;
         replacements are write-only. Remove takes effect only when you save. Do
@@ -34,27 +36,34 @@ export function AgentEnvironmentEditor({
         const removed = changed && patch[key] === null;
         return (
           <div key={key} className="flex flex-wrap items-end gap-2">
-            <label className="agent-control-field flex-1">
-              <span className="break-all font-mono text-mono">{key}</span>
-              <input
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                aria-label={`Replacement for ${key}`}
-                disabled={disabled || removed}
-                value={patch[key] ?? ""}
-                placeholder={
-                  removed
-                    ? "Will be removed on save"
-                    : keys.includes(key)
-                      ? "Saved value unchanged"
-                      : "New value"
+            <div className="min-w-0 flex-1">
+              <Field
+                label={
+                  <span className="break-all font-mono text-mono">
+                    <span className="sr-only">Replacement for </span>
+                    {key}
+                  </span>
                 }
-                onChange={(event) =>
-                  onChange({ ...patch, [key]: event.target.value })
-                }
-              />
-            </label>
+              >
+                <Input
+                  type="password"
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  disabled={disabled || removed}
+                  value={patch[key] ?? ""}
+                  placeholder={
+                    removed
+                      ? "Will be removed on save"
+                      : keys.includes(key)
+                        ? "Saved value unchanged"
+                        : "New value"
+                  }
+                  onChange={(event) =>
+                    onChange({ ...patch, [key]: event.target.value })
+                  }
+                />
+              </Field>
+            </div>
             {!removed && (
               <Button
                 disabled={disabled}
@@ -84,15 +93,16 @@ export function AgentEnvironmentEditor({
         );
       })}
       <div className="flex flex-wrap items-end gap-2">
-        <label className="agent-control-field flex-1">
-          Variable name
-          <input
-            value={newKey}
-            autoComplete="off"
-            spellCheck={false}
-            onChange={(event) => setNewKey(event.target.value)}
-          />
-        </label>
+        <div className="min-w-0 flex-1">
+          <Field label="Variable name">
+            <Input
+              value={newKey}
+              autoComplete="off"
+              spellCheck={false}
+              onChange={(event) => setNewKey(event.target.value)}
+            />
+          </Field>
+        </div>
         <Button
           disabled={disabled}
           onClick={() => {

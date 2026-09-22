@@ -1,0 +1,146 @@
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { PageSearch } from "../../../src/app/shell/PageSearch";
+import { CommunitySwitcher } from "../../../src/features/communities/CommunitySwitcher";
+import { CommunityDialog } from "../../../src/features/communities/CommunityDialog";
+import { AgentCreateDialog } from "../../../src/bundled/agents/AgentCreateDialog";
+import { AgentEditor } from "../../../src/bundled/agents/AgentEditor";
+import { ConfirmAction } from "../../../src/bundled/workflows/ConfirmAction";
+import { getWorkflowActivationWarning } from "../../../src/bundled/workflows/workflowActivationWarning";
+import { MediaAttachment } from "../../../src/features/messages/MediaAttachment";
+import { MediaReviewViewer } from "../../../src/features/messages/MediaReviewViewer";
+import { Button } from "../../../src/shared/design-system/ui/Button";
+import { useKeyboardFocusVisibility } from "../../../src/shared/design-system/useKeyboardFocusVisibility";
+import {
+  agentFixture,
+  attachment,
+  communityFixture,
+  mediaFixture,
+  sampleImage,
+} from "./data";
+import { confirmations, type DialogId } from "./catalog";
+import "../../../src/bundled/agents/AgentControls.css";
+
+const pages = ["Messages", "Agents", "Sessions", "Workflows", "Projects"].map(
+  (title) => ({
+    id: title.toLowerCase(),
+    key: `buzz.${title.toLowerCase()}/${title.toLowerCase()}`,
+    pluginId: `buzz.${title.toLowerCase()}`,
+    revision: "preview",
+    title,
+    component: () => null,
+  }),
+);
+
+function AgentScene({ create, close }: { create: boolean; close(): void }) {
+  const [fixture] = useState(agentFixture);
+  const state = useSyncExternalStore(
+    fixture.control.subscribe,
+    fixture.control.snapshot,
+  );
+  useEffect(() => {
+    void fixture.control.refresh();
+    return () => fixture.control.dispose();
+  }, [fixture]);
+  if (state.status !== "ready") return null;
+  return create ? (
+    <AgentCreateDialog
+      control={fixture.control}
+      state={state}
+      destination="https://relay.example.test"
+      owner={"de".repeat(32)}
+      onClose={close}
+    />
+  ) : (
+    <AgentEditor
+      control={fixture.control}
+      state={state}
+      agent={state.data?.agents[0] ?? fixture.agent}
+      onClose={close}
+    />
+  );
+}
+
+function ReviewScene({ close }: { close(): void }) {
+  const [fixture] = useState(mediaFixture);
+  useEffect(() => () => fixture.owner.dispose(), [fixture]);
+  return (
+    <MediaReviewViewer
+      attachment={attachment}
+      session={fixture.owner.session}
+      scope="dialog-gallery"
+      channelId="studio"
+      channelName="Design studio"
+      messageId={fixture.root.id}
+      initialTime={0}
+      close={close}
+    />
+  );
+}
+
+export function Scene({ id }: { id: DialogId }) {
+  useKeyboardFocusVisibility();
+  const [communities] = useState(communityFixture);
+  const [open, setOpen] = useState(true);
+  const host = useRef<HTMLDivElement>(null);
+  const params = new URLSearchParams(location.search);
+  const variant = params.get("variant") ?? "default";
+  const close = () => setOpen(false);
+  useEffect(() => {
+    if (!["search", "communities", "attachment"].includes(id)) return;
+    host.current?.querySelector<HTMLButtonElement>("button")?.click();
+  }, [id]);
+  const confirmation =
+    id in confirmations
+      ? confirmations[id as keyof typeof confirmations]
+      : undefined;
+  const warning =
+    id === "enable" && variant !== "default"
+      ? getWorkflowActivationWarning(
+          variant === "schedule"
+            ? "trigger:\n  on: schedule"
+            : "trigger:\n  on: message_posted",
+        )
+      : null;
+  return (
+    <div className="scene shell-background">
+      <div className="scene-context" aria-hidden="true">
+        <span>Buzz</span>
+        <span>Design studio</span>
+        <span>Messages · Agents · Workflows</span>
+      </div>
+      <div className="scene-content" ref={host}>
+        {id === "search" && <PageSearch pages={pages} onSelect={() => {}} />}
+        {id === "communities" && (
+          <CommunitySwitcher communities={communities} />
+        )}
+        {id === "attachment" && (
+          <MediaAttachment attachment={attachment} media={() => sampleImage} />
+        )}
+        {!["search", "communities", "attachment"].includes(id) && (
+          <Button onClick={() => setOpen(true)}>Reopen dialog</Button>
+        )}
+      </div>
+      {open && id === "join" && (
+        <CommunityDialog communities={communities} mode="join" close={close} />
+      )}
+      {open && (id === "create" || id === "edit") && (
+        <AgentScene create={id === "create"} close={close} />
+      )}
+      {open && confirmation && (
+        <ConfirmAction
+          {...confirmation}
+          {...(warning ?? {})}
+          pending={variant === "pending"}
+          error={
+            variant === "error"
+              ? "The request could not be confirmed. Your changes are still here."
+              : null
+          }
+          onCancel={close}
+          onConfirm={close}
+        />
+      )}
+      {open && id === "review" && <ReviewScene close={close} />}
+    </div>
+  );
+}

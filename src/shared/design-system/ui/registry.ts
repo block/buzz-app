@@ -36,6 +36,11 @@ export const BASE_UI_PARTS = {
   field: { name: "Field", docs: "field", module: "@base-ui/react/field" },
   input: { name: "Input", docs: "input", module: "@base-ui/react/input" },
   select: { name: "Select", docs: "select", module: "@base-ui/react/select" },
+  combobox: {
+    name: "Combobox",
+    docs: "combobox",
+    module: "@base-ui/react/combobox",
+  },
   switch: { name: "Switch", docs: "switch", module: "@base-ui/react/switch" },
   tabs: { name: "Tabs", docs: "tabs", module: "@base-ui/react/tabs" },
   accordion: {
@@ -467,8 +472,14 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     name: "Accordion",
     purpose: "Reveal related content without leaving the page.",
     behavior:
-      "Base UI owns expansion, keyboard activation, and panel semantics",
-    variants: ["default", "navigation", "activity", "controlled expansion"],
+      "Base UI owns expansion, keyboard activation, and panel semantics; keepMounted preserves local form state while collapsed",
+    variants: [
+      "default",
+      "form",
+      "navigation",
+      "activity",
+      "controlled expansion",
+    ],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Design system",
@@ -477,11 +488,25 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: [],
   },
   {
+    slug: "combobox",
+    name: "Combobox",
+    purpose:
+      "A searchable form field with an integrated browse control and shared option popup.",
+    behavior:
+      "Base UI owns keyboard navigation and selection; callers own filtering, custom values and async discovery",
+    variants: ["default", "loading", "disabled"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Combobox.tsx",
+    baseUi: [BASE_UI_PARTS.combobox],
+    composes: ["icon-button"],
+  },
+  {
     slug: "select",
     name: "Select",
-    purpose: "A compact labelled choice with grouped options.",
+    purpose: "A labelled choice with inline and full-width form layouts.",
     behavior: "Base UI owns focus, keyboard selection, grouping, and dismissal",
-    variants: ["grouped"],
+    variants: ["inline", "field", "disabled"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Design system",

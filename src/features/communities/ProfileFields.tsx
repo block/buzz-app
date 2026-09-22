@@ -19,7 +19,7 @@ export function ProfileFields({
   disabled?: boolean;
 }) {
   return (
-    <div className="grid gap-5">
+    <div className="grid gap-4">
       <Field label="Display name">
         <Input
           autoComplete="nickname"

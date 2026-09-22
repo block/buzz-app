@@ -945,10 +945,17 @@ export function relayBrokerPlugin({
             if (!upstream.ok)
               return json(res, upstream.status, { error: "Media read failed" });
             const type = upstream.headers.get("content-type") ?? "";
-            const image = type.startsWith("image/");
-            const video = type.startsWith("video/");
-            if (!image && !video)
-              return json(res, 415, { error: "Media type rejected" });
+            const mediaType = type.split(";", 1)[0].trim().toLowerCase();
+            const trustedType =
+              /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(
+                mediaType,
+              );
+            const image =
+              trustedType &&
+              mediaType.startsWith("image/") &&
+              mediaType !== "image/svg+xml";
+            const video = trustedType && mediaType.startsWith("video/");
+            const download = !image && !video;
             const length = Number(upstream.headers.get("content-length"));
             if (
               Number.isFinite(length) &&
@@ -957,13 +964,14 @@ export function relayBrokerPlugin({
             )
               return json(res, 413, { error: "Media budget exceeded" });
             const headers = {
-              "Content-Type": type,
+              "Content-Type": download ? "application/octet-stream" : mediaType,
               "Cache-Control": "private, max-age=3600",
               "X-Content-Type-Options": "nosniff",
+              ...(download ? { "Content-Disposition": "attachment" } : {}),
               ...(upstream.headers.get("content-length")
                 ? { "Content-Length": upstream.headers.get("content-length") }
                 : {}),
-              ...(upstream.headers.get("content-range")
+              ...(!download && upstream.headers.get("content-range")
                 ? { "Content-Range": upstream.headers.get("content-range") }
                 : {}),
               ...(video

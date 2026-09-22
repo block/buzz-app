@@ -380,9 +380,9 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
     row: {
       ...row,
       attachments: [
-        { url: "https://safe.test/a.png", video: false },
-        { url: "https://user:secret@unsafe.test/a.png", video: false },
-        { url: "http://unsafe.test/a.png", video: false },
+        { url: "https://safe.test/a.png", kind: "image" },
+        { url: "https://user:secret@unsafe.test/a.png", kind: "image" },
+        { url: "http://unsafe.test/a.png", kind: "image" },
       ],
     },
     profile: undefined,
@@ -397,7 +397,7 @@ it("the actual message row rejects attachment URLs outside the shared safe-link 
   expect(attachments).toHaveLength(1);
   expect(attachments[0]?.props.attachment).toEqual({
     url: "https://safe.test/a.png",
-    video: false,
+    kind: "image",
   });
 });
 
@@ -600,7 +600,7 @@ it("routes media in replies through the resolved root review workspace", () => {
   const open = vi.fn();
   const h = messagesHarness(undefined, open);
   const root = { ...row, id: "resolved-root" };
-  const attachment = { url: "https://safe/image.png", video: false };
+  const attachment = { url: "https://safe/image.png", kind: "image" as const };
   h.snapshot.root = root;
   h.snapshot.replies = [{ ...row, id: "reply", attachments: [attachment] }];
   h.render();

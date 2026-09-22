@@ -16,6 +16,7 @@ export function safeMessageUrl(value: string): string | undefined {
 
 type MarkdownNode = {
   type: string;
+  value?: string;
   url?: string;
   identifier?: string;
   children?: MarkdownNode[];
@@ -27,13 +28,39 @@ type MarkdownScan = {
   tooDeep: boolean;
   definitions: Map<string, string>;
   images: MarkdownNode[];
+  links: MarkdownNode[];
 };
+
+export const MAX_ATTACHMENT_NAME_LENGTH = 256;
+export const RELAY_HASH_BASENAME = /^[0-9a-f]{64}(?:\.[^./?#]+)?$/i;
+
+export function relayHashBasename(value: string): boolean {
+  return RELAY_HASH_BASENAME.test(value);
+}
+
+export function safeAttachmentName(value: string): string | undefined {
+  const name = value.slice(0, MAX_ATTACHMENT_NAME_LENGTH);
+  return name && !hasUnsafeAttachmentNameCharacter(name) ? name : undefined;
+}
+
+function hasUnsafeAttachmentNameCharacter(value: string): boolean {
+  for (const character of value) {
+    const code = character.codePointAt(0);
+    if (code === undefined) continue;
+    if (code <= 0x1f || (code >= 0x7f && code <= 0x9f)) return true;
+    if (code === 0x200e || code === 0x200f) return true;
+    if (code >= 0x202a && code <= 0x202e) return true;
+    if (code >= 0x2066 && code <= 0x2069) return true;
+  }
+  return false;
+}
 
 /** Parse once and bound attacker-controlled nesting before recursive render stages. */
 export function scanMarkdown(content: string): MarkdownScan {
   const tree = fromMarkdown(content) as MarkdownNode;
   const definitions = new Map<string, string>();
   const images: MarkdownNode[] = [];
+  const links: MarkdownNode[] = [];
   const pending = [{ node: tree, depth: 0 }];
   let tooDeep = false;
   while (pending.length) {
@@ -53,36 +80,96 @@ export function scanMarkdown(content: string): MarkdownScan {
       definitions.set(node.identifier.toLowerCase(), node.url);
     if (node.type === "image" || node.type === "imageReference")
       images.push(node);
+    if (node.type === "link" || node.type === "linkReference") links.push(node);
     for (let index = (node.children?.length ?? 0) - 1; index >= 0; index--) {
       const child = node.children?.[index];
       if (child) pending.push({ node: child, depth: depth + 1 });
     }
   }
-  return { tree, tooDeep, definitions, images };
+  return { tree, tooDeep, definitions, images, links };
 }
 
-/** Project every CommonMark image from the same bounded parse policy as rendering. */
-export function projectMarkdownImages(content: string): {
+function resolvedNodeUrl(
+  node: MarkdownNode,
+  definitions: ReadonlyMap<string, string>,
+): string | undefined {
+  return node.type === "link" || node.type === "image"
+    ? node.url
+    : typeof node.identifier === "string"
+      ? definitions.get(node.identifier.toLowerCase())
+      : undefined;
+}
+
+function stripRanges(
+  content: string,
+  ranges: readonly { start: number; end: number }[],
+): string {
+  const merged: Array<{ start: number; end: number }> = [];
+  for (const range of [...ranges].sort((a, b) => a.start - b.start)) {
+    const previous = merged.at(-1);
+    if (previous && range.start <= previous.end) {
+      previous.end = Math.max(previous.end, range.end);
+      continue;
+    }
+    merged.push({ ...range });
+  }
+
+  let stripped = content;
+  for (let index = merged.length - 1; index >= 0; index--) {
+    const range = merged[index];
+    if (range)
+      stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
+  }
+  return stripped.trimEnd();
+}
+
+function nodeText(node: MarkdownNode): string {
+  if (typeof node.value === "string") return node.value;
+  return (node.children ?? []).map(nodeText).join("");
+}
+
+function adoptableAttachmentLabel(label: string, url: string): boolean {
+  if (relayHashBasename(label)) return false;
+  try {
+    new URL(label);
+    return false;
+  } catch {
+    return label !== url;
+  }
+}
+
+export type ProjectedAttachmentLinkName = Readonly<{
+  url: string;
+  name: string;
+}>;
+
+export function projectMarkdownAttachments(
+  content: string,
+  attachmentUrls: ReadonlySet<string>,
+): {
   content: string;
   urls: readonly string[];
+  names: readonly ProjectedAttachmentLinkName[];
 } {
-  const { tooDeep, definitions, images } = scanMarkdown(content);
-  if (tooDeep) return { content, urls: Object.freeze([]) };
+  const { tooDeep, definitions, images, links } = scanMarkdown(content);
+  if (tooDeep)
+    return {
+      content,
+      urls: Object.freeze([]),
+      names: Object.freeze([]),
+    };
 
   const urls: string[] = [];
   const seen = new Set<string>();
+  const names: ProjectedAttachmentLinkName[] = [];
   const ranges: Array<{ start: number; end: number }> = [];
+
   for (const image of images) {
-    const raw =
-      image.type === "image"
-        ? image.url
-        : typeof image.identifier === "string"
-          ? definitions.get(image.identifier.toLowerCase())
-          : undefined;
-    const url = raw ? safeMessageUrl(raw) : undefined;
-    if (url && !seen.has(url)) {
-      seen.add(url);
-      urls.push(url);
+    const url = resolvedNodeUrl(image, definitions);
+    const safeUrl = url ? safeMessageUrl(url) : undefined;
+    if (safeUrl && !seen.has(safeUrl)) {
+      seen.add(safeUrl);
+      urls.push(safeUrl);
     }
     const start = image.position?.start.offset;
     const end = image.position?.end.offset;
@@ -90,8 +177,26 @@ export function projectMarkdownImages(content: string): {
       ranges.push({ start, end });
   }
 
-  let stripped = content;
-  for (const range of ranges.sort((a, b) => b.start - a.start))
-    stripped = stripped.slice(0, range.start) + stripped.slice(range.end);
-  return { content: stripped.trimEnd(), urls: Object.freeze(urls) };
+  if (attachmentUrls.size) {
+    for (const link of links) {
+      const raw = resolvedNodeUrl(link, definitions);
+      const url = raw ? safeMessageUrl(raw) : undefined;
+      if (!url || !attachmentUrls.has(url)) continue;
+
+      const start = link.position?.start.offset;
+      const end = link.position?.end.offset;
+      if (typeof start === "number" && typeof end === "number")
+        ranges.push({ start, end });
+
+      const label = safeAttachmentName(nodeText(link).trim());
+      if (!label || !adoptableAttachmentLabel(label, url)) continue;
+      names.push({ url, name: label });
+    }
+  }
+
+  return {
+    content: stripRanges(content, ranges),
+    urls: Object.freeze(urls),
+    names: Object.freeze(names),
+  };
 }

@@ -8,7 +8,7 @@ afterEach(cleanup);
 it("keeps playback controls named for their actions, not icon components", () => {
   const { container } = render(
     <MediaAttachment
-      attachment={{ url: "https://example.test/a.mp4", video: true }}
+      attachment={{ url: "https://example.test/a.mp4", kind: "video" }}
       media={(url) => url}
     />,
   );
@@ -30,7 +30,7 @@ it("keeps the image download accessible name", () => {
   const url = "https://example.test/a.png";
   render(
     <ImageReviewStage
-      attachments={[{ url, video: false }]}
+      attachments={[{ url, kind: "image" }]}
       selectedUrl={url}
       media={(url) => url}
       select={() => {}}
@@ -40,4 +40,17 @@ it("keeps the image download accessible name", () => {
     "href",
     url,
   );
+});
+
+it("does not render stray file attachments as images", () => {
+  const { container } = render(
+    <MediaAttachment
+      attachment={{ url: "https://example.test/file.bin", kind: "file" }}
+      media={(url) => url}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Attachment unavailable",
+  );
+  expect(container.querySelector("img")).toBeNull();
 });

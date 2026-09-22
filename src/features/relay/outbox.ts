@@ -17,11 +17,18 @@ export interface Outbox {
   /** Outstanding operations only. Confirmed events live in the session's retained data. */
   snapshot(): readonly OutgoingEvent[];
   subscribe(listener: () => void): () => void;
+  /** Capture fresh send intent synchronously; returned work runs once after
+   * receipt/verified echo, never history hydration. It cannot affect delivery. */
+  observeSend(listener: SendObserver): () => void;
   supports(kind: number): boolean;
   send(input: Pick<EventTemplate, "kind" | "content" | "tags">): string;
   retry(id: string): void;
   dismiss(id: string): Promise<void>;
 }
+type SendObserver = (
+  event: EventData,
+  signal: AbortSignal,
+) => ((pending: readonly EventData[]) => void) | undefined;
 export type LocalEvents = Pick<Outbox, "snapshot" | "subscribe">;
 export interface OutboxStorage {
   close?(): void;
@@ -85,6 +92,40 @@ export function createOutbox(
     controller?: AbortController;
   };
   const attempts = new Map<string, Attempt>();
+  const lifetime = new AbortController();
+  const sendListeners = new Set<SendObserver>();
+  const deliveryWork = new Map<
+    string,
+    {
+      event: EventData;
+      work: ((pending: readonly EventData[]) => void)[];
+    }
+  >();
+  const captureSend = (event: EventData) => {
+    const work: ((pending: readonly EventData[]) => void)[] = [];
+    for (const listener of sendListeners) {
+      try {
+        const run = listener(event, lifetime.signal);
+        if (run) work.push(run);
+      } catch {
+        /* Independent observer. */
+      }
+    }
+    if (work.length) deliveryWork.set(event.id, { event, work });
+  };
+  const delivered = (event: RelayEvent) => {
+    const work = deliveryWork.get(event.id)?.work;
+    const pending = [...deliveryWork.values()].map((item) => item.event);
+    deliveryWork.delete(event.id);
+    for (const run of work ?? []) {
+      // Execution/UI observers must never change message delivery evidence.
+      try {
+        run(pending);
+      } catch {
+        /* Observer owns its error presentation. */
+      }
+    }
+  };
   const inflight = () =>
     [...attempts.values()].filter((attempt) => attempt.controller).length;
   let closed = false;
@@ -336,6 +377,7 @@ export function createOutbox(
               : "accepted",
           error: undefined,
         });
+      delivered(signed);
       onAccepted(signed);
     } catch (error) {
       const latest = find(id);
@@ -397,6 +439,12 @@ export function createOutbox(
   const outbox: Outbox = Object.freeze({
     snapshot: () => finalSnapshot ?? snapshot,
     subscribe: (listener: () => void) => subscribe(listeners, listener),
+    observeSend: (listener: SendObserver) => {
+      sendListeners.add(listener);
+      return () => {
+        sendListeners.delete(listener);
+      };
+    },
     supports: (kind: number) =>
       !closed && (!writer.kinds || writer.kinds.includes(kind)),
     send(input: Pick<EventTemplate, "kind" | "content" | "tags">) {
@@ -434,6 +482,7 @@ export function createOutbox(
         ) as unknown as string[][],
         id: getEventHash(template),
       });
+      captureSend(event);
       profiling.measure("send.local", event.id, () => {
         snapshot = Object.freeze([
           ...snapshot,
@@ -458,12 +507,15 @@ export function createOutbox(
         !isWorkflowOperation(item.event) &&
         !attempts.has(id)
       ) {
+        if (item.delivery === "failed" || item.delivery === "unknown")
+          captureSend(item.event);
         replace({ ...item, delivery: "sending", error: undefined });
         schedule(id, undefined, item.delivery);
       }
     },
     async dismiss(id: string) {
       if (closed || attempts.has(id)) return;
+      deliveryWork.delete(id);
       const retained = completed.peek(id);
       const previous =
         find(id) ??
@@ -513,6 +565,7 @@ export function createOutbox(
       const [first] = confirmed;
       if (!first) return;
       for (const event of confirmed) {
+        delivered(event);
         if (awaitsReceipt(event) && attempts.has(event.id)) {
           snapshot = Object.freeze(
             snapshot.map((item) =>
@@ -553,6 +606,7 @@ export function createOutbox(
       finalSnapshot = snapshot;
       finalVisible = visible;
       closed = true;
+      lifetime.abort();
       for (const attempt of attempts.values()) {
         attempt.controller?.abort(abortError());
         clearTimeout(attempt.timer);
@@ -560,6 +614,8 @@ export function createOutbox(
       attempts.clear();
       listeners.clear();
       localListeners.clear();
+      sendListeners.clear();
+      deliveryWork.clear();
       void ready
         .then(() => durable)
         .catch(() => {})

@@ -229,9 +229,6 @@ the complete suite still runs with `pnpm test` / `just scan`:
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
-- **Windows native notifications:** Clippy and all Tauri-package tests on Windows,
-  using the repository Rust pin through rustup (Hermit is not available there).
-  This compiles the Windows backend; it does not exercise OS banner interaction.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
   per engine), each with two workers. They start alongside measurements on separate
@@ -241,16 +238,38 @@ the complete suite still runs with `pnpm test` / `just scan`:
   outside the browser subprocess timeout. No measurement is repeated on shards,
   and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
-- **CI required:** fails unless every lane and every browser shard succeeds,
+- **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.
 
 Actions and tool versions are pinned, installs use the frozen lockfile, and
 Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
-Superseded PR runs are cancelled. CI uses disposable Ubuntu/Windows runners and no live
+Superseded PR runs are cancelled. Automatic CI uses disposable Ubuntu runners and no live
 Buzz identity or signing credentials. It is not native GUI acceptance, a signed
 package, or a cross-platform release gate. `just scan` remains available locally;
 CI does not add full scans to commit/push or ordinary interactive feedback rounds.
+
+### On-demand Windows validation
+
+Automatic PR/main CI is Linux-only. Run the existing workflow manually for native
+Windows changes or release validation:
+
+```sh
+gh workflow run ci.yml --ref <branch>
+```
+
+A manual dispatch runs only **Windows native validation**: the same pinned Rust,
+Clippy and complete Tauri-package tests, without repeating Linux/browser jobs.
+Windows failures do not block the automatic `CI required` check; a Linux pass
+is not Windows validation. The job does not exercise OS banner interaction or
+packaged-app acceptance.
+
+For MSVC, `src-tauri/build.rs` links `windows-app-manifest.xml` into both the app
+and library unit-test executables. The XML matches Tauri's default Common Controls
+v6 manifest; icons/version resources remain Tauri-owned. This addresses
+[Tauri's library-test manifest gap](https://github.com/tauri-apps/tauri/issues/13419)
+without disabling IPC tests or native UI features. Non-MSVC builds retain Tauri's
+default resource path. Keep the manifest aligned when upgrading Tauri.
 
 ## Test organization
 

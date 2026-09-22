@@ -563,3 +563,114 @@ it("a queued retry deadline preserves unknown evidence without another dispatch"
   ).toBe("unknown");
   expect(h.publish).not.toHaveBeenCalled();
 });
+
+for (const outcome of [
+  "ack",
+  "echo",
+  "unknown-then-echo",
+  "rejected",
+  "unknown",
+] as const) {
+  it(`delivered notification follows ${outcome}, never enqueue/sign or unknown outcome`, async () => {
+    const storage = memoryStorage();
+    let resolve!: () => void;
+    let reject!: (error: Error) => void;
+    const publish = vi.fn(
+      () =>
+        new Promise<void>((yes, no) => {
+          resolve = yes;
+          reject = no;
+        }),
+    );
+    const owner = createOutbox(
+      viewer.pubkey,
+      {
+        sign: async (template) => signed(viewer, template),
+        publish,
+      },
+      storage,
+    );
+    const notified = vi.fn();
+    owner.outbox.observeSend((event) => () => notified(event));
+    const id = owner.outbox.send({
+      kind: 9,
+      content: "wake",
+      tags: [["h", "c"]],
+    });
+    try {
+      await vi.waitFor(() => expect(publish).toHaveBeenCalledOnce());
+      expect(notified).not.toHaveBeenCalled();
+      const event = owner.outbox.snapshot()[0]?.signed;
+      assert.exists(event);
+      if (outcome === "ack") resolve();
+      else if (outcome === "echo") owner.observe([event]);
+      else
+        reject(
+          outcome === "rejected"
+            ? new PublishRejected("no")
+            : new Error("lost ACK"),
+        );
+      await flush();
+      if (outcome === "unknown-then-echo") {
+        expect(notified).not.toHaveBeenCalled();
+        expect(owner.outbox.snapshot()[0]?.delivery).toBe("unknown");
+        owner.observe([event]);
+      }
+      const confirmed = ["ack", "echo", "unknown-then-echo"].includes(outcome);
+      expect(notified).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+      if (confirmed) {
+        expect(notified).toHaveBeenCalledWith({
+          id: event.id,
+          pubkey: event.pubkey,
+          kind: event.kind,
+          content: event.content,
+          tags: event.tags,
+          created_at: event.created_at,
+        });
+        owner.observe([event]);
+        owner.outbox.retry(id);
+        await flush();
+        expect(notified).toHaveBeenCalledOnce();
+      }
+      owner.dispose();
+      const restored = createOutbox(
+        viewer.pubkey,
+        {
+          sign: async (template) => signed(viewer, template),
+          publish,
+        },
+        storage,
+      );
+      restored.outbox.observeSend((event) => () => notified(event));
+      await restored.ready;
+      restored.observe([event]);
+      expect(notified).toHaveBeenCalledTimes(confirmed ? 1 : 0);
+      restored.dispose();
+    } finally {
+      owner.dispose();
+    }
+  });
+}
+
+it("a failing delivered observer cannot turn a confirmed send into failure", async () => {
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+    memoryStorage(),
+  );
+  const next = vi.fn();
+  owner.outbox.observeSend(() => () => {
+    throw new Error("observer");
+  });
+  owner.outbox.observeSend(() => next);
+  try {
+    owner.outbox.send({ kind: 9, content: "hello", tags: [] });
+    await vi.waitFor(() => expect(next).toHaveBeenCalledOnce());
+    expect(owner.outbox.snapshot()[0]?.delivery).toBe("accepted");
+  } finally {
+    owner.dispose();
+  }
+});

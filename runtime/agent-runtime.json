@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/block/buzz.git",
+  "revision": "84b0fd04b7831657df2873c3a835412f47cebb03",
+  "tools": [
+    "buzz-acp",
+    "buzz-agent",
+    "buzz-dev-mcp",
+    "buzz",
+    "git-credential-nostr"
+  ]
+}

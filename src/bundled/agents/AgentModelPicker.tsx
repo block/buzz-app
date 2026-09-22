@@ -215,7 +215,8 @@ export function AgentModelPicker({
               tabIndex={0}
               onClick={() => {
                 if (supported && !fresh && attempted.current !== key) {
-                  setOpen(true);
+                  // Base UI owns opening; an immediate open here can be followed
+                  // by its deferred pointer-open after the user presses Escape.
                   void run("connect");
                 }
               }}

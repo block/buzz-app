@@ -1,43 +1,29 @@
 import { Context } from "@deepseek-ai/cordis";
 import { afterEach, expect, it, vi } from "vitest";
 import { BrowserService } from "./service";
-import type { BrowserOpenResult } from "./api";
 import type { BrowserPlatform } from "./platform";
 
 const contexts: Context[] = [];
 afterEach(async () => {
-  for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
+  for (const context of contexts.splice(0)) await context.fiber.dispose();
 });
 
-function setup(platform: BrowserPlatform) {
-  const ctx = new Context();
-  contexts.push(ctx);
-  new BrowserService(ctx, platform);
-  return ctx;
-}
-
-function fakePlatform(available: boolean, result: BrowserOpenResult) {
+function platform(available: boolean): BrowserPlatform {
   return {
     available,
-    open: vi.fn(async () => result),
-  } satisfies BrowserPlatform;
+    attach: vi.fn(),
+    setBounds: vi.fn(),
+    navigate: vi.fn(),
+    action: vi.fn(),
+    status: vi.fn(),
+    detach: vi.fn(),
+  };
 }
 
-it("exposes the underlying platform's availability", () => {
-  const ctx = setup(fakePlatform(true, { status: "opened" }));
-  expect(ctx.browser.available).toBe(true);
-});
-
-it("reports unavailable when the platform has no capability", () => {
-  const ctx = setup(fakePlatform(false, { status: "unavailable" }));
-  expect(ctx.browser.available).toBe(false);
-});
-
-it("delegates open() to the platform", async () => {
-  const platform = fakePlatform(true, { status: "opened" });
-  const ctx = setup(platform);
-  await expect(ctx.browser.open("https://example.com")).resolves.toEqual({
-    status: "opened",
-  });
-  expect(platform.open).toHaveBeenCalledWith("https://example.com");
+it("exposes availability and a host View", () => {
+  const context = new Context();
+  contexts.push(context);
+  new BrowserService(context, platform(true));
+  expect(context.browser.available).toBe(true);
+  expect(typeof context.browser.View).toBe("function");
 });

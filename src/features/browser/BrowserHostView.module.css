@@ -1,0 +1,88 @@
+.browser {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-panel);
+  color: var(--text);
+}
+
+.toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-1);
+  min-width: 0;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.toolbar button,
+.toolbar input {
+  height: 32px;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius-control);
+  background: var(--bg-float);
+  color: var(--text);
+  font: inherit;
+}
+
+.status {
+  max-width: 30%;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.error {
+  flex: none;
+  padding: var(--space-1) var(--space-2);
+  border-bottom: 1px solid var(--border);
+  color: var(--danger);
+  overflow-wrap: anywhere;
+}
+
+.toolbar button {
+  flex: none;
+  width: 32px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.toolbar button:hover {
+  background: var(--bg-glass-primary-hover);
+}
+
+.toolbar form {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+}
+
+.toolbar input {
+  flex: 1;
+  min-width: 0;
+  padding: 0 var(--space-2);
+}
+
+.viewport {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+@media (max-width: 420px) {
+  .toolbar {
+    gap: var(--space-half);
+    padding-inline: var(--space-1);
+  }
+
+  .toolbar button {
+    width: 28px;
+  }
+}

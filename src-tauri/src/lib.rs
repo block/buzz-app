@@ -3,7 +3,10 @@ mod browser;
 mod browser_permissions_tests;
 mod notifications;
 mod terminal;
-use browser::{browser_action, browser_navigate, browser_open, browser_status};
+use browser::{
+    browser_action, browser_attach, browser_detach, browser_navigate, browser_set_bounds,
+    browser_status,
+};
 use notifications::{notification_show, Notifications};
 use tauri::Manager as _;
 use terminal::{
@@ -183,15 +186,19 @@ pub fn run() {
             plugin_change,
             plugin_module,
             plugin_recover,
-            browser_open,
+            browser_attach,
+            browser_set_bounds,
+            browser_detach,
             browser_navigate,
             browser_action,
             browser_status
         ])
+        .on_window_event(browser::window_event)
         .build(app_context())
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                browser::shutdown();
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");
                 }

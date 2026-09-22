@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-window",
   "description": "Allow the main application commands, title bar controls and external HTTP(S) links.",
-  "windows": ["main"],
+  "webviews": ["main"],
   "permissions": [
     "allow-notification-show",
     "allow-terminal-create-owner",
@@ -20,7 +20,12 @@
     "allow-plugin-change",
     "allow-plugin-module",
     "allow-plugin-recover",
-    "allow-browser-open",
+    "allow-browser-attach",
+    "allow-browser-set-bounds",
+    "allow-browser-detach",
+    "allow-browser-navigate",
+    "allow-browser-action",
+    "allow-browser-status",
     "core:window:allow-start-dragging",
     "core:window:allow-internal-toggle-maximize",
     {

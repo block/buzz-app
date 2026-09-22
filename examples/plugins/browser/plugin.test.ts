@@ -37,7 +37,19 @@ it("fails immediately with a matching-host diagnostic when browser is absent", a
   try {
     const plugin = root.plugin(manifest);
     await expect(plugin.await()).rejects.toThrow(
-      "Browser plugin requires a Buzz build with the browser capability",
+      "Browser plugin requires a Buzz build with the embedded browser capability",
+    );
+  } finally {
+    await root.fiber.dispose();
+  }
+});
+
+it("rejects the previous window-only browser service", async () => {
+  const { root } = hostWithoutBrowser();
+  root.provide("browser", { available: true, open: vi.fn() });
+  try {
+    await expect(root.plugin(manifest).await()).rejects.toThrow(
+      "Browser plugin requires a Buzz build with the embedded browser capability",
     );
   } finally {
     await root.fiber.dispose();
@@ -62,7 +74,7 @@ it("waits for a present provider to activate and tracks its withdrawal", async (
     const provider = root.plugin({
       name: "browser-provider",
       async apply(ctx) {
-        ctx.provide("browser", { available: true, open: vi.fn() });
+        ctx.provide("browser", { available: true, View: () => null });
         reportProvided();
         await activationAllowed;
       },

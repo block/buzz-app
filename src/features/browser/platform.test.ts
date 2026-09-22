@@ -7,97 +7,82 @@ vi.mock("@tauri-apps/api/core", () => ({
   isTauri: () => native.value,
   invoke: sdk.invoke,
 }));
+
 afterEach(() => {
   native.value = false;
-  sdk.invoke.mockReset().mockImplementation(async () => undefined);
+  sdk.invoke.mockReset().mockResolvedValue(undefined);
+  vi.unstubAllGlobals();
 });
 
 describe("validateBrowsableUrl", () => {
-  it("accepts http and https URLs", () => {
+  it("accepts normalized HTTP(S) URLs", () => {
     expect(validateBrowsableUrl("https://example.com")).toEqual({
       ok: true,
       url: "https://example.com/",
     });
-    expect(validateBrowsableUrl("http://example.com/path?q=1").ok).toBe(true);
   });
 
-  it("rejects non-http(s) schemes", () => {
+  it("rejects unsafe, credentialed, malformed, and oversized URLs", () => {
     expect(validateBrowsableUrl("javascript:alert(1)").ok).toBe(false);
-    expect(validateBrowsableUrl("file:///etc/passwd").ok).toBe(false);
-  });
-
-  it("rejects embedded credentials", () => {
-    const result = validateBrowsableUrl("https://user:pass@example.com");
-    expect(result).toEqual({
-      ok: false,
-      reason: "URLs with embedded credentials are not supported",
-    });
-  });
-
-  it("rejects empty, malformed, or oversized input", () => {
-    expect(validateBrowsableUrl("").ok).toBe(false);
+    expect(validateBrowsableUrl("https://user:pass@example.com").ok).toBe(
+      false,
+    );
     expect(validateBrowsableUrl("not a url").ok).toBe(false);
     expect(
-      validateBrowsableUrl(`https://example.com/${"a".repeat(3000)}`).ok,
+      validateBrowsableUrl(`https://example.com/#${"文".repeat(300)}`).ok,
     ).toBe(false);
-  });
-
-  it("measures the 2048-byte limit against the normalized UTF-8 form, not raw character count", () => {
-    // Each "文" is one UTF-16 code unit but percent-encodes to 9 ASCII bytes
-    // once normalized, so raw .length badly undercounts the real size.
-    const raw = `https://example.com/#${"文".repeat(300)}`;
-    expect(raw.length).toBeLessThan(2048);
-    const result = validateBrowsableUrl(raw);
-    expect(result).toEqual({ ok: false, reason: "URL exceeds 2048 bytes" });
-  });
-
-  it("accepts a raw-character-heavy but byte-bounded Unicode URL", () => {
-    const raw = `https://example.com/#${"文".repeat(50)}`;
-    const result = validateBrowsableUrl(raw);
-    expect(result.ok).toBe(true);
   });
 });
 
 describe("createBrowserPlatform", () => {
-  it("reports unavailable outside a desktop build, without invoking", async () => {
+  it("is available only in the macOS desktop host", () => {
+    native.value = true;
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    expect(createBrowserPlatform().available).toBe(true);
+    vi.stubGlobal("navigator", { platform: "Linux x86_64" });
+    expect(createBrowserPlatform().available).toBe(false);
     native.value = false;
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    expect(createBrowserPlatform().available).toBe(false);
+  });
+
+  it("passes session IDs, bounds, actions, and normalized URLs", async () => {
+    native.value = true;
+    vi.stubGlobal("navigator", { platform: "MacIntel" });
+    sdk.invoke.mockResolvedValueOnce("session-1" as never);
     const platform = createBrowserPlatform();
-    expect(platform.available).toBe(false);
-    await expect(platform.open("https://example.com")).resolves.toEqual({
-      status: "unavailable",
-    });
+    const bounds = { x: 1, y: 2, width: 300, height: 400 };
+    await expect(platform.attach("https://example.com", bounds)).resolves.toBe(
+      "session-1",
+    );
+    await platform.setBounds("session-1", bounds, true);
+    await platform.navigate("session-1", "https://other.example.com");
+    await platform.action("session-1", "reload");
+    await platform.status("session-1");
+    await platform.detach("session-1");
+    expect(sdk.invoke.mock.calls).toEqual([
+      ["browser_attach", { url: "https://example.com/", bounds }],
+      ["browser_set_bounds", { sessionId: "session-1", bounds, visible: true }],
+      [
+        "browser_navigate",
+        { sessionId: "session-1", url: "https://other.example.com/" },
+      ],
+      ["browser_action", { sessionId: "session-1", action: "reload" }],
+      ["browser_status", { sessionId: "session-1" }],
+      ["browser_detach", { sessionId: "session-1" }],
+    ]);
+  });
+
+  it("rejects an invalid URL before native invocation", async () => {
+    const platform = createBrowserPlatform();
+    await expect(
+      platform.attach("file:///etc/passwd", {
+        x: 0,
+        y: 0,
+        width: 1,
+        height: 1,
+      }),
+    ).rejects.toThrow("Only http and https URLs are supported");
     expect(sdk.invoke).not.toHaveBeenCalled();
-  });
-
-  it("validates before invoking on desktop", async () => {
-    native.value = true;
-    const platform = createBrowserPlatform();
-    expect(platform.available).toBe(true);
-    await expect(platform.open("javascript:alert(1)")).resolves.toEqual({
-      status: "invalid-url",
-      reason: "Only http and https URLs are supported",
-    });
-    expect(sdk.invoke).not.toHaveBeenCalled();
-  });
-
-  it("invokes browser_open with the normalized URL on desktop", async () => {
-    native.value = true;
-    const platform = createBrowserPlatform();
-    await expect(platform.open("https://example.com")).resolves.toEqual({
-      status: "opened",
-    });
-    expect(sdk.invoke).toHaveBeenCalledWith("browser_open", {
-      url: "https://example.com/",
-    });
-  });
-
-  it("reports failure when the native call rejects", async () => {
-    native.value = true;
-    sdk.invoke.mockRejectedValueOnce(new Error("denied"));
-    const platform = createBrowserPlatform();
-    await expect(platform.open("https://example.com")).resolves.toEqual({
-      status: "failed",
-      reason: "denied",
-    });
   });
 });

@@ -1,4 +1,4 @@
-//! A trusted toolbar and a remote webview with no Tauri bridge.
+//! Remote website content embedded in the main window without a Tauri bridge.
 
 mod platform;
 mod policy;
@@ -6,17 +6,15 @@ mod policy;
 use std::{cell::RefCell, rc::Rc};
 
 use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview, WebviewUrl, Window};
+use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview};
 use wry::{PageLoadEvent, Rect, WebView, WebViewBuilder};
 
-use policy::{browser_layout, is_controls_navigation, NavigationPolicy};
-
-const WINDOW_LABEL: &str = "browser";
-const CONTROLS_LABEL: &str = "browser-controls";
+pub use policy::BrowserBounds;
+use policy::NavigationPolicy;
 
 thread_local! {
     // Wry and its delegates must be created, used, and dropped on the UI thread.
-    static BROWSER: RefCell<Option<BrowserWindow>> = const { RefCell::new(None) };
+    static BROWSER: RefCell<Option<BrowserSession>> = const { RefCell::new(None) };
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -35,10 +33,9 @@ pub enum BrowserAction {
     Reload,
 }
 
-struct BrowserWindow {
-    instance: uuid::Uuid,
-    window: Window,
-    controls: Webview,
+struct BrowserSession {
+    instance: String,
+    host: Webview,
     guest: WebView,
     // WKWebView's UI delegate reference is weak.
     _permissions: platform::Permissions,
@@ -46,7 +43,7 @@ struct BrowserWindow {
     policy: NavigationPolicy,
 }
 
-impl BrowserWindow {
+impl BrowserSession {
     fn navigate(&self, target: &str) -> Result<(), String> {
         let url = self.policy.validate(target)?;
         self.guest
@@ -58,26 +55,6 @@ impl BrowserWindow {
         Ok(())
     }
 
-    fn resize(&self) -> Result<(), String> {
-        let scale = self
-            .window
-            .scale_factor()
-            .map_err(|error| error.to_string())?;
-        let size = self
-            .window
-            .inner_size()
-            .map_err(|error| error.to_string())?
-            .to_logical::<f64>(scale);
-        let layout = browser_layout(size.width, size.height);
-        self.controls
-            .set_bounds(tauri::Rect {
-                position: LogicalPosition::new(0.0, 0.0).into(),
-                size: LogicalSize::new(layout.width, layout.controls_height).into(),
-            })
-            .map_err(|error| error.to_string())?;
-        platform::resize_guest(&self.guest, &self.controls, &layout)
-    }
-
     fn snapshot(&self) -> Result<BrowserSnapshot, String> {
         let mut snapshot = self.snapshot.borrow().clone();
         snapshot.url = self.guest.url().map_err(|error| error.to_string())?;
@@ -86,6 +63,19 @@ impl BrowserWindow {
             snapshot.loading = platform::loading(&self.guest);
         }
         Ok(snapshot)
+    }
+
+    fn set_bounds(&self, bounds: BrowserBounds, visible: bool) -> Result<(), String> {
+        self.guest
+            .set_visible(false)
+            .map_err(|error| error.to_string())?;
+        if !visible {
+            return Ok(());
+        }
+        platform::resize_guest(&self.guest, &self.host, bounds)?;
+        self.guest
+            .set_visible(true)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -101,119 +91,61 @@ async fn on_main_thread<T: Send + 'static>(
     receiver
         .recv()
         .await
-        .ok_or_else(|| "Browser window stopped before the request completed".to_string())?
-}
-
-pub(crate) async fn open(app: AppHandle, target: String) -> Result<(), String> {
-    let handle = app.clone();
-    on_main_thread(&app, move || {
-        let exists = BROWSER.with(|browser| browser.borrow().is_some());
-        if !exists {
-            let browser = create_window(&handle, &target)?;
-            BROWSER.with(|current| *current.borrow_mut() = Some(browser));
-        } else {
-            with_browser(|browser| browser.navigate(&target))?;
-        }
-        with_browser(|browser| {
-            browser.window.show().map_err(|error| error.to_string())?;
-            browser
-                .window
-                .set_focus()
-                .map_err(|error| error.to_string())
-        })
-    })
-    .await
+        .ok_or_else(|| "Browser stopped before the request completed".to_string())?
 }
 
 fn with_browser<T>(
-    operation: impl FnOnce(&BrowserWindow) -> Result<T, String>,
+    session_id: &str,
+    operation: impl FnOnce(&BrowserSession) -> Result<T, String>,
 ) -> Result<T, String> {
     BROWSER.with(|browser| {
         let browser = browser.borrow();
-        operation(
-            browser
-                .as_ref()
-                .ok_or_else(|| "Browser window is closed".to_string())?,
-        )
+        let browser = browser
+            .as_ref()
+            .filter(|browser| browser.instance == session_id)
+            .ok_or_else(|| "Browser session is closed or replaced".to_string())?;
+        operation(browser)
     })
 }
 
-fn create_window(app: &AppHandle, target: &str) -> Result<BrowserWindow, String> {
-    let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
-    let url = policy.validate(target)?;
-    let window = tauri::window::WindowBuilder::new(app, WINDOW_LABEL)
-        .title("Buzz Browser")
-        .inner_size(1120.0, 780.0)
-        .min_inner_size(480.0, 320.0)
-        .visible(false)
-        .build()
-        .map_err(|error| error.to_string())?;
-    let result = build_contents(&window, policy, url.as_str());
-    match result {
-        Ok(browser) => {
-            let instance = browser.instance;
-            window.on_window_event(move |event| {
-                let is_current = BROWSER.with(|browser| {
-                    browser
-                        .borrow()
-                        .as_ref()
-                        .is_some_and(|browser| browser.instance == instance)
-                });
-                if !is_current {
-                    return;
-                }
-                match event {
-                    tauri::WindowEvent::Resized(_)
-                    | tauri::WindowEvent::ScaleFactorChanged { .. } => {
-                        if let Err(error) = with_browser(BrowserWindow::resize) {
-                            BROWSER.with(|browser| {
-                                if let Some(browser) = browser.borrow().as_ref() {
-                                    browser.snapshot.borrow_mut().error = Some(error);
-                                }
-                            });
-                        }
+pub(crate) fn shutdown() {
+    BROWSER.with(|browser| {
+        browser.borrow_mut().take();
+    });
+}
+
+pub(crate) fn window_event(window: &tauri::Window, event: &tauri::WindowEvent) {
+    if window.label() != "main" {
+        return;
+    }
+    match event {
+        tauri::WindowEvent::Resized(_) | tauri::WindowEvent::ScaleFactorChanged { .. } => {
+            BROWSER.with(|browser| {
+                if let Some(browser) = browser.borrow().as_ref() {
+                    if let Err(error) = browser.guest.set_visible(false) {
+                        browser.snapshot.borrow_mut().error = Some(error.to_string());
                     }
-                    tauri::WindowEvent::CloseRequested { .. } | tauri::WindowEvent::Destroyed => {
-                        BROWSER.with(|browser| browser.borrow_mut().take());
-                    }
-                    _ => {}
                 }
             });
-            Ok(browser)
         }
-        Err(error) => {
-            let _ = window.close();
-            Err(error)
-        }
+        tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. } => shutdown(),
+        _ => {}
     }
 }
 
 fn build_contents(
-    window: &Window,
-    policy: NavigationPolicy,
+    app: &AppHandle,
     target: &str,
-) -> Result<BrowserWindow, String> {
-    let trusted_url = window
-        .app_handle()
+    bounds: BrowserBounds,
+) -> Result<BrowserSession, String> {
+    let policy = NavigationPolicy::new(app.config().build.dev_url.clone());
+    let target = policy.validate(target)?;
+    bounds.validate()?;
+    let host = app
         .get_webview("main")
-        .ok_or("Buzz main webview is unavailable")?
-        .url()
-        .map_err(|error| error.to_string())?;
-    let controls = window
-        .add_child(
-            tauri::webview::WebviewBuilder::new(
-                CONTROLS_LABEL,
-                WebviewUrl::App("browser.html".into()),
-            )
-            .on_navigation(move |url| is_controls_navigation(&trusted_url, url))
-            .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny),
-            LogicalPosition::new(0.0, 0.0),
-            LogicalSize::new(1120.0, 56.0),
-        )
-        .map_err(|error| error.to_string())?;
+        .ok_or("Buzz main webview is unavailable")?;
     let snapshot = Rc::new(RefCell::new(BrowserSnapshot::default()));
     let navigation_policy = policy.clone();
-    let navigation_snapshot = snapshot.clone();
     let title_snapshot = snapshot.clone();
     let load_snapshot = snapshot.clone();
     let download_snapshot = snapshot.clone();
@@ -221,21 +153,18 @@ fn build_contents(
     // No URL is loaded until native permission handlers replace Wry's defaults.
     // In particular, this builder receives no IPC handler or host initialization scripts.
     let builder = WebViewBuilder::new()
+        .with_visible(false)
         .with_incognito(true)
         .with_clipboard(false)
         .with_devtools(false)
         .with_autoplay(false)
         .with_bounds(Rect {
-            position: LogicalPosition::new(0.0, 56.0).into(),
-            size: LogicalSize::new(1120.0, 724.0).into(),
+            position: LogicalPosition::new(0.0, 0.0).into(),
+            size: LogicalSize::new(1.0, 1.0).into(),
         })
-        .with_navigation_handler(move |target| match navigation_policy.validate(&target) {
-            Ok(_) => true,
-            Err(error) => {
-                navigation_snapshot.borrow_mut().error = Some(error);
-                false
-            }
-        })
+        // Wry also reports subframe URLs here. A blocked iframe must not label
+        // the successfully loaded top-level website as a navigation failure.
+        .with_navigation_handler(move |target| navigation_policy.validate(&target).is_ok())
         .with_document_title_changed_handler(move |title| {
             title_snapshot.borrow_mut().title = title;
         })
@@ -254,36 +183,89 @@ fn build_contents(
                 Some("Pop-up windows are blocked in Buzz Browser".into());
             wry::NewWindowResponse::Deny
         });
-    let guest = platform::build_guest(builder, window)?;
+    let guest = platform::build_guest(builder, &host.window())?;
     let permissions = platform::deny_permissions(&guest)?;
-    let browser = BrowserWindow {
-        instance: uuid::Uuid::new_v4(),
-        window: window.clone(),
-        controls,
+    let browser = BrowserSession {
+        instance: uuid::Uuid::new_v4().to_string(),
+        host,
         guest,
         _permissions: permissions,
         snapshot,
         policy,
     };
-    browser.resize()?;
-    browser.navigate(target)?;
+    platform::resize_guest(&browser.guest, &browser.host, bounds)?;
+    browser.navigate(target.as_str())?;
     Ok(browser)
 }
 
 #[tauri::command]
-pub async fn browser_open(app: AppHandle, url: String) -> Result<(), String> {
-    open(app, url).await
-}
-
-#[tauri::command]
-pub async fn browser_navigate(app: AppHandle, url: String) -> Result<(), String> {
-    on_main_thread(&app, move || with_browser(|browser| browser.navigate(&url))).await
-}
-
-#[tauri::command]
-pub async fn browser_action(app: AppHandle, action: BrowserAction) -> Result<(), String> {
+pub async fn browser_attach(
+    app: AppHandle,
+    url: String,
+    bounds: BrowserBounds,
+) -> Result<String, String> {
+    let handle = app.clone();
     on_main_thread(&app, move || {
-        with_browser(|browser| {
+        // Drop the previous guest before creating another private browsing session.
+        shutdown();
+        let browser = build_contents(&handle, &url, bounds)?;
+        let session_id = browser.instance.clone();
+        BROWSER.with(|current| *current.borrow_mut() = Some(browser));
+        Ok(session_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn browser_set_bounds(
+    app: AppHandle,
+    session_id: String,
+    bounds: BrowserBounds,
+    visible: bool,
+) -> Result<(), String> {
+    on_main_thread(&app, move || {
+        with_browser(&session_id, |browser| browser.set_bounds(bounds, visible))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn browser_detach(app: AppHandle, session_id: String) -> Result<(), String> {
+    on_main_thread(&app, move || {
+        BROWSER.with(|browser| {
+            let mut browser = browser.borrow_mut();
+            if browser
+                .as_ref()
+                .is_some_and(|browser| browser.instance == session_id)
+            {
+                browser.take();
+            }
+        });
+        Ok(())
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn browser_navigate(
+    app: AppHandle,
+    session_id: String,
+    url: String,
+) -> Result<(), String> {
+    on_main_thread(&app, move || {
+        with_browser(&session_id, |browser| browser.navigate(&url))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn browser_action(
+    app: AppHandle,
+    session_id: String,
+    action: BrowserAction,
+) -> Result<(), String> {
+    on_main_thread(&app, move || {
+        with_browser(&session_id, |browser| {
             browser.snapshot.borrow_mut().error = None;
             match action {
                 BrowserAction::Reload => browser.guest.reload().map_err(|error| error.to_string()),
@@ -296,6 +278,9 @@ pub async fn browser_action(app: AppHandle, action: BrowserAction) -> Result<(),
 }
 
 #[tauri::command]
-pub async fn browser_status(app: AppHandle) -> Result<BrowserSnapshot, String> {
-    on_main_thread(&app, || with_browser(BrowserWindow::snapshot)).await
+pub async fn browser_status(app: AppHandle, session_id: String) -> Result<BrowserSnapshot, String> {
+    on_main_thread(&app, move || {
+        with_browser(&session_id, BrowserSession::snapshot)
+    })
+    .await
 }

@@ -31,7 +31,7 @@ fn invoke(
 }
 
 #[test]
-fn native_command_permissions_separate_main_controls_and_guest() {
+fn native_command_permissions_allow_only_main_webview() {
     let app = mock_builder()
         // A marker handler proves which requests pass the real generated ACL,
         // without starting terminals, importing plugins or showing notifications.
@@ -49,21 +49,13 @@ fn native_command_permissions_separate_main_controls_and_guest() {
             tauri::LogicalSize::new(800, 600),
         )
         .unwrap();
-    let browser_window = WindowBuilder::new(&app, "browser").build().unwrap();
-    let controls = browser_window
-        .add_child(
-            WebviewBuilder::new("browser-controls", WebviewUrl::default()),
-            tauri::LogicalPosition::new(0, 0),
-            tauri::LogicalSize::new(800, 56),
-        )
-        .unwrap();
-    // Production uses a raw Wry guest with no IPC. This simulated Tauri sibling
-    // additionally catches window-wide grants accidentally added to the toolbar.
-    let guest = browser_window
+    // Production uses a raw Wry guest with no IPC. A simulated Tauri sibling
+    // catches accidental window-wide grants in the main window's capability.
+    let guest = main_window
         .add_child(
             WebviewBuilder::new("browser-content", WebviewUrl::default()),
-            tauri::LogicalPosition::new(0, 56),
-            tauri::LogicalSize::new(800, 544),
+            tauri::LogicalPosition::new(500, 80),
+            tauri::LogicalSize::new(300, 500),
         )
         .unwrap();
 
@@ -84,9 +76,13 @@ fn native_command_permissions_separate_main_controls_and_guest() {
         "plugin_change",
         "plugin_module",
         "plugin_recover",
-        "browser_open",
+        "browser_attach",
+        "browser_set_bounds",
+        "browser_detach",
+        "browser_navigate",
+        "browser_action",
+        "browser_status",
     ];
-    let control_commands = ["browser_navigate", "browser_action", "browser_status"];
     let local_origin = if cfg!(windows) {
         "http://tauri.localhost"
     } else {
@@ -94,22 +90,6 @@ fn native_command_permissions_separate_main_controls_and_guest() {
     };
     for command in application_commands {
         assert!(invoke(&main, command, local_origin).is_ok(), "{command}");
-        assert!(
-            invoke(&controls, command, local_origin).is_err(),
-            "controls must reject {command}"
-        );
-    }
-    for command in control_commands {
-        assert!(
-            invoke(&controls, command, local_origin).is_ok(),
-            "{command}"
-        );
-        assert!(
-            invoke(&main, command, local_origin).is_err(),
-            "main must use browser_open, not {command}"
-        );
-    }
-    for command in application_commands.into_iter().chain(control_commands) {
         for origin in [local_origin, "https://example.org", "http://localhost:1430"] {
             assert!(
                 invoke(&guest, command, origin).is_err(),
@@ -117,8 +97,8 @@ fn native_command_permissions_separate_main_controls_and_guest() {
             );
         }
         assert!(
-            invoke(&controls, command, "https://example.org").is_err(),
-            "remote content must not use toolbar grants: {command}"
+            invoke(&main, command, "https://example.org").is_err(),
+            "remote content must not use main grants: {command}"
         );
     }
 }

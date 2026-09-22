@@ -84,80 +84,42 @@ mod macos {
 #[cfg(target_os = "macos")]
 pub(super) fn resize_guest(
     guest: &WebView,
-    controls: &tauri::Webview,
-    layout: &super::policy::BrowserLayout,
+    host: &tauri::Webview,
+    bounds: super::BrowserBounds,
 ) -> Result<(), String> {
     use objc2_web_kit::WKWebView;
     use wry::WebViewExtMacOS;
     let (sender, receiver) = std::sync::mpsc::channel();
-    let controls_height = layout.controls_height;
-    controls
-        .with_webview(move |webview| {
-            // Tauri owns the retained view throughout this UI-thread callback.
-            let controls = unsafe { &*webview.inner().cast::<WKWebView>() };
-            let Some(window) = controls.window() else {
-                return;
-            };
-            let Some(parent) = (unsafe { controls.superview() }) else {
-                return;
-            };
-            // A full-size macOS content view includes the native title bar. Use the
-            // window's usable content rectangle so it cannot clip the web toolbar.
-            let content_rectangle = window.contentLayoutRect();
-            let mut toolbar_rectangle = parent.convertRect_fromView(content_rectangle, None);
-            if !parent.isFlipped() {
-                toolbar_rectangle.origin.y += toolbar_rectangle.size.height - controls_height;
-            }
-            toolbar_rectangle.size.height = controls_height;
-            controls.setFrame(toolbar_rectangle);
-            let rectangle = controls.convertRect_toView(controls.bounds(), None);
-            let _ = sender.send((rectangle, content_rectangle));
-        })
-        .map_err(|error| error.to_string())?;
-    let (controls_rectangle, content_rectangle) = receiver
+    host.with_webview(move |webview| {
+        // CSS coordinates start at the top left; AppKit views may be unflipped.
+        let host = unsafe { &*webview.inner().cast::<WKWebView>() };
+        let viewport = host.bounds();
+        let result = bounds
+            .clip(viewport.size.width, viewport.size.height)
+            .map(|bounds| {
+                let mut rectangle = viewport;
+                rectangle.origin.x += bounds.x;
+                rectangle.origin.y += if host.isFlipped() {
+                    bounds.y
+                } else {
+                    viewport.size.height - bounds.y - bounds.height
+                };
+                rectangle.size.width = bounds.width;
+                rectangle.size.height = bounds.height;
+                host.convertRect_toView(rectangle, None)
+            });
+        let _ = sender.send(result);
+    })
+    .map_err(|error| error.to_string())?;
+    let rectangle = receiver
         .try_recv()
-        .map_err(|_| "Browser layout must run on the UI thread with an attached window")?;
+        .map_err(|_| "Browser layout must run on the UI thread")??;
     unsafe {
         let native_guest = guest.webview();
         let parent = native_guest
             .superview()
             .ok_or("Browser content has no parent view")?;
-        let controls_rectangle = parent.convertRect_fromView(controls_rectangle, None);
-        let content_rectangle = parent.convertRect_fromView(content_rectangle, None);
-        let mut guest_rectangle = controls_rectangle;
-        if parent.isFlipped() {
-            guest_rectangle.origin.y = controls_rectangle.origin.y + controls_rectangle.size.height;
-            guest_rectangle.size.height = (content_rectangle.origin.y
-                + content_rectangle.size.height
-                - guest_rectangle.origin.y)
-                .max(0.0);
-        } else {
-            guest_rectangle.origin.y = content_rectangle.origin.y;
-            guest_rectangle.size.height =
-                (controls_rectangle.origin.y - content_rectangle.origin.y).max(0.0);
-        }
-        native_guest.setFrame(guest_rectangle);
-        let actual = native_guest.frame();
-        debug_assert_eq!(controls_rectangle.size.height, layout.controls_height);
-        for rectangle in [controls_rectangle, actual] {
-            debug_assert!(
-                rectangle.origin.x >= content_rectangle.origin.x
-                    && rectangle.origin.y >= content_rectangle.origin.y
-                    && rectangle.origin.x + rectangle.size.width
-                        <= content_rectangle.origin.x + content_rectangle.size.width
-                    && rectangle.origin.y + rectangle.size.height
-                        <= content_rectangle.origin.y + content_rectangle.size.height,
-                "Browser child {rectangle:?} is outside visible content {content_rectangle:?}"
-            );
-        }
-        debug_assert!(
-            if parent.isFlipped() {
-                actual.origin.y >= controls_rectangle.origin.y + controls_rectangle.size.height
-            } else {
-                actual.origin.y + actual.size.height <= controls_rectangle.origin.y
-            },
-            "Website content overlaps browser controls"
-        );
+        native_guest.setFrame(parent.convertRect_fromView(rectangle, None));
     }
     Ok(())
 }
@@ -165,13 +127,27 @@ pub(super) fn resize_guest(
 #[cfg(target_os = "windows")]
 pub(super) fn resize_guest(
     guest: &WebView,
-    _controls: &tauri::Webview,
-    layout: &super::policy::BrowserLayout,
+    host: &tauri::Webview,
+    bounds: super::BrowserBounds,
 ) -> Result<(), String> {
+    let scale = host
+        .window()
+        .scale_factor()
+        .map_err(|error| error.to_string())?;
+    let size = host
+        .size()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+    let position = host
+        .position()
+        .map_err(|error| error.to_string())?
+        .to_logical::<f64>(scale);
+    let bounds = bounds.clip(size.width, size.height)?;
     guest
         .set_bounds(wry::Rect {
-            position: tauri::LogicalPosition::new(0.0, layout.controls_height).into(),
-            size: tauri::LogicalSize::new(layout.width, layout.content_height).into(),
+            position: tauri::LogicalPosition::new(position.x + bounds.x, position.y + bounds.y)
+                .into(),
+            size: tauri::LogicalSize::new(bounds.width, bounds.height).into(),
         })
         .map_err(|error| error.to_string())
 }
@@ -179,17 +155,10 @@ pub(super) fn resize_guest(
 #[cfg(target_os = "linux")]
 pub(super) fn resize_guest(
     _guest: &WebView,
-    controls: &tauri::Webview,
-    layout: &super::policy::BrowserLayout,
+    _host: &tauri::Webview,
+    _bounds: super::BrowserBounds,
 ) -> Result<(), String> {
-    use gtk::prelude::WidgetExt;
-    let controls_height = layout.controls_height as i32;
-    // Wry's GtkBox child ignores set_bounds; Gtk size requests reserve the toolbar.
-    controls
-        .with_webview(move |webview| {
-            webview.inner().set_size_request(-1, controls_height);
-        })
-        .map_err(|error| error.to_string())
+    Err("Embedded Buzz Browser is not supported on Linux".into())
 }
 
 #[cfg(target_os = "macos")]
@@ -208,18 +177,11 @@ pub(super) fn build_guest(builder: WebViewBuilder<'_>, window: &Window) -> Resul
 }
 
 #[cfg(target_os = "linux")]
-pub(super) fn build_guest(builder: WebViewBuilder<'_>, window: &Window) -> Result<WebView, String> {
-    use gtk::prelude::*;
-    use wry::WebViewBuilderExtUnix;
-    let container = window.default_vbox().map_err(|error| error.to_string())?;
-    // Tauri adds the toolbar to the box first. Only remote content expands vertically.
-    if let Some(toolbar) = container.children().first() {
-        toolbar.set_size_request(-1, super::policy::CONTROLS_HEIGHT as i32);
-        container.set_child_packing(toolbar, false, false, 0, gtk::PackType::Start);
-    }
-    builder
-        .build_gtk(&container)
-        .map_err(|error| error.to_string())
+pub(super) fn build_guest(
+    _builder: WebViewBuilder<'_>,
+    _window: &Window,
+) -> Result<WebView, String> {
+    Err("Embedded Buzz Browser is not supported on Linux".into())
 }
 
 #[cfg(target_os = "linux")]

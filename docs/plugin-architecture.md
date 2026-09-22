@@ -431,7 +431,7 @@ real workflows rather than declaring the toolbar a universal editor API.
 
 ## Desktop browser
 
-Plugins can use the host-matched [`browser` capability](browser.md) to open HTTP(S) links in a Buzz-owned native window. The [external Browser example](../examples/plugins/browser/README.md) consumes that capability through the existing panel contract. The web application reports it unavailable. Website content has a separate native view without Buzz IPC; external plugin code remains trusted same-process code.
+Plugins can render the host-matched [`browser.View` component](browser.md) inside a panel to open HTTP(S) links beside the conversation. The [external Browser example](../examples/plugins/browser/README.md) uses the existing panel contract; it does not create another window. This preview currently enables embedding only on macOS desktop. Website content has a separate native view without Buzz IPC; external plugin code remains trusted same-process code. Unmounting the component closes its private browsing session.
 
 ## In-app keyboard shortcuts
 

@@ -32,11 +32,6 @@ export default defineConfig(async ({ command, mode }) => {
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
     },
     clearScreen: false,
-    build: {
-      rolldownOptions: {
-        input: { main: "index.html", browser: "browser.html" },
-      },
-    },
     server: {
       port: 1430,
       strictPort: false,

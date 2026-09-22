@@ -81,6 +81,7 @@ export function ProfileButton({
       <nav
         id={id}
         aria-label="Your account"
+        data-popup-open={open ? "" : undefined}
         hidden={!open}
         className="absolute top-full right-0 z-50 mt-2 w-56 max-w-[calc(100vw-2rem)] rounded-2xl border border-line bg-surface p-2 shadow-surface"
       >

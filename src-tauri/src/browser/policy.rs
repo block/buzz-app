@@ -1,7 +1,6 @@
 use url::Url;
 
 const MAXIMUM_URL_BYTES: usize = 2048;
-pub(super) const CONTROLS_HEIGHT: f64 = 56.0;
 
 #[derive(Clone)]
 pub(super) struct NavigationPolicy {
@@ -42,28 +41,42 @@ impl NavigationPolicy {
     }
 }
 
-pub(super) fn is_controls_navigation(main_url: &Url, target: &Url) -> bool {
-    main_url.scheme() == target.scheme()
-        && main_url.host_str() == target.host_str()
-        && main_url.port_or_known_default() == target.port_or_known_default()
-        && target.path() == "/browser.html"
-        && target.username().is_empty()
-        && target.password().is_none()
-}
-
-#[derive(Debug, PartialEq)]
-pub(super) struct BrowserLayout {
+/// Coordinates relative to the main webview's CSS viewport.
+#[derive(Clone, Copy, Debug, serde::Deserialize, PartialEq)]
+pub struct BrowserBounds {
+    pub x: f64,
+    pub y: f64,
     pub width: f64,
-    pub controls_height: f64,
-    pub content_height: f64,
+    pub height: f64,
 }
 
-pub(super) fn browser_layout(width: f64, height: f64) -> BrowserLayout {
-    let controls_height = height.clamp(0.0, CONTROLS_HEIGHT);
-    BrowserLayout {
-        width: width.max(0.0),
-        controls_height,
-        content_height: (height - controls_height).max(0.0),
+impl BrowserBounds {
+    pub(super) fn validate(self) -> Result<(), String> {
+        if ![self.x, self.y, self.width, self.height]
+            .iter()
+            .all(|value| value.is_finite())
+            || self.x < 0.0
+            || self.y < 0.0
+            || self.width <= 0.0
+            || self.height <= 0.0
+        {
+            return Err(
+                "Browser viewport must have finite, positive dimensions within the app".into(),
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", test))]
+    pub(super) fn clip(self, width: f64, height: f64) -> Result<Self, String> {
+        self.validate()?;
+        let clipped = Self {
+            width: self.width.min(width - self.x),
+            height: self.height.min(height - self.y),
+            ..self
+        };
+        clipped.validate()?;
+        Ok(clipped)
     }
 }
 
@@ -128,58 +141,50 @@ mod tests {
     }
 
     #[test]
-    fn controls_navigation_accepts_only_its_exact_application_origin_and_page() {
-        for main in [
-            "tauri://localhost/index.html",
-            "http://tauri.localhost",
-            "http://localhost:1430/",
+    fn viewport_rejects_invalid_or_offscreen_rectangles() {
+        let bounds = BrowserBounds {
+            x: 500.0,
+            y: 80.0,
+            width: 400.0,
+            height: 600.0,
+        };
+        for invalid in [
+            BrowserBounds { x: -1.0, ..bounds },
+            BrowserBounds {
+                y: f64::NAN,
+                ..bounds
+            },
+            BrowserBounds {
+                width: f64::INFINITY,
+                ..bounds
+            },
+            BrowserBounds {
+                height: 0.0,
+                ..bounds
+            },
         ] {
-            let main_url = Url::parse(main).unwrap();
-            let controls_url = main_url.join("/browser.html").unwrap();
-            assert!(is_controls_navigation(&main_url, &controls_url));
-            for denied in [
-                "https://example.com/browser.html",
-                "http://localhost:1431/browser.html",
-                "tauri://untrusted/browser.html",
-                "file:///browser.html",
-            ] {
-                assert!(!is_controls_navigation(
-                    &main_url,
-                    &Url::parse(denied).unwrap()
-                ));
-            }
-            assert!(!is_controls_navigation(
-                &main_url,
-                &main_url.join("/index.html").unwrap()
-            ));
+            assert!(invalid.validate().is_err());
         }
+        assert!(bounds.clip(500.0, 800.0).is_err());
+        assert!(bounds.clip(1200.0, 80.0).is_err());
     }
 
     #[test]
-    fn controls_keep_their_height_when_content_resizes() {
+    fn viewport_clips_to_main_webview() {
+        let bounds = BrowserBounds {
+            x: 500.0,
+            y: 80.0,
+            width: 400.0,
+            height: 600.0,
+        };
         assert_eq!(
-            browser_layout(1200.0, 800.0),
-            BrowserLayout {
-                width: 1200.0,
-                controls_height: 56.0,
-                content_height: 744.0
+            bounds.clip(800.0, 600.0).unwrap(),
+            BrowserBounds {
+                width: 300.0,
+                height: 520.0,
+                ..bounds
             }
         );
-        assert_eq!(
-            browser_layout(480.0, 320.0),
-            BrowserLayout {
-                width: 480.0,
-                controls_height: 56.0,
-                content_height: 264.0
-            }
-        );
-        assert_eq!(
-            browser_layout(0.0, 10.0),
-            BrowserLayout {
-                width: 0.0,
-                controls_height: 10.0,
-                content_height: 0.0
-            }
-        );
+        assert_eq!(bounds.clip(1200.0, 800.0).unwrap(), bounds);
     }
 }

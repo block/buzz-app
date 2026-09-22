@@ -1,12 +1,10 @@
-export type BrowserOpenResult =
-  | { status: "opened" }
-  | { status: "unavailable" }
-  | { status: "invalid-url"; reason: string }
-  | { status: "failed"; reason: string };
+import type { ComponentType } from "react";
+
+export type BrowserViewProps = Readonly<{ url: string }>;
 
 export interface Browser {
   readonly available: boolean;
-  open(url: string): Promise<BrowserOpenResult>;
+  readonly View: ComponentType<BrowserViewProps>;
 }
 
 declare module "@deepseek-ai/cordis" {

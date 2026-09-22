@@ -1,6 +1,4 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import type { BrowserOpenResult } from "./api";
-
 const MAX_URL_BYTES = 2048;
 const encoder = new TextEncoder();
 
@@ -8,12 +6,6 @@ export type UrlValidation =
   | { ok: true; url: string }
   | { ok: false; reason: string };
 
-/**
- * http(s) only, no embedded credentials, and no more than 2048 UTF-8 bytes
- * once normalized — matching the native side's byte-based limit rather than
- * a character count, so Unicode and percent-encoding expansion can't push a
- * URL over the limit on one side of the boundary but not the other.
- */
 export function validateBrowsableUrl(url: string): UrlValidation {
   if (typeof url !== "string" || !url)
     return { ok: false, reason: "A URL is required" };
@@ -36,36 +28,59 @@ export function validateBrowsableUrl(url: string): UrlValidation {
   return { ok: true, url: normalized };
 }
 
+export type BrowserBounds = Readonly<{
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}>;
+
+export type BrowserStatus = Readonly<{
+  url: string;
+  title: string;
+  loading: boolean;
+  error: string | null;
+}>;
+
+export type BrowserAction = "back" | "forward" | "reload";
+
 export interface BrowserPlatform {
   readonly available: boolean;
-  open(url: string): Promise<BrowserOpenResult>;
+  attach(url: string, bounds: BrowserBounds): Promise<string>;
+  setBounds(
+    sessionId: string,
+    bounds: BrowserBounds,
+    visible: boolean,
+  ): Promise<void>;
+  navigate(sessionId: string, url: string): Promise<void>;
+  action(sessionId: string, action: BrowserAction): Promise<void>;
+  status(sessionId: string): Promise<BrowserStatus>;
+  detach(sessionId: string): Promise<void>;
 }
 
-/** No fallback: outside a desktop build there is no in-app browser surface. */
+function normalizedUrl(url: string): string {
+  const validation = validateBrowsableUrl(url);
+  if (!validation.ok) throw new Error(validation.reason);
+  return validation.url;
+}
+
 export function createBrowserPlatform(): BrowserPlatform {
-  if (!isTauri()) {
-    return {
-      available: false,
-      async open(): Promise<BrowserOpenResult> {
-        return { status: "unavailable" };
-      },
-    };
-  }
+  const available =
+    isTauri() &&
+    typeof navigator !== "undefined" &&
+    /Mac/i.test(navigator.platform);
   return {
-    available: true,
-    async open(url): Promise<BrowserOpenResult> {
-      const validated = validateBrowsableUrl(url);
-      if (!validated.ok)
-        return { status: "invalid-url", reason: validated.reason };
-      try {
-        await invoke("browser_open", { url: validated.url });
-        return { status: "opened" };
-      } catch (error) {
-        return {
-          status: "failed",
-          reason: error instanceof Error ? error.message : String(error),
-        };
-      }
-    },
+    available,
+    attach: async (url, bounds) =>
+      invoke<string>("browser_attach", { url: normalizedUrl(url), bounds }),
+    setBounds: (sessionId, bounds, visible) =>
+      invoke("browser_set_bounds", { sessionId, bounds, visible }),
+    navigate: async (sessionId, url) =>
+      invoke("browser_navigate", { sessionId, url: normalizedUrl(url) }),
+    action: (sessionId, action) =>
+      invoke("browser_action", { sessionId, action }),
+    status: (sessionId) =>
+      invoke<BrowserStatus>("browser_status", { sessionId }),
+    detach: (sessionId) => invoke("browser_detach", { sessionId }),
   };
 }

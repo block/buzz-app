@@ -3,11 +3,6 @@ import { beaconStyles } from "./styles";
 import { classifyOwnPullRequest, isHighlighted } from "./classify";
 import { createPullRequestDetailView } from "./PullRequestDetailView";
 import { createSettingsPanel } from "./SettingsPanel";
-import {
-  GitHubError,
-  fetchOwnPullRequests,
-  fetchReviewRequests,
-} from "./github";
 import type { PreferencesStore } from "./preferences";
 import type {
   AgentSummarySelection,
@@ -15,11 +10,11 @@ import type {
   RelaySession,
 } from "./relayTypes";
 import type { TokenStore } from "./tokenStore";
+import type { QueueCache } from "./queueCache";
 import type {
   OwnPullRequest,
   OwnPullRequestStatus,
   PullRequestSummary,
-  SearchResult,
 } from "./types";
 
 type ReactRuntime = Context["react"];
@@ -35,11 +30,6 @@ const OWN_STATUS_LABELS: Record<OwnPullRequestStatus, string> = {
 
 // PR Beacon's own default poll interval.
 const POLL_INTERVAL_MS = 60_000;
-
-type LoadState<Item> =
-  | { status: "loading" }
-  | { status: "error"; message: string }
-  | { status: "ready"; items: Item[]; truncated: boolean };
 
 function useTokenStore(React: ReactRuntime, tokenStore: TokenStore) {
   return React.useSyncExternalStore(
@@ -95,6 +85,10 @@ export function createApp(
   tokenStore: TokenStore,
   preferencesStore: PreferencesStore,
   relay: RelayData,
+  queues: {
+    reviewRequests: QueueCache<PullRequestSummary>;
+    ownPullRequests: QueueCache<OwnPullRequest>;
+  },
 ) {
   const SettingsPanel = createSettingsPanel(React);
   const PullRequestDetailView = createPullRequestDetailView(React);
@@ -224,70 +218,61 @@ export function createApp(
     );
   }
 
-  // Shared by the review-request and own-pull-request lists: loads once,
-  // exposes a manual refresh, and — only while pollingEnabled — re-loads on
-  // a fixed interval as long as the component stays mounted. The interval
-  // never starts a second request while one is already in flight.
-  function usePolledFetch<Item>(
+  function useQueue<Item>(
+    cache: QueueCache<Item>,
     token: string,
     pollingEnabled: boolean,
-    fetcher: (
-      token: string,
-      signal: AbortSignal,
-    ) => Promise<SearchResult<Item>>,
-    fallbackErrorMessage: string,
-  ): { state: LoadState<Item>; refresh: () => void } {
-    const [state, setState] = React.useState<LoadState<Item>>({
-      status: "loading",
-    });
-    const [reloadKey, setReloadKey] = React.useState(0);
-    const isFetchingRef = React.useRef(false);
-
+  ) {
+    const state = React.useSyncExternalStore(
+      cache.subscribe,
+      cache.snapshot,
+      cache.snapshot,
+    );
     React.useEffect(() => {
-      const controller = new AbortController();
-      isFetchingRef.current = true;
-      setState({ status: "loading" });
-      fetcher(token, controller.signal)
-        .then((result) => {
-          // Check ownership before touching the busy flag: an aborted
-          // request's own callback must not clear the flag a newer,
-          // still-in-flight request set, or a poll tick could start an
-          // overlapping second request.
-          if (controller.signal.aborted) return;
-          isFetchingRef.current = false;
-          setState({
-            status: "ready",
-            items: result.items,
-            truncated: result.truncated,
-          });
-        })
-        .catch((error) => {
-          if (controller.signal.aborted) return;
-          isFetchingRef.current = false;
-          setState({
-            status: "error",
-            message:
-              error instanceof GitHubError
-                ? error.message
-                : fallbackErrorMessage,
-          });
-        });
-      return () => {
-        controller.abort();
-        isFetchingRef.current = false;
-      };
-    }, [token, reloadKey]);
-
+      void cache.load();
+    }, [cache, token]);
     React.useEffect(() => {
       if (!pollingEnabled) return;
       const interval = setInterval(() => {
-        if (isFetchingRef.current) return; // no overlapping requests
-        setReloadKey((key) => key + 1);
+        void cache.refresh();
       }, POLL_INTERVAL_MS);
       return () => clearInterval(interval);
-    }, [pollingEnabled]);
+    }, [cache, pollingEnabled, token]);
+    return {
+      state,
+      refresh: () => {
+        void cache.refresh();
+      },
+    };
+  }
 
-    return { state, refresh: () => setReloadKey((key) => key + 1) };
+  function LastFetched({ timestamp }: { timestamp: number | null }) {
+    const [now, setNow] = React.useState(Date.now);
+    React.useEffect(() => {
+      setNow(Date.now());
+      if (timestamp === null) return;
+      const interval = setInterval(() => setNow(Date.now()), 30_000);
+      return () => clearInterval(interval);
+    }, [timestamp]);
+    if (timestamp === null) return <span>Not fetched yet</span>;
+    const minutes = Math.max(0, Math.floor((now - timestamp) / 60_000));
+    const elapsed =
+      minutes < 60
+        ? minutes
+        : minutes < 1_440
+          ? Math.floor(minutes / 60)
+          : Math.floor(minutes / 1_440);
+    const unit = minutes < 60 ? "minute" : minutes < 1_440 ? "hour" : "day";
+    const age =
+      minutes === 0
+        ? "less than a minute ago"
+        : `${elapsed} ${unit}${elapsed === 1 ? "" : "s"} ago`;
+    const date = new Date(timestamp);
+    return (
+      <time dateTime={date.toISOString()} title={date.toLocaleString()}>
+        Last fetched: {age}
+      </time>
+    );
   }
 
   function PullRequestRow(props: {
@@ -348,12 +333,12 @@ export function createApp(
     onHiddenReviewRequestUrlsChange: (next: string[]) => void;
     onSelect: (pullRequest: PullRequestSummary) => void;
   }) {
-    const { state, refresh } = usePolledFetch(
+    const { state, refresh } = useQueue(
+      queues.reviewRequests,
       props.token,
       props.pollingEnabled,
-      fetchReviewRequests,
-      "Could not load review requests.",
     );
+    const result = state.result;
 
     function hide(url: string) {
       if (props.hiddenReviewRequestUrls.includes(url)) return;
@@ -370,12 +355,12 @@ export function createApp(
 
     const hiddenSet = new Set(props.hiddenReviewRequestUrls);
     const visible =
-      state.status === "ready"
-        ? state.items.filter((item) => !hiddenSet.has(item.url))
+      result !== null
+        ? result.items.filter((item) => !hiddenSet.has(item.url))
         : [];
     const hidden =
-      state.status === "ready"
-        ? state.items.filter((item) => hiddenSet.has(item.url))
+      result !== null
+        ? result.items.filter((item) => hiddenSet.has(item.url))
         : [];
     const highlighted = visible.filter((item) =>
       isHighlighted(item, props.vipLogins, props.watchedLabels),
@@ -388,25 +373,35 @@ export function createApp(
       <div className="beacon-inbox">
         <div className="beacon-toolbar">
           <p className="beacon-muted">
-            {state.status === "ready"
+            {result !== null
               ? `${visible.length} open request${visible.length === 1 ? "" : "s"} for your review`
               : "Your review inbox"}
           </p>
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={state.status === "loading"}
-          >
+          <button type="button" onClick={refresh} disabled={state.isFetching}>
             Refresh
           </button>
         </div>
-        {state.status === "loading" && <p>Loading review requests…</p>}
-        {state.status === "error" && <p role="alert">{state.message}</p>}
-        {state.status === "ready" && (
+        <p className="beacon-muted beacon-fetched">
+          <LastFetched timestamp={state.lastFetchedAt} />
+        </p>
+        {state.isFetching && (
+          <p role="status">
+            {result
+              ? "Refreshing review requests…"
+              : "Loading review requests…"}
+          </p>
+        )}
+        {state.error && (
+          <p role="alert">
+            {state.error}
+            {result && " Showing previously fetched data."}
+          </p>
+        )}
+        {result !== null && (
           <>
-            {state.truncated && (
+            {result.truncated && (
               <p role="alert">
-                Showing the first {state.items.length} results; more may exist
+                Showing the first {result.items.length} results; more may exist
                 on GitHub. Refine your review-request filters on GitHub to see
                 the rest.
               </p>
@@ -471,16 +466,16 @@ export function createApp(
     pollingEnabled: boolean;
     onSelect: (pullRequest: PullRequestSummary) => void;
   }) {
-    const { state, refresh } = usePolledFetch(
+    const { state, refresh } = useQueue(
+      queues.ownPullRequests,
       props.token,
       props.pollingEnabled,
-      fetchOwnPullRequests,
-      "Could not load your pull requests.",
     );
+    const result = state.result;
 
     const grouped = new Map<OwnPullRequestStatus, OwnPullRequest[]>();
-    if (state.status === "ready") {
-      for (const item of state.items) {
+    if (result !== null) {
+      for (const item of result.items) {
         const status = classifyOwnPullRequest(item);
         grouped.set(status, [...(grouped.get(status) ?? []), item]);
       }
@@ -490,29 +485,41 @@ export function createApp(
       <div className="beacon-inbox">
         <div className="beacon-toolbar">
           <p className="beacon-muted">
-            {state.status === "ready"
-              ? `${state.items.length} open pull request${state.items.length === 1 ? "" : "s"}`
+            {result !== null
+              ? `${result.items.length} open pull request${result.items.length === 1 ? "" : "s"}`
               : "Your open pull requests"}
           </p>
-          <button
-            type="button"
-            onClick={refresh}
-            disabled={state.status === "loading"}
-          >
+          <button type="button" onClick={refresh} disabled={state.isFetching}>
             Refresh
           </button>
         </div>
-        {state.status === "loading" && <p>Loading your pull requests…</p>}
-        {state.status === "error" && <p role="alert">{state.message}</p>}
-        {state.status === "ready" && (
+        <p className="beacon-muted beacon-fetched">
+          <LastFetched timestamp={state.lastFetchedAt} />
+        </p>
+        {state.isFetching && (
+          <p role="status">
+            {result
+              ? "Refreshing your pull requests…"
+              : "Loading your pull requests…"}
+          </p>
+        )}
+        {state.error && (
+          <p role="alert">
+            {state.error}
+            {result && " Showing previously fetched data."}
+          </p>
+        )}
+        {result !== null && (
           <>
-            {state.truncated && (
+            {result.truncated && (
               <p role="alert">
-                Showing the first {state.items.length} pull requests; more may
+                Showing the first {result.items.length} pull requests; more may
                 exist on GitHub.
               </p>
             )}
-            {state.items.length === 0 && <p>You have no open pull requests.</p>}
+            {result.items.length === 0 && (
+              <p>You have no open pull requests.</p>
+            )}
             {(Object.keys(OWN_STATUS_LABELS) as OwnPullRequestStatus[]).map(
               (status) => {
                 const items = grouped.get(status);

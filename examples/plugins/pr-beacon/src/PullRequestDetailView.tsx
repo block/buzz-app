@@ -368,19 +368,23 @@ export function createPullRequestDetailView(React: ReactRuntime) {
       reader.refresh().then(checkForReply);
     }
 
-    if (loadError) return <p role="alert">{loadError}</p>;
-    if (!detail || !files) return <p>Loading…</p>;
-
-    return (
-      <section
-        className="beacon-detail"
-        aria-label={`Pull request #${pullRequest.number}`}
-      >
-        <header className="beacon-detail-header">
-          <p className="beacon-eyebrow">
-            {detail.repository} <span>#{detail.number}</span>
-          </p>
-          <h2>{detail.title}</h2>
+    const detailHeader = (
+      <header className="beacon-detail-header">
+        <p className="beacon-eyebrow">
+          {pullRequest.repository} <span>#{pullRequest.number}</span>
+        </p>
+        <div className="beacon-detail-title-row">
+          <h2>{detail ? detail.title : pullRequest.title}</h2>
+          <a
+            className="beacon-external-link"
+            href={detail ? detail.url : pullRequest.url}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Open on GitHub
+          </a>
+        </div>
+        {detail && (
           <div className="beacon-detail-meta">
             <span>
               by <strong>{detail.author}</strong>
@@ -391,7 +395,37 @@ export function createPullRequestDetailView(React: ReactRuntime) {
               <code>{detail.baseRefName}</code>
             </span>
           </div>
-        </header>
+        )}
+      </header>
+    );
+
+    if (loadError)
+      return (
+        <section
+          className="beacon-detail"
+          aria-label={`Pull request #${pullRequest.number}`}
+        >
+          {detailHeader}
+          <p role="alert">{loadError}</p>
+        </section>
+      );
+    if (!detail || !files)
+      return (
+        <section
+          className="beacon-detail"
+          aria-label={`Pull request #${pullRequest.number}`}
+        >
+          {detailHeader}
+          <p>Loading…</p>
+        </section>
+      );
+
+    return (
+      <section
+        className="beacon-detail"
+        aria-label={`Pull request #${pullRequest.number}`}
+      >
+        {detailHeader}
         <div className="beacon-review-grid">
           <section
             className="beacon-card beacon-summary"

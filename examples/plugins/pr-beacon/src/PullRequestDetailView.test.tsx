@@ -117,6 +117,36 @@ describe("PullRequestDetailView load lifecycle", () => {
   });
 });
 
+describe("PullRequestDetailView Open on GitHub link", () => {
+  it("renders an accessible external link to the pull request's actual URL", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi
+        .fn()
+        .mockImplementation((url: string) =>
+          Promise.resolve(
+            url.includes("/compare/")
+              ? jsonResponse({ files: [] })
+              : detailResponse(pullRequest, "sha-1"),
+          ),
+        ),
+    );
+    render(
+      <PullRequestDetailView
+        token="test-token"
+        pullRequest={pullRequest}
+        relay={relay}
+        relaySnapshot={relaySnapshot}
+        summarySelection={null}
+      />,
+    );
+    const link = await screen.findByRole("link", { name: "Open on GitHub" });
+    expect(link).toHaveAttribute("href", pullRequest.url);
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer");
+  });
+});
+
 describe("PullRequestDetailView approve flow", () => {
   it("does not fabricate an AI summary and prompts to pick an agent instead", async () => {
     vi.stubGlobal(

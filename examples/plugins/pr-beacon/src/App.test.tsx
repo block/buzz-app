@@ -1,10 +1,19 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { createApp } from "./App";
+import { createApp as createAppWithQueues } from "./App";
+import { createQueueCache } from "./queueCache";
+import { fetchReviewRequests, fetchOwnPullRequests } from "./github";
 import { createPreferencesStore } from "./preferences";
 import {
   createFakeAgentLibrary,
@@ -12,6 +21,41 @@ import {
   createFakeSession,
 } from "./testRelayFixtures";
 import { createTokenStore } from "./tokenStore";
+
+const disposeQueues: (() => void)[] = [];
+
+type AppArguments = Parameters<typeof createAppWithQueues>;
+
+function createApp(
+  runtime: AppArguments[0],
+  tokenStore: AppArguments[1],
+  preferencesStore: AppArguments[2],
+  relay: AppArguments[3],
+) {
+  const queues = {
+    reviewRequests: createQueueCache(
+      tokenStore,
+      fetchReviewRequests,
+      "Could not load review requests.",
+    ),
+    ownPullRequests: createQueueCache(
+      tokenStore,
+      fetchOwnPullRequests,
+      "Could not load your pull requests.",
+    ),
+  };
+  disposeQueues.push(
+    queues.reviewRequests.dispose,
+    queues.ownPullRequests.dispose,
+  );
+  return createAppWithQueues(
+    runtime,
+    tokenStore,
+    preferencesStore,
+    relay,
+    queues,
+  );
+}
 
 function jsonResponse(body: unknown) {
   return new Response(JSON.stringify(body));
@@ -45,6 +89,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  for (const dispose of disposeQueues.splice(0)) dispose();
   vi.unstubAllGlobals();
   vi.useRealTimers();
 });
@@ -460,5 +505,203 @@ describe("App agent summary settings", () => {
     render(<App />);
     expect(screen.getByText(/No channels are available/)).toBeInTheDocument();
     expect(screen.getByLabelText("Summary channel")).toBeDisabled();
+  });
+});
+
+describe("App cached queues", () => {
+  it("reuses both queues across tab changes, a PR visit, and page remounts", async () => {
+    const tokenStore = createTokenStore();
+    tokenStore.setToken("test-token");
+    const App = createApp(
+      React as never,
+      tokenStore,
+      createPreferencesStore(),
+      createFakeRelay(),
+    );
+    const searchQueries: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, options: RequestInit) => {
+        if (url.endsWith("/graphql")) {
+          const query = JSON.parse(options.body as string).variables
+            .queryString as string;
+          searchQueries.push(query);
+          return Promise.resolve(
+            searchResponse([
+              reviewRequestNode(
+                query.includes("author:") ? 2 : 1,
+                query.includes("author:") ? "My change" : "Requested change",
+              ),
+            ]),
+          );
+        }
+        if (url.includes("/compare/"))
+          return Promise.resolve(jsonResponse({ files: [] }));
+        return Promise.resolve(
+          jsonResponse({
+            html_url: "https://github.com/example/repo/pull/1",
+            number: 1,
+            title: "Requested change",
+            body: "",
+            user: { login: "octocat" },
+            head: { sha: "head-sha", ref: "feature" },
+            base: { ref: "main", sha: "base-sha" },
+          }),
+        );
+      }),
+    );
+    const firstMount = render(<App />);
+    await userEvent.click(
+      await screen.findByRole("button", { name: /#1 — Requested change/ }),
+    );
+    expect(
+      await screen.findByRole("link", { name: "Open on GitHub" }),
+    ).toHaveAttribute("href", "https://github.com/example/repo/pull/1");
+    await userEvent.click(screen.getByRole("button", { name: /Back/ }));
+    await screen.findByRole("button", { name: /#1 — Requested change/ });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Your pull requests" }),
+    );
+    await screen.findByRole("button", { name: /#2 — My change/ });
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review requests" }),
+    );
+    await screen.findByRole("button", { name: /#1 — Requested change/ });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Your pull requests" }),
+    );
+    await screen.findByRole("button", { name: /#2 — My change/ });
+    firstMount.unmount();
+    render(<App />);
+    expect(
+      screen.getByRole("button", { name: /#1 — Requested change/ }),
+    ).toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Your pull requests" }),
+    );
+    expect(
+      screen.getByRole("button", { name: /#2 — My change/ }),
+    ).toBeInTheDocument();
+    expect(searchQueries).toHaveLength(2);
+  });
+
+  it("keeps cached rows and last-success time during a failed refresh, then replaces both on success", async () => {
+    vi.useFakeTimers();
+    const firstFetchTime = new Date("2026-09-22T17:00:00Z");
+    vi.setSystemTime(firstFetchTime);
+    const tokenStore = createTokenStore();
+    tokenStore.setToken("test-token");
+    const App = createApp(
+      React as never,
+      tokenStore,
+      createPreferencesStore(),
+      createFakeRelay(),
+    );
+    let finishRefresh: ((response: Response) => void) | undefined;
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        searchResponse([reviewRequestNode(1, "Cached change")]),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishRefresh = resolve;
+          }),
+      )
+      .mockResolvedValueOnce(
+        searchResponse([reviewRequestNode(2, "Fresh change")]),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+    await act(async () => {
+      render(<App />);
+    });
+    const timestamp = screen.getByText(/Last fetched:/);
+    expect(timestamp).toHaveAttribute("datetime", firstFetchTime.toISOString());
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(180_000);
+    });
+    expect(timestamp).toHaveTextContent("Last fetched: 3 minutes ago");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    });
+    expect(
+      screen.getByRole("button", { name: /#1 — Cached change/ }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh" })).toBeDisabled();
+    expect(timestamp).toHaveAttribute("datetime", firstFetchTime.toISOString());
+    await act(async () => {
+      finishRefresh?.(
+        new Response(JSON.stringify({ message: "Unavailable" }), {
+          status: 503,
+        }),
+      );
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Showing previously fetched data.",
+    );
+    expect(
+      screen.getByRole("button", { name: /#1 — Cached change/ }),
+    ).toBeInTheDocument();
+    expect(timestamp).toHaveAttribute("datetime", firstFetchTime.toISOString());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /#2 — Fresh change/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /#1 — Cached change/ }),
+    ).not.toBeInTheDocument();
+    expect(timestamp).toHaveAttribute("datetime", "2026-09-22T17:03:00.000Z");
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it("reuses an empty result and clears both queues when credentials change", async () => {
+    const tokenStore = createTokenStore();
+    tokenStore.setToken("first-token");
+    const App = createApp(
+      React as never,
+      tokenStore,
+      createPreferencesStore(),
+      createFakeRelay(),
+    );
+    const fetchMock = vi
+      .fn()
+      .mockImplementation(() => Promise.resolve(searchResponse([])));
+    vi.stubGlobal("fetch", fetchMock);
+    render(<App />);
+    await screen.findByText("No open review requests.");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Your pull requests" }),
+    );
+    await screen.findByText("You have no open pull requests.");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review requests" }),
+    );
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    await act(async () => {
+      tokenStore.setToken("second-token");
+    });
+    await screen.findByText("No open review requests.");
+    await userEvent.click(
+      screen.getByRole("button", { name: "Your pull requests" }),
+    );
+    await screen.findByText("You have no open pull requests.");
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    await userEvent.click(screen.getByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Disconnect" }));
+    expect(screen.queryByText(/Last fetched:/)).not.toBeInTheDocument();
+    await act(async () => {
+      tokenStore.setToken("second-token");
+    });
+    await userEvent.click(
+      screen.getByRole("button", { name: "Review requests" }),
+    );
+    await screen.findByText("No open review requests.");
+    expect(fetchMock).toHaveBeenCalledTimes(5);
   });
 });

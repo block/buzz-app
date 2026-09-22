@@ -43,7 +43,7 @@ var beaconStyles = `
 .pr-beacon button { min-height: 34px; border: 1px solid var(--beacon-border); border-radius: 7px; padding: 6px 12px; background: var(--beacon-surface); color: var(--beacon-text); font-size: calc(13px * var(--buzz-text-scale, 1)); font-weight: 550; cursor: pointer; transition: background .12s, border-color .12s; }
 .pr-beacon button:hover:not(:disabled) { background: var(--beacon-hover); border-color: var(--beacon-muted); }
 .pr-beacon button:disabled { opacity: .48; cursor: not-allowed; }
-.pr-beacon :is(button,input,select,summary):focus-visible { outline: 2px solid var(--beacon-accent); outline-offset: 3px; }
+.pr-beacon :is(button,input,select,summary,a):focus-visible { outline: 2px solid var(--beacon-accent); outline-offset: 3px; }
 .pr-beacon .beacon-primary { background: #137567; color: #fff; border-color: #137567; }
 .pr-beacon .beacon-primary:hover:not(:disabled) { background: #0c6155; border-color: #0c6155; }
 .pr-beacon .beacon-quiet { background: transparent; border-color: transparent; color: var(--beacon-muted); }
@@ -56,6 +56,7 @@ var beaconStyles = `
 .pr-beacon .beacon-tabs button:hover:not(:disabled) { color: var(--beacon-text); background: transparent; }
 .pr-beacon .beacon-tabs button[aria-current="page"] { color: var(--beacon-accent); }
 .pr-beacon .beacon-tabs button[aria-current="page"]::after { content: ""; position: absolute; height: 2px; background: var(--beacon-accent); bottom: -1px; left: 0; right: 0; }
+.pr-beacon .beacon-fetched { margin: -12px 0 18px; }
 .pr-beacon .beacon-toolbar { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 20px; }
 .pr-beacon .beacon-group-title { margin: 24px 0 10px; font-size: calc(13px * var(--buzz-text-scale, 1)); color: var(--beacon-muted); }
 .pr-beacon .beacon-inbox > section:first-of-type .beacon-group-title { margin-top: 0; }
@@ -79,6 +80,10 @@ var beaconStyles = `
 .pr-beacon .beacon-hidden button { margin-left: 12px; }
 .pr-beacon [role="alert"] { padding: 12px 14px; border-radius: 7px; color: var(--beacon-warning); background: var(--beacon-warning-soft); font-size: calc(13px * var(--buzz-text-scale, 1)); margin: 12px 0; overflow-wrap: anywhere; }
 .pr-beacon .beacon-backbar { display: flex; align-items: center; gap: 10px; color: var(--beacon-muted); font-size: calc(12px * var(--buzz-text-scale, 1)); margin: -8px 0 16px -10px; }
+.pr-beacon .beacon-detail-title-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 12px 20px; }
+.pr-beacon .beacon-detail-title-row h2 { flex: 1 1 340px; min-width: 0; overflow-wrap: anywhere; }
+.pr-beacon .beacon-external-link { color: var(--beacon-accent); display: inline-flex; align-items: center; min-height: 34px; padding: 6px 10px; border: 1px solid var(--beacon-border); border-radius: 7px; font-size: calc(13px * var(--buzz-text-scale, 1)); text-decoration: underline; text-underline-offset: 3px; }
+.pr-beacon .beacon-external-link:hover { background: var(--beacon-hover); }
 .pr-beacon .beacon-detail-header { margin-bottom: 18px; }
 .pr-beacon .beacon-eyebrow { color: var(--beacon-muted); font-size: calc(12px * var(--buzz-text-scale, 1)); font-weight: 550; }
 .pr-beacon .beacon-detail-header > .beacon-eyebrow { margin-bottom: 9px; }
@@ -817,31 +822,41 @@ function createPullRequestDetailView(React) {
       }, AGENT_REPLY_TIMEOUT_MS);
       reader.refresh().then(checkForReply);
     }
-    if (loadError)
-      return /* @__PURE__ */ React.createElement(
-        "p",
-        { role: "alert" },
-        loadError,
-      );
-    if (!detail || !files)
-      return /* @__PURE__ */ React.createElement("p", null, "Loading…");
-    return /* @__PURE__ */ React.createElement(
-      "section",
-      {
-        className: "beacon-detail",
-        "aria-label": `Pull request #${pullRequest.number}`,
-      },
+    const detailHeader = /* @__PURE__ */ React.createElement(
+      "header",
+      { className: "beacon-detail-header" },
       /* @__PURE__ */ React.createElement(
-        "header",
-        { className: "beacon-detail-header" },
+        "p",
+        { className: "beacon-eyebrow" },
+        pullRequest.repository,
+        " ",
         /* @__PURE__ */ React.createElement(
-          "p",
-          { className: "beacon-eyebrow" },
-          detail.repository,
-          " ",
-          /* @__PURE__ */ React.createElement("span", null, "#", detail.number),
+          "span",
+          null,
+          "#",
+          pullRequest.number,
         ),
-        /* @__PURE__ */ React.createElement("h2", null, detail.title),
+      ),
+      /* @__PURE__ */ React.createElement(
+        "div",
+        { className: "beacon-detail-title-row" },
+        /* @__PURE__ */ React.createElement(
+          "h2",
+          null,
+          detail ? detail.title : pullRequest.title,
+        ),
+        /* @__PURE__ */ React.createElement(
+          "a",
+          {
+            className: "beacon-external-link",
+            href: detail ? detail.url : pullRequest.url,
+            target: "_blank",
+            rel: "noopener noreferrer",
+          },
+          "Open on GitHub",
+        ),
+      ),
+      detail &&
         /* @__PURE__ */ React.createElement(
           "div",
           { className: "beacon-detail-meta" },
@@ -871,7 +886,34 @@ function createPullRequestDetailView(React) {
             ),
           ),
         ),
-      ),
+    );
+    if (loadError)
+      return /* @__PURE__ */ React.createElement(
+        "section",
+        {
+          className: "beacon-detail",
+          "aria-label": `Pull request #${pullRequest.number}`,
+        },
+        detailHeader,
+        /* @__PURE__ */ React.createElement("p", { role: "alert" }, loadError),
+      );
+    if (!detail || !files)
+      return /* @__PURE__ */ React.createElement(
+        "section",
+        {
+          className: "beacon-detail",
+          "aria-label": `Pull request #${pullRequest.number}`,
+        },
+        detailHeader,
+        /* @__PURE__ */ React.createElement("p", null, "Loading…"),
+      );
+    return /* @__PURE__ */ React.createElement(
+      "section",
+      {
+        className: "beacon-detail",
+        "aria-label": `Pull request #${pullRequest.number}`,
+      },
+      detailHeader,
       /* @__PURE__ */ React.createElement(
         "div",
         { className: "beacon-review-grid" },
@@ -1613,7 +1655,7 @@ function useAgentLibrarySnapshot(React, agentLibrary) {
     agentLibrary.snapshot,
   );
 }
-function createApp(React, tokenStore, preferencesStore, relay) {
+function createApp(React, tokenStore, preferencesStore, relay, queues) {
   const SettingsPanel = createSettingsPanel(React);
   const PullRequestDetailView = createPullRequestDetailView(React);
   function AgentSummarySettings(props) {
@@ -1777,57 +1819,64 @@ function createApp(React, tokenStore, preferencesStore, relay) {
       ),
     );
   }
-  function usePolledFetch(
-    token,
-    pollingEnabled,
-    fetcher,
-    fallbackErrorMessage,
-  ) {
-    const [state, setState] = React.useState({ status: "loading" });
-    const [reloadKey, setReloadKey] = React.useState(0);
-    const isFetchingRef = React.useRef(false);
+  function useQueue(cache, token, pollingEnabled) {
+    const state = React.useSyncExternalStore(
+      cache.subscribe,
+      cache.snapshot,
+      cache.snapshot,
+    );
     React.useEffect(() => {
-      const controller = new AbortController();
-      isFetchingRef.current = true;
-      setState({ status: "loading" });
-      fetcher(token, controller.signal)
-        .then((result) => {
-          if (controller.signal.aborted) return;
-          isFetchingRef.current = false;
-          setState({
-            status: "ready",
-            items: result.items,
-            truncated: result.truncated,
-          });
-        })
-        .catch((error) => {
-          if (controller.signal.aborted) return;
-          isFetchingRef.current = false;
-          setState({
-            status: "error",
-            message:
-              error instanceof GitHubError
-                ? error.message
-                : fallbackErrorMessage,
-          });
-        });
-      return () => {
-        controller.abort();
-        isFetchingRef.current = false;
-      };
-    }, [token, reloadKey]);
+      cache.load();
+    }, [cache, token]);
     React.useEffect(() => {
       if (!pollingEnabled) return;
       const interval = setInterval(() => {
-        if (isFetchingRef.current) return;
-        setReloadKey((key) => key + 1);
+        cache.refresh();
       }, POLL_INTERVAL_MS);
       return () => clearInterval(interval);
-    }, [pollingEnabled]);
+    }, [cache, pollingEnabled, token]);
     return {
       state,
-      refresh: () => setReloadKey((key) => key + 1),
+      refresh: () => {
+        cache.refresh();
+      },
     };
+  }
+  function LastFetched({ timestamp }) {
+    const [now, setNow] = React.useState(Date.now);
+    React.useEffect(() => {
+      setNow(Date.now());
+      if (timestamp === null) return;
+      const interval = setInterval(() => setNow(Date.now()), 3e4);
+      return () => clearInterval(interval);
+    }, [timestamp]);
+    if (timestamp === null)
+      return /* @__PURE__ */ React.createElement(
+        "span",
+        null,
+        "Not fetched yet",
+      );
+    const minutes = Math.max(0, Math.floor((now - timestamp) / 6e4));
+    const elapsed =
+      minutes < 60
+        ? minutes
+        : minutes < 1440
+          ? Math.floor(minutes / 60)
+          : Math.floor(minutes / 1440);
+    const age =
+      minutes === 0
+        ? "less than a minute ago"
+        : `${elapsed} ${minutes < 60 ? "minute" : minutes < 1440 ? "hour" : "day"}${elapsed === 1 ? "" : "s"} ago`;
+    const date = new Date(timestamp);
+    return /* @__PURE__ */ React.createElement(
+      "time",
+      {
+        dateTime: date.toISOString(),
+        title: date.toLocaleString(),
+      },
+      "Last fetched: ",
+      age,
+    );
   }
   function PullRequestRow(props) {
     const { item } = props;
@@ -1903,12 +1952,12 @@ function createApp(React, tokenStore, preferencesStore, relay) {
     );
   }
   function ReviewQueue(props) {
-    const { state, refresh } = usePolledFetch(
+    const { state, refresh } = useQueue(
+      queues.reviewRequests,
       props.token,
       props.pollingEnabled,
-      fetchReviewRequests,
-      "Could not load review requests.",
     );
+    const result = state.result;
     function hide(url) {
       if (props.hiddenReviewRequestUrls.includes(url)) return;
       props.onHiddenReviewRequestUrlsChange([
@@ -1923,12 +1972,12 @@ function createApp(React, tokenStore, preferencesStore, relay) {
     }
     const hiddenSet = new Set(props.hiddenReviewRequestUrls);
     const visible =
-      state.status === "ready"
-        ? state.items.filter((item) => !hiddenSet.has(item.url))
+      result !== null
+        ? result.items.filter((item) => !hiddenSet.has(item.url))
         : [];
     const hidden =
-      state.status === "ready"
-        ? state.items.filter((item) => hiddenSet.has(item.url))
+      result !== null
+        ? result.items.filter((item) => hiddenSet.has(item.url))
         : [];
     const highlighted = visible.filter((item) =>
       isHighlighted(item, props.vipLogins, props.watchedLabels),
@@ -1945,7 +1994,7 @@ function createApp(React, tokenStore, preferencesStore, relay) {
         /* @__PURE__ */ React.createElement(
           "p",
           { className: "beacon-muted" },
-          state.status === "ready"
+          result !== null
             ? `${visible.length} open request${visible.length === 1 ? "" : "s"} for your review`
             : "Your review inbox",
         ),
@@ -1954,33 +2003,41 @@ function createApp(React, tokenStore, preferencesStore, relay) {
           {
             type: "button",
             onClick: refresh,
-            disabled: state.status === "loading",
+            disabled: state.isFetching,
           },
           "Refresh",
         ),
       ),
-      state.status === "loading" &&
+      /* @__PURE__ */ React.createElement(
+        "p",
+        { className: "beacon-muted beacon-fetched" },
+        /* @__PURE__ */ React.createElement(LastFetched, {
+          timestamp: state.lastFetchedAt,
+        }),
+      ),
+      state.isFetching &&
         /* @__PURE__ */ React.createElement(
           "p",
-          null,
-          "Loading review requests…",
+          { role: "status" },
+          result ? "Refreshing review requests…" : "Loading review requests…",
         ),
-      state.status === "error" &&
+      state.error &&
         /* @__PURE__ */ React.createElement(
           "p",
           { role: "alert" },
-          state.message,
+          state.error,
+          result && " Showing previously fetched data.",
         ),
-      state.status === "ready" &&
+      result !== null &&
         /* @__PURE__ */ React.createElement(
           React.Fragment,
           null,
-          state.truncated &&
+          result.truncated &&
             /* @__PURE__ */ React.createElement(
               "p",
               { role: "alert" },
               "Showing the first ",
-              state.items.length,
+              result.items.length,
               " results; more may exist on GitHub. Refine your review-request filters on GitHub to see the rest.",
             ),
           visible.length === 0 &&
@@ -2075,15 +2132,15 @@ function createApp(React, tokenStore, preferencesStore, relay) {
     );
   }
   function OwnPullRequests(props) {
-    const { state, refresh } = usePolledFetch(
+    const { state, refresh } = useQueue(
+      queues.ownPullRequests,
       props.token,
       props.pollingEnabled,
-      fetchOwnPullRequests,
-      "Could not load your pull requests.",
     );
+    const result = state.result;
     const grouped = /* @__PURE__ */ new Map();
-    if (state.status === "ready")
-      for (const item of state.items) {
+    if (result !== null)
+      for (const item of result.items) {
         const status = classifyOwnPullRequest(item);
         grouped.set(status, [...(grouped.get(status) ?? []), item]);
       }
@@ -2096,8 +2153,8 @@ function createApp(React, tokenStore, preferencesStore, relay) {
         /* @__PURE__ */ React.createElement(
           "p",
           { className: "beacon-muted" },
-          state.status === "ready"
-            ? `${state.items.length} open pull request${state.items.length === 1 ? "" : "s"}`
+          result !== null
+            ? `${result.items.length} open pull request${result.items.length === 1 ? "" : "s"}`
             : "Your open pull requests",
         ),
         /* @__PURE__ */ React.createElement(
@@ -2105,36 +2162,46 @@ function createApp(React, tokenStore, preferencesStore, relay) {
           {
             type: "button",
             onClick: refresh,
-            disabled: state.status === "loading",
+            disabled: state.isFetching,
           },
           "Refresh",
         ),
       ),
-      state.status === "loading" &&
+      /* @__PURE__ */ React.createElement(
+        "p",
+        { className: "beacon-muted beacon-fetched" },
+        /* @__PURE__ */ React.createElement(LastFetched, {
+          timestamp: state.lastFetchedAt,
+        }),
+      ),
+      state.isFetching &&
         /* @__PURE__ */ React.createElement(
           "p",
-          null,
-          "Loading your pull requests…",
+          { role: "status" },
+          result
+            ? "Refreshing your pull requests…"
+            : "Loading your pull requests…",
         ),
-      state.status === "error" &&
+      state.error &&
         /* @__PURE__ */ React.createElement(
           "p",
           { role: "alert" },
-          state.message,
+          state.error,
+          result && " Showing previously fetched data.",
         ),
-      state.status === "ready" &&
+      result !== null &&
         /* @__PURE__ */ React.createElement(
           React.Fragment,
           null,
-          state.truncated &&
+          result.truncated &&
             /* @__PURE__ */ React.createElement(
               "p",
               { role: "alert" },
               "Showing the first ",
-              state.items.length,
+              result.items.length,
               " pull requests; more may exist on GitHub.",
             ),
-          state.items.length === 0 &&
+          result.items.length === 0 &&
             /* @__PURE__ */ React.createElement(
               "p",
               null,
@@ -2457,13 +2524,141 @@ function createTokenStore() {
   };
 }
 //#endregion
+//#region src/queueCache.ts
+function createQueueCache(tokenStore, fetcher, fallbackErrorMessage) {
+  const listeners = /* @__PURE__ */ new Set();
+  let state = {
+    result: null,
+    isFetching: false,
+    error: null,
+    lastFetchedAt: null,
+  };
+  let currentToken = tokenStore.getToken();
+  let requestGeneration = 0;
+  let activeRequest = null;
+  let disposed = false;
+  const publish = (nextState) => {
+    state = nextState;
+    for (const listener of listeners) listener();
+  };
+  const unsubscribeTokenStore = tokenStore.subscribe(() => {
+    const nextToken = tokenStore.getToken();
+    if (nextToken === currentToken) return;
+    currentToken = nextToken;
+    requestGeneration += 1;
+    activeRequest?.controller.abort();
+    activeRequest = null;
+    publish({
+      result: null,
+      isFetching: false,
+      error: null,
+      lastFetchedAt: null,
+    });
+  });
+  const startRequest = () => {
+    if (disposed || !currentToken) return Promise.resolve();
+    if (activeRequest) return activeRequest.promise;
+    const controller = new AbortController();
+    const generation = requestGeneration;
+    publish({
+      ...state,
+      isFetching: true,
+      error: null,
+    });
+    const promise = fetcher(currentToken, controller.signal)
+      .then((result) => {
+        if (disposed || generation !== requestGeneration) return;
+        publish({
+          result,
+          isFetching: false,
+          error: null,
+          lastFetchedAt: Date.now(),
+        });
+      })
+      .catch((error) => {
+        if (disposed || generation !== requestGeneration) return;
+        publish({
+          ...state,
+          isFetching: false,
+          error:
+            error instanceof GitHubError ? error.message : fallbackErrorMessage,
+        });
+      })
+      .finally(() => {
+        if (
+          generation === requestGeneration &&
+          activeRequest?.promise === promise
+        )
+          activeRequest = null;
+      });
+    activeRequest = {
+      controller,
+      promise,
+    };
+    return promise;
+  };
+  const load = () => {
+    if (activeRequest) return activeRequest.promise;
+    if (state.result || state.error) return Promise.resolve();
+    return startRequest();
+  };
+  return {
+    snapshot: () => state,
+    subscribe: (listener) => {
+      if (disposed) return () => {};
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    load,
+    refresh: startRequest,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      currentToken = null;
+      requestGeneration += 1;
+      activeRequest?.controller.abort();
+      activeRequest = null;
+      unsubscribeTokenStore();
+      listeners.clear();
+      state = {
+        result: null,
+        isFetching: false,
+        error: null,
+        lastFetchedAt: null,
+      };
+    },
+  };
+}
+//#endregion
 //#region src/index.tsx
 var inject = ["react", "pages", "relay"];
 function apply(ctx) {
   const tokenStore = createTokenStore();
   ctx.effect(() => tokenStore.dispose);
   const preferencesStore = createPreferencesStore();
-  const App = createApp(ctx.react, tokenStore, preferencesStore, ctx.relay);
+  const queues = {
+    reviewRequests: createQueueCache(
+      tokenStore,
+      fetchReviewRequests,
+      "Could not load review requests.",
+    ),
+    ownPullRequests: createQueueCache(
+      tokenStore,
+      fetchOwnPullRequests,
+      "Could not load your pull requests.",
+    ),
+  };
+  ctx.effect(() => () => {
+    queues.reviewRequests.dispose();
+    queues.ownPullRequests.dispose();
+  });
+  const App = createApp(
+    ctx.react,
+    tokenStore,
+    preferencesStore,
+    ctx.relay,
+    queues,
+  );
   ctx.pages.register({
     id: "main",
     title: "PR Beacon",

@@ -20,7 +20,7 @@ built from public GitHub REST/GraphQL API documentation.
   / Ready to merge, using only evidence GitHub's API actually reports (see
   [Known limitations](#known-limitations) — this is a portable subset, not a
   full parity implementation of any particular status engine).
-- **Pull request detail** — title, branches, and a changed-files diff fetched
+- **Pull request detail** — an **Open on GitHub** link, title, branches, and a changed-files diff fetched
   via GitHub's compare API, pinned to the exact base and head commit SHAs you
   loaded (not "whatever the PR looks like right now"). See
   [Known limitations](#known-limitations) for the size/patch caps this diff
@@ -41,13 +41,16 @@ built from public GitHub REST/GraphQL API documentation.
   origin. Hiding is explicit only in both directions: a capped or
   filtered refresh that happens not to return a hidden pull request does
   not un-hide it — only clicking **Unhide** does.
-- **Explicit Refresh, and optional background polling.** Both the
-  review-request and your-pull-requests lists have a manual **Refresh**
-  button, available even after a failed load (disabled only while a request
-  is actually in flight). A Settings checkbox additionally enables
-  re-checking both lists once a minute while this page stays mounted; the
-  interval is torn down on unmount and never starts an overlapping request
-  while one is still in flight.
+- **Cached queues, Refresh, and last-fetched time.** Each queue loads once and
+  keeps its results in memory for the current plugin activation. Switching
+  tabs, returning from a PR, or reopening the page reuses those results.
+  Each queue shows when its last successful fetch completed; hover for the
+  exact date and time. **Refresh** fetches new results while keeping the
+  previous list visible. A failed refresh keeps that list and timestamp,
+  with an error message. Optional background refresh checks the visible
+  queue once a minute and never overlaps an active request.
+  Disconnecting, changing tokens, disabling the plugin, or reloading Buzz
+  clears both caches. PR data and tokens are never cached on disk.
 - **Agent summary** — send a pull request's title, URL, base/head commit
   SHAs, and diff to an existing Buzz agent you pick, and see its replies
   in the pull request detail view. See
@@ -271,7 +274,7 @@ to avoid installing an older bundle. Import the updated folder in Buzz again.
   exposes a blind retry), an unmount-mid-approve-preflight case proving no
   real GitHub mutation fires after the view closes, and a rapid
   pull-request switch proving a slow, stale response can't overwrite the
-  currently selected one.
+  currently selected one, plus the accessible **Open on GitHub** link.
 - `relaySummary.test.ts` — the agent-summary request builder's byte-budget
   behavior (including escape-heavy/unicode content and JSON-serialized size,
   not raw string length), giant-title truncation, count-only partial-coverage
@@ -286,7 +289,10 @@ to avoid installing an older bundle. Import the updated folder in Buzz again.
   multiple sequential replies keep updating the displayed content instead of
   disposing on the first one; and the included/omitted file coverage is
   shown before the user clicks Send, not only after.
-- `App.test.tsx` — hide/unhide (with an explicit-only contract: a
+- `queueCache.test.ts` — cached empty results, request deduplication, successful-fetch
+  timestamps, failed-refresh retention, and clearing on token change/disposal.
+- `App.test.tsx` — reuse across tabs, PR visits, and page remounts; relative
+  fetch times; retained results during refresh/failure; credential changes; hide/unhide (with an explicit-only contract: a
   capped/filtered refresh never silently un-hides), manual Refresh
   re-fetching the list (available even after an error, disabled only while
   loading), background polling (starts a re-check on the interval, never

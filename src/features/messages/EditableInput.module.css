@@ -6,8 +6,8 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
-  line-height: var(--text-body-sm--line-height);
-  letter-spacing: var(--text-body-sm--letter-spacing);
+  line-height: inherit;
+  letter-spacing: inherit;
   caret-color: var(--text-standard);
   cursor: text;
   outline: none;

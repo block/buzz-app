@@ -397,6 +397,9 @@ impl Manager {
         self.catalog()
     }
     pub fn reload(&self, id: &str) -> Result<Catalog> {
+        self.reload_with_commit_hook(id, || {})
+    }
+    fn reload_with_commit_hook(&self, id: &str, before_commit: impl FnOnce()) -> Result<Catalog> {
         valid_id(id)?;
         if is_bundled(id) {
             return Err("Bundled plugins cannot be reloaded from disk".into());
@@ -423,6 +426,7 @@ impl Manager {
             return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
         }
         let revision = hash(&bytes);
+        before_commit();
         {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
@@ -430,6 +434,9 @@ impl Manager {
                 .installed
                 .get_mut(id)
                 .ok_or("Plugin is not installed")?;
+            if plugin.enabled {
+                return Err("Disable the plugin before reloading it from disk".into());
+            }
             if plugin.current != snapshot.0 || plugin.current_source.as_ref() != Some(&snapshot.1) {
                 return Err("Plugin changed while reload was reading from disk; try again".into());
             }
@@ -540,6 +547,7 @@ fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
     }
     Ok(bytes)
 }
+
 fn err(e: impl std::fmt::Display) -> String {
     e.to_string()
 }
@@ -597,4 +605,52 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     #[cfg(unix)]
     File::open(parent).map_err(err)?.sync_all().map_err(err)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Manager;
+    use std::fs;
+
+    #[test]
+    fn reload_rejects_enable_between_disk_read_and_commit() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "test", false).unwrap();
+        let source = temp.path().join("build");
+        fs::create_dir(&source).unwrap();
+        fs::write(
+            source.join("manifest.json"),
+            r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+        )
+        .unwrap();
+        fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+        let first = manager
+            .install(&source)
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap()
+            .revision
+            .clone();
+        fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
+
+        let error = match manager.reload_with_commit_hook("example.page", || {
+            manager.change("enable", "example.page").unwrap();
+        }) {
+            Ok(_) => panic!("reload should reject an enabled plugin at commit"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("Disable the plugin before reloading"));
+        let catalog = manager.catalog().unwrap();
+        let plugin = catalog
+            .plugins
+            .iter()
+            .find(|plugin| plugin.manifest.id == "example.page")
+            .unwrap();
+        assert!(plugin.enabled);
+        assert_eq!(plugin.revision, first);
+        assert_eq!(plugin.previous, None);
+    }
 }

@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, expect, it } from "vitest";
 import { FileAttachment, formatFileSize } from "./FileAttachment";
+
+afterEach(cleanup);
 
 it.each([
   [1, "1 B"],
@@ -44,3 +46,36 @@ it("falls back to a generic file label", () => {
     screen.getByRole("link", { name: "Download File" }),
   ).toBeInTheDocument();
 });
+
+it("keeps nameless downloads on the media href", () => {
+  render(
+    <FileAttachment
+      attachment={{ url: "https://fixture.test/file", kind: "file" }}
+      source="app://media/file"
+    />,
+  );
+  expect(screen.getByRole("link", { name: "Download File" })).toHaveAttribute(
+    "href",
+    "app://media/file",
+  );
+  expect(screen.getByRole("link", { name: "Download File" })).toHaveAttribute(
+    "download",
+    "",
+  );
+});
+
+it.each(["application/octet-stream", "application/vnd.ms-excel"])(
+  "does not derive noisy labels from %s",
+  (mime) => {
+    render(
+      <FileAttachment
+        attachment={{ url: "https://fixture.test/file", kind: "file", mime }}
+        source="app://media/file"
+      />,
+    );
+    expect(
+      screen.getByRole("link", { name: "Download File" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText("File")).toBeInTheDocument();
+  },
+);

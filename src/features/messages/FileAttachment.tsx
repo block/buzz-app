@@ -18,7 +18,8 @@ function mimeLabel(mime: string | undefined): string | undefined {
   const [type, subtype] = mime.split("/");
   if (!type || !subtype) return undefined;
   if (subtype === "pdf") return "PDF file";
-  return `${subtype.split(/[.+-]/)[0]?.toUpperCase()} file`;
+  if (!/^[a-z0-9]+$/i.test(subtype)) return undefined;
+  return `${subtype.toUpperCase()} file`;
 }
 
 export function FileAttachment({
@@ -55,7 +56,7 @@ export function FileAttachment({
     <a
       className={styles.fileAttachment}
       href={source}
-      download={attachment.name}
+      download={attachment.name ?? ""}
       aria-label={`Download ${displayName}`}
     >
       {content}

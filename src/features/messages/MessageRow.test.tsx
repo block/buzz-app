@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
@@ -503,6 +504,8 @@ it("renders unavailable generic files without a download link", () => {
   expect(html).toContain("PDF file");
   expect(html).toContain("File unavailable");
   expect(html).toContain('role="status"');
-  expect(html).not.toContain("<a");
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(container.querySelector("a")).toBeNull();
   expect(html).not.toContain("Open image attachment");
 });

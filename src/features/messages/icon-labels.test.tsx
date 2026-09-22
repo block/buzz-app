@@ -41,3 +41,16 @@ it("keeps the image download accessible name", () => {
     url,
   );
 });
+
+it("does not render stray file attachments as images", () => {
+  const { container } = render(
+    <MediaAttachment
+      attachment={{ url: "https://example.test/file.bin", kind: "file" }}
+      media={(url) => url}
+    />,
+  );
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Attachment unavailable",
+  );
+  expect(container.querySelector("img")).toBeNull();
+});

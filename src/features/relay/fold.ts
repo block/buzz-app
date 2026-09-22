@@ -15,8 +15,9 @@ function attachmentKind(
   fields: Record<string, string>,
   url: string,
 ): Attachment["kind"] {
-  if (fields.m?.startsWith("image/")) return "image";
-  if (fields.m?.startsWith("video/")) return "video";
+  const mime = fields.m?.toLowerCase();
+  if (mime?.startsWith("image/")) return "image";
+  if (mime?.startsWith("video/")) return "video";
   if (fields.m) return "file";
   if (/\.(mp4|webm)(?:\?|$)/i.test(url)) return "video";
   if (/\.(png|jpe?g|gif|webp|avif)(?:\?|$)/i.test(url)) return "image";
@@ -83,8 +84,7 @@ export function parseAttachments(
     if (seen.has(url)) continue;
     seen.add(url);
     if (/\.(mp4|webm)(?:\?|$)/i.test(url)) result.push({ url, kind: "video" });
-    else if (/\.(png|jpe?g|gif|webp|avif)(?:\?|$)/i.test(url))
-      result.push({ url, kind: "image" });
+    else result.push({ url, kind: "image" });
   }
   return result;
 }

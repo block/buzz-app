@@ -174,6 +174,21 @@ describe("message fold", () => {
     expect(row.attachments).toEqual([]);
   });
 
+  it("projects extensionless markdown images as image attachments", () => {
+    const hash = "a".repeat(64);
+    const event = message(
+      alice,
+      channel,
+      `See ![relay image](https://relay.test/files/${hash}) now`,
+      10,
+    );
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row?.content).toBe("See  now");
+    expect(row?.attachments).toEqual([
+      { url: `https://relay.test/files/${hash}`, kind: "image" },
+    ]);
+  });
+
   it.each([9, 40002])(
     "preserves code indentation when projecting images in kind %s",
     (kind) => {
@@ -355,6 +370,7 @@ it("marks same-label identity replacement as edited without changing notificatio
 
 it("classifies generic imeta files and validates file metadata", () => {
   const hash = `${"a".repeat(64)}.pdf`;
+  const badName = "%zz";
   const event = message(keypair(), "channel", "", 1, [
     [
       "imeta",
@@ -375,6 +391,13 @@ it("classifies generic imeta files and validates file metadata", () => {
       "m application/octet-stream",
       "size 1.5",
     ],
+    [
+      "imeta",
+      "url https://x.test/oversized.dat",
+      "m application/octet-stream",
+      `size ${"9".repeat(20)}`,
+    ],
+    ["imeta", `url https://x.test/${badName}`, "m application/octet-stream"],
   ]);
   expect(parseAttachments(event, [])).toEqual([
     {
@@ -400,6 +423,39 @@ it("classifies generic imeta files and validates file metadata", () => {
       kind: "file",
       mime: "application/octet-stream",
       name: "broken.bin",
+    },
+    {
+      url: "https://x.test/oversized.dat",
+      kind: "file",
+      mime: "application/octet-stream",
+      name: "oversized.dat",
+    },
+    {
+      url: `https://x.test/${badName}`,
+      kind: "file",
+      mime: "application/octet-stream",
+      name: badName,
+    },
+  ]);
+});
+
+it("classifies imeta media mime types case-insensitively", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", "url https://x.test/photo", "m Image/PNG"],
+    ["imeta", "url https://x.test/movie", "m Video/MP4"],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/photo",
+      kind: "image",
+      mime: "Image/PNG",
+      name: "photo",
+    },
+    {
+      url: "https://x.test/movie",
+      kind: "video",
+      mime: "Video/MP4",
+      name: "movie",
     },
   ]);
 });

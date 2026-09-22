@@ -112,6 +112,7 @@ export function App({ services }: { services: AppServices }) {
         }}
         communities={services.communities}
         windows={windows}
+        searchServices={services}
         launchers={
           <PanelLaunchers
             panels={panels}

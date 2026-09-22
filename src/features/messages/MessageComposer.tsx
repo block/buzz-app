@@ -111,13 +111,29 @@ function Composer({
   mediaTimeSeconds,
   clearMediaTime,
   hideMediaTimeIndicator = false,
-  disabled = false,
+  disabled: requestedDisabled = false,
   submission,
   sessionConversation,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
   const { control } = useMentionAgents(scope);
+  const list = useSyncExternalStore(
+    session.channels?.get || sessionConversation
+      ? session.channels.subscribeList
+      : noChannelSubscription,
+    session.channels?.get || sessionConversation
+      ? session.channels.list
+      : noChannelSnapshot,
+    session.channels?.get || sessionConversation
+      ? session.channels.list
+      : noChannelSnapshot,
+  );
+  const readOnly =
+    !submission &&
+    !!session.channels?.get &&
+    !list.channels.some((channel) => channel.id === channelId);
+  const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
@@ -142,13 +158,6 @@ function Composer({
       live.current = false;
     };
   }, []);
-  const list = useSyncExternalStore(
-    sessionConversation
-      ? session.channels.subscribeList
-      : noChannelSubscription,
-    sessionConversation ? session.channels.list : noChannelSnapshot,
-    sessionConversation ? session.channels.list : noChannelSnapshot,
-  );
   const parentChannelId = list.channels.find(
     (item) => item.id === channelId,
   )?.parentChannelId;

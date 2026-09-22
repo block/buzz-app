@@ -7,7 +7,7 @@ import type { Communities } from "../../features/communities/service";
 import type { WindowHost } from "../../features/windows/service";
 import { CommunitySwitcher } from "../../features/communities/CommunitySwitcher";
 import { ProfileButton } from "./ProfileButton";
-import { PageSearch } from "./PageSearch";
+import { PageSearch, type SearchServices } from "./PageSearch";
 import { PageTab } from "./PageTab";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
@@ -25,6 +25,7 @@ export function AppShell({
   workspace,
   communities,
   windows,
+  searchServices,
   navigationControls,
   onCommunitySelect,
   launchers,
@@ -40,6 +41,7 @@ export function AppShell({
   workspace?: boolean;
   communities: Communities;
   windows: WindowHost;
+  searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
   launchers?: ReactNode;
@@ -137,7 +139,13 @@ export function AppShell({
             {...titleBarDragProps}
           >
             {launchers}
-            {main && <PageSearch pages={pages} onSelect={onSelect} />}
+            {main && (
+              <PageSearch
+                pages={pages}
+                onSelect={onSelect}
+                services={searchServices}
+              />
+            )}
             {main && (
               <ProfileButton
                 communities={communities}

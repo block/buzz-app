@@ -11,7 +11,14 @@ import { MessageRow } from "../../src/features/messages/MessageRow";
 import { createRelaySession } from "../../src/features/relay/session";
 import { foldMessages } from "../../src/features/relay/fold";
 import { mediaUrl } from "../../src/features/relay/transport";
-import { keypair, message, signed } from "../../src/features/relay/testing";
+import {
+  keypair,
+  message,
+  metadata,
+  roster,
+  signed,
+} from "../../src/features/relay/testing";
+import { matchesEvent } from "../../src/features/relay/projection";
 import type { RelayEvent } from "../../src/features/relay/events";
 import type { LiveCallbacks } from "../../src/features/relay/live";
 import "../../src/shared/styles/globals.css";
@@ -102,7 +109,12 @@ const sessions = ["a", "b"].map((community) => {
           if (fail) throw new Error("Fixture catalog offline");
           return [catalog];
         }
-        return [];
+        return [
+          roster(relay, "c", [viewer.pubkey], 1),
+          metadata(relay, "c", "Test", 1),
+        ].filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
       },
       writer: {
         kinds: [7, 9],
@@ -121,6 +133,7 @@ const sessions = ["a", "b"].map((community) => {
     },
     { outboxStorage: { load: () => [], save() {} } },
   );
+  owner.session.channels.ensureList();
   const root = message(
     viewer,
     "c",

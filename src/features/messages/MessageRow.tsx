@@ -116,6 +116,8 @@ export const MessageRow = memo(function MessageRow({
     session &&
     scope &&
     session.outbox?.supports(7) &&
+    (!session.channels.get ||
+      channelList.channels.some((channel) => channel.id === row.channelId)) &&
     !channelList.channels.find((channel) => channel.id === row.channelId)
       ?.archived
   );

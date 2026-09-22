@@ -28,7 +28,9 @@ test("app startup preserves shared shell control styling", async ({ page }) => {
       for (const control of controls) {
         await expect(control).toBeVisible();
         await expect(control).toHaveCSS("padding-left", "0px");
-        await expect(control).toHaveCSS("border-top-width", "0px");
+        // Shared controls reserve a transparent border for outline variants.
+        await expect(control).toHaveCSS("border-top-width", "1px");
+        await expect(control).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
       }
     }
   }

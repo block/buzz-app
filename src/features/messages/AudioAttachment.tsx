@@ -8,7 +8,10 @@ import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
 
 let playing: HTMLAudioElement | null = null;
-const ENDED_DURATION_CORRECTION_SECONDS = 0.05;
+const ENDED_DURATION_CORRECTION_MIN_SECONDS = 0.05;
+// Old Buzz voice notes include a 1 fps 16x16 video track, so container
+// duration can overshoot the real audio by about one frame; allow headroom.
+const ENDED_DURATION_CORRECTION_MAX_SECONDS = 1.5;
 
 function finiteDuration(value: number | undefined): number | undefined {
   return value !== undefined &&
@@ -70,7 +73,7 @@ export function AudioAttachment({
     const corrected = endedDuration.current;
     if (
       corrected !== undefined &&
-      measured > corrected + ENDED_DURATION_CORRECTION_SECONDS
+      measured > corrected + ENDED_DURATION_CORRECTION_MIN_SECONDS
     ) {
       setDuration(corrected);
       return;
@@ -103,17 +106,20 @@ export function AudioAttachment({
         }}
         onEnded={(event) => {
           const measured = finiteDuration(event.currentTarget.currentTime);
-          const nextDuration =
+          const durationGap =
+            measured !== undefined && duration !== undefined
+              ? duration - measured
+              : undefined;
+          const shouldCorrectDuration =
+            endedDuration.current === undefined &&
             measured !== undefined &&
-            duration !== undefined &&
-            measured < duration - ENDED_DURATION_CORRECTION_SECONDS
-              ? measured
-              : (duration ?? measured);
-          if (
-            measured !== undefined &&
-            duration !== undefined &&
-            measured < duration - ENDED_DURATION_CORRECTION_SECONDS
-          ) {
+            durationGap !== undefined &&
+            durationGap > ENDED_DURATION_CORRECTION_MIN_SECONDS &&
+            durationGap <= ENDED_DURATION_CORRECTION_MAX_SECONDS;
+          const nextDuration = shouldCorrectDuration
+            ? measured
+            : (duration ?? measured);
+          if (shouldCorrectDuration) {
             endedDuration.current = measured;
             setDuration(measured);
           }

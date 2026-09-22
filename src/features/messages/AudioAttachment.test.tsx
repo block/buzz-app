@@ -364,6 +364,64 @@ it("keeps ended cleanup idempotent when pause fires before ended", () => {
   expect(pause).not.toHaveBeenCalled();
 });
 
+it("does not correct duration or suppress later duration sync when ended far before the known duration", () => {
+  const { container } = render(
+    <AudioAttachment
+      attachment={{
+        url: "https://fixture.test/truncated.mp3",
+        kind: "audio",
+        duration: 60,
+      }}
+      source={source}
+    />,
+  );
+  const audio = container.querySelector("audio");
+  if (!audio) throw new Error("Missing audio element");
+
+  fireEvent.play(audio);
+  audio.currentTime = 2;
+  fireEvent.ended(audio);
+
+  expect(screen.getByText("1:00 / 1:00")).toBeInTheDocument();
+  expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
+    "max",
+    "60",
+  );
+
+  setDuration(audio, 62);
+  fireEvent.durationChange(audio);
+  expect(screen.getByText("1:00 / 1:02")).toBeInTheDocument();
+  expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
+    "max",
+    "62",
+  );
+});
+
+it("does not correct duration just outside the ended correction bound", () => {
+  const { container } = render(
+    <AudioAttachment
+      attachment={{
+        url: "https://fixture.test/voice-note.mp4",
+        kind: "audio",
+        duration: 5.4,
+      }}
+      source={source}
+    />,
+  );
+  const audio = container.querySelector("audio");
+  if (!audio) throw new Error("Missing audio element");
+
+  fireEvent.play(audio);
+  audio.currentTime = 3.89;
+  fireEvent.ended(audio);
+
+  expect(screen.getByRole("slider", { name: "Seek audio" })).toHaveAttribute(
+    "max",
+    "5.4",
+  );
+  expect(screen.getByText("0:05 / 0:05")).toBeInTheDocument();
+});
+
 it("corrects duration to the observed end without resetting it on replay", () => {
   const { container } = render(
     <AudioAttachment

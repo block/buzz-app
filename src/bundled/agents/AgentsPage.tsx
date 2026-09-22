@@ -1,5 +1,5 @@
 import { useIdentityNames } from "../../features/identity-names/react";
-import { useEffect, useSyncExternalStore } from "react";
+import { useSyncExternalStore } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -116,9 +116,6 @@ function ManagedAgents({
     library.snapshot,
     library.snapshot,
   );
-  useEffect(() => {
-    if (connection.status === "ready") void library.refresh();
-  }, [library, connection.status]);
   return (
     <section aria-label="My agents" className="flex flex-col gap-4">
       <h2 className="sr-only">My agents</h2>
@@ -142,7 +139,15 @@ function ManagedAgents({
           return (
             <AgentCard
               key={agent.id}
-              name={resolveName(agent.pubkey, agent.name)}
+              name={
+                connection.viewer &&
+                connection.scope?.endsWith(`:${connection.viewer}`) &&
+                relayOrigin(
+                  connection.scope.slice(0, -(connection.viewer.length + 1)),
+                ) === relayOrigin(agent.relayUrl)
+                  ? resolveName(agent.pubkey, agent.name)
+                  : agent.name
+              }
               avatar={avatar}
               identities={[agent]}
               session={connection.session}
@@ -159,6 +164,12 @@ function ManagedAgents({
           );
         })}
       </div>
+      {connection.status === "ready" && (
+        <AgentLibrary
+          session={connection.session}
+          managedKeys={state.data?.agents.map((agent) => agent.pubkey) ?? []}
+        />
+      )}
     </section>
   );
 }

@@ -12,6 +12,8 @@ import {
 import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createWorkSessions } from "./work-sessions";
+import { inventoryReader } from "../agents/inventory";
+import { readRelayLibrary } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -195,6 +197,9 @@ export function createRelaySession(
     ? { snapshot: local, subscribe: writes.local.subscribe }
     : undefined;
   function revokeAccess(commit: () => void) {
+    const resumeLibrary = !["idle", "unavailable"].includes(
+      agentLibrary.queries.snapshot().status,
+    );
     revoking++;
     try {
       accessEpoch++;
@@ -222,6 +227,13 @@ export function createRelaySession(
       for (const purge of views.values()) purge();
       commit();
       unread.purge();
+      if (resumeLibrary) {
+        const epoch = accessEpoch;
+        queueMicrotask(() => {
+          if (!closed && epoch === accessEpoch)
+            void agentLibrary.queries.refresh();
+        });
+      }
     } finally {
       if (--revoking === 0) {
         const pending = [...notifications];
@@ -346,7 +358,14 @@ export function createRelaySession(
   );
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
-  const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
+  const agentLibrary = createAgentLibrary(
+    transport
+      ? inventoryReader(transport.readAgentLibrary, (signal) =>
+          readRelayLibrary(requests.reader, transport.viewer, signal),
+        )
+      : undefined,
+    notify,
+  );
   const nameSource = {
     profiles: profiles.queries,
     agentLibrary: agentLibrary.queries,
@@ -951,6 +970,7 @@ export function createRelaySession(
   // the sidebar page to mount and observe them.
   if (options.warm) void sidebarPreferences.queries.ensure();
   let refreshedGeneration = -1;
+  let resumeLibraryOnConnect = false;
   const catchupRunning = new Map<string, Catchup>();
   const catchupQueue = new Set<string>();
   const isChannelHead = (filters: readonly ReadFilter[], channelId: string) =>
@@ -1151,6 +1171,9 @@ export function createRelaySession(
         catchups.clear();
         catchupQueue.clear();
         requests.invalidate();
+        resumeLibraryOnConnect ||= !["idle", "unavailable"].includes(
+          agentLibrary.queries.snapshot().status,
+        );
         agentLibrary.clear();
         archives.clear();
         workflows.interrupt();
@@ -1173,6 +1196,10 @@ export function createRelaySession(
       )
         refreshRoster();
       liveSnapshot = snapshot;
+      if (snapshot.status === "connected" && resumeLibraryOnConnect) {
+        resumeLibraryOnConnect = false;
+        void agentLibrary.queries.refresh();
+      }
       publishLive();
     },
     established(channelId) {
@@ -1221,6 +1248,7 @@ export function createRelaySession(
     async clearCache() {
       accessEpoch++;
       cacheClearEpoch++;
+      resumeLibraryOnConnect = false;
       activity.clear();
       presence.clear();
       typing.clear();

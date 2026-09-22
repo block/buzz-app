@@ -59,7 +59,7 @@ it("lazy fresh reads replace, fail visibly, retry, and fence late results", asyn
   owner.dispose();
   expect(owner.queries.snapshot().identities).toEqual([]);
 });
-it("actual session wires the host library and clears/disposes it without relay directory reads", async () => {
+it("actual session retains host library alongside relay reads and clears/disposes both", async () => {
   const read = vi.fn().mockResolvedValue(library);
   const query = vi.fn().mockResolvedValue([]);
   const owner = createRelaySession({
@@ -71,7 +71,7 @@ it("actual session wires the host library and clears/disposes it without relay d
   });
   await owner.session.agentLibrary.refresh();
   expect(read).toHaveBeenCalledOnce();
-  expect(query).not.toHaveBeenCalled();
+  expect(query).toHaveBeenCalledOnce();
   expect(owner.session.agentLibrary.snapshot().definitions).toHaveLength(2);
   await owner.clearCache();
   expect(owner.session.agentLibrary.snapshot().definitions).toEqual([]);

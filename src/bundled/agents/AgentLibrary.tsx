@@ -6,7 +6,13 @@ import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 
-export function AgentLibrary({ session }: { session: RelaySession }) {
+export function AgentLibrary({
+  session,
+  managedKeys = [],
+}: {
+  session: RelaySession;
+  managedKeys?: readonly string[];
+}) {
   const resolveName = useIdentityNames(session.names);
   const library = session.agentLibrary;
   const archives = session.archives;
@@ -30,13 +36,13 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
   }, [library, archives]);
   const { identities, profiles } = identityTiles(
     snapshot,
-    (key) => archives.state(key) === "archived",
+    (key) => managedKeys.includes(key) || archives.state(key) === "archived",
   );
   const loading = snapshot.status === "loading";
   return (
     <div className="mx-auto mt-2 max-w-6xl space-y-section-gap">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <p className="m-0 text-body text-secondary">Your agents from Buzz.</p>
+        <p className="m-0 text-body text-secondary">Known agent inventory.</p>
         <Button
           variant="quiet"
           size="compact"
@@ -49,7 +55,7 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
       </div>
       {loading && (
         <p className="text-body" role="status">
-          Reading your Buzz library…
+          Reading agent inventory…
         </p>
       )}
       {snapshot.status === "idle" && (
@@ -59,8 +65,8 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
       )}
       {snapshot.status === "unavailable" && (
         <p className="text-body" role="status">
-          The current Buzz library is available through the local live
-          development host. See README for live setup.
+          Connect to a community to discover agent identities. The local library
+          also requires a supported host.
         </p>
       )}
       {snapshot.error && (
@@ -127,9 +133,9 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
             </p>
           )}
           <p className="border-t border-primary pt-4 text-body-sm text-secondary">
-            This is your current Buzz library, read-only. Templates are not
-            managed agents. Open the desktop app to import an existing identity;
-            import does not start it or add channel membership.
+            This inventory is read-only. Discovery does not prove local key
+            custody, community membership or running status. Local import
+            remains a separate operation and does not start an agent.
           </p>
         </>
       )}

@@ -101,6 +101,7 @@ export function PageSearch({
         open={open}
         onOpenChange={setOpen}
         title="Search Buzz"
+        motion="none"
         closeLabel="Close search"
         initialFocus={input}
         finalFocus={returnFocus}

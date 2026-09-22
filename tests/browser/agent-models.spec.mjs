@@ -27,14 +27,20 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
       name: "Edit agent",
       exact: true,
     });
-    await editor.getByText("Advanced", { exact: true }).click();
+    await editor
+      .getByRole("button", { name: "Environment", exact: true })
+      .click();
     await editor
       .getByRole("combobox", { name: "Harness", exact: true })
-      .selectOption({ label: "Buzz Agent" });
+      .click();
+    await page.getByRole("option", { name: "Buzz Agent", exact: true }).click();
     await editor
       .getByRole("combobox", { name: "Provider", exact: true })
-      .selectOption({ label: "Databricks v2" });
-    await editor.getByText("Advanced model settings", { exact: true }).click();
+      .click();
+    await page
+      .getByRole("option", { name: "Databricks v2", exact: true })
+      .click();
+    await editor.getByRole("button", { name: "Model", exact: true }).click();
     const model = editor.getByRole("textbox", {
       name: "Model ID (custom or blank)",
       exact: true,
@@ -95,7 +101,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
       .getByRole("button", { name: "Actions for Fixture agent", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
-    await editor.getByText("Advanced model settings", { exact: true }).click();
+    await editor.getByRole("button", { name: "Model", exact: true }).click();
     await expect(model).toHaveValue("catalog.schema.real-model");
     await editor.getByRole("button", { name: "Refresh models" }).click();
     await expect(search).toHaveValue("Friendly Model");
@@ -127,7 +133,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     await expect(editor.getByRole("status")).toContainText("No models found");
     await page.evaluate(() => window.agentModelsFixture.mode("wait"));
     await editor.getByRole("button", { name: "Retry models" }).click();
-    await editor.getByText("Runtime and identity", { exact: true }).click();
+    await editor.getByRole("button", { name: "Runtime", exact: true }).click();
     await expect(
       editor.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();

@@ -110,7 +110,7 @@ export function SearchChoices({
           }
         }}
       />
-      <div className="mt-3 max-h-[55vh] space-y-3 overflow-y-auto">
+      <div className="-mx-5 mt-2 max-h-[55vh] space-y-3 overflow-y-auto px-1 py-1 max-[480px]:-mx-3">
         <div
           id={id}
           role="listbox"
@@ -134,7 +134,11 @@ export function SearchChoices({
                           aria-current={false}
                           selected={selected === key}
                           data-search-result=""
-                          icon={<Icon size={17} aria-hidden="true" />}
+                          icon={
+                            <span className="grid size-6 shrink-0 place-items-center">
+                              <Icon size={17} aria-hidden="true" />
+                            </span>
+                          }
                           label={
                             <>
                               <span className="block truncate text-body-sm">
@@ -157,13 +161,13 @@ export function SearchChoices({
           )}
         </div>
         {!destinations.length && (
-          <p className="px-3 text-body-sm text-subtle">
+          <p className="px-control-inset text-body-sm text-subtle">
             No matching destinations.
           </p>
         )}
-        {children}
+        {children && <div className="px-control-inset">{children}</div>}
       </div>
-      <p className="mt-3 px-3 text-caption text-metadata">
+      <p className="mt-3 text-caption text-metadata">
         ↑ ↓ to move · Enter to open · Esc to close
       </p>
     </>

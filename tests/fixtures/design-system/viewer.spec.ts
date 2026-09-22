@@ -724,6 +724,93 @@ test("radios enabled after mount remain synchronized on native reset", async ({
   ).toEqual({ delivery: "all" });
 });
 
+test("dialog motion retains exit presence and respects immediate interaction paths", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/dialog`);
+  const trigger = page
+    .getByRole("region", { name: "Single field", exact: true })
+    .getByRole("button", { name: "Open dialog", exact: true });
+  const popup = page.locator(".buzz-dialog");
+  // Hold real CSS transitions, so intermediate presence does not depend on speed.
+  await page.evaluate(() => {
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.matches('.buzz-dialog[data-motion="default"]')
+        )
+          return;
+        for (const animation of event.target.getAnimations()) animation.pause();
+      },
+      true,
+    );
+  });
+  const finish = () =>
+    page.evaluate(() => {
+      for (const animation of document.getAnimations()) animation.finish();
+    });
+  try {
+    await trigger.click();
+    await expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el.getAnimations().some((a) => a.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+    await expect(popup).toHaveCSS("transition-duration", "0.15s, 0.22s");
+    await finish();
+    await expect
+      .poll(() => popup.evaluate((el) => el.contains(document.activeElement)))
+      .toBe(true);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(popup).toHaveAttribute("data-ending-style", "");
+    await expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el.getAnimations().some((a) => a.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+    await expect(popup).toHaveCSS("transition-duration", "0.12s");
+    await finish();
+    await expect(popup).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // Escape can interrupt a pointer-opened entrance without waiting for motion.
+    await trigger.click();
+    await expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el.getAnimations().some((a) => a.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(popup).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // Use real keyboard navigation to activate the host's modality owner.
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await trigger.press("Enter");
+    await expect(popup).toHaveCSS("transition-duration", "0s");
+    await page.keyboard.press("Escape");
+    await expect(popup).toHaveCount(0);
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await trigger.click();
+    await expect(popup).toHaveCSS("transition-duration", "0s");
+    await expect(popup).toHaveCSS("opacity", "1");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(popup).toHaveCount(0);
+  } finally {
+    await finish();
+  }
+});
+
 // Real engines own :focus-visible, input modality and portal focus transfer.
 test("menu items retain keyboard-only focus rings through choices and submenus in both modes", async ({
   page,

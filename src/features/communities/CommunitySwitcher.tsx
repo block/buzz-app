@@ -1,5 +1,6 @@
 import { Dialog } from "../../shared/design-system/ui/Dialog";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import {
   CaretDownIcon,
@@ -9,19 +10,6 @@ import {
 import { CommunityDialog } from "./CommunityDialog";
 import type { Communities } from "./service";
 import styles from "./Communities.module.css";
-function CommunityIcon({ icon, name }: { icon?: string; name: string }) {
-  const [failed, setFailed] = useState(false);
-  return icon && !failed ? (
-    <img
-      src={icon}
-      alt=""
-      referrerPolicy="no-referrer"
-      onError={() => setFailed(true)}
-    />
-  ) : (
-    <span>{name.slice(0, 2).toUpperCase()}</span>
-  );
-}
 export function CommunitySwitcher({
   communities,
   onSelect,
@@ -76,7 +64,11 @@ export function CommunitySwitcher({
             onClick={() => select(null)}
             selected={client.selected === null}
             label="Personal space"
-            icon={<GlobeIcon size={22} aria-hidden="true" />}
+            icon={
+              <span className="grid size-6 shrink-0 place-items-center">
+                <GlobeIcon size={22} aria-hidden="true" />
+              </span>
+            }
           />
           {client.memberships.map((m) => (
             <NavigationItem
@@ -89,12 +81,13 @@ export function CommunitySwitcher({
               selected={client.selected === m.id}
               label={m.name}
               icon={
-                <span className={styles.communityIcon}>
-                  <CommunityIcon
-                    name={m.name}
-                    {...(m.icon ? { icon: m.icon } : {})}
-                  />
-                </span>
+                <Avatar
+                  size="small"
+                  shape="circle"
+                  alt=""
+                  fallback={m.name}
+                  src={m.icon}
+                />
               }
             />
           ))}
@@ -107,7 +100,11 @@ export function CommunitySwitcher({
               setJoining(true);
             }}
             label="Add a community"
-            icon={<PlusIcon size={22} aria-hidden="true" />}
+            icon={
+              <span className="grid size-6 shrink-0 place-items-center">
+                <PlusIcon size={22} aria-hidden="true" />
+              </span>
+            }
           />
         </nav>
       </Dialog>

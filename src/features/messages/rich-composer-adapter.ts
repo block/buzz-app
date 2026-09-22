@@ -71,7 +71,31 @@ export class RichComposerAdapter {
             };
           },
         }),
-        Link.configure({ openOnClick: false }),
+        Link.extend({
+          addStorage() {
+            return {
+              markdown: {
+                serialize: {
+                  open: "[",
+                  close: (
+                    _state: unknown,
+                    mark: { attrs: { href: string; title?: string } },
+                  ) => {
+                    // Markdown decodes character references in destinations and titles.
+                    // Escape at this mark boundary, never across authored message text.
+                    const escapeLink = (text: string) =>
+                      text.replace(/[\\&()"]/g, "\\$&");
+                    const title = mark.attrs.title
+                      ? ` "${escapeLink(mark.attrs.title)}"`
+                      : "";
+                    return `](${escapeLink(mark.attrs.href)}${title})`;
+                  },
+                  mixable: true,
+                },
+              },
+            };
+          },
+        }).configure({ openOnClick: false }),
         TiptapMarkdown.configure({ html: false, breaks: true }),
       ],
       content: "",

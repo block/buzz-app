@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { MessageMarkdown } from "./MessageMarkdown";
 import { RichComposerAdapter } from "./rich-composer-adapter";
 import { mentionDraft } from "./mention-draft";
 
@@ -343,3 +346,55 @@ it("restores recipient marks from the replaced text rather than its preceding bo
   });
   expect(adapter(source).snapshot().draft).toEqual(source);
 });
+
+// Exercise both consumers of the outgoing draft: persisted editor and message renderer.
+it.each([
+  "https://example.com/?x=1&copy;=2",
+  "https://example.com/?x=1&#169;=2",
+  "https://example.com/a(b)?x=1&other=2",
+  "https://example.com/hello%20world",
+])(
+  "preserves link destination %s through delivery and draft restoration",
+  (href) => {
+    const value = adapter();
+    value.editor.commands.insertContent({
+      type: "text",
+      text: "design",
+      marks: [{ type: "link", attrs: { href } }],
+    });
+    const draft = value.snapshot().draft;
+    const restored = adapter(draft);
+    expect(restored.editor.getHTML()).toContain("design");
+    expect(
+      restored.editor.getJSON().content?.[0]?.content?.[0]?.marks,
+    ).toContainEqual(
+      expect.objectContaining({
+        type: "link",
+        attrs: expect.objectContaining({ href }),
+      }),
+    );
+    const output = document.createElement("div");
+    output.innerHTML = renderToStaticMarkup(
+      createElement(MessageMarkdown, {
+        row: {
+          id: "message",
+          channelId: "channel",
+          authorId: "author",
+          content: draft.text,
+          createdAt: 1,
+          mentions: [],
+          participants: [],
+          attachments: [],
+          reactions: [],
+          replyCount: 0,
+          emoji: [],
+        },
+        media: () => undefined,
+        onOpenLink: () => false,
+        canOpenLink: () => true,
+      }),
+    );
+    expect(output.querySelector("a")?.getAttribute("href")).toBe(href);
+    expect(restored.snapshot().draft).toEqual(draft);
+  },
+);

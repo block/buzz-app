@@ -1092,8 +1092,13 @@ function ChannelSidebarResizeHandle({
       onDoubleClick={() => setWidth(CHANNEL_SIDEBAR_DEFAULT_WIDTH)}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 48 : 16;
-        if (event.key === "ArrowLeft") setWidth(renderedWidth - step);
-        else if (event.key === "ArrowRight") setWidth(renderedWidth + step);
+        const sidebar = event.currentTarget.previousElementSibling;
+        const currentWidth =
+          sidebar instanceof HTMLElement
+            ? sidebar.getBoundingClientRect().width
+            : renderedWidth;
+        if (event.key === "ArrowLeft") setWidth(currentWidth - step);
+        else if (event.key === "ArrowRight") setWidth(currentWidth + step);
         else if (event.key === "Home") setWidth(CHANNEL_SIDEBAR_MIN_WIDTH);
         else if (event.key === "End") setWidth(CHANNEL_SIDEBAR_MAX_WIDTH);
         else return;

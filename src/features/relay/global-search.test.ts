@@ -513,3 +513,38 @@ it("a restricted route revalidates the nonmember ID and purges inaccessible prev
     owner.dispose();
   }
 });
+
+it.each([false, true])(
+  "completes authority-only self-revocation but fences mixed content reads (content=%s)",
+  async (content) => {
+    const viewer = keypair(),
+      relay = keypair();
+    let events: RelayEvent[] = [publicMetadata(relay, "open")];
+    const owner = createRelaySession({
+      ...scriptedTransport(viewer.pubkey, relay.pubkey).transport,
+      query: async () => events,
+    });
+    try {
+      await owner.session.channels.resolve?.(["open"]);
+      expect(owner.session.channels.get?.("open")).toMatchObject({
+        readOnly: true,
+      });
+      events = [publicMetadata(relay, "open", [["private"]], 1700000001)];
+      if (content) events.push(message(viewer, "open", "hidden", 1700000000));
+      const read = owner.session.read([
+        { kinds: [39000], "#d": ["open"], limit: 20 },
+        ...(content ? [{ kinds: [9], "#h": ["open"], limit: 20 }] : []),
+      ]);
+      if (content) await expect(read).rejects.toThrow("Stale relay read");
+      else await expect(read).resolves.toEqual([]);
+      expect(owner.session.channels.get?.("open")).toBeUndefined();
+      const view = owner.session.observe([
+        { kinds: [9], "#h": ["open"], limit: 20 },
+      ]);
+      expect(view.snapshot().events).toEqual([]);
+      view.dispose();
+    } finally {
+      owner.dispose();
+    }
+  },
+);

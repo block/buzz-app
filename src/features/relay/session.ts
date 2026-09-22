@@ -821,7 +821,17 @@ export function createRelaySession(
       const began = revision;
       const epoch = accessEpoch;
       const result = await verified.read(filters, settings);
-      if (closed || epoch !== accessEpoch)
+      // Applying discovery can itself revoke access. Let that authority-only
+      // read finish under current visibility; content/search completions must
+      // still be fenced, including mixed discovery + content requests.
+      const discoveryOnly =
+        filters.length > 0 &&
+        filters.every(
+          (filter) =>
+            !!filter.kinds?.length &&
+            filter.kinds.every((kind) => [39000, 39002].includes(kind)),
+        );
+      if (closed || (epoch !== accessEpoch && !discoveryOnly))
         throw new DOMException("Stale relay read", "AbortError");
       const merged = new Map(result.map((event) => [event.id, event]));
       for (const [id, observation] of recent.entries()) {

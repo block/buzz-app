@@ -37,8 +37,8 @@
   flex-direction: column;
 }
 .sidebar {
-  --sidebar-inline-padding: var(--space-2);
-  padding: var(--space-2) var(--sidebar-inline-padding);
+  --sidebar-padding: var(--space-2);
+  padding: var(--sidebar-padding);
 }
 .channelListFrame {
   position: relative;
@@ -47,9 +47,9 @@
 }
 .channelList {
   height: 100%;
-  margin-inline-end: calc(-1 * var(--sidebar-inline-padding));
+  margin-inline-end: calc(-1 * var(--sidebar-padding));
   overflow-y: auto;
-  padding-inline-end: var(--sidebar-inline-padding);
+  padding-inline-end: var(--sidebar-padding);
   scrollbar-color: color-mix(in srgb, var(--text-standard) 20%, transparent)
     transparent;
   scrollbar-width: thin;
@@ -98,7 +98,7 @@
   align-items: center;
   gap: var(--space-row-gap);
   overflow: hidden;
-  border-radius: var(--radius-row);
+  border-radius: calc(var(--radius-panel) - var(--sidebar-padding));
   padding: var(--space-1) var(--space-control-inset);
   background: transparent;
   color: var(--text-standard);
@@ -109,6 +109,9 @@
   transition:
     color var(--duration-state) var(--easing-state),
     background-color var(--duration-state) var(--easing-state);
+}
+.sidebar [data-buzz-ui][data-variant="row"] {
+  border-radius: calc(var(--radius-panel) - var(--sidebar-padding));
 }
 .channelSection > summary::-webkit-details-marker {
   display: none;
@@ -303,9 +306,6 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
   .board,
   .withPanel {
     grid-template-columns: 124px 4px minmax(0, 1fr);
-  }
-  .sidebar {
-    --sidebar-inline-padding: var(--space-1);
   }
   .sidebarResizeHandle {
     display: none;

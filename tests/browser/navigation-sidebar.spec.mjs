@@ -26,6 +26,27 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   expect(before).not.toBeNull();
   expect(grip).not.toBeNull();
   expect(listBox).not.toBeNull();
+  const geometry = await sidebar.evaluate((panel) => {
+    const content = panel.firstElementChild;
+    const row = panel.querySelector('[data-channel-id="alpha"]');
+    if (!(content instanceof HTMLElement) || !(row instanceof HTMLElement))
+      throw new Error("Channel sidebar geometry is unavailable");
+    const panelStyle = getComputedStyle(panel);
+    const contentStyle = getComputedStyle(content);
+    const rowStyle = getComputedStyle(row);
+    return {
+      panelRadius: Number.parseFloat(panelStyle.borderTopLeftRadius),
+      padding: [
+        contentStyle.paddingTop,
+        contentStyle.paddingRight,
+        contentStyle.paddingBottom,
+        contentStyle.paddingLeft,
+      ].map(Number.parseFloat),
+      rowRadius: Number.parseFloat(rowStyle.borderTopLeftRadius),
+    };
+  });
+  expect(new Set(geometry.padding).size).toBe(1);
+  expect(geometry.rowRadius).toBe(geometry.panelRadius - geometry.padding[0]);
   expect(grip.width).toBeGreaterThanOrEqual(16);
   expect(grip.height).toBeGreaterThan(500);
   expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(

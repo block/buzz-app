@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { worktreeIcon } from "./worktree-icon.mjs";
 
 const args = process.argv.slice(2);
 const forwarded = [];
@@ -23,18 +25,20 @@ for (; index < args.length && args[index] !== "--"; index++) {
   }
 }
 
+const config = {};
+const icon = worktreeIcon(fileURLToPath(new URL("../", import.meta.url)));
+if (icon) config.bundle = { icon: [icon] };
 if (port !== undefined) {
   // Tauri's own --port controls its static-file server, not our Vite server.
+  config.build = {
+    devUrl: `http://localhost:${port}`,
+    beforeDevCommand: `pnpm dev:desktop --port ${port}`,
+  };
+}
+if (Object.keys(config).length) {
   // Prepend: Tauri treats everything after a bare positional as runner args.
-  forwarded.unshift(
-    "--config",
-    JSON.stringify({
-      build: {
-        devUrl: `http://localhost:${port}`,
-        beforeDevCommand: `pnpm dev:desktop --port ${port}`,
-      },
-    }),
-  );
+  // Explicit user configs merge afterward and retain precedence.
+  forwarded.unshift("--config", JSON.stringify(config));
 }
 // Runner/application arguments after -- belong to Tauri, including any --port.
 forwarded.push(...args.slice(index));

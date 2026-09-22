@@ -402,7 +402,8 @@ export class RichComposerAdapter {
           : this.editor.schema.text(source, marks),
       );
     }
-    return transaction;
+    // Preview conversion must preserve a pending formatting choice, including [].
+    return transaction.setStoredMarks(state.storedMarks);
   }
 
   removeRecipient(pubkey: string) {

@@ -489,9 +489,14 @@ it("keeps failed emoji previews editable without changing authored content", () 
 });
 
 // Image errors are presentation changes, not authored edits or new undo steps.
-it.each([true, false])(
-  "preserves failed emoji marks, recipients, selection and history (editable=%s)",
-  (editable) => {
+it.each([
+  { editable: true, initiallyBold: true },
+  { editable: true, initiallyBold: false },
+  { editable: false, initiallyBold: true },
+  { editable: false, initiallyBold: false },
+])(
+  "preserves failed emoji marks, recipients, selection and history (editable=$editable, initiallyBold=$initiallyBold)",
+  ({ editable, initiallyBold }) => {
     const value = adapter();
     // jsdom has no selection geometry; native scrolling is covered in browsers.
     value.editor.setOptions({
@@ -502,8 +507,11 @@ it.each([true, false])(
       (url) => url,
     );
     value.insertMention("a".repeat(64), "Alex");
-    value.editor.commands.toggleBold();
+    if (initiallyBold) value.editor.commands.toggleBold();
     value.insertText(":party:");
+    // Choose formatting for the next character, including an explicit empty set.
+    value.editor.commands.toggleBold();
+    const pendingMarks = value.editor.state.storedMarks;
     const before = value.snapshot();
     value.setEditable(editable);
     value.editor.view.dom
@@ -513,9 +521,19 @@ it.each([true, false])(
     expect(value.snapshot().selectionStart).toBe(before.selectionStart);
     expect(value.snapshot().selectionEnd).toBe(before.selectionEnd);
     expect(value.editor.view.dom.querySelector("strong")?.textContent).toBe(
-      ":party:",
+      initiallyBold ? ":party:" : undefined,
     );
+    expect(value.editor.state.storedMarks).toEqual(pendingMarks);
     value.setEditable(true);
+    expect(value.insertText("X")).toBe(true);
+    expect(value.snapshot().editingText).toBe("@Alex :party:X");
+    expect(
+      value.editor.state.doc.firstChild?.lastChild?.marks.map(
+        (mark) => mark.type.name,
+      ),
+    ).toEqual(initiallyBold ? [] : ["bold"]);
+    expect(value.editor.commands.undo()).toBe(true);
+    expect(value.snapshot().draft).toEqual(before.draft);
     expect(value.editor.commands.undo()).toBe(true);
     expect(value.snapshot().editingText).toBe("@Alex ");
     expect(value.editor.commands.redo()).toBe(true);

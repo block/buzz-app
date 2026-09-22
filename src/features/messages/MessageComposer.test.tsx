@@ -31,11 +31,15 @@ import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
 
+import { fillComposer, installComposerGeometry } from "./composer-testing";
+let restoreGeometry: () => void;
+
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
 
 beforeEach(() => {
   localStorage.clear();
+  restoreGeometry = installComposerGeometry();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -47,6 +51,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  restoreGeometry();
   vi.unstubAllGlobals();
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
@@ -224,11 +229,7 @@ function mount(
       });
     },
     fill(text: string) {
-      const field = input();
-      act(() => field.focus());
-      field.value = text;
-      field.setSelectionRange(text.length, text.length);
-      fireEvent.input(field);
+      fillComposer(input(), text);
     },
     submit() {
       fireEvent.submit(within(view.container).getByRole("form"));
@@ -290,11 +291,11 @@ it.each(["disabled", "readOnly"] as const)(
       h.retarget({ disabled: true });
       expect(input).toHaveAttribute("aria-disabled", "true");
       expect(input).toHaveAttribute("contenteditable", "false");
-    } else input.readOnly = true;
+    } else act(() => input.richComposer?.setEditable(false));
     expect(h.publish(late, "late result")).toBe(false);
 
     if (state === "disabled") h.retarget({ disabled: false });
-    else input.readOnly = false;
+    else act(() => input.richComposer?.setEditable(true));
     expect(h.input().disabled).toBe(false);
     expect(h.input().readOnly).toBe(false);
     h.input().focus();
@@ -305,7 +306,7 @@ it.each(["disabled", "readOnly"] as const)(
       screen.getByRole("option", { name: "displayed choice" }),
     ).toBeVisible();
     if (state === "disabled") h.retarget({ disabled: true });
-    else h.input().readOnly = true;
+    else act(() => h.input().richComposer?.setEditable(false));
     fireEvent.keyDown(h.input(), { key: "Enter" });
     expect(h.input()).toHaveValue("!displayed");
     expect(h.messages.send).not.toHaveBeenCalled();
@@ -314,7 +315,7 @@ it.each(["disabled", "readOnly"] as const)(
 
 it("sends channel messages and thread replies through real form and keyboard events", async () => {
   const h = mount();
-  await h.user.type(h.input(), "channel draft");
+  h.fill("channel draft");
   await h.user.click(screen.getByRole("button", { name: "Send message" }));
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
@@ -323,7 +324,7 @@ it("sends channel messages and thread replies through real form and keyboard eve
   );
   expect(h.messages.reply).not.toHaveBeenCalled();
   h.retarget({ threadRootId: "root" });
-  await h.user.type(h.input(), "thread draft");
+  h.fill("thread draft");
   await h.user.keyboard("{Shift>}{Enter}{/Shift}");
   expect(h.input()).toHaveValue("thread draft\n");
   // This checks the composition guard, not native IME behavior.
@@ -415,13 +416,19 @@ it("labels simultaneous composers independently and prevents disabled or unsuppo
 it("subscribes to emoji changes and releases the subscription when unmounted", () => {
   const h = mount();
   h.fill(":party:");
-  expect(h.input().querySelectorAll("img")).toHaveLength(0);
+  expect(h.input().querySelectorAll("img[data-composer-emoji]")).toHaveLength(
+    0,
+  );
   expect(h.emojiListeners.size).toBe(1);
   expect(h.session.emoji.ensure).toHaveBeenCalled();
   h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
-  expect(h.input().querySelectorAll("img")).toHaveLength(1);
+  expect(h.input().querySelectorAll("img[data-composer-emoji]")).toHaveLength(
+    1,
+  );
   h.setEmoji([]);
-  expect(h.input().querySelectorAll("img")).toHaveLength(0);
+  expect(h.input().querySelectorAll("img[data-composer-emoji]")).toHaveLength(
+    0,
+  );
   h.unmount();
   expect(h.emojiListeners.size).toBe(0);
 });
@@ -473,14 +480,14 @@ it.each([undefined, "root"])(
 
 it.each([undefined, "root"])(
   "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
-  (root) => {
+  async (root) => {
     const h = mount(root ? { threadRootId: root } : {});
     act(() => {
       h.commands().insertMention(first);
       h.commands().insertText("can you see this is's");
     });
     const input = h.input();
-    const text = input.querySelector("[data-editor-text]")?.firstChild;
+    const text = input.querySelector("p")?.lastChild;
     if (!(text instanceof Text)) throw new Error("Missing editable text");
     const quote = text.data.indexOf("'");
     expect(quote).toBeGreaterThan(0);
@@ -498,10 +505,12 @@ it.each([undefined, "root"])(
       value: () => [target],
     });
     fireEvent(input, before);
-    text.replaceData(quote, 1, "’");
-    fireEvent.input(input, {
-      inputType: "insertReplacementText",
-      data: "’",
+    await act(async () => {
+      text.replaceData(quote, 1, "’");
+      fireEvent.input(input, {
+        inputType: "insertReplacementText",
+        data: "’",
+      });
     });
     expect(input).toHaveValue("@Honey can you see this is’s");
     expect(
@@ -528,6 +537,9 @@ it("deleting a mention or removing its chip removes notification intent", async 
       name: `Remove mention Honey ${first.pubkey}`,
     }),
   );
+  act(() => {
+    expect(h.commands().insertText(" still not notifying")).toBe(true);
+  });
   h.submit();
   expect(h.messages.send.mock.calls[1]?.at(-1)).toEqual([]);
 });
@@ -601,7 +613,9 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
     expect(h.commands().insertText(":party:")).toBe(true);
   });
   expect(h.input()).toHaveValue(":party::party:");
-  expect(h.container.querySelectorAll("img")).toHaveLength(2);
+  expect(h.container.querySelectorAll("img[data-composer-emoji]")).toHaveLength(
+    2,
+  );
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
@@ -616,7 +630,9 @@ it("renders a leading custom emoji inline without changing trailing text", () =>
   h.fill(":bufo:lakjsdlkjflakjsdf");
   expect(h.input()).not.toHaveAttribute("data-single-emoji");
   expect(h.input()).toHaveValue(":bufo:lakjsdlkjflakjsdf");
-  expect(h.container.querySelectorAll("img")).toHaveLength(1);
+  expect(h.container.querySelectorAll("img[data-composer-emoji]")).toHaveLength(
+    1,
+  );
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
@@ -868,7 +884,7 @@ it.each(
         screen.getByRole("button", { name: "First Honey" }),
       );
     } else {
-      await view.user.type(view.input(), "Hello Honey");
+      view.fill("Hello Honey");
       await view.user.click(
         screen.getByRole("button", { name: "Choose an agent" }),
       );
@@ -1003,7 +1019,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
   await view.user.click(
     await screen.findByRole("menuitemradio", { name: "Fizz" }),
   );
-  await view.user.type(view.input(), "Hello");
+  view.fill("Hello");
   await view.user.keyboard("{Enter}");
   expect(view.messages.send).toHaveBeenLastCalledWith("channel", "Hello", [
     second.pubkey,

@@ -12,6 +12,9 @@ import { RichComposerAdapter } from "./rich-composer-adapter";
 /** One transaction-driven bridge; Tiptap owns document, selection and Undo. */
 export function RichComposerInput({
   draft,
+  emoji,
+  session,
+  "data-single-emoji": singleEmoji,
   disabled,
   placeholder,
   "aria-label": accessibleLabel,
@@ -25,8 +28,11 @@ export function RichComposerInput({
   onCompositionStart,
   onCompositionEnd,
   onKeyDown,
-}: EditableInputProps & {
+  onRejected,
+}: Omit<EditableInputProps, "onUndo"> & {
   draft: MentionDraft;
+  "data-single-emoji"?: boolean | undefined;
+  onRejected: (reason: string) => void;
   session: RelaySession;
   scope: string;
   channelId: string;
@@ -44,6 +50,7 @@ export function RichComposerInput({
     onCompositionStart,
     onCompositionEnd,
     onKeyDown,
+    onRejected,
   });
   latest.current = {
     disabled,
@@ -54,12 +61,17 @@ export function RichComposerInput({
     onCompositionStart,
     onCompositionEnd,
     onKeyDown,
+    onRejected,
   };
 
   useLayoutEffect(() => {
     const element = host.current;
     if (!element) return;
-    const owner = new RichComposerAdapter(element, initialDraft.current);
+    const owner = new RichComposerAdapter(
+      element,
+      initialDraft.current,
+      (reason) => latest.current.onRejected(reason),
+    );
     const input = owner.editor.view.dom as ComposerInputElement;
     input.richComposer = owner;
     input.id = id ?? "";
@@ -110,13 +122,29 @@ export function RichComposerInput({
         preventDefault: () => keyboard.preventDefault(),
         stopPropagation: () => keyboard.stopPropagation(),
       } as never);
+      return keyboard.defaultPrevented;
     };
+    owner.editor.setOptions({
+      editorProps: { handleKeyDown: (_view, event) => keydown(event) },
+    });
     const selection = () => latest.current.onSelect?.({} as never);
+    // A native replacement can leave the document equal (e.g. replacing a query
+    // with itself). ProseMirror then emits no document transaction, but completion
+    // still needs fresh evidence. Let its DOM observer reconcile first.
+    const nativeInput = () => {
+      queueMicrotask(() => {
+        if (!owner.editor.isDestroyed)
+          latest.current.onInput?.({
+            currentTarget: input,
+            target: input,
+          } as never);
+      });
+    };
+    input.addEventListener("input", nativeInput);
     input.addEventListener("focus", focus);
     input.addEventListener("blur", blur);
     input.addEventListener("compositionstart", composeStart);
     input.addEventListener("compositionend", composeEnd);
-    input.addEventListener("keydown", keydown);
     input.ownerDocument.addEventListener("selectionchange", selection);
     ref.current = input;
     const updateEmpty = () => {
@@ -134,11 +162,11 @@ export function RichComposerInput({
     });
     return () => {
       stop();
+      input.removeEventListener("input", nativeInput);
       input.removeEventListener("focus", focus);
       input.removeEventListener("blur", blur);
       input.removeEventListener("compositionstart", composeStart);
       input.removeEventListener("compositionend", composeEnd);
-      input.removeEventListener("keydown", keydown);
       input.ownerDocument.removeEventListener("selectionchange", selection);
       ref.current = null;
       owner.destroy();
@@ -155,6 +183,15 @@ export function RichComposerInput({
     owner?.setEditable(!disabled);
     ref.current?.setAttribute("aria-disabled", String(disabled));
   }, [disabled, ref]);
+
+  useLayoutEffect(() => {
+    ref.current?.richComposer?.setEmoji(emoji, (url) => session.media(url));
+  }, [emoji, session, ref]);
+
+  useLayoutEffect(() => {
+    ref.current?.toggleAttribute("data-single-emoji", !!singleEmoji);
+    if (singleEmoji) ref.current?.setAttribute("data-single-emoji", "true");
+  }, [singleEmoji, ref]);
 
   return <div ref={host} />;
 }

@@ -376,14 +376,14 @@ same `registerTool` contract. No page imports their implementations. Optional nu
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
 `-10` to retain its position before default-order tools such as Emoji.
 
-Links, channel references, selected mentions and custom emoji render through shared
-message components directly in the editable draft. Display tokens retain the exact authored source;
-copying and sending preserve that source. Arrow keys and deletion open adjacent
-links for ordinary text editing. Partially deleting a link keeps it plain during
-the editing session; double-click selects the link and triple-click selects its
-whole paragraph. The host owns source offsets, plain-text paste, composition, undo and
-selected recipient metadata. Token renderers are display-only while editing.
-Names pasted as text never create notification intent.
+The rich editor owns the document, selection, composition and undo. React holds
+its serialized draft for persistence and sending, not a competing editable copy.
+Markdown formatting is visible while editing and serialized for delivery. Selected
+mentions are identity-bearing editor atoms; custom emoji atoms retain literal
+shortcodes. Catalog changes update previews without creating undo entries.
+Removing a Notify recipient replaces its atom with ordinary visible text, so later
+edits cannot restore notification intent. Pasted names never create that intent.
+All document-changing transactions share editability and text/recipient limits.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })` and `focus` commands.
 Mention insertion atomically records visible text and exact notification intent;
@@ -407,7 +407,7 @@ are not runtime capability negotiation or cross-version compatibility promises.
 ### Composer completion providers
 
 Emoji and Mentions each register a separate `registerCompletion` contribution.
-The host observes focused, enabled textarea text and collapsed UTF-16 selection,
+The host observes focused, enabled editor text and collapsed UTF-16 selection,
 then chooses the valid syntax match closest to the caret (greatest range start),
 with `order` and contribution key breaking ties. This lets a later emoji trigger
 win over an earlier multi-word mention query. Matchers
@@ -427,13 +427,13 @@ leave a withdrawn result without pending work. Cleanup cancels asynchronous work
 The host binds callbacks to the exact contribution, editor revision and query.
 Edits (including same-text input), selection changes, blur, composition, disabled
 state, plugin replacement, destination/session change and unmount revoke old work.
-Acceptance rechecks the actual DOM text/caret/focus and atomically replaces the
-query through the existing mention-draft path, retaining its text/recipient limits.
+Acceptance rechecks current editing text/caret/focus, not serialized Markdown, and
+atomically replaces the query through the editor transaction path with its limits.
 Typing/pasting a name alone never creates notification authority. Accepted mention
 intent survives optional plugin removal and remains subject to session validation.
 
 One host-owned, viewport-bounded portal renders the active listbox. Focus stays on
-the textarea with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
+the editor with `aria-controls`/`aria-activedescendant`; arrows follow stable IDs,
 plain Enter/forward Tab accept, and Escape dismisses pending results. A rejected
 displayed choice must not fall through to sending. Retry is a selectable menu action
 using the same arrow/Enter/Tab path, including when there are no results. Modified
@@ -447,7 +447,7 @@ network reads or a separate identity cache. Multi-word filtering stays in the
 provider so a delayed name can appear without another editor event.
 
 This is the same host-matched preview as toolbar tools, not version negotiation or
-a sandbox. Inline mention pills remain outside this completion implementation.
+a sandbox. The editor owns identity atoms independently of completion providers.
 
 Formatting needs selection transforms. Attachments and voice need shared media
 capabilities, destination-bound asynchronous work and cancellation; accepted

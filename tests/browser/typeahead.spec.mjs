@@ -220,12 +220,14 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await expect(input).toHaveJSProperty("value", "😄");
   await expect(input).toBeFocused();
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((element) => [
-      element.selectionStart,
-      element.selectionEnd,
-    ]),
-  ).toEqual([0, "😄".length]);
+  await expect
+    .poll(() =>
+      input.evaluate((element) => [
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    )
+    .toEqual([0, "😄".length]);
   await input.press("ArrowRight");
   expect(
     await page.evaluate(() => window.mentionFixture.publications.length),
@@ -275,14 +277,14 @@ test("completion resumes after selection collapses to the original caret", async
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([5, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([5, 6]);
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await input.press("ArrowRight");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([6, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([6, 6]);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
   await expect(input).toHaveJSProperty("value", "😄");
@@ -309,6 +311,9 @@ test("selection recovery requires fresh results and preserves Escape dismissal",
   expect(await publish(before - 1)).toBe(true);
   await expect(page.getByRole("option", { name: "Choice" })).toBeVisible();
   await input.press("Shift+ArrowLeft");
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([9, 10]);
   await expect(page.getByRole("listbox")).toHaveCount(0);
   expect(await publish(before - 1)).toBe(false);
   await input.press("ArrowRight");
@@ -629,7 +634,10 @@ test("current custom catalog drives typeahead and signed tags across community r
   expect(suggestionBox.width).toBeCloseTo(composerBox.width * 0.375, 1);
   await first.click();
   await expect(input).toHaveJSProperty("value", ":party-parrot:");
-  await expect(composer.locator("img")).toHaveCSS("width", "42px");
+  await expect(composer.locator("img[data-composer-emoji]")).toHaveCSS(
+    "width",
+    "42px",
+  );
   await input.press("Shift+ArrowLeft");
   expect(
     await input.evaluate((element) =>
@@ -637,9 +645,9 @@ test("current custom catalog drives typeahead and signed tags across community r
     ),
   ).toBe(":party-parrot:");
   await input.press("ArrowRight");
-  expect(await input.evaluate((element) => element.selectionStart)).toBe(
-    ":party-parrot:".length,
-  );
+  await expect
+    .poll(() => input.evaluate((element) => element.selectionStart))
+    .toBe(":party-parrot:".length);
   await expect(input).toBeFocused();
   await page.screenshot({
     path: test.info().outputPath("custom-emoji-native-caret.png"),
@@ -678,7 +686,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   ).toBe(":party-parrot: hello");
   await input.fill(":party-parrot:");
   await expect(input).toHaveAttribute("data-single-emoji", "true");
-  const renderedEmoji = input.locator("img");
+  const renderedEmoji = input.locator("img[data-composer-emoji]");
   await expect(renderedEmoji).toHaveCount(1);
   await expect(renderedEmoji).toHaveCSS("width", "42px");
   await expect(renderedEmoji).toHaveCSS("height", "42px");
@@ -703,14 +711,14 @@ test("current custom catalog drives typeahead and signed tags across community r
     await expect(image).toHaveCSS("height", "42px");
   }
   await input.fill(":party-parrot:lakjsdlkjflakjsdf");
-  await expect(input.locator("[data-source]")).toHaveCount(1);
+  await expect(input.locator("[data-composer-emoji]")).toHaveCount(1);
   await expect(input).not.toHaveAttribute("data-single-emoji", "true");
   await expect(renderedEmoji).toHaveCount(1);
   await expect(renderedEmoji).toHaveCSS("width", "22px");
   await expect(renderedEmoji).toHaveCSS("height", "22px");
   await expect(composer).toContainText("lakjsdlkjflakjsdf");
   const inlineAlignment = await input.evaluate((element) => {
-    const token = element.querySelector("[data-source]");
+    const token = element.querySelector("[data-composer-emoji]");
     const range = document.createRange();
     range.selectNodeContents(token.nextSibling);
     return {
@@ -873,7 +881,7 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
 });
 
-test("native read-only state rejects a displayed choice without sending", async ({
+test("editor read-only state rejects a displayed choice without sending", async ({
   page,
 }) => {
   await page.goto("/tests/fixtures/typeahead.html");
@@ -891,7 +899,7 @@ test("native read-only state rejects a displayed choice without sending", async 
   );
   await expect(page.getByRole("option", { name: "Bad" })).toBeVisible();
   await input.evaluate((el) => {
-    el.readOnly = true;
+    el.richComposer.setEditable(false);
   });
   await input.press("Enter");
   await expect(input).toHaveJSProperty("value", "!readonly");
@@ -971,4 +979,39 @@ test("portal bounds hold when the focused composer moves outside the viewport", 
       .toBe(true);
     await expect(input).toBeFocused();
   }
+});
+
+test("formatted completion accepts before Enter can send and keeps the explicit recipient", async ({
+  page,
+}) => {
+  const input = await open(page);
+  const key = await page.evaluate(() => window.mentionFixture.first);
+  await input.fill("@Ho");
+  await input.press("ControlOrMeta+a");
+  await input.press("ControlOrMeta+b");
+  await expect(input.locator("strong")).toHaveText("@Ho");
+  await input.press("ArrowRight");
+  const option = page.getByRole("option", {
+    name: `Honey ${key}`,
+    exact: true,
+  });
+  await expect(option).toBeVisible();
+  // Select by keyboard so this proves dispatch order, not just click handling.
+  if ((await option.getAttribute("aria-selected")) !== "true")
+    await input.press("ArrowDown");
+  await input.press("Enter");
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+  expect(
+    await page.evaluate(() => window.mentionFixture.publications.length),
+  ).toBe(0);
+  await expect(input.locator("strong")).toContainText("@Honey");
+  await input.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(1);
+  expect(
+    await page.evaluate(() =>
+      window.mentionFixture.publications[0].tags.filter(([tag]) => tag === "p"),
+    ),
+  ).toEqual([["p", key]]);
 });

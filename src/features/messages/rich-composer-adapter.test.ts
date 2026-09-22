@@ -227,3 +227,95 @@ it("drops nonrepresentable recipient metadata without exposing markers", () => {
   expect(value.snapshot().draft.recipients).toEqual([]);
   expect(value.snapshot().draft.text).not.toContain("recipient:");
 });
+
+it("rejects oversized direct, formatted and completion edits without changing the draft", () => {
+  const value = adapter(mentionDraft("x".repeat(16000)));
+  const before = value.snapshot().draft;
+  value.editor.commands.insertContent("z");
+  expect(value.snapshot().draft).toEqual(before);
+  value.editor.commands.selectAll();
+  value.editor.commands.toggleBold();
+  expect(value.snapshot().draft).toEqual(before);
+  value.setEditingSelection(16000);
+  const observation = value.observation();
+  if (!observation) throw new Error("Missing observation");
+  expect(value.replaceEditingRange(observation, 16000, 16000, "z")).toBe(false);
+  expect(value.snapshot().draft).toEqual(before);
+});
+
+it("rejects the 33rd identity before it becomes visible or loses notification metadata", () => {
+  const value = adapter();
+  for (let index = 0; index < 32; index++)
+    expect(
+      value.insertMention(index.toString(16).padStart(64, "0"), `User${index}`),
+    ).toBe(true);
+  const before = value.snapshot().draft;
+  expect(value.insertMention("f".repeat(64), "Extra")).toBe(false);
+  expect(value.snapshot().draft).toEqual(before);
+  expect(value.snapshot().draft.recipients).toHaveLength(32);
+});
+
+it("locks direct commands and undo while disabled, then restores editing", () => {
+  const value = adapter(mentionDraft("saved"));
+  value.editor.commands.insertContent(" edit");
+  const before = value.snapshot().draft;
+  value.setEditable(false);
+  value.editor.commands.insertContent("bad");
+  value.editor.commands.selectAll();
+  value.editor.commands.toggleBold();
+  value.editor.commands.undo();
+  expect(value.snapshot().draft).toEqual(before);
+  value.setEditable(true);
+  expect(value.editor.commands.undo()).toBe(true);
+  expect(value.snapshot().draft.text).toBe("saved");
+});
+
+it("keeps catalog-only emoji changes out of undo and preserves literal source and marks", () => {
+  const value = adapter(mentionDraft("**:party:**"));
+  const entries = [{ shortcode: "party", url: "https://emoji.test/party.png" }];
+  value.setEmoji(entries, (url) => url);
+  expect(
+    value.editor.view.dom.querySelectorAll("img[data-composer-emoji]"),
+  ).toHaveLength(1);
+  expect(value.snapshot().draft.text).toBe("**:party:**");
+  expect(value.editor.commands.undo()).toBe(false);
+  value.setEmoji([], (url) => url);
+  expect(value.snapshot().draft.text).toBe("**:party:**");
+  expect(value.editor.commands.undo()).toBe(false);
+});
+
+it("preserves authored trailing breaks when sending and restoring a draft", () => {
+  const value = adapter(mentionDraft("line"));
+  value.editor.commands.setHardBreak();
+  value.editor.commands.setHardBreak();
+  expect(value.snapshot().draft.text).toBe("line\n\n");
+  expect(adapter(value.snapshot().draft).snapshot().draft).toEqual(
+    value.snapshot().draft,
+  );
+});
+
+it("refreshes read-only emoji previews without editing content or decorating code", () => {
+  const value = adapter(mentionDraft(":party:"));
+  value.setEditable(false);
+  value.setEmoji(
+    [{ shortcode: "party", url: "https://emoji.test/party.png" }],
+    (url) => url,
+  );
+  expect(
+    value.editor.view.dom.querySelectorAll("img[data-composer-emoji]"),
+  ).toHaveLength(1);
+  expect(value.snapshot().draft.text).toBe(":party:");
+  value.setEmoji([], (url) => url);
+  expect(
+    value.editor.view.dom.querySelectorAll("img[data-composer-emoji]"),
+  ).toHaveLength(0);
+  expect(value.snapshot().draft.text).toBe(":party:");
+
+  const code = adapter(mentionDraft("```\n:party:\n```"));
+  code.setEmoji(
+    [{ shortcode: "party", url: "https://emoji.test/party.png" }],
+    (url) => url,
+  );
+  expect(code.editor.view.dom.querySelectorAll("img")).toHaveLength(0);
+  expect(code.snapshot().draft.text).toBe("```\n:party:\n```");
+});

@@ -23,6 +23,7 @@ const nonIconDependencies = new Set([
   "@tauri-apps/api",
   "@tauri-apps/cli",
   "@tiptap/core",
+  "@tiptap/extension-hard-break",
   "@tiptap/extension-link",
   "@tiptap/pm",
   "@tiptap/starter-kit",

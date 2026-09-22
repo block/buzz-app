@@ -7,8 +7,19 @@ import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { NewSessionComposer } from "./NewSessionComposer";
 
-afterEach(cleanup);
-beforeEach(() => localStorage.clear());
+import {
+  fillComposer,
+  installComposerGeometry,
+} from "../messages/composer-testing";
+let restoreGeometry: () => void;
+afterEach(() => {
+  cleanup();
+  restoreGeometry();
+});
+beforeEach(() => {
+  localStorage.clear();
+  restoreGeometry = installComposerGeometry();
+});
 const parent = {
   id: "11111111-1111-4111-8111-111111111111",
   name: "Engineering",
@@ -129,8 +140,7 @@ it.each([true, false])(
   },
 );
 it("keeps parent drafts separate and cannot send on an unsupported community", async () => {
-  const test = setup(false),
-    user = userEvent.setup();
+  const test = setup(false);
   const view = render(
     <NewSessionComposer
       session={test.session}
@@ -139,7 +149,7 @@ it("keeps parent drafts separate and cannot send on an unsupported community", a
       onStarted={() => {}}
     />,
   );
-  await user.type(screen.getByRole("textbox"), "Parent draft");
+  fillComposer(screen.getByRole("textbox"), "Parent draft");
   expect(screen.getByRole("button", { name: "Send message" })).toBeDisabled();
   view.unmount();
   const solo = render(
@@ -180,7 +190,7 @@ it("discards a recovered draft with a malformed session identifier", async () =>
   );
   const input = screen.getByRole("textbox");
   expect(input).toHaveProperty("value", "");
-  await user.type(input, "Fresh start");
+  fillComposer(input, "Fresh start");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() => expect(onStarted).toHaveBeenCalledOnce());
   expect(test.workSessions.create).toHaveBeenCalledWith(
@@ -207,7 +217,7 @@ it("keeps the prompt through an uncertain delivery and retries without duplicate
       onStarted={onStarted}
     />,
   );
-  await user.type(screen.getByRole("textbox"), "Recover this prompt");
+  fillComposer(screen.getByRole("textbox"), "Recover this prompt");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await screen.findByRole("alert");
   expect(screen.getByRole("textbox")).toHaveTextContent("Recover this prompt");
@@ -244,7 +254,7 @@ it("restores the chosen agent and invites it before the first standalone message
   await user.click(
     await screen.findByRole("menuitemradio", { name: /^Outside agent/ }),
   );
-  await user.type(screen.getByRole("textbox"), "Help with the release");
+  fillComposer(screen.getByRole("textbox"), "Help with the release");
   view.unmount();
   render(
     <NewSessionComposer
@@ -295,7 +305,7 @@ it("loads the new session roster profiles before sending without an explicit age
       onStarted={onStarted}
     />,
   );
-  await user.type(screen.getByRole("textbox"), "Keep going");
+  fillComposer(screen.getByRole("textbox"), "Keep going");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   await waitFor(() =>
     expect(test.session.profiles.ensure).toHaveBeenCalledWith(
@@ -454,7 +464,7 @@ it("keeps an editable draft when parent admission fails and retries admission fi
   await user.click(
     await screen.findByRole("menuitemradio", { name: /^Outside agent/ }),
   );
-  await user.type(screen.getByRole("textbox"), "Help");
+  fillComposer(screen.getByRole("textbox"), "Help");
   await user.click(screen.getByRole("button", { name: "Send message" }));
   expect(await screen.findByRole("alert")).toHaveTextContent(
     "Only channel admins",

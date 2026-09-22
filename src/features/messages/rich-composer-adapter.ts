@@ -1,10 +1,18 @@
 import { Editor } from "@tiptap/core";
-import { EditorState } from "@tiptap/pm/state";
+import { closeHistory } from "@tiptap/pm/history";
+import { EditorState, Plugin } from "@tiptap/pm/state";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import HardBreak from "@tiptap/extension-hard-break";
 import Link from "@tiptap/extension-link";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown as TiptapMarkdown } from "tiptap-markdown";
 import type { ComposerObservation } from "../conversation/contracts";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
+import {
+  CUSTOM_EMOJI_NODE,
+  CustomEmojiNode,
+} from "./rich-composer/customEmojiNode";
+import type { CustomEmoji } from "../relay/emoji";
 import { RECIPIENT_NODE, RecipientNode } from "./rich-composer/recipientNode";
 
 const recipientMarker = (token: string) => `\uE000recipient:${token}\uE001`;
@@ -14,9 +22,11 @@ const leafText = (node: {
 }) =>
   node.type.name === RECIPIENT_NODE
     ? `@${String(node.attrs.name ?? "")}`
-    : node.type.name === "hardBreak"
-      ? "\n"
-      : "";
+    : node.type.name === CUSTOM_EMOJI_NODE
+      ? String(node.attrs.source)
+      : node.type.name === "hardBreak"
+        ? "\n"
+        : "";
 
 export type RichComposerSnapshot = Readonly<{
   revision: number;
@@ -32,14 +42,35 @@ export class RichComposerAdapter {
   readonly editor: Editor;
   #revision = 0;
   #nextToken = 0;
+  #emoji = new Map<string, string>();
+  #restoring = false;
+  #rejected = false;
   #listeners = new Set<(documentChanged: boolean) => void>();
 
-  constructor(element: HTMLElement, draft: MentionDraft = mentionDraft("")) {
+  constructor(
+    element: HTMLElement,
+    draft: MentionDraft = mentionDraft(""),
+    private readonly onRejected: (reason: string) => void = () => {},
+  ) {
     this.editor = new Editor({
       element,
       extensions: [
         RecipientNode,
-        StarterKit.configure({ heading: false, link: false }),
+        CustomEmojiNode,
+        StarterKit.configure({ heading: false, link: false, hardBreak: false }),
+        HardBreak.extend({
+          addStorage() {
+            return {
+              markdown: {
+                // The default serializer drops breaks at the end of a paragraph.
+                // In a message these are authored content, not layout padding.
+                serialize(state: { write(text: string): void }) {
+                  state.write("\\\n");
+                },
+              },
+            };
+          },
+        }),
         Link.configure({ openOnClick: false }),
         TiptapMarkdown.configure({ html: false, breaks: true }),
       ],
@@ -51,6 +82,43 @@ export class RichComposerAdapter {
       },
     });
     this.restore(draft);
+    this.editor.registerPlugin(
+      new Plugin({
+        appendTransaction: (transactions, _old, state) => {
+          if (
+            !transactions.some(
+              (transaction) =>
+                transaction.docChanged || transaction.getMeta("emojiCatalog"),
+            )
+          )
+            return null;
+          return this.#decorateEmoji(state);
+        },
+        filterTransaction: (transaction) => {
+          if (
+            !transaction.docChanged ||
+            this.#restoring ||
+            transaction.getMeta("emojiDecoration")
+          )
+            return true;
+          let count = 0;
+          transaction.doc.descendants((node) => {
+            if (node.type.name === RECIPIENT_NODE) ++count;
+          });
+          const reason = !this.editor.isEditable
+            ? "This draft is not editable"
+            : count > 32
+              ? "Choose at most 32 recipients"
+              : this.#serialize(transaction.doc).text.length > 16000
+                ? "Message is too long"
+                : undefined;
+          if (!reason) return true;
+          this.#rejected = true;
+          this.onRejected(reason);
+          return false;
+        },
+      }),
+    );
   }
 
   destroy() {
@@ -118,7 +186,10 @@ export class RichComposerAdapter {
     const to = this.#documentPosition(end);
     if (from === undefined || to === undefined || from > to) return false;
     this.editor.view.focus();
+    this.#rejected = false;
     this.editor.view.dispatch(this.editor.state.tr.insertText(text, from, to));
+    if (this.#rejected) return false;
+    this.editor.view.dispatch(closeHistory(this.editor.state.tr));
     return true;
   }
 
@@ -129,20 +200,136 @@ export class RichComposerAdapter {
       !name.trim()
     )
       return false;
-    return this.editor
+    this.#rejected = false;
+    const marks = (
+      this.editor.state.storedMarks ?? this.editor.state.selection.$from.marks()
+    ).map((mark) => mark.toJSON());
+    const accepted = this.editor
       .chain()
       .focus()
       .insertContent([
         {
           type: RECIPIENT_NODE,
           attrs: { pubkey, name, token: this.#token() },
+          marks,
         },
-        { type: "text", text: " " },
+        { type: "text", text: " ", marks },
       ])
       .run();
+    if (!accepted || this.#rejected) return false;
+    this.editor.view.dispatch(closeHistory(this.editor.state.tr));
+    return true;
+  }
+
+  setEmoji(
+    entries: readonly CustomEmoji[],
+    media: (url: string) => string | undefined,
+  ) {
+    this.#emoji = new Map(
+      entries.flatMap((entry) => {
+        const url = media(entry.url);
+        return url ? [[entry.shortcode.toLowerCase(), url] as const] : [];
+      }),
+    );
+    this.editor.view.dispatch(
+      this.editor.state.tr
+        .setMeta("emojiCatalog", true)
+        .setMeta("addToHistory", false),
+    );
+  }
+
+  #decorateEmoji(state: EditorState) {
+    const replacements: {
+      from: number;
+      to: number;
+      source: string;
+      url?: string | undefined;
+    }[] = [];
+    state.doc.descendants((node, position) => {
+      if (node.type.name === "codeBlock") return false;
+      if (node.type.name === CUSTOM_EMOJI_NODE) {
+        const source = String(node.attrs.source);
+        const url = this.#emoji.get(source.slice(1, -1).toLowerCase());
+        if (url !== node.attrs.url)
+          replacements.push({
+            from: position,
+            to: position + node.nodeSize,
+            source,
+            url,
+          });
+      } else if (
+        node.isText &&
+        !node.marks.some((mark) => mark.type.name === "code")
+      ) {
+        for (const match of (node.text ?? "").matchAll(
+          /:([a-z0-9_-]{1,64}):/gi,
+        )) {
+          const url = this.#emoji.get((match[1] ?? "").toLowerCase());
+          if (url)
+            replacements.push({
+              from: position + match.index,
+              to: position + match.index + match[0].length,
+              source: match[0],
+              url,
+            });
+        }
+      }
+    });
+    if (!replacements.length) return null;
+    const transaction = state.tr.setMeta("emojiDecoration", true);
+    for (const { from, to, source, url } of replacements.reverse()) {
+      const marks = state.doc.resolve(from).marks();
+      transaction.replaceWith(
+        from,
+        to,
+        url
+          ? state.schema.node(
+              CUSTOM_EMOJI_NODE,
+              { source, url },
+              undefined,
+              marks,
+            )
+          : this.editor.schema.text(source, marks),
+      );
+    }
+    return transaction;
+  }
+
+  removeRecipient(pubkey: string) {
+    if (!this.editor.isEditable) return false;
+    const matches: { position: number; size: number; name: string }[] = [];
+    this.editor.state.doc.descendants((node, position) => {
+      if (node.type.name === RECIPIENT_NODE && node.attrs.pubkey === pubkey)
+        matches.push({
+          position,
+          size: node.nodeSize,
+          name: String(node.attrs.name),
+        });
+    });
+    if (!matches.length) return false;
+    const transaction = this.editor.state.tr;
+    for (const match of matches.reverse()) {
+      const node = transaction.doc.nodeAt(match.position);
+      transaction.replaceWith(
+        match.position,
+        match.position + match.size,
+        this.editor.schema.text(`@${match.name}`, node?.marks),
+      );
+    }
+    this.editor.view.dispatch(transaction);
+    return true;
   }
 
   restore(value: MentionDraft) {
+    this.#restoring = true;
+    try {
+      this.#restore(value);
+    } finally {
+      this.#restoring = false;
+    }
+  }
+
+  #restore(value: MentionDraft) {
     const draft = mentionDraft(value);
     const orderedRecipients = [...draft.recipients].sort(
       (a, b) => b.start - a.start,
@@ -188,6 +375,20 @@ export class RichComposerAdapter {
       const end = Math.max(1, this.editor.state.doc.content.size - 1);
       this.editor.view.dispatch(
         this.editor.state.tr.insertText(trailingWhitespace, end),
+      );
+    }
+    const trailingBreaks = draft.text.match(/\n+$/)?.[0].length ?? 0;
+    const representedBreaks =
+      this.#editingText().match(/\n+$/)?.[0].length ?? 0;
+    if (trailingBreaks > representedBreaks) {
+      const end = Math.max(1, this.editor.state.doc.content.size - 1);
+      this.editor.view.dispatch(
+        this.editor.state.tr.insert(
+          end,
+          Array.from({ length: trailingBreaks - representedBreaks }, () =>
+            this.editor.schema.node("hardBreak"),
+          ),
+        ),
       );
     }
     for (const { recipient, token } of recipients.reverse()) {
@@ -255,15 +456,12 @@ export class RichComposerAdapter {
     return undefined;
   }
 
-  #serialize(): MentionDraft {
+  #serialize(doc: ProseMirrorNode = this.editor.state.doc): MentionDraft {
     const storage = this.editor.storage as unknown as {
       markdown?: { serializer?: { serialize(content: unknown): string } };
     };
-    const authoredText = this.editor.state.doc.textBetween(
-      0,
-      this.editor.state.doc.content.size,
-      "\n",
-      (node) => (node.type.name === RECIPIENT_NODE ? "" : leafText(node)),
+    const authoredText = doc.textBetween(0, doc.content.size, "\n", (node) =>
+      node.type.name === RECIPIENT_NODE ? "" : leafText(node),
     );
     const nodes: {
       position: number;
@@ -271,7 +469,7 @@ export class RichComposerAdapter {
       pubkey: string;
       name: string;
     }[] = [];
-    this.editor.state.doc.descendants((node, position) => {
+    doc.descendants((node, position) => {
       if (node.type.name !== RECIPIENT_NODE) return;
       let token: string;
       let marker: string;
@@ -286,7 +484,10 @@ export class RichComposerAdapter {
         name: String(node.attrs.name ?? ""),
       });
     });
-    let serializationTransaction = this.editor.state.tr;
+    let serializationTransaction = EditorState.create({
+      schema: this.editor.schema,
+      doc,
+    }).tr;
     for (const node of nodes)
       serializationTransaction = serializationTransaction.setNodeMarkup(
         node.position,

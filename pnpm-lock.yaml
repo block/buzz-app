@@ -15,9 +15,6 @@ importers:
       '@base-ui/react':
         specifier: 1.8.0
         version: 1.8.0(patch_hash=7fa81e73a79e25bc6cddeeb432a4609fbc8f1795141fbd0cfebacbfbaa02757f)(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
-      '@noble/curves':
-        specifier: 2.0.1
-        version: 2.0.1
       '@deepseek-ai/cordis':
         specifier: 4.0.2
         version: 4.0.2
@@ -30,6 +27,9 @@ importers:
       '@fontsource/jetbrains-mono':
         specifier: ^5.3.0
         version: 5.3.0
+      '@noble/curves':
+        specifier: 2.0.1
+        version: 2.0.1
       '@phosphor-icons/core':
         specifier: 2.1.1
         version: 2.1.1
@@ -45,6 +45,9 @@ importers:
       '@tiptap/core':
         specifier: 3.31.3
         version: 3.31.3(@tiptap/pm@3.31.3)
+      '@tiptap/extension-hard-break':
+        specifier: 3.31.3
+        version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))
       '@tiptap/extension-link':
         specifier: 3.31.3
         version: 3.31.3(@tiptap/core@3.31.3(@tiptap/pm@3.31.3))(@tiptap/pm@3.31.3)

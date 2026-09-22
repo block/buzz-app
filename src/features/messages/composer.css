@@ -38,3 +38,21 @@
     pointer-events: none;
   }
 }
+
+/* Editor-owned emoji nodes retain their authored shortcode for delivery. */
+.message-composer-editor img[data-composer-emoji] {
+  display: inline-block;
+  width: var(--size-emoji-inline);
+  height: var(--size-emoji-inline);
+  object-fit: contain;
+  vertical-align: -0.25em;
+}
+.message-composer-editor[data-single-emoji] {
+  font-size: var(--size-emoji-display);
+  line-height: var(--size-emoji-line);
+}
+.message-composer-editor[data-single-emoji] img[data-composer-emoji] {
+  width: var(--size-emoji-display);
+  height: var(--size-emoji-display);
+  vertical-align: top;
+}

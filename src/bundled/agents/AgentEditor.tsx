@@ -164,7 +164,7 @@ export function AgentEditor({
                   current work; a later sent mention can start it again.
                 </p>
                 {agent.error && (
-                  <p role="alert" className="text-red-12">
+                  <p role="alert" className="text-danger">
                     {agent.error}
                   </p>
                 )}
@@ -203,7 +203,7 @@ export function AgentEditor({
                 onChange={change}
               />
               {state.error && (
-                <p role="alert" className="text-red-12">
+                <p role="alert" className="text-danger">
                   {state.error}
                 </p>
               )}
@@ -213,14 +213,14 @@ export function AgentEditor({
                 </Button>
               )}
               {stale && (
-                <p role="alert" className="text-red-12">
+                <p role="alert" className="text-danger">
                   The host has a newer saved revision. Your edits are still
                   here; copy anything you need, then discard to load the latest
                   settings.
                 </p>
               )}
               {error && (
-                <p role="alert" className="text-red-12">
+                <p role="alert" className="text-danger">
                   {error}
                 </p>
               )}

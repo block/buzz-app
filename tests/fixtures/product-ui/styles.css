@@ -1,0 +1,5 @@
+@import "../../../src/shared/design-system/styles/globals.css";
+@import "../../../src/shared/styles/tokens.css";
+@import "../../../src/features/messages/composer.css";
+@import "../../../src/bundled/composer/lab/specimens.css";
+@source "../../../src/bundled/composer/";

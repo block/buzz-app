@@ -6,7 +6,7 @@ export type MentionDraft = {
   recipients: readonly DraftRecipient[];
 };
 const boundary = (text: string, end: number) =>
-  end === text.length || /[\s.,!?;:()[\]{}]/u.test(text[end] ?? "");
+  end === text.length || /[\s.,!?;:()[\]{}*_~`]/u.test(text[end] ?? "");
 /** Old text-only drafts remain text-only: restoring prose never creates notifications. */
 export function mentionDraft(value: unknown): MentionDraft {
   if (typeof value === "string") return { text: value, recipients: [] };

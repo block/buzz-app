@@ -1,5 +1,6 @@
 /** Text offsets remain the editor contract, including the source behind inline tokens. */
 export type ComposerInputElement = HTMLDivElement & {
+  richComposer?: import("./rich-composer-adapter").RichComposerAdapter;
   value: string;
   selectionStart: number;
   selectionEnd: number;

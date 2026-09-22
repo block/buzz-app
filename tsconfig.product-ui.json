@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src",
+    "tests/fixtures/product-ui",
+    "tests/fixtures/design-system",
+    "vite.product-ui.config.ts"
+  ]
+}

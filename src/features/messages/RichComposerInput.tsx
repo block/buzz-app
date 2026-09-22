@@ -1,23 +1,30 @@
+import { useLayoutEffect, useRef } from "react";
+import styles from "./Messages.module.css";
+import "./composer.css";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
-import { scanMarkdown } from "../relay/message-content";
-import { MessageMarkdown } from "./MessageMarkdown";
 import type { MentionDraft } from "./mention-draft";
-import { useReferenceDirectory } from "./ReferenceText";
-import { messageLinkParts } from "./message-link-parts";
-import { messageReferences } from "./message-references";
-import { EditableInput, type EditableInputProps } from "./EditableInput";
+import type { EditableInputProps } from "./EditableInput";
+import type { ComposerInputElement } from "./composer-dom";
+import { RichComposerAdapter } from "./rich-composer-adapter";
 
-/** Decorations never change source text or infer notification recipients from names. */
+/** One transaction-driven bridge; Tiptap owns document, selection and Undo. */
 export function RichComposerInput({
   draft,
-  session,
-  scope,
-  channelId,
-  extensions,
-  emoji,
-  ...input
+  disabled,
+  placeholder,
+  "aria-label": accessibleLabel,
+  className,
+  ref,
+  id,
+  onInput,
+  onFocus,
+  onBlur,
+  onSelect,
+  onCompositionStart,
+  onCompositionEnd,
+  onKeyDown,
 }: EditableInputProps & {
   draft: MentionDraft;
   session: RelaySession;
@@ -26,106 +33,128 @@ export function RichComposerInput({
   extensions: ConversationExtensions | undefined;
   emoji: readonly CustomEmoji[];
 }) {
-  const directory = useReferenceDirectory(session, draft.recipients.length > 0);
-  const profiles = new Map(directory.profiles);
-  for (const recipient of draft.recipients)
-    profiles.set(recipient.pubkey, {
-      ...profiles.get(recipient.pubkey),
-      name: recipient.name,
-    });
-  const { tree, tooDeep } = scanMarkdown(draft.text);
-  const literals: { start: number; end: number }[] = [];
-  const pending = [tree];
-  while (pending.length) {
-    const node = pending.pop();
-    if (!node) continue;
-    if (
-      [
-        "code",
-        "inlineCode",
-        "image",
-        "imageReference",
-        "definition",
-        "html",
-      ].includes(node.type)
-    ) {
-      const start = node.position?.start.offset,
-        end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        literals.push({ start, end });
-    } else pending.push(...(node.children ?? []));
-  }
-  const ranges: {
-    start: number;
-    end: number;
-    mention?: string;
-    editAsText?: boolean;
-  }[] = [];
-  const add = (
-    start: number,
-    end: number,
-    mention?: string,
-    editAsText = false,
-  ) => {
-    if (
-      !tooDeep &&
-      ![...literals, ...ranges].some(
-        (range) => start < range.end && end > range.start,
-      )
-    )
-      ranges.push({ start, end, editAsText, ...(mention ? { mention } : {}) });
+  const host = useRef<HTMLDivElement>(null);
+  const initialDraft = useRef(draft);
+  const latest = useRef({
+    disabled,
+    onInput,
+    onFocus,
+    onBlur,
+    onSelect,
+    onCompositionStart,
+    onCompositionEnd,
+    onKeyDown,
+  });
+  latest.current = {
+    disabled,
+    onInput,
+    onFocus,
+    onBlur,
+    onSelect,
+    onCompositionStart,
+    onCompositionEnd,
+    onKeyDown,
   };
-  messageLinkParts(draft.text, undefined, (start, end) =>
-    add(start, end, undefined, true),
-  );
-  for (const recipient of draft.recipients)
-    add(recipient.start, recipient.end, recipient.pubkey);
-  for (const reference of messageReferences(
-    draft.text,
-    [],
-    profiles,
-    directory.channels,
-    directory.agents,
-  ))
-    add(reference.start, reference.end, undefined, true);
-  const renderableEmoji = emoji.filter((entry) => !!session.media(entry.url));
-  const shortcodes = new Set(
-    renderableEmoji.map((entry) => entry.shortcode.toLowerCase()),
-  );
-  for (const match of draft.text.matchAll(/:([a-z0-9_-]{1,64}):/gi))
-    if (shortcodes.has(match[1]?.toLowerCase() ?? ""))
-      add(match.index, match.index + match[0].length);
-  const decorations = ranges
-    .sort((a, b) => a.start - b.start)
-    .map(({ start, end, mention, editAsText }) => ({
-      start,
-      end,
-      editAsText: !!editAsText,
-      content: (
-        <MessageMarkdown
-          row={{
-            id: "composer",
-            authorId: "",
-            createdAt: 0,
-            channelId,
-            content: draft.text.slice(start, end),
-            mentions: mention ? [mention] : [],
-            emoji: renderableEmoji,
-            participants: [],
-            attachments: [],
-            reactions: [],
-            replyCount: 0,
-          }}
-          directory={directory}
-          participantProfiles={profiles}
-          session={session}
-          scope={scope}
-          extensions={extensions}
-          media={session.media}
-          onOpenLink={() => false}
-          interactive={false}
-        />
+
+  useLayoutEffect(() => {
+    const element = host.current;
+    if (!element) return;
+    const owner = new RichComposerAdapter(element, initialDraft.current);
+    const input = owner.editor.view.dom as ComposerInputElement;
+    input.richComposer = owner;
+    input.id = id ?? "";
+    input.classList.add(
+      "message-composer-editor",
+      ...[styles.input, ...(className ?? "").split(" ")].filter(
+        (name): name is string => Boolean(name),
       ),
-    }));
-  return <EditableInput {...input} decorations={decorations} />;
+    );
+
+    input.setAttribute("aria-multiline", "true");
+    Object.defineProperties(input, {
+      value: { configurable: true, get: () => owner.snapshot().editingText },
+      selectionStart: {
+        configurable: true,
+        get: () => owner.snapshot().selectionStart,
+      },
+      selectionEnd: {
+        configurable: true,
+        get: () => owner.snapshot().selectionEnd,
+      },
+      selectionDirection: { configurable: true, get: () => "forward" },
+      disabled: { configurable: true, get: () => latest.current.disabled },
+      readOnly: { configurable: true, get: () => !owner.snapshot().editable },
+      setSelectionRange: {
+        configurable: true,
+        value: (start: number, end: number) =>
+          owner.setEditingSelection(start, end),
+      },
+    });
+    const focus = (event: Event) => latest.current.onFocus?.(event as never);
+    const blur = (event: Event) => latest.current.onBlur?.(event as never);
+    const composeStart = (event: Event) =>
+      latest.current.onCompositionStart?.(event as never);
+    const composeEnd = (event: Event) =>
+      latest.current.onCompositionEnd?.(event as never);
+    const keydown = (event: Event) => {
+      const keyboard = event as KeyboardEvent;
+      latest.current.onKeyDown?.({
+        nativeEvent: keyboard,
+        currentTarget: input,
+        target: input,
+        key: keyboard.key,
+        altKey: keyboard.altKey,
+        ctrlKey: keyboard.ctrlKey,
+        metaKey: keyboard.metaKey,
+        shiftKey: keyboard.shiftKey,
+        preventDefault: () => keyboard.preventDefault(),
+        stopPropagation: () => keyboard.stopPropagation(),
+      } as never);
+    };
+    const selection = () => latest.current.onSelect?.({} as never);
+    input.addEventListener("focus", focus);
+    input.addEventListener("blur", blur);
+    input.addEventListener("compositionstart", composeStart);
+    input.addEventListener("compositionend", composeEnd);
+    input.addEventListener("keydown", keydown);
+    input.ownerDocument.addEventListener("selectionchange", selection);
+    ref.current = input;
+    const updateEmpty = () => {
+      input.dataset.empty = String(owner.editor.isEmpty);
+    };
+    updateEmpty();
+    const stop = owner.subscribe((documentChanged) => {
+      updateEmpty();
+      if (documentChanged)
+        latest.current.onInput?.({
+          currentTarget: input,
+          target: input,
+        } as never);
+      else latest.current.onSelect?.({} as never);
+    });
+    return () => {
+      stop();
+      input.removeEventListener("focus", focus);
+      input.removeEventListener("blur", blur);
+      input.removeEventListener("compositionstart", composeStart);
+      input.removeEventListener("compositionend", composeEnd);
+      input.removeEventListener("keydown", keydown);
+      input.ownerDocument.removeEventListener("selectionchange", selection);
+      ref.current = null;
+      owner.destroy();
+    };
+  }, [className, id, ref]);
+
+  useLayoutEffect(() => {
+    ref.current?.setAttribute("data-placeholder", placeholder);
+    ref.current?.setAttribute("aria-label", accessibleLabel ?? placeholder);
+  }, [placeholder, accessibleLabel, ref]);
+
+  useLayoutEffect(() => {
+    const owner = ref.current?.richComposer;
+    owner?.setEditable(!disabled);
+    ref.current?.setAttribute("aria-disabled", String(disabled));
+  }, [disabled, ref]);
+
+  return <div ref={host} />;
 }

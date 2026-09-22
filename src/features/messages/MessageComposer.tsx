@@ -264,6 +264,19 @@ function Composer({
     caret.current = undefined;
   });
   function undo(redo: boolean) {
+    const owner = input.current?.richComposer;
+    if (owner) {
+      if (
+        editingDisabled ||
+        !owner.editor.isEditable ||
+        completion.composing.current
+      )
+        return;
+      if (redo) owner.editor.commands.redo();
+      else owner.editor.commands.undo();
+      completion.invalidate();
+      return;
+    }
     if (
       editingDisabled ||
       input.current?.readOnly ||
@@ -291,20 +304,35 @@ function Composer({
     recipient?: MentionRecipient,
     range?: CompletionQuery,
   ) {
+    const element = input.current;
     if (
       editingDisabled ||
       !outbox?.supports(9) ||
-      !input.current?.isConnected ||
-      // DOM props are committed before child layout effects; closures can still
-      // carry the preceding render's enabled state during that interval.
-      input.current.disabled ||
-      input.current.readOnly ||
+      !element?.isConnected ||
+      element.disabled ||
+      element.readOnly ||
       typeof text !== "string"
     )
       return false;
+    const owner = element.richComposer;
+    if (owner) {
+      if (recipient) {
+        if (range && !owner.setEditingSelection(range.start, range.end))
+          return false;
+        return owner.insertMention(recipient.pubkey, recipient.name);
+      }
+      const observation = owner.observation();
+      if (!observation) return false;
+      return owner.replaceEditingRange(
+        observation,
+        range?.start ?? observation.start,
+        range?.end ?? observation.end,
+        text,
+      );
+    }
     const current = valueRef.current;
-    const start = range?.start ?? caret.current ?? input.current.selectionStart;
-    const end = range?.end ?? caret.current ?? input.current.selectionEnd;
+    const start = range?.start ?? caret.current ?? element.selectionStart;
+    const end = range?.end ?? caret.current ?? element.selectionEnd;
     const edited = replaceMentionDraft(current, start, end, text);
     if (edited.text.length > 16000) {
       setError("Message is too long to insert text");
@@ -458,6 +486,7 @@ function Composer({
       completion.invalidate();
       clearMediaTime?.();
       setDraft("");
+      input.current?.richComposer?.restore(mentionDraft(""));
       history.current = { past: [], future: [] };
       input.current?.focus();
       setError(undefined);
@@ -570,18 +599,13 @@ function Composer({
               completion.composing.current = false;
               completion.observe(true);
             }}
-            // onInput also observes same-text replacements, which onChange omits.
-            onInput={(event) => {
-              const range = edit.current;
-              edit.current = undefined;
-              saveDraft(
-                editMentionDraft(
-                  valueRef.current,
-                  event.currentTarget.value,
-                  range,
-                ),
-                range,
-              );
+            onInput={() => {
+              const owner = input.current?.richComposer;
+              if (!owner) return;
+              const next = owner.snapshot().draft;
+              valueRef.current = next;
+              updateDraft(next);
+              writeView(scope, draftKey, next);
               completion.observe(true);
             }}
             onKeyDown={(event) => {

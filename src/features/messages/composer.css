@@ -1,0 +1,40 @@
+@layer components {
+  .message-composer-editor {
+    box-sizing: border-box;
+    width: 100%;
+    min-height: 1.5lh;
+    max-height: min(10rem, 30vh);
+    overflow-y: auto;
+    padding: var(--space-1h) 0;
+    outline: 0;
+    color: var(--text-primary);
+  }
+
+  .message-composer-editor p {
+    margin: 0;
+  }
+  .message-composer-editor p + p {
+    margin-top: var(--space-1);
+  }
+  .message-composer-editor ul,
+  .message-composer-editor ol,
+  .message-composer-editor blockquote {
+    margin: 0;
+    padding-inline-start: var(--space-5);
+  }
+  .message-composer-editor blockquote {
+    border-inline-start: 2px solid var(--border-primary);
+  }
+  html[data-keyboard-navigation]
+    .message-composer-editor.ProseMirror-focused:focus-visible {
+    outline: 2px solid var(--purple-8);
+    outline-offset: 2px;
+  }
+  .message-composer-editor[data-empty="true"]::before {
+    color: var(--text-tertiary);
+    content: attr(data-placeholder);
+    float: left;
+    height: 0;
+    pointer-events: none;
+  }
+}

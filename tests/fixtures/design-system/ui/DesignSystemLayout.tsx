@@ -6,6 +6,7 @@ import { Link, Outlet } from "@tanstack/react-router";
 import { Fragment, type ReactNode } from "react";
 
 import { useColorScheme } from "../../../../src/shared/design-system/theme/useColorScheme";
+import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 import { COMPONENTS } from "../../../../src/shared/design-system/ui/registry";
 
@@ -95,7 +96,10 @@ function NavItems({ items, depth = 0 }: { items: NavItem[]; depth?: number }) {
           <div className={depth ? "design-system-nav-child" : undefined}>
             <NavLink
               to={to}
-              exact={children !== undefined && children.length > 0}
+              exact={
+                to === "/design/product-ui/composer" ||
+                (children !== undefined && children.length > 0)
+              }
             >
               {label}
             </NavLink>
@@ -110,7 +114,13 @@ function NavItems({ items, depth = 0 }: { items: NavItem[]; depth?: number }) {
 }
 
 /** `children` is for the not-found shell, which renders outside the route tree. */
-export function DesignSystemLayout({ children }: { children?: ReactNode }) {
+export function DesignSystemLayout({
+  children,
+  productUI = false,
+}: {
+  children?: ReactNode;
+  productUI?: boolean;
+}) {
   const { scheme, toggle, persistenceError } = useColorScheme();
 
   return (
@@ -133,6 +143,37 @@ export function DesignSystemLayout({ children }: { children?: ReactNode }) {
               <NavItems items={section.items} />
             </section>
           ))}
+          {productUI && (
+            <section className="design-system-nav-section">
+              <h2 className="text-body text-tertiary">Product UI</h2>
+              <Accordion
+                variant="navigation"
+                defaultValue={["composer"]}
+                items={[
+                  {
+                    value: "composer",
+                    title: "Composer",
+                    content: (
+                      <NavItems
+                        items={[
+                          ["Overview", "/design/product-ui/composer"],
+                          ["Inline chips", "/design/product-ui/composer/chips"],
+                          [
+                            "Text formatting",
+                            "/design/product-ui/composer/formatting",
+                          ],
+                          [
+                            "Emoji and expressions",
+                            "/design/product-ui/composer/expressions",
+                          ],
+                        ]}
+                      />
+                    ),
+                  },
+                ]}
+              />
+            </section>
+          )}
         </div>
       </nav>
       <main className="design-system-content">

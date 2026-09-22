@@ -1271,3 +1271,58 @@ it("keeps an oversized link insertion out of the draft and leaves the dialog ope
     within(screen.getByRole("dialog")).getByRole("alert"),
   ).toHaveTextContent("limit");
 });
+
+it("disables attachment entry without upload capability and keeps text sending available", () => {
+  const h = mount();
+  expect(screen.getByRole("button", { name: "Attach file" })).toBeDisabled();
+  const picker = screen.getByLabelText("Choose attachments");
+  expect(picker).toBeDisabled();
+  fireEvent.change(picker, {
+    target: { files: [new File(["note"], "note.txt")] },
+  });
+  expect(
+    screen.queryByRole("region", { name: "Selected attachments" }),
+  ).not.toBeInTheDocument();
+  h.fill("text still works");
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "text still works",
+    [],
+  );
+});
+
+it("disables futile attachment retry when upload capability disappears and recovers when restored", async () => {
+  const h = mount();
+  const upload = vi.fn<NonNullable<RelaySession["attachments"]>["upload"]>();
+  let capability: RelaySession["attachments"];
+  Object.defineProperty(h.session, "attachments", { get: () => capability });
+  upload.mockRejectedValueOnce(new Error("upload failed"));
+  capability = { upload };
+  h.retarget({});
+  expect(screen.getByRole("button", { name: "Attach file" })).toBeEnabled();
+  fireEvent.change(screen.getByLabelText("Choose attachments"), {
+    target: { files: [new File(["note"], "note.txt", { type: "text/plain" })] },
+  });
+  const retry = await screen.findByRole("button", { name: "Retry note.txt" });
+  expect(upload).toHaveBeenCalledOnce();
+  capability = undefined;
+  h.retarget({});
+  expect(retry).toBeDisabled();
+  fireEvent.click(retry);
+  expect(upload).toHaveBeenCalledOnce();
+  upload.mockResolvedValueOnce({
+    url: "https://example.com/media/file.txt",
+    type: "text/plain",
+    size: 4,
+    sha256: "a".repeat(64),
+  });
+  capability = { upload };
+  h.retarget({});
+  await h.user.click(screen.getByRole("button", { name: "Retry note.txt" }));
+  await waitFor(() =>
+    expect(screen.getByText("Ready to send")).toBeInTheDocument(),
+  );
+  expect(upload).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled();
+});

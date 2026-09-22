@@ -616,7 +616,7 @@ function Composer({
               <>
                 <IconButton
                   aria-label="Attach file"
-                  disabled={editingDisabled}
+                  disabled={editingDisabled || !uploadCapability}
                   onClick={() => attachments.input.current?.click()}
                   icon={<PaperclipIcon size={16} aria-hidden="true" />}
                   size="toolbar"

@@ -36,19 +36,21 @@ export function useLocalAttachments(upload?: AttachmentUpload) {
   }, []);
   return {
     files,
+    available: !!upload,
     error,
     input,
     blocked: files.some((file) => file.state !== "ready"),
     content: (text: string) => queue.current?.content(text) ?? text,
     add(selected: FileList | null) {
-      if (selected?.length) setError(queue.current?.add(Array.from(selected)));
+      if (currentUpload.current && selected?.length)
+        setError(queue.current?.add(Array.from(selected)));
     },
     remove(id: number) {
       queue.current?.remove(id);
       setError(undefined);
     },
     retry(id: number) {
-      queue.current?.retry(id);
+      if (currentUpload.current) queue.current?.retry(id);
     },
     clear() {
       queue.current?.clear();
@@ -150,7 +152,7 @@ function AttachmentItem({
         <div>
           <Button
             size="compact"
-            disabled={disabled}
+            disabled={disabled || !selection.available}
             onClick={() => selection.retry(id)}
           >
             Retry {file.name}
@@ -176,7 +178,7 @@ export function ComposerAttachments({
         multiple
         hidden
         aria-label="Choose attachments"
-        disabled={disabled}
+        disabled={disabled || !selection.available}
         onChange={(event) => {
           if (!disabled) selection.add(event.currentTarget.files);
           event.currentTarget.value = "";

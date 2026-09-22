@@ -156,11 +156,9 @@ export function ColorTablePage() {
       {view === "roles" ? (
         <>
           <Note>
-            Build screens from the <strong>Ramps</strong> — every step is
-            authored per mode, so <code>bg-neutral-4</code> behaves in both.
-            These fifteen roles are the exceptions: each one either takes a
-            different step in light and dark, so no class can say it, or its
-            name enforces a rule a ramp cannot. The reasoning lives on the{" "}
+            Build screens with <strong>semantic roles</strong>. Choose the name
+            by what the color does, then let the shared palette supply its light
+            and dark values. See the{" "}
             <Link to="/design/color" className="text-purple-12 underline">
               colour page
             </Link>

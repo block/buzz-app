@@ -250,6 +250,7 @@ describe("Markdown profile mentions", () => {
             };
           },
           refresh: async () => {},
+          retain: () => () => {},
         },
       },
       { snapshot: () => [provider], subscribe: () => () => {} },

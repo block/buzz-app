@@ -1,3 +1,4 @@
+import { mentionChoices } from "./mention-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useMentionAgents } from "../../features/agents/mention-context";
 import { useAgentChoices } from "./use-agent-choices";
@@ -74,48 +75,37 @@ export function MentionCompletion({
   }, [session, memberKey, attempt]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const choices = new Map(
-      [...agents.identities, ...available].map((agent) => [
-        agent.pubkey,
-        { pubkey: agent.pubkey, name: resolveName(agent.pubkey, agent.name) },
-      ]),
+    const candidates = mentionChoices(
+      [...agents.identities, ...available],
+      members,
+      profiles,
+      resolveName,
     );
-    for (const pubkey of members)
-      choices.set(pubkey, {
-        pubkey,
-        name: resolveName(
-          pubkey,
-          profiles.get(pubkey)?.name ??
-            choices.get(pubkey)?.name ??
-            pubkey.slice(0, 12),
-        ),
-      });
-    const candidates = [...choices.values()];
     const needle = query.query.toLowerCase();
     const admitted = matchesMentionQuery(
       query.query,
-      candidates.map((item) => item.name),
+      candidates.map((item) => item.label),
     );
     const matching =
       admitted && !channel?.archived
         ? candidates
-            .filter(({ pubkey, name }) =>
-              `${name} ${pubkey}`.toLowerCase().includes(needle),
+            .filter(({ recipient, label }) =>
+              `${label} ${recipient.pubkey}`.toLowerCase().includes(needle),
             )
             .sort(
               (a, b) =>
-                Number(!a.name.toLowerCase().startsWith(needle)) -
-                  Number(!b.name.toLowerCase().startsWith(needle)) ||
-                a.name.localeCompare(b.name) ||
-                a.pubkey.localeCompare(b.pubkey),
+                Number(!a.label.toLowerCase().startsWith(needle)) -
+                  Number(!b.label.toLowerCase().startsWith(needle)) ||
+                a.label.localeCompare(b.label) ||
+                a.recipient.pubkey.localeCompare(b.recipient.pubkey),
             )
         : [];
     const membershipMissing = (!inviteAgents || !!channel) && !channel?.members;
     const missing = members.some((key) => !profiles.has(key));
     const withdraw = publish({
-      items: matching.slice(0, 20).map((recipient) => ({
+      items: matching.slice(0, 20).map(({ recipient, label }) => ({
         id: recipient.pubkey,
-        label: recipient.name,
+        label,
         detail: members.includes(recipient.pubkey)
           ? recipient.pubkey
           : inviteAgents
@@ -124,7 +114,7 @@ export function MentionCompletion({
         preview: (
           <Avatar
             alt=""
-            fallback={recipient.name}
+            fallback={label}
             src={session.media(
               profiles.get(recipient.pubkey)?.picture ?? "",
               "small",

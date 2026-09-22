@@ -1,5 +1,8 @@
 import type { Plugin } from "vite";
 export function relayBrokerPlugin(options?: {
+  communityPreference?: ReturnType<
+    typeof import("./community-preference.mjs").communityPreference
+  >;
   authorizedViewer?: string | undefined;
   agentLibrary?: () => Promise<
     import("../src/features/agents/library").AgentLibrary

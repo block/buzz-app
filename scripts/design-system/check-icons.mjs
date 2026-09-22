@@ -40,6 +40,7 @@ const nonIconDependencies = new Set([
   "mdast-util-from-markdown",
   "nostr-tools",
   "postcss",
+  "proper-lockfile",
   "react",
   "react-dom",
   "react-markdown",

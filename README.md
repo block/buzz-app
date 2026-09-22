@@ -77,6 +77,12 @@ in the non-live shell/fixture state.
    are public configuration, not secrets. With both relay settings unset, there is
    no default relay or alias map; Personal space and communities saved by canonical
    URL remain usable. Configuration does not automatically join a community.
+   In live development, a fresh browser address with no saved client record can
+   inherit this identity’s last explicitly selected community from another local
+   worktree/port. Existing records always win, including Personal space. Select a
+   community once in an updated dev app to seed this shared startup preference;
+   earlier versions did not record it. This restores a local choice, never joins
+   or publishes a profile, and never switches already-open windows.
 3. Start a development target:
    ```sh
    just web

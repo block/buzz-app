@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import viteConfig from "../../../vite.config";
+import { communityPreference } from "../../../dev/community-preference.mjs";
 import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
 
 vi.mock("node:child_process", async (original) => ({
@@ -31,7 +32,11 @@ afterEach(async () => {
   vi.resetAllMocks();
 });
 
-async function startup(relayUrl = "", aliases = "") {
+async function startup(
+  relayUrl = "",
+  aliases = "",
+  preferenceDirectory?: string,
+) {
   vi.stubEnv("BUZZ_RELAY_URL", relayUrl);
   vi.stubEnv("BUZZ_COMMUNITY_ALIASES", aliases);
   vi.stubEnv("BUZZ_DEV_VIEWER", viewer);
@@ -39,9 +44,14 @@ async function startup(relayUrl = "", aliases = "") {
     Buffer.from(JSON.stringify({ identity: nip19.nsecEncode(key) })),
   );
   const resolved = await config({ command: "serve", mode: "development" });
-  const plugin = (resolved.plugins as Plugin[]).find(
-    (entry) => entry.name === "buzz-relay-broker",
-  );
+  const plugin = preferenceDirectory
+    ? relayBrokerPlugin({
+        authorizedViewer: viewer,
+        communityPreference: communityPreference(preferenceDirectory),
+      })
+    : (resolved.plugins as Plugin[]).find(
+        (entry) => entry.name === "buzz-relay-broker",
+      );
   assert.exists(plugin);
   let handler: RequestListener | undefined;
   const server = createServer((req, res) => handler?.(req, res));
@@ -71,7 +81,10 @@ async function startup(relayUrl = "", aliases = "") {
 
 it("serves identity with no configured communities and rejects unscoped relay access without networking", async () => {
   const app = await startup();
-  expect(await (await app.get("identity")).json()).toEqual({ viewer });
+  expect(await (await app.get("identity")).json()).toEqual({
+    viewer,
+    startupCommunity: null,
+  });
   expect((await app.get("session")).status).toBe(400);
   expect((await app.get("unknown/session")).status).toBe(400);
   expect(
@@ -187,3 +200,70 @@ it.each([
     expect(() => relayBrokerPlugin({ relayUrl, communityAliases })).toThrow();
   },
 );
+
+it("two dev servers share persisted choices with origin checks and identity-owned writes", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "shared-community-broker-"));
+  try {
+    const first = await startup("", "", directory);
+    const second = await startup("", "", directory);
+    expect(await (await second.get("identity")).json()).toEqual({
+      viewer,
+      startupCommunity: null,
+    });
+    const choice = {
+      url: "https://community.example",
+      name: "Community",
+      selectedAt: 200,
+    };
+    const post = (
+      app: typeof first,
+      route: string,
+      body: unknown,
+      origin = app.base,
+    ) =>
+      fetch(`${app.base}/api/relay/${route}`, {
+        method: "POST",
+        headers: { Origin: origin, "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    expect((await post(first, "community-preference", choice)).status).toBe(
+      400,
+    );
+    expect((await post(first, "register", choice)).status).toBe(200);
+    expect(
+      (
+        await post(
+          first,
+          "community-preference",
+          choice,
+          "https://evil.example",
+        )
+      ).status,
+    ).toBe(403);
+    expect((await post(first, "community-preference", choice)).status).toBe(
+      200,
+    );
+    expect(await (await second.get("identity")).json()).toEqual({
+      viewer,
+      startupCommunity: choice,
+    });
+    const older = {
+      url: "https://older.example",
+      name: "Older",
+      selectedAt: 100,
+    };
+    await post(second, "register", older);
+    await post(second, "community-preference", {
+      ...older,
+      viewer: "b".repeat(64),
+    });
+    expect(await (await first.get("identity")).json()).toEqual({
+      viewer,
+      startupCommunity: choice,
+    });
+    expect(communityPreference(directory).read("b".repeat(64))).toBeNull();
+    expect(upstream).not.toHaveBeenCalled();
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
+});

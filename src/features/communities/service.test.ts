@@ -9,7 +9,7 @@ import { readView, writeView } from "../../shared/view-state";
 const viewer = "a".repeat(64);
 const roots: Context[] = [];
 const requests: string[] = [];
-function setup(saved?: unknown, savedViewer = viewer) {
+function setup(saved?: unknown, savedViewer = viewer, extraIdentity = {}) {
   const storage = new Map<string, string>();
   if (saved)
     storage.set(`buzz-client.v1:${savedViewer}`, JSON.stringify(saved));
@@ -21,7 +21,8 @@ function setup(saved?: unknown, savedViewer = viewer) {
     "fetch",
     vi.fn(async (input: string) => {
       requests.push(input);
-      if (input.endsWith("/identity")) return Response.json({ viewer });
+      if (input.endsWith("/identity"))
+        return Response.json({ viewer, ...extraIdentity });
       if (input.endsWith("/session")) {
         const destination = input.split("/")[3];
         assert.exists(destination);
@@ -423,4 +424,185 @@ it("keeps only valid unique unresolved aliases and never carries them to another
     JSON.parse(localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null")
       .memberships,
   ).toEqual([]);
+});
+
+const startupCommunity = {
+  url: "https://remembered.example",
+  name: "Remembered",
+};
+it("a fresh port inherits once without remote joins or preference writes", async () => {
+  const client = setup(undefined, viewer, { startupCommunity });
+  await flush();
+  expect(client.snapshot()).toMatchObject({
+    selected: startupCommunity.url,
+    memberships: [{ id: startupCommunity.url, name: "Remembered" }],
+  });
+  expect(
+    JSON.parse(localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null")
+      .selected,
+  ).toBe(startupCommunity.url);
+  expect(requests.filter((url) => /preference|join|publish/.test(url))).toEqual(
+    [],
+  );
+  client.select(null);
+  await flush();
+  expect(client.snapshot().selected).toBeNull();
+  expect(
+    requests.filter((url) => url.endsWith("community-preference")),
+  ).toEqual([]);
+});
+it.each([null, "https://existing.example"])(
+  "local selection %s overrides shared startup",
+  async (selected) => {
+    const client = setup(
+      {
+        profile: { name: "Mine", picture: "" },
+        memberships: [{ id: "https://existing.example", name: "Existing" }],
+        selected,
+      },
+      viewer,
+      { startupCommunity },
+    );
+    await flush();
+    expect(client.snapshot().selected).toBe(selected);
+    expect(client.snapshot().profile.name).toBe("Mine");
+    expect(requests.some((url) => url.includes("remembered.example"))).toBe(
+      false,
+    );
+  },
+);
+it("an unavailable saved alias is not replaced by the shared preference", async () => {
+  const client = setup(
+    { memberships: [{ id: "missing", name: "Missing" }], selected: "missing" },
+    viewer,
+    { startupCommunity },
+  );
+  await flush();
+  expect(client.snapshot().selected).toBeNull();
+  expect(requests).toEqual(["/api/relay/identity"]);
+});
+it.each([
+  null,
+  { url: "http://unsafe.example", name: "No" },
+  { url: "https://valid.example" },
+])(
+  "invalid or absent shared preference leaves Personal usable (%j)",
+  async (startupCommunity) => {
+    const client = setup(undefined, viewer, { startupCommunity });
+    await flush();
+    expect(client.snapshot()).toMatchObject({
+      status: "ready",
+      selected: null,
+      memberships: [],
+    });
+  },
+);
+it("only explicit community choices update the shared preference, never profile saves or restore", async () => {
+  const client = setup(
+    { memberships: [{ id: "primary", name: "Primary" }], selected: "primary" },
+    viewer,
+    { startupCommunity: null },
+  );
+  await flush();
+  expect(requests.some((url) => url.endsWith("community-preference"))).toBe(
+    false,
+  );
+  client.saveProfile({ name: "Local", picture: "" });
+  client.select("primary");
+  await flush();
+  const writes = vi
+    .mocked(fetch)
+    .mock.calls.filter(([url]) => url === "/api/relay/community-preference");
+  expect(writes).toHaveLength(1);
+  expect(JSON.parse(String(writes[0]?.[1]?.body))).toMatchObject({
+    url: communityDestination("primary").url,
+    name: "Primary",
+    selectedAt: expect.any(Number),
+  });
+});
+it("preference write failure does not prevent switching or later writes", async () => {
+  const client = setup(
+    { memberships: [{ id: "primary", name: "Primary" }], selected: null },
+    viewer,
+    { startupCommunity: null },
+  );
+  await flush();
+  const original = vi.mocked(fetch).getMockImplementation();
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    if (args[0] === "/api/relay/community-preference")
+      throw new Error("disk unavailable");
+    if (!original) throw new Error("Missing fetch fixture");
+    return original(...args);
+  });
+  client.select("primary");
+  await flush();
+  expect(client.snapshot().selected).toBe("primary");
+  client.select(null);
+  client.select("primary");
+  await flush();
+  expect(
+    vi
+      .mocked(fetch)
+      .mock.calls.filter(([url]) => url === "/api/relay/community-preference"),
+  ).toHaveLength(2);
+});
+
+it("malformed-but-present local state prevents shared inheritance", async () => {
+  const client = setup(undefined, viewer, { startupCommunity });
+  localStorage.setItem(`buzz-client.v1:${viewer}`, "broken json");
+  await flush();
+  expect(client.snapshot().selected).toBeNull();
+  expect(requests).toEqual(["/api/relay/identity"]);
+});
+
+it("timestamps choices before a delayed registration across two windows", async () => {
+  const saved = {
+    memberships: [{ id: "primary", name: "Primary" }],
+    selected: "primary",
+  };
+  const first = setup(saved, viewer, { startupCommunity: null });
+  await flush();
+  const second = setup(saved, viewer, { startupCommunity: null });
+  await flush();
+  const original = vi.mocked(fetch).getMockImplementation();
+  const deferred = <T>() => {
+    let resolve: (value: T | PromiseLike<T>) => void = () => {};
+    const promise = new Promise<T>((accept) => {
+      resolve = accept;
+    });
+    return { promise, resolve };
+  };
+  const gate = deferred<Response>();
+  const started = deferred<void>();
+  const persisted = deferred<void>();
+  const timestamps: number[] = [];
+  let hold = true;
+  vi.mocked(fetch).mockImplementation(async (...args) => {
+    if (args[0] === "/api/relay/register" && hold) {
+      hold = false;
+      started.resolve();
+      return gate.promise;
+    }
+    if (args[0] === "/api/relay/community-preference") {
+      timestamps.push(JSON.parse(String(args[1]?.body)).selectedAt);
+      persisted.resolve();
+      return Response.json({ saved: true });
+    }
+    if (!original) throw new Error("Missing fetch fixture");
+    return original(...args);
+  });
+  const clock = vi.spyOn(performance, "now").mockReturnValue(100);
+  first.select("primary");
+  await started.promise;
+  try {
+    clock.mockReturnValue(200);
+    second.select("primary");
+    await persisted.promise;
+    expect(timestamps).toHaveLength(1);
+  } finally {
+    gate.resolve(Response.json({}));
+  }
+  await flush();
+  expect(timestamps).toHaveLength(2);
+  expect(timestamps[1]).toBeLessThan(timestamps[0] ?? 0);
 });

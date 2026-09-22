@@ -31,6 +31,34 @@ export function createCommunities(ctx: Context, live: boolean) {
   const unresolvedMemberships: Membership[] = [];
   let unresolvedSelection: string | null = null;
   let disposed = false;
+  let shareSelection = false;
+  let selectionWrites = Promise.resolve();
+  const remember = (membership: Membership) => {
+    if (!shareSelection) return;
+    const url = communityDestination(membership.id).url;
+    const selectedAt = performance.timeOrigin + performance.now();
+    // Serialize choices from this window; an older request must not overwrite a newer one.
+    selectionWrites = selectionWrites
+      .then(async () => {
+        if (disposed) return;
+        const registered = await fetch("/api/relay/register", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url }),
+          signal: controller.signal,
+        });
+        if (!registered.ok || disposed) return;
+        await fetch("/api/relay/community-preference", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ url, name: membership.name, selectedAt }),
+          signal: controller.signal,
+        });
+      })
+      .catch(() => {
+        /* A development convenience must not block selection. */
+      });
+  };
   const controller = new AbortController();
   const presenceActivity = createPresenceActivity();
   const listeners = new Set<() => void>();
@@ -104,15 +132,36 @@ export function createCommunities(ctx: Context, live: boolean) {
     void fetch("/api/relay/identity", { signal: controller.signal })
       .then(async (response) => {
         if (!response.ok) throw new Error("Local identity unavailable");
-        const { viewer } = await response.json();
+        const identity = await response.json();
+        const { viewer } = identity;
+        shareSelection = Object.hasOwn(identity, "startupCommunity");
         if (typeof viewer !== "string" || !/^[a-f0-9]{64}$/.test(viewer))
           throw new Error("Invalid local identity");
         if (disposed) return;
         let saved = empty();
         try {
-          const raw = JSON.parse(
-            localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null",
-          );
+          const stored = localStorage.getItem(`buzz-client.v1:${viewer}`);
+          if (stored === null && identity.startupCommunity) {
+            const { url, name } = identity.startupCommunity;
+            if (
+              typeof url === "string" &&
+              typeof name === "string" &&
+              name.length <= 256
+            ) {
+              const destination = communityDestination(url);
+              saved = {
+                ...saved,
+                memberships: [{ id: destination.id, name }],
+                selected: destination.id,
+              };
+              // Pin this port once. Later launches must not follow another window.
+              localStorage.setItem(
+                `buzz-client.v1:${viewer}`,
+                JSON.stringify(saved),
+              );
+            }
+          }
+          const raw = JSON.parse(stored ?? "null");
           if (raw)
             saved = {
               profile: {
@@ -209,6 +258,8 @@ export function createCommunities(ctx: Context, live: boolean) {
         throw new Error("Join this community first");
       if (id) acquire(id);
       update({ selected: id });
+      const membership = state.memberships.find((entry) => entry.id === id);
+      if (membership) remember(membership);
     },
     saveProfile(profile: PersonalProfile) {
       update({ profile });
@@ -229,6 +280,7 @@ export function createCommunities(ctx: Context, live: boolean) {
       if (sessions.has(membership.id)) sessions.get(membership.id)?.retry();
       else acquire(membership.id);
       emitRelay();
+      remember(membership);
     },
   };
 }

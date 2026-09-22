@@ -1,6 +1,6 @@
 # Client and community ownership
 
-The app opens into Personal space with no joined community. The shell, local
+The app normally opens into Personal space with no joined community. The shell, local
 profile editor, Home, Settings and plugin management do not wait for a relay.
 `features/communities/service.ts` owns the local identity's default profile,
 saved memberships and optional selection. `features/relay/session.ts` still owns
@@ -134,3 +134,29 @@ while keeping the local name unchanged. No remote membership, profile, or policy
 acceptance is created by this fixture. Live validation with an authorized identity can restore existing profiles and
 read selected communities without posting test messages. The fixture itself is
 not evidence of live access; see [manual fixture setup](contributing.md#manual-browser-fixtures).
+
+## Shared development startup preference
+
+The live Vite broker remembers explicit selections and completed community opens
+as a canonical secure origin and display name, per verified viewer, in
+`~/.buzz/dev-communities/<viewer>.json`. A fresh port reads this hint with its
+identity response and seeds its own local membership/selection once. Any existing
+client record takes precedence, including Personal space, malformed records and
+unresolved aliases. Existing records are not migrated or reselected. Profile,
+drafts, credentials and community content are never copied between ports.
+
+The hint has the same trust as a saved local membership: normal session routing
+and relay access enforcement still apply. Offline communities retain normal retry
+behavior. No remote join, invite acceptance or profile publication is performed.
+Personal space and startup restoration do not update the shared hint; an explicit
+community selection does. Updates carry the selection time and use per-viewer
+cross-process exclusion plus atomic file replacement, preventing a delayed older
+request from replacing a later choice. Storage/transport failure is best effort
+and never blocks a selection. This is a machine-local convenience, not a secure
+store against same-user processes or a cross-device preference service.
+
+Only real live-development configuration enables this capability. Packaged builds
+and ordinary test fixtures do not. There is no window synchronization, polling,
+relay-command override or insecure-localhost support added. The first explicit
+selection in an updated development app seeds the preference. Deleting the file
+clears it; this does not alter any port's saved state.

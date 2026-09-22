@@ -23,6 +23,9 @@ export default defineConfig(async ({ command, mode }) => {
         authorizedViewer: env.BUZZ_DEV_VIEWER,
         relayUrl: defaultRelay,
         communityAliases: aliases,
+        communityPreference: (
+          await import("./dev/community-preference.mjs")
+        ).communityPreference(),
       }),
     );
   return {

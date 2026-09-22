@@ -354,6 +354,7 @@ export function relayBrokerPlugin({
   upstreamFetch,
   socketFactory,
   agentLibrary = readAgentLibrary,
+  communityPreference,
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -472,8 +473,43 @@ export function relayBrokerPlugin({
               });
             }
           }
+          if (
+            url.pathname === "/api/relay/community-preference" &&
+            req.method === "POST" &&
+            communityPreference
+          ) {
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (raw.length > 4096)
+                return json(res, 413, { error: "Preference too large" });
+            }
+            try {
+              const value = JSON.parse(raw);
+              const destination = communityDestination(value.url, aliases);
+              if (registered.get(destination.id) !== destination.url)
+                return json(res, 400, {
+                  error: "Register this community first",
+                });
+              await communityPreference.write(viewer, {
+                url: destination.url,
+                name: value.name,
+                selectedAt: value.selectedAt,
+              });
+              return json(res, 200, { saved: true });
+            } catch {
+              return json(res, 400, {
+                error: "Community preference could not be saved",
+              });
+            }
+          }
           if (url.pathname === "/api/relay/identity" && req.method === "GET")
-            return json(res, 200, { viewer });
+            return json(res, 200, {
+              viewer,
+              ...(communityPreference
+                ? { startupCommunity: communityPreference.read(viewer) }
+                : {}),
+            });
           const parts = url.pathname.split("/").filter(Boolean);
           const scoped = parts.length === 4;
           let id;

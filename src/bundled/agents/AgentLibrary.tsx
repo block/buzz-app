@@ -71,7 +71,7 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
           <section aria-label="Library templates" className="space-y-3">
             <h2 className="m-0 flex items-center gap-2 text-heading">
               Library templates{" "}
-              <span className="rounded-md bg-neutral-2 px-2 py-0.5 text-body-sm font-normal text-secondary">
+              <span className="rounded-md bg-surface-inset px-2 py-0.5 text-body-sm font-normal text-secondary">
                 {groups.length}
               </span>
             </h2>

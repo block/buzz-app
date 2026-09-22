@@ -134,7 +134,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
     /observed unread messages/,
   );
   await expect(ordinary.locator("[data-channel-priority]")).toHaveCount(0);
-  await expect(ordinary.locator("span").first()).toHaveCSS(
+  await expect(ordinary.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
     "500",
   );
@@ -160,11 +160,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   const transitionProperties = await cue(page, "below").evaluate((el) =>
     getComputedStyle(el).transitionProperty.split(", "),
   );
-  expect(transitionProperties).toEqual([
-    "background-color",
-    "color",
-    "border-color",
-  ]);
+  expect(transitionProperties).toEqual(["background-color", "color"]);
   await expect(cue(page, "above")).toHaveCount(0);
   // Keep actionable DMs below while moving only ordinary unread above: priority
   // is derived from the destinations on each edge, not from the whole roster.

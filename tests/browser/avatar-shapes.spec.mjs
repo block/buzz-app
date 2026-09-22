@@ -189,7 +189,7 @@ test("avatar shapes paint at every size and preserve pointer/keyboard profile co
     const button = page.getByRole("button", { name: "View Agent profile" });
     await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
     await button.hover();
-    // The shared ghost IconButton uses the semantic subtle-hover fill.
+    // The shared ghost IconButton supplies its semantic dark hover treatment.
     await expect(button).toHaveCSS("background-color", "rgb(64, 64, 64)");
     await button.click();
     await expect(page.getByRole("status")).toHaveText("Profile opened");

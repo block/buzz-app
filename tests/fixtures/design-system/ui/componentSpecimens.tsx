@@ -1,3 +1,6 @@
+import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
+import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
+import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
 import { Textarea } from "../../../../src/shared/design-system/ui/Textarea";
@@ -352,6 +355,24 @@ function AvatarSpecimen() {
           />
         </Specimen>
       </SpecimenGroup>
+      <SpecimenGroup label="Profile buttons">
+        <div className="component-specimen-row">
+          <IconButton
+            aria-label="View Morgan profile"
+            size="large"
+            shape="round"
+            icon={
+              <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
+            }
+          />
+          <IconButton
+            aria-label="View Alex profile"
+            size="large"
+            shape="round"
+            icon={<Avatar alt="" fallback="Alex" size="fill" />}
+          />
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Fill an owning layout box">
         <div className="size-40 overflow-hidden rounded-2xl">
           <Avatar
@@ -507,6 +528,9 @@ function TabsSpecimen() {
               value={panelDestination}
               items={DESTINATIONS}
               label="Prototype destinations on a panel"
+              renderPanel={(value) => (
+                <p className="text-body-sm">{value} content</p>
+              )}
               onValueChange={setPanelDestination}
               variant="panel"
             />
@@ -633,6 +657,7 @@ function NavigationSectionSpecimen() {
 
 function NavigationItemSpecimen() {
   const [selected, setSelected] = useState("buzz-design");
+  const [selectedPill, setSelectedPill] = useState("Notes");
   return (
     <div className="component-specimen-stack">
       {/* Interactive: clicking moves `selected`, so the selected fill and the
@@ -663,6 +688,19 @@ function NavigationItemSpecimen() {
             selected={selected === "session"}
             onClick={() => setSelected("session")}
           />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup label="Pill — click to move the selection">
+        <div className="component-specimen-row">
+          {["Notes", "Activity"].map((label) => (
+            <NavigationItem
+              key={label}
+              label={label}
+              variant="pill"
+              selected={selectedPill === label}
+              onClick={() => setSelectedPill(label)}
+            />
+          ))}
         </div>
       </SpecimenGroup>
     </div>
@@ -889,6 +927,57 @@ function SelectSpecimen() {
   );
 }
 
+function DialogSpecimen() {
+  const [open, setOpen] = useState(false);
+  return (
+    <SpecimenFrame>
+      <Button onClick={() => setOpen(true)}>Edit workspace</Button>
+      <Dialog
+        open={open}
+        onOpenChange={setOpen}
+        title="Edit workspace"
+        description="Change the name used in this example."
+        actions={
+          <>
+            <Button onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="prominent" onClick={() => setOpen(false)}>
+              Save
+            </Button>
+          </>
+        }
+      >
+        <Field label="Workspace name">
+          <Input defaultValue="Project notes" />
+        </Field>
+      </Dialog>
+    </SpecimenFrame>
+  );
+}
+
+function AlertDialogSpecimen() {
+  const [open, setOpen] = useState(false);
+  return (
+    <SpecimenFrame>
+      <Button onClick={() => setOpen(true)}>Discard example changes</Button>
+      {open && (
+        <AlertDialog
+          title="Discard changes?"
+          description="Your unsaved example changes will be lost."
+          onClose={() => setOpen(false)}
+          actions={
+            <>
+              <Button onClick={() => setOpen(false)}>Keep editing</Button>
+              <Button variant="destructive" onClick={() => setOpen(false)}>
+                Discard
+              </Button>
+            </>
+          }
+        />
+      )}
+    </SpecimenFrame>
+  );
+}
+
 function RadioGroupSpecimen() {
   const [summary, setSummary] = useState(false);
   const [delivery, setDelivery] = useState("all");
@@ -964,6 +1053,15 @@ function RadioGroupSpecimen() {
 }
 
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
+  "alert-dialog": AlertDialogSpecimen,
+  dialog: DialogSpecimen,
+  tooltip: () => (
+    <SpecimenFrame>
+      <Tooltip content="Create a note">
+        <IconButton aria-label="Create note" icon={<PlusIcon size={16} />} />
+      </Tooltip>
+    </SpecimenFrame>
+  ),
   field: () => (
     <SpecimenFrame>
       <Field

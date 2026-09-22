@@ -1,3 +1,7 @@
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { SearchField } from "../../shared/design-system/ui/SearchField";
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useMentionAgents } from "../../features/agents/mention-context";
 import { useAgentChoices } from "./use-agent-choices";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -114,7 +118,9 @@ export function MentionPicker({
         }
       }}
     >
-      <button
+      <IconButton
+        disabled={disabled}
+        size="toolbar"
         ref={trigger}
         type="button"
         aria-label="Mention a member"
@@ -125,28 +131,27 @@ export function MentionPicker({
           setOpen(!open);
           session.channels.ensureList();
         }}
-      >
-        <AtIcon size={20} aria-hidden="true" />
-      </button>
+        icon={<AtIcon size={20} aria-hidden="true" />}
+      />
       {open && (
         <section
           id={id}
           className={styles.mentionPopover}
           aria-label="Mention a member or agent"
         >
-          <label>
-            {inviteAgents
-              ? "Search members and agents"
-              : "Search members and your agents"}
-            <input
-              type="search"
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") event.preventDefault();
-              }}
-            />
-          </label>
+          <SearchField
+            label={
+              inviteAgents
+                ? "Search members and agents"
+                : "Search members and your agents"
+            }
+            value={search}
+            onValueChange={setSearch}
+            disabled={disabled}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") event.preventDefault();
+            }}
+          />
           <p>
             {inviteAgents
               ? parentAdmission
@@ -156,12 +161,12 @@ export function MentionPicker({
           </p>
           {agents.status === "loading" && <p role="status">Loading agents…</p>}
           {agents.status === "error" && (
-            <button
+            <Button
               type="button"
               onClick={() => void session.agentLibrary.refresh()}
             >
               Retry agent list
-            </button>
+            </Button>
           )}
           {error && <p role="status">{error}</p>}
           {list.error && (
@@ -170,52 +175,57 @@ export function MentionPicker({
           {(!inviteAgents || !!channel) && !channel?.members && (
             <p role="status">Channel membership unavailable.</p>
           )}
-          <button
+          <Button
+            disabled={disabled}
             type="button"
             onClick={() => session.channels.refreshList?.()}
           >
             Refresh members
-          </button>
+          </Button>
           <div className={styles.mentionChoices}>
             {candidates.slice(0, 100).map((recipient) => (
-              <button
+              <NavigationItem
                 type="button"
                 key={recipient.pubkey}
                 aria-label={`${recipient.name} ${recipient.pubkey}`}
-                disabled={!!channel?.archived}
+                disabled={disabled || !!channel?.archived}
                 onClick={() => {
                   if (select(recipient)) setOpen(false);
                 }}
-              >
-                <Avatar
-                  alt=""
-                  fallback={recipient.name}
-                  src={session.media(
-                    profiles.get(recipient.pubkey)?.picture ?? "",
-                    "small",
-                  )}
-                  size="default"
-                  shape={
-                    agentPubkeys.has(recipient.pubkey) ||
-                    !channel?.members?.includes(recipient.pubkey)
-                      ? "squircle"
-                      : "circle"
-                  }
-                />
-                <span className={styles.mentionLabel}>
-                  <span>{recipient.name}</span>
-                  <code title={recipient.pubkey}>{recipient.pubkey}</code>
-                  {!channel?.members?.includes(recipient.pubkey) && (
-                    <small>
-                      {inviteAgents
-                        ? parentAdmission
-                          ? "Adds to session and parent channel when you send"
-                          : "Adds to session when you send"
-                        : "Adds to channel when you send"}
-                    </small>
-                  )}
-                </span>
-              </button>
+                label={
+                  <span className="flex flex-col whitespace-normal">
+                    <span>{recipient.name}</span>
+                    {!channel?.members?.includes(recipient.pubkey) && (
+                      <small className="text-caption text-subtle">
+                        {inviteAgents
+                          ? parentAdmission
+                            ? "Adds to session and parent channel when you send"
+                            : "Adds to session when you send"
+                          : "Adds to channel when you send"}
+                      </small>
+                    )}
+                  </span>
+                }
+                title={recipient.pubkey}
+                trailing={<code>{recipient.pubkey.slice(0, 12)}</code>}
+                icon={
+                  <Avatar
+                    alt=""
+                    fallback={recipient.name}
+                    src={session.media(
+                      profiles.get(recipient.pubkey)?.picture ?? "",
+                      "small",
+                    )}
+                    size="default"
+                    shape={
+                      agentPubkeys.has(recipient.pubkey) ||
+                      !channel?.members?.includes(recipient.pubkey)
+                        ? "squircle"
+                        : "circle"
+                    }
+                  />
+                }
+              />
             ))}
             {candidates.length > 100 && (
               <p>Narrow your search to see more members.</p>

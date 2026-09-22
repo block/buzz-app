@@ -15,6 +15,11 @@ export type BaseUiPart = {
 };
 
 export const BASE_UI_PARTS = {
+  alertDialog: {
+    name: "Alert Dialog",
+    docs: "alert-dialog",
+    module: "@base-ui/react/alert-dialog",
+  },
   radio: { name: "Radio", docs: "radio", module: "@base-ui/react/radio" },
   radioGroup: {
     name: "Radio Group",
@@ -37,6 +42,11 @@ export const BASE_UI_PARTS = {
     name: "Accordion",
     docs: "accordion",
     module: "@base-ui/react/accordion",
+  },
+  tooltip: {
+    name: "Tooltip",
+    docs: "tooltip",
+    module: "@base-ui/react/tooltip",
   },
   dialog: { name: "Dialog", docs: "dialog", module: "@base-ui/react/dialog" },
   popover: {
@@ -89,6 +99,44 @@ export type ComponentDefinition = {
 };
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
+  {
+    slug: "alert-dialog",
+    name: "AlertDialog",
+    purpose: "Confirm a consequential action before continuing.",
+    behavior: "Base UI owns modal focus and alert-dialog semantics",
+    variants: ["default", "pending"],
+    status: "core",
+    collection: "components",
+    source: "shared/design-system/ui/AlertDialog.tsx",
+    baseUi: [BASE_UI_PARTS.alertDialog],
+    composes: [],
+  },
+  {
+    slug: "tooltip",
+    name: "Tooltip",
+    purpose: "A short hint for an already labelled control.",
+    behavior: "Base UI owns focus, positioning and dismissal",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Tooltip.tsx",
+    baseUi: [BASE_UI_PARTS.tooltip],
+    composes: [],
+  },
+
+  {
+    slug: "dialog",
+    name: "Dialog",
+    purpose: "A shared modal frame with title, content and actions.",
+    behavior: "Base UI owns focus, positioning and dismissal",
+    variants: ["default"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Dialog.tsx",
+    baseUi: [BASE_UI_PARTS.dialog],
+    composes: ["icon-button"],
+  },
+
   {
     slug: "checkbox",
     name: "Checkbox",
@@ -403,9 +451,10 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "navigation-item",
     name: "NavigationItem",
-    purpose: "A selectable destination row with optional icon and metadata.",
+    purpose:
+      "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button",
-    variants: ["default", "inset", "selected"],
+    variants: ["row", "pill", "inset", "selected"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

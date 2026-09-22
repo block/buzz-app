@@ -3,7 +3,7 @@
   flex-shrink: 0;
   /* Leave 4px before the composer's 12px top margin. */
   margin: var(--space-3) var(--space-4) calc(-1 * var(--space-2));
-  background: var(--bg-panel);
+  background: var(--surface-panel);
 }
 .agents {
   display: flex;
@@ -13,21 +13,12 @@
   scrollbar-width: thin;
 }
 .agents > button {
-  display: flex;
   width: 100%;
   min-width: 0;
   flex-shrink: 0;
   justify-content: flex-start;
-  padding-left: 0;
   gap: var(--space-2);
   text-align: left;
-}
-/* Keep the compound activity label in one row inside the shared button. */
-.agents > button > span {
-  flex: 1;
-  min-width: 0;
-  flex-wrap: nowrap;
-  justify-content: flex-start;
 }
 .name {
   max-width: 40%;
@@ -40,12 +31,12 @@
   white-space: nowrap;
 }
 .status {
-  color: var(--text-secondary);
+  color: var(--text-subtle);
 }
 .indicator {
   margin-left: auto;
   flex-shrink: 0;
-  color: var(--purple-9);
+  color: var(--affordance-accent-prominent);
 }
 @keyframes working-pulse {
   50% {
@@ -57,15 +48,7 @@
     animation: working-pulse 1.4s ease-in-out infinite;
   }
 }
-.summary {
-  max-width: min(320px, calc(100vw - 32px));
-  padding: var(--space-3);
-  border-radius: var(--radius-control);
-  background: var(--bg-panel);
-  border: 1px solid var(--border-primary);
-  color: var(--text-primary);
-  overflow-wrap: anywhere;
-}
+
 @media (max-width: 650px) {
   .root {
     /* The narrow composer has an 8px top margin. */

@@ -4,7 +4,7 @@
 .root {
   height: 100%;
   min-height: 0;
-  color: var(--text);
+  color: var(--text-standard);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
@@ -29,23 +29,16 @@
 }
 .sidebar,
 .conversation {
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--elevation-card);
 }
 .sidebar {
   --sidebar-inline-padding: var(--space-2);
-  grid-column: 1;
   padding: var(--space-2) var(--sidebar-inline-padding);
-}
-.conversation {
-  grid-column: 3;
 }
 .channelListFrame {
   position: relative;
@@ -57,7 +50,8 @@
   margin-inline-end: calc(-1 * var(--sidebar-inline-padding));
   overflow-y: auto;
   padding-inline-end: var(--sidebar-inline-padding);
-  scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
+  scrollbar-color: color-mix(in srgb, var(--text-standard) 20%, transparent)
+    transparent;
   scrollbar-width: thin;
 }
 .channelList::-webkit-scrollbar {
@@ -69,7 +63,7 @@
 .channelList::-webkit-scrollbar-thumb {
   border: 2px solid transparent;
   border-radius: var(--radius-pill);
-  background: color-mix(in srgb, var(--text) 20%, transparent);
+  background: color-mix(in srgb, var(--text-standard) 20%, transparent);
   background-clip: padding-box;
 }
 .channelListContent {
@@ -77,52 +71,18 @@
   flex-direction: column;
   gap: var(--space-half);
 }
-.sidebar .unreadEdge {
+.unreadEdge {
   position: absolute;
   left: 50%;
   transform: translateX(-50%);
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
   width: max-content;
   max-width: calc(100% - 8px);
-  min-height: 28px;
-  padding: var(--space-1h) var(--space-2);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-pill);
-  background: var(--surface);
-  color: var(--text-muted);
-  box-shadow: var(--elevation-card);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  font-weight: var(--type-weight-medium);
-  cursor: pointer;
-  transition:
-    background-color 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease;
-}
-.sidebar .unreadEdge[data-attention="true"] {
-  border-color: transparent;
-  background: var(--primary);
-  color: var(--on-primary);
-}
-.unreadEdge svg {
-  flex-shrink: 0;
 }
 .unreadEdge[data-edge="above"] {
   top: 4px;
 }
 .unreadEdge[data-edge="below"] {
   bottom: 4px;
-}
-.unreadEdge:hover {
-  border-color: var(--on-primary);
-}
-.unreadEdge:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: 2px;
 }
 .channelSection {
   flex-shrink: 0;
@@ -131,43 +91,38 @@
   margin-top: var(--space-3);
 }
 .channelSection > summary {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  min-height: var(--size-row);
+  align-items: center;
+  gap: var(--space-row-gap);
+  overflow: hidden;
+  border-radius: var(--radius-row);
+  padding: var(--space-1) var(--space-control-inset);
+  background: transparent;
+  color: var(--text-standard);
+  font: inherit;
+  text-align: left;
   cursor: pointer;
   list-style: none;
+  transition:
+    color var(--duration-state) var(--easing-state),
+    background-color var(--duration-state) var(--easing-state);
 }
 .channelSection > summary::-webkit-details-marker {
   display: none;
 }
-.channelList button,
-.channelSection > summary {
-  width: 100%;
-  display: flex;
-  align-items: center;
-  text-align: left;
-  gap: var(--space-2);
-  border: 0;
-  background: none;
-  padding: var(--space-1) var(--space-2);
-  min-height: 30px;
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
-  border-radius: var(--radius-row);
-  flex-shrink: 0;
-}
-.channelList button svg,
-.channelSection > summary svg {
-  flex-shrink: 0;
-  color: var(--text-muted);
-}
-.channelList button:hover,
 .channelSection > summary:hover {
-  background: var(--surface-hover);
+  background: var(--affordance-subtle);
 }
-.channelSection > summary:focus-visible {
-  outline: 2px solid var(--focus);
-  outline-offset: -2px;
+html[data-keyboard-navigation] .channelSection > summary:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 .sectionChevron {
+  flex-shrink: 0;
+  color: var(--text-subtle);
   transition: transform 120ms ease;
 }
 .channelSection[open] .sectionChevron {
@@ -189,31 +144,22 @@
   height: 17px;
   object-fit: contain;
 }
-.channelList button[aria-current="page"] {
-  background: var(--surface-accent);
-  color: var(--text);
-  font-weight: var(--type-weight-medium);
+.channelSection > summary > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .preferenceNotice {
   padding: var(--space-2);
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-  border-top: 1px solid var(--border);
-}
-.preferenceNotice button {
-  display: block;
-  margin-top: var(--space-1);
-  border: 0;
-  background: none;
-  text-decoration: underline;
-  cursor: pointer;
+  border-top: 1px solid var(--border-standard);
 }
 .sidebarResizeHandle {
   position: relative;
   z-index: 4;
-  grid-column: 2;
   align-self: stretch;
   width: 16px;
   height: 100%;
@@ -231,7 +177,7 @@
   width: 3px;
   height: 7.5%;
   border-radius: var(--radius-pill);
-  background: var(--focus);
+  background: var(--border-focus);
   content: "";
   opacity: 0;
   transform: translate(-50%, -50%);
@@ -243,11 +189,11 @@
   left: calc(100% + 2px);
   width: max-content;
   padding: var(--space-1h) var(--space-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-standard);
   border-radius: var(--radius-control);
-  background: var(--surface);
-  box-shadow: var(--elevation-popover);
-  color: var(--text);
+  background: var(--surface-popover);
+  box-shadow: var(--shadow-sm);
+  color: var(--text-standard);
   content: attr(data-tooltip);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
@@ -275,45 +221,9 @@
 .sidebarResizeHandle:focus-visible {
   outline: none;
 }
-.heading {
-  min-height: 58px;
-  padding: var(--space-4) var(--space-panel-inset);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  flex-shrink: 0;
-}
-.heading button:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-1h);
-  border: 0;
-  background: var(--surface-control);
-  padding: var(--space-1h) var(--space-2);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-}
-.heading
-  button[aria-pressed="true"]:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
-  background: var(--selected);
-  color: var(--on-selected);
-}
-.channelTitle {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  min-width: 0;
-}
-.channelTitle strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 .empty {
   padding: var(--space-8) var(--space-4);
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
@@ -347,8 +257,8 @@
 .connectIcon {
   padding: var(--space-5);
   border-radius: var(--radius-panel);
-  color: var(--link);
-  background: var(--surface-control);
+  color: var(--text-standard);
+  background: var(--affordance-subtle);
   margin-bottom: var(--space-4);
 }
 .connect h1 {
@@ -358,7 +268,7 @@
 }
 .connect p {
   max-width: 550px;
-  color: var(--text-muted);
+  color: var(--text-subtle);
 }
 .connect button {
   margin: var(--space-4) 0;
@@ -397,35 +307,17 @@
   .sidebar {
     --sidebar-inline-padding: var(--space-1);
   }
-  .sidebar,
-  .conversation {
-    border-radius: var(--radius-card-compact);
+  .sidebarResizeHandle {
+    display: none;
   }
   .withPanel .panelStack {
     width: 100%;
-  }
-  .heading {
-    padding: var(--space-3);
-  }
-  .channelList button {
-    font-size: var(--text-caption);
-    line-height: var(--text-caption--line-height);
-    letter-spacing: var(--text-caption--letter-spacing);
-  }
-  .sidebarResizeHandle {
-    display: none;
   }
   .roster {
     font-size: var(--text-caption);
     line-height: var(--text-caption--line-height);
     letter-spacing: var(--text-caption--letter-spacing);
   }
-}
-.channelList button span,
-.channelSection > summary > span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 .diagnostics {
   position: relative;
@@ -439,27 +331,23 @@
   border-radius: var(--radius-row);
   cursor: pointer;
   list-style: none;
-  color: var(--text-muted);
+  color: var(--text-subtle);
 }
 .diagnostics > summary::-webkit-details-marker {
   display: none;
 }
 .diagnostics > summary:hover {
-  background: var(--surface-accent);
+  background: var(--affordance-selected);
 }
 .diagnosticsMenu {
+  @apply popover-surface;
   position: absolute;
   right: 0;
   top: 36px;
-  z-index: 5;
   width: min(300px, 70vw);
   max-height: 60vh;
   overflow: auto;
   padding: var(--space-3);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface);
-  box-shadow: var(--elevation-popover);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -478,16 +366,11 @@
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
-  background: var(--warning-surface);
-  color: var(--warning);
-  border-bottom: 1px solid var(--border);
+  background: var(--affordance-warning);
+  color: var(--text-warning);
+  border-bottom: 1px solid var(--border-standard);
 }
 
-.channelLabel:has(~ .unreadState),
-.channelLabel:has(~ .threadActivityDot) {
-  color: var(--text);
-  font-weight: var(--type-weight-medium);
-}
 .unreadState {
   position: absolute;
   width: 1px;
@@ -507,20 +390,16 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--primary);
+  background: var(--affordance-prominent);
 }
 .threadActivityDot {
   cursor: help;
 }
 .activityPopover {
-  z-index: 20;
+  @apply popover-surface;
   width: min(360px, calc(100vw - 24px));
   max-height: min(420px, calc(100vh - 24px));
   overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-control);
-  background: var(--surface-elevated);
-  box-shadow: var(--elevation-popover);
   transform-origin: var(--transform-origin);
   transition:
     opacity 120ms ease-out,
@@ -534,7 +413,7 @@
 .activityStale {
   margin: 0;
   padding: var(--space-1h) var(--space-3);
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -544,33 +423,14 @@
   overflow-y: auto;
 }
 .activityItem {
-  display: grid;
-  grid-template-columns: 30px minmax(0, 1fr);
-  align-items: start;
   width: 100%;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-3);
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  color: var(--text);
-  line-height: 1.4;
-  text-align: left;
 }
 .activityItem + .activityItem {
-  border-top: 1px solid var(--border);
-}
-.activityItem:hover,
-.activityItem:focus-visible {
-  background: var(--surface-hover);
+  border-top: 1px solid var(--border-standard);
 }
 .activityAvatar {
   width: 30px;
   height: 30px;
-  border-radius: var(--radius-row);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
 }
 .activityItemBody {
   display: grid;
@@ -594,7 +454,7 @@
 }
 .activityItemHeading > span.activityTimestamp,
 .activityItemMeta {
-  color: var(--text-muted);
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -640,7 +500,7 @@
   min-height: 180px;
   max-height: 65%;
   flex-shrink: 0;
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-standard);
   overflow: hidden;
 }
 
@@ -649,5 +509,5 @@
   height: 6px;
   flex-shrink: 0;
   border-radius: 50%;
-  background: var(--purple-9);
+  background: var(--affordance-accent-prominent);
 }

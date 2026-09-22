@@ -1,3 +1,6 @@
+import { Checkbox } from "../../shared/design-system/ui/Checkbox";
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
   useMemo,
@@ -210,14 +213,14 @@ function ReviewShell({
           <span data-tauri-drag-region>
             {attachment.video ? "Video review" : "Image"}
           </span>
-          <button
+          <IconButton
+            size="compact"
             ref={closeButton}
             type="button"
             aria-label="Close fullscreen viewer"
             onClick={close}
-          >
-            <XIcon size={20} aria-hidden="true" />
-          </button>
+            icon={<XIcon size={20} aria-hidden="true" />}
+          />
         </header>
         <div className={styles.mediaReviewStage}>
           {!source || !rootId ? (
@@ -227,9 +230,9 @@ function ReviewShell({
             >
               {error ?? (loading ? "Loading media…" : "Media unavailable")}
               {retry && (
-                <button type="button" onClick={() => void retry()}>
+                <Button size="sm" type="button" onClick={() => void retry()}>
                   Retry
-                </button>
+                </Button>
               )}
             </p>
           ) : attachment.video ? (
@@ -271,16 +274,11 @@ function ReviewShell({
               {attachment.video && (
                 <div className={styles.mediaReviewTimeOption}>
                   <span>{formatMediaTime(currentTime)}</span>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={includeTime}
-                      onChange={(event) =>
-                        setIncludeTime(event.currentTarget.checked)
-                      }
-                    />
-                    Comment at current frame
-                  </label>
+                  <Checkbox
+                    label="Comment at current frame"
+                    checked={includeTime}
+                    onCheckedChange={setIncludeTime}
+                  />
                 </div>
               )}
               <MessageComposer

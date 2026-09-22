@@ -1,3 +1,6 @@
+import { Panel } from "../../shared/design-system/ui/Panel";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { Button } from "../../shared/design-system/ui/Button";
 import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -5,7 +8,7 @@ import {
   buzzLinkTarget,
   isBuzzLink,
 } from "../../features/navigation/buzz-links";
-import { ChannelSidebarRow } from "./ChannelSidebarRow";
+import { ChannelSidebarItem } from "./ChannelSidebarItem";
 import { SessionMessageTarget } from "../../features/sessions/SessionMessageTarget";
 import { NewSessionComposer } from "../../features/sessions/NewSessionComposer";
 import {
@@ -13,8 +16,7 @@ import {
   SessionColumn,
   SessionHeading,
 } from "../../features/sessions/SessionPresentation";
-import { UnreadBadge, UnreadOptions } from "./UnreadBadge";
-import { ChannelActivityPopover } from "./ChannelActivityPopover";
+import { UnreadOptions } from "./UnreadBadge";
 import { SidebarUnread } from "./SidebarUnread";
 import type { ConversationExtensions } from "../../features/conversation/contracts";
 import {
@@ -35,7 +37,6 @@ import {
   DotsThreeIcon,
   PlugIcon,
   ChatCircleIcon,
-  UsersIcon,
 } from "../../shared/design-system/icons/index";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
@@ -109,9 +110,9 @@ export function ChannelsPage({
             </p>
             {session.status === "error" && (
               <>
-                <button type="button" onClick={relay.retry}>
+                <Button type="button" onClick={relay.retry}>
                   Connect relay
-                </button>
+                </Button>
                 <p className={styles.note}>
                   For development, set <code>BUZZ_DEV_VIEWER</code> to your Buzz
                   public key in <code>.env.local</code>, then restart{" "}
@@ -197,13 +198,16 @@ function ChannelWorkspace({
       ? saved.filter((id): id is string => typeof id === "string")
       : [];
   });
-  const updateDraftParents = (update: (previous: string[]) => string[]) => {
-    setDraftParents((previous) => {
-      const next = update(previous);
-      writeView(scope, "sessions:channel-drafts", next);
-      return next;
-    });
-  };
+  const updateDraftParents = useCallback(
+    (update: (previous: string[]) => string[]) => {
+      setDraftParents((previous) => {
+        const next = update(previous);
+        writeView(scope, "sessions:channel-drafts", next);
+        return next;
+      });
+    },
+    [scope],
+  );
   const navigate = useCallback(
     (id: string) => {
       setSelected(id);
@@ -297,16 +301,6 @@ function ChannelWorkspace({
   const currentId = current?.id;
   const drafting =
     !!draftParent && draftParent === currentId && !requestedMessage;
-  const startSession = (parentId: string) => {
-    select(parentId);
-    setDraftParent(parentId);
-    sidebar.toggle(`session-children:${parentId}`, true);
-    updateDraftParents((previous) =>
-      previous.includes(parentId) ? previous : [...previous, parentId],
-    );
-    setThread(undefined);
-    open(undefined);
-  };
   useEffect(() => {
     if (
       drafting &&
@@ -401,6 +395,19 @@ function ChannelWorkspace({
     opening.current = next;
     setOpened(next);
   }, []);
+  const startSession = useCallback(
+    (parentId: string) => {
+      select(parentId);
+      setDraftParent(parentId);
+      sidebar.toggle(`session-children:${parentId}`, true);
+      updateDraftParents((previous) =>
+        previous.includes(parentId) ? previous : [...previous, parentId],
+      );
+      setThread(undefined);
+      open(undefined);
+    },
+    [select, sidebar.toggle, updateDraftParents, open],
+  );
   const panel =
     opened &&
     opened.channelId === current?.id &&
@@ -679,309 +686,288 @@ function ChannelWorkspace({
         } as CSSProperties
       }
     >
-      <aside className={styles.sidebar} aria-label="Channel sidebar">
-        <SidebarUnread listRef={sidebar.list}>
-          {sidebarSections(channels, preferences.data).map((section) => (
-            <details
-              key={section.key}
-              className={styles.channelSection}
-              open={!sidebar.collapsed.includes(section.key)}
-            >
-              {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
-              <summary
-                onClick={(event) => {
-                  event.preventDefault();
-                  sidebar.toggle(
-                    section.key,
-                    sidebar.collapsed.includes(section.key),
-                  );
-                }}
+      <Panel as="aside" aria-label="Channel sidebar">
+        <div className={styles.sidebar}>
+          <SidebarUnread listRef={sidebar.list}>
+            {sidebarSections(channels, preferences.data).map((section) => (
+              <details
+                key={section.key}
+                className={styles.channelSection}
+                open={!sidebar.collapsed.includes(section.key)}
               >
-                <CaretRightIcon
-                  className={styles.sectionChevron}
-                  size={17}
-                  aria-hidden="true"
-                />
-                {section.icon && (
-                  <SidebarSectionIcon icon={section.icon} session={queries} />
-                )}
-                <span>{section.title}</span>
-              </summary>
-              {section.rows.map((channel) => {
-                const Icon =
-                  channel.channelType === "dm"
-                    ? (channel.participants?.length ?? 0) > 1
-                      ? UsersIcon
-                      : ChatCircleIcon
-                    : HashIcon;
-                return (
-                  <ChannelSidebarRow
-                    key={channel.id}
-                    channel={channel}
-                    icon={<Icon size={17} />}
-                    badge={
-                      <>
-                        {workingChannels.has(channel.id) && (
-                          <span
-                            className={styles.working}
-                            role="img"
-                            aria-label="Agent working"
-                            title="Agent working in this channel"
-                          />
-                        )}
-                        <UnreadBadge
-                          session={queries}
-                          channelId={channel.id}
-                          dm={channel.channelType === "dm"}
-                        />
-                      </>
-                    }
-                    wrapSelect={(trigger) => (
-                      <ChannelActivityPopover
-                        session={queries}
-                        channelId={channel.id}
-                        channelName={channel.name}
-                        onOpenThread={(item) =>
-                          openActivityThread(item.channelId, item.rootId)
-                        }
-                        trigger={trigger}
-                      />
-                    )}
-                    selected={current?.id}
-                    collapsed={sidebar.collapsed.includes(
-                      `session-children:${channel.id}`,
-                    )}
-                    onToggle={(open) =>
-                      sidebar.toggle(`session-children:${channel.id}`, open)
-                    }
-                    draft={draftParents.includes(channel.id)}
-                    draftSelected={drafting && draftParent === channel.id}
-                    sessions={childrenByParent.get(channel.id) ?? []}
-                    childContent={(child) => (
-                      <UnreadBadge
-                        session={queries}
-                        channelId={child.id}
-                        label={child.name}
-                      />
-                    )}
-                    onPrepare={(id) => queries.channels.prepare?.(id)}
-                    onSelect={select}
-                    onNewSession={startSession}
+                {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
+                <summary
+                  onClick={(event) => {
+                    event.preventDefault();
+                    sidebar.toggle(
+                      section.key,
+                      sidebar.collapsed.includes(section.key),
+                    );
+                  }}
+                >
+                  <CaretRightIcon
+                    className={styles.sectionChevron}
+                    size={17}
+                    aria-hidden="true"
                   />
-                );
-              })}
-            </details>
-          ))}
-          {list.status === "loading" && !list.channels.length && (
-            <p className={styles.empty}>Loading your channels…</p>
-          )}
-          {list.status === "error" && (
-            <p role="alert" className={styles.empty}>
-              {list.error}
-            </p>
-          )}
-          {list.status === "ready" && !channels.length && (
-            <p className={styles.empty}>No channels yet.</p>
-          )}
-        </SidebarUnread>
-        {preferences.status !== "ready" && (
-          <div className={styles.preferenceNotice} role="status">
-            {preferences.status === "loading"
-              ? "Loading saved groups and stars…"
-              : preferences.status === "unsupported"
-                ? "Saved groups and stars aren’t supported by this host yet."
-                : "Couldn’t refresh saved groups and stars. Your conversations are still available."}
-            {preferences.status === "error" && (
-              <button type="button" onClick={preferences.reload}>
-                Retry
-              </button>
+                  {section.icon && (
+                    <SidebarSectionIcon icon={section.icon} session={queries} />
+                  )}
+                  <span>{section.title}</span>
+                </summary>
+                {section.rows.map((channel) => {
+                  const sessions = childrenByParent.get(channel.id);
+                  const selected =
+                    current?.id === channel.id ||
+                    sessions?.some((child) => child.id === current?.id)
+                      ? current?.id
+                      : undefined;
+                  return (
+                    <ChannelSidebarItem
+                      key={channel.id}
+                      channel={channel}
+                      session={queries}
+                      working={workingChannels.has(channel.id)}
+                      selected={selected}
+                      collapsed={sidebar.collapsed.includes(
+                        `session-children:${channel.id}`,
+                      )}
+                      onToggle={sidebar.toggle}
+                      draft={draftParents.includes(channel.id)}
+                      draftSelected={drafting && draftParent === channel.id}
+                      sessions={sessions}
+                      onSelect={select}
+                      onNewSession={startSession}
+                      onOpenThread={openActivityThread}
+                    />
+                  );
+                })}
+              </details>
+            ))}
+            {list.status === "loading" && !list.channels.length && (
+              <p className={styles.empty}>Loading your channels…</p>
             )}
-          </div>
-        )}
-      </aside>
+            {list.status === "error" && (
+              <p role="alert" className={styles.empty}>
+                {list.error}
+              </p>
+            )}
+            {list.status === "ready" && !channels.length && (
+              <p className={styles.empty}>No channels yet.</p>
+            )}
+          </SidebarUnread>
+          {preferences.status !== "ready" && (
+            <div className={styles.preferenceNotice} role="status">
+              {preferences.status === "loading"
+                ? "Loading saved groups and stars…"
+                : preferences.status === "unsupported"
+                  ? "Saved groups and stars aren’t supported by this host yet."
+                  : "Couldn’t refresh saved groups and stars. Your conversations are still available."}
+              {preferences.status === "error" && (
+                <Button type="button" onClick={preferences.reload}>
+                  Retry
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </Panel>
       <ChannelSidebarResizeHandle
         width={sidebar.width}
         setWidth={sidebar.setWidth}
       />
-      <article className={styles.conversation} aria-label="Conversation">
-        {drafting && current ? (
-          <NewSessionView parentName={current.name}>
-            <NewSessionComposer
-              extensions={extensions}
-              key={current.id}
-              session={queries}
-              scope={scope}
-              parent={current}
-              onStarted={(id) => {
-                updateDraftParents((previous) =>
-                  previous.filter((parent) => parent !== current.id),
-                );
-                select(id);
-              }}
-            />
-          </NewSessionView>
-        ) : (
-          <>
-            {current?.channelType === "session" ? (
-              <SessionHeading
-                channel={current}
-                parentName={
-                  channels.find(
-                    (parent) => parent.id === current.parentChannelId,
-                  )?.name
-                }
+      <Panel as="article" aria-label="Conversation">
+        <div className={styles.conversation}>
+          {drafting && current ? (
+            <NewSessionView parentName={current.name}>
+              <NewSessionComposer
+                extensions={extensions}
+                key={current.id}
+                session={queries}
+                scope={scope}
+                parent={current}
+                onStarted={(id) => {
+                  updateDraftParents((previous) =>
+                    previous.filter((parent) => parent !== current.id),
+                  );
+                  select(id);
+                }}
               />
-            ) : (
-              <header className={styles.heading}>
-                <div className={styles.channelTitle}>
-                  {current?.channelType === "dm" ? (
-                    <ChatCircleIcon size={20} />
-                  ) : (
-                    <HashIcon size={20} />
-                  )}
-                  <strong>{current?.name ?? "Channels"}</strong>
-                </div>
-                {drawer.launchers}
-                <details className={styles.diagnostics}>
-                  <summary
-                    aria-label="Conversation options"
-                    title="Conversation options"
-                  >
-                    <DotsThreeIcon size={19} aria-hidden="true" />
-                  </summary>
-                  <div className={styles.diagnosticsMenu}>
-                    <UnreadOptions session={queries} channelId={current?.id} />
-                    <details>
-                      <summary>Diagnostics</summary>
-                      <LiveStatus
-                        live={queries.live}
-                        channelId={current?.id}
-                        partialRoster={list.coverage === "partial"}
-                        diagnostics
-                      />
-                      <p>
-                        {list.coverage === "partial"
-                          ? "Partial roster"
-                          : "Roster"}{" "}
-                        · {channels.length} channels
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() => queries.channels.refreshList?.()}
-                      >
-                        Refresh channels
-                      </button>
-                      {preferences.error && (
-                        <p>Saved groups and stars: {preferences.error}</p>
-                      )}
-                      {preferences.status !== "unsupported" && (
-                        <button
-                          type="button"
-                          disabled={preferences.status === "loading"}
-                          onClick={preferences.reload}
-                        >
-                          Refresh groups and stars
-                        </button>
-                      )}
-                      {current && (
-                        <button
-                          type="button"
-                          onClick={() => queries.channels.refresh?.(current.id)}
-                        >
-                          Refresh messages
-                        </button>
-                      )}
-                      {queries.outbox ? (
-                        <OutboxStatus
-                          outbox={queries.outbox}
-                          profiling={queries.profiling}
-                        />
-                      ) : (
-                        <RelayTimings profiling={queries.profiling} />
-                      )}
-                    </details>
-                  </div>
-                </details>
-              </header>
-            )}
-            <SessionColumn enabled={flatSession}>
-              <LiveStatus
-                live={queries.live}
-                channelId={current?.id}
-                partialRoster={list.coverage === "partial"}
-              />
-              {flatSession &&
-              current &&
-              navigation &&
-              requestedMessage &&
-              exact &&
-              !exact.inTimeline ? (
-                <SessionMessageTarget
-                  key={`${current.id}:${requestedMessage}`}
-                  session={queries}
-                  scope={scope}
-                  channelId={current.id}
-                  messageId={requestedMessage}
-                  navigation={navigation}
-                  extensions={extensions}
-                  onOpenLink={openLink}
-                  canOpenLink={canOpenLink}
-                  onLatest={() => select(current.id)}
-                  onRetry={() => {
-                    void navigator?.retry();
-                  }}
-                />
-              ) : current ? (
-                <ChannelBody
-                  viewer={viewer}
-                  extensions={extensions}
-                  key={current.id}
-                  queries={queries}
-                  scope={scope}
-                  channelId={current.id}
-                  navigation={
-                    flatSession || !requestedMessage || exact?.inTimeline
-                      ? navigation
-                      : undefined
-                  }
-                  onOpenLink={openLink}
-                  canOpenLink={canOpenLink}
-                  onOpenThread={flatSession ? undefined : openThread}
-                  onOpenMediaReview={openMediaReview}
-                  revealMessageId={
-                    sent?.channelId === current.id ? sent.id : undefined
+            </NewSessionView>
+          ) : (
+            <>
+              {current?.channelType === "session" ? (
+                <SessionHeading
+                  channel={current}
+                  parentName={
+                    channels.find(
+                      (parent) => parent.id === current.parentChannelId,
+                    )?.name
                   }
                 />
               ) : (
-                <div className={styles.empty}>Select a channel to read it.</div>
-              )}
-              {current && (
-                <MessageComposer
-                  sessionConversation={current.channelType === "session"}
-                  extensions={extensions}
-                  key={`composer:${current.id}`}
-                  session={queries}
-                  scope={scope}
-                  channelId={current.id}
-                  channelName={current.name}
-                  onOpenLink={openLink}
-                  canOpenLink={canOpenLink}
-                  label={
-                    current.channelType === "session"
-                      ? "Message this session"
-                      : undefined
+                <PanelHeader
+                  title={current?.name ?? "Channels"}
+                  icon={
+                    current?.channelType === "dm" ? (
+                      <ChatCircleIcon size={20} />
+                    ) : (
+                      <HashIcon size={20} />
+                    )
                   }
-                  onSend={(id) => {
-                    setSent({ channelId: current.id, id });
-                    if (flatSession && requestedMessage) select(current.id);
-                  }}
+                  actions={
+                    <>
+                      {drawer.launchers}
+                      <details className={styles.diagnostics}>
+                        <summary
+                          aria-label="Conversation options"
+                          title="Conversation options"
+                        >
+                          <DotsThreeIcon size={19} aria-hidden="true" />
+                        </summary>
+                        <div className={styles.diagnosticsMenu}>
+                          <UnreadOptions
+                            session={queries}
+                            channelId={current?.id}
+                          />
+                          <details>
+                            <summary>Diagnostics</summary>
+                            <LiveStatus
+                              live={queries.live}
+                              channelId={current?.id}
+                              partialRoster={list.coverage === "partial"}
+                              diagnostics
+                            />
+                            <p>
+                              {list.coverage === "partial"
+                                ? "Partial roster"
+                                : "Roster"}{" "}
+                              · {channels.length} channels
+                            </p>
+                            <Button
+                              type="button"
+                              onClick={() => queries.channels.refreshList?.()}
+                            >
+                              Refresh channels
+                            </Button>
+                            {preferences.error && (
+                              <p>Saved groups and stars: {preferences.error}</p>
+                            )}
+                            {preferences.status !== "unsupported" && (
+                              <Button
+                                type="button"
+                                disabled={preferences.status === "loading"}
+                                onClick={preferences.reload}
+                              >
+                                Refresh groups and stars
+                              </Button>
+                            )}
+                            {current && (
+                              <Button
+                                type="button"
+                                onClick={() =>
+                                  queries.channels.refresh?.(current.id)
+                                }
+                              >
+                                Refresh messages
+                              </Button>
+                            )}
+                            {queries.outbox ? (
+                              <OutboxStatus
+                                outbox={queries.outbox}
+                                profiling={queries.profiling}
+                              />
+                            ) : (
+                              <RelayTimings profiling={queries.profiling} />
+                            )}
+                          </details>
+                        </div>
+                      </details>
+                    </>
+                  }
                 />
               )}
-            </SessionColumn>
-            {drawer.content}
-          </>
-        )}
-      </article>
+              <SessionColumn enabled={flatSession}>
+                <LiveStatus
+                  live={queries.live}
+                  channelId={current?.id}
+                  partialRoster={list.coverage === "partial"}
+                />
+                {flatSession &&
+                current &&
+                navigation &&
+                requestedMessage &&
+                exact &&
+                !exact.inTimeline ? (
+                  <SessionMessageTarget
+                    key={`${current.id}:${requestedMessage}`}
+                    session={queries}
+                    scope={scope}
+                    channelId={current.id}
+                    messageId={requestedMessage}
+                    navigation={navigation}
+                    extensions={extensions}
+                    onOpenLink={openLink}
+                    canOpenLink={canOpenLink}
+                    onLatest={() => select(current.id)}
+                    onRetry={() => {
+                      void navigator?.retry();
+                    }}
+                  />
+                ) : current ? (
+                  <ChannelBody
+                    viewer={viewer}
+                    extensions={extensions}
+                    key={current.id}
+                    queries={queries}
+                    scope={scope}
+                    channelId={current.id}
+                    navigation={
+                      flatSession || !requestedMessage || exact?.inTimeline
+                        ? navigation
+                        : undefined
+                    }
+                    onOpenLink={openLink}
+                    canOpenLink={canOpenLink}
+                    onOpenThread={flatSession ? undefined : openThread}
+                    onOpenMediaReview={openMediaReview}
+                    revealMessageId={
+                      sent?.channelId === current.id ? sent.id : undefined
+                    }
+                  />
+                ) : (
+                  <div className={styles.empty}>
+                    Select a channel to read it.
+                  </div>
+                )}
+                {current && (
+                  <MessageComposer
+                    sessionConversation={current.channelType === "session"}
+                    extensions={extensions}
+                    key={`composer:${current.id}`}
+                    session={queries}
+                    scope={scope}
+                    channelId={current.id}
+                    channelName={current.name}
+                    onOpenLink={openLink}
+                    canOpenLink={canOpenLink}
+                    label={
+                      current.channelType === "session"
+                        ? "Message this session"
+                        : undefined
+                    }
+                    onSend={(id) => {
+                      setSent({ channelId: current.id, id });
+                      if (flatSession && requestedMessage) select(current.id);
+                    }}
+                  />
+                )}
+              </SessionColumn>
+              {drawer.content}
+            </>
+          )}
+        </div>
+      </Panel>
       {showingMediaReview && (
         <MediaReviewViewer
           extensions={extensions}
@@ -1165,12 +1151,12 @@ const ChannelBody = memo(function ChannelBody({
     return (
       <div className={styles.empty} role="alert">
         <p>{window.error}</p>
-        <button
+        <Button
           type="button"
           onClick={() => queries.channels.ensure(channelId)}
         >
           Retry messages
-        </button>
+        </Button>
       </div>
     );
   if (window.status !== "ready" && !window.rows.length)

@@ -1,6 +1,7 @@
 import { Button as BaseButton } from "@base-ui/react/button";
 import { CircleNotchIcon } from "../icons/index";
 import type { ComponentProps, ReactNode } from "react";
+import { Tooltip } from "./Tooltip";
 
 type ButtonVariant =
   | "prominent"
@@ -31,9 +32,10 @@ export function Button({
   loading = false,
   disabled,
   onClick,
+  title,
   ...props
 }: ButtonProps) {
-  return (
+  const control = (
     <BaseButton
       {...props}
       type={type}
@@ -70,5 +72,14 @@ export function Button({
         />
       )}
     </BaseButton>
+  );
+  // Keep the native title API at call sites, but share the hint's appearance
+  // and dismissal behavior. Content titles on non-controls remain native.
+  return title ? (
+    <Tooltip content={title} disableHoverablePopup>
+      {control}
+    </Tooltip>
+  ) : (
+    control
   );
 }

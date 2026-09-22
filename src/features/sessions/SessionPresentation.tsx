@@ -1,3 +1,4 @@
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { HashIcon } from "../../shared/design-system/icons/index";
 import type { ReactNode, RefObject } from "react";
 import type { ChannelSummary } from "../relay/contracts";
@@ -45,14 +46,14 @@ export function SessionHeading({
   children?: ReactNode;
 }) {
   return (
-    <header className={styles.workHeader}>
-      <div className={styles.workTitle}>
-        <HashIcon size={20} aria-hidden="true" />
-        <h2 ref={headingRef} tabIndex={-1}>
+    <PanelHeader
+      icon={<HashIcon size={20} />}
+      title={
+        <h2 ref={headingRef} tabIndex={-1} className="m-0 truncate text-label">
           {channel.name}
         </h2>
-      </div>
-      {channel.archived ? <span>Archived</span> : children}
-    </header>
+      }
+      actions={channel.archived ? <span>Archived</span> : children}
+    />
   );
 }

@@ -23,10 +23,14 @@ it("reloads the selected agent after the connection clears the library", async (
       <AgentChoice session={session} value={pubkey} onChange={vi.fn()} />
     </StrictMode>,
   );
-  await screen.findByRole("button", { name: "Change agent: Selected agent" });
+  expect(
+    await screen.findByRole("button", { name: "Change agent: Selected agent" }),
+  ).toHaveTextContent("Selected agent");
   await act(async () => library.clear());
   await waitFor(() => expect(read).toHaveBeenCalledTimes(2));
-  await screen.findByRole("button", { name: "Change agent: Selected agent" });
+  expect(
+    await screen.findByRole("button", { name: "Change agent: Selected agent" }),
+  ).toHaveTextContent("Selected agent");
   view.unmount();
   library.dispose();
 });

@@ -6,14 +6,15 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   font: inherit;
-  line-height: 1.5;
-  caret-color: var(--text);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  caret-color: var(--text-standard);
   cursor: text;
   outline: none;
 }
 .input[data-empty]::before {
   content: attr(data-placeholder);
-  color: var(--text-muted);
+  color: var(--text-subtle);
   pointer-events: none;
   position: absolute;
 }
@@ -52,8 +53,7 @@
   line-height: var(--size-emoji-line);
 }
 .input[data-single-emoji] img {
+  vertical-align: top;
   width: var(--size-emoji-display);
   height: var(--size-emoji-display);
-  /* Match message artwork: keep large emoji inside the line box. */
-  vertical-align: top;
 }

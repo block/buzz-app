@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
 export const CHANNEL_SIDEBAR_DEFAULT_WIDTH = 260;
@@ -81,15 +81,12 @@ export function useSidebarView(scope: string, ready: boolean) {
     };
   }, [scope]);
 
-  const update = (next: SidebarView) => {
+  const update = useCallback((next: SidebarView) => {
     intent.current = next;
     setView(next);
-  };
-  return {
-    list,
-    collapsed: view.collapsed,
-    width: view.width,
-    toggle: (key: string, open: boolean) => {
+  }, []);
+  const toggle = useCallback(
+    (key: string, open: boolean) => {
       const collapsed = intent.current.collapsed;
       if (collapsed.includes(key) === !open) return;
       pending.current = false;
@@ -100,6 +97,13 @@ export function useSidebarView(scope: string, ready: boolean) {
           : [...collapsed, key],
       });
     },
+    [update],
+  );
+  return {
+    list,
+    collapsed: view.collapsed,
+    width: view.width,
+    toggle,
     setWidth: (width: number) => {
       const next = clampChannelSidebarWidth(width);
       if (intent.current.width === next) return;

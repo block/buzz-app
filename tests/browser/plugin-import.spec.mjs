@@ -22,6 +22,7 @@ async function nativeImports(page, samples = []) {
         enabled: true,
         revision: "bundled",
         previous: null,
+        reloadable: false,
         error: null,
       }),
     );
@@ -83,8 +84,16 @@ async function nativeImports(page, samples = []) {
               source: "external",
               enabled: false,
               previous: null,
+              reloadable: true,
               error: null,
             });
+          return ready();
+        }
+        if (command === "plugin_reload") {
+          const plugin = plugins.find((p) => p.manifest.id === args.id);
+          plugin.previous = plugin.revision;
+          plugin.revision = `${plugin.revision}-reload`;
+          plugin.reloadable = true;
           return ready();
         }
         if (command === "plugin_change") {
@@ -259,6 +268,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await button(page, "Install plugin").click();
   const enabled = page.getByRole("switch", { name: "Enable Example two" });
   await expect(enabled).toHaveAttribute("aria-checked", "false");
+  await expect(button(page, "Reload")).toBeVisible();
   expect(
     await page.evaluate(
       () =>
@@ -266,7 +276,14 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
           .args,
     ),
   ).toEqual({ token: "preview-one", path: "plugins/two/dist" });
+  await button(page, "Reload").click();
+  expect(
+    await page.evaluate(
+      () => window.importCalls.find((c) => c.command === "plugin_reload").args,
+    ),
+  ).toEqual({ id: "example.two" });
   await enabled.click();
+  await expect(button(page, "Reload")).toHaveCount(0);
   await expect(
     page.getByText(/It stays enabled and may run immediately/),
   ).toBeVisible();

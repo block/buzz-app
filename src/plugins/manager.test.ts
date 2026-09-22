@@ -19,6 +19,7 @@ const ready = (enabled = true, paused = false): StorageResult => ({
         enabled,
         revision: "one",
         previous: null,
+        reloadable: paused,
         error: null,
       },
     ],
@@ -39,6 +40,7 @@ function harness(overrides: Partial<PluginStorage> = {}, fail = false) {
     changePlugin: vi.fn(async () => ready(false)),
     recoverSettings: vi.fn(async () => ready()),
     readModule: vi.fn(async () => ""),
+    reloadPlugin: vi.fn(async () => ready(false)),
     ...overrides,
   };
   const root = new Context();
@@ -244,6 +246,25 @@ it("installs a selected preview through the management boundary, rejecting overl
     "nested/dist",
   );
   install.resolve(ready(false));
+  expect(await first).toBe(true);
+  poll.resolve(ready());
+  await vi.advanceTimersByTimeAsync(0);
+  expect(plugins.snapshot().configuration).toEqual(ready(false));
+});
+
+it("reloads through the management boundary, rejecting overlap and stale polls", async () => {
+  const reload = deferred();
+  const { plugins, installation } = harness({
+    reloadPlugin: vi.fn(() => reload.promise),
+  });
+  await vi.advanceTimersByTimeAsync(0);
+  const poll = deferred();
+  vi.mocked(installation.getCatalog).mockReturnValueOnce(poll.promise);
+  await vi.advanceTimersByTimeAsync(1000);
+  const first = plugins.reload("example");
+  expect(await plugins.reload("other")).toBe(false);
+  expect(installation.reloadPlugin).toHaveBeenCalledExactlyOnceWith("example");
+  reload.resolve(ready(false));
   expect(await first).toBe(true);
   poll.resolve(ready());
   await vi.advanceTimersByTimeAsync(0);

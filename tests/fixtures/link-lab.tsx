@@ -25,6 +25,7 @@ runtime.reconcile([
     source: "bundled",
     revision: "preview",
     previous: null,
+    reloadable: false,
     error: null,
   },
 ]);

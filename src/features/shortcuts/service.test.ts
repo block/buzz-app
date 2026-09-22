@@ -57,6 +57,7 @@ const plugin = (id: string, revision = "one"): PluginInfo => ({
   source: "external",
   revision,
   previous: null,
+  reloadable: true,
   error: null,
 });
 

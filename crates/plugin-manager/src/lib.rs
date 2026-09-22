@@ -86,8 +86,27 @@ fn is_bundled(id: &str) -> bool {
 struct Installed {
     manifest: Manifest,
     current: String,
+    #[serde(default)]
+    current_source: Option<ReloadSource>,
     previous: Option<String>,
+    #[serde(default)]
+    previous_source: Option<ReloadSource>,
     enabled: bool,
+}
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ReloadSource {
+    root: PathBuf,
+    path: String,
+}
+impl ReloadSource {
+    pub fn folder(root: PathBuf, path: String) -> Result<Self> {
+        if !root.is_absolute() {
+            return Err("Reload source root must be absolute".into());
+        }
+        validate_candidate_path(&path)?;
+        Ok(Self { root, path })
+    }
 }
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -122,6 +141,7 @@ pub struct PluginInfo {
     pub enabled: bool,
     pub revision: String,
     pub previous: Option<String>,
+    pub reloadable: bool,
     pub error: Option<String>,
 }
 #[derive(Serialize)]
@@ -261,6 +281,7 @@ impl Manager {
                     enabled,
                     revision: "bundled".into(),
                     previous: None,
+                    reloadable: false,
                     error: None,
                 }
             })
@@ -276,6 +297,7 @@ impl Manager {
                 enabled: p.enabled,
                 revision: p.current,
                 previous: p.previous,
+                reloadable: p.current_source.is_some(),
                 error,
             });
         }
@@ -286,20 +308,21 @@ impl Manager {
         })
     }
     pub fn install(&self, directory: &Path) -> Result<Catalog> {
-        self.install_artifact(&prepare_artifact(directory)?)
+        let source = ReloadSource::folder(directory.canonicalize().map_err(err)?, ".".into())?;
+        self.install_artifact(&prepare_artifact(directory)?, Some(source))
     }
-    fn install_artifact(&self, bytes: &[u8]) -> Result<Catalog> {
+    fn install_artifact(&self, bytes: &[u8], source: Option<ReloadSource>) -> Result<Catalog> {
         let Artifact { manifest, .. } = serde_json::from_slice(bytes).map_err(err)?;
         let revision = hash(bytes);
         {
             let _lock = self.lock()?;
             let mut registry = self.read()?;
             let old = registry.installed.get(&manifest.id);
-            let previous = old.and_then(|p| {
+            let (previous, previous_source) = old.map_or((None, None), |p| {
                 if p.current == revision {
-                    p.previous.clone()
+                    (p.previous.clone(), p.previous_source.clone())
                 } else {
-                    Some(p.current.clone())
+                    (Some(p.current.clone()), p.current_source.clone())
                 }
             });
             let enabled = old.is_some_and(|p| p.enabled);
@@ -309,7 +332,9 @@ impl Manager {
                 Installed {
                     manifest,
                     current: revision,
+                    current_source: source,
                     previous,
+                    previous_source,
                     enabled,
                 },
             );
@@ -349,8 +374,11 @@ impl Manager {
                     "rollback" => {
                         let previous = p.previous.clone().ok_or("No previous revision")?;
                         let a = self.artifact(id, &previous)?;
+                        let previous_source = p.previous_source.clone();
                         p.previous = Some(p.current.clone());
+                        p.previous_source = p.current_source.clone();
                         p.current = previous;
+                        p.current_source = previous_source;
                         p.manifest = a.manifest;
                     }
                     _ => return Err("Unknown management action".into()),
@@ -365,6 +393,58 @@ impl Manager {
                         .map_err(|e| format!("Plugin removed, but artifact cleanup failed: {e}"))?;
                 }
             }
+        }
+        self.catalog()
+    }
+    pub fn reload(&self, id: &str) -> Result<Catalog> {
+        valid_id(id)?;
+        if is_bundled(id) {
+            return Err("Bundled plugins cannot be reloaded from disk".into());
+        }
+        let snapshot = {
+            let _lock = self.lock()?;
+            let registry = self.read()?;
+            let plugin = registry
+                .installed
+                .get(id)
+                .ok_or("Plugin is not installed")?;
+            if plugin.enabled {
+                return Err("Disable the plugin before reloading it from disk".into());
+            }
+            let source = plugin
+                .current_source
+                .clone()
+                .ok_or("Plugin was not installed from a reloadable folder")?;
+            (plugin.current.clone(), source, plugin.manifest.id.clone())
+        };
+        let bytes = prepare_reload_artifact(&snapshot.1)?;
+        let Artifact { manifest, .. } = serde_json::from_slice(&bytes).map_err(err)?;
+        if manifest.id != snapshot.2 {
+            return Err("Reloaded plugin manifest ID changed; import it as a new plugin".into());
+        }
+        let revision = hash(&bytes);
+        {
+            let _lock = self.lock()?;
+            let mut registry = self.read()?;
+            let plugin = registry
+                .installed
+                .get_mut(id)
+                .ok_or("Plugin is not installed")?;
+            if plugin.current != snapshot.0 || plugin.current_source.as_ref() != Some(&snapshot.1) {
+                return Err("Plugin changed while reload was reading from disk; try again".into());
+            }
+            let (previous, previous_source) = if plugin.current == revision {
+                (plugin.previous.clone(), plugin.previous_source.clone())
+            } else {
+                (Some(plugin.current.clone()), plugin.current_source.clone())
+            };
+            atomic_write(&self.artifact_path(&manifest.id, &revision), &bytes)?;
+            plugin.manifest = manifest;
+            plugin.current = revision;
+            plugin.current_source = Some(snapshot.1);
+            plugin.previous = previous;
+            plugin.previous_source = previous_source;
+            self.save(&registry)?;
         }
         self.catalog()
     }
@@ -404,6 +484,46 @@ fn prepare_artifact(directory: &Path) -> Result<Vec<u8>> {
         &read_limited(&directory.join("manifest.json"))?,
         read_limited(&directory.join("plugin.js"))?,
     )
+}
+fn prepare_reload_artifact(source: &ReloadSource) -> Result<Vec<u8>> {
+    let relative = validate_candidate_path(&source.path)?;
+    if !fs::symlink_metadata(&source.root)
+        .map_err(err)?
+        .file_type()
+        .is_dir()
+    {
+        return Err("Reload source root must be a regular folder".into());
+    }
+    let directory = cap_std::fs::Dir::open_ambient_dir(&source.root, cap_std::ambient_authority())
+        .map_err(err)?;
+    artifact_from_text(
+        &imports::read_source_file(&directory, &relative.join("manifest.json"))?,
+        imports::read_source_file(&directory, &relative.join("plugin.js"))?,
+    )
+}
+fn validate_candidate_path(path: &str) -> Result<PathBuf> {
+    let path = path.trim();
+    if path.is_empty() {
+        return Err("Reload source path is empty".into());
+    }
+    if path == "." {
+        return Ok(PathBuf::new());
+    }
+    let path = Path::new(path);
+    if !path.is_relative() {
+        return Err("Reload source path must be relative".into());
+    }
+    let mut relative = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => relative.push(part),
+            _ => return Err("Reload source path must stay inside its folder".into()),
+        }
+    }
+    if relative.as_os_str().is_empty() {
+        return Err("Reload source path is empty".into());
+    }
+    Ok(relative)
 }
 fn artifact_from_text(manifest: &str, code: String) -> Result<Vec<u8>> {
     let manifest: Manifest = serde_json::from_str(manifest).map_err(err)?;

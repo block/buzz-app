@@ -188,6 +188,7 @@ function withProbe(result: Awaited<ReturnType<PluginStorage["getCatalog"]>>) {
       enabled: probeEnabled,
       revision: "bundled",
       previous: null,
+      reloadable: false,
       error: null,
     });
   return result;
@@ -199,6 +200,7 @@ const storage: PluginStorage = {
   recoverSettings: () => api("recover", {}),
   readModule: async (id, revision) =>
     (await api("module", { id, revision })).code,
+  reloadPlugin: async (id) => withProbe(await api("reload", { id })),
 };
 const ctx = new Context();
 type MentionCommand =

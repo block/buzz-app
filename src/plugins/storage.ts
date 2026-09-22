@@ -91,6 +91,10 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
     if (!desktop) throw new Error("Local plugins require the desktop app");
     return invoke("plugin_module", { id, revision });
   }
+  async function reloadPlugin(id: string): Promise<StorageResult> {
+    if (!desktop) throw new Error("Plugin reload requires the desktop app");
+    return invoke("plugin_reload", { id });
+  }
 
   const imports: PluginImports | undefined = desktop
     ? {
@@ -102,7 +106,14 @@ export function createPluginStorage(bundledCatalog: () => Catalog["plugins"]) {
         discard: (token) => invoke("plugin_import_discard", { token }),
       }
     : undefined;
-  return { getCatalog, changePlugin, recoverSettings, readModule, imports };
+  return {
+    getCatalog,
+    changePlugin,
+    recoverSettings,
+    readModule,
+    reloadPlugin,
+    imports,
+  };
 }
 export type PluginStorage = Omit<
   ReturnType<typeof createPluginStorage>,

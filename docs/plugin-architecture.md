@@ -195,7 +195,12 @@ folders. Choose one and explicitly install/update; the same preview can install
 another plugin without fetching again. New plugins stay disabled. Updates match
 **manifest ID**, even across repositories, and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. The UI warns before
-that action. Installed artifacts do not watch/pull the source; import again to update.
+that action. Installed artifacts do not watch/pull the source. Plugins installed from
+a folder keep the selected folder path for Settings → Plugins → Reload while disabled;
+reloading reads the recorded candidate folder and requires the manifest ID to stay the
+same. Enabled plugins must be disabled before reload so memory-only plugin state, such
+as credentials, is not discarded by replacing the running module. Git installs and older
+installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;

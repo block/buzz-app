@@ -8,6 +8,7 @@ const catalog = (): PluginInfo[] =>
     enabled: true,
     revision: "bundled",
     previous: null,
+    reloadable: false,
     error: null,
   }));
 afterEach(() => vi.unstubAllGlobals());

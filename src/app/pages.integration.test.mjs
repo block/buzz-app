@@ -3,14 +3,9 @@ import { test, vi } from "vitest";
 import { setImmediate as settle } from "node:timers/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { createServer } from "vite";
+import { createServices } from "./services";
 
 test("the app runtime exposes ready bundled pages and removes them on disable", async () => {
-  const vite = await createServer({
-    configFile: false,
-    optimizeDeps: { noDiscovery: true, include: [] },
-    server: { middlewareMode: true, ws: false },
-  });
   const originalStorage = Object.getOwnPropertyDescriptor(
     globalThis,
     "localStorage",
@@ -25,7 +20,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
   });
   let services;
   try {
-    const { createServices } = await vite.ssrLoadModule("/src/app/services.ts");
     services = createServices();
     assert.deepEqual(services.pages.snapshot(), []);
     await settle();
@@ -246,7 +240,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     });
   } finally {
     await services?.dispose();
-    await vite.close();
     if (originalStorage)
       Object.defineProperty(globalThis, "localStorage", originalStorage);
     else delete globalThis.localStorage;

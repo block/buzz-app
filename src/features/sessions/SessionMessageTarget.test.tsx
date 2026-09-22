@@ -169,6 +169,19 @@ it("disposes a superseded reader and ignores late results, then disposes on unmo
 });
 
 it("keeps a verified exact target readable if unrelated thread context fails", async () => {
+  // Control reveal vs. cancellation; user-event timing must not choose the path.
+  const frames = new Map<number, FrameRequestCallback>();
+  let frameId = 0;
+  vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+    frames.set(++frameId, callback);
+    return frameId;
+  });
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => frames.delete(id));
+  const flushFrame = () => {
+    for (const [id, callback] of [...frames]) {
+      if (frames.delete(id)) callback(performance.now());
+    }
+  };
   const test = setup(),
     { navigation, controller } = test.request("first");
   render(<SessionMessageTarget {...test.props} navigation={navigation} />);
@@ -194,12 +207,32 @@ it("keeps a verified exact target readable if unrelated thread context fails", a
     }),
   );
   expect(screen.getByText("Selected reply")).toBeVisible();
+  const row = document.querySelector<HTMLElement>('[data-message-id="target"]');
+  if (!row) throw new Error("Target row did not mount");
+  // jsdom lacks this browser operation. Real viewport acceptance stays in Playwright.
+  const scroll = vi.fn();
+  row.scrollIntoView = scroll;
+  expect(row.isConnected).toBe(true);
+  expect(navigation.signal.aborted).toBe(false);
+  act(flushFrame); // Install the real observer and queue reveal.
+  act(flushFrame); // Scroll/focus, leaving completion pending.
+  expect(scroll).toHaveBeenCalledExactlyOnceWith({
+    block: "start",
+    inline: "nearest",
+    behavior: "instant",
+  });
+  expect(document.activeElement).toBe(row);
+  expect(frames.size).toBe(1);
   expect(navigation.complete).not.toHaveBeenCalled();
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Back to latest" }));
   expect(test.props.onLatest).toHaveBeenCalledOnce();
   act(() => controller.abort());
+  expect(frames.size).toBe(0);
+  act(flushFrame);
+  expect(scroll).toHaveBeenCalledTimes(1);
+  expect(navigation.complete).not.toHaveBeenCalled();
   expect(current.dispose).toHaveBeenCalled();
   expect(screen.queryByText("Selected reply")).not.toBeInTheDocument();
 });

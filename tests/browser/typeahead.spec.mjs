@@ -719,8 +719,17 @@ test("current custom catalog drives typeahead and signed tags across community r
   await expect(composer).toContainText("lakjsdlkjflakjsdf");
   const inlineAlignment = await input.evaluate((element) => {
     const token = element.querySelector("[data-composer-emoji]");
+    const text = document.createTreeWalker(element, NodeFilter.SHOW_TEXT);
+    let followingText;
+    while (text.nextNode()) {
+      if (text.currentNode.textContent === "lakjsdlkjflakjsdf") {
+        followingText = text.currentNode;
+        break;
+      }
+    }
+    if (!followingText) throw new Error("Following composer text is missing");
     const range = document.createRange();
-    range.selectNodeContents(token.nextSibling);
+    range.selectNodeContents(followingText);
     return {
       right: token.getBoundingClientRect().right,
       textLeft: range.getBoundingClientRect().left,

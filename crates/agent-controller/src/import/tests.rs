@@ -522,7 +522,7 @@ fn invalid_destination_discards_pending_without_echoing_inputs_or_acquiring_keys
     let mut store = Store::open(dest.path().into()).unwrap();
     let keys = Memory::default();
     for invalid in [
-        "",
+        " ",
         "not a URL",
         "ws://raw.example",
         "http://raw.example",
@@ -627,4 +627,56 @@ fn duplicate_keys_ignore_pin_differences_and_source_pin_changes_still_invalidate
     assert_eq!(keys.reads.load(Ordering::SeqCst), 0);
     assert!(keys.keys.lock().unwrap().is_empty());
     assert!(store.agents().unwrap().is_empty());
+}
+
+#[test]
+fn local_browse_without_destination_cannot_commit_or_reuse_prior_authority() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    let bytes = source(old.path());
+    let mut imports = Imports::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let keys = Memory::default();
+    let prior = imports
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "wss://chosen.example",
+        )
+        .unwrap();
+    let browse = imports
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "",
+        )
+        .unwrap();
+    assert_eq!(browse.candidates.len(), 1);
+    assert_eq!(browse.candidates[0].pubkey, PUB);
+    assert!(browse.candidates[0].relay_url.is_empty());
+    assert!(browse.token.is_empty());
+    for (token, id) in [
+        (&browse.token, &browse.candidates[0].id),
+        (&prior.token, &prior.candidates[0].id),
+    ] {
+        assert!(imports
+            .commit(token, std::slice::from_ref(id), &mut store, &keys)
+            .is_err());
+    }
+    assert_eq!(keys.reads.load(Ordering::SeqCst), 0);
+    assert!(keys.keys.lock().unwrap().is_empty());
+    assert!(store.agents().unwrap().is_empty());
+    assert_eq!(
+        fs::read(
+            old.path()
+                .join(LegacySource::Installed.app_directory())
+                .join("agents/managed-agents.json")
+        )
+        .unwrap(),
+        bytes
+    );
+    let serialized = serde_json::to_string(&browse).unwrap();
+    assert!(!serialized.contains("private_key"));
 }

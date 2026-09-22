@@ -31,8 +31,11 @@ The dev broker and native host must both support this flow. Packaged human
 signing remains unavailable.
 
 **Not imported from old Buzz** is a separate collapsible section. Expanding it
-loads installed identities for the connected community; already-managed exact
-identities are excluded. Each remaining row says **Not imported** and has its own
+loads installed identities even without a community connection or destination.
+Choose Installed or Development Buzz under Import options to browse either local
+library. Browsing reads no keys and creates no import token. Import stays disabled
+until a destination is selected and a new preview is loaded; already-managed exact
+identities at that destination are excluded. Each remaining row says **Not imported** and has its own
 **Import** action. Source/destination overrides and source warnings stay under
 Import options. Import focuses the imported card and says **Imported, not started**.
 It does not start a listener, invite an agent or change the old library.
@@ -160,8 +163,10 @@ resources. Production has no disposable storage override or preview launch mode.
   Saved `BUZZ_AGENT_MODEL`/`BUZZ_AGENT_PROVIDER` (buzz-agent) and
   `GOOSE_MODEL`/`GOOSE_PROVIDER` (Goose) overrides win over Model/Provider
   selectors; blank selectors do not erase them. ACP uses the same effective model.
-- Import previews only the chosen installed/development library and requires an
-  explicit secure **Destination community** origin. Old Buzz ignores saved relay
+- Local browsing reads only the chosen installed/development library without a
+  destination. Native keeps no pending import for that read and invalidates any
+  prior import token. An actionable import preview requires an explicit secure
+  **Destination community** origin. Old Buzz ignores saved relay
   pins at runtime; blank, stale or malformed saved pins do not route or hide
   identities here. Native validates the chosen destination, shows it beside each
   exact key, and retains it with the preview token through commit. Source or

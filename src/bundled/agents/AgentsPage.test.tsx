@@ -591,3 +591,53 @@ for (const stage of ["create", "profile"] as const) {
     });
   }
 }
+
+it("browses both local libraries without a community and requires a destination preview to import", async () => {
+  const { f, read } = setup("disconnected");
+  fireEvent.click(
+    await screen.findByRole("button", { name: "Not imported from old Buzz" }),
+  );
+  const section = screen.getByRole("region", { name: "Import from old Buzz" });
+  expect(
+    await within(section).findByRole("button", {
+      name: "Import Fixture agent",
+    }),
+  ).toBeDisabled();
+  expect(f.calls).toContainEqual({
+    action: "preview",
+    payload: { source: "installed", destination: "" },
+  });
+  expect(read).not.toHaveBeenCalled();
+  fireEvent.change(screen.getByLabelText("Source library"), {
+    target: { value: "development" },
+  });
+  await waitFor(() =>
+    expect(f.calls).toContainEqual({
+      action: "preview",
+      payload: { source: "development", destination: "" },
+    }),
+  );
+  expect(
+    await within(section).findByRole("button", {
+      name: "Import Fixture agent",
+    }),
+  ).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Destination community"), {
+    target: { value: "wss://chosen.example" },
+  });
+  expect(
+    within(section).queryByRole("button", { name: "Import Fixture agent" }),
+  ).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Load agents" }));
+  await waitFor(() =>
+    expect(
+      within(section).getByRole("button", { name: "Import Fixture agent" }),
+    ).toBeEnabled(),
+  );
+  expect(
+    f.calls.filter((call) =>
+      ["import", "start", "restart"].includes(call.action),
+    ),
+  ).toEqual([]);
+  expect(read).not.toHaveBeenCalled();
+});

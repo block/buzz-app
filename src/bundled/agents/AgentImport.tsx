@@ -59,7 +59,7 @@ export function AgentImport({
     [control],
   );
   useEffect(() => {
-    if (initialDestination) void load("installed", initialDestination);
+    void load("installed", initialDestination);
     return () => {
       generation.current++;
     };
@@ -79,6 +79,12 @@ export function AgentImport({
       {destination && (
         <p className="m-0 break-all text-body-sm">Community: {destination}</p>
       )}
+      {!destination && (
+        <p className="m-0 text-body-sm text-secondary">
+          These identities are saved on this computer. Choose a destination in
+          Import options before importing; browsing does not need a connection.
+        </p>
+      )}
       {!commitAvailable && (
         <p role="status">Import is unavailable in this app session.</p>
       )}
@@ -87,7 +93,7 @@ export function AgentImport({
         <div className="flex flex-col items-start gap-2">
           <p role="alert">{error}</p>
           <Button
-            disabled={disabled || !destination.trim()}
+            disabled={disabled}
             onClick={() => void load(source, destination)}
           >
             Retry
@@ -95,7 +101,11 @@ export function AgentImport({
         </div>
       )}
       {candidates?.length === 0 && (
-        <p>No agents left to import from this library for this community.</p>
+        <p>
+          {destination
+            ? "No agents left to import from this library for this community."
+            : "No agents in this local library."}
+        </p>
       )}
       {candidates?.map((candidate) => (
         <div
@@ -113,10 +123,12 @@ export function AgentImport({
             </details>
           </div>
           <Button
-            disabled={disabled || previewing || !commitAvailable}
+            disabled={
+              disabled || previewing || !commitAvailable || !preview?.token
+            }
             aria-label={`Import ${candidate.name}`}
             onClick={() => {
-              if (!preview) return;
+              if (!preview?.token) return;
               const current = generation.current;
               void control
                 .commitImport(preview.token, [candidate.id])
@@ -155,8 +167,7 @@ export function AgentImport({
                 const next = event.target.value as ImportSource;
                 setSource(next);
                 invalidatePreview();
-                if (destination.trim() && !disabled)
-                  void load(next, destination);
+                if (!disabled) void load(next, destination);
               }}
             >
               <option value="installed">Installed Buzz</option>
@@ -176,7 +187,7 @@ export function AgentImport({
             />
           </label>
           <Button
-            disabled={disabled || previewing || !destination.trim()}
+            disabled={disabled || previewing}
             onClick={() => void load(source, destination)}
           >
             Load agents

@@ -81,7 +81,12 @@ impl Imports {
         destination: &str,
     ) -> Result<ImportPreview> {
         self.pending = None;
-        let relay = canonical_relay(destination)?;
+        // Browsing local files needs no destination and grants no import authority.
+        let relay = if destination.is_empty() {
+            String::new()
+        } else {
+            canonical_relay(destination)?
+        };
         let source = app_data_parent.join(source_kind.app_directory());
         let data = read_source(&source)?;
         let mut candidates = Vec::new();
@@ -109,7 +114,7 @@ impl Imports {
             .sequence
             .checked_add(1)
             .ok_or("Import preview exhausted")?;
-        let preview = ImportPreview {
+        let mut preview = ImportPreview {
             token: format!("{}-{}", self.sequence, data.digest),
             source_path: source.join("agents/managed-agents.json").display().to_string(),
             candidates,
@@ -120,6 +125,13 @@ impl Imports {
                 "This copies selected identities and resolved settings; old Buzz remains unchanged.".into(),
             ],
         };
+        if relay.is_empty() {
+            preview.token.clear();
+            preview.warnings = vec![
+                "Local identities only. Choose a destination before reviewing an import.".into(),
+            ];
+            return Ok(preview);
+        }
         self.pending = Some(Pending {
             preview: preview.clone(),
             source,

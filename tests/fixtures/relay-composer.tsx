@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import { Context } from "@deepseek-ai/cordis";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import { PanelsService } from "../../src/features/panels/service";
+import { PagesService } from "../../src/features/pages/service";
 import { createRelaySession } from "../../src/features/relay/session";
 import {
   keypair,
@@ -98,6 +99,10 @@ const container = document.getElementById("root");
 if (!container) throw new Error("Missing fixture root");
 createRoot(container).render(
   <div style={{ height: "100vh" }}>
-    <ChannelsPage relay={data} panels={new PanelsService(root)} />
+    <ChannelsPage
+      relay={data}
+      panels={new PanelsService(root)}
+      pages={new PagesService(root)}
+    />
   </div>,
 );

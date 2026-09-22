@@ -145,7 +145,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   });
   const before = await box(conversation);
   near(sidebar.x, 16);
-  near(before.x - sidebar.x - sidebar.width, 4);
+  near(before.x - sidebar.x - sidebar.width, 8);
   near(before.y, 56);
   near(before.height, 760);
   const background = await page
@@ -173,7 +173,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   const dock = await box(panel(page));
   near(dock.y, main.y);
   near(dock.height, main.height);
-  near(dock.x - main.x - main.width, 4);
+  near(dock.x - main.x - main.width, 8);
   near(dock.x + dock.width, 1264);
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();
@@ -286,6 +286,39 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
       .getByRole("navigation", { name: "Pages", exact: true })
       .getByRole("button", { name: "Messages" }),
   ).toBeVisible();
+});
+
+test("narrow link panels begin after the rendered sidebar", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 832 });
+  await open(page, app);
+  await page
+    .getByRole("separator", { name: "Resize channel sidebar" })
+    .press("End");
+  await page.setViewportSize({ width: 800, height: 600 });
+  await link(page, app, "https://github.com/block/buzz/pull/7");
+
+  const sidebar = await box(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  );
+  const conversation = await box(
+    page.getByRole("article", { name: "Conversation", exact: true }),
+  );
+  const dock = await box(panel(page));
+  near(conversation.x - sidebar.x - sidebar.width, 8);
+  near(dock.x, conversation.x);
+  expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
+  expect(
+    await page
+      .getByRole("separator", { name: "Resize channel sidebar" })
+      .evaluate((element) => Number(getComputedStyle(element).zIndex)),
+  ).toBeLessThan(
+    await panel(page).evaluate((element) =>
+      Number(getComputedStyle(element.parentElement).zIndex),
+    ),
+  );
 });
 
 readingTest(

@@ -67,6 +67,9 @@ test("Back restores each thread visit before the previous channel", async ({
 
   await threadButton(roots[0]).click();
   await expect(panel.getByText("Thread root 0", { exact: true })).toBeVisible();
+  await expect(
+    panel.getByRole("textbox", { name: "Reply to thread", exact: true }),
+  ).toHaveAttribute("data-placeholder", "Reply in thread");
   await threadButton(roots[1]).click();
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
   const openThread = await panel
@@ -86,6 +89,9 @@ test("Back restores each thread visit before the previous channel", async ({
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
 
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toHaveAttribute("data-placeholder", "Send a message in #Beta");
   await page.goBack();
   await expect(panel.getByText("Thread root 1", { exact: true })).toBeVisible();
   const threadPanel = await panel.elementHandle();

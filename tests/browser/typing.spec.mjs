@@ -121,6 +121,16 @@ for (const scope of ["channel", "thread"]) {
     const stable = async () => {
       expect(await history.boundingBox()).toEqual(idle);
       expect(await composer.boundingBox()).toEqual(idleComposer);
+      if (await indicator.count()) {
+        const typing = await indicator.boundingBox();
+        const editor = await composer.getByRole("textbox").boundingBox();
+        expect(typing.x).toBeGreaterThanOrEqual(idleComposer.x);
+        expect(typing.x + typing.width).toBeLessThanOrEqual(
+          idleComposer.x + idleComposer.width,
+        );
+        expect(typing.y).toBeGreaterThanOrEqual(idleComposer.y);
+        expect(typing.y + typing.height).toBeLessThanOrEqual(editor.y);
+      }
       await expect.poll(gap).toBeLessThan(2);
       const tail = await history
         .locator("[data-message-id]")

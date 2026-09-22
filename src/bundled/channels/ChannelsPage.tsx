@@ -50,7 +50,14 @@ import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
-import { MessageComposer } from "../../features/messages/MessageComposer";
+import {
+  composerPlaceholder,
+  hasSentMessage,
+} from "../../features/messages/composer-placeholder";
+import {
+  MessageComposer,
+  type MessageComposerProps,
+} from "../../features/messages/MessageComposer";
 import { ChannelTimeline } from "../../features/messages/ChannelTimeline";
 import { ThreadPanel } from "../../features/messages/ThreadPanel";
 import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
@@ -948,7 +955,10 @@ function ChannelWorkspace({
                   </div>
                 )}
                 {current && (
-                  <MessageComposer
+                  <ChannelComposer
+                    destination={
+                      current.channelType === "dm" ? "dm" : "channel"
+                    }
                     sessionConversation={current.channelType === "session"}
                     extensions={extensions}
                     key={`composer:${current.id}`}
@@ -1122,3 +1132,35 @@ const ChannelBody = memo(function ChannelBody({
     />
   );
 });
+
+/** Reuse the already-owned channel window; do not start a second history read. */
+function ChannelComposer({
+  destination,
+  ...props
+}: MessageComposerProps & { destination: "channel" | "dm" }) {
+  const { session, channelId } = props;
+  const subscribe = useCallback(
+    (listener: () => void) =>
+      session.channels.subscribeWindow(channelId, listener),
+    [session, channelId],
+  );
+  const snapshot = useCallback(
+    () => session.channels.window(channelId),
+    [session, channelId],
+  );
+  const window = useSyncExternalStore(subscribe, snapshot, snapshot);
+  return (
+    <MessageComposer
+      {...props}
+      placeholder={
+        props.sessionConversation
+          ? props.label
+          : composerPlaceholder(
+              destination,
+              hasSentMessage(window.rows, window.status),
+              props.channelName,
+            )
+      }
+    />
+  );
+}

@@ -76,6 +76,7 @@ export function ChannelSidebarRow({
     <>
       <div
         className={styles.row}
+        data-channel-sidebar-row=""
         data-selected={(selected === channel.id && !draftSelected) || undefined}
       >
         {hasChildren && (

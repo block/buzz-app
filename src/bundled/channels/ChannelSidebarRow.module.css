@@ -4,7 +4,20 @@
   align-items: center;
   width: 100%;
   min-width: 0;
-  border-radius: var(--radius-control);
+  border-radius: var(--channel-row-radius, var(--radius-row));
+  background: transparent;
+  transition:
+    color var(--duration-state) var(--easing-state),
+    background-color var(--duration-state) var(--easing-state);
+}
+.row:hover:not([data-selected]) {
+  background: var(--affordance-subtle);
+}
+.row[data-selected] {
+  background: var(--affordance-selected);
+}
+.row .select [data-buzz-ui][data-variant="row"] {
+  background: transparent;
 }
 .row .select {
   flex: 1;

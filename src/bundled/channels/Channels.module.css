@@ -16,7 +16,7 @@
   display: grid;
   grid-template-columns:
     minmax(124px, min(var(--channel-sidebar-width, 260px), calc(100% - 336px)))
-    16px
+    var(--space-panel-gap)
     minmax(0, 1fr);
   height: 100%;
   position: relative;
@@ -25,7 +25,7 @@
 .withPanel {
   grid-template-columns:
     minmax(124px, min(var(--channel-sidebar-width, 260px), calc(100% - 652px)))
-    16px minmax(320px, 1.1fr) minmax(316px, 1fr);
+    var(--space-panel-gap) minmax(320px, 1.1fr) minmax(316px, 1fr);
 }
 .sidebar,
 .conversation {
@@ -38,6 +38,7 @@
 }
 .sidebar {
   --sidebar-padding: var(--space-2);
+  --channel-row-radius: calc(var(--radius-panel) - var(--sidebar-padding));
   padding: var(--sidebar-padding);
 }
 .channelListFrame {
@@ -165,6 +166,7 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
   z-index: 4;
   align-self: stretch;
   width: 16px;
+  justify-self: center;
   height: 100%;
   padding: 0;
   border: 0;
@@ -238,7 +240,7 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
   display: grid;
   grid-auto-rows: minmax(0, 1fr);
   gap: var(--space-1);
-  margin-left: var(--space-1);
+  margin-left: var(--space-panel-gap);
 }
 .companion {
   display: grid;
@@ -289,7 +291,7 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
         124px,
         min(var(--channel-sidebar-width, 260px), calc(100% - 336px))
       )
-      16px
+      var(--space-panel-gap)
       minmax(0, 1fr);
   }
   .withPanel .panelStack {

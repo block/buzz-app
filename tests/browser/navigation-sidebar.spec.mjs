@@ -38,10 +38,12 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     if (!(content instanceof HTMLElement) || !(row instanceof HTMLElement))
       throw new Error("Channel sidebar geometry is unavailable");
     const panelStyle = getComputedStyle(panel);
+    const boardStyle = getComputedStyle(panel.parentElement);
     const contentStyle = getComputedStyle(content);
     const rowStyle = getComputedStyle(row);
     return {
       panelRadius: Number.parseFloat(panelStyle.borderTopLeftRadius),
+      panelGap: Number.parseFloat(boardStyle.gridTemplateColumns.split(" ")[1]),
       padding: [
         contentStyle.paddingTop,
         contentStyle.paddingRight,
@@ -53,6 +55,14 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   });
   expect(new Set(geometry.padding).size).toBe(1);
   expect(geometry.rowRadius).toBe(geometry.panelRadius - geometry.padding[0]);
+  const conversation = await page
+    .getByRole("article", { name: "Conversation" })
+    .boundingBox();
+  expect(conversation).not.toBeNull();
+  expect(conversation.x - (before.x + before.width)).toBeCloseTo(
+    geometry.panelGap,
+    0,
+  );
   expect(grip.width).toBeGreaterThanOrEqual(16);
   expect(grip.height).toBeGreaterThan(500);
   expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(
@@ -147,10 +157,26 @@ sessionSidebar(
     expect(await x(label(parent))).toBeCloseTo(await x(label(regular)), 0);
     expect(await x(label(child))).toBeCloseTo(await x(label(regular)), 0);
 
-    await page
-      .getByRole("button", { name: /More options for/ })
-      .first()
-      .click();
+    const parentSurface = parent.locator(
+      "xpath=ancestor::*[@data-channel-sidebar-row]",
+    );
+    const more = page.getByRole("button", { name: /More options for/ }).first();
+    expect(
+      await more.evaluate(
+        (action, row) => row.contains(action),
+        await parentSurface.elementHandle(),
+      ),
+    ).toBe(true);
+    expect(
+      await parent.evaluate((row) => getComputedStyle(row).backgroundColor),
+    ).toBe("rgba(0, 0, 0, 0)");
+    expect(
+      await parentSurface.evaluate(
+        (row) => getComputedStyle(row).backgroundColor,
+      ),
+    ).not.toBe("rgba(0, 0, 0, 0)");
+
+    await more.click();
     await page.getByRole("menuitem", { name: "New session" }).click();
     const draft = page.getByRole("button", { name: /New session draft in/ });
     await expect(draft).toBeVisible();

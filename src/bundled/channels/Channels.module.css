@@ -310,7 +310,8 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
     grid-template-columns: 124px 4px minmax(0, 1fr);
   }
   .sidebarResizeHandle {
-    display: none;
+    visibility: hidden;
+    pointer-events: none;
   }
   .withPanel .panelStack {
     width: 100%;

@@ -26,6 +26,7 @@ use terminal::{
 #[derive(Clone, Default)]
 struct Imports(Arc<Mutex<Option<PreparedImport>>>);
 
+#[cfg(any(target_os = "macos", test))]
 #[derive(Debug, PartialEq, Eq)]
 enum TitleBarDoubleClickAction {
     Maximize,
@@ -33,6 +34,7 @@ enum TitleBarDoubleClickAction {
     None,
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn title_bar_double_click_action(preference: Option<&str>) -> TitleBarDoubleClickAction {
     match preference {
         Some("Maximize" | "Zoom" | "Fill") => TitleBarDoubleClickAction::Maximize,

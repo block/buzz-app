@@ -145,7 +145,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   });
   const before = await box(conversation);
   near(sidebar.x, 16);
-  near(before.x - sidebar.x - sidebar.width, 16);
+  near(before.x - sidebar.x - sidebar.width, 8);
   near(before.y, 56);
   near(before.height, 760);
   const background = await page
@@ -173,7 +173,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   const dock = await box(panel(page));
   near(dock.y, main.y);
   near(dock.height, main.height);
-  near(dock.x - main.x - main.width, 4);
+  near(dock.x - main.x - main.width, 8);
   near(dock.x + dock.width, 1264);
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();

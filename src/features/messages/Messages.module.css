@@ -178,21 +178,12 @@
 .attachmentImage img {
   object-fit: scale-down;
 }
+/* Conversation placement only; the shared composer stylesheet owns its surface. */
 .composer {
-  border: 1px solid var(--border-input, var(--border-control));
-  background: var(--surface, var(--bg-panel));
-  border-radius: var(--radius-control);
-  padding: var(--space-3) var(--space-3) var(--space-2);
   margin: var(--space-3) var(--space-4) var(--space-4);
-  display: flex;
   flex-shrink: 0;
-  flex-direction: column;
-  gap: var(--space-1h);
-  color: var(--text, var(--text-primary));
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
 }
+
 .empty {
   padding: var(--space-8) var(--space-4);
   color: var(--text-muted);

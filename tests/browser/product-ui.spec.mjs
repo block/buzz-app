@@ -36,9 +36,35 @@ test("product catalogue uses the production composer and shared navigation", asy
   );
   await preview.getByRole("combobox", { name: "Preview context" }).click();
   await page
-    .getByRole("option", { name: "Session · Reply", exact: true })
+    .getByRole("option", { name: "Thread · Reply", exact: true })
     .click();
   await expect(previewInput).toHaveAttribute("aria-label", "Reply to thread");
+  for (const [option, copy] of [
+    ["Channel · New message", "Send a message in #buzz-design"],
+    ["Channel · Reply", "Send a message in #buzz-design"],
+    ["Thread · New thread", "Reply in thread"],
+    ["Thread · Reply", "Reply in thread"],
+    ["Direct message · New message", "Start a new message"],
+    ["Direct message · Reply", "Message..."],
+  ]) {
+    await preview.getByRole("combobox", { name: "Preview context" }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+    await expect(previewInput).toHaveAttribute("data-placeholder", copy);
+    await expect
+      .poll(() =>
+        previewInput.evaluate((el) => getComputedStyle(el, "::before").content),
+      )
+      .toBe(`"${copy}"`);
+  }
+  await previewInput.fill("Keep this draft");
+  const editorBefore = await previewInput.elementHandle();
+  await preview.getByRole("combobox", { name: "Preview context" }).click();
+  await page
+    .getByRole("option", { name: "Direct message · New message", exact: true })
+    .click();
+  await expect(previewInput).toHaveText("Keep this draft");
+  expect(await editorBefore.evaluate((el) => el.isConnected)).toBe(true);
+  await expect(previewInput).toHaveAttribute("data-empty", "false");
   await previewInput.fill("Hello from the production composer");
   await preview.getByRole("button", { name: "Send message" }).click();
   await expect(previewInput).toHaveText("");
@@ -244,4 +270,46 @@ test("product page hierarchy separates its three levels", async ({ page }) => {
   expect(stateGap).toBeGreaterThan(pairGap * 2);
   // Sections are the only boundary that earns a rule.
   await expect(states).toHaveCSS("border-top-width", "1px");
+});
+
+test("composer surface uses the shared border and fits its conversation inset", async ({
+  page,
+}) => {
+  await page.goto(`${url}#/design/product-ui/composer`);
+  const stage = page.locator(".composer-playground-stage");
+  const composer = stage.getByRole("form");
+  for (const dark of [false, true]) {
+    await page.evaluate((dark) => {
+      document.documentElement.classList.toggle("dark", dark);
+      document.documentElement.dataset.colorMode = dark ? "dark" : "light";
+    }, dark);
+    for (const width of [390, 820, 1440]) {
+      await page.setViewportSize({ width, height: 1000 });
+      const border = await composer.evaluate((el) => {
+        const probe = document.createElement("div");
+        probe.style.borderColor = "var(--border-primary)";
+        el.append(probe);
+        const color = getComputedStyle(probe).borderColor;
+        probe.remove();
+        return color;
+      });
+      await expect(composer).toHaveCSS("border-color", border);
+      await expect
+        .poll(() =>
+          stage.evaluate((el) => {
+            const parent = el.getBoundingClientRect();
+            const child = el.querySelector("form").getBoundingClientRect();
+            const left = child.left - parent.left;
+            const right = parent.right - child.right;
+            return (
+              left > 0 &&
+              right > 0 &&
+              Math.abs(left - right) < 1 &&
+              el.scrollWidth <= el.clientWidth
+            );
+          }),
+        )
+        .toBe(true);
+    }
+  }
 });

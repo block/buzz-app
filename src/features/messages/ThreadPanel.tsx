@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { composerPlaceholder, hasSentMessage } from "./composer-placeholder";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -478,6 +479,10 @@ function ThreadMessages({
           channelId={channelId}
           channelName={channelName}
           threadRootId={snapshot.root.id}
+          placeholder={composerPlaceholder(
+            "thread",
+            hasSentMessage(snapshot.replies),
+          )}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           {...(videoAttachment && mediaCommentTime !== undefined

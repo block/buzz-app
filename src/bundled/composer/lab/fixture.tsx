@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { composerPlaceholder } from "../../../features/messages/composer-placeholder";
 import { EmojiPicker } from "../../emoji/EmojiPicker";
 import { MentionCompletion } from "../../mentions/MentionCompletion";
 import { mentionQuery } from "../../mentions/mention-query";
@@ -111,6 +112,11 @@ export function useComposerFixture(
     scope,
     channelId: "buzz-design",
     channelName: "buzz-design",
+    placeholder: composerPlaceholder(
+      props.threadRootId ? "thread" : "channel",
+      false,
+      props.channelName ?? "buzz-design",
+    ),
     ...props,
   };
 }

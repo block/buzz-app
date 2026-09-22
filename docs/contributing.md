@@ -47,6 +47,12 @@ need their own validation.
 - `just web [args...]`: install locked dependencies and forward arguments to Vite,
   e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
   (default: 1430) or the next available port, allowing parallel browser development.
+  Use `just web profile` for opt-in Chromium and broker CPU profiles, or
+  `just web profile --network` to additionally record sanitized browser network and
+  Chrome performance events. Press Ctrl+C to finalize the capture; the command prints
+  the `.profiles/...-web` output directory. Load `.cpuprofile` files in Chromium
+  DevTools (**Performance** > **Load profile**), and load `chrome-performance.json`
+  through the same panel when network capture is enabled.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
@@ -61,6 +67,10 @@ need their own validation.
   implicit runner arguments. Explicit `--config` arguments merge afterward and can
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
+  On macOS, `just desktop profile` records the process tree with Instruments' Time
+  Profiler. Press Ctrl+C to finalize and validate the trace; the command prints the
+  saved `.trace` path, which opens in Instruments. Use `just profile-clean` to remove
+  all generated web and desktop captures.
 - `just design [args...]`: install locked dependencies, start the standalone
   design-system viewer, and open it in your browser. Arguments pass through to
   Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port

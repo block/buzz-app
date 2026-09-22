@@ -186,6 +186,9 @@ function installSignals(stop) {
         for (const child of children) signal(child, "SIGKILL");
         return;
       }
+      console.log(
+        `\n${name === "SIGINT" ? "Ctrl-C" : name} received; finalizing profile...`,
+      );
       stopping = Promise.resolve()
         .then(stop)
         .catch((error) => {
@@ -224,6 +227,13 @@ function safeUrl(value) {
   return `${url.origin}${url.pathname}`;
 }
 
+function headerValue(headers, name) {
+  const target = name.toLowerCase();
+  for (const [key, value] of Object.entries(headers ?? {}))
+    if (key.toLowerCase() === target) return value;
+  return undefined;
+}
+
 function networkRecorder(session) {
   const requests = new Map();
   const webSockets = new Map();
@@ -255,7 +265,7 @@ function networkRecorder(session) {
         : undefined;
       entry.response = timestamp;
       entry.timing = response.timing;
-      entry.serverTiming = response.headers?.["server-timing"];
+      entry.serverTiming = headerValue(response.headers, "server-timing");
     },
   );
   session.on(
@@ -449,7 +459,6 @@ async function profileWeb() {
     }
     if (failure) throw failure;
     console.log(`\nProfile saved to ${directory}`);
-    run("open", [directory]);
     process.exitCode = forced ? 130 : 0;
   };
   installSignals(stop);
@@ -491,7 +500,7 @@ async function profileWeb() {
   await session.send("Profiler.setSamplingInterval", { interval: 1000 });
   await session.send("Profiler.start");
   await page.goto(url);
-  console.log(`\nProfiling ${url}. Press Ctrl-C to stop and open the results.`);
+  console.log(`\nProfiling ${url}. Press Ctrl-C to stop and save the profile.`);
   const code = await new Promise((resolve) =>
     vite.once("exit", (value) => resolve(value ?? 0)),
   );
@@ -534,7 +543,6 @@ async function profileDesktop() {
       );
     }
     console.log(`\nProfile saved to ${trace}`);
-    run("open", [trace]);
     process.exitCode = forced ? 130 : 0;
   };
   installSignals(stop);
@@ -542,7 +550,7 @@ async function profileDesktop() {
   // Start compilation immediately: Time Profiler records system-wide, including processes created afterward.
   desktop = run(process.execPath, ["scripts/desktop-dev.mjs", ...args]);
   console.log(
-    "\nProfiling the desktop process tree. Press Ctrl-C to stop and open Instruments.",
+    "\nProfiling the desktop process tree. Press Ctrl-C to stop and save the profile.",
   );
   const code = await new Promise((resolve) =>
     desktop.once("exit", (value) => resolve(value ?? 0)),

@@ -38,7 +38,6 @@ export function PageSearch({
         ref={trigger}
         type="button"
         variant="chrome"
-        shape="round"
         aria-label="Find a page"
         title="Find a page"
         onClick={() => {

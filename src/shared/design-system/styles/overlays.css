@@ -1,4 +1,23 @@
 @layer components {
+  .buzz-popover-positioner {
+    z-index: var(--layer-popover);
+  }
+  .buzz-popover {
+    @apply popover-surface;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    max-width: var(--available-width);
+    max-height: var(--available-height);
+    overflow: auto;
+    border-radius: var(--radius-panel);
+    padding: var(--space-3);
+    transform-origin: var(--transform-origin);
+  }
+  .buzz-popover[data-variant="flush"] {
+    gap: 0;
+    padding: 0;
+  }
   .buzz-dialog-backdrop {
     position: fixed;
     inset: 0;

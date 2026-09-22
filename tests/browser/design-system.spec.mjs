@@ -75,6 +75,11 @@ test("shared tokens reach app controls without history or chip overrides", async
 
   for (const mode of ["Light", "Dark"]) {
     await page.getByRole("radio", { name: mode, exact: true }).check();
+    await expect(page.locator("body")).toHaveCSS("scrollbar-width", "thin");
+    await expect(page.locator("body")).toHaveCSS(
+      "scrollbar-color",
+      "rgb(128, 128, 128) rgba(0, 0, 0, 0)",
+    );
     const override = await page.addStyleTag({
       content: `:root, :root[data-color-mode] {
         --affordance-subtle: rgb(12, 34, 56);
@@ -85,7 +90,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         --surface-popover: rgb(23, 45, 67);
         --border-standard: rgb(45, 67, 89);
         --radius-control: 13px;
-        --radius-card: 19px;
+        --radius-panel: 19px;
         --layer-popover: 1234;
       }`,
     });
@@ -116,7 +121,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         await expect(surface).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
         await expect(surface).toHaveCSS(
           "border-radius",
-          name === "emojiPopover" ? "19px" : "13px",
+          ["emojiPopover", "mentionPopover"].includes(name) ? "19px" : "13px",
         );
         await expect(surface).toHaveCSS("z-index", "1234");
       }

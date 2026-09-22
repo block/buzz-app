@@ -2,6 +2,7 @@
 @layer theme, base, components, utilities;
 @import "tailwindcss";
 @import "../design-system/styles/tokens.css";
+@import "../design-system/styles/scrollbars.css" layer(base);
 @import "../design-system/styles/typography.css";
 @import "../design-system/styles/materials.css";
 @import "../design-system/styles/components.css";
@@ -91,7 +92,6 @@
     overscroll-behavior: none;
   }
   * {
-    scrollbar-width: thin;
     box-sizing: border-box;
   }
   :where(strong, b) {
@@ -106,7 +106,7 @@
   button:not(:where([data-buzz-ui], [data-buzz-ui] *)) {
     cursor: pointer;
     border: 1px solid var(--border);
-    border-radius: var(--radius-legacy-control);
+    border-radius: var(--radius-pill);
     padding: var(--space-2) var(--space-control-inset);
     background: var(--surface);
     color: var(--accent);

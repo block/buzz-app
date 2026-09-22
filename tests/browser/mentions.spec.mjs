@@ -19,25 +19,55 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   try {
     await server.listen();
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?test-controls`,
     );
     const keys = await page.evaluate(() => ({
       first: window.mentionFixture.first,
       second: window.mentionFixture.second,
     }));
+    // Real layout is required: the popup follows the whole composer, including
+    // multiple lines of text, rather than the trigger's toolbar position.
+    const expectComposerAnchor = async (popup) => {
+      await expect(popup).toHaveClass(/buzz-popover/);
+      expect(
+        await popup.evaluate((element) => element.closest("form") === null),
+      ).toBe(true);
+      await expect(popup).toHaveCSS("border-radius", "24px");
+      await expect
+        .poll(() =>
+          popup.evaluate((element) => {
+            const composer = document.querySelector("form");
+            return (
+              composer.getBoundingClientRect().top -
+              element.getBoundingClientRect().bottom
+            );
+          }),
+        )
+        .toBe(4);
+    };
     const choose = async (key) => {
       await page
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
-      const picker = page.getByRole("region", {
+      const picker = page.getByRole("dialog", {
         name: "Mention a member or agent",
       });
+      const search = picker.getByRole("searchbox");
+      await search.fill(key);
       await expect(
         picker.getByRole("button", { name: `Honey ${key}`, exact: true }),
       ).toBeVisible();
-      await picker
-        .getByRole("button", { name: `Honey ${key}`, exact: true })
-        .click();
+      await expectComposerAnchor(picker);
+      await search.press("ArrowDown");
+      const choice = picker.getByRole("button", {
+        name: `Honey ${key}`,
+        exact: true,
+      });
+      await expect(choice).toBeFocused();
+      await expect(choice).toHaveCSS("outline-style", "solid");
+      await choice.press("Enter");
+      await expect(picker).toHaveCount(0);
+      await expect(page.getByRole("textbox")).toBeFocused();
     };
     const order = () =>
       page
@@ -46,6 +76,75 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
           buttons.map((button) => button.getAttribute("aria-label")),
         );
     await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
+    // Browser-only contract: native shadow search and React search share their
+    // shape, typography, clear target and alignment in both appearance modes.
+    const searchAppearance = (field) =>
+      field.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const input = getComputedStyle(element.querySelector("input"));
+        const clear = element.querySelector("button");
+        return {
+          height: style.height,
+          radius: style.borderRadius,
+          padding: style.padding,
+          background: style.backgroundColor,
+          border: style.border,
+          color: input.color,
+          font: input.font,
+          clear: clear && {
+            width: getComputedStyle(clear).width,
+            height: getComputedStyle(clear).height,
+            radius: getComputedStyle(clear).borderRadius,
+            color: getComputedStyle(clear).color,
+          },
+        };
+      });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      const mention = page.getByRole("dialog", {
+        name: "Mention a member or agent",
+      });
+      const row = mention.getByRole("button", {
+        name: `Honey ${keys.first}`,
+        exact: true,
+      });
+      await expect(row).toHaveCSS("padding", "8px");
+      await row.hover();
+      await expect(row).toHaveCSS(
+        "background-color",
+        mode === "light" ? "rgb(232, 232, 232)" : "rgb(64, 64, 64)",
+      );
+      await mention.getByRole("searchbox").fill("");
+      const empty = await searchAppearance(mention.locator(".search-field"));
+      await mention.getByRole("searchbox").fill("Honey");
+      const filled = await searchAppearance(mention.locator(".search-field"));
+      await page
+        .getByRole("button", { name: "Insert emoji", exact: true })
+        .click();
+      const emojiField = page.locator("em-emoji-picker .search-field");
+      await expect(emojiField).toBeVisible();
+      expect(await searchAppearance(emojiField)).toEqual(empty);
+      const emojiSearch = emojiField.getByRole("searchbox");
+      await emojiSearch.fill("face");
+      await expect(
+        emojiField.getByRole("button", { name: "Clear", exact: true }),
+      ).toBeVisible();
+      expect(await searchAppearance(emojiField)).toEqual(filled);
+      await emojiField
+        .getByRole("button", { name: "Clear", exact: true })
+        .click();
+      await expect(emojiSearch).toHaveValue("");
+      await expect(emojiSearch).toBeFocused();
+      await emojiSearch.press("Escape");
+    }
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "light";
+    });
     await choose(keys.first);
     await choose(keys.second);
     // The merged toolbar must preserve exact recipients while the new picker
@@ -62,20 +161,15 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       "data-theme",
       "dark",
     );
+    await expectComposerAnchor(
+      page.getByRole("dialog", { name: "Emoji picker" }),
+    );
     await search.fill("grinning");
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
     await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(2);
-    const chip = page
-      .getByRole("region", { name: "Notification recipients" })
-      .getByRole("button")
-      .first();
-    await expect(chip).toHaveCSS("background-color", "rgb(51, 51, 51)");
-    await expect(chip).toHaveCSS("color", "rgb(255, 255, 255)");
+      page.getByRole("region", { name: "Notification recipients" }),
+    ).toHaveCount(0);
     await page.screenshot({
       path: test.info().outputPath("mention-recipients.png"),
     });
@@ -111,10 +205,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       page.getByRole("button", { name: "Mention a member", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(1);
+      page.getByRole("region", { name: "Notification recipients" }),
+    ).toHaveCount(0);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
@@ -165,10 +257,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");
     await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(1);
+      page.getByRole("region", { name: "Notification recipients" }),
+    ).toHaveCount(0);
     await page
       .getByRole("button", { name: "Toggle disabled", exact: true })
       .click();

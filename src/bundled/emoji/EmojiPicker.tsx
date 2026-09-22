@@ -3,18 +3,19 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
   useSyncExternalStore,
 } from "react";
 import {
-  MagnifyingGlassIcon,
   SmileyIcon,
   SmileyStickerIcon,
 } from "../../shared/design-system/icons/index";
-import { Popover } from "@base-ui/react/popover";
+import {
+  Popover,
+  type PopoverActions,
+} from "../../shared/design-system/ui/Popover";
 import type { RelaySession } from "../../features/relay/session";
 import {
   communityFromScope,
@@ -55,12 +56,12 @@ export function EmojiPicker({
   const [error, setError] = useState<string>();
   const [attempt, retry] = useState(0);
   const trigger = useRef<HTMLButtonElement>(null);
+  const popoverActions = useRef<PopoverActions>(null);
   const controls = useRef<HTMLFieldSetElement>(null);
   const [host, setHost] = useState<HTMLDivElement | null>(null);
   const search = useRef("");
   const onInsert = useRef(insert);
   onInsert.current = insert;
-  const id = useId();
   const community = reaction ? undefined : communityFromScope(scope);
   const gifs = community
     ? gifAvailability?.community === community
@@ -73,9 +74,10 @@ export function EmojiPicker({
     session.emoji.snapshot,
     session.emoji.snapshot,
   );
-  useEffect(() => {
-    // The popover is positioned against the action row; intermediate tool groups
+  useLayoutEffect(() => {
+    // The popover is positioned against the composer; intermediate tool groups
     // may be narrower and are not its available width.
+    // Size before paint so opening never flashes a one-column shell.
     const container = reaction
       ? document.documentElement
       : controls.current?.offsetParent;
@@ -126,18 +128,6 @@ export function EmojiPicker({
     );
     return () => controller.abort();
   }, [community, gifDiscoveryRequested, gifAvailability]);
-  useEffect(() => {
-    if (!open || disabled || reaction) return;
-    function outside(event: PointerEvent) {
-      if (
-        event.target instanceof Node &&
-        !controls.current?.contains(event.target)
-      )
-        setOpen(false);
-    }
-    document.addEventListener("pointerdown", outside);
-    return () => document.removeEventListener("pointerdown", outside);
-  }, [open, disabled, reaction]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt explicitly retries a failed lazy import.
   useLayoutEffect(() => {
     if (!open || disabled || tab !== "emoji" || !host || !perLine) return;
@@ -184,11 +174,6 @@ export function EmojiPicker({
   }, [open, disabled, session, scope, catalog, attempt, perLine, tab, host]);
   const emojiContent = (
     <div className={styles.emojiMart}>
-      <MagnifyingGlassIcon
-        className={styles.sharedSearchIcon}
-        size={16}
-        aria-hidden="true"
-      />
       <div ref={setHost} />
     </div>
   );
@@ -208,29 +193,34 @@ export function EmojiPicker({
     />
   );
   const picker = (
-    <section
-      id={id}
-      className={`${styles.emojiPopover} ${reaction ? styles.reactionPopover : ""}`}
+    <Popover.Popup
+      variant="flush"
+      initialFocus={false}
+      onKeyDownCapture={(event) => {
+        // Mart swallows Escape in its shadow root before Base UI can see it.
+        if (event.key === "Escape") {
+          event.preventDefault();
+          event.stopPropagation();
+          popoverActions.current?.close();
+        }
+      }}
+      className={styles.emojiPopover}
+      data-reaction={reaction || undefined}
       aria-label="Emoji picker"
+      data-tabs={showGifTab || undefined}
       style={{ width: perLine * EMOJI_SLOT + PICKER_CHROME + 2 }}
     >
-      {showGifTab ? (
-        <Tabs
-          variant="panel"
-          label="Media type"
-          value={tab}
-          onValueChange={setTab}
-          items={[
-            { value: "emoji", label: "Emoji" },
-            { value: "gifs", label: "GIF" },
-          ]}
-          renderPanel={(value) =>
-            value === "emoji" ? emojiContent : gifContent
-          }
-        />
-      ) : (
-        emojiContent
-      )}
+      <Tabs
+        variant="panel"
+        label="Media type"
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          { value: "emoji", label: "Emoji" },
+          ...(showGifTab ? [{ value: "gifs" as const, label: "GIF" }] : []),
+        ]}
+        renderPanel={(value) => (value === "emoji" ? emojiContent : gifContent)}
+      />
       {tab === "emoji" && error && (
         <div role="alert" className={styles.emojiStatus}>
           Could not load emoji picker: {error}
@@ -247,7 +237,7 @@ export function EmojiPicker({
           </Button>
         </div>
       )}
-    </section>
+    </Popover.Popup>
   );
   const button = (
     <IconButton
@@ -256,24 +246,10 @@ export function EmojiPicker({
       type="button"
       aria-label={reaction ? "Add reaction" : "Insert emoji"}
       title={reaction ? "Add reaction" : "Insert emoji"}
-      aria-expanded={open && !disabled}
       aria-busy={(gifDiscoveryRequested && gifs === undefined) || undefined}
-      aria-controls={id}
       disabled={disabled}
       onPointerEnter={() => setGifDiscoveryRequested(true)}
       onFocus={() => setGifDiscoveryRequested(true)}
-      onClick={() => {
-        if (open) {
-          setOpen(false);
-          return;
-        }
-
-        void session.emoji.ensure();
-        if (gifs !== true && gifAvailability?.community === community)
-          setGifAvailability(undefined);
-        setGifDiscoveryRequested(true);
-        setOpen(true);
-      }}
       icon={
         reaction ? (
           <SmileyStickerIcon size={18} aria-hidden="true" />
@@ -289,39 +265,36 @@ export function EmojiPicker({
       disabled={disabled}
       aria-label="Emoji controls"
       className={styles.emojiPicker}
-      onKeyDownCapture={(event) => {
-        // Mart stops search key events before they bubble out of its shadow root.
-        if (event.key === "Escape" && open) {
-          event.preventDefault();
-          event.stopPropagation();
-          setOpen(false);
-          trigger.current?.focus();
-        }
-      }}
     >
-      {reaction ? <Popover.Trigger render={button} /> : button}
-      {reaction ? (
-        <Popover.Portal>
-          <Popover.Positioner
-            side="bottom"
-            align="start"
-            sideOffset={6}
-            collisionPadding={16}
-            className={styles.reactionPositioner}
-          >
-            <Popover.Popup render={picker} />
-          </Popover.Positioner>
-        </Popover.Portal>
-      ) : open && !disabled ? (
-        picker
-      ) : null}
+      <Popover.Trigger render={button} />
+      <Popover.Portal>
+        <Popover.Positioner
+          side={reaction ? "bottom" : "top"}
+          anchor={
+            reaction
+              ? undefined
+              : () => controls.current?.closest("form") ?? trigger.current
+          }
+        >
+          {picker}
+        </Popover.Positioner>
+      </Popover.Portal>
     </fieldset>
   );
-  return reaction ? (
-    <Popover.Root open={open && !disabled} onOpenChange={setOpen}>
+  return (
+    <Popover.Root
+      actionsRef={popoverActions}
+      open={open && !disabled}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) return;
+        void session.emoji.ensure();
+        if (gifs !== true && gifAvailability?.community === community)
+          setGifAvailability(undefined);
+        setGifDiscoveryRequested(true);
+      }}
+    >
       {controlsView}
     </Popover.Root>
-  ) : (
-    controlsView
   );
 }

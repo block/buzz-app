@@ -220,7 +220,6 @@ export function MediaAttachment({
           <IconButton
             size="compact"
             variant="solid"
-            shape="round"
             type="button"
             aria-label={playing ? "Pause video" : "Play video"}
             onClick={() => {
@@ -236,7 +235,6 @@ export function MediaAttachment({
           <IconButton
             size="compact"
             variant="solid"
-            shape="round"
             type="button"
             aria-label="Open video fullscreen"
             onClick={() => {
@@ -310,7 +308,6 @@ function MediaViewer({
           <IconButton
             size="compact"
             variant="solid"
-            shape="round"
             ref={closeButton}
             type="button"
             aria-label="Close fullscreen viewer"

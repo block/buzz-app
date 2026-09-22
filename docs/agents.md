@@ -79,14 +79,15 @@ The shared channel summary now exposes exact members from its existing verified
 relay-authored kind-39002 roster, without a second directory or subscription.
 The bundled **Mentions** plugin offers **Mention a member** in both channel and
 thread composers through the shared conversation tool contract. The host retains
-recipient intent, disclosure and removal even when the chooser plugin is disabled.
+recipient intent and inline mention editing even when the chooser plugin is disabled.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Editing a selected span removes its
 notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
-than guess. Even a same-text replacement drops the edited identity. Explicit recipient
-chips show who will be notified and can be removed without deleting the prose.
+than guess. Even a same-text replacement drops the edited identity. Selected
+mentions appear inline; editing or deleting them removes notification intent.
+The picker supports Up/Down navigation, Enter selection and Escape dismissal.
 
 `session.messages.send/reply` accepts up to 32 exact pubkeys and emits deduplicated
 `p` tags. Selection never invites someone. The native local-agent flow now offers
@@ -160,8 +161,8 @@ HTTP broker/verified transport, including corrupted signature rejection.
 
 ## Current feedback round and deferred validation
 
-Composer: grouped @/emoji controls on the left, circular send on the right,
-quieter recipient chips and compact avatar suggestions. No placeholder actions,
+Composer: grouped @/emoji controls on the left, icon-only send on the right,
+inline recipient mentions and compact avatar suggestions. No placeholder actions,
 rich-editor migration or changed notification semantics. Cards use squircle
 avatars, short labels and expandable exact keys; no running/ownership badge.
 

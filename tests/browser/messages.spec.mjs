@@ -450,11 +450,9 @@ test("media review completions stay visible and preserve modal keyboard ownershi
       await mention.click();
       await expect(input).toHaveJSProperty("value", "@Fixture Reader ");
       await expect(input).toBeFocused();
-      await expect(
-        dialog.getByRole("region", {
-          name: "Notification recipients",
-        }),
-      ).toContainText("Fixture Reader");
+      await expect(input.locator("[data-mention-kind]")).toContainText(
+        "Fixture Reader",
+      );
       for (const key of ["Enter", "Tab"]) {
         await input.fill(":smile");
         const emoji = page

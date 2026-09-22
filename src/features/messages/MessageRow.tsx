@@ -136,7 +136,6 @@ export const MessageRow = memo(function MessageRow({
         {clickable ? (
           <IconButton
             size="large"
-            shape="round"
             aria-label={`View ${name} profile`}
             onClick={(event) => {
               event.currentTarget.focus();

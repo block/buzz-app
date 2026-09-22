@@ -1,3 +1,6 @@
+@import "./search-field.css" layer(components);
+@import "./composer.css" layer(components);
+
 @layer components {
   .buzz-button {
     position: relative;
@@ -104,7 +107,6 @@
     min-height: 0;
     width: var(--size-control);
     height: var(--size-control);
-    border-radius: var(--radius-control);
     flex: 0 0 auto;
     padding: 0;
   }
@@ -122,7 +124,6 @@
     width: var(--size-row);
     height: var(--size-row);
     min-height: var(--size-row);
-    border-radius: var(--radius-row);
   }
 
   /* Toolbars need a less dense hit area than navigator-row actions while
@@ -130,17 +131,11 @@
   .buzz-button[data-icon-size="toolbar"] {
     width: 2rem;
     height: 2rem;
-    border-radius: var(--radius-row);
   }
 
   .buzz-button[data-icon-size="large"] {
     width: var(--size-control-lg);
     height: var(--size-control-lg);
-    border-radius: var(--radius-pill);
-  }
-
-  .buzz-button[data-icon-shape="round"] {
-    border-radius: var(--radius-pill);
   }
 
   /* Every icon variant states its own hover. The one that did not —
@@ -199,6 +194,10 @@
      like an available send/stop action. Shape never changes state semantics. */
   .buzz-button[data-icon-variant][data-disabled] {
     color: var(--text-unavailable);
+  }
+
+  .buzz-button[data-icon-variant="ghost"][data-disabled] {
+    background: transparent;
   }
 
   .buzz-button:is(
@@ -607,46 +606,6 @@
     margin-top: var(--space-1);
   }
 
-  .search-field {
-    display: flex;
-    width: 100%;
-    min-height: var(--size-control);
-    align-items: center;
-    gap: var(--space-row-gap);
-    border-radius: var(--radius-control);
-    border: 1px solid var(--border-prominent);
-    padding: 0 var(--space-control-inset);
-    background: var(--surface-panel);
-    color: var(--text-metadata);
-  }
-
-  .search-field[data-variant="navigator"] {
-    border-radius: var(--radius-panel);
-  }
-
-  .search-field input {
-    min-width: 0;
-    flex: 1;
-    border: 0;
-    outline: 0;
-    background: transparent;
-    color: var(--text-standard);
-    font: inherit;
-  }
-
-  html[data-keyboard-navigation] .search-field input:focus-visible {
-    outline: 2px solid var(--text-standard);
-    outline-offset: 2px;
-  }
-
-  .search-field input::placeholder {
-    color: var(--text-metadata);
-  }
-
-  .search-field input::-webkit-search-cancel-button {
-    display: none;
-  }
-
   .navigation-section {
     display: flex;
     flex-direction: column;
@@ -712,9 +671,30 @@
   /* Hover is the lightest acknowledgement; selection is a persistent, one-step
      stronger statement. Keeping them separate prevents a selected destination
      from becoming indistinguishable the moment a pointer passes over it. */
-  .navigation-item:hover:not([data-selected]) {
+  .navigation-item:hover:not([data-selected]):not([data-variant="option"]) {
     background: var(--affordance-subtle);
     color: var(--text-standard);
+  }
+
+  .navigation-item[data-variant="option"] {
+    padding: var(--space-2);
+    transition: none;
+  }
+
+  @media (hover: hover) and (pointer: fine) {
+    .navigation-item[data-variant="option"]:hover:not(:disabled) {
+      background: var(--affordance-subtle-hover);
+    }
+  }
+
+  html[data-keyboard-navigation]
+    .navigation-item[data-variant="option"]:focus-visible {
+    background: var(--affordance-subtle-hover);
+    outline-offset: -2px;
+  }
+
+  .navigation-item[data-variant="option"]:active:not(:disabled) {
+    background: var(--affordance-subtle-pressed);
   }
 
   .navigation-item[data-selected] {

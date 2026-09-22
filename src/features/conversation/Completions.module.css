@@ -96,3 +96,43 @@
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
 }
+
+/* Inline mention suggestions share the toolbar picker's surface and row rhythm.
+   The editor retains focus and owns the listbox's active descendant. */
+.popup[data-mention] {
+  border-radius: var(--radius-panel);
+  padding: var(--space-3);
+}
+.popup[data-mention] .list {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-1);
+}
+.popup[data-mention] .option {
+  padding: var(--space-2);
+  border-radius: var(--radius-row);
+}
+.popup[data-mention] .preview {
+  width: var(--size-control-sm);
+  height: var(--size-control-sm);
+}
+.popup[data-mention] .label:has([data-recipient-key]) {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.name {
+  display: block;
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.popup[data-mention] [data-recipient-key] {
+  flex: 0 0 12ch;
+  overflow: hidden;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  color: var(--text-metadata);
+}

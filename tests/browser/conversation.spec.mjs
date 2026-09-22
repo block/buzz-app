@@ -218,11 +218,7 @@ test("independent packed author consumer and native-installed contribution survi
       .getByRole("button", { name: "Insert mixed", exact: true })
       .click();
     await expect(draft).toHaveJSProperty("value", "Hi @Member and @Member ");
-    await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(2);
+    await expect(draft.locator("[data-mention-kind]")).toHaveCount(2);
     await page.evaluate(() => window.conversationFixture.saveEdit());
     await page.evaluate(() => window.conversationFixture.removeProbe());
     expect(
@@ -261,10 +257,8 @@ test("independent packed author consumer and native-installed contribution survi
     await page
       .getByRole("button", { name: `Member ${member}`, exact: true })
       .click();
-    const recipients = page.getByRole("region", {
-      name: "Notification recipients",
-    });
-    await expect(recipients.getByRole("button")).toHaveCount(1);
+    const mentions = draft.locator("[data-mention-kind]");
+    await expect(mentions).toHaveCount(1);
     const withMention = await draft.evaluate((element) => element.value);
     const textarea = await draft.elementHandle();
     await page.evaluate(() =>
@@ -274,11 +268,10 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("button", { name: "Mention a member", exact: true }),
     ).toHaveCount(0);
     await expect(draft).toHaveJSProperty("value", withMention);
-    await expect(recipients.getByRole("button")).toHaveCount(1);
+    await expect(mentions).toHaveCount(1);
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
-    await recipients.getByRole("button").click();
-    await expect(recipients).toHaveCount(0);
-    await expect(draft).toHaveJSProperty("value", withMention);
+    await draft.fill("Channels draft");
+    await expect(mentions).toHaveCount(0);
     await page.evaluate(() =>
       window.conversationFixture.change("enable", "buzz.mentions"),
     );

@@ -1,20 +1,17 @@
 @reference "../../shared/styles/globals.css";
 
 .mentionPopover {
-  @apply popover-surface;
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
   width: min(380px, 75vw);
-  max-height: 360px;
-  overflow: auto;
-  padding: var(--space-3);
+  max-width: min(var(--anchor-width), var(--available-width));
+  max-height: min(360px, var(--available-height));
+  overflow: hidden;
 }
-.mentionPopover label {
-  display: grid;
-  gap: var(--space-1h);
+.mentionPopover > :not(.mentionChoices) {
+  flex-shrink: 0;
 }
 .mentionPopover p {
+  margin: 0;
+  color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -22,15 +19,15 @@
 .mentionChoices {
   display: grid;
   gap: var(--space-1);
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 .mentionChoices code {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
   overflow-wrap: anywhere;
-}
-.mentionPopover p {
-  color: var(--text-subtle);
 }
 .pickerControls {
   border: 0;

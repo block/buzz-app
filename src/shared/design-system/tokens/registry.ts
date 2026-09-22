@@ -395,6 +395,21 @@ export const ROLE_GROUPS: RoleGroup[] = [
     ],
   },
   {
+    id: "scrollbars",
+    name: "Scrollbars",
+    description:
+      "Native thin scrollbars with transparent tracks in both themes.",
+    roles: [
+      {
+        token: "scrollbar-thumb",
+        variable: "--scrollbar-thumb",
+        pointsAt: "neutral-8 light / neutral-9 dark (gray)",
+        use: "Gray native scrollbar thumb on a transparent track, including vendor shadow roots.",
+        status: "core",
+      },
+    ],
+  },
+  {
     id: "semantic-border",
     name: "Border",
     description: "Shared border roles, with values for both themes.",
@@ -1086,6 +1101,12 @@ export const SPACE_ROLES = [
 ];
 
 export const RADII = [
+  {
+    token: "corner-control",
+    variable: "--corner-control",
+    value: "16px",
+    use: "Legacy controls; distinct from the compact 8px radius-control and 24px radius-panel.",
+  },
   {
     token: "radius-row",
     variable: "--radius-row",

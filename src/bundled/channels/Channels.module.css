@@ -250,7 +250,6 @@
   cursor: help;
 }
 .activityPopover {
-  @apply popover-surface;
   width: min(360px, calc(100vw - 24px));
   max-height: min(420px, calc(100vh - 24px));
   overflow: hidden;

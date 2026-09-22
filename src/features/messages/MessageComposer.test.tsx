@@ -451,11 +451,10 @@ it.each([undefined, "root"])(
     await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
     h.unmount();
     h = mount(options);
+    expect(h.input()).toHaveValue("Please help @Honey @Honey ");
     expect(
-      screen.getByRole("button", {
-        name: `Remove mention Honey ${second.pubkey}`,
-      }),
-    ).toBeVisible();
+      screen.queryByRole("region", { name: "Notification recipients" }),
+    ).not.toBeInTheDocument();
     h.submit();
     expect(
       (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
@@ -504,11 +503,7 @@ it.each([undefined, "root"])(
       data: "’",
     });
     expect(input).toHaveValue("@Honey can you see this is’s");
-    expect(
-      screen.getByRole("button", {
-        name: `Remove mention Honey ${first.pubkey}`,
-      }),
-    ).toBeVisible();
+
     h.submit();
     expect(
       (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
@@ -516,20 +511,15 @@ it.each([undefined, "root"])(
   },
 );
 
-it("deleting a mention or removing its chip removes notification intent", async () => {
+it("deleting an inline mention removes notification intent without a chip row", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(
+    screen.queryByRole("region", { name: "Notification recipients" }),
+  ).not.toBeInTheDocument();
   h.fill("no recipient now");
   h.submit();
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
-  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
-  await h.user.click(
-    screen.getByRole("button", {
-      name: `Remove mention Honey ${first.pubkey}`,
-    }),
-  );
-  h.submit();
-  expect(h.messages.send.mock.calls[1]?.at(-1)).toEqual([]);
 });
 
 it("ambiguous namesake replacement cannot notify the wrong remaining identity", async () => {

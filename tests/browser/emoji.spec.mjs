@@ -341,7 +341,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(toneMenu).toBeVisible();
     await expect(toneMenu).toHaveCSS("z-index", "100");
     // Mart's opening transform temporarily lifts the menu above its final edge.
-    // Measure the settled menu: its 42px bottom offset meets the 42px nav flush,
+    // Measure the settled menu: its control-size offset meets the nav flush,
     // which is non-overlapping but does not leave a strictly positive gap.
     await expect(toneMenu).toHaveCSS("transform", "none");
     await expect(toneMenu).toHaveCSS("opacity", "1");
@@ -366,33 +366,43 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(toneMenu).toHaveCount(0);
     await expect(skinTone).toBeFocused();
     await search.focus();
-    const searchIcon = page.locator(
-      '[aria-label="Emoji picker"] svg[class*="sharedSearchIcon"]',
-    );
+    const searchIcon = page.locator("em-emoji-picker .search .loupe svg");
     await expectPhosphor(searchIcon, "magnifying-glass");
     await expect(
-      page.locator(
-        '[aria-label="Emoji picker"] svg[class*="sharedSearchIcon"]:visible',
-      ),
+      page.locator("em-emoji-picker .search .loupe svg:visible"),
     ).toHaveCount(1);
     await expect(page.locator("em-emoji-picker .search .loupe")).toHaveCSS(
       "visibility",
-      "hidden",
+      "visible",
     );
-    await expect(search).toHaveCSS("height", "28px");
-    await expect(search).toHaveCSS("margin-left", "2px");
-    await expect(search).toHaveCSS("margin-right", "2px");
+    const searchField = page.locator("em-emoji-picker .search-field");
+    await expect(searchField).toHaveCSS("height", "40px");
+    await expect(search).toHaveCSS("margin-left", "0px");
+    await expect(search).toHaveCSS("margin-right", "0px");
     await expect(search).toHaveCSS("border-top-width", "0px");
-    await expect(search).toHaveCSS("border-radius", "10px");
-    await expect(search).toHaveCSS("background-color", "rgb(240, 240, 240)");
+    await expect(searchField).toHaveCSS("border-radius", "159984px");
+    await expect(searchField).toHaveCSS(
+      "background-color",
+      "rgb(255, 255, 255)",
+    );
     await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
     await expect(search).toHaveCSS("outline-style", "none");
-    await expect(search).toHaveCSS(
-      "box-shadow",
-      "rgb(240, 240, 240) 0px 0px 0px 1px",
-    );
+    await expect(search).toHaveCSS("box-shadow", "none");
+    const expectSearchAlignment = async () => {
+      const offsets = await searchField.evaluate((field) => {
+        const bounds = field.getBoundingClientRect();
+        return [...field.querySelectorAll("input, svg")].map((element) => {
+          const rect = element.getBoundingClientRect();
+          return Math.abs(
+            rect.top + rect.height / 2 - bounds.top - bounds.height / 2,
+          );
+        });
+      });
+      for (const offset of offsets) expect(offset).toBeLessThan(1);
+    };
+    await expectSearchAlignment();
     const surface = page.locator("em-emoji-picker #root");
-    const region = page.getByRole("region", { name: "Emoji picker" });
+    const region = page.getByRole("dialog", { name: "Emoji picker" });
     await expect(surface).toHaveAttribute("data-theme", "light");
     await expect(region).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(region).toHaveCSS("border-radius", "24px");
@@ -404,7 +414,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(surface).toHaveCSS("width", "360px");
     const initialRegion = await region.boundingBox();
     const initialSurface = await surface.boundingBox();
-    const searchGutters = await search.evaluate((input) => {
+    const searchGutters = await searchField.evaluate((input) => {
       const searchBounds = input.getBoundingClientRect();
       const rootBounds = input
         .getRootNode()
@@ -444,33 +454,33 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBe(true);
     await search.fill("party");
     const emojiClear = page.locator("em-emoji-picker .search .delete");
-    await expect(emojiClear).toHaveCSS("right", "10px");
+    await expect(emojiClear).toHaveCSS("width", "32px");
+    await expect(emojiClear).toHaveCSS("height", "32px");
     await expect(emojiClear.locator("svg")).toHaveAttribute(
       "viewBox",
       "0 0 256 256",
     );
     await expect(emojiClear.locator("svg")).toHaveCSS("width", "16px");
     await expect(emojiClear.locator("svg")).toHaveCSS("height", "16px");
-    await expect(emojiClear).toHaveCSS("color", "rgb(82, 82, 82)");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expect(emojiClear).toHaveCSS("color", "rgb(102, 102, 102)");
+    await expectPhosphor(emojiClear.locator("svg"), "x");
     await expect(emojiClear.locator("svg path")).toHaveCSS(
       "fill",
-      "rgb(82, 82, 82)",
+      "rgb(102, 102, 102)",
     );
+    await expectSearchAlignment();
     // Mart recreates the clear control when search empties, and on picker remount.
     await search.fill("");
     await expect(emojiClear).toHaveCount(0);
     await search.fill("party");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expectPhosphor(emojiClear.locator("svg"), "x");
     await picker.click();
     await expect(page.locator("em-emoji-picker")).toHaveCount(0);
     await picker.click();
     await search.fill("party");
-    await expectPhosphor(emojiClear.locator("svg"), "x-circle");
+    await expectPhosphor(emojiClear.locator("svg"), "x");
     await expect(
-      page.locator(
-        '[aria-label="Emoji picker"] svg[class*="sharedSearchIcon"]:visible',
-      ),
+      page.locator("em-emoji-picker .search .loupe svg:visible"),
     ).toHaveCount(1);
     const insert = page.getByRole("button", {
       name: ":party:",
@@ -489,16 +499,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         document.documentElement.dataset.colorMode = mode;
       }, mode);
       await expect(surface).toHaveAttribute("data-theme", mode);
-      await expect(search).toHaveCSS(
+      await expect(searchField).toHaveCSS(
         "background-color",
-        mode === "dark" ? "rgb(16, 16, 16)" : "rgb(240, 240, 240)",
+        mode === "dark" ? "rgb(26, 26, 26)" : "rgb(255, 255, 255)",
       );
-      await expect(search).toHaveCSS(
-        "box-shadow",
-        mode === "dark"
-          ? "rgb(16, 16, 16) 0px 0px 0px 1px"
-          : "rgb(240, 240, 240) 0px 0px 0px 1px",
-      );
+      await expect(search).toHaveCSS("box-shadow", "none");
       await expect(search).toHaveCSS("font-family", /Inter Variable/);
 
       await expect(search).toHaveValue("party");
@@ -511,7 +516,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     await expect(page.locator("em-emoji-picker #root")).toHaveCSS(
       "width",
-      "240px",
+      // 300px pane minus 32px composer margins and both surface borders.
+      // The popup uses the composer width, including its toolbar padding.
+      "264px",
     );
     await expect(search).toHaveValue("party");
     await expect(page.locator("em-emoji-picker nav")).toHaveCount(0);
@@ -526,7 +533,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     expect(narrowRegion.y + 1).toBe(narrowSurface.y);
     const pane = await page.locator("main").boundingBox();
     const popover = await page
-      .getByRole("region", { name: "Emoji picker" })
+      .getByRole("dialog", { name: "Emoji picker" })
       .boundingBox();
     expect(popover.x).toBeGreaterThanOrEqual(pane.x);
     expect(popover.x + popover.width).toBeLessThanOrEqual(pane.x + pane.width);
@@ -600,14 +607,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     });
     expect(emojiGridGutters.left).toBeCloseTo(emojiGridGutters.right, 1);
     expect(emojiGridGutters.left).toBeCloseTo(12, 1);
-    const scrollbar = page.locator("em-emoji-picker .buzz-scrollbar-track");
-    const scrollbarThumb = scrollbar.locator(".buzz-scrollbar-thumb");
-    await expect(scrollbar).toBeVisible();
-    await expect(scrollbar).toHaveCSS("right", "4px");
-    await expect(scrollbar).toHaveCSS("opacity", "0.6");
-    await expect(scrollbarThumb).toHaveCSS(
-      "background-color",
-      "rgb(128, 128, 128)",
+    const scroll = page.locator("em-emoji-picker .scroll");
+    await expect(scroll).toHaveCSS("scrollbar-width", "thin");
+    await expect(scroll).toHaveCSS(
+      "scrollbar-color",
+      "rgb(128, 128, 128) rgba(0, 0, 0, 0)",
     );
     for (const [index, result] of searchRowPositions.entries())
       expect(result.x).toBeCloseTo(firstRow[index].x, 1);

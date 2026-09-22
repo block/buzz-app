@@ -1,0 +1,5 @@
+/* Also loaded into vendor shadow roots so every scrolling surface agrees. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}

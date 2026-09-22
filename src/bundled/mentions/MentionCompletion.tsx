@@ -125,7 +125,7 @@ export function MentionCompletion({
               profiles.get(recipient.pubkey)?.picture ?? "",
               "small",
             )}
-            size="small"
+            size="default"
             shape={
               agentPubkeys.has(recipient.pubkey) ||
               !members.includes(recipient.pubkey)

@@ -154,15 +154,17 @@
   object-fit: scale-down;
 }
 .composer {
-  border: 1px solid var(--border-prominent);
+  position: relative;
+  border: 1px solid var(--border-standard);
   background: var(--surface-panel);
-  border-radius: var(--radius-control);
-  padding: var(--space-3) var(--space-3) var(--space-2);
+  border-radius: var(--radius-panel);
+  box-shadow: var(--shadow-xs);
+  padding: var(--space-4) calc(var(--space-5) / 2) calc(var(--space-5) / 2);
   margin: var(--space-3) var(--space-4) var(--space-4);
   display: flex;
   flex-shrink: 0;
   flex-direction: column;
-  gap: var(--space-1h);
+  gap: var(--space-4);
   color: var(--text-standard);
   font-size: var(--text-label-sm);
   line-height: var(--text-label-sm--line-height);
@@ -186,9 +188,9 @@
 .composerInput {
   position: relative;
   width: 100%;
+  padding-inline: calc(var(--space-5) / 2);
 }
 .composerActions {
-  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);
@@ -198,17 +200,6 @@
   align-items: center;
   gap: var(--space-half);
   flex: 1;
-}
-.composerHint {
-  color: var(--text-subtle);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-}
-@media (max-width: 850px) {
-  .composerHint {
-    display: none;
-  }
 }
 .delivery {
   display: flex;
@@ -228,13 +219,15 @@
 }
 .composer:focus-within {
   border-color: var(--border-focus);
-  box-shadow: 0 0 0 1px var(--border-focus);
+  box-shadow:
+    var(--shadow-xs),
+    0 0 0 1px var(--border-focus);
 }
 .composer:has(
   .composerTools > :where(fieldset) > button[aria-expanded="true"]
 ):focus-within {
-  border-color: var(--border-prominent);
-  box-shadow: none;
+  border-color: var(--border-standard);
+  box-shadow: var(--shadow-xs);
 }
 .threadUnread {
   width: 8px;
@@ -302,20 +295,6 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 
-.mentionRecipients {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: var(--space-1h);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-}
-.mentionRecipients code {
-  font-size: var(--text-mono-sm);
-  line-height: var(--text-mono-sm--line-height);
-  letter-spacing: var(--text-mono-sm--letter-spacing);
-}
 .mediaAttachments {
   display: grid;
   justify-items: start;

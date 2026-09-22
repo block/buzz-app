@@ -1,5 +1,6 @@
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
+import { Popover } from "../../../../src/shared/design-system/ui/Popover";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
@@ -41,6 +42,7 @@ import { FullPageSurface } from "../../../../src/shared/design-system/ui/FullPag
 import { PreviewCard } from "../../../../src/shared/design-system/ui/PreviewCard";
 import type { ChipAddress } from "../../../../src/shared/design-system/chips/address";
 import { chipFaces } from "../../../../src/shared/design-system/chips/faceResolver";
+import { ComposerSpecimen } from "./ComposerSpecimen";
 
 const DESTINATIONS = [
   { value: "home", label: "Home" },
@@ -156,7 +158,7 @@ function IconButtonSpecimen() {
       {/* `chrome` sits on the app backdrop, because it is a translucent glass
           fill — on a flat panel it has nothing to be translucent over and reads
           as a plain grey. */}
-      <SpecimenGroup label="Variants">
+      <SpecimenGroup label="Variants · circular at every size">
         <div className="component-specimen-row">
           <Specimen prop='variant="quiet"'>
             <IconButton
@@ -179,11 +181,10 @@ function IconButtonSpecimen() {
               variant="solid"
             />
           </Specimen>
-          <Specimen prop='variant="tint" shape="round"'>
+          <Specimen prop='variant="tint"'>
             <IconButton
               aria-label="Round tinted send"
               icon={icons.add}
-              shape="round"
               variant="tint"
             />
           </Specimen>
@@ -205,8 +206,8 @@ function IconButtonSpecimen() {
           </div>
         </SpecimenFrame>
       </section>
-      {/* Shown on `quiet`, not the default `ghost`: the three sizes differ only
-          in hit area (30 / 36 / 40px), and with no fill they render as three
+      {/* Shown on `quiet`, not the default `ghost`: the sizes differ only
+          in hit area, and with no fill they render as three
           identical 16px glyphs — the page would claim to show a size ramp while
           showing nothing. A fill makes the box the sample. */}
       <SpecimenGroup label="Sizes">
@@ -261,15 +262,19 @@ function IconButtonSpecimen() {
               disabled
             />
           </Specimen>
+          <Specimen prop='variant="ghost" disabled'>
+            <IconButton
+              aria-label="Disabled ghost add"
+              icon={icons.add}
+              variant="ghost"
+              disabled
+            />
+          </Specimen>
           {(["tint", "solid"] as const).map((variant) => (
-            <Specimen
-              key={variant}
-              prop={`variant="${variant}" shape="round" disabled`}
-            >
+            <Specimen key={variant} prop={`variant="${variant}" disabled`}>
               <IconButton
                 aria-label={`Disabled round ${variant}`}
                 icon={icons.add}
-                shape="round"
                 variant={variant}
                 disabled
               />
@@ -360,7 +365,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Morgan profile"
             size="large"
-            shape="round"
             icon={
               <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
             }
@@ -368,7 +372,6 @@ function AvatarSpecimen() {
           <IconButton
             aria-label="View Alex profile"
             size="large"
-            shape="round"
             icon={<Avatar alt="" fallback="Alex" size="fill" />}
           />
         </div>
@@ -676,6 +679,21 @@ function NavigationItemSpecimen() {
             trailing={<span className="text-body-sm">3</span>}
             selected={selected === "desktop-new"}
             onClick={() => setSelected("desktop-new")}
+          />
+        </div>
+      </SpecimenGroup>
+      <SpecimenGroup label="Picker option — even padding and immediate hover feedback">
+        <div className="component-navigation-section-demo">
+          <NavigationItem
+            variant="option"
+            label="Alex"
+            icon={<Avatar fallback="Alex" alt="" size="default" />}
+          />
+          <NavigationItem
+            variant="option"
+            label="Unavailable"
+            disabled
+            icon={<Avatar fallback="Unavailable" alt="" size="default" />}
           />
         </div>
       </SpecimenGroup>
@@ -1053,6 +1071,23 @@ function RadioGroupSpecimen() {
 }
 
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
+  popover: () => (
+    <SpecimenFrame>
+      <Popover.Root>
+        <Popover.Trigger render={<Button>Open popover</Button>} />
+        <Popover.Portal>
+          <Popover.Positioner>
+            <Popover.Popup aria-label="Example popover">
+              <Popover.Title className="text-label">
+                Quick actions
+              </Popover.Title>
+              <Popover.Close render={<Button variant="ghost">Done</Button>} />
+            </Popover.Popup>
+          </Popover.Positioner>
+        </Popover.Portal>
+      </Popover.Root>
+    </SpecimenFrame>
+  ),
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimen,
   tooltip: () => (
@@ -1141,6 +1176,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchFieldSpecimen,
+  composer: ComposerSpecimen,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

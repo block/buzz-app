@@ -1,7 +1,7 @@
 import { test, expect } from "./source-fixture.mjs";
 
 const open = async (page) => {
-  await page.goto("/tests/fixtures/mentions.html");
+  await page.goto("/tests/fixtures/mentions.html?test-controls");
   return page.getByRole("textbox", { name: "Message #General" });
 };
 const expectAvatarShape = async (target, shape) => {
@@ -31,7 +31,7 @@ test("mention completion distinguishes exact agent identity without reshaping a 
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
-  const picker = page.getByRole("region", {
+  const picker = page.getByRole("dialog", {
     name: "Mention a member or agent",
   });
   await expectAvatarShape(
@@ -104,6 +104,22 @@ for (const mode of ["light", "dark"]) {
       });
       const options = popup.getByRole("option");
       await expect(options.nth(1)).toBeVisible();
+      if (kind === "mention") {
+        await expect(popup).toHaveCSS("border-radius", "24px");
+        await expect(popup).toHaveCSS("padding", "12px");
+        await expect(popup).toHaveCSS("width", "380px");
+        await expect(options.first()).toHaveCSS("padding", "8px");
+        const composer = page.getByRole("form", {
+          name: "Send a message to General",
+        });
+        await expect
+          .poll(async () => {
+            const anchor = await composer.boundingBox();
+            const menu = await popup.boundingBox();
+            return anchor.y - menu.y - menu.height;
+          })
+          .toBe(4);
+      }
       await expect(options.first()).toHaveAttribute("aria-selected", "true");
       await input.press("ArrowDown");
       const selected = options.nth(1);
@@ -175,11 +191,7 @@ test("typeahead replaces only the query and publishes selected namesake identity
   await option.click();
   await expect(input).toBeFocused();
   await expect(input).toHaveJSProperty("value", "Before @Honey  after");
-  await expect(
-    page
-      .getByRole("region", { name: "Notification recipients" })
-      .getByRole("button"),
-  ).toHaveCount(1);
+  await expect(input.locator("[data-mention-kind]")).toHaveCount(1);
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))

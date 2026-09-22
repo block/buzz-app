@@ -1,3 +1,5 @@
+import scrollbarStyles from "../../shared/design-system/styles/scrollbars.css?raw";
+import searchFieldStyles from "../../shared/design-system/styles/search-field.css?raw";
 import { pickerIcons } from "../../shared/design-system/icons/svg";
 // Emoji Mart config adapted from block/buzz's shared picker; see NOTICE.md.
 import data from "@emoji-mart/data";
@@ -155,7 +157,6 @@ export function mountEmojiMart({
       --buzz-category-icon: var(--text-subtle);
       --buzz-category-icon-selected: var(--text-standard);
       --buzz-category-label: var(--text-subtle);
-      --buzz-scrollbar-thumb: var(--border-prominent);
       background: var(--surface-panel);
       color: var(--text-standard);
       font-family: var(--font-sans);
@@ -167,27 +168,6 @@ export function mountEmojiMart({
     }
     .scroll {
       padding-inline: var(--space-3);
-      scrollbar-width: none;
-    }
-    .scroll::-webkit-scrollbar {
-      display: none;
-    }
-    .buzz-scrollbar-track {
-      position: absolute;
-      right: 4px;
-      z-index: 4;
-      width: 8px;
-      opacity: .6;
-      pointer-events: none;
-    }
-    .buzz-scrollbar-thumb {
-      position: absolute;
-      top: 0;
-      left: 0;
-      width: 8px;
-      min-height: 32px;
-      border-radius: var(--radius-pill);
-      background: var(--buzz-scrollbar-thumb);
     }
     .scroll > div {
       width: 100% !important;
@@ -200,50 +180,27 @@ export function mountEmojiMart({
       letter-spacing: 0;
       line-height: var(--text-caption--line-height);
     }
-    .search input[type="search"] {
-      width: calc(100% - 4px);
-      height: 28px;
-      padding: 0 var(--space-8);
-      margin-inline: var(--space-half);
-      border: 0;
-      border-radius: var(--picker-search-radius);
-      background: var(--picker-search-background);
-      box-shadow: 0 0 0 1px var(--picker-search-background);
-      color: var(--picker-search-foreground);
-      font-family: var(--font-legacy-sans);
-      font-size: var(--text-body-sm);
-      line-height: var(--text-body-sm--line-height);
-      transition:
-        opacity 100ms ease,
-        background 100ms ease,
-        box-shadow 100ms ease;
+    .search.search-field {
+      width: calc(100% - var(--space-2));
+      margin: var(--picker-search-top, var(--space-3)) var(--space-1) var(--space-3);
     }
-    .search input[type="search"]:focus {
-      background: var(--picker-search-background);
-      box-shadow: 0 0 0 1px var(--picker-search-background);
-      outline: none;
-    }
-    :host([data-keyboard-navigation]) .search input[type="search"]:focus-visible {
-      background: var(--picker-search-background);
-      box-shadow: 0 0 0 2px var(--picker-search-ring);
-      outline: none;
-    }
-    .search input[type="search"]::placeholder,
     .search .icon {
-      color: var(--picker-search-muted);
-      opacity: 1;
+      top: auto;
+      right: auto;
+      left: auto;
+      transform: none;
     }
     .search .loupe {
-      visibility: hidden;
-    }
-    .search .delete {
-      right: 10px;
+      position: static;
       width: 16px;
       height: 16px;
-      padding: 0;
-      color: var(--picker-search-muted);
+      flex: 0 0 16px;
+      order: 0;
+      color: var(--text-metadata);
+      opacity: 1;
+      pointer-events: none;
     }
-    .search .delete svg {
+    .search .icon svg {
       width: 16px;
       height: 16px;
     }
@@ -251,12 +208,9 @@ export function mountEmojiMart({
     .spacer {
       height: 0;
     }
-    .spacer + .flex.flex-middle {
-      padding-bottom: var(--space-1);
-    }
     .spacer + .flex.flex-middle > .flex.flex-auto.flex-center.flex-middle {
       width: 0 !important;
-      height: 48px !important;
+      height: 0 !important;
       overflow: hidden;
       visibility: hidden;
     }
@@ -277,8 +231,12 @@ export function mountEmojiMart({
     }
     #nav {
       box-sizing: border-box;
+      display: grid;
       width: 100%;
-      padding-inline: var(--padding);
+      height: var(--size-control);
+      flex-shrink: 0;
+      align-items: center;
+      padding: 0 var(--padding);
     }
     #nav > .flex.relative > button {
       flex: 1 1 0;
@@ -335,7 +293,7 @@ export function mountEmojiMart({
       backdrop-filter: none;
       top: auto !important;
       right: 8px !important;
-      bottom: 42px !important;
+      bottom: var(--size-control) !important;
       left: auto !important;
       z-index: 100 !important;
       transform-origin: 100% 100%;
@@ -356,62 +314,11 @@ export function mountEmojiMart({
         transition-duration: 0ms;
       }
     }
+  ${scrollbarStyles}
+  ${searchFieldStyles}
   `;
   root?.appendChild(navigationStyle);
   let skinToneObserver: MutationObserver | undefined;
-  let scrollbarCleanup: (() => void) | undefined;
-  let scrollbarScroll: HTMLElement | undefined;
-  let scrollbarUpdate: (() => void) | undefined;
-  const installPersistentScrollbar = () => {
-    const scroll = root?.querySelector<HTMLElement>(".scroll");
-    const pickerRoot = root?.querySelector<HTMLElement>("#root");
-    if (!scroll || !pickerRoot) return;
-    if (scroll === scrollbarScroll) {
-      scrollbarUpdate?.();
-      return;
-    }
-    scrollbarCleanup?.();
-    pickerRoot.querySelector(".buzz-scrollbar-track")?.remove();
-    const track = host.ownerDocument.createElement("div");
-    track.className = "buzz-scrollbar-track";
-    track.setAttribute("aria-hidden", "true");
-    const thumb = host.ownerDocument.createElement("div");
-    thumb.className = "buzz-scrollbar-thumb";
-    track.appendChild(thumb);
-    pickerRoot.appendChild(track);
-    const update = () => {
-      const pickerBounds = pickerRoot.getBoundingClientRect();
-      const scrollBounds = scroll.getBoundingClientRect();
-      const trackHeight = Math.max(0, scroll.clientHeight - 16);
-      const overflow = scroll.scrollHeight - scroll.clientHeight;
-      track.hidden = overflow <= 0;
-      track.style.top = `${scrollBounds.top - pickerBounds.top + 8}px`;
-      track.style.height = `${trackHeight}px`;
-      if (overflow <= 0) return;
-      const thumbHeight = Math.max(
-        32,
-        trackHeight * (scroll.clientHeight / scroll.scrollHeight),
-      );
-      const offset =
-        (scroll.scrollTop / overflow) * Math.max(0, trackHeight - thumbHeight);
-      thumb.style.height = `${thumbHeight}px`;
-      thumb.style.transform = `translateY(${offset}px)`;
-    };
-    const resize = new ResizeObserver(update);
-    resize.observe(scroll);
-    if (scroll.firstElementChild) resize.observe(scroll.firstElementChild);
-    scroll.addEventListener("scroll", update, { passive: true });
-    scrollbarScroll = scroll;
-    scrollbarUpdate = update;
-    scrollbarCleanup = () => {
-      resize.disconnect();
-      scroll.removeEventListener("scroll", update);
-      track.remove();
-      scrollbarScroll = undefined;
-      scrollbarUpdate = undefined;
-    };
-    update();
-  };
   const placeSkinToneInNavigation = () => {
     const source = root?.querySelector<HTMLButtonElement>(".skin-tone-button");
     const navigation = root?.querySelector<HTMLElement>(
@@ -453,11 +360,14 @@ export function mountEmojiMart({
     });
     return true;
   };
-  const installSearchClearIcon = () => {
-    const icon = root?.querySelector<SVGSVGElement>(".search .delete svg");
-    if (!icon || icon.dataset.buzzCircleX) return;
+  const installSearchIcon = (
+    selector: string,
+    name: "x" | "magnifying-glass",
+  ) => {
+    const icon = root?.querySelector<SVGSVGElement>(selector);
+    if (!icon || icon.dataset.buzzSearchIcon) return;
     const template = document.createElement("template");
-    template.innerHTML = pickerIcons["x-circle"];
+    template.innerHTML = pickerIcons[name];
     const replacement = template.content.firstElementChild;
     if (!replacement) return;
     // Preserve the widget-owned node so its renderer does not insert a second SVG.
@@ -466,15 +376,19 @@ export function mountEmojiMart({
     for (const attribute of [...replacement.attributes])
       icon.setAttribute(attribute.name, attribute.value);
     icon.innerHTML = replacement.innerHTML;
-    icon.dataset.buzzCircleX = "true";
+    icon.dataset.buzzSearchIcon = name;
     icon.setAttribute("aria-hidden", "true");
   };
   const focusSearch = () => {
     const input = root?.querySelector<HTMLInputElement>('input[type="search"]');
     if (!root || !input || disposed) return;
     placeSkinToneInNavigation();
-    installPersistentScrollbar();
-    installSearchClearIcon();
+    input.parentElement?.classList.add("search-field");
+    root
+      .querySelector(".search .delete")
+      ?.setAttribute("data-search-clear", "");
+    installSearchIcon(".search .loupe svg", "magnifying-glass");
+    installSearchIcon(".search .delete svg", "x");
     if (input.dataset.buzzSearchReady) return;
     input.dataset.buzzSearchReady = "true";
     input.addEventListener("input", () => searchChange(input.value));
@@ -498,7 +412,6 @@ export function mountEmojiMart({
     disposed = true;
     observer.disconnect();
     skinToneObserver?.disconnect();
-    scrollbarCleanup?.();
     themeObserver.disconnect();
     picker.remove(); // unregisters Mart's document listeners and observers
     for (const id of values.keys()) delete Data?.emojis[id];

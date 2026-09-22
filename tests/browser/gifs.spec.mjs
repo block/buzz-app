@@ -84,12 +84,18 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await emojiTrigger.click();
   await expect.poll(() => infoRequests).toBeGreaterThan(0);
-  const picker = page.getByRole("region", { name: "Emoji picker" });
+  const picker = page.getByRole("dialog", { name: "Emoji picker" });
   await expect(emojiTrigger).toHaveAttribute("aria-busy", "true");
   await expect(picker).toBeVisible();
   await expect(page.getByRole("tab", { name: "GIF", exact: true })).toHaveCount(
     0,
   );
+  const initialEmojiSearch = page.getByRole("searchbox", {
+    name: "Search emoji",
+    exact: true,
+  });
+  await expect(initialEmojiSearch).toBeFocused();
+  const initialSearchNode = await initialEmojiSearch.elementHandle();
   releaseInfo();
   await expect(emojiTrigger).not.toHaveAttribute("aria-busy", "true");
   await expect(
@@ -105,8 +111,29 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     name: "Search emoji",
     exact: true,
   });
-  const emojiSearchPosition = await emojiSearch.boundingBox();
+  const emojiSearchFrame = await emojiSearch.locator("..").boundingBox();
+  const emojiTabsBox = await picker.getByRole("tablist").boundingBox();
+  expect(emojiSearchFrame.x).toBeCloseTo(emojiTabsBox.x, 1);
+  expect(emojiSearchFrame.y - emojiTabsBox.y - emojiTabsBox.height).toBeCloseTo(
+    16,
+    1,
+  );
+  const emojiResultsBox = await picker
+    .locator("em-emoji-picker .scroll")
+    .boundingBox();
+  const emojiPickerBox = await picker.boundingBox();
+  const emojiFooterBox = await picker
+    .locator("em-emoji-picker #nav")
+    .boundingBox();
+  expect(
+    emojiResultsBox.y - emojiSearchFrame.y - emojiSearchFrame.height,
+  ).toBeCloseTo(12, 1);
+  expect(emojiFooterBox.height).toBeCloseTo(40, 1);
   await expect(emojiSearch).toBeFocused();
+  // Discovering GIF support must not replace the focused vendor search.
+  expect(await initialSearchNode.evaluate((node) => node.isConnected)).toBe(
+    true,
+  );
   await expect(emojiTab).toHaveAttribute("aria-selected", "true");
   await expect(emojiTab).toHaveAttribute("aria-controls", /.+/);
   await expect(
@@ -135,7 +162,9 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   // Observe the real key's browser-default boundary, not a guessed network delay.
   await search.evaluate((input) => {
     window.gifEnter = { prevented: false, submits: 0 };
-    input.form.addEventListener("submit", () => window.gifEnter.submits++);
+    document
+      .querySelector("form")
+      .addEventListener("submit", () => window.gifEnter.submits++);
     window.addEventListener("keydown", (event) => {
       if (event.target === input && event.key === "Enter")
         window.gifEnter.prevented = event.defaultPrevented;
@@ -159,8 +188,8 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(draft).toHaveJSProperty("value", "");
   const composer = draft.locator("xpath=ancestor::form");
-  await expect(composer).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
-  await expect(composer).toHaveCSS("box-shadow", "none");
+  await expect(composer).toHaveCSS("border-top-color", "rgb(232, 232, 232)");
+  await expect(composer).not.toHaveCSS("box-shadow", "none");
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");
   await expect(search).toHaveAttribute("autocapitalize", "off");
@@ -171,6 +200,12 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await expect(search).toHaveCSS("color", "rgb(0, 0, 0)");
   await expect(search).toHaveCSS("font-family", /Inter Variable/);
   const gifSearchPosition = await searchFrame.boundingBox();
+  const tabListBox = await picker.getByRole("tablist").boundingBox();
+  expect(gifSearchPosition.x).toBeCloseTo(tabListBox.x, 1);
+  expect(gifSearchPosition.y - tabListBox.y - tabListBox.height).toBeCloseTo(
+    16,
+    1,
+  );
   expect(gifSearchPosition.width).toBeGreaterThan(0);
   expect(gifSearchPosition.x).toBeGreaterThanOrEqual(
     (await picker.boundingBox()).x,
@@ -195,9 +230,16 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     });
   expect(gifResultGutters.left).toBeCloseTo(gifResultGutters.right, 1);
   expect(gifResultGutters.left).toBeCloseTo(12, 1);
-  const gifScrollbar = page.getByTestId("gif-scrollbar-track");
-  await expect(gifScrollbar).toHaveCSS("right", "4px");
-  await expect(gifScrollbar).toHaveCSS("opacity", "0.6");
+  const gifResults = page.getByTestId("klipy-gif-grid").locator("..");
+  const gifResultsBox = await gifResults.boundingBox();
+  expect(gifResultsBox.y).toBeCloseTo(emojiResultsBox.y, 1);
+  expect(gifResultsBox.height).toBeCloseTo(emojiResultsBox.height, 1);
+  expect(await picker.boundingBox()).toEqual(emojiPickerBox);
+  await expect(gifResults).toHaveCSS("scrollbar-width", "thin");
+  await expect(gifResults).toHaveCSS(
+    "scrollbar-color",
+    "rgb(128, 128, 128) rgba(0, 0, 0, 0)",
+  );
   expect(gifGridBox.y).toBeGreaterThanOrEqual(
     gifSearchPosition.y + gifSearchPosition.height,
   );
@@ -217,11 +259,13 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(returningEmojiSearch).toHaveValue("celebrate");
   await expect(returningEmojiSearch).toHaveCSS("animation-name", "none");
-  const returningEmojiSearchPosition = await returningEmojiSearch.boundingBox();
-  expect(returningEmojiSearchPosition.x).toBeCloseTo(emojiSearchPosition.x, 1);
-  expect(returningEmojiSearchPosition.y).toBeCloseTo(emojiSearchPosition.y, 1);
+  const returningEmojiSearchPosition = await returningEmojiSearch
+    .locator("..")
+    .boundingBox();
+  expect(returningEmojiSearchPosition.x).toBeCloseTo(emojiSearchFrame.x, 1);
+  expect(returningEmojiSearchPosition.y).toBeCloseTo(emojiSearchFrame.y, 1);
   expect(returningEmojiSearchPosition.width).toBeCloseTo(
-    emojiSearchPosition.width,
+    emojiSearchFrame.width,
     1,
   );
   await gifTab.click();

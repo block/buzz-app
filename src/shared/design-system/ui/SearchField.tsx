@@ -18,7 +18,7 @@ export function SearchField({
   onValueChange: (value: string) => void;
   label?: string;
   placeholder?: string;
-  /** Navigator search uses the panel's broad corner to echo its enclosing surface. */
+  /** Both variants share the capsule search treatment. */
   variant?: "default" | "navigator";
 } & Omit<
   ComponentProps<typeof Input>,
@@ -43,8 +43,9 @@ export function SearchField({
       />
       {value ? (
         <IconButton
+          data-search-clear=""
           aria-label={`Clear ${label.toLowerCase()}`}
-          icon={<XIcon size={14} aria-hidden="true" />}
+          icon={<XIcon size={16} aria-hidden="true" />}
           size="compact"
           disabled={inputProps.disabled || inputProps.readOnly}
           onClick={() => {

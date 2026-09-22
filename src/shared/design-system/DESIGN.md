@@ -79,9 +79,17 @@ Buzz is a place where people build together and bring their agents into the room
 
 Button uses prominent, subtle, ghost, destructive and outline emphasis. Its
 32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
-increase height at larger text settings. Text buttons use pill corners. Fields
-use the shared control corner. Legacy Button names map to these variants during
+increase height at larger text settings. All action buttons use `--radius-pill`:
+text buttons are capsules and square icon buttons are circles, at every size and
+in every state. IconButton has no per-caller shape override. Fields
+use the shared control corner; SearchField uses a capsule. Its shared CSS recipe
+also styles Emoji Mart’s native search, preserving the widget’s keyboard model. Legacy Button names map to these variants during
 migration; do not add new primary/quiet or compact/default call sites.
+
+Composer picker surfaces use the 24px `--radius-panel` role. The legacy
+control bridge keeps the 16px `--corner-control` foundation. Compact fields use
+the distinct 8px `--radius-control` role. Frequently used composer pickers
+open, close and filter immediately, without entrance motion or staggered results.
 
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
@@ -89,6 +97,13 @@ independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
 ## Compositions
+
+Popover wraps Base UI's popover parts with the shared 24px panel corner,
+popover surface, standard border and small shadow. The default content inset is
+12px; use the flush variant when content such as a media picker owns its layout.
+Use Positioner's anchor to attach a picker to its whole composer. Base UI owns
+portals, collision handling, outside dismissal and focus restoration. Frequent
+pickers switch immediately without entrance motion.
 
 Dialog composes a Base UI modal with a shared title, optional description, body,
 close button and actions. Pending operations set preventClose so Escape and the
@@ -102,7 +117,8 @@ Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
-forwards normal button events, refs and data attributes so unread observation,
+offers an `option` variant for picker rows with even 8px padding and immediate
+hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 
 ## State
@@ -166,6 +182,11 @@ The values documented above define this system, including the 12px xsmall role.
 - **Every dark value in this system is authored rather than observed.** The design exploration it came from is light-only. Treat anything that looks wrong in dark as a finding.
 
 ## Density and rhythm
+
+- **Scrollbars share one native treatment.** Use `scrollbar-width: thin` and
+  `scrollbar-color: var(--scrollbar-thumb) transparent`. The thumb is gray in
+  both modes. Load the shared scrollbar recipe into vendor shadow roots too;
+  let the browser own scrolling and scrollbar visibility.
 
 - **Dense data renders as rows with dividers, edge to edge.** Wrapping every list item in its own card is the most common way a functional surface becomes a marketing page.
 - **Content that separates itself needs no divider, and no container.** A divider is for uniform rows where the eye needs a line to track along. When each entry already carries a visible difference — a colour swatch, a type specimen, an avatar — the content is the separator, and adding a rule or a card on top is redundant structure. Space alone is enough.

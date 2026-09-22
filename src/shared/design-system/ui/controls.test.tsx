@@ -11,8 +11,33 @@ import { Textarea } from "./Textarea";
 import { Radio, RadioGroup } from "./RadioGroup";
 import { Checkbox } from "./Checkbox";
 import { SearchField } from "./SearchField";
+import { Composer } from "./Composer";
 
 afterEach(cleanup);
+
+test("composer enables submission only for an available non-empty draft", async () => {
+  const user = userEvent.setup();
+  const submit = vi.fn((event) => event.preventDefault());
+  function Example() {
+    const [value, setValue] = useState("");
+    return (
+      <Composer
+        label="New message"
+        value={value}
+        onValueChange={setValue}
+        onSubmit={submit}
+      />
+    );
+  }
+  render(<Example />);
+  const input = screen.getByRole("textbox", { name: "New message" });
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeDisabled();
+  await user.type(input, "Hello");
+  expect(send).toBeEnabled();
+  await user.click(send);
+  expect(submit).toHaveBeenCalledTimes(1);
+});
 
 test("a loading action keeps its name and blocks pointer, keyboard and form submission until released", async () => {
   const user = userEvent.setup();

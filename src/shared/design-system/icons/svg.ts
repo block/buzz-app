@@ -9,7 +9,9 @@ import lightbulb from "@phosphor-icons/core/assets/regular/lightbulb.svg?raw";
 import shapes from "@phosphor-icons/core/assets/regular/shapes.svg?raw";
 import flag from "@phosphor-icons/core/assets/regular/flag.svg?raw";
 import asterisk from "@phosphor-icons/core/assets/regular/asterisk.svg?raw";
-import x_circle from "@phosphor-icons/core/assets/regular/x-circle.svg?raw";
+import x from "@phosphor-icons/core/assets/regular/x.svg?raw";
+
+import magnifying_glass from "@phosphor-icons/core/assets/regular/magnifying-glass.svg?raw";
 
 export const pickerIcons = {
   clock: clock,
@@ -22,5 +24,6 @@ export const pickerIcons = {
   shapes: shapes,
   flag: flag,
   asterisk: asterisk,
-  "x-circle": x_circle,
+  x: x,
+  "magnifying-glass": magnifying_glass,
 };

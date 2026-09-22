@@ -1,4 +1,5 @@
 import "../../src/shared/styles/globals.css";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -7,6 +8,8 @@ import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
 import { bundledPlugins } from "../../src/bundled";
 import { createRelaySession } from "../../src/features/relay/session";
+import { relayOrigin } from "../../src/features/communities/destination";
+import { registerBrokerCommunity } from "../../src/features/relay/transport";
 import {
   keypair,
   metadata,
@@ -29,6 +32,12 @@ let releaseProfiles = () => {};
 let libraryReads = 0;
 let libraryIncludesFirst = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
+const testControls = new URLSearchParams(location.search).has("test-controls");
+// Optional visual preview: real GIF search, with messages still local to this fixture.
+const gifRelay = new URLSearchParams(location.search).get("gif-community");
+const gifCommunity = gifRelay ? relayOrigin(gifRelay) : undefined;
+if (gifCommunity)
+  await registerBrokerCommunity(gifCommunity, AbortSignal.timeout(12000));
 const profileGate = delayed
   ? new Promise<void>((resolve) => {
       releaseProfiles = resolve;
@@ -162,34 +171,57 @@ Object.assign(window, {
   },
 });
 function Fixture() {
+  useKeyboardFocusVisibility();
   const [thread, setThread] = useState(false);
   const [disabled, setDisabled] = useState(false);
   return (
-    <main style={{ maxWidth: 700, padding: 40, marginTop: 380 }}>
-      <button type="button" onClick={() => setThread(!thread)}>
-        Toggle thread
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          members = [viewer.pubkey, second.pubkey];
-          time++;
-          owner.session.channels.refreshList?.();
-        }}
-      >
-        Remove first Honey
-      </button>
-      <button type="button" onClick={() => setDisabled(!disabled)}>
-        Toggle disabled
-      </button>
-      <conversation.ui.Composer
-        disabled={disabled}
-        session={owner.session}
-        scope="mentions-fixture"
-        channelId="c"
-        channelName="General"
-        {...(thread ? { threadRootId: "a".repeat(64) } : {})}
-      />
+    <main
+      style={
+        testControls
+          ? { maxWidth: 700, padding: 40, marginTop: 380 }
+          : {
+              minHeight: "100dvh",
+              width: "100%",
+              display: "grid",
+              placeItems: "center",
+              padding: 24,
+            }
+      }
+    >
+      {testControls && (
+        <>
+          <button type="button" onClick={() => setThread(!thread)}>
+            Toggle thread
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              members = [viewer.pubkey, second.pubkey];
+              time++;
+              owner.session.channels.refreshList?.();
+            }}
+          >
+            Remove first Honey
+          </button>
+          <button type="button" onClick={() => setDisabled(!disabled)}>
+            Toggle disabled
+          </button>
+        </>
+      )}
+      <div style={{ width: "100%", maxWidth: 720 }}>
+        <conversation.ui.Composer
+          disabled={disabled}
+          session={owner.session}
+          scope={
+            gifCommunity
+              ? `${gifCommunity}:${viewer.pubkey}`
+              : "mentions-fixture"
+          }
+          channelId="c"
+          channelName="General"
+          {...(thread ? { threadRootId: "a".repeat(64) } : {})}
+        />
+      </div>
     </main>
   );
 }

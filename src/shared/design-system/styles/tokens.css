@@ -359,7 +359,7 @@
 
   /* --- Corner. Four shapes, each with a distinct job. ------- */
   --corner-row: 0.625rem;
-  --corner-control: 0.75rem;
+  --corner-control: 1rem;
   --corner-panel: 1.5rem;
   --corner-round: 9999rem;
 
@@ -500,6 +500,7 @@
   --text-link: var(--blue-12);
   --affordance-link-hover: var(--blue-4);
   --border-standard: var(--neutral-3);
+  --scrollbar-thumb: var(--neutral-8);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);
@@ -543,6 +544,7 @@
   --text-link: var(--blue-12);
   --affordance-link-hover: var(--blue-4);
   --border-standard: var(--neutral-4);
+  --scrollbar-thumb: var(--neutral-9);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
   --border-danger: var(--red-9);

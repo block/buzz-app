@@ -15,7 +15,6 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
       <IconButton
         type="button"
         variant="chrome"
-        shape="round"
         aria-label="Go back"
         title="Go back"
         disabled={!state.canGoBack}
@@ -25,7 +24,6 @@ export function NavigationControls({ navigation }: { navigation: Navigation }) {
       <IconButton
         type="button"
         variant="chrome"
-        shape="round"
         aria-label="Go forward"
         title="Go forward"
         disabled={!state.canGoForward}

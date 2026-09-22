@@ -3,7 +3,6 @@ import { Button } from "./Button";
 
 type IconButtonVariant = "quiet" | "ghost" | "solid" | "tint" | "chrome";
 type IconButtonSize = "compact" | "toolbar" | "default" | "large";
-type IconButtonShape = "control" | "round";
 
 export type IconButtonProps = Omit<
   ComponentProps<typeof Button>,
@@ -13,14 +12,12 @@ export type IconButtonProps = Omit<
   icon: ReactElement;
   variant?: IconButtonVariant;
   size?: IconButtonSize;
-  shape?: IconButtonShape;
 };
 
 export function IconButton({
   icon,
   variant = "ghost",
   size = "default",
-  shape = "control",
   ...props
 }: IconButtonProps) {
   return (
@@ -29,7 +26,6 @@ export function IconButton({
       variant="ghost"
       data-icon-variant={variant}
       data-icon-size={size}
-      data-icon-shape={shape}
     >
       {icon}
     </Button>

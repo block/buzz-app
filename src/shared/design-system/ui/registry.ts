@@ -100,6 +100,19 @@ export type ComponentDefinition = {
 
 export const COMPONENTS: readonly ComponentDefinition[] = [
   {
+    slug: "popover",
+    name: "Popover",
+    purpose: "An anchored surface for pickers and contextual controls.",
+    behavior:
+      "Base UI owns portals, positioning, dismissal and focus restoration",
+    variants: ["default", "flush"],
+    status: "core",
+    collection: "components",
+    source: "shared/design-system/ui/Popover.tsx",
+    baseUi: [BASE_UI_PARTS.popover],
+    composes: [],
+  },
+  {
     slug: "alert-dialog",
     name: "AlertDialog",
     purpose: "Confirm a consequential action before continuing.",
@@ -272,7 +285,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     slug: "button",
     name: "Button",
     purpose:
-      "A labelled action with shared emphasis, loading and destructive states.",
+      "A capsule-shaped labelled action with shared emphasis, loading and destructive states.",
     behavior: "Base UI Button",
     variants: [
       "prominent",
@@ -293,7 +306,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "icon-button",
     name: "IconButton",
-    purpose: "A compact icon-only action that always owns an accessible label.",
+    purpose:
+      "A circular icon-only action at every size, with an accessible label; ghost stays transparent at rest, including when disabled.",
     behavior: "Composes Buzz Button",
     variants: [
       "quiet",
@@ -301,7 +315,6 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
       "solid",
       "tint",
       "chrome",
-      "shape: control | round",
       "compact: 16px artwork, 32px target, Phosphor artwork",
       "toolbar: 16px artwork, 32px target, Phosphor artwork",
     ],
@@ -425,7 +438,8 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
   {
     slug: "search-field",
     name: "SearchField",
-    purpose: "A compact filter field with a search cue and clear action.",
+    purpose:
+      "A capsule search field with a search cue and a 32px clear action.",
     behavior: "Base UI Field and Input",
     variants: ["default"],
     status: "proposed",
@@ -433,6 +447,30 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     owner: "desktop-new Messages",
     source: "shared/design-system/ui/SearchField.tsx",
     baseUi: [BASE_UI_PARTS.field, BASE_UI_PARTS.input],
+    composes: ["icon-button"],
+  },
+  {
+    slug: "composer",
+    name: "Composer",
+    purpose:
+      "The message drafting frame: editable content, contextual information, tools, send state and delivery feedback.",
+    behavior:
+      "Native form and textarea semantics; product capabilities supply rich editing and tool behavior",
+    variants: [
+      "empty",
+      "draft",
+      "multiline",
+      "context",
+      "sending",
+      "error",
+      "disabled",
+      "narrow",
+    ],
+    status: "proposed",
+    collection: "components",
+    owner: "desktop-new Messages",
+    source: "shared/design-system/ui/Composer.tsx",
+    baseUi: [],
     composes: ["icon-button"],
   },
   {
@@ -454,7 +492,7 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     purpose:
       "A selectable destination row or pill with optional icon and metadata.",
     behavior: "Base UI Button",
-    variants: ["row", "pill", "inset", "selected"],
+    variants: ["row", "pill", "option", "inset", "selected"],
     status: "proposed",
     collection: "components",
     owner: "desktop-new Messages",

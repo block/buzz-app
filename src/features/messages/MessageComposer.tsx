@@ -649,34 +649,6 @@ function Composer({
               />
             </div>
           )}
-        {!!value.recipients.length && (
-          <section
-            className={styles.mentionRecipients}
-            aria-label="Notification recipients"
-          >
-            <span>Notify:</span>
-            {value.recipients.map((recipient) => (
-              <Button
-                type="button"
-                key={`${recipient.pubkey}:${recipient.start}`}
-                title={recipient.pubkey}
-                aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
-                disabled={editingDisabled}
-                onClick={() =>
-                  saveDraft({
-                    ...value,
-                    recipients: value.recipients.filter(
-                      (item) => item.pubkey !== recipient.pubkey,
-                    ),
-                  })
-                }
-              >
-                {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
-                <XIcon size={12} aria-hidden="true" />
-              </Button>
-            ))}
-          </section>
-        )}
         <div className={styles.composerActions}>
           <div className={styles.composerTools}>
             {extensions && (
@@ -703,14 +675,9 @@ function Composer({
                 onChange={selectAgent}
                 disabled={editingDisabled}
               />
-            ) : (
-              <span className={styles.composerHint}>
-                Shift + Enter for a new line
-              </span>
-            ))}
+            ) : null)}
           <IconButton
-            variant="solid"
-            shape="round"
+            size="toolbar"
             type="submit"
             aria-label="Send message"
             title="Send message"
@@ -721,7 +688,7 @@ function Composer({
               submission?.disabled ||
               !draft.trim()
             }
-            icon={<ArrowUpIcon size={18} />}
+            icon={<ArrowUpIcon size={20} />}
           />
         </div>
         {error && <p role="alert">{error}</p>}

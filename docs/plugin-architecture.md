@@ -395,8 +395,8 @@ presentation, never recipient resolution. Editing/pasting over an identity span
 removes its intent under the existing draft rules.
 
 **User intent outlives the tool that created it.** Disabling Mentions removes its
-chooser, not selected recipients, their visible disclosure/removal controls, scoped
-drafts or pending messages. The session still owns roster/profile data, membership
+chooser, not selected recipients, inline mention editing, scoped drafts or pending
+messages. The session still owns roster/profile data, membership
 checks, signing and publication/retry. Plugins remain trusted same-process code;
 revocable editor commands do not sandbox the session capabilities they receive.
 

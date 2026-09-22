@@ -1,5 +1,5 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import { Popover } from "@base-ui/react/popover";
+import { Popover } from "../../shared/design-system/ui/Popover";
 import {
   useCallback,
   useMemo,
@@ -130,6 +130,7 @@ export function ChannelActivityPopover({
           collisionPadding={8}
         >
           <Popover.Popup
+            variant="flush"
             className={styles.activityPopover}
             aria-label={`Activity in ${channelName}`}
           >

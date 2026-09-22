@@ -208,6 +208,53 @@ it("starts a standalone session using existing private-channel creation without 
   expect(test.outbox.send).toHaveBeenCalledTimes(2);
 });
 
+it("creates an ordinary stream with explicit visibility and optional description", () => {
+  const test = setup();
+  const id = "11111111-1111-4111-8111-111111111111";
+  test.service.createChannel(id, "  Release notes  ", "open", "  Updates  ");
+  expect(test.outbox.send).toHaveBeenCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Release notes"],
+      ["visibility", "open"],
+      ["channel_type", "stream"],
+      ["about", "Updates"],
+    ],
+  });
+  test.service.createChannel(id, "Private", "private");
+  expect(test.outbox.send).toHaveBeenLastCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Private"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+    ],
+  });
+  test.service.createChannel(id, "Standup", "open", undefined, 604800);
+  expect(test.outbox.send).toHaveBeenLastCalledWith({
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Standup"],
+      ["visibility", "open"],
+      ["channel_type", "stream"],
+      ["ttl", "604800"],
+    ],
+  });
+  expect(() => test.service.createChannel(id, " ", "open")).toThrow(/name/);
+  expect(() =>
+    test.service.createChannel(id, "Work", "open", "x".repeat(1001)),
+  ).toThrow(/description/);
+  expect(() =>
+    test.service.createChannel(id, "Work", "open", undefined, 0),
+  ).toThrow(/duration/);
+});
+
 it("recovers a lost normal-channel creation acknowledgment only with its exact verified event", async () => {
   const test = setup();
   const creation = signed(keypair(), {

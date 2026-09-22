@@ -692,6 +692,94 @@ export function createRelaySession(
     !!transport?.decodeSidebarPreferences,
     notify,
   );
+  const workSessions = createWorkSessions(
+    writes?.outbox,
+    channels.queries,
+    verified,
+    lifetime.signal,
+    writes?.local,
+    async (id) => {
+      if (!transport) return false;
+      // Confirm only this viewer's exact creation receipt. Discovery may be
+      // incomplete; this never admits the channel or grants content access.
+      const events = await requests.reader.read(
+        [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
+        { signal: lifetime.signal, fresh: true },
+      );
+      return events.some(
+        (event) =>
+          event.id === id &&
+          event.kind === 9007 &&
+          event.pubkey === transport.viewer,
+      );
+    },
+    () => {
+      const library = agentLibrary.queries.snapshot();
+      return library.status === "ready"
+        ? library.identities.map((agent) => agent.pubkey)
+        : [];
+    },
+    transport?.relayAuthor,
+  );
+  let pendingChannelCreation:
+    | {
+        signature: string;
+        id: string;
+        operation: string;
+      }
+    | undefined;
+  const channelCreation = Object.freeze({
+    available: workSessions.available,
+    async create(input: {
+      name: string;
+      description?: string | undefined;
+      visibility: "open" | "private";
+      ttlSeconds?: number | undefined;
+    }) {
+      const normalized = {
+        name: input.name.trim(),
+        visibility: input.visibility,
+        ...(input.description?.trim()
+          ? { description: input.description.trim() }
+          : {}),
+        ...(input.ttlSeconds !== undefined
+          ? { ttlSeconds: input.ttlSeconds }
+          : {}),
+      };
+      const signature = JSON.stringify(normalized);
+      if (pendingChannelCreation?.signature !== signature) {
+        if (pendingChannelCreation)
+          throw new Error(
+            "Another channel is still awaiting confirmation. Retry it before changing the details.",
+          );
+        const id = crypto.randomUUID();
+        pendingChannelCreation = {
+          signature,
+          id,
+          operation: workSessions.createChannel(
+            id,
+            normalized.name,
+            normalized.visibility,
+            normalized.description,
+            normalized.ttlSeconds,
+          ),
+        };
+      }
+      const pending = pendingChannelCreation;
+      try {
+        await workSessions.delivered(pending.operation);
+        await workSessions.refresh(pending.id, {}, false);
+        pendingChannelCreation = undefined;
+        return pending.id;
+      } catch (error) {
+        if (workSessions.failed(pending.operation)) {
+          await workSessions.discardFailed(pending.operation);
+          pendingChannelCreation = undefined;
+        }
+        throw error;
+      }
+    },
+  });
   const session = Object.freeze({
     presence,
     viewer: transport?.viewer,
@@ -704,35 +792,8 @@ export function createRelaySession(
       };
     },
     typing: typing.capability,
-    workSessions: createWorkSessions(
-      writes?.outbox,
-      channels.queries,
-      verified,
-      lifetime.signal,
-      writes?.local,
-      async (id) => {
-        if (!transport) return false;
-        // Confirm only this viewer's exact creation receipt. Discovery may be
-        // incomplete; this never admits the channel or grants content access.
-        const events = await requests.reader.read(
-          [{ kinds: [9007], ids: [id], authors: [transport.viewer], limit: 1 }],
-          { signal: lifetime.signal, fresh: true },
-        );
-        return events.some(
-          (event) =>
-            event.id === id &&
-            event.kind === 9007 &&
-            event.pubkey === transport.viewer,
-        );
-      },
-      () => {
-        const library = agentLibrary.queries.snapshot();
-        return library.status === "ready"
-          ? library.identities.map((agent) => agent.pubkey)
-          : [];
-      },
-      transport?.relayAuthor,
-    ),
+    channelCreation,
+    workSessions,
     unread: unread.capability,
     sidebarPreferences: sidebarPreferences.queries,
     live,

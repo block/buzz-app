@@ -49,6 +49,18 @@ it("leaves ambiguous names, partial matches and ordinary email text unchanged", 
     ),
   ).toEqual([]);
 });
+it("keeps private channel visibility on inline references", () => {
+  const refs = messageReferences(
+    "Ask in #secret.",
+    [],
+    profiles,
+    [{ id: "secret", name: "secret", private: true }],
+    agents,
+  );
+  expect(refs).toMatchObject([
+    { label: "#secret", kind: "channel", id: "secret", private: true },
+  ]);
+});
 it("resolves channel labels only in the receiving community", () => {
   const scope = `https://local.example:${person}`;
   expect(

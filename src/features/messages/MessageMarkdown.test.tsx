@@ -6,7 +6,7 @@ import {
   render as mount,
 } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { RobotIcon } from "../../shared/design-system/icons/index";
+import { LockIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import referenceStyles from "../../shared/InlineReference.module.css";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ComponentProps } from "react";
@@ -498,7 +498,7 @@ it.each([false, true])(
   },
 );
 
-it("keeps resolved channel labels for Buzz autolinks", () => {
+it("keeps resolved private channel labels and lock icons for Buzz links", () => {
   const entry = {
     id: "link",
     title: "Links",
@@ -509,7 +509,7 @@ it("keeps resolved channel labels for Buzz autolinks", () => {
     component: ({ url }: { url: string }) => <LinkLabel href={url} />,
   };
   const href = `buzz://message?channel=design&id=${"a".repeat(64)}`;
-  const html = render(`<${href}> <buzz://channel/design>`, {
+  const html = render(`<${href}> <buzz://channel/design> #design`, {
     directory: {
       profiles: new Map(),
       agents: [],
@@ -518,6 +518,7 @@ it("keeps resolved channel labels for Buzz autolinks", () => {
           id: "design",
           name: "design",
           channelType: "forum",
+          private: true,
         },
       ],
     },
@@ -531,6 +532,10 @@ it("keeps resolved channel labels for Buzz autolinks", () => {
   const text = html.replace(/<[^>]*>/g, "");
   expect(text).toContain("design");
   expect(text).not.toContain("buzz://");
+  const lock = renderToStaticMarkup(
+    <LockIcon className={referenceStyles.icon} />,
+  );
+  expect(html.split(lock)).toHaveLength(3);
 });
 
 it("renders tagged agent library names and profile names with the same agent icon", () => {

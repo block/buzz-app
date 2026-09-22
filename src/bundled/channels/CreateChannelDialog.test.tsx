@@ -1,0 +1,120 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import { CreateChannelDialog } from "./CreateChannelDialog";
+
+afterEach(cleanup);
+
+it("reveals description on demand and creates an ongoing open channel", async () => {
+  const user = userEvent.setup();
+  const onCreate = vi.fn(async () => {});
+  const onOpenChange = vi.fn();
+  render(
+    <CreateChannelDialog
+      open
+      onOpenChange={onOpenChange}
+      onCreate={onCreate}
+    />,
+  );
+  expect(
+    screen.getByRole("dialog", { name: "Create a channel" }),
+  ).not.toHaveAccessibleDescription();
+  expect(
+    screen.queryByRole("textbox", { name: "Description" }),
+  ).not.toBeInTheDocument();
+  expect(screen.queryByText("Optional")).not.toBeInTheDocument();
+  expect(screen.getByText("Duration")).toHaveClass("sr-only");
+  expect(screen.getByRole("radiogroup", { name: "Duration" })).toBeVisible();
+  expect(screen.getByRole("radio", { name: /Ongoing/ })).toBeChecked();
+  const privateSwitch = screen.getByRole("switch", { name: "Private" });
+  const privateLabel = screen.getByText("Private", { selector: "label" });
+  expect(privateSwitch).not.toBeChecked();
+  expect(
+    privateSwitch.compareDocumentPosition(privateLabel) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
+  expect(
+    screen.queryByRole("button", { name: "Cancel" }),
+  ).not.toBeInTheDocument();
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "  launch  ");
+  await user.click(screen.getByRole("button", { name: "Add a description" }));
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveFocus();
+  await user.type(
+    screen.getByRole("textbox", { name: "Description" }),
+    "  Release planning  ",
+  );
+  await user.click(screen.getByRole("button", { name: "Create channel" }));
+  await waitFor(() =>
+    expect(onCreate).toHaveBeenCalledWith({
+      name: "launch",
+      description: "Release planning",
+      visibility: "open",
+    }),
+  );
+  expect(onOpenChange).toHaveBeenCalledWith(false);
+});
+
+it("creates a private temporary channel and reports a rejected request", async () => {
+  const user = userEvent.setup();
+  const onOpenChange = vi.fn();
+  const onCreate = vi.fn(async () => {
+    throw new Error("Creation rejected");
+  });
+  render(
+    <CreateChannelDialog
+      open
+      onOpenChange={onOpenChange}
+      onCreate={onCreate}
+    />,
+  );
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  await user.click(screen.getByRole("radio", { name: /Temporary/ }));
+  await user.click(screen.getByText("Private", { selector: "label" }));
+  await user.click(screen.getByRole("button", { name: "Create channel" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Creation rejected",
+  );
+  expect(onCreate).toHaveBeenCalledWith({
+    name: "ops",
+    visibility: "private",
+    ttlSeconds: 604800,
+  });
+  expect(onOpenChange).not.toHaveBeenCalled();
+  expect(screen.getByRole("radio", { name: /Temporary/ })).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Private" })).toBeChecked();
+});
+
+it("blocks edits during creation without applying disabled control styles", async () => {
+  const user = userEvent.setup();
+  let finishCreation!: () => void;
+  const onCreate = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finishCreation = resolve;
+      }),
+  );
+  const onOpenChange = vi.fn();
+  render(
+    <CreateChannelDialog
+      open
+      onOpenChange={onOpenChange}
+      onCreate={onCreate}
+    />,
+  );
+  const name = screen.getByRole("textbox", { name: "Name" });
+  const privateSwitch = screen.getByRole("switch", { name: "Private" });
+  await user.type(name, "launch");
+  await user.click(screen.getByRole("button", { name: "Create channel" }));
+  const form = document.getElementById("create-channel-form");
+  await waitFor(() => expect(form).toHaveAttribute("inert"));
+  expect(form).toHaveAttribute("aria-busy", "true");
+  expect(name).not.toBeDisabled();
+  expect(privateSwitch).not.toBeDisabled();
+  expect(privateSwitch).toHaveAttribute("aria-disabled", "true");
+  await user.click(privateSwitch);
+  expect(privateSwitch).not.toBeChecked();
+  finishCreation();
+  await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
+});

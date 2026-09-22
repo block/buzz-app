@@ -3,6 +3,8 @@ import type { Outbox } from "./outbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayReader } from "./reader";
 
+export const DEFAULT_TEMPORARY_CHANNEL_TTL_SECONDS = 7 * 24 * 60 * 60;
+
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
 /** Work-session commands use the same durable outbox and connection lifetime. */
@@ -20,7 +22,7 @@ export function createWorkSessions(
   function writer() {
     if (signal.aborted || !available || !outbox)
       throw new Error(
-        "This community does not support saved sessions yet. Your draft is kept here.",
+        "This community does not support channel creation yet. Your draft is kept here.",
       );
     return outbox;
   }
@@ -263,6 +265,41 @@ export function createWorkSessions(
     available,
     addAgents,
     refreshMembership,
+    createChannel(
+      id: string,
+      title: string,
+      visibility: "open" | "private",
+      description?: string,
+      ttlSeconds?: number,
+    ) {
+      writer();
+      identifier(id);
+      const name = title.trim();
+      const about = description?.trim();
+      if (!name || [...name].length > 120)
+        throw new Error("Use a channel name between 1 and 120 characters.");
+      if (about && [...about].length > 1000)
+        throw new Error("Keep the channel description under 1,000 characters.");
+      if (
+        ttlSeconds !== undefined &&
+        (!Number.isInteger(ttlSeconds) ||
+          ttlSeconds <= 0 ||
+          ttlSeconds > 2_147_483_647)
+      )
+        throw new Error("Choose a valid temporary channel duration.");
+      return writer().send({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", id],
+          ["name", name],
+          ["visibility", visibility],
+          ["channel_type", "stream"],
+          ...(about ? [["about", about]] : []),
+          ...(ttlSeconds ? [["ttl", String(ttlSeconds)]] : []),
+        ],
+      });
+    },
     create(id: string, title: string, parentId?: string) {
       writer();
       identifier(id);

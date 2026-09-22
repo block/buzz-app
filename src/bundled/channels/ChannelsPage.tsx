@@ -1,6 +1,7 @@
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -33,11 +34,12 @@ import {
 } from "react";
 import {
   CaretRightIcon,
-  HashIcon,
   DotsThreeIcon,
   PlugIcon,
   ChatCircleIcon,
+  PlusIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -60,8 +62,12 @@ import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
-import { sidebarSections } from "./sidebar-sections";
+import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
 import { SidebarSectionIcon } from "./SidebarSectionIcon";
+import {
+  CreateChannelDialog,
+  type CreateChannelInput,
+} from "./CreateChannelDialog";
 import {
   CHANNEL_SIDEBAR_DEFAULT_WIDTH,
   CHANNEL_SIDEBAR_MAX_WIDTH,
@@ -205,6 +211,8 @@ function ChannelWorkspace({
   const [selected, setSelected] = useState<string | undefined>(() =>
     readView(scope, "selected-channel", undefined),
   );
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const createChannelTrigger = useRef<HTMLButtonElement>(null);
   const [draftParent, setDraftParent] = useState<string>();
   const [draftParents, setDraftParents] = useState<string[]>(() => {
     const saved = readView<unknown>(scope, "sessions:channel-drafts", []);
@@ -332,6 +340,7 @@ function ChannelWorkspace({
         : undefined))
     : (channels.find((channel) => channel.id === selected) ??
       channels.find((item) => item.channelType !== "session"));
+  const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
     if (requestedChannel && !resolving && list.status === "ready" && !current)
@@ -498,6 +507,15 @@ function ChannelWorkspace({
       mounted.current = false;
     };
   }, []);
+  const createChannel = useCallback(
+    async (input: CreateChannelInput) => {
+      const id = await queries.channelCreation.create(input);
+      if (!mounted.current) return;
+      select(id);
+      sidebar.toggle("channels", true);
+    },
+    [queries, select, sidebar.toggle],
+  );
   useEffect(() => {
     if (opened && !panel) open(undefined);
   }, [opened, panel, open]);
@@ -762,62 +780,91 @@ function ChannelWorkspace({
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
           <SidebarUnread listRef={sidebar.list}>
-            {sidebarSections(channels, preferences.data).map((section) => (
-              <details
-                key={section.key}
-                className={styles.channelSection}
-                open={!sidebar.collapsed.includes(section.key)}
-              >
-                {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
-                <summary
-                  onClick={(event) => {
-                    event.preventDefault();
-                    sidebar.toggle(
-                      section.key,
-                      sidebar.collapsed.includes(section.key),
-                    );
-                  }}
+            {sidebarSections(channels, preferences.data).map((section) => {
+              const showsCreateChannel = isChannelSectionKey(section.key);
+              return (
+                <details
+                  key={section.key}
+                  className={styles.channelSection}
+                  open={!sidebar.collapsed.includes(section.key)}
                 >
-                  <CaretRightIcon
-                    className={styles.sectionChevron}
-                    size={17}
-                    aria-hidden="true"
-                  />
-                  {section.icon && (
-                    <SidebarSectionIcon icon={section.icon} session={queries} />
-                  )}
-                  <span>{section.title}</span>
-                </summary>
-                {section.rows.map((channel) => {
-                  const sessions = childrenByParent.get(channel.id);
-                  const selected =
-                    current?.id === channel.id ||
-                    sessions?.some((child) => child.id === current?.id)
-                      ? current?.id
-                      : undefined;
-                  return (
-                    <ChannelSidebarItem
-                      key={channel.id}
-                      channel={channel}
-                      session={queries}
-                      working={workingChannels.has(channel.id)}
-                      sessionsEnabled={sessionsEnabled}
-                      selected={selected}
-                      collapsed={sidebar.collapsed.includes(
-                        `session-children:${channel.id}`,
-                      )}
-                      onToggle={sidebar.toggle}
-                      draft={draftParents.includes(channel.id)}
-                      draftSelected={drafting && draftParent === channel.id}
-                      sessions={sessions}
-                      onSelect={select}
-                      onNewSession={startSession}
-                      onOpenThread={openActivityThread}
+                  {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
+                  <summary
+                    onClick={(event) => {
+                      event.preventDefault();
+                      sidebar.toggle(
+                        section.key,
+                        sidebar.collapsed.includes(section.key),
+                      );
+                    }}
+                  >
+                    <CaretRightIcon
+                      className={styles.sectionChevron}
+                      size={17}
+                      aria-hidden="true"
                     />
-                  );
-                })}
-              </details>
-            ))}
+                    {section.icon && (
+                      <SidebarSectionIcon
+                        icon={section.icon}
+                        session={queries}
+                      />
+                    )}
+                    <span className={styles.sectionTitle}>{section.title}</span>
+                    {showsCreateChannel && (
+                      <span className={styles.sectionAction}>
+                        <IconButton
+                          type="button"
+                          size="compact"
+                          shape="round"
+                          aria-label="Create channel"
+                          title={
+                            queries.channelCreation.available
+                              ? "Create channel"
+                              : "Channel creation unavailable"
+                          }
+                          disabled={!queries.channelCreation.available}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            createChannelTrigger.current = event.currentTarget;
+                            setCreateChannelOpen(true);
+                          }}
+                          icon={<PlusIcon size={16} aria-hidden="true" />}
+                        />
+                      </span>
+                    )}
+                  </summary>
+                  {section.rows.map((channel) => {
+                    const sessions = childrenByParent.get(channel.id);
+                    const selected =
+                      current?.id === channel.id ||
+                      sessions?.some((child) => child.id === current?.id)
+                        ? current?.id
+                        : undefined;
+                    return (
+                      <ChannelSidebarItem
+                        key={channel.id}
+                        channel={channel}
+                        session={queries}
+                        working={workingChannels.has(channel.id)}
+                        sessionsEnabled={sessionsEnabled}
+                        selected={selected}
+                        collapsed={sidebar.collapsed.includes(
+                          `session-children:${channel.id}`,
+                        )}
+                        onToggle={sidebar.toggle}
+                        draft={draftParents.includes(channel.id)}
+                        draftSelected={drafting && draftParent === channel.id}
+                        sessions={sessions}
+                        onSelect={select}
+                        onNewSession={startSession}
+                        onOpenThread={openActivityThread}
+                      />
+                    );
+                  })}
+                </details>
+              );
+            })}
             {list.status === "loading" && !list.channels.length && (
               <p className={styles.empty}>Loading your channels…</p>
             )}
@@ -846,6 +893,12 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
+      <CreateChannelDialog
+        open={createChannelOpen}
+        onOpenChange={setCreateChannelOpen}
+        onCreate={createChannel}
+        finalFocus={createChannelTrigger}
+      />
       <ChannelSidebarResizeHandle
         width={sidebar.width}
         setWidth={sidebar.setWidth}
@@ -886,7 +939,7 @@ function ChannelWorkspace({
                     current?.channelType === "dm" ? (
                       <ChatCircleIcon size={20} />
                     ) : (
-                      <HashIcon size={20} />
+                      <CurrentChannelIcon size={20} />
                     )
                   }
                   actions={
@@ -1158,13 +1211,8 @@ function ChannelSidebarResizeHandle({
       onDoubleClick={() => setWidth(CHANNEL_SIDEBAR_DEFAULT_WIDTH)}
       onKeyDown={(event) => {
         const step = event.shiftKey ? 48 : 16;
-        const sidebar = event.currentTarget.previousElementSibling;
-        const currentWidth =
-          sidebar instanceof HTMLElement
-            ? sidebar.getBoundingClientRect().width
-            : renderedWidth;
-        if (event.key === "ArrowLeft") setWidth(currentWidth - step);
-        else if (event.key === "ArrowRight") setWidth(currentWidth + step);
+        if (event.key === "ArrowLeft") setWidth(width - step);
+        else if (event.key === "ArrowRight") setWidth(width + step);
         else if (event.key === "Home") setWidth(CHANNEL_SIDEBAR_MIN_WIDTH);
         else if (event.key === "End") setWidth(CHANNEL_SIDEBAR_MAX_WIDTH);
         else return;

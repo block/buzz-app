@@ -10,6 +10,7 @@ import {
   UserIcon,
   PaletteIcon,
   BellIcon,
+  ChatCircleIcon,
   WrenchIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
@@ -22,6 +23,7 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import type { NotificationsService } from "../features/notifications/service";
 import { DeveloperSettings } from "./DeveloperSettings";
+import { MessageSettings } from "./MessageSettings";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
@@ -29,6 +31,7 @@ const baseSections: Section[] = [
   { id: "profile", label: "Profile", icon: UserIcon },
   { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "messages", label: "Messages", icon: ChatCircleIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
 ];
 
@@ -113,6 +116,9 @@ export function Settings({
             </div>
             <div hidden={selected !== "appearance"}>
               <AppearanceSettings appearance={appearance} />
+            </div>
+            <div hidden={selected !== "messages"}>
+              <MessageSettings />
             </div>
             <div hidden={selected !== "profile"}>
               <ProfileSettings communities={communities} />

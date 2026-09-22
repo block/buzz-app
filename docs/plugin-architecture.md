@@ -374,7 +374,9 @@ chooser UI belongs in tool plugins: `bundled/emoji` and `bundled/mentions` use t
 same `registerTool` contract. No page imports their implementations. Optional numeric
 `order` (default zero, lower first; ties by contribution key) keeps visual and
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
-`-10` to retain its position before default-order tools such as Emoji.
+`-10` to retain its position before default-order tools such as Emoji. The host groups
+negative-order tools with selected-recipient avatars, preserving DOM/keyboard order;
+this is host layout, not a new plugin contract.
 
 Links, channel references, selected mentions and custom emoji render through shared
 message components directly in the editable draft. Display tokens retain the exact authored source;
@@ -414,6 +416,9 @@ win over an earlier multi-word mention query. Matchers
 must not depend on asynchronously arriving session data: the winning component owns
 reactive roster/profile/catalog filtering. Only that component mounts. An empty
 result without status/retry hides the menu while keeping the provider subscribed.
+Before the first publication the menu is also hidden: syntax matching is not evidence
+of loading. Providers must publish an explicit status for actual pending work. Escape
+still revokes unpublished work, without exposing ARIA controls for a missing listbox.
 
 Providers receive immutable observation/range evidence and `publish(result)`—not
 DOM, focus or replacement commands. Results contain stable IDs, labels, optional

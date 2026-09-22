@@ -7,6 +7,11 @@ test("editable composer renders links and mentions while preserving source and n
   page,
   browserName,
 }) => {
+  // Keep the empty-after-send contract under test; agent-prefill behavior has
+  // separate coverage in mention-edit.spec.mjs.
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,

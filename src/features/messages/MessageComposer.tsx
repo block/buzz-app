@@ -1,7 +1,10 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
+import { knownAgentPubkeys } from "../agents/known";
+import { rememberAgentsPreference } from "./mention-preferences";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
@@ -28,6 +31,7 @@ import {
 } from "./emoji-size";
 import {
   mentionDraft,
+  followupDraft,
   editMentionDraft,
   replaceMentionDraft,
   type MentionDraft,
@@ -184,7 +188,7 @@ function Composer({
       JSON.stringify(next.recipients) ===
         JSON.stringify(valueRef.current.recipients)
     )
-      return;
+      return false;
     if (!compositionSaved.current)
       history.current.past.push({
         draft: valueRef.current,
@@ -197,9 +201,8 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     writeView(scope, draftKey, next);
+    return true;
   };
-  const setDraft = (text: string) =>
-    saveDraft(editMentionDraft(valueRef.current, text));
   const [error, setError] = useState<string>();
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
@@ -459,9 +462,23 @@ function Composer({
       onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();
-      setDraft("");
+      const agents = knownAgentPubkeys(
+        session.profiles.snapshot(),
+        session.agentLibrary.snapshot(),
+      );
+      const next = followupDraft(
+        rememberAgentsPreference()
+          ? captured.recipients.filter((item) => agents.has(item.pubkey))
+          : [],
+      );
+      const changed = saveDraft(next);
+      // An unchanged prefill may not render. Do not leave a caret command for
+      // the next keystroke to consume after inserting its first character.
+      caret.current = changed ? next.text.length : undefined;
       history.current = { past: [], future: [] };
       input.current?.focus();
+      if (!changed)
+        input.current?.setSelectionRange(next.text.length, next.text.length);
       setError(undefined);
     } catch (reason) {
       if (live.current && !attempt.signal.aborted)
@@ -487,6 +504,26 @@ function Composer({
       canOpen={(target) => canOpenLink?.(target) ?? false}
       open={(target) => onOpenLink?.(target) ?? false}
     />
+  );
+  const renderLeadingTools = (tools: ReactNode) => (
+    <div className={styles.composerLeadingTools}>
+      {tools}
+      {!!value.recipients.length && (
+        <RecipientAvatars
+          session={session}
+          recipients={value.recipients}
+          disabled={editingDisabled}
+          remove={(pubkey) =>
+            saveDraft({
+              ...value,
+              recipients: value.recipients.filter(
+                (item) => item.pubkey !== pubkey,
+              ),
+            })
+          }
+        />
+      )}
+    </div>
   );
   if (!outbox?.supports(9))
     return (
@@ -649,39 +686,12 @@ function Composer({
               />
             </div>
           )}
-        {!!value.recipients.length && (
-          <section
-            className={styles.mentionRecipients}
-            aria-label="Notification recipients"
-          >
-            <span>Notify:</span>
-            {value.recipients.map((recipient) => (
-              <Button
-                type="button"
-                key={`${recipient.pubkey}:${recipient.start}`}
-                title={recipient.pubkey}
-                aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
-                disabled={editingDisabled}
-                onClick={() =>
-                  saveDraft({
-                    ...value,
-                    recipients: value.recipients.filter(
-                      (item) => item.pubkey !== recipient.pubkey,
-                    ),
-                  })
-                }
-              >
-                {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
-                <XIcon size={12} aria-hidden="true" />
-              </Button>
-            ))}
-          </section>
-        )}
         <div className={styles.composerActions}>
           <div className={styles.composerTools}>
-            {extensions && (
+            {extensions ? (
               <ComposerTools
                 registry={extensions.tools}
+                renderLeading={renderLeadingTools}
                 session={session}
                 scope={scope}
                 channelId={channelId}
@@ -692,6 +702,8 @@ function Composer({
                 insertMention={insertMention}
                 focus={() => input.current?.focus()}
               />
+            ) : (
+              renderLeadingTools(null)
             )}
           </div>
           {trailingTool ??
@@ -744,5 +756,67 @@ function Composer({
         )}
       </form>
     </>
+  );
+}
+
+/** Presentation stays host-owned even when the optional mention tool is disabled. */
+function RecipientAvatars({
+  session,
+  recipients,
+  disabled,
+  remove,
+}: {
+  session: RelaySession;
+  recipients: readonly MentionRecipient[];
+  disabled: boolean;
+  remove(pubkey: string): void;
+}) {
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const unique = [
+    ...new Map(recipients.map((item) => [item.pubkey, item])).values(),
+  ];
+  return (
+    <section
+      className={styles.mentionRecipients}
+      aria-label="Notification recipients"
+    >
+      {unique.map((recipient) => {
+        const profile = profiles.get(recipient.pubkey);
+        return (
+          <IconButton
+            key={recipient.pubkey}
+            type="button"
+            size="toolbar"
+            data-mention-recipient=""
+            title={`Don't notify ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
+            aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
+            disabled={disabled}
+            onClick={() => remove(recipient.pubkey)}
+            icon={
+              <span
+                className={styles.mentionRecipientArtwork}
+                data-avatar-shape={profile?.isAgent ? "squircle" : "circle"}
+                aria-hidden="true"
+              >
+                <Avatar
+                  alt=""
+                  fallback={recipient.name}
+                  src={session.media(profile?.picture ?? "", "small")}
+                  size="small"
+                  shape={profile?.isAgent ? "squircle" : "circle"}
+                />
+                <span className={styles.mentionRecipientRemove}>
+                  <XIcon size={16} />
+                </span>
+              </span>
+            }
+          />
+        );
+      })}
+    </section>
   );
 }

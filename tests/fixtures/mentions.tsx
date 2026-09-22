@@ -1,4 +1,5 @@
 import "../../src/shared/styles/globals.css";
+import { MessageSettings } from "../../src/app/MessageSettings";
 import { StrictMode, useState, useLayoutEffect } from "react";
 import { createRoot } from "react-dom/client";
 import { finalizeEvent } from "nostr-tools";
@@ -27,6 +28,8 @@ const publications: RelayEvent[] = [];
 let incoming = (_events: readonly RelayEvent[]) => {};
 let releaseProfiles = () => {};
 let libraryReads = 0;
+const reads: (readonly number[])[] = [];
+let pendingReads = 0;
 let libraryIncludesFirst = false;
 const delayed = new URLSearchParams(location.search).has("delayed-profiles");
 const profileGate = delayed
@@ -55,21 +58,27 @@ const owner = createRelaySession(
       return { update() {}, retry() {}, dispose() {} };
     },
     async query(filters) {
-      if (filters.some((filter) => filter.kinds?.includes(0)))
-        await profileGate;
-      const events = [
-        roster(relay, "c", members, time),
-        metadata(relay, "c", "General"),
-        roster(relay, "other", [viewer.pubkey], time),
-        metadata(relay, "other", "Other"),
-        profile(viewer, { name: "Viewer" }),
-        profile(first, { name: delayed ? "Mary Jane" : "Honey" }),
-        profile(second, { name: "Honey", is_agent: true }),
-        ...publications,
-      ];
-      return events.filter((event) =>
-        filters.some((filter) => matchesEvent(event, filter)),
-      );
+      reads.push(filters.flatMap((filter) => filter.kinds ?? []));
+      pendingReads++;
+      try {
+        if (filters.some((filter) => filter.kinds?.includes(0)))
+          await profileGate;
+        const events = [
+          roster(relay, "c", members, time),
+          metadata(relay, "c", "General"),
+          roster(relay, "other", [viewer.pubkey], time),
+          metadata(relay, "other", "Other"),
+          profile(viewer, { name: "Viewer" }),
+          profile(first, { name: delayed ? "Mary Jane" : "Honey" }),
+          profile(second, { name: "Honey", is_agent: true }),
+          ...publications,
+        ];
+        return events.filter((event) =>
+          filters.some((filter) => matchesEvent(event, filter)),
+        );
+      } finally {
+        pendingReads--;
+      }
     },
     writer: {
       kinds: [9],
@@ -151,6 +160,7 @@ Object.assign(window, {
     },
     releaseProfiles: () => releaseProfiles(),
     libraryReads: () => libraryReads,
+    reads: () => ({ kinds: reads, pending: pendingReads }),
     setLibraryAgent(included: boolean) {
       libraryIncludesFirst = included;
       return owner.session.agentLibrary.refresh();
@@ -190,6 +200,9 @@ function Fixture() {
         channelName="General"
         {...(thread ? { threadRootId: "a".repeat(64) } : {})}
       />
+      {new URLSearchParams(location.search).has("settings") && (
+        <MessageSettings />
+      )}
     </main>
   );
 }

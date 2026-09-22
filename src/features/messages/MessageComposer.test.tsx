@@ -30,6 +30,7 @@ import type { RelaySession } from "../relay/session";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
+import { setRememberAgentsPreference } from "./mention-preferences";
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
@@ -115,6 +116,7 @@ function mount(
   };
   const typing: ReturnType<RelaySession["typing"]["snapshot"]> = [];
   const profiles = new Map();
+  const library = { status: "ready", identities: [], definitions: [] };
   const session = {
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
@@ -122,6 +124,9 @@ function mount(
       snapshot: () => profiles,
       subscribe: () => () => {},
       ensure: vi.fn(async () => {}),
+    },
+    agentLibrary: {
+      snapshot: () => library,
     },
     emoji: {
       snapshot: () => emoji,
@@ -229,12 +234,72 @@ function mount(
       field.value = text;
       field.setSelectionRange(text.length, text.length);
       fireEvent.input(field);
+      // Browsers queue selectionchange after the editor restores its native
+      // selection. Deliver that boundary explicitly in this synchronous fixture.
+      fireEvent(document, new Event("selectionchange"));
     },
     submit() {
       fireEvent.submit(within(view.container).getByRole("form"));
     },
   };
 }
+
+it("keeps unpublished completions invisible but lets Escape revoke pending work", () => {
+  const h = mount();
+  const input = h.input();
+  input.focus();
+  h.fill("!pending");
+  const pending = h.completionRequests.length - 1;
+  expect(pending).toBeGreaterThanOrEqual(0);
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute("aria-controls");
+  expect(input).not.toHaveAttribute("aria-haspopup");
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(h.publish(pending, "late result")).toBe(false);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(input).toHaveValue("!pending");
+
+  h.fill("!fresh");
+  expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
+  expect(screen.getByRole("option", { name: "chosen" })).toBeVisible();
+  expect(input).toHaveAttribute("aria-controls");
+});
+
+it("shows provider-owned pending and retry states and hides an empty publication", () => {
+  const h = mount();
+  const input = h.input();
+  input.focus();
+  h.fill("!search");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  act(() => {
+    publish({ items: [], status: "Searching fixture…" });
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Searching fixture…");
+  const retry = vi.fn(() =>
+    publish({
+      items: [
+        { id: "recovered", label: "Recovered", edit: { text: "recovered" } },
+      ],
+    }),
+  );
+  act(() => {
+    publish({ items: [], status: "Unavailable", retry });
+  });
+  expect(
+    screen.getByRole("option", { name: "Retry suggestions" }),
+  ).toBeVisible();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(retry).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("option", { name: "Recovered" })).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  act(() => {
+    publish({ items: [] });
+  });
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute("aria-controls");
+});
 
 it("revokes stale completion publications across editor and ownership lifecycles and recovers freshly", () => {
   const h = mount();
@@ -1096,4 +1161,70 @@ it("keeps retry submission available while a new-session draft is locked", () =>
     recipients: [],
   });
   expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it.each([undefined, "root"])(
+  "prefills only exact selected agents after an accepted send in %s",
+  (threadRootId) => {
+    const h = mount(threadRootId ? { threadRootId } : {});
+    vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
+      new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
+    );
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+      h.commands().insertMention(second);
+      h.commands().insertText("hello");
+    });
+    const send = threadRootId ? h.messages.reply : h.messages.send;
+    send.mockImplementationOnce(() => {
+      throw new Error("outbox full");
+    });
+    h.submit();
+    expect(h.input()).toHaveValue("@Honey @Honey @Honey hello");
+    h.submit();
+    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([
+      first.pubkey,
+      second.pubkey,
+      second.pubkey,
+    ]);
+    expect(h.input()).toHaveValue("@Honey ");
+    expect(
+      screen.getAllByRole("button", { name: /^Remove mention/ }),
+    ).toHaveLength(1);
+    h.retarget({ channelId: "other" });
+    expect(h.input()).toHaveValue("");
+    h.retarget({ channelId: "channel" });
+    expect(h.input()).toHaveValue("@Honey ");
+    h.submit();
+    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([second.pubkey]);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${second.pubkey}`,
+      }),
+    );
+    expect(h.input()).toHaveValue("@Honey ");
+    h.submit();
+    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([]);
+    expect(h.input()).toHaveValue("");
+  },
+);
+
+it("opt-out changes future prefills, not the current draft, and re-enable revives nothing", () => {
+  const h = mount();
+  vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
+    new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
+  );
+  act(() => {
+    h.commands().insertMention(second);
+  });
+  h.submit();
+  expect(h.input()).toHaveValue("@Honey ");
+  setRememberAgentsPreference(false);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.submit();
+  expect(h.messages.send.mock.calls.at(-1)?.at(-1)).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+  setRememberAgentsPreference(true);
+  expect(h.input()).toHaveValue("");
 });

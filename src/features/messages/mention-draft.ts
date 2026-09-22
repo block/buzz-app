@@ -37,6 +37,22 @@ export function mentionDraft(value: unknown): MentionDraft {
       .map(({ pubkey, name, start, end }) => ({ pubkey, name, start, end })),
   };
 }
+/** Prefill exact, already-selected identities; never infer recipients from prose. */
+export function followupDraft(
+  recipients: readonly MentionRecipient[],
+): MentionDraft {
+  const next: MentionDraft = { text: "", recipients: [] };
+  const spans: DraftRecipient[] = [];
+  const unique = new Map(recipients.map((item) => [item.pubkey, item]));
+  for (const { pubkey, name } of [...unique.values()].slice(0, 32)) {
+    const start = next.text.length;
+    const text = `@${name} `;
+    if (start + text.length > 16000) break;
+    next.text += text;
+    spans.push({ pubkey, name, start, end: next.text.length - 1 });
+  }
+  return mentionDraft({ text: next.text, recipients: spans });
+}
 /** Known editor replacement keeps only untouched spans. */
 export function replaceMentionDraft(
   value: MentionDraft,

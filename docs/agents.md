@@ -86,7 +86,20 @@ Typing a name alone does not notify anyone. Editing a selected span removes its
 notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Explicit recipient
-chips show who will be notified and can be removed without deleting the prose.
+avatars beside the @ tool show who will be notified. Hover or keyboard focus shows
+an × removal cue; removing a recipient leaves the prose intact. Repeated mentions
+of one identity share one avatar. These controls remain available without Mentions.
+
+After an accepted send, the next draft starts with the exact selected agent-name
+mentions, deduplicated by key. Agent classification uses already-cached profile hints
+or the local library, not a new lookup or permission grant. Human recipients and
+plain typed names are not carried forward. The prefill is an ordinary scoped draft:
+channel/thread/account isolation, edits, removal, undo and delivery checks still apply.
+**Settings → Messages → Remember mentioned agents** defaults on and is saved on this
+device. Turning it off stops future prefills without changing the current draft;
+turning it back on does not restore old recipients. Session auto-recipient rules are
+unchanged. An outbox rejection preserves the original draft; acceptance is not proof
+of relay delivery or agent execution.
 
 `session.messages.send/reply` accepts up to 32 exact pubkeys and emits deduplicated
 `p` tags. Selection never invites someone. The native local-agent flow now offers

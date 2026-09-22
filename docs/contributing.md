@@ -48,7 +48,10 @@ need their own validation.
   e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
   (default: 1430) or the next available port, allowing parallel browser development.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
-  Tauri, e.g. `just desktop --port 1431 --no-watch`. The desktop adapter consumes
+  Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
+  builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
+  A preparation failure stops launch; help does not prepare resources.
+  The desktop adapter consumes
   `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
   the existing Tauri configuration is unchanged (port 1430). Desktop requires the

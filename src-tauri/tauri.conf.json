@@ -6,7 +6,7 @@
   "build": {
     "beforeDevCommand": "pnpm dev:desktop",
     "devUrl": "http://localhost:1430",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "node scripts/build-agent-runtime.mjs && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {

@@ -22,6 +22,7 @@ const disposals: (() => void)[] = [];
 afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
+  vi.useRealTimers();
   for (const dispose of disposals.splice(0)) dispose();
 });
 function setup(
@@ -591,3 +592,147 @@ for (const stage of ["create", "profile"] as const) {
     });
   }
 }
+
+it("blocks creation before native writes when the runtime is missing and preserves the draft for recovery", async () => {
+  const prepare = vi.fn(async () => ({
+    id: "created",
+    pubkey: "cd".repeat(32),
+  }));
+  const commit = vi.fn();
+  const { f, control } = setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.data.runtimeAvailable = false;
+    fixture.data.runtimeMessage =
+      "Agent runtime is not packaged; build its resources first";
+    fixture.host.prepareCreate = prepare;
+    fixture.host.commitCreate = commit;
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Calvin" },
+  });
+  const create = within(dialog).getByRole("button", { name: "Create agent" });
+  expect(create).toBeDisabled();
+  expect(within(dialog).getByRole("alert")).toHaveTextContent(
+    "agent runtime is unavailable",
+  );
+  const form = create.closest("form");
+  if (!form) throw Error("Missing create form");
+  await act(async () => fireEvent.submit(form));
+  expect(prepare).not.toHaveBeenCalled();
+  expect(commit).not.toHaveBeenCalled();
+  f.data.runtimeAvailable = true;
+  await act(async () => control.refresh());
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Calvin");
+  expect(create).toBeEnabled();
+  expect(within(dialog).queryByRole("alert")).toBeNull();
+});
+
+it("retries the same saved profile even if the runtime becomes unavailable", async () => {
+  const prepare = vi.fn(async () => ({
+    id: "created",
+    pubkey: "cd".repeat(32),
+  }));
+  const commit = vi.fn();
+  const profile = vi.fn();
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const { f, control } = setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/fixture/workspace";
+    fixture.host.prepareCreate = prepare;
+    fixture.host.commitCreate = commit.mockImplementation(
+      async (_request, edit) => {
+        fixture.data.agents.push({
+          ...structuredClone(fixture.agent),
+          id: "created",
+          name: edit.name,
+          enabled: false,
+          status: "stopped",
+          profilePending: true,
+        });
+        return structuredClone(fixture.data);
+      },
+    );
+    fixture.host.publishProfile = profile
+      .mockRejectedValueOnce("Synthetic profile failure")
+      .mockImplementation(async () => {
+        const created = fixture.data.agents.find(
+          (agent) => agent.id === "created",
+        );
+        if (!created) throw Error("Missing created fixture");
+        created.profilePending = false;
+        return structuredClone(fixture.data);
+      });
+  });
+  const user = userEvent.setup();
+  await user.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await user.type(within(dialog).getByLabelText("Name"), "Calvin");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Create agent" }),
+  );
+  await within(dialog).findByText(/Calvin is saved and stopped/);
+  expect(profile).toHaveBeenCalledExactlyOnceWith("created");
+  f.data.runtimeAvailable = false;
+  await act(async () => control.refresh());
+  const retry = within(dialog).getByRole("button", { name: "Retry profile" });
+  expect(retry).toBeEnabled();
+  await user.click(retry);
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  expect(prepare).toHaveBeenCalledOnce();
+  expect(commit).toHaveBeenCalledOnce();
+  expect(profile.mock.calls).toEqual([["created"], ["created"]]);
+});
+
+for (const error of [
+  "Agent runtime is initializing; retry shortly",
+  "Another native agent operation is in progress",
+]) {
+  it(`shows agents without manual Retry after a transient native read: ${error}`, async () => {
+    vi.useFakeTimers();
+    let snapshot!: ReturnType<typeof vi.spyOn>;
+    setup("ready", (f) => {
+      snapshot = vi.spyOn(f.host, "snapshot").mockRejectedValueOnce(error);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(screen.getByText("Reading local agent status…")).toBeVisible();
+    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(250);
+    });
+    expect(
+      screen.getAllByRole("article", { name: "Agent Fixture agent" }),
+    ).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Retry status" })).toBeNull();
+    expect(snapshot).toHaveBeenCalledTimes(2);
+  });
+}
+it("shows Retry after persistent or genuine read failure without hiding the error", async () => {
+  vi.useFakeTimers();
+  const { f } = setup("ready", (f) => {
+    vi.spyOn(f.host, "snapshot").mockRejectedValue(
+      "Agent runtime is initializing; retry shortly",
+    );
+  });
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+  expect(screen.getByText(/Could not refresh local agents/)).toBeVisible();
+  expect(f.host.snapshot).toHaveBeenCalledTimes(21);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(21);
+  vi.mocked(f.host.snapshot).mockRejectedValue("Store is unreadable");
+  fireEvent.click(screen.getByRole("button", { name: "Retry status" }));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5000);
+  });
+  expect(f.host.snapshot).toHaveBeenCalledTimes(22);
+  expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+});

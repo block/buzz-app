@@ -25,6 +25,18 @@ for (; index < args.length && args[index] !== "--"; index++) {
   }
 }
 
+// Prepare resources before Tauri can compile or observe an already-running Vite.
+// Its dev-server readiness timeout must not include a cold runtime build.
+if (!forwarded.some((arg) => arg === "--help" || arg === "-h")) {
+  const prepared = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("./build-agent-runtime.mjs", import.meta.url))],
+    { stdio: "inherit" },
+  );
+  if (prepared.error) console.error(prepared.error.message);
+  if (prepared.signal) process.kill(process.pid, prepared.signal);
+  if (prepared.status !== 0) process.exit(prepared.status ?? 1);
+}
 const config = {};
 const icon = worktreeIcon(fileURLToPath(new URL("../", import.meta.url)));
 if (icon) config.bundle = { icon: [icon] };

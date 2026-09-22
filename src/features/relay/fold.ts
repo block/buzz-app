@@ -4,7 +4,11 @@ import { emojiTags } from "./emoji";
 import { objectBody } from "./body";
 import { newer } from "./events";
 import type { EventData } from "./events";
-import type { Attachment, ChannelMessage } from "./contracts";
+import {
+  MAX_ATTACHMENT_DURATION_SECONDS,
+  type Attachment,
+  type ChannelMessage,
+} from "./contracts";
 import {
   projectMarkdownAttachments,
   relayHashBasename,
@@ -14,13 +18,12 @@ import {
 
 import { channelRowKind, membershipChange } from "./membership";
 const HEX64 = /^[0-9a-f]{64}$/;
-const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
 
 function isLegacyVoiceNote(mime: string | undefined, name: string | undefined) {
   // Old Buzz uploads voice notes as video/mp4: a 16x16 H.264 black track plus AAC
   // because the relay video validator requires a video track; classify by filename convention.
   return (
-    mime?.startsWith("video/mp4") === true &&
+    (mime === "video/mp4" || mime?.startsWith("video/mp4;") === true) &&
     name?.startsWith("voice-note-") === true &&
     name.endsWith(".mp4")
   );
@@ -106,7 +109,7 @@ export function parseAttachments(
       ? Number(fields.size)
       : undefined;
     // Treat signed metadata as untrusted layout input. Invalid/unbounded duration
-    // uses the player fallback rather than sender-controlled text width.
+    // uses a stable unknown-duration fallback.
     const parsedDuration = /^\d+(?:\.\d+)?$/.test(fields.duration ?? "")
       ? Number(fields.duration)
       : undefined;

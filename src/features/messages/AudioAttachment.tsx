@@ -1,13 +1,19 @@
 import { useCallback, useRef, useState } from "react";
 import { PauseIcon, PlayIcon } from "../../shared/design-system/icons/index";
-import type { Attachment } from "../relay/contracts";
+import {
+  MAX_ATTACHMENT_DURATION_SECONDS,
+  type Attachment,
+} from "../relay/contracts";
 import { formatMediaTime } from "./media-timecode";
 import styles from "./Messages.module.css";
 
 let playing: HTMLAudioElement | null = null;
 
 function finiteDuration(value: number | undefined): number | undefined {
-  return value !== undefined && Number.isFinite(value) && value > 0
+  return value !== undefined &&
+    Number.isFinite(value) &&
+    value > 0 &&
+    value <= MAX_ATTACHMENT_DURATION_SECONDS
     ? value
     : undefined;
 }

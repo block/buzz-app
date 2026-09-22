@@ -1,6 +1,9 @@
 import type { CustomEmoji } from "./emoji";
 import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
+
+export const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
+
 /** Folded, read-only channel state. Rows are domain data, not wire events or presentation. */
 export type ChannelSummary = Readonly<{
   id: string;

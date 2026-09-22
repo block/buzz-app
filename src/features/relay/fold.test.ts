@@ -881,6 +881,25 @@ it("keeps plain video/mp4 attachments classified as video", () => {
   ]);
 });
 
+it("keeps video/mp4V-ES voice-note-shaped attachments classified as video", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/voice-note-fallback.mp4",
+      "m video/mp4V-ES",
+      "filename voice-note-1.mp4",
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/voice-note-fallback.mp4",
+      kind: "video",
+      mime: "video/mp4V-ES",
+      name: "voice-note-1.mp4",
+    },
+  ]);
+});
+
 it.each(["audio/mpeg", "Audio/MPEG"])(
   "classifies %s attachments as audio",
   (mime) => {
@@ -897,6 +916,21 @@ it.each(["audio/mpeg", "Audio/MPEG"])(
     ]);
   },
 );
+
+it("accepts maximum bounded attachment duration", () => {
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", "url https://x.test/song.mp3", "m audio/mpeg", "duration 86400"],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/song.mp3",
+      kind: "audio",
+      mime: "audio/mpeg",
+      name: "song.mp3",
+      duration: 86400,
+    },
+  ]);
+});
 
 it.each([
   "0",

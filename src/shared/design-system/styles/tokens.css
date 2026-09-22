@@ -487,6 +487,7 @@
   --surface-panel: var(--neutral-1);
   --surface-popover: var(--neutral-1);
   --surface-inset: var(--neutral-2);
+  --surface-inverse: var(--neutral-11);
   --text-standard: var(--neutral-12);
   --text-subtle: var(--neutral-10);
   --text-metadata: var(--neutral-9);
@@ -496,6 +497,8 @@
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
   --text-accent: var(--purple-12);
+  --text-link: var(--blue-12);
+  --affordance-link-hover: var(--blue-4);
   --border-standard: var(--neutral-3);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
@@ -528,6 +531,7 @@
   --surface-panel: var(--neutral-3);
   --surface-popover: var(--neutral-5);
   --surface-inset: var(--neutral-2);
+  --surface-inverse: var(--neutral-11);
   --text-standard: var(--neutral-12);
   --text-subtle: var(--neutral-11);
   --text-metadata: var(--neutral-10);
@@ -537,6 +541,8 @@
   --text-warning: var(--amber-12);
   --text-success: var(--green-12);
   --text-accent: var(--purple-12);
+  --text-link: var(--blue-12);
+  --affordance-link-hover: var(--blue-4);
   --border-standard: var(--neutral-4);
   --border-prominent: var(--neutral-8);
   --border-focus: var(--neutral-12);
@@ -627,6 +633,10 @@
      inset and a 4px gap. */
   --space-chip-inset: 0.1875rem;
   --space-chip-gap: var(--space-1);
+  --layer-dialog-backdrop: 1000;
+  --layer-dialog: 1001;
+  --layer-popover: 1100;
+  --layer-tooltip: 1200;
   --size-topbar: 3.5rem;
   --size-panel-header: 3.5rem;
   --size-control-sm: 2rem;
@@ -714,10 +724,13 @@
 @theme inline {
   --color-*: initial;
   /* Semantic utilities. Text and border stay in their own namespaces. */
+  --text-color-link: var(--text-link);
+  --color-affordance-link-hover: var(--affordance-link-hover);
   --color-surface-base: var(--surface-base);
   --color-surface-panel: var(--surface-panel);
   --color-surface-popover: var(--surface-popover);
   --color-surface-inset: var(--surface-inset);
+  --color-surface-inverse: var(--surface-inverse);
   --text-color-standard: var(--text-standard);
   --text-color-subtle: var(--text-subtle);
   --text-color-metadata: var(--text-metadata);

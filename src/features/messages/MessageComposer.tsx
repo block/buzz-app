@@ -1,3 +1,5 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
@@ -638,13 +640,13 @@ function Composer({
           !hideMediaTimeIndicator && (
             <div className={styles.mediaComposerAnchor}>
               <span>Commenting at {formatMediaTime(mediaTimeSeconds)}</span>
-              <button
+              <IconButton
+                size="compact"
                 type="button"
                 onClick={clearMediaTime}
                 aria-label="Remove video time"
-              >
-                <XIcon size={13} aria-hidden="true" />
-              </button>
+                icon={<XIcon size={13} />}
+              />
             </div>
           )}
         {!!value.recipients.length && (
@@ -654,7 +656,7 @@ function Composer({
           >
             <span>Notify:</span>
             {value.recipients.map((recipient) => (
-              <button
+              <Button
                 type="button"
                 key={`${recipient.pubkey}:${recipient.start}`}
                 title={recipient.pubkey}
@@ -671,7 +673,7 @@ function Composer({
               >
                 {recipient.name} <code>{recipient.pubkey.slice(0, 8)}</code>
                 <XIcon size={12} aria-hidden="true" />
-              </button>
+              </Button>
             ))}
           </section>
         )}
@@ -706,8 +708,9 @@ function Composer({
                 Shift + Enter for a new line
               </span>
             ))}
-          <button
-            className={styles.sendButton}
+          <IconButton
+            variant="solid"
+            shape="round"
             type="submit"
             aria-label="Send message"
             title="Send message"
@@ -718,13 +721,12 @@ function Composer({
               submission?.disabled ||
               !draft.trim()
             }
-          >
-            <ArrowUpIcon size={18} aria-hidden="true" />
-          </button>
+            icon={<ArrowUpIcon size={18} />}
+          />
         </div>
         {error && <p role="alert">{error}</p>}
         {error && session.emoji?.snapshot().status === "error" && (
-          <button
+          <Button
             type="button"
             disabled={editingDisabled}
             onClick={() => {
@@ -738,7 +740,7 @@ function Composer({
             }}
           >
             Retry message preparation
-          </button>
+          </Button>
         )}
       </form>
     </>

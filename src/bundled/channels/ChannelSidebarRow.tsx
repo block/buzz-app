@@ -1,3 +1,5 @@
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   CaretDownIcon,
   CaretRightIcon,
@@ -49,8 +51,7 @@ export function ChannelSidebarRow({
     channel.channelType !== "session" &&
     !channel.archived;
   const selectButton = (
-    <button
-      className={styles.select}
+    <NavigationItem
       type="button"
       title={channel.name}
       data-channel-id={channel.id}
@@ -60,15 +61,17 @@ export function ChannelSidebarRow({
       onPointerEnter={() => onPrepare(channel.id)}
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
-    >
-      {hasChildren ? (
-        <span className={styles.iconSpace} aria-hidden="true" />
-      ) : (
-        icon
-      )}
-      <span>{channel.name}</span>
-      {badge}
-    </button>
+      selected={selected === channel.id && !draftSelected}
+      label={<span className={styles.label}>{channel.name}</span>}
+      icon={
+        hasChildren ? (
+          <span className={styles.iconSpace} aria-hidden="true" />
+        ) : (
+          icon
+        )
+      }
+      trailing={badge && <span className={styles.badges}>{badge}</span>}
+    />
   );
   return (
     <>
@@ -77,37 +80,50 @@ export function ChannelSidebarRow({
         data-selected={(selected === channel.id && !draftSelected) || undefined}
       >
         {hasChildren && (
-          <button
-            type="button"
-            className={styles.disclosure}
-            aria-label={`${collapsed ? "Expand" : "Collapse"} sessions in ${channel.name}`}
-            aria-expanded={!collapsed}
-            aria-controls={childrenId}
-            onClick={() => onToggle(collapsed)}
-          >
-            <span className={styles.hashIcon} aria-hidden="true">
-              {icon}
-            </span>
-            <Chevron
-              className={styles.chevronIcon}
-              size={17}
-              aria-hidden="true"
+          <span className={styles.disclosure}>
+            <IconButton
+              type="button"
+              size="compact"
+              aria-label={`${collapsed ? "Expand" : "Collapse"} sessions in ${channel.name}`}
+              aria-expanded={!collapsed}
+              aria-controls={childrenId}
+              onClick={() => onToggle(collapsed)}
+              icon={
+                <>
+                  <span className={styles.hashIcon} aria-hidden="true">
+                    {icon}
+                  </span>
+                  <Chevron
+                    className={styles.chevronIcon}
+                    size={17}
+                    aria-hidden="true"
+                  />
+                </>
+              }
             />
-          </button>
+          </span>
         )}
-        {wrapSelect ? wrapSelect(selectButton) : selectButton}
+        <div className={styles.select}>
+          {wrapSelect ? wrapSelect(selectButton) : selectButton}
+        </div>
         {canParent && (
           <Menu.Root
             onOpenChange={(open) => {
               if (open) starting.current = false;
             }}
           >
-            <Menu.Trigger
-              className={styles.more}
-              aria-label={`More options for ${channel.name}`}
-            >
-              <DotsThreeVerticalIcon size={15} />
-            </Menu.Trigger>
+            <span className={styles.more}>
+              <Menu.Trigger
+                render={
+                  <IconButton
+                    size="compact"
+                    aria-label={`More options for ${channel.name}`}
+                    icon={<DotsThreeVerticalIcon size={15} />}
+                  />
+                }
+                aria-label={`More options for ${channel.name}`}
+              />
+            </span>
             <Menu.Portal>
               <Menu.Positioner
                 side="bottom"
@@ -145,23 +161,20 @@ export function ChannelSidebarRow({
       </div>
       <div id={childrenId} hidden={collapsed}>
         {draft && (
-          <button
-            type="button"
-            className={styles.child}
+          <NavigationItem
+            inset
+            label="New session"
+            trailing={<small>Draft</small>}
             aria-label={`New session draft in ${channel.name}`}
-            aria-current={draftSelected ? "page" : undefined}
+            selected={draftSelected}
             onClick={() => onNewSession(channel.id)}
-          >
-            <span className={styles.iconSpace} aria-hidden="true" />
-            <span>New session</span>
-            <small>Draft</small>
-          </button>
+          />
         )}
         {sessions.map((child) => (
-          <button
+          <NavigationItem
+            inset
             key={child.id}
             type="button"
-            className={styles.child}
             title={child.name}
             data-channel-id={child.id}
             aria-label={`${child.name}, session in ${channel.name}`}
@@ -169,10 +182,13 @@ export function ChannelSidebarRow({
             onPointerEnter={() => onPrepare(child.id)}
             onFocus={() => onPrepare(child.id)}
             onClick={() => onSelect(child.id)}
-          >
-            <span className={styles.iconSpace} aria-hidden="true" />
-            {childContent?.(child) ?? <span>{child.name}</span>}
-          </button>
+            selected={selected === child.id}
+            label={
+              <span className={styles.childLabel}>
+                {childContent?.(child) ?? child.name}
+              </span>
+            }
+          />
         ))}
       </div>
     </>

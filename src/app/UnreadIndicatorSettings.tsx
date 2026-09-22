@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import type { UnreadIndicator } from "../features/notifications/indicator";
+import { Button } from "../shared/design-system/ui/Button";
 
 export function UnreadIndicatorSettings({
   indicator,
@@ -34,7 +35,7 @@ export function UnreadIndicatorSettings({
       </p>
       <div className="flex gap-2">
         {(state.permission === "default" || state.permission === "setup") && (
-          <button
+          <Button
             type="button"
             disabled={state.requesting}
             onClick={() => void indicator.request()}
@@ -42,15 +43,15 @@ export function UnreadIndicatorSettings({
             {state.permission === "setup"
               ? "Set up Dock badges"
               : "Allow notifications and badges"}
-          </button>
+          </Button>
         )}
-        <button
+        <Button
           type="button"
           disabled={state.requesting}
           onClick={() => void indicator.refresh()}
         >
           Check Dock permission
-        </button>
+        </Button>
       </div>
       {state.error && (
         <p role="alert" className="notice">

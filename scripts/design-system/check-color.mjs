@@ -106,29 +106,9 @@ const PALETTE_HUES = [
   "orange",
 ];
 
-/**
- * **Palette steps are public now. Only glass is private.**
- *
- * This rule used to reject `var(--neutral-4)` in a component, on the reasoning
- * that a screen should say what a thing *is* rather than which colour it takes.
- * That reasoning was imported from Tailwind, where `neutral-800` is a single
- * literal and naming it really does break dark mode.
- *
- * It does not hold here. **Every step in this palette is authored per mode**, so
- * `neutral-4` is one value in light and another in dark and a component naming it
- * behaves correctly in both. Once that is true, a role whose light and dark
- * values are the same step is a name in front of a number — and a name in front
- * of a number hides the decision rather than recording it. Nineteen roles were
- * exactly that.
- *
- * Glass stays private for a different reason, which has nothing to do with
- * naming: a glass fill without its blur, rim, and lift is not glass. It is
- * reachable only through the `glass-primary` / `glass-secondary` utilities, which
- * carry the whole material. That is enforced below.
- *
- * Hues are enumerated rather than matched as `[a-z]+` because a palette step and
- * a non-colour token are the same shape: `--neutral-4` and `--space-4`.
- */
+/** Glass is consumed as a complete material, never as a bare fill. Direct
+ * palette consumption in production is checked by check-adoption.mjs; viewer
+ * swatches may inspect the palette. */
 const PRIVATE_TOKEN = /var\(\s*--glass-\d+\s*\)/g;
 
 /**

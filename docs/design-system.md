@@ -1,11 +1,10 @@
 # Design system and appearance
 
-> **The design system going forward:** the imported system is documented in
-> [the handoff README](../src/shared/design-system/README.md) and displayed at
-> `/tests/fixtures/design-system.html`. New UI and existing surfaces moving off the
-> current styles should use it. This initial port does not migrate existing surfaces,
-> so the host styling described below still governs those callers until they move;
-> the host remains the single owner of appearance throughout the transition.
+The shared components live in `src/shared/design-system` and appear at
+`/tests/fixtures/design-system.html`. Buzz follows Block UI’s approach to semantic
+roles, controls and states, using Base UI for behavior and public fonts and assets.
+The app imports the same form and overlay styles as the component viewer.
+See [the adoption map](design-system-adoption.md) for ownership and retained adapters.
 
 The **host** owns appearance, including startup and recovery. A plugin must not be
 required to render the shell correctly. Pages still own their layout and behavior;
@@ -89,15 +88,11 @@ picker. Browser regressions cover host Settings changes through an open widget,
 opening in Dark, and no updates after disposal. Mutation probes exercise the startup
 script, Settings writes/retry, host lifetime and widget initial/update/disposal paths.
 
-The initial integration batch passed the theme/picker journeys in both browsers,
-Node/Vitest/plugin-manager tests, formatting/types, build and Clippy. The broad browser
-run was **89/90**, not green: WebKit's `initial-position.spec.mjs` reload case reported
-a localhost access-control console warning. The identical failure reproduced on
-pre-theme `742a770` (one failure, two passes); its cause is not diagnosed or suppressed.
-Native Rust test targets compile but contain zero tests. Human light/dark visual
-approval and independent source review do not replace attended packaged-app
-chrome/relaunch acceptance. Browser evidence also does not cover third-party plugins
-that hard-code their own colors.
+Run the design guards, unit tests and relevant browser journeys for a changed
+component. Native window chrome and relaunch still need an attended packaged-app
+check; browser checks do not establish native acceptance or third-party plugin
+styling. Keep full batch validation separate from an interactive preview.
+
 
 
 ## Text size and shortcuts
@@ -135,14 +130,11 @@ palette, typography roles, materials and component styles with one Tailwind rese
 It does not import the viewer's global entry, preference owner, docking vendor CSS
 or workspace experiments. Panel styling remains defined only by the shared system.
 
-Existing screens retain their palette, canvas, type sizes and native-control
-recipes. Compatibility names are temporary, not the vocabulary for new work.
-`bg-primary` retains the old action fill via an explicit compatibility utility;
-`text-primary` and `border-primary` belong to the system. The old control radius
-is explicitly named `--radius-legacy-control` to avoid overriding shared controls.
-Legacy monospace utilities and native code retain their system font stack; migrated
-boundaries select the shared mono face. No old paint role is aliased merely because it sounds similar: the current
-palettes differ, and aliasing them would silently recolor unmigrated screens.
+Bundled screens use semantic colors and shared controls. Compatibility names
+forward to the same shared roles; they are not the vocabulary for new work.
+`bg-primary` forwards to the prominent action role, while `text-primary` and
+`border-primary` keep their text and border meanings. Native plugin fallbacks
+remain available outside shared-control boundaries.
 
 Shared primitives carry `data-buzz-ui`, including portal popup roots. Legacy
 native-element selectors exclude that boundary and its descendants (without native CSS scope); shared typography starts there.
@@ -167,3 +159,33 @@ and the temporary font/color compatibility contracts. Remove compatibility check
 as their legacy consumers disappear; no separate legacy viewer or test suite is
 needed. Browser checks do not establish native or packaged acceptance. Broad scan
 remains an agreed integration-batch gate.
+
+## Baseline ownership and exceptions
+
+Bundled UI uses semantic roles, including renderer adapters. Change color values
+in the shared token layer and visual control recipes in the shared components.
+Feature CSS owns layout, not a second Button/Input recipe. `design:check` rejects
+direct palette consumption and feature selectors that override control paint,
+padding or typography; `design:census` includes the app and renderer string reads.
+These are static guardrails, not a substitute for browser checks.
+
+Anchored emoji, mention, completion, account and diagnostics surfaces use
+`popover-surface` for their border, fill, elevation and layer. Their placement,
+scrolling and specialized keyboard/editor interactions remain feature-owned.
+Popup selection uses the shared hover affordance so it stays visible on the
+raised dark surface. Compact completion/emoji layouts may select shared radius
+tokens to fit their inner geometry. Shared Button/IconButton `title` props render
+a shared Tooltip; content titles (full names, timestamps and media descriptions) remain native.
+
+Explicit exceptions: GIF and image tiles use native media buttons, image zoom
+uses a native range with semantic colors; rendered Markdown task
+checkboxes and inline links keep their content semantics; the rich editor uses
+native selection colors; terminal ANSI colors and decorative artwork remain
+renderer-owned. The design viewer's layout experiments are not bundled app UI.
+Plugin examples consume public CSS roles and host fallbacks. External plugins
+cannot be guaranteed to follow this system; no new plugin API is introduced here.
+
+The browser adoption regression changes semantic fill, type and spacing values
+and checks the actual Settings button, inline chips and production CSS inside
+message-history containers and anchored popups. It exists because DOM emulation
+cannot establish CSS layer ownership.

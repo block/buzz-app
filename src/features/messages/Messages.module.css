@@ -373,6 +373,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
 }
 .audioAttachment {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-2);

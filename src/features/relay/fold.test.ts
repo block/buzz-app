@@ -838,6 +838,21 @@ it("classifies voice-note mp4 metadata as audio with validated duration and file
   ]);
 });
 
+it("classifies voice-note mp4 metadata case-insensitively", () => {
+  const url = "https://x.test/media/hash";
+  const event = message(keypair(), "channel", "", 1, [
+    ["imeta", `url ${url}`, "m Video/MP4", "filename Voice-Note-1.MP4"],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url,
+      kind: "audio",
+      mime: "Video/MP4",
+      name: "Voice-Note-1.MP4",
+    },
+  ]);
+});
+
 it("detects legacy voice-note mp4s from the link label when filename is absent", () => {
   const url = "https://x.test/media/hash";
   const event = message(keypair(), "channel", `[voice-note-2.mp4](${url})`, 1, [
@@ -901,6 +916,29 @@ it.each(["0", "-1", "Infinity", "NaN", "not-a-number"])(
     ]);
   },
 );
+
+it.each([
+  [" 12 ", 12],
+  ["1e9", 1e9],
+])("accepts Number-compatible attachment duration %s", (duration, expected) => {
+  const event = message(keypair(), "channel", "", 1, [
+    [
+      "imeta",
+      "url https://x.test/song.mp3",
+      "m audio/mpeg",
+      `duration ${duration}`,
+    ],
+  ]);
+  expect(parseAttachments(event, [])).toEqual([
+    {
+      url: "https://x.test/song.mp3",
+      kind: "audio",
+      mime: "audio/mpeg",
+      name: "song.mp3",
+      duration: expected,
+    },
+  ]);
+});
 
 it("rejects control characters in imeta filenames", () => {
   const event = message(keypair(), "channel", "", 1, [

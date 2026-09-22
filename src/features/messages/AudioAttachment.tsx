@@ -25,15 +25,16 @@ export function AudioAttachment({
     finiteDuration(attachment.duration),
   );
   const [isPlaying, setIsPlaying] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const [failedSource, setFailedSource] = useState<string | null>(null);
+  const failed = failedSource === source;
   const total = duration;
 
-  useEffect(
-    () => () => {
-      if (playing === audio.current) playing = null;
-    },
-    [],
-  );
+  useEffect(() => {
+    const element = audio.current;
+    return () => {
+      if (playing === element) playing = null;
+    };
+  }, []);
 
   if (failed)
     return (
@@ -68,7 +69,10 @@ export function AudioAttachment({
           if (playing === event.currentTarget) playing = null;
           setIsPlaying(false);
         }}
-        onError={() => setFailed(true)}
+        onError={(event) => {
+          if (playing === event.currentTarget) playing = null;
+          setFailedSource(source);
+        }}
       />
       <button
         type="button"

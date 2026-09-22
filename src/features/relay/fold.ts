@@ -21,12 +21,13 @@ function attachmentKind(
   detectionName: string | undefined,
 ): Attachment["kind"] {
   const mime = fields.m?.toLowerCase();
+  const voiceNoteName = detectionName?.toLowerCase();
   if (mime?.startsWith("image/")) return "image";
   if (
     mime?.startsWith("audio/") ||
     (mime === "video/mp4" &&
-      detectionName?.startsWith("voice-note-") &&
-      detectionName.endsWith(".mp4"))
+      voiceNoteName?.startsWith("voice-note-") &&
+      voiceNoteName.endsWith(".mp4"))
   )
     return "audio";
   if (mime?.startsWith("video/")) return "video";

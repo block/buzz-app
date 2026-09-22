@@ -15,7 +15,7 @@ use buzzodz_plugins::{
 };
 use dock::{dock_permission, unread_indicator_set};
 use notifications::{notification_show, Notifications};
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tauri::Manager as _;
@@ -64,7 +64,7 @@ struct TitleBarFillFrame {
     filled: TitleBarFrame,
 }
 
-#[cfg(any(target_os = "macos", test))]
+#[cfg(target_os = "macos")]
 #[derive(Default)]
 struct TitleBarFillFrames(Mutex<HashMap<String, TitleBarFillFrame>>);
 

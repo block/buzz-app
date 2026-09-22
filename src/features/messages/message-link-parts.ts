@@ -3,6 +3,7 @@ import { parseBuzzLink } from "../navigation/buzz-links";
 type LinkPart = { text: string; url?: string; label?: string };
 
 export function isSupportedMessageLink(url: string): boolean {
+  if (/\s/.test(url)) return false;
   try {
     const parsed = new URL(url);
     return parsed.protocol === "buzz:"
@@ -112,7 +113,7 @@ export function messageLinkParts(
       if (url.startsWith("<") && url.endsWith(">")) url = url.slice(1, -1);
       url = unescapeLink(url);
       const label = unescapeLink(match[1]).trim();
-      if (!label || /\s/.test(url) || !isSupportedMessageLink(url)) continue;
+      if (!label || !isSupportedMessageLink(url)) continue;
       parts.push({ text: content.slice(offset, match.index) });
       parts.push({ text: label, label, url });
       onLabeledLink?.(match.index, closing.end, label, url);

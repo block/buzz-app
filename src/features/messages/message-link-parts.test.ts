@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { messageLinkParts } from "./message-link-parts";
+import { isSupportedMessageLink, messageLinkParts } from "./message-link-parts";
 import { targetLink } from "../navigation/targets";
 
 it("recognizes bare and wrapped Buzz channel, message, thread and shared links", () => {
@@ -197,4 +197,17 @@ it("bounds repeated unfinished wrappers while retaining a later valid link", () 
     ]);
     expect(parts.map((part) => part.text).join("")).toBe(`${prefix} Docs`);
   }
+});
+
+it.each([
+  "https://example.com/hello world",
+  "https://example.com/hello\tworld",
+  "https://example.com/hello\nworld",
+])("rejects whitespace in link destination %s", (url) => {
+  expect(isSupportedMessageLink(url)).toBe(false);
+});
+it("accepts explicitly encoded spaces in a link destination", () => {
+  expect(isSupportedMessageLink("https://example.com/hello%20world")).toBe(
+    true,
+  );
 });

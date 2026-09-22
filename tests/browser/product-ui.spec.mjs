@@ -96,6 +96,10 @@ test("product catalogue uses the production composer and shared navigation", asy
   await dialog.getByRole("button", { name: "Add link", exact: true }).click();
   await expect(dialog.getByRole("alert")).toContainText("HTTPS");
   await expect(formattingEditor).toHaveText("selected tail");
+  await dialog.getByLabel("Address").fill("https://example.com/hello world");
+  await dialog.getByRole("button", { name: "Add link", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toBeVisible();
+  await expect(formattingEditor).toHaveText("selected tail");
   await dialog.getByLabel("Address").fill("buzz://channel/design");
   await dialog.getByRole("button", { name: "Add link", exact: true }).click();
   await expect(dialog).toHaveCount(0);

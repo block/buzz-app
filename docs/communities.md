@@ -148,10 +148,11 @@ drafts, credentials and community content are never copied between ports.
 The hint has the same trust as a saved local membership: normal session routing
 and relay access enforcement still apply. Offline communities retain normal retry
 behavior. No remote join, invite acceptance or profile publication is performed.
-Personal space and startup restoration do not update the shared hint; an explicit
-community selection does. Updates carry the selection time and use per-viewer
-cross-process exclusion plus atomic file replacement, preventing a delayed older
-request from replacing a later choice. Storage/transport failure is best effort
+Personal space, startup restoration and navigation/history scope reconciliation
+do not update the shared hint; an explicit community selection does. Updates carry
+the selection time and use per-viewer cross-process exclusion plus atomic file
+replacement, preventing a delayed older request from replacing a later choice.
+Storage/transport failure is best effort
 and never blocks a selection. This is a machine-local convenience, not a secure
 store against same-user processes or a cross-device preference service.
 

@@ -145,7 +145,7 @@ export function useAppNavigation(services: AppServices) {
       client.status !== "loading" &&
       client.selected !== null
     )
-      services.communities.select(null);
+      services.communities.select(null, "navigation");
     if (
       scope &&
       client.status !== "loading" &&
@@ -153,7 +153,7 @@ export function useAppNavigation(services: AppServices) {
       membership &&
       client.selected !== membership.id
     ) {
-      services.communities.select(membership.id);
+      services.communities.select(membership.id, "navigation");
     }
   }, [services, state.attempt, failure, scope, client, membership]);
   useEffect(() => {

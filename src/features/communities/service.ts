@@ -252,14 +252,15 @@ export function createCommunities(ctx: Context, live: boolean) {
         listeners.delete(fn);
       };
     },
-    select(id: string | null) {
+    select(id: string | null, intent: "explicit" | "navigation" = "explicit") {
       if (id) id = communityDestination(id).id;
       if (id && !state.memberships.some((m) => m.id === id))
         throw new Error("Join this community first");
       if (id) acquire(id);
       update({ selected: id });
       const membership = state.memberships.find((entry) => entry.id === id);
-      if (membership) remember(membership);
+      // Restored routes change this window, not the shared explicit-choice hint.
+      if (membership && intent === "explicit") remember(membership);
     },
     saveProfile(profile: PersonalProfile) {
       update({ profile });

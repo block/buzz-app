@@ -23,7 +23,7 @@ test("app startup preserves shared shell control styling", async ({ page }) => {
       const controls = [
         page.getByRole("button", { name: "Go back", exact: true }),
         page.getByRole("button", { name: "Go forward", exact: true }),
-        page.getByRole("button", { name: "Find a page", exact: true }),
+        page.getByRole("button", { name: "Search Buzz", exact: true }),
       ];
       for (const control of controls) {
         await expect(control).toBeVisible();

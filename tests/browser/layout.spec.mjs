@@ -251,10 +251,10 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   near(narrow.width, 374);
   await button(page, "Close channel panel").click();
   await expect(composer).toBeInViewport();
-  await button(page, "Find a page").click();
+  await button(page, "Search Buzz").click();
   await page
-    .getByRole("dialog", { name: "Find a page" })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("dialog", { name: "Search Buzz" })
+    .getByRole("option", { name: "Home", exact: true })
     .click();
   await expect(
     page
@@ -759,13 +759,15 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Workflows",
     "Make it yours · Settings",
   ]);
-  await button(page, "Find a page").click();
-  const search = page.getByRole("dialog", { name: "Find a page", exact: true });
-  await expect(search.getByRole("button")).toHaveText([
-    "",
+  await button(page, "Search Buzz").click();
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  const pageResults = search.locator("section").filter({
+    has: page.getByRole("heading", { name: "Pages", exact: true }),
+  });
+  await expect(pageResults.getByRole("option")).toHaveText([
     ...titles,
     "Settings",
   ]);
-  await search.getByRole("button", { name: "Projects", exact: true }).click();
+  await search.getByRole("option", { name: "Projects", exact: true }).click();
   await expect(title).toBeVisible();
 });

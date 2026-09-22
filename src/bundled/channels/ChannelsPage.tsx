@@ -278,16 +278,59 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.channelId
       : undefined;
+  const [resolved, setResolved] = useState<{
+    request: PageNavigation;
+    available: boolean;
+  }>();
+  const joinedRequest = channels.some(
+    (channel) => channel.id === requestedChannel,
+  );
+  useEffect(() => {
+    // Let initial membership discovery settle before resolving an omitted target.
+    // A premature exact lookup publishes a one-channel list and starts readers
+    // that the completing full roster then invalidates.
+    if (
+      !requestedChannel ||
+      !navigation ||
+      joinedRequest ||
+      list.status === "idle" ||
+      list.status === "loading" ||
+      !queries.channels.resolve
+    )
+      return;
+    const controller = new AbortController();
+    void queries.channels
+      .resolve([requestedChannel], {
+        signal: AbortSignal.any([controller.signal, navigation.signal]),
+        priority: "foreground",
+      })
+      .then(() => {
+        if (!controller.signal.aborted && !navigation.signal.aborted)
+          setResolved({ request: navigation, available: true });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && !navigation.signal.aborted) {
+          setResolved({ request: navigation, available: false });
+          navigation.complete({ status: "failed", reason: "unavailable" });
+        }
+      });
+    return () => controller.abort();
+  }, [requestedChannel, navigation, joinedRequest, queries, list.status]);
+  const resolving =
+    !!requestedChannel &&
+    !joinedRequest &&
+    !!queries.channels.resolve &&
+    resolved?.request !== navigation;
   const current = requestedChannel
     ? (channels.find((channel) => channel.id === requestedChannel) ??
-      (list.coverage === "partial"
-        ? { id: requestedChannel, name: "Conversation" }
+      (resolved?.request === navigation && resolved?.available
+        ? queries.channels.get?.(requestedChannel)
         : undefined))
     : (channels.find((channel) => channel.id === selected) ??
       channels.find((item) => item.channelType !== "session"));
   useEffect(() => {
     if (navigation?.signal.aborted) return;
-    if (requestedChannel && list.status === "ready" && !current)
+    if (requestedChannel && !resolving && list.status === "ready" && !current)
       navigation?.complete({ status: "failed", reason: "unavailable" });
     if (!requestedChannel && !current && list.status === "ready")
       navigation?.complete({ status: "opened" });
@@ -303,7 +346,15 @@ function ChannelWorkspace({
         },
       });
     }
-  }, [requestedChannel, current, list.status, navigation, viewer, scope]);
+  }, [
+    requestedChannel,
+    resolving,
+    current,
+    list.status,
+    navigation,
+    viewer,
+    scope,
+  ]);
   const requestedMessage =
     navigation?.target.kind === "conversation"
       ? navigation.target.messageId
@@ -395,7 +446,11 @@ function ChannelWorkspace({
     priorRoutedThread.current = undefined;
   }
   if (showingThread?.navigation) priorRoutedThread.current = showingThread;
-  else if (!showingThread && (!navigation || (requestedMessage && !exact)))
+  else if (
+    current &&
+    !showingThread &&
+    (!navigation || (requestedMessage && !exact))
+  )
     showingThread = priorRoutedThread.current;
   else priorRoutedThread.current = undefined;
   useEffect(() => {
@@ -675,7 +730,7 @@ function ChannelWorkspace({
       : undefined;
   const drawerContext = useMemo(
     () =>
-      current && viewer
+      current && !current.readOnly && viewer
         ? {
             scope,
             viewer,
@@ -952,8 +1007,15 @@ function ChannelWorkspace({
                   />
                 ) : (
                   <div className={styles.empty}>
-                    Select a channel to read it.
+                    {resolving
+                      ? "Checking conversation access…"
+                      : "Select a channel to read it."}
                   </div>
+                )}
+                {current?.readOnly && (
+                  <p className="px-4 py-2 text-body-sm text-subtle">
+                    Read-only preview · You haven’t joined this conversation.
+                  </p>
                 )}
                 {current && (
                   <MessageComposer

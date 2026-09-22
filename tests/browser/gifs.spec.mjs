@@ -159,7 +159,15 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(draft).toHaveJSProperty("value", "");
   const composer = draft.locator("xpath=ancestor::form");
-  await expect(composer).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
+  const composerBorder = await composer.evaluate((element) => {
+    const probe = document.createElement("div");
+    probe.style.borderColor = "var(--border-standard)";
+    element.append(probe);
+    const color = getComputedStyle(probe).borderColor;
+    probe.remove();
+    return color;
+  });
+  await expect(composer).toHaveCSS("border-top-color", composerBorder);
   await expect(composer).toHaveCSS("box-shadow", "none");
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");

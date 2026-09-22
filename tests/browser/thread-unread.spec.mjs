@@ -208,6 +208,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
+  const beforeReload = app.report.queries.length;
   await page.reload();
   await page
     .getByRole("button", { name: "Messages", exact: true })
@@ -215,4 +216,14 @@ test("thread buttons show observed unread independently, clear only after readin
     .click();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
+  // Restoring a joined conversation waits for initial membership discovery;
+  // it must not publish an early one-channel roster through exact resolution.
+  expect(
+    app.report.queries
+      .slice(beforeReload)
+      .filter(
+        ({ filter }) =>
+          filter.kinds?.includes(39002) && filter["#d"]?.includes("alpha"),
+      ),
+  ).toEqual([]);
 });

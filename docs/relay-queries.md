@@ -162,6 +162,43 @@ inserting isolated rows into channel history. Explicit denial revokes the owning
 channel; access loss, cache clear and disposal purge the view. There is no separate
 reader owner, subscription or persistence.
 
+## Global message search and public previews
+
+Global message searches (`kinds: [9, 40002]`, no `#h`) keep the relay's order.
+Before admitting hits, the session resolves only their distinct nonmember channel
+IDs through the existing verified reader. The palette requests 20 hits; resolution
+accepts at most 128 IDs in one bounded request for signed metadata and
+viewer-scoped membership. This also resolves members omitted from a capped roster. Missing/forged metadata
+cannot grant a preview; read/capacity failures remain visible rather than becoming
+an empty successful page. Other search entities and feed queries retain their
+existing finite-read behavior.
+
+Only relay-authored explicit `public` metadata without `private`, `hidden`, or
+DM type grants nonmember reading. Signed membership still owns the joined roster.
+`channels.get(id)` exposes separately resolved summaries (`readOnly: true`), while
+`channels.list()` remains joined-only. Opening a nonmember destination revalidates
+its metadata and reuses the existing channel window/exact thread owners. It does
+not join, persist a public head, warm all search results, or add sidebar/unread
+membership. Only demanded retained previews enter the existing live interest set.
+Shared composers and reactions remain unavailable for nonmembers; message helpers
+and workflows do not acquire write eligibility from public metadata. The relay
+remains the final write authority, including low-level outbox intent.
+
+Public-to-private metadata, membership loss and explicit denial purge retained
+content through the existing coordinated revocation boundary. An access-revoked
+live CLOSED suspends and revalidates the affected preview ID: nonmembers may never
+receive the private metadata EVENT. Failed/cancelled revalidation keeps content
+hidden and exposes deliberate retry through existing live status. Suspension is
+not signed denial: successful resolution can restore the same public version
+without resurrecting purged content. Authority-only changes replace the subscribed snapshot
+even when joined rows are unchanged; search drops copied hits on loss. Signed evidence is
+bounded by discovery's existing capacity and retained for the session, including
+across fetched-cache clearing; clearing cancels reads and drops content/windows,
+not authority evidence. Every later search/open revalidates nonmember metadata.
+An older metadata replay cannot undo a newer private event or an explicit denial.
+A newer signed public event can regrant a never-joined preview; membership loss
+still requires fresh signed membership, not metadata, to reverse it.
+
 ## Ownership and reconciliation
 
 | Internal owner | Responsibility |

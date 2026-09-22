@@ -265,6 +265,9 @@ test("channel navigation preserves sidebar DOM, group state and scroll", async (
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const node = await sidebar.elementHandle();
+  await expect(
+    page.getByRole("searchbox", { name: "Search channels" }),
+  ).toHaveCount(0);
   await button(page, "Beta").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
@@ -366,8 +369,8 @@ test("sidebar view state does not leak across communities", async ({
   app,
 }) => {
   await open(page, app);
-  const group = page
-    .getByRole("navigation", { name: "Subscribed channels" })
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const group = sidebar
     .locator("details")
     .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
   await group.locator("summary").click();
@@ -384,7 +387,7 @@ test("sidebar view state does not leak across communities", async ({
   await expect(group).not.toHaveAttribute("open");
 });
 
-test("invalid saved sidebar fields fall back without breaking Messages", async ({
+test("legacy filters are ignored and invalid saved sidebar fields fall back", async ({
   page,
   app,
 }) => {
@@ -402,7 +405,7 @@ test("invalid saved sidebar fields fall back without breaking Messages", async (
     localStorage.setItem(
       key,
       JSON.stringify({
-        search: "Alpha",
+        search: "missing-channel",
         collapsed: [null, 42],
         scrollTop: -100,
         width: "wide",
@@ -411,8 +414,9 @@ test("invalid saved sidebar fields fall back without breaking Messages", async (
   });
   await button(page, "Messages").first().click();
   await expect(
-    page.getByRole("textbox", { name: "Search channels" }),
+    page.getByRole("searchbox", { name: "Search channels" }),
   ).toHaveCount(0);
+  await expect(button(page, "Beta")).toBeVisible();
   await expect(sidebar.locator("details").first()).toHaveAttribute("open");
   expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(0);
   await expect(

@@ -1,0 +1,76 @@
+use super::{Failure, Keychain};
+use zeroize::Zeroizing;
+
+pub(super) struct OsKeychain;
+
+// Tests never compile live Keychain calls, including accidental default adapter use.
+#[cfg(all(target_os = "macos", not(test)))]
+mod macos {
+    use super::*;
+    use security_framework::os::macos::{keychain::SecKeychain, passwords::find_generic_password};
+
+    fn error(error: security_framework::base::Error) -> Failure {
+        status(error.code())
+    }
+    impl Keychain for OsKeychain {
+        fn legacy(&self, service: &str, account: &str) -> Result<Zeroizing<Vec<u8>>, Failure> {
+            // Legacy file-Keychain search list only. No DPK/per-key migration.
+            find_generic_password(None, service, account)
+                .map(|(password, _)| Zeroizing::new(password.to_vec()))
+                .map_err(error)
+        }
+        fn saved(&self, service: &str, account: &str) -> Result<Zeroizing<Vec<u8>>, Failure> {
+            // Read the same default Keychain that add writes, never a search-list match.
+            SecKeychain::default()
+                .map_err(error)?
+                .find_generic_password(service, account)
+                .map(|(password, _)| Zeroizing::new(password.to_vec()))
+                .map_err(error)
+        }
+        fn add(&self, service: &str, account: &str, value: &[u8]) -> Result<(), Failure> {
+            SecKeychain::default()
+                .map_err(error)?
+                .add_generic_password(service, account, value)
+                .map_err(error)
+        }
+    }
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn status(code: i32) -> Failure {
+    match code {
+        -25300 => Failure::Absent,
+        -25299 => Failure::Occupied,
+        -128 | -25293 | -25308 => Failure::Denied,
+        -26275 => Failure::Corrupt,
+        _ => Failure::Unavailable,
+    }
+}
+
+#[cfg(any(not(target_os = "macos"), test))]
+impl Keychain for OsKeychain {
+    fn legacy(&self, _: &str, _: &str) -> Result<Zeroizing<Vec<u8>>, Failure> {
+        Err(Failure::Unavailable)
+    }
+    fn saved(&self, _: &str, _: &str) -> Result<Zeroizing<Vec<u8>>, Failure> {
+        Err(Failure::Unavailable)
+    }
+    fn add(&self, _: &str, _: &str, _: &[u8]) -> Result<(), Failure> {
+        Err(Failure::Unavailable)
+    }
+}
+
+#[test]
+fn macos_status_codes_are_sanitized() {
+    for (code, expected) in [
+        (-25300, Failure::Absent),
+        (-25299, Failure::Occupied),
+        (-128, Failure::Denied),
+        (-25293, Failure::Denied),
+        (-25308, Failure::Denied),
+        (-26275, Failure::Corrupt),
+        (-1, Failure::Unavailable),
+    ] {
+        assert_eq!(status(code), expected);
+    }
+}

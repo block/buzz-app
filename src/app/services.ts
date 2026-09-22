@@ -1,4 +1,6 @@
 // FOUNDATION: Compose the bundled distribution, plugin runtime, and services here.
+import { bindAgentMentions } from "../features/agents/mention-wake";
+import { provideAgentControl } from "../features/agents/control-service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
 import { NotificationsService } from "../features/notifications/service";
@@ -23,6 +25,7 @@ export function createServices() {
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
   });
+  const agentControl = provideAgentControl(ctx);
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const shortcuts = new ShortcutsService(ctx);
@@ -34,6 +37,7 @@ export function createServices() {
     import.meta.env.VITE_BUZZ_LIVE === "1",
   );
   const relay = communities.relay;
+  ctx.effect(() => bindAgentMentions(agentControl, communities));
   const notifications = new NotificationsService(
     ctx,
     navigation,
@@ -48,6 +52,7 @@ export function createServices() {
     );
   let disposal: Promise<void> | undefined;
   return {
+    agentControl,
     notifications,
     navigation,
     navigationHost,

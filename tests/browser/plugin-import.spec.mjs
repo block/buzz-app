@@ -116,6 +116,127 @@ test("browser truthfully offers desktop-only loading", async ({
   await expect(button(page, "Load from folder")).toHaveCount(0);
 });
 
+// Real font metrics, text wrapping and icon geometry are not observable in jsdom.
+test("Settings text buttons contain enlarged labels without resizing icon buttons", async ({
+  page,
+  app,
+}, info) => {
+  await nativeImports(page);
+  await openPlugins(page, app.origin);
+  const checkButtons = async (section, scale) => {
+    await expect
+      .poll(() =>
+        section.evaluate((root, scale) => {
+          const failures = [];
+          const bounds = root.getBoundingClientRect();
+          for (const button of root.querySelectorAll("button.buzz-button")) {
+            const box = button.getBoundingClientRect();
+            if (scale === 100 && box.height !== 36)
+              failures.push(`${button.textContent}: default height changed`);
+            const text = document.createRange();
+            text.selectNodeContents(button);
+            for (const line of text.getClientRects()) {
+              if (
+                line.top < box.top ||
+                line.bottom > box.bottom ||
+                line.left < box.left ||
+                line.right > box.right
+              )
+                failures.push(
+                  `${button.textContent}: content overflows button`,
+                );
+            }
+            if (box.left < bounds.left || box.right > bounds.right)
+              failures.push(`${button.textContent}: button overflows section`);
+          }
+          return failures;
+        }, scale),
+      )
+      .toEqual([]);
+  };
+  for (const scale of [100, 200]) {
+    await button(page, "Appearance").click();
+    if (scale === 200) {
+      for (let i = 0; i < 10; i++)
+        await button(page, "Increase text size").click();
+    }
+    await expect(page.getByRole("status", { name: "Text size" })).toHaveText(
+      `${scale}%`,
+    );
+    for (const [width, mode] of [
+      [320, "Light"],
+      [800, "Dark"],
+      [1280, "Light"],
+    ]) {
+      await page.setViewportSize({ width, height: 900 });
+      await button(page, "Appearance").click();
+      const appearance = page.getByRole("region", {
+        name: "Appearance",
+        exact: true,
+      });
+      await appearance.getByRole("radio", { name: mode, exact: true }).check();
+      await expect(appearance.getByRole("button")).toHaveCount(3);
+      await page.evaluate(() => document.fonts.ready);
+      await checkButtons(appearance, scale);
+      // Shared IconButton must not inherit the enlarged text button's minimum.
+      await expect(
+        page.getByRole("button", { name: "Find a page", exact: true }),
+      ).toHaveAttribute("data-icon-size", "default");
+      await expect
+        .poll(() =>
+          page.locator("button[data-icon-size]").evaluateAll((buttons) =>
+            buttons
+              .filter((button) => button.getClientRects().length)
+              .map((button) => {
+                const box = button.getBoundingClientRect();
+                const sizes = {
+                  compact: 30,
+                  toolbar: 32,
+                  default: 36,
+                  large: 40,
+                };
+                return (
+                  box.width === sizes[button.dataset.iconSize] &&
+                  box.height === box.width
+                );
+              }),
+          ),
+        )
+        .not.toContain(false);
+      await button(page, "Plugins").click();
+      const plugins = page.getByRole("region", {
+        name: "Plugins",
+        exact: true,
+      });
+      await expect(button(page, "Load from folder")).toBeVisible();
+      await expect(button(page, "Load from Git")).toBeVisible();
+      await checkButtons(plugins, scale);
+      if (scale === 200 && width === 320) {
+        // Prove this exercises wrapped text, not just a one-line button.
+        const lines = await button(page, "Load from folder").evaluate(
+          (button) => {
+            const walker = document.createTreeWalker(
+              button,
+              NodeFilter.SHOW_TEXT,
+            );
+            const tops = new Set();
+            while (walker.nextNode()) {
+              const range = document.createRange();
+              range.selectNodeContents(walker.currentNode);
+              for (const line of range.getClientRects()) tops.add(line.top);
+            }
+            return tops.size;
+          },
+        );
+        expect(lines).toBeGreaterThan(1);
+      }
+      await page.screenshot({
+        path: info.outputPath(`settings-buttons-${scale}-${width}.png`),
+      });
+    }
+  }
+});
+
 test("folder/Git preview selects the exact subfolder, installs disabled and warns on enabled updates", async ({
   page,
   app,

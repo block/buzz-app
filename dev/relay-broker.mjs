@@ -58,6 +58,7 @@ import { Readable } from "node:stream";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
@@ -271,6 +272,36 @@ export function validMessageTemplate(event) {
         reply[3] === "reply"
       );
     })()
+  );
+}
+/** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
+export function validAgentEnrollment(event) {
+  const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+  if (
+    event?.kind !== 9000 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length !== 4
+  )
+    return false;
+  const validators = {
+    h: uuid,
+    p: /^[0-9a-f]{64}$/,
+    role: /^bot$/,
+    "client-id": uuid,
+  };
+  return (
+    new Set(event.tags.map((tag) => tag?.[0])).size === 4 &&
+    event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        typeof tag[1] === "string" &&
+        Object.hasOwn(validators, tag[0]) &&
+        validators[tag[0]].test(tag[1]),
+    )
   );
 }
 export function validFilters(filters) {
@@ -587,10 +618,9 @@ export function relayBrokerPlugin({
               writeKinds: [
                 7,
                 9,
+                9000,
                 ...WORKFLOW_KINDS,
-                ...((await getAuthority(relay)).channelCreation
-                  ? [9000, 9007]
-                  : []),
+                ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               workflowReads: true,
               sidebarPreferences: true,
@@ -971,6 +1001,7 @@ export function relayBrokerPlugin({
               "/api/relay/read-state-sign",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
+              "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
               "/api/relay/gifs",
@@ -993,6 +1024,26 @@ export function relayBrokerPlugin({
             filters = JSON.parse(raw);
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
+          }
+          if (route === "/api/relay/authorize-agent") {
+            if (
+              !scoped ||
+              filters?.owner !== viewer ||
+              !/^[0-9a-f]{64}$/.test(filters?.pubkey ?? "") ||
+              filters.pubkey === viewer ||
+              Object.keys(filters).length !== 2
+            )
+              return json(res, 400, {
+                error: "Invalid agent owner authorization",
+              });
+            cancel.signal.throwIfAborted();
+            const digest = createHash("sha256")
+              .update(`nostr:agent-auth:${filters.pubkey}:`)
+              .digest();
+            const signature = Buffer.from(schnorr.sign(digest, key)).toString(
+              "hex",
+            );
+            return json(res, 200, { auth: ["auth", viewer, "", signature] });
           }
           if (presence && !presenceFilter(filters))
             return json(res, 400, { error: "Invalid presence filter" });
@@ -1106,11 +1157,15 @@ export function relayBrokerPlugin({
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
             if ([9000, 9007].includes(filters?.kind)) {
+              const enrollment = validAgentEnrollment(filters);
               const authority = await getAuthority(relay);
-              const supported = authority.channelCreation;
-              if (!supported || !validSessionCommand(filters))
+              if (
+                !enrollment &&
+                !(authority.channelCreation && validSessionCommand(filters))
+              )
                 return json(res, 400, {
-                  error: "Session operation unavailable or invalid",
+                  error:
+                    "Agent enrollment or session operation unavailable or invalid",
                   sent: false,
                 });
             } else if (![7, 9].includes(filters?.kind)) {

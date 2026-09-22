@@ -52,6 +52,7 @@ it("offers outside agents in the session mention picker while ordinary channel p
     select = vi.fn(() => true);
   const view = render(
     <MentionPicker
+      scope="scope"
       session={test.session}
       channelId="parent"
       disabled={false}
@@ -64,6 +65,7 @@ it("offers outside agents in the session mention picker while ordinary channel p
   ).not.toBeInTheDocument();
   view.rerender(
     <MentionPicker
+      scope="scope"
       session={test.session}
       channelId="parent"
       disabled={false}

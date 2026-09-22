@@ -22,14 +22,6 @@ an actual use, document it in the registry and measure its intended pairings.
 Legacy utilities and host aliases remain while their callers migrate. Do not
 add new uses. Whole materials such as glass still travel as one shared recipe.
 
-| Role | Use |
-| --- | --- |
-| `surface-panel` | Content panels and form fields. |
-| `text-standard` | Main text on a neutral surface. |
-| `text-subtle` | Supporting text. |
-| `border-prominent` | Field boundaries and stronger separators. |
-| `affordance-subtle-hover` | Hover on a quiet action. |
-
 ## Foundations
 
 The interface uses shared color, type, spacing and shape roles. Primary actions
@@ -144,8 +136,9 @@ Values scale with the host text-size preference.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 
-Typography follows the adopted Block UI scale, using public fonts. The values
-documented above define this system, including the 12px xsmall role.
+Typography provenance: the ramp and role settings derive from the pinned
+[Block UI typography specification](https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json).
+The values documented above define this system, including the 12px xsmall role.
 
 ## Both modes
 

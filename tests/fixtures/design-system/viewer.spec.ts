@@ -528,7 +528,7 @@ test("typography shows the size ramp and renders xsmall mono details", async ({
     page.getByRole("link", { name: "Typography source specification" }),
   ).toHaveAttribute(
     "href",
-    "https://github.com/block/buzz-app/blob/main/src/shared/design-system/styles/typography.css",
+    "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json",
   );
 });
 

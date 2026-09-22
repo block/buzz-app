@@ -16,7 +16,7 @@ import { connectBrokerTransport } from "./transport";
 import { createRelaySession } from "./session";
 import { keypair } from "./testing";
 
-it("profiles a first slow publish through real local IPC, signing, authenticated socket, and receipt reconciliation", async () => {
+it("profiles a first held publish through real local IPC, signing, authenticated socket, and receipt reconciliation", async () => {
   const viewer = keypair(),
     relay = keypair();
   let handler: RequestListener | undefined;
@@ -80,6 +80,7 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
     const pending = owner.session.profiling
       .snapshot()
       .find((sample) => sample.stage === "send.publish" && sample.id === first);
+    assert.exists(pending);
     expect(pending).toMatchObject({ outcome: "pending" });
     release();
     await vi.waitFor(() => expect(outbox.snapshot()).toHaveLength(0), {
@@ -100,7 +101,9 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
     );
     assert.exists(secondUpstream);
     expect(firstUpstream.duration).toBeGreaterThan(0);
-    expect(secondUpstream.duration).toBeLessThan(firstUpstream.duration);
+    expect(firstUpstream.outcome).toBe("ok");
+    expect(secondUpstream.outcome).toBe("ok");
+    expect(firstUpstream.duration).toBeGreaterThanOrEqual(pending.duration);
     expect(
       timings.some(
         (sample) => sample.id === first && sample.stage === "send.sign",

@@ -2,6 +2,12 @@
 
 ## Scope
 
+This document describes the read-only compatibility/mention slice. The Agents
+page also exposes [native local controls](agent-control.md) for create/import,
+saved settings, mention-to-add/wake and bundled Start/Stop/Restart. The read-only
+compatibility view below remains the browser fallback; native management has its
+own handover and rollback contract.
+
 V1 **reuses the current Buzz library and mentions existing agents in channels
 and threads**. No migration to relay-only storage. Creation, editing,
 add-existing membership, Save/recovery and all runner management are out of V1.
@@ -31,7 +37,7 @@ add-existing membership, Save/recovery and all runner management are out of V1.
   projects from JSON, so private fields may transiently exist in host memory;
   there is no claim that JavaScript strings are zeroized. Browser reads time out
   at ten seconds and session disposal/cache/access/disconnect fences clear them.
-- The page uses only `session.agentLibrary` and `session.archives`. Unused relay
+- The compatibility view uses only `session.agentLibrary` and `session.archives`. Unused relay
   ownership/configuration readers and native recovery code have been removed.
 - Avatars use saved library artwork, with initials on missing/failed images.
   Optional artwork accepts HTTPS without credentials or bounded raster data URLs,
@@ -83,7 +89,11 @@ than guess. Even a same-text replacement drops the edited identity. Explicit rec
 chips show who will be notified and can be removed without deleting the prose.
 
 `session.messages.send/reply` accepts up to 32 exact pubkeys and emits deduplicated
-`p` tags. Selection never invites someone. Current roster membership is checked at
+`p` tags. Selection never invites someone. The native local-agent flow now offers
+same-community managed agents too: the composer enrolls a selected nonmember on
+Send, verifies the roster, then calls this unchanged message API. See
+[local agent controls](agent-control.md#normal-desktop-workflow). Ordinary nonmember
+people are not automatically added. Current roster membership is checked at
 intent, before signing, and after signing before entering the transport publisher;
 retry/restored signed intent uses the same publisher check. Before **each**
 mention publication the session performs a bounded foreground finite read of this

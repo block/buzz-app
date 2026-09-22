@@ -99,6 +99,7 @@ function setup(channelCreation = true) {
     },
   };
   const outbox: Outbox = {
+    observeSend: () => () => {},
     snapshot: () => [],
     subscribe: receipts.subscribe,
     supports: (kind) => channelCreation && [9, 9000, 9007].includes(kind),
@@ -266,6 +267,7 @@ it.each([true, false])(
         { event: creation, delivery: "unknown" },
       ];
       const outbox: Outbox = {
+        observeSend: () => () => {},
         supports: () => true,
         send: vi.fn(),
         snapshot: () => items,

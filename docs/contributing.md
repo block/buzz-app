@@ -44,9 +44,25 @@ The pinned pnpm Hermit package supports Apple Silicon macOS but marks Intel macO
 on an unsupported platform; resolve that tooling gap first. Other platforms still
 need their own validation.
 
-- `just web`: install locked dependencies and start Vite on port 1430 or the
-  next available port, allowing parallel browser development across worktrees.
-- `just desktop`: install locked dependencies and start Tauri, which starts Vite.
+- `just web [args...]`: install locked dependencies and forward arguments to Vite,
+  e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
+  (default: 1430) or the next available port, allowing parallel browser development.
+- `just desktop [args...]`: install locked dependencies and forward arguments to
+  Tauri, e.g. `just desktop --port 1431 --no-watch`. The desktop adapter consumes
+  `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
+  Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
+  the existing Tauri configuration is unchanged (port 1430). Desktop requires the
+  exact port to be free; an occupied port fails rather than opening another copy's
+  server. Other arguments, including runner/application arguments after `--`, pass
+  through unchanged. Port configuration is prepended so Tauri parses it even with
+  implicit runner arguments. Explicit `--config` arguments merge afterward and can
+  override it; keep their development URL and frontend command consistent. Use `--`
+  before runner/application arguments if they contain their own `--port` flag.
+- `just design [args...]`: install locked dependencies, start the standalone
+  design-system viewer, and open it in your browser. Arguments pass through to
+  Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port
+  fails rather than switching automatically. This starts neither Tauri nor the
+  live relay broker. Press Ctrl+C to stop it.
 - To pause notifications in your local dev server, set `BUZZ_DEV_NOTIFICATIONS=0`
   in `.env.local` and restart the server. Only `0` pauses alerts and permission
   requests; removing the setting restores normal behavior. Saved preferences are
@@ -70,9 +86,12 @@ isolated test buses, never use the desktop session bus or display real banners. 
 Installs run on every invocation to account for branch and lockfile changes.
 pnpm reuses its shared package cache; no node_modules directory needs to be copied
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
-downloads and native compilation can take time. Desktop dev requires port 1430
-for its fixed native development URL. Browser dev prints its selected URL and can
-use a later port when 1430 is occupied.
+downloads and native compilation can take time. For parallel copies, run
+`just desktop --port 1430` and `just desktop --port 1431` in separate
+terminals/worktrees, or choose other free ports. Ports must be integers from 1 to 65535. Browser dev
+prints its selected URL and can use a later port when the requested port is
+occupied. Port selection does not isolate credentials or native plugin data;
+use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
 Both run the development broker with your identity when the public
 `BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
 identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).
@@ -229,9 +248,6 @@ the complete suite still runs with `pnpm test` / `just scan`:
   doctests (including Tauri), and every Node integration test. The CLI integration
   tests build Rust and install scaffold dependencies; they are intentionally CI-only
   rather than part of pre-push.
-- **Windows native notifications:** Clippy and all Tauri-package tests on Windows,
-  using the repository Rust pin through rustup (Hermit is not available there).
-  This compiles the Windows backend; it does not exercise OS banner interaction.
 - **Browser measurements:** Chromium then WebKit, serially on an isolated runner.
 - **Browser journeys:** four runners (Chromium and WebKit, two file-level shards
   per engine), each with two workers. They start alongside measurements on separate
@@ -241,16 +257,38 @@ the complete suite still runs with `pnpm test` / `just scan`:
   outside the browser subprocess timeout. No measurement is repeated on shards,
   and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
-- **CI required:** fails unless every lane and every browser shard succeeds,
+- **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.
 
 Actions and tool versions are pinned, installs use the frozen lockfile, and
 Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
-Superseded PR runs are cancelled. CI uses disposable Ubuntu/Windows runners and no live
+Superseded PR runs are cancelled. Automatic CI uses disposable Ubuntu runners and no live
 Buzz identity or signing credentials. It is not native GUI acceptance, a signed
 package, or a cross-platform release gate. `just scan` remains available locally;
 CI does not add full scans to commit/push or ordinary interactive feedback rounds.
+
+### On-demand Windows validation
+
+Automatic PR/main CI is Linux-only. Run the existing workflow manually for native
+Windows changes or release validation:
+
+```sh
+gh workflow run ci.yml --ref <branch>
+```
+
+A manual dispatch runs only **Windows native validation**: the same pinned Rust,
+Clippy and complete Tauri-package tests, without repeating Linux/browser jobs.
+Windows failures do not block the automatic `CI required` check; a Linux pass
+is not Windows validation. The job does not exercise OS banner interaction or
+packaged-app acceptance.
+
+For MSVC, `src-tauri/build.rs` links `windows-app-manifest.xml` into both the app
+and library unit-test executables. The XML matches Tauri's default Common Controls
+v6 manifest; icons/version resources remain Tauri-owned. This addresses
+[Tauri's library-test manifest gap](https://github.com/tauri-apps/tauri/issues/13419)
+without disabling IPC tests or native UI features. Non-MSVC builds retain Tauri's
+default resource path. Keep the manifest aligned when upgrading Tauri.
 
 ## Test organization
 

@@ -1,3 +1,4 @@
+import { useMentionAgents } from "../../features/agents/mention-context";
 import { useAgentChoices } from "./use-agent-choices";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
@@ -5,6 +6,7 @@ import { AtIcon } from "../../shared/design-system/icons/index";
 import {
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
   useSyncExternalStore,
@@ -17,12 +19,14 @@ import type { ComposerToolProps } from "../../features/conversation/contracts";
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
   session,
+  scope,
   channelId,
   disabled,
   inviteAgents,
   select,
 }: {
   session: RelaySession;
+  scope: string;
   channelId: string;
   disabled: boolean;
   inviteAgents?: boolean | undefined;
@@ -46,6 +50,20 @@ export function MentionPicker({
   const agents = useAgentChoices(session, inviteAgents && open);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
+  const { agents: localAgents } = useMentionAgents(scope);
+  const available = useMemo(
+    () =>
+      !inviteAgents &&
+      channel?.members &&
+      !channel.archived &&
+      (channel.channelType === "stream" || channel.channelType === "forum") &&
+      session.outbox?.supports(9000)
+        ? localAgents
+            .filter((agent) => !channel.members?.includes(agent.pubkey))
+            .map(({ pubkey, name }) => ({ pubkey, name }))
+        : [],
+    [channel, localAgents, session.outbox, inviteAgents],
+  );
   const parentAdmission =
     !!channel &&
     (channel.channelType !== "session" || !!channel.parentChannelId);
@@ -66,7 +84,7 @@ export function MentionPicker({
     };
   }, [session, open, memberKey]);
   const choices = new Map(
-    agents.identities.map((agent) => [
+    [...agents.identities, ...available].map((agent) => [
       agent.pubkey,
       { pubkey: agent.pubkey, name: agent.name },
     ]),
@@ -114,12 +132,12 @@ export function MentionPicker({
         <section
           id={id}
           className={styles.mentionPopover}
-          aria-label="Mention a channel member"
+          aria-label="Mention a member or agent"
         >
           <label>
             {inviteAgents
               ? "Search members and agents"
-              : "Search channel members"}
+              : "Search members and your agents"}
             <input
               type="search"
               value={search}
@@ -134,7 +152,7 @@ export function MentionPicker({
               ? parentAdmission
                 ? "Agents you mention join this session and its parent channel when you send, with access to their history."
                 : "Agents you mention join this session when you send, with access to its history."
-              : "Only members of this channel are shown."}
+              : "Your agents are added to this channel when you send."}
           </p>
           {agents.status === "loading" && <p role="status">Loading agents…</p>}
           {agents.status === "error" && (
@@ -178,12 +196,24 @@ export function MentionPicker({
                   )}
                   size="default"
                   shape={
-                    agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                    agentPubkeys.has(recipient.pubkey) ||
+                    !channel?.members?.includes(recipient.pubkey)
+                      ? "squircle"
+                      : "circle"
                   }
                 />
                 <span className={styles.mentionLabel}>
                   <span>{recipient.name}</span>
                   <code title={recipient.pubkey}>{recipient.pubkey}</code>
+                  {!channel?.members?.includes(recipient.pubkey) && (
+                    <small>
+                      {inviteAgents
+                        ? parentAdmission
+                          ? "Adds to session and parent channel when you send"
+                          : "Adds to session when you send"
+                        : "Adds to channel when you send"}
+                    </small>
+                  )}
                 </span>
               </button>
             ))}

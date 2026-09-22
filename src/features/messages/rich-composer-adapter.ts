@@ -148,6 +148,22 @@ export class RichComposerAdapter {
     this.restore(draft);
     this.editor.registerPlugin(
       new Plugin({
+        props: {
+          transformPastedHTML(html) {
+            // Clipboard images are presentation, not authority to load a URL.
+            // Restore their shortcode; the current catalog owns decoration.
+            const content = document.createElement("template");
+            content.innerHTML = html;
+            for (const image of content.content.querySelectorAll(
+              "img[data-composer-emoji]",
+            )) {
+              const source = image.getAttribute("alt") ?? "";
+              if (/^:[a-z0-9_-]{1,64}:$/i.test(source))
+                image.replaceWith(source);
+            }
+            return content.innerHTML;
+          },
+        },
         appendTransaction: (transactions, _old, state) => {
           if (
             !transactions.some(

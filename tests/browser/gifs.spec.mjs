@@ -227,16 +227,10 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(draft).toHaveJSProperty("value", "unfinished draft");
   expect(signRequests).toBe(0);
-  await draft.evaluate((element) => {
-    element.value = "";
-    element.dispatchEvent(
-      new InputEvent("input", {
-        bubbles: true,
-        inputType: "deleteContentBackward",
-      }),
-    );
-  });
+  await draft.press("ControlOrMeta+a");
+  await draft.press("Backspace");
   await expect(draft).toHaveJSProperty("value", "");
+  await search.focus();
   const composer = draft.locator("xpath=ancestor::form");
   await expect(composer).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
   await expect(composer).toHaveCSS("box-shadow", "none");

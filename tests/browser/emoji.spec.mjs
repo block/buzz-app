@@ -267,16 +267,23 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     // Visible source text and unavailable emoji retain ordinary character selection.
     for (const literal of [":unknown:", ":nosource:"]) {
       await draft().fill(literal);
+      await expect(draft()).toHaveJSProperty("value", literal);
+      await draft().press("ControlOrMeta+a");
+      await draft().press("ArrowRight");
       await draft().press("Shift+ArrowLeft");
-      expect(await selectedDraftText()).toBe(":");
+      await expect.poll(selectedDraftText).toBe(":");
     }
     await page.locator("main").evaluate((main) => {
       main.style.width = "300px";
     });
     await draft().fill(Array(24).fill(":party:").join(" "));
     const largeCustom = draft();
-    await expect(largeCustom.locator("img")).toHaveCount(24);
-    await expect(largeCustom.locator("img").last()).toHaveCSS("width", "42px");
+    await expect(largeCustom.locator("img[data-composer-emoji]")).toHaveCount(
+      24,
+    );
+    await expect(
+      largeCustom.locator("img[data-composer-emoji]").last(),
+    ).toHaveCSS("width", "42px");
     expect(
       await largeCustom.evaluate(
         (group) => group.scrollWidth <= group.clientWidth,
@@ -284,7 +291,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toBe(true);
     expect(
       await largeCustom
-        .locator("img")
+        .locator("img[data-composer-emoji]")
         .last()
         .evaluate((image) => image.offsetTop),
     ).toBeGreaterThan(0);
@@ -292,7 +299,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
       path: test.info().outputPath("large-custom-emoji-draft.png"),
     });
     const lastCustomBounds = await largeCustom
-      .locator("img")
+      .locator("img[data-composer-emoji]")
       .last()
       .boundingBox();
     const inputBounds = await draft().boundingBox();
@@ -868,6 +875,11 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await page.getByRole("button", { name: "Toggle thread" }).click();
     await page.getByRole("button", { name: "Switch community" }).click();
     await expect(draft()).toHaveJSProperty("value", "A draft");
+    // Exercise insertion at an explicit caret, not the remount's default.
+    await draft().focus();
+    await draft().press("ControlOrMeta+a");
+    await draft().press("ArrowLeft");
+    await expect(draft()).toHaveJSProperty("selectionStart", 0);
     await picker.click();
     await page.evaluate(async () => {
       window.emojiFixture.fail(true);

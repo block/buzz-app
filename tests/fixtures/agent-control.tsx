@@ -1,3 +1,4 @@
+import "../../src/shared/styles/globals.css";
 import { useState, useSyncExternalStore } from "react";
 import { createNavigationController } from "../../src/features/navigation/controller";
 import { createMemoryHistory } from "../../src/features/navigation/history";
@@ -13,7 +14,6 @@ import { createAgentControl } from "../../src/features/agents/control";
 import { controlFixture } from "../../src/features/agents/control-testing";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
-import "../../src/shared/styles/globals.css";
 
 const fixture = controlFixture();
 const modelCalls: string[] = [];

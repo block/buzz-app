@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, expect, it } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { MessageMarkdown } from "./MessageMarkdown";
@@ -17,6 +17,7 @@ function adapter(draft = mentionDraft("")) {
 afterEach(() => {
   for (const value of mounted.splice(0)) value.destroy();
   document.body.replaceChildren();
+  vi.unstubAllGlobals();
 });
 
 it("keeps completion text independent from Markdown and edits inside formatting", () => {
@@ -431,4 +432,53 @@ it("preserves character references in inline code", () => {
     marks: [{ type: "code" }],
   });
   expect(adapter(value.snapshot().draft).snapshot().editingText).toBe(text);
+});
+
+it("pastes emoji as current-catalog text without trusting clipboard image URLs", () => {
+  // jsdom lacks ClipboardEvent; pasteHTML supplies the real parser path.
+  vi.stubGlobal("ClipboardEvent", Event);
+  const value = adapter();
+  value.setEmoji(
+    [{ shortcode: "party", url: "https://current.test/party.png" }],
+    (url) => url,
+  );
+  const html =
+    '<p><strong><img data-composer-emoji alt=":party:" src="https://untrusted.test/old.png"></strong> <img data-composer-emoji alt=":missing:" src="https://untrusted.test/missing.png"></p>';
+  value.editor.view.pasteHTML(html);
+  expect(value.snapshot().draft.text).toBe("**:party:** :missing:");
+  const images = value.editor.view.dom.querySelectorAll(
+    "img[data-composer-emoji]",
+  );
+  expect(images).toHaveLength(1);
+  expect(images[0]?.getAttribute("src")).toBe("https://current.test/party.png");
+  expect(value.snapshot().draft.recipients).toEqual([]);
+  value.setEmoji([], (url) => url);
+  expect(value.snapshot().draft.text).toBe("**:party:** :missing:");
+  expect(
+    value.editor.view.dom.querySelectorAll("img[data-composer-emoji]"),
+  ).toHaveLength(0);
+});
+
+it("keeps failed emoji previews readable without changing authored content", () => {
+  const value = adapter(mentionDraft("before :party: after"));
+  value.setEmoji(
+    [{ shortcode: "party", url: "https://current.test/party.png" }],
+    (url) => url,
+  );
+  const before = value.snapshot().draft;
+  const image = value.editor.view.dom.querySelector("img[data-composer-emoji]");
+  expect(image).not.toBeNull();
+  image?.dispatchEvent(new Event("error"));
+  expect(value.editor.view.dom.textContent).toBe("before :party: after");
+  expect(value.snapshot().draft).toEqual(before);
+  value.setEmoji(
+    [{ shortcode: "party", url: "https://current.test/recovered.png" }],
+    (url) => url,
+  );
+  expect(
+    value.editor.view.dom
+      .querySelector("img[data-composer-emoji]")
+      ?.getAttribute("src"),
+  ).toBe("https://current.test/recovered.png");
+  expect(value.snapshot().draft).toEqual(before);
 });

@@ -22,6 +22,24 @@ export const CustomEmojiNode = Node.create({
       },
     ];
   },
+  addNodeView() {
+    return ({ node }) => {
+      const dom = document.createElement("span");
+      dom.contentEditable = "false";
+      const image = document.createElement("img");
+      image.alt = image.title = String(node.attrs.source);
+      image.draggable = false;
+      image.dataset.composerEmoji = "";
+      const showSource = () => image.replaceWith(String(node.attrs.source));
+      image.addEventListener("error", showSource, { once: true });
+      image.src = String(node.attrs.url);
+      dom.append(image);
+      return {
+        dom,
+        destroy: () => image.removeEventListener("error", showSource),
+      };
+    };
+  },
   renderText({ node }) {
     return String(node.attrs.source);
   },

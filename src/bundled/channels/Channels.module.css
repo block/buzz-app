@@ -47,27 +47,6 @@
 .conversation {
   grid-column: 3;
 }
-.search {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  padding: var(--space-1h) var(--space-2);
-  margin-bottom: var(--space-4);
-  border-radius: var(--radius-control);
-  background: var(--surface-input);
-  color: var(--text-muted);
-}
-.search input {
-  border: 0;
-  outline: none;
-  background: none;
-  width: 100%;
-  font: inherit;
-  color: var(--text);
-}
-.search:focus-within {
-  outline: 2px solid var(--focus);
-}
 .channelListFrame {
   position: relative;
   min-height: 0;

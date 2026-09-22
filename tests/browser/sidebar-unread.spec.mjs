@@ -190,8 +190,8 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   await expect(row(page, "dm-030")).toBeFocused();
   await expect(list(page).locator('[aria-current="page"]')).toHaveAttribute(
-    "title",
-    "Alpha",
+    "data-channel-id",
+    "alpha",
   );
   await cue(page, "below").focus();
   await cue(page, "below").press("Enter");
@@ -226,8 +226,8 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await page.mouse.wheel(0, -10000);
   await expect(cue(page, "above")).toHaveCount(0);
   await expect(cue(page, "below")).toBeVisible();
-  await page.getByRole("textbox", { name: "Search channels" }).focus();
-  await page.keyboard.press("Tab"); // Set keyboard modality from the visible search, not an offscreen row.
+  await list(page).locator("summary").first().focus();
+  await page.keyboard.press("Tab"); // Set keyboard modality from a visible sidebar control.
   await cue(page, "below").focus();
   await expect(cue(page, "below")).toHaveCSS("outline-width", "2px");
   await cue(page, "below").press("Enter");
@@ -243,19 +243,12 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect(row(page, "dm-030")).toHaveAttribute("aria-current", "page");
 });
 
-test("search, resizing, collapsed groups and new unread evidence update only the displayed roster", async ({
+test("resizing, collapsed groups and new unread evidence update only the displayed roster", async ({
   page,
   app,
 }) => {
   await open(page, app);
   await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
-  const search = page.getByRole("textbox", { name: "Search channels" });
-  await search.fill("Alpha");
-  await expect(cue(page, "below")).toHaveCount(0);
-  await expect(cue(page, "above")).toHaveCount(0);
-  await search.fill("missing-channel");
-  await expect(cue(page, "below")).toHaveCount(0);
-  await search.fill("");
   await expect(cue(page, "below")).toBeVisible();
   // DMs are hidden behind a visible section summary: not below the scroll fold.
   await list(page).locator("summary").filter({ hasText: /^DMs$/ }).click();

@@ -32,7 +32,6 @@ import {
 import {
   CaretRightIcon,
   HashIcon,
-  MagnifyingGlassIcon,
   DotsThreeIcon,
   PlugIcon,
   ChatCircleIcon,
@@ -241,7 +240,6 @@ function ChannelWorkspace({
     scope,
     list.status === "ready" && preferences.status !== "loading",
   );
-  const { search } = sidebar;
   const channels = useChannelLabels(list.channels, queries.profiles);
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
@@ -672,19 +670,6 @@ function ChannelWorkspace({
     [scope, viewer, current, showingThread],
   );
   const drawer = useChannelPanels(panels, drawerContext);
-  const visible = useMemo(
-    () =>
-      channels.filter(
-        (channel) =>
-          channel.name.toLowerCase().includes(search.toLowerCase()) ||
-          childrenByParent
-            .get(channel.id)
-            ?.some((child) =>
-              child.name.toLowerCase().includes(search.toLowerCase()),
-            ),
-      ),
-    [channels, search, childrenByParent],
-  );
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
@@ -695,32 +680,21 @@ function ChannelWorkspace({
       }
     >
       <aside className={styles.sidebar} aria-label="Channel sidebar">
-        <div className={styles.search}>
-          <MagnifyingGlassIcon size={17} />
-          <input
-            aria-label="Search channels"
-            placeholder="Search"
-            value={search}
-            onChange={(event) => sidebar.setSearch(event.target.value)}
-          />
-        </div>
         <SidebarUnread listRef={sidebar.list}>
-          {sidebarSections(visible, preferences.data).map((section) => (
+          {sidebarSections(channels, preferences.data).map((section) => (
             <details
               key={section.key}
               className={styles.channelSection}
-              open={!!search || !sidebar.collapsed.includes(section.key)}
+              open={!sidebar.collapsed.includes(section.key)}
             >
               {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
               <summary
                 onClick={(event) => {
                   event.preventDefault();
-                  // Only user intent changes the saved layout, never search expansion.
-                  if (!search)
-                    sidebar.toggle(
-                      section.key,
-                      sidebar.collapsed.includes(section.key),
-                    );
+                  sidebar.toggle(
+                    section.key,
+                    sidebar.collapsed.includes(section.key),
+                  );
                 }}
               >
                 <CaretRightIcon
@@ -774,25 +748,15 @@ function ChannelWorkspace({
                       />
                     )}
                     selected={current?.id}
-                    collapsed={
-                      !search &&
-                      sidebar.collapsed.includes(
-                        `session-children:${channel.id}`,
-                      )
+                    collapsed={sidebar.collapsed.includes(
+                      `session-children:${channel.id}`,
+                    )}
+                    onToggle={(open) =>
+                      sidebar.toggle(`session-children:${channel.id}`, open)
                     }
-                    onToggle={(open) => {
-                      if (!search)
-                        sidebar.toggle(`session-children:${channel.id}`, open);
-                    }}
                     draft={draftParents.includes(channel.id)}
                     draftSelected={drafting && draftParent === channel.id}
-                    sessions={(childrenByParent.get(channel.id) ?? []).filter(
-                      (child) =>
-                        channel.name
-                          .toLowerCase()
-                          .includes(search.toLowerCase()) ||
-                        child.name.toLowerCase().includes(search.toLowerCase()),
-                    )}
+                    sessions={childrenByParent.get(channel.id) ?? []}
                     childContent={(child) => (
                       <UnreadBadge
                         session={queries}
@@ -816,10 +780,8 @@ function ChannelWorkspace({
               {list.error}
             </p>
           )}
-          {list.status === "ready" && !visible.length && (
-            <p className={styles.empty}>
-              {search ? "No matching channels." : "No channels yet."}
-            </p>
+          {list.status === "ready" && !channels.length && (
+            <p className={styles.empty}>No channels yet.</p>
           )}
         </SidebarUnread>
         {preferences.status !== "ready" && (

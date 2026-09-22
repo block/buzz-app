@@ -13,7 +13,6 @@ export function clampChannelSidebarWidth(width: number) {
 }
 
 type SidebarView = {
-  search: string;
   collapsed: string[];
   scrollTop: number;
   width: number;
@@ -24,7 +23,6 @@ function restore(scope: string): SidebarView {
   const saved =
     raw && typeof raw === "object" ? (raw as Partial<SidebarView>) : {};
   return {
-    search: typeof saved.search === "string" ? saved.search : "",
     collapsed: Array.isArray(saved.collapsed)
       ? saved.collapsed.filter((key): key is string => typeof key === "string")
       : [],
@@ -89,13 +87,8 @@ export function useSidebarView(scope: string, ready: boolean) {
   };
   return {
     list,
-    search: view.search,
     collapsed: view.collapsed,
     width: view.width,
-    setSearch: (search: string) => {
-      pending.current = false;
-      update({ ...intent.current, search });
-    },
     toggle: (key: string, open: boolean) => {
       const collapsed = intent.current.collapsed;
       if (collapsed.includes(key) === !open) return;

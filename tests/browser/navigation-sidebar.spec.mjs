@@ -95,22 +95,18 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .toBeCloseTo(260, 0);
 });
 
-test("channel navigation preserves sidebar search, DOM, group state and scroll", async ({
+test("channel navigation preserves sidebar DOM, group state and scroll", async ({
   page,
   app,
 }) => {
   await open(page, app);
   const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
   const node = await sidebar.elementHandle();
-  const search = page.getByRole("textbox", { name: "Search channels" });
-  await search.fill("a");
   await button(page, "Beta").click();
   await expect(
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
-  await expect(search).toHaveValue("a", { timeout: 1500 });
   expect(await node.evaluate((element) => element.isConnected)).toBe(true);
-  await search.fill("");
   const group = sidebar
     .locator("details")
     .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
@@ -152,7 +148,6 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
-    const search = page.getByRole("textbox", { name: "Search channels" });
     const group = sidebar
       .locator("details")
       .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
@@ -179,12 +174,6 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
         .first()
         .click();
     };
-    // Search and scroll are separate phases: filtering by "a" removes the DM
-    // fixture rows, so it cannot also establish a scroll-restoration failure.
-    await search.fill("a");
-    await leave();
-    await expect(search).toHaveValue("a", { timeout: 1500 });
-    await search.fill("");
     await group.locator("summary").click();
     await expect(group).not.toHaveAttribute("open");
     const scroll = await sidebar.evaluate((element) => {
@@ -193,7 +182,6 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
     });
     expect(scroll).toBeGreaterThan(100);
     await leave();
-    await expect(search).toHaveValue("");
     await expect(group).not.toHaveAttribute("open");
     await expect
       .poll(() => sidebar.evaluate((element) => element.scrollTop))
@@ -202,7 +190,6 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
       await button(page, "Go forward").click();
       await expect(sidebar).toHaveCount(0);
       await button(page, "Go back").click();
-      await expect(search).toHaveValue("");
       await expect(group).not.toHaveAttribute("open");
       await expect
         .poll(() => sidebar.evaluate((element) => element.scrollTop))
@@ -216,19 +203,22 @@ test("sidebar view state does not leak across communities", async ({
   app,
 }) => {
   await open(page, app);
-  const search = page.getByRole("textbox", { name: "Search channels" });
-  await search.fill("Alpha");
+  const group = page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .locator("details")
+    .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+  await group.locator("summary").click();
+  await expect(group).not.toHaveAttribute("open");
   await button(page, "Switch community").click();
   await button(page, "Switch to Secondary").click();
   await expect(button(page, "Switch community")).toHaveAttribute(
     "title",
     "Secondary",
   );
-  await expect(search).toHaveValue("");
-  await search.fill("Beta");
+  await expect(group).toHaveAttribute("open");
   await button(page, "Switch community").click();
   await button(page, "Switch to Primary").click();
-  await expect(search).toHaveValue("Alpha", { timeout: 1500 });
+  await expect(group).not.toHaveAttribute("open");
 });
 
 test("invalid saved sidebar fields fall back without breaking Messages", async ({
@@ -236,7 +226,9 @@ test("invalid saved sidebar fields fall back without breaking Messages", async (
   app,
 }) => {
   await open(page, app);
-  await page.getByRole("textbox", { name: "Search channels" }).fill("Alpha");
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const group = sidebar.locator("details").first();
+  await group.locator("summary").click();
   await button(page, "Home").first().click();
   await page.evaluate(() => {
     const key = Object.keys(localStorage).find((key) =>
@@ -246,14 +238,18 @@ test("invalid saved sidebar fields fall back without breaking Messages", async (
       throw new Error("Sidebar state was not saved on leaving Messages");
     localStorage.setItem(
       key,
-      JSON.stringify({ search: {}, collapsed: [null, 42], scrollTop: -100 }),
+      JSON.stringify({
+        search: "Alpha",
+        collapsed: [null, 42],
+        scrollTop: -100,
+        width: "wide",
+      }),
     );
   });
   await button(page, "Messages").first().click();
   await expect(
     page.getByRole("textbox", { name: "Search channels" }),
-  ).toHaveValue("");
-  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  ).toHaveCount(0);
   await expect(sidebar.locator("details").first()).toHaveAttribute("open");
   expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(0);
   await expect(

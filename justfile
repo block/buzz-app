@@ -11,12 +11,26 @@ install:
 # Run the shared frontend in a browser; forward Vite arguments (e.g. --port 1431).
 [positional-arguments]
 web *args: install
-    pnpm dev "$@"
+    #!/usr/bin/env bash
+    if [[ "${1:-}" == "profile" ]]; then
+        shift
+        exec node scripts/profile-dev.mjs web "$@"
+    fi
+    exec pnpm dev "$@"
 
 # Run Tauri; --port selects Vite's port, other arguments pass through to Tauri.
 [positional-arguments]
 desktop *args: install
-    node scripts/desktop-dev.mjs "$@"
+    #!/usr/bin/env bash
+    if [[ "${1:-}" == "profile" ]]; then
+        shift
+        exec node scripts/profile-dev.mjs desktop "$@"
+    fi
+    exec node scripts/desktop-dev.mjs "$@"
+
+# Remove generated CPU, network, and Instruments profiles.
+profile-clean:
+    rm -rf -- .profiles
 
 # Open the design system in a browser; forward Vite arguments (e.g. --port 1444).
 [positional-arguments]

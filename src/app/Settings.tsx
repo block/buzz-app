@@ -231,6 +231,15 @@ export function Settings({
                                 Roll back
                               </Button>
                             )}
+                            {plugin.reloadable && !plugin.enabled && (
+                              <Button
+                                type="button"
+                                disabled={busy}
+                                onClick={() => plugins.reload(id)}
+                              >
+                                Reload
+                              </Button>
+                            )}
                             {plugin.source === "external" && (
                               <Button
                                 type="button"

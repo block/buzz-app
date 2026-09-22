@@ -298,6 +298,16 @@ async fn plugin_change(
     .await
 }
 #[tauri::command]
+async fn plugin_reload(
+    manager: tauri::State<'_, PluginManager>,
+    id: String,
+) -> Result<InstallationResult, String> {
+    with_manager(manager, move |m| {
+        m.reload(&id).map(|catalog| ready(&m, catalog))
+    })
+    .await
+}
+#[tauri::command]
 async fn plugin_module(
     manager: tauri::State<'_, PluginManager>,
     id: String,
@@ -319,6 +329,7 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_import_discard,
         plugin_catalog,
         plugin_change,
+        plugin_reload,
         plugin_module,
         plugin_recover,
         agent_control_create_prepare,

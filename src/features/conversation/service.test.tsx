@@ -30,6 +30,7 @@ function harness(module: PluginModule) {
     source: "external" as const,
     revision: "one",
     previous: null,
+    reloadable: true,
     error: null,
   };
   return { service, runtime, plugin };

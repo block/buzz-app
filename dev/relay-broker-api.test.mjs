@@ -243,7 +243,12 @@ test("media proxy returns generic files as neutralized authenticated downloads",
 });
 
 test("media proxy neutralizes active content as downloads", async () => {
-  const activeTypes = ["text/html", "image/svg+xml"];
+  const activeTypes = [
+    "text/html",
+    "image/svg+xml",
+    "image/svg+xml; charset=utf-8",
+    "IMAGE/SVG+XML",
+  ];
   for (const contentType of activeTypes) {
     const bytes = Buffer.from(`<script>${contentType}</script>`);
     const h = await harness(
@@ -253,6 +258,57 @@ test("media proxy neutralizes active content as downloads", async () => {
             "Content-Type": contentType,
             "Content-Length": String(bytes.length),
           },
+        }),
+    );
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(response.headers.get("content-disposition")).toBe("attachment");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await h.close();
+    }
+  }
+});
+
+test("media proxy neutralizes comma-joined content types as downloads", async () => {
+  const bytes = Buffer.from("fake png then svg");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "image/png, image/svg+xml",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe("attachment");
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy neutralizes missing or empty content types as downloads", async () => {
+  for (const headers of [{}, { "Content-Type": "" }]) {
+    const bytes = Buffer.from("unknown bytes");
+    const h = await harness(
+      () =>
+        new Response(bytes, {
+          headers: { ...headers, "Content-Length": String(bytes.length) },
         }),
     );
     try {

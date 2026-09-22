@@ -916,9 +916,15 @@ export function relayBrokerPlugin({
               return json(res, upstream.status, { error: "Media read failed" });
             const type = upstream.headers.get("content-type") ?? "";
             const mediaType = type.split(";", 1)[0].trim().toLowerCase();
+            const trustedType =
+              /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(
+                mediaType,
+              );
             const image =
-              mediaType.startsWith("image/") && mediaType !== "image/svg+xml";
-            const video = mediaType.startsWith("video/");
+              trustedType &&
+              mediaType.startsWith("image/") &&
+              mediaType !== "image/svg+xml";
+            const video = trustedType && mediaType.startsWith("video/");
             const download = !image && !video;
             const length = Number(upstream.headers.get("content-length"));
             if (

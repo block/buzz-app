@@ -22,6 +22,7 @@ import type {
 } from "../conversation/contracts";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
+import type { ChannelSummary } from "../relay/contracts";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
@@ -46,7 +47,10 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 
-function mount(options: Partial<MessageComposerProps> = {}) {
+function mount(
+  options: Partial<MessageComposerProps> = {},
+  channels: readonly ChannelSummary[] = [],
+) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
   function Completion({ publish }: ComposerCompletionProps) {
@@ -107,8 +111,14 @@ function mount(options: Partial<MessageComposerProps> = {}) {
   };
   const typing: ReturnType<RelaySession["typing"]["snapshot"]> = [];
   const profiles = new Map();
+  const channelList = { channels, status: "ready" };
   const session = {
     messages,
+    channels: {
+      list: () => channelList,
+      subscribeList: () => () => {},
+      ensureList: () => {},
+    },
     typing: { snapshot: () => typing, subscribe: () => () => {} },
     profiles: { snapshot: () => profiles, subscribe: () => () => {} },
     emoji: {
@@ -292,6 +302,41 @@ it.each(["disabled", "readOnly"] as const)(
     fireEvent.keyDown(h.input(), { key: "Enter" });
     expect(h.input()).toHaveValue("!displayed");
     expect(h.messages.send).not.toHaveBeenCalled();
+  },
+);
+
+it.each([undefined, "root"])(
+  "addresses a one-to-one DM recipient without a typed mention (thread %s)",
+  async (threadRootId) => {
+    const h = mount({ ...(threadRootId ? { threadRootId } : {}) }, [
+      {
+        id: "channel",
+        name: "Honey",
+        channelType: "dm",
+        members: ["c".repeat(64), first.pubkey],
+        participants: [first.pubkey],
+      },
+    ]);
+    h.fill("Hello");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(
+      (threadRootId ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
+    ).toEqual([first.pubkey]);
+  },
+);
+
+it.each([
+  { channelType: "stream" as const, participants: [first.pubkey] },
+  { channelType: "dm" as const, participants: [first.pubkey, second.pubkey] },
+  { channelType: "dm" as const, participants: [] },
+  {},
+])(
+  "does not infer a recipient outside a known one-to-one DM: %j",
+  async (metadata) => {
+    const h = mount({}, [{ id: "channel", name: "Conversation", ...metadata }]);
+    h.fill("Hello");
+    await h.user.click(screen.getByRole("button", { name: "Send message" }));
+    expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
   },
 );
 

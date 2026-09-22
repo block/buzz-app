@@ -1,0 +1,80 @@
+.content {
+  max-width: 60rem;
+  margin-inline: auto;
+  display: grid;
+  gap: var(--space-section-gap);
+}
+
+.sharing,
+.agent,
+.notice {
+  padding: var(--space-panel-inset);
+  background: var(--surface-accent);
+  border-radius: var(--radius-panel);
+}
+
+.sharing,
+.agent,
+.field {
+  display: grid;
+  gap: var(--space-row-gap);
+}
+
+.field {
+  margin-block-start: var(--space-control-inset);
+}
+
+.input {
+  width: 100%;
+  min-width: 0;
+  background: var(--bg-panel);
+  color: var(--text-primary);
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-control);
+  padding: var(--space-row-gap) var(--space-control-inset);
+  font: inherit;
+}
+
+.input:disabled {
+  color: var(--text-disabled);
+}
+
+.metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-section-gap);
+}
+
+.map {
+  background: var(--surface-accent);
+  border-radius: var(--radius-panel);
+  padding: var(--space-control-inset);
+}
+
+.map svg {
+  display: block;
+  width: 100%;
+  height: 24rem;
+}
+
+.territory {
+  fill: var(--text-secondary);
+  cursor: pointer;
+}
+
+.territory:hover,
+.territory:focus-visible,
+.territory[aria-pressed="true"] {
+  fill: var(--text-primary);
+}
+
+.boundary {
+  fill: none;
+  stroke: var(--surface-accent);
+}
+
+.detail {
+  min-height: 5rem;
+  overflow-wrap: anywhere;
+  padding-block-start: var(--space-control-inset);
+}

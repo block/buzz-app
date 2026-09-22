@@ -588,10 +588,15 @@ function ChannelWorkspace({
   const drawer = useChannelPanels(panels, drawerContext);
   const visible = useMemo(
     () =>
-      channels.filter((channel) =>
-        channel.name.toLowerCase().includes(search.toLowerCase()),
+      channels.filter(
+        (channel) =>
+          channel.name.toLowerCase().includes(search.toLowerCase()) &&
+          !(
+            channel.channelType === "dm" &&
+            sidebar.hiddenDms.includes(channel.id)
+          ),
       ),
-    [channels, search],
+    [channels, search, sidebar.hiddenDms],
   );
   return (
     <div
@@ -607,6 +612,11 @@ function ChannelWorkspace({
             onChange={(event) => sidebar.setSearch(event.target.value)}
           />
         </div>
+        {sidebar.hiddenDms.length > 0 && (
+          <button type="button" onClick={sidebar.restoreDms}>
+            Restore hidden DMs
+          </button>
+        )}
         <SidebarUnread listRef={sidebar.list}>
           {sidebarSections(visible, preferences.data).map((section) => (
             <details
@@ -726,6 +736,14 @@ function ChannelWorkspace({
               <DotsThreeIcon size={19} aria-hidden="true" />
             </summary>
             <div className={styles.diagnosticsMenu}>
+              {current?.channelType === "dm" && (
+                <button
+                  type="button"
+                  onClick={() => sidebar.hideDm(current.id)}
+                >
+                  Hide from sidebar
+                </button>
+              )}
               <UnreadOptions session={queries} channelId={current?.id} />
               <details>
                 <summary>Diagnostics</summary>

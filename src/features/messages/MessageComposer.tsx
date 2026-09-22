@@ -289,22 +289,27 @@ function Composer({
     )
       return;
     try {
+      const channel = session.channels
+        .list()
+        .channels.find((item) => item.id === channelId);
+      // A one-to-one DM explicitly addresses its other member. Use the same
+      // verified roster and publication preflight as a selected mention.
+      const recipients = [
+        ...new Set([
+          ...value.recipients.map((item) => item.pubkey),
+          ...(channel?.channelType === "dm" &&
+          channel.participants?.length === 1
+            ? channel.participants
+            : []),
+        ]),
+      ];
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, draft)
           : draft;
       const id = threadRootId
-        ? session.messages.reply(
-            channelId,
-            threadRootId,
-            content,
-            value.recipients.map((item) => item.pubkey),
-          )
-        : session.messages.send(
-            channelId,
-            draft,
-            value.recipients.map((item) => item.pubkey),
-          );
+        ? session.messages.reply(channelId, threadRootId, content, recipients)
+        : session.messages.send(channelId, draft, recipients);
       onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();

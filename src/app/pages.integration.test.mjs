@@ -144,6 +144,37 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       .find((panel) => panel.pluginId === "buzz.bestie");
     assert.notEqual(secondBestie, firstBestie);
     assert.equal(secondBestie.revision, firstBestie.revision);
+    const compute = services.panels
+      .snapshot()
+      .find((page) => page.pluginId === "buzz.community-compute");
+    assert.equal(compute.title, "Compute");
+    assert.ok(compute.launcher.icon.startsWith("data:image/svg+xml,"));
+    assert.equal(
+      services.pages
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.community-compute"),
+      false,
+    );
+    assert.match(
+      renderToStaticMarkup(createElement(compute.component)),
+      /Sharing compute isn’t available in this build yet/,
+    );
+    await services.plugins.change("disable", "buzz.community-compute");
+    assert.equal(
+      services.panels
+        .snapshot()
+        .some((page) => page.pluginId === "buzz.community-compute"),
+      false,
+    );
+    await services.plugins.change("enable", "buzz.community-compute");
+    await vi.waitFor(() =>
+      assert.ok(
+        services.panels
+          .snapshot()
+          .some((page) => page.pluginId === "buzz.community-compute"),
+      ),
+    );
+    await services.plugins.change("disable", "buzz.community-compute");
     const page = services.pages.snapshot()[0];
     assert.match(
       renderToStaticMarkup(createElement(page.component)),

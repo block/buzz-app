@@ -4,7 +4,46 @@
 
 V1 **reuses the current Buzz library and mentions existing agents in channels
 and threads**. No migration to relay-only storage. Creation, editing,
-add-existing membership, Save/recovery and all runner management are out of V1.
+add-existing membership and Save/recovery remain out of V1. The local development
+runner extension below adds start/stop for one explicitly configured existing agent.
+
+### Local shared-compute runner (macOS development builds)
+
+The native `agent_runner` host can run an existing owner-only `buzz-agent`
+identity independently of the old desktop app. The consumer bundle contains
+`buzz-acp`, `buzz-agent` and `buzz-dev-mcp`; old Buzz does not need to remain open.
+`Agents` exposes Start/Stop on the card containing the configured identity, matched
+by public key rather than display name. This is not a general agent editor or release installer.
+
+The development broker uses the launcher's `BUZZ_AGENT_LIBRARY` override, falling
+back to `BUZZ_RUNNER_LIBRARY` and then the installed Buzz library. The paired
+consumer therefore displays the same library its runner uses. Saved definitions
+and other identities remain visible; only the configured identity has runner controls.
+
+Trusted launcher configuration selects `BUZZ_RUNNER_AGENT`,
+`BUZZ_RUNNER_LIBRARY`, `BUZZ_RUNNER_WORKDIR` and the existing
+`BUZZ_DEV_CREDENTIAL_SERVICE`. The renderer cannot supply executable paths,
+credentials, prompts or arbitrary environment variables. The host reads the legacy
+library without migration/writeback, resolves the linked definition, verifies its
+unconditional owner attestation against the connected compute account, and reads
+only the selected agent credential from the existing Keychain blob. Credentials
+stay native and are never returned to the renderer or copied into the bundle.
+Conditional attestations and non-shared-compute/non-owner-only configurations fail
+closed in this initial compatibility slice.
+
+The runner holds the consumer generation lease until its process group is gone.
+Compute replacement cannot reuse its endpoint while the agent is alive. Disconnect
+stops the agent; reconnection requires an explicit Start. A pipe-supervised group
+leader handles desktop death and holds the identity lock until group cleanup.
+Existing legacy PID receipts block duplicate launches; stop old Buzz's runner
+before handing it over. Do not restart the old runner concurrently: old Buzz does
+not understand the new app's lock. App launch does not automatically start agents.
+
+The pair builder accepts `BUZZ_AGENT_RUNTIME_SOURCE` pointing to the trusted
+existing Buzz binary directory and `BUZZ_COMPUTE_BUILD_ROLE=client` to rebuild only
+the consumer. Executables are replaced atomically to avoid macOS rejecting an
+overwritten running executable. The live consumer remains a development build
+with the existing local library/Keychain and source checkout dependencies.
 
 ### Implemented compatibility view
 
@@ -105,6 +144,12 @@ first dispatched attempt may already have delivered. These checks are client UX 
 not a substitute for relay authorization, a membership transaction, or the ACP
 listener's own admission rules. Network changes after transport dispatch remain
 possible. No ownership or running status is inferred from a member's name/profile.
+
+In a relay-identified one-to-one DM, the composer also addresses the sole other
+participant from the verified roster, without requiring a typed mention. This
+applies to root messages and thread replies and uses the same publication
+preflight. It allows mention-subscribed agent runners to receive ordinary DMs.
+Group DMs, streams, self-DMs and unknown metadata do not infer recipients.
 
 Wire compatibility is kind 9 + `h` + exact `p`; direct replies also carry
 `["e", root, "", "reply"]`. Existing buzz-acp owns mention admission, replay,

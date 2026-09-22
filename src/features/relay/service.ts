@@ -1,3 +1,5 @@
+import { nativeComputeStatus } from "../community-compute/native";
+import type { ComputeStatusSource } from "../community-compute/status";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
@@ -10,6 +12,9 @@ export type RelaySnapshot = Readonly<{
   session: RelaySession;
   viewer?: string;
   error?: string;
+  compute?: ComputeStatusSource;
+  /** Exact community endpoint; scope additionally partitions by viewer. */
+  community?: string;
 }>;
 export type RelayData = {
   snapshot(): RelaySnapshot;
@@ -30,6 +35,7 @@ export function provideRelay(
   ctx: Context,
   connect?: (signal: AbortSignal) => Promise<ReadTransport>,
 ) {
+  let compute: ReturnType<typeof nativeComputeStatus>;
   let disposed = false;
   let generation = 0;
   let controller: AbortController | undefined;
@@ -46,6 +52,8 @@ export function provideRelay(
     for (const listener of listeners) listener();
   };
   const reset = () => {
+    compute?.dispose();
+    compute = undefined;
     generation++;
     controller?.abort();
     clearTimeout(deadline);
@@ -93,7 +101,10 @@ export function provideRelay(
                 transport.scope ?? transport.relayAuthor,
               ),
             });
+            compute = nativeComputeStatus(transport);
             publish({
+              ...(compute ? { compute: compute.source } : {}),
+              ...(transport.scope ? { community: transport.scope } : {}),
               status: "ready",
               generation,
               viewer: transport.viewer,

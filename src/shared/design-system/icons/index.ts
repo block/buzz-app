@@ -188,3 +188,6 @@ export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
     "Buzz-owned mark based on GitHub’s issue symbol and Phosphor Circle geometry.",
   intendedSizes: [{ width: 22, height: 22 }],
 });
+
+import { CpuIcon as PhosphorCpuIcon } from "@phosphor-icons/react/dist/csr/Cpu";
+export const CpuIcon = defineIcon("phosphor", PhosphorCpuIcon);

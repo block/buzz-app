@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "compute-widget",
+  "description": "Allow dragging and closing the floating Compute widget.",
+  "windows": ["compute-widget"],
+  "permissions": ["core:window:allow-start-dragging", "core:window:allow-close"]
+}

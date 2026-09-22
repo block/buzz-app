@@ -24,3 +24,7 @@ export const pickerIcons = {
   asterisk: asterisk,
   "x-circle": x_circle,
 };
+
+// Neutral ink remains visible when an SVG is used as an image in either shell theme.
+import cpu from "@phosphor-icons/core/assets/regular/cpu.svg?raw";
+export const computeLauncherIcon = `data:image/svg+xml,${encodeURIComponent(cpu.replace('fill="currentColor"', 'fill="gray"'))}`;

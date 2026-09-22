@@ -7,6 +7,7 @@ import {
   PaletteIcon,
   BellIcon,
   WrenchIcon,
+  CpuIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Communities } from "../features/communities/service";
@@ -18,6 +19,8 @@ import { AppearanceSettings } from "./AppearanceSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import type { NotificationsService } from "../features/notifications/service";
 import { DeveloperSettings } from "./DeveloperSettings";
+
+import { CommunityComputePage } from "../bundled/community-compute/CommunityComputePage";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
@@ -55,6 +58,13 @@ export function Settings({
     | undefined;
   onSection?: (section: string) => void;
 }) {
+  const { configuration, activation, busy, error, refreshError } =
+    useSyncExternalStore(plugins.subscribe, plugins.snapshot);
+  const computeEnabled =
+    activation["buzz.community-compute"]?.status === "active";
+  const availableSections = computeEnabled
+    ? [...sections, { id: "compute", label: "Compute", icon: CpuIcon }]
+    : sections;
   const [selected, setSelected] =
     useState<(typeof sections)[number]["id"]>("profile");
   const requestedSection =
@@ -64,7 +74,9 @@ export function Settings({
   useEffect(() => {
     if (
       requestedSection &&
-      sections.some((section) => section.id === requestedSection)
+      [...sections, { id: "compute" }].some(
+        (section) => section.id === requestedSection,
+      )
     )
       setSelected(requestedSection as typeof selected);
   }, [requestedSection]);
@@ -72,8 +84,6 @@ export function Settings({
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
   }, [navigation, requestedSection, selected]);
-  const { configuration, activation, busy, error, refreshError } =
-    useSyncExternalStore(plugins.subscribe, plugins.snapshot);
   const ready = configuration.status === "ready" ? configuration : undefined;
   const catalog = ready?.catalog;
   const externalPluginsPaused = ready?.externalPluginsPaused;
@@ -85,7 +95,7 @@ export function Settings({
             Settings
           </h1>
           <nav aria-label="Settings sections" className={styles.navigation}>
-            {sections.map(({ id, label, icon: Icon }) => (
+            {availableSections.map(({ id, label, icon: Icon }) => (
               <button
                 type="button"
                 key={id}
@@ -104,6 +114,12 @@ export function Settings({
           </nav>
         </aside>
         <div className={styles.detail}>
+          {selected === "compute" &&
+            (computeEnabled ? (
+              <CommunityComputePage relay={communities.relay} />
+            ) : (
+              <p role="status">Enable Compute in Plugins to configure it.</p>
+            ))}
           <div hidden={selected !== "notifications"}>
             <NotificationSettings notifications={notifications} />
           </div>

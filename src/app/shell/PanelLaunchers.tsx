@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ComputeWidgetLauncher } from "../../bundled/community-compute/ComputeWidgetLauncher";
 import { SidebarIcon } from "../../shared/design-system/icons/index";
 import type { RegisteredPanel } from "../../features/panels/service";
 
@@ -13,22 +14,26 @@ export function PanelLaunchers({
 }) {
   return panels
     .filter((panel) => panel.launcher)
-    .map((panel) => (
-      <button
-        type="button"
-        key={`${panel.key}:${panel.revision}`}
-        className="shell-icon"
-        aria-label={panel.title}
-        title={panel.title}
-        aria-expanded={panel === selected}
-        onClick={(event) => launch(panel, event.currentTarget)}
-      >
-        <LauncherIcon
-          key={panel.launcher?.icon}
-          src={panel.launcher?.icon ?? ""}
-        />
-      </button>
-    ));
+    .map((panel) =>
+      panel.pluginId === "buzz.community-compute" ? (
+        <ComputeWidgetLauncher key={`${panel.key}:${panel.revision}`} />
+      ) : (
+        <button
+          type="button"
+          key={`${panel.key}:${panel.revision}`}
+          className="shell-icon"
+          aria-label={panel.title}
+          title={panel.title}
+          aria-expanded={panel === selected}
+          onClick={(event) => launch(panel, event.currentTarget)}
+        >
+          <LauncherIcon
+            key={panel.launcher?.icon}
+            src={panel.launcher?.icon ?? ""}
+          />
+        </button>
+      ),
+    );
 }
 function LauncherIcon({ src }: { src: string }) {
   const [failed, setFailed] = useState(false);

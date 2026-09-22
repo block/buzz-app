@@ -15,6 +15,11 @@ import { useEffect, useSyncExternalStore } from "react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { useRelayConnection } from "../../features/relay/react";
+import {
+  AgentRunner,
+  useAgentRunner,
+  type AgentRunnerControls,
+} from "./AgentRunner";
 
 export function AgentsPage({ relay }: { relay: RelayData }) {
   const connection = useRelayConnection(relay);
@@ -27,6 +32,7 @@ export function AgentsPage({ relay }: { relay: RelayData }) {
             <MyAgents
               key={`${connection.scope}:${connection.generation}`}
               session={connection.session}
+              relay={relay}
             />
           ) : (
             <div className="mt-6">
@@ -45,7 +51,14 @@ export function AgentsPage({ relay }: { relay: RelayData }) {
     </div>
   );
 }
-function MyAgents({ session }: { session: RelaySession }) {
+function MyAgents({
+  session,
+  relay,
+}: {
+  session: RelaySession;
+  relay: RelayData;
+}) {
+  const runner = useAgentRunner(relay);
   const library = session.agentLibrary;
   const archives = session.archives;
   const snapshot = useSyncExternalStore(
@@ -128,6 +141,7 @@ function MyAgents({ session }: { session: RelaySession }) {
                   avatar={group.avatar ?? group.identities[0]?.avatar}
                   identities={group.identities}
                   session={session}
+                  runner={runner}
                 />
               ))}
             </div>
@@ -143,6 +157,7 @@ function MyAgents({ session }: { session: RelaySession }) {
                     avatar={identity.avatar}
                     identities={[identity]}
                     session={session}
+                    runner={runner}
                   />
                 ))}
               </div>
@@ -159,6 +174,7 @@ function MyAgents({ session }: { session: RelaySession }) {
                     avatar={identity.avatar}
                     identities={[identity]}
                     session={session}
+                    runner={runner}
                   />
                 ))}
               </div>
@@ -172,7 +188,9 @@ function MyAgents({ session }: { session: RelaySession }) {
           )}
           <p className="border-t border-primary pt-4 text-body-sm text-secondary">
             Mention existing members with @ in a channel or thread. This is your
-            current Buzz library, read-only; keep Buzz running for replies.
+            current Buzz library, read-only. Replies require a running agent;
+            configured desktop builds show runner controls on the matching agent
+            card.
           </p>
         </>
       )}
@@ -184,11 +202,13 @@ function AgentCard({
   avatar,
   identities,
   session,
+  runner,
 }: {
   name: string;
   avatar?: string | undefined;
   identities: AgentLibrary["identities"];
   session: RelaySession;
+  runner: AgentRunnerControls;
 }) {
   const source = avatarSource(avatar);
   const picture = source?.startsWith("data:")
@@ -210,6 +230,10 @@ function AgentCard({
       <h3 className="m-0 truncate text-label" title={name}>
         {name}
       </h3>
+      <AgentRunner
+        controls={runner}
+        pubkeys={identities.map((identity) => identity.pubkey)}
+      />
       {identities.length ? (
         <Accordion
           items={[

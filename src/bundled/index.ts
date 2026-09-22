@@ -23,6 +23,8 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
+import computeManifest from "./community-compute/manifest.json";
+import * as compute from "./community-compute";
 
 export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...activityManifest, apiVersion: 1 }, module: activity },
@@ -37,4 +39,5 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...projectsManifest, apiVersion: 1 }, module: projects },
   { manifest: { ...agentsManifest, apiVersion: 1 }, module: agents },
   { manifest: { ...workflowsManifest, apiVersion: 1 }, module: workflows },
+  { manifest: { ...computeManifest, apiVersion: 1 }, module: compute },
 ];

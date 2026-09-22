@@ -1,3 +1,4 @@
+import { createComputeStatusSigner } from "./compute-status.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
@@ -130,7 +131,14 @@ export function createUpstream(base) {
   };
 }
 
-function loadIdentity(authorizedViewer) {
+export function loadIdentity(
+  authorizedViewer,
+  {
+    service = "buzz-desktop",
+    platform = process.platform,
+    read = execFileSync,
+  } = {},
+) {
   // Validate the explicit public pin before prompting for any credential access.
   const configured = authorizedViewer?.trim() ?? "";
   let expected;
@@ -147,6 +155,14 @@ function loadIdentity(authorizedViewer) {
     throw new Error(
       "Set BUZZ_DEV_VIEWER in .env.local to your existing Buzz public key (hex or npub, never nsec). See README.md#relay-channels.",
     );
+  if (
+    !/^buzz-desktop(?:-dev(?:\.[a-z0-9][a-z0-9._-]{0,79})?|-demo\.[a-z0-9][a-z0-9._-]{0,79})?$/.test(
+      service,
+    )
+  )
+    throw new Error(
+      "Choose an existing Buzz credential service; no credential fallback",
+    );
   // The installed Buzz desktop keeps its secrets blob in the OS credential
   // store under service `buzz-desktop`, username `secrets`: the macOS Keychain,
   // or the freedesktop secret service on Linux (read through libsecret's
@@ -155,31 +171,24 @@ function loadIdentity(authorizedViewer) {
   const readers = {
     darwin: {
       command: "/usr/bin/security",
-      args: [
-        "find-generic-password",
-        "-s",
-        "buzz-desktop",
-        "-a",
-        "secrets",
-        "-w",
-      ],
+      args: ["find-generic-password", "-s", service, "-a", "secrets", "-w"],
       failure: "Keychain read unavailable or declined; no credential fallback",
     },
     linux: {
       command: "secret-tool",
-      args: ["lookup", "service", "buzz-desktop", "username", "secrets"],
+      args: ["lookup", "service", service, "username", "secrets"],
       failure:
         "Secret service read unavailable (needs libsecret-tools, an unlocked keyring in this desktop session, and Buzz desktop signed in); no credential fallback",
     },
   };
-  const reader = readers[process.platform];
+  const reader = readers[platform];
   if (!reader)
     throw new Error(
-      `Live identity is read from the OS credential store on macOS or Linux only (this is ${process.platform}); no credential fallback`,
+      `Live identity is read from the OS credential store on macOS or Linux only (this is ${platform}); no credential fallback`,
     );
   let raw;
   try {
-    raw = execFileSync(reader.command, reader.args, {
+    raw = read(reader.command, reader.args, {
       stdio: ["ignore", "pipe", "pipe"],
       timeout: 120000,
     })
@@ -313,11 +322,14 @@ export function relayBrokerPlugin({
   authorizedViewer,
   relayUrl,
   communityAliases,
-  identity = () => loadIdentity(authorizedViewer),
+  credentialService = "buzz-desktop",
+  identity = () =>
+    loadIdentity(authorizedViewer, { service: credentialService }),
   authority = relayAuthority,
   upstreamFetch,
   socketFactory,
-  agentLibrary = readAgentLibrary,
+  agentLibraryPath,
+  agentLibrary = () => readAgentLibrary(agentLibraryPath),
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -326,6 +338,7 @@ export function relayBrokerPlugin({
     async configureServer(server) {
       const key = identity();
       const viewer = getPublicKey(key);
+      const signComputeStatus = createComputeStatusSigner(viewer, key);
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
@@ -578,6 +591,7 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
+              computeStatus: true,
               writeKinds: [7, 9, ...WORKFLOW_KINDS],
               workflowReads: true,
               sidebarPreferences: true,
@@ -925,6 +939,7 @@ export function relayBrokerPlugin({
           }
           if (
             ![
+              "/api/relay/compute-status",
               "/api/relay/query",
               "/api/relay/sign",
               "/api/relay/publish",
@@ -1057,6 +1072,18 @@ export function relayBrokerPlugin({
               sent: false,
             });
           const timings = [];
+          const computeStatus = route === "/api/relay/compute-status";
+          if (computeStatus) {
+            try {
+              cancel.signal.throwIfAborted();
+              filters = await signComputeStatus(filters, cancel.signal);
+            } catch {
+              return json(res, 400, {
+                error: "Compute status rejected",
+                sent: false,
+              });
+            }
+          }
           const signing = route === "/api/relay/sign";
           const publishing = route === "/api/relay/publish";
           if (signing || publishing) {
@@ -1097,6 +1124,7 @@ export function relayBrokerPlugin({
             if (filters.pubkey !== viewer || !verifyEvent(filters))
               return json(res, 400, { error: "Invalid outgoing signature" });
           } else if (
+            !computeStatus &&
             !profile &&
             !claim &&
             !policy &&
@@ -1144,7 +1172,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile
+              : profile || computeStatus
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -1257,14 +1285,14 @@ export function relayBrokerPlugin({
               }
               return json(res, response.status, failure);
             }
-            if (profile) {
+            if (profile || computeStatus) {
               const receipt = JSON.parse(text);
               if (
                 receipt.event_id !== filters.id ||
                 typeof receipt.accepted !== "boolean"
               )
                 return json(res, 502, {
-                  error: "Profile publication could not be confirmed",
+                  error: "Publication could not be confirmed",
                 });
             }
             res.writeHead(200, {

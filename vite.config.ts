@@ -21,6 +21,12 @@ export default defineConfig(async ({ command, mode }) => {
     plugins.push(
       (await import("./dev/relay-broker.mjs")).relayBrokerPlugin({
         authorizedViewer: env.BUZZ_DEV_VIEWER,
+        credentialService:
+          env.BUZZ_DEV_CREDENTIAL_SERVICE?.trim() || "buzz-desktop",
+        agentLibraryPath:
+          env.BUZZ_AGENT_LIBRARY?.trim() ||
+          env.BUZZ_RUNNER_LIBRARY?.trim() ||
+          undefined,
         relayUrl: defaultRelay,
         communityAliases: aliases,
       }),

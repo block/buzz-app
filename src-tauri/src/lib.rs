@@ -1,3 +1,8 @@
+pub mod agent_runner;
+mod community_compute;
+mod compute_host;
+mod compute_widget;
+use compute_host::ComputeHost;
 mod notifications;
 mod terminal;
 use notifications::{notification_show, Notifications};
@@ -130,12 +135,26 @@ async fn plugin_catalog(
 }
 #[tauri::command]
 async fn plugin_change(
+    app: tauri::AppHandle,
     manager: tauri::State<'_, PluginManager>,
     action: String,
     id: String,
+    compute: tauri::State<'_, ComputeHost>,
 ) -> Result<InstallationResult, String> {
+    let compute = compute.inner().clone();
     with_manager(manager, move |m| {
-        m.change(&action, &id).map(|catalog| ready(&m, catalog))
+        if id == "buzz.community-compute" && action == "disable" {
+            compute.set_allowed(false);
+            compute.stop(None, true)?;
+            if let Some(window) = app.get_webview_window(compute_widget::LABEL) {
+                window.close().map_err(|e| e.to_string())?;
+            }
+        }
+        let result = m.change(&action, &id)?;
+        if id == "buzz.community-compute" && action == "enable" {
+            compute.set_allowed(true);
+        }
+        Ok(ready(&m, result))
     })
     .await
 }
@@ -162,7 +181,47 @@ pub fn run() {
         .manage(Terminals::default())
         .manage(Notifications::default())
         .manage(PluginManager(Manager::from_env()))
+        .setup(|app| {
+            let enabled = app
+                .state::<PluginManager>()
+                .0
+                .as_ref()
+                .ok()
+                .and_then(|m| m.catalog().ok())
+                .is_some_and(|catalog| {
+                    catalog
+                        .plugins
+                        .iter()
+                        .any(|p| p.manifest.id == "buzz.community-compute" && p.enabled)
+                });
+            let host = ComputeHost::new(
+                app.path().app_data_dir().ok(),
+                app.config().build.dev_url.as_ref().map(ToString::to_string),
+                enabled,
+            );
+            app.manage(host.clone());
+            app.manage(agent_runner::AgentRunner::new(
+                app.path().app_data_dir()?,
+                std::env::current_exe()?
+                    .parent()
+                    .ok_or("Missing app executable directory")?
+                    .join("agent-runtime"),
+                host.clone(),
+            ));
+            host.restore();
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
+            agent_runner::agent_runner_status,
+            agent_runner::agent_runner_start,
+            agent_runner::agent_runner_stop,
+            compute_widget::compute_widget_open,
+            community_compute::community_compute_test,
+            community_compute::community_compute_status,
+            community_compute::community_compute_models,
+            community_compute::community_compute_start,
+            community_compute::community_compute_stop,
+            community_compute::community_compute_snapshot,
             notification_show,
             terminal_create_owner,
             terminal_spawn,
@@ -184,6 +243,8 @@ pub fn run() {
         .expect("failed to build Buzz Foundation")
         .run(|app, event| {
             if matches!(event, tauri::RunEvent::Exit) {
+                let _ = app.state::<agent_runner::AgentRunner>().stop();
+                let _ = app.state::<ComputeHost>().stop(None, false);
                 if let Err(error) = app.state::<Terminals>().shutdown() {
                     eprintln!("Terminal shutdown failed: {error}");
                 }

@@ -1,13 +1,21 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
-type SidebarView = { search: string; collapsed: string[]; scrollTop: number };
+type SidebarView = {
+  search: string;
+  collapsed: string[];
+  scrollTop: number;
+  hiddenDms: string[];
+};
 
 function restore(scope: string): SidebarView {
   const raw = readView<unknown>(scope, "channel-sidebar", null);
   const saved =
     raw && typeof raw === "object" ? (raw as Partial<SidebarView>) : {};
   return {
+    hiddenDms: Array.isArray(saved.hiddenDms)
+      ? saved.hiddenDms.filter((id): id is string => typeof id === "string")
+      : [],
     search: typeof saved.search === "string" ? saved.search : "",
     collapsed: Array.isArray(saved.collapsed)
       ? saved.collapsed.filter((key): key is string => typeof key === "string")
@@ -71,6 +79,20 @@ export function useSidebarView(scope: string, ready: boolean) {
     list,
     search: view.search,
     collapsed: view.collapsed,
+    hiddenDms: view.hiddenDms,
+    hideDm: (id: string) => {
+      const next = {
+        ...intent.current,
+        hiddenDms: [...new Set([...intent.current.hiddenDms, id])],
+      };
+      update(next);
+      writeView(scope, "channel-sidebar", next);
+    },
+    restoreDms: () => {
+      const next = { ...intent.current, hiddenDms: [] };
+      update(next);
+      writeView(scope, "channel-sidebar", next);
+    },
     setSearch: (search: string) => {
       pending.current = false;
       update({ ...intent.current, search });

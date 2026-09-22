@@ -1,6 +1,8 @@
 import type { Plugin } from "vite";
 export function relayBrokerPlugin(options?: {
   authorizedViewer?: string | undefined;
+  credentialService?: string | undefined;
+  agentLibraryPath?: string | undefined;
   agentLibrary?: () => Promise<
     import("../src/features/agents/library").AgentLibrary
   >;

@@ -22,9 +22,9 @@ test("Buzz channel and message links render, reveal verified targets, and preser
     app.report.brokerRequests.filter(({ url }) =>
       url.endsWith("/agent-library"),
     ).length;
-  // Shared naming loads inventory once on session activation. Link previews
-  // reuse that evidence rather than starting another library read.
-  await expect.poll(libraryReads).toBe(1);
+  // Session activation reads inventory; the authoritative startup roster
+  // retires that read and restores demand. Link previews add no further read.
+  await expect.poll(libraryReads).toBe(2);
   const history = app.histories.get("primary/alpha");
   const target = history.find((row) => row.content === "Broadcast reply");
   const href = `buzz://message?channel=alpha&id=${target.id}`;
@@ -109,7 +109,7 @@ test("Buzz channel and message links render, reveal verified targets, and preser
   );
   await expect(link).toBeFocused();
   await expect(preview).toBeVisible();
-  expect(libraryReads()).toBe(1);
+  expect(libraryReads()).toBe(2);
   await link.press("Tab");
   await expect(preview).toBeFocused();
   await preview.press("Enter");

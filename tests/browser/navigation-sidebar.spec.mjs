@@ -75,19 +75,21 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     "data-tooltip",
     "Drag to resize · Double-click to reset",
   );
-  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
   const tooltip = () =>
     handle.evaluate((element) => {
       const style = getComputedStyle(element, "::before");
-      return { delay: style.transitionDelay, opacity: style.opacity };
+      return {
+        delay: style.transitionDelay,
+        opacity: style.opacity,
+        visibility: style.visibility,
+      };
     });
-  await expect.poll(tooltip).toEqual({ delay: "0.6s", opacity: "0" });
-  await page.addStyleTag({
-    content: `[aria-label="Resize channel sidebar"]:hover::before {
-      transition: none !important;
-    }`,
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
+  await expect.poll(async () => (await tooltip()).delay).toBe("0.6s");
+  await expect.poll(tooltip).toMatchObject({
+    opacity: "1",
+    visibility: "visible",
   });
-  await expect.poll(async () => (await tooltip()).opacity).toBe("1");
 
   await handle.press("ArrowRight");
   await expect

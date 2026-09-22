@@ -21,6 +21,10 @@ import type {
   CompletionResult,
   InlineRenderer,
 } from "../conversation/contracts";
+import { AgentMentionContext } from "../agents/mention-context";
+import { createAgentControl, type AgentControl } from "../agents/control";
+import { controlFixture } from "../agents/control-testing";
+import type { OutgoingEvent } from "../relay/outbox";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
@@ -47,7 +51,10 @@ afterEach(() => {
   delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 
-function mount(options: Partial<MessageComposerProps> = {}) {
+function mount(
+  options: Partial<MessageComposerProps> = {},
+  control?: AgentControl,
+) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
   function Completion({ publish }: ComposerCompletionProps) {
@@ -168,7 +175,12 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     },
     ...options,
   };
-  const view = render(<MessageComposer {...props} />, {
+  const tree = () => (
+    <AgentMentionContext.Provider value={control}>
+      <MessageComposer {...props} />
+    </AgentMentionContext.Provider>
+  );
+  const view = render(tree(), {
     reactStrictMode: true,
   });
   const input = () =>
@@ -178,7 +190,7 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     input,
     messages,
     onSend,
-    session,
+    session: props.session,
     emojiListeners,
     user: userEvent.setup(),
     commands: () => commands,
@@ -203,7 +215,7 @@ function mount(options: Partial<MessageComposerProps> = {}) {
     },
     retarget(next: Partial<MessageComposerProps>) {
       props = { ...props, ...next };
-      view.rerender(<MessageComposer {...props} />);
+      view.rerender(tree());
     },
     setEmoji(entries: readonly CustomEmoji[]) {
       act(() => {
@@ -459,6 +471,51 @@ it.each([undefined, "root"])(
   },
 );
 
+it.each([undefined, "root"])(
+  "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
+  (root) => {
+    const h = mount(root ? { threadRootId: root } : {});
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertText("can you see this is's");
+    });
+    const input = h.input();
+    const text = input.querySelector("[data-editor-text]")?.firstChild;
+    if (!(text instanceof Text)) throw new Error("Missing editable text");
+    const quote = text.data.indexOf("'");
+    expect(quote).toBeGreaterThan(0);
+    const target = document.createRange();
+    target.setStart(text, quote);
+    target.setEnd(text, quote + 1);
+    // WebKit's replacement range is behind the caret, not the selection.
+    input.setSelectionRange(input.value.length, input.value.length);
+    const before = new InputEvent("beforeinput", {
+      bubbles: true,
+      inputType: "insertReplacementText",
+      data: "’",
+    });
+    Object.defineProperty(before, "getTargetRanges", {
+      value: () => [target],
+    });
+    fireEvent(input, before);
+    text.replaceData(quote, 1, "’");
+    fireEvent.input(input, {
+      inputType: "insertReplacementText",
+      data: "’",
+    });
+    expect(input).toHaveValue("@Honey can you see this is’s");
+    expect(
+      screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      }),
+    ).toBeVisible();
+    h.submit();
+    expect(
+      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
+    ).toEqual([first.pubkey]);
+  },
+);
+
 it("deleting a mention or removing its chip removes notification intent", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
@@ -588,6 +645,169 @@ it("rejects overlong and over-limit tool edits without changing accepted intent"
   expect(h.input()).toHaveValue(before);
   expect(screen.getByRole("alert")).toHaveTextContent("at most 32 recipients");
 });
+
+// The production composer must perform enrollment, not a pre-populated test roster.
+for (const threadRootId of [undefined, "f".repeat(64)])
+  it(`adds a selected local agent only on Send, then sends after membership confirmation (thread=${!!threadRootId})`, async () => {
+    const f = controlFixture();
+    f.agent.pubkey = first.pubkey;
+    const control = createAgentControl(f.host);
+    await control.refresh();
+    const h = mount(
+      {
+        scope: `https://relay.example.test:${"d".repeat(64)}`,
+        ...(threadRootId ? { threadRootId } : {}),
+      },
+      control,
+    );
+    const channel = {
+      id: "channel",
+      name: "General",
+      channelType: "stream" as const,
+      members: ["d".repeat(64)],
+    };
+    const listeners = new Set<() => void>();
+    // A Sessions parent invitation is a different operation, even for the same recipient.
+    const invitation: OutgoingEvent = {
+      delivery: "failed",
+      event: {
+        id: "c".repeat(64),
+        pubkey: "d".repeat(64),
+        kind: 9000,
+        content: "",
+        created_at: Math.floor(Date.now() / 1000) - 16 * 60,
+        tags: [
+          ["h", "channel"],
+          ["p", first.pubkey],
+        ],
+      },
+    };
+    let operations: readonly OutgoingEvent[] = [invitation];
+    const retry = vi.fn();
+    const add = vi.fn((input) => {
+      operations = [
+        {
+          event: {
+            ...input,
+            pubkey: "d".repeat(64),
+            id: "e".repeat(64),
+            created_at: 1,
+          },
+          delivery: "sending",
+        },
+      ];
+      return "e".repeat(64);
+    });
+    const list = { status: "ready", channels: [channel] };
+    Object.assign(h.session, {
+      channels: { list: () => list, subscribeList: () => () => {} },
+      read: vi.fn(async () => {
+        if (operations[0]?.delivery === "accepted")
+          channel.members = [...channel.members, first.pubkey];
+        return [];
+      }),
+      outbox: {
+        supports: () => true,
+        send: add,
+        retry,
+        snapshot: () => operations,
+        subscribe: (fn: () => void) => {
+          listeners.add(fn);
+          return () => listeners.delete(fn);
+        },
+      },
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+      expect(add).not.toHaveBeenCalled();
+      fireEvent.submit(screen.getByRole("form"));
+      await act(async () => {});
+      expect(add).toHaveBeenCalledWith({
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", "channel"],
+          ["p", first.pubkey],
+          ["role", "bot"],
+        ],
+      });
+      expect(h.messages.send).not.toHaveBeenCalled();
+      expect(h.messages.reply).not.toHaveBeenCalled();
+      await act(async () => {
+        operations = operations.map((item) => ({
+          ...item,
+          delivery: "accepted",
+        }));
+        for (const listener of listeners) listener();
+      });
+      const send = threadRootId ? h.messages.reply : h.messages.send;
+      expect(send).toHaveBeenCalledOnce();
+      expect(retry).not.toHaveBeenCalled();
+      expect(send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+      expect(h.input().value).toBe("");
+    } finally {
+      control.dispose();
+    }
+  });
+
+it.each([false, true])(
+  "keeps the selected draft on an enrollment error (expired=%s) without sending the message",
+  async (expired) => {
+    const f = controlFixture();
+    f.agent.pubkey = first.pubkey;
+    const control = createAgentControl(f.host);
+    await control.refresh();
+    const h = mount(
+      { scope: `https://relay.example.test:${"d".repeat(64)}` },
+      control,
+    );
+    const add = vi.fn(() => {
+      throw new Error("Cannot add agent");
+    });
+    const list = {
+      status: "ready",
+      channels: [
+        { id: "channel", channelType: "stream", members: ["d".repeat(64)] },
+      ],
+    };
+    const operations = expired
+      ? [
+          {
+            delivery: "failed",
+            event: {
+              id: "e".repeat(64),
+              kind: 9000,
+              created_at: Math.floor(Date.now() / 1000) - 16 * 60,
+              tags: [
+                ["h", "channel"],
+                ["p", first.pubkey],
+                ["role", "bot"],
+              ],
+            },
+          },
+        ]
+      : [];
+    Object.assign(h.session, {
+      channels: { list: () => list, subscribeList: () => () => {} },
+      read: async () => [],
+      outbox: { supports: () => true, send: add, snapshot: () => operations },
+    });
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+      fireEvent.submit(screen.getByRole("form"));
+      await act(async () => {});
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        expired ? "Open Outbox" : "Cannot add agent",
+      );
+      expect(h.input().value).toBe("@Honey ");
+      expect(h.messages.send).not.toHaveBeenCalled();
+      if (expired) expect(add).not.toHaveBeenCalled();
+      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+    } finally {
+      control.dispose();
+    }
+  },
+);
 
 it.each(
   ["send", "unmount", "disabled", "denied"].flatMap((outcome) =>
@@ -855,3 +1075,25 @@ it.each(["ready", "failed", "unmounted"])(
     }
   },
 );
+
+it("keeps retry submission available while a new-session draft is locked", () => {
+  const submit = vi.fn();
+  const h = mount({
+    submission: {
+      draftKey: "session-retry",
+      initialDraft: "Keep this operation",
+      locked: true,
+      disabled: false,
+      submit,
+    },
+  });
+  expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeEnabled();
+  fireEvent.click(send);
+  expect(submit).toHaveBeenCalledWith({
+    text: "Keep this operation",
+    recipients: [],
+  });
+  expect(h.messages.send).not.toHaveBeenCalled();
+});

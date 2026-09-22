@@ -260,6 +260,11 @@ for (const mode of ["light", "dark"]) {
         path: testInfo.outputPath(`activity-entry-${mode}-${width}.png`),
       });
       await page.keyboard.press("Escape");
+      // Escape starts Base UI's asynchronous unmount. The closing portal still
+      // has its wide-screen position and can overflow the next narrow viewport.
+      await expect(
+        page.getByRole("tooltip", { includeHidden: true }),
+      ).toHaveCount(0);
     }
 
     await entry.click();

@@ -1,5 +1,5 @@
 {
-  "name": "example-composer-lab",
+  "name": "test-conversation-consumer",
   "private": true,
   "type": "module",
   "scripts": {

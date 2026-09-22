@@ -17,7 +17,7 @@ broader supported external reuse remains an [author-contract gate](status.md#ope
 
 **Rich conversation content.** An integration plugin recognizes a link to a GitHub pull request or a native Buzz object and supplies a panel showing that object. The Channels page decides where the panel appears. Another page can display the same content in a different arrangement.
 
-Both experiences use real session capabilities. As AI integrations become available, authors should be able to consume those capabilities without rebuilding authentication, execution, or state handling. The first [Agents slice](agents.md) shows the existing Buzz library read-only; mentions use current channel membership and existing runners.
+Both experiences use real session capabilities. As AI integrations become available, authors should be able to consume those capabilities without rebuilding authentication, execution, or state handling. The [Agents compatibility view](agents.md) shows the existing Buzz library read-only; mentions use current channel membership and existing runners. The connected [local controls checkpoint](agent-control.md) adds native settings and bundled process management through an injected app-owned capability. Execution and credential import stay blocked in the disposable editor; the normal management path requires its separately reviewed, attended handover.
 
 ## Ownership
 
@@ -26,7 +26,7 @@ Both experiences use real session capabilities. As AI integrations become availa
 | Application host | Startup, plugin installation and activation, page navigation, Settings, and recovery. |
 | Page plugin | Its complete React tree, local interaction state, internal navigation, and arrangement of panels. |
 | Panel plugin | Recognizing a supported target and implementing the content and interactions for that target. |
-| Shared capabilities | Session state, relay access, retained data, and eventually agent operations and external connections. |
+| Shared capabilities | Session state, relay access, retained data, local agent controls, and eventually external connections. |
 | Reusable UI components | Useful rendering and interaction behavior, configured through ordinary props. |
 | Cordis | Dependency availability and resource lifetime across plugin activation, replacement, and disposal. |
 
@@ -47,8 +47,8 @@ features/relay/         shared channel data, queries, profiles and durable deliv
 features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
 bundled/projects/       title-only Projects page scaffold
-bundled/agents/         read-only current-Buzz agent library page
-features/agents/        shared session-owned local library view
+bundled/agents/         local control UI and read-only current-Buzz library page
+features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin companion panel and its snake launcher
 ```
@@ -97,7 +97,7 @@ is an enabled-by-default scaffold with only a centered title and no relay depend
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
-agent operations remain future shared capabilities.
+agent execution remain future shared capabilities.
 
 ### Composer accessories
 
@@ -167,6 +167,13 @@ enabled by the normal bundled policy; saved disabled flags still win.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.
+`agentControl` is provided once on the root Cordis context and exported through
+the generated type-only author contract. Agents consumes it through injection;
+plugin disable/re-enable and community switches do not reconstruct it. Page
+unmount clears observation, not enabled intent. Root disposal fences only the
+TypeScript projection; the native app owns persistence, credential admission and
+process lifetime, and enforces launch/import gates even for direct IPC calls.
+
 Settings and Recovery subscribe directly to plugin management. Page render errors
 stay in the page boundary rather than being copied into plugin configuration.
 
@@ -352,7 +359,9 @@ ordinary prose never create notification intent or establish an identity.
 
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` components. Generated
-type-only `@buzz/author` declarations support the independent Composer Lab example.
+type-only `@buzz/author` declarations are exercised by a source-only external consumer
+fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
+the browser test's temporary profile.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
 

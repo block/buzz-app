@@ -18,8 +18,8 @@ pub(crate) enum Permission {
 }
 
 #[tauri::command]
-pub(crate) fn unread_indicator_set(
-    window: tauri::WebviewWindow,
+pub(crate) fn unread_indicator_set<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
     unread: bool,
 ) -> Result<(), String> {
     if window.label() != "main" {
@@ -37,8 +37,8 @@ pub(crate) fn unread_indicator_set(
 }
 
 #[tauri::command]
-pub(crate) async fn dock_permission(
-    window: tauri::WebviewWindow,
+pub(crate) async fn dock_permission<R: tauri::Runtime>(
+    window: tauri::WebviewWindow<R>,
     request: bool,
 ) -> Result<Permission, String> {
     if window.label() != "main" {

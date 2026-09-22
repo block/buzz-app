@@ -1133,7 +1133,12 @@ it("formats the production draft reversibly without losing explicit notification
   input.setSelectionRange(0, input.value.length);
   await h.user.click(screen.getByRole("button", { name: "Toggle formatting" }));
   await h.user.click(screen.getByRole("button", { name: "Bold" }));
-  expect(input).toHaveValue("**@Honey** ");
+  expect(input).toHaveTextContent("@Honey");
+  expect(input.querySelector("strong")).toHaveTextContent("@Honey");
+  expect(screen.getByRole("button", { name: "Bold" })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
   await h.user.click(screen.getByRole("button", { name: "Bold" }));
   expect(input).toHaveValue("@Honey ");
   await h.user.click(screen.getByRole("button", { name: "Bold" }));
@@ -1160,8 +1165,107 @@ it("rejects formatting and link edits when guards change", async () => {
   await h.user.click(screen.getByRole("button", { name: "Link" }));
   await h.user.type(screen.getByLabelText("Link text"), "changed");
   await h.user.type(screen.getByLabelText("Address"), "https://example.com");
-  input.readOnly = true;
-  await h.user.click(screen.getByRole("button", { name: "Add link" }));
-  expect(input).toHaveValue("original");
+  h.retarget({ disabled: true });
+  expect(screen.getByRole("button", { name: "Add link" })).toBeDisabled();
+  const form = screen.getByRole("dialog").querySelector("form");
+  if (!form) throw new Error("Missing link form");
+  fireEvent.submit(form);
+  expect(input).toHaveTextContent("original");
   expect(screen.getByRole("dialog")).toBeVisible();
+});
+
+it.each(["_filename_", "[different](https://other.example)", "<b>literal</b>"])(
+  "inserts a literal link label %s with the chosen destination",
+  async (label) => {
+    const h = mount();
+    h.fill("original");
+    h.input().setSelectionRange(0, 8);
+    await h.user.click(
+      screen.getByRole("button", { name: "Toggle formatting" }),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Link" }));
+    fireEvent.change(screen.getByLabelText("Link text"), {
+      target: { value: label },
+    });
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "https://example.com" },
+    });
+    await h.user.click(screen.getByRole("button", { name: "Add link" }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(h.input().textContent).toBe(label);
+    expect(h.input().querySelector("a")).toHaveAttribute(
+      "href",
+      "https://example.com",
+    );
+    expect(h.input().querySelectorAll("a")).toHaveLength(1);
+    expect(h.input().querySelector("em, strong")).toBeNull();
+  },
+);
+
+it.each([
+  "javascript:alert(1)",
+  "http://example.com",
+  "https://user:secret@example.com",
+  "buzz://invalid",
+])(
+  "keeps invalid link %s and selection available for correction",
+  async (url) => {
+    const h = mount();
+    h.fill("original tail");
+    const input = h.input();
+    input.setSelectionRange(0, 8);
+    await h.user.click(
+      screen.getByRole("button", { name: "Toggle formatting" }),
+    );
+    await h.user.click(screen.getByRole("button", { name: "Link" }));
+    fireEvent.change(screen.getByLabelText("Link text"), {
+      target: { value: "design" },
+    });
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: url },
+    });
+    await h.user.click(screen.getByRole("button", { name: "Add link" }));
+    expect(input).toHaveTextContent("original tail");
+    expect(screen.getByRole("dialog")).toBeVisible();
+    expect(screen.getByLabelText("Address")).toHaveAttribute(
+      "aria-invalid",
+      "true",
+    );
+    fireEvent.change(screen.getByLabelText("Address"), {
+      target: { value: "buzz://channel/design" },
+    });
+    await h.user.click(screen.getByRole("button", { name: "Add link" }));
+    expect(input.textContent).toBe("design tail");
+    expect(input.querySelector("a")).toHaveAttribute(
+      "href",
+      "buzz://channel/design",
+    );
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledWith(
+      "channel",
+      "[design](buzz://channel/design) tail",
+      [],
+    );
+  },
+);
+
+it("keeps an oversized link insertion out of the draft and leaves the dialog open", async () => {
+  const h = mount();
+  h.fill("x".repeat(15980));
+  const input = h.input();
+  input.setSelectionRange(15980, 15980);
+  await h.user.click(screen.getByRole("button", { name: "Toggle formatting" }));
+  await h.user.click(screen.getByRole("button", { name: "Link" }));
+  fireEvent.change(screen.getByLabelText("Link text"), {
+    target: { value: "label" },
+  });
+  fireEvent.change(screen.getByLabelText("Address"), {
+    target: { value: "https://example.com" },
+  });
+  await h.user.click(screen.getByRole("button", { name: "Add link" }));
+  expect(input.textContent).toBe("x".repeat(15980));
+  expect(screen.getByRole("dialog")).toBeVisible();
+  expect(
+    within(screen.getByRole("dialog")).getByRole("alert"),
+  ).toHaveTextContent("limit");
 });

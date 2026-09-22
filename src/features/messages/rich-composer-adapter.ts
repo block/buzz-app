@@ -8,6 +8,7 @@ import Link from "@tiptap/extension-link";
 import { defaultMarkdownSerializer } from "prosemirror-markdown";
 import StarterKit from "@tiptap/starter-kit";
 import { Markdown as TiptapMarkdown } from "tiptap-markdown";
+import { isSupportedMessageLink } from "./message-link-parts";
 import type { ComposerObservation } from "../conversation/contracts";
 import { mentionDraft, type MentionDraft } from "./mention-draft";
 import {
@@ -146,7 +147,11 @@ export class RichComposerAdapter {
               },
             };
           },
-        }).configure({ openOnClick: false }),
+        }).configure({
+          openOnClick: false,
+          protocols: ["buzz"],
+          isAllowedUri: isSupportedMessageLink,
+        }),
         TiptapMarkdown.configure({ html: false, breaks: true }),
       ],
       content: "",
@@ -319,6 +324,26 @@ export class RichComposerAdapter {
       .run();
     if (!accepted || this.#rejected) return false;
     this.editor.view.dispatch(closeHistory(this.editor.state.tr));
+    return true;
+  }
+
+  insertLink(label: string, url: string) {
+    const { state } = this.editor;
+    const link = state.schema.marks.link;
+    if (
+      !link ||
+      !this.editor.isEditable ||
+      !label ||
+      !isSupportedMessageLink(url) ||
+      !state.selection.$from.parent.type.allowsMarkType(link)
+    )
+      return false;
+    const text = state.schema.text(label, [link.create({ href: url })]);
+    this.#rejected = false;
+    this.editor.view.dispatch(state.tr.replaceSelectionWith(text, false));
+    if (this.#rejected) return false;
+    this.editor.view.dispatch(closeHistory(this.editor.state.tr));
+    this.editor.view.focus();
     return true;
   }
 

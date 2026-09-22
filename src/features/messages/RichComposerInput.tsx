@@ -1,3 +1,4 @@
+import "./composer.css";
 import { useLayoutEffect, useRef } from "react";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";

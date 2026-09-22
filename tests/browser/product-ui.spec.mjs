@@ -45,15 +45,66 @@ test("product catalogue uses the production composer and shared navigation", asy
   await page
     .getByRole("link", { name: "Text formatting", exact: true })
     .click();
-  await page
-    .getByRole("button", { name: "Toggle formatting", exact: true })
-    .click();
-  await expect(
-    page.getByRole("group", { name: "Formatting", exact: true }),
-  ).toBeVisible();
+  const formattingEditor = page.locator(".message-composer-editor");
+  await formattingEditor.fill("selected tail");
+  await formattingEditor.evaluate((element) => {
+    const range = document.createRange();
+    range.setStart(element.querySelector("p").firstChild, 0);
+    range.setEnd(element.querySelector("p").firstChild, 2);
+    const selection = window.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await expect
+    .poll(() =>
+      formattingEditor.evaluate((element) => ({
+        start: element.richComposer.snapshot().selectionStart,
+        end: element.richComposer.snapshot().selectionEnd,
+      })),
+    )
+    .toEqual({ start: 0, end: 2 });
+  const toggle = page.getByRole("button", {
+    name: "Toggle formatting",
+    exact: true,
+  });
+  await toggle.focus();
+  await toggle.press("Enter");
+  const closeFormatting = page.getByRole("button", {
+    name: "Close formatting",
+    exact: true,
+  });
+  await expect(closeFormatting).toBeFocused();
+  await closeFormatting.press("Tab");
+  const bold = page.getByRole("button", { name: "Bold", exact: true });
+  await expect(bold).toBeFocused();
+  await bold.press("Enter");
+  await expect(formattingEditor.locator("strong")).toHaveText("se");
+  await expect(bold).toHaveAttribute("aria-pressed", "true");
+  await formattingEditor.evaluate((element) => {
+    const selection = window.getSelection();
+    selection.selectAllChildren(element);
+    selection.collapseToEnd();
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await expect(bold).toHaveAttribute("aria-pressed", "false");
   await page.getByRole("button", { name: "Link", exact: true }).click();
-  await expect(page.getByRole("dialog")).toBeVisible();
-  await page.getByRole("button", { name: "Cancel", exact: true }).click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toBeVisible();
+  await dialog.getByLabel("Link text").fill("_filename_");
+  await dialog.getByLabel("Address").fill("javascript:alert(1)");
+  await dialog.getByRole("button", { name: "Add link", exact: true }).click();
+  await expect(dialog.getByRole("alert")).toContainText("HTTPS");
+  await expect(formattingEditor).toHaveText("selected tail");
+  await dialog.getByLabel("Address").fill("buzz://channel/design");
+  await dialog.getByRole("button", { name: "Add link", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(formattingEditor.locator("a")).toHaveText("_filename_");
+  await expect(formattingEditor.locator("a")).toHaveAttribute(
+    "href",
+    "buzz://channel/design",
+  );
+  await expect(formattingEditor.locator("a em")).toHaveCount(0);
   await page
     .getByRole("button", { name: "Close formatting", exact: true })
     .click();

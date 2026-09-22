@@ -47,8 +47,6 @@ import {
   type ComposerFormat,
 } from "./ComposerFormattingBar";
 import { ComposerLinkDialog } from "./ComposerLinkDialog";
-import { formatComposerDraft, markdownLink } from "./composer-format";
-import "./composer.css";
 import type { ComposerInputElement } from "./composer-dom";
 
 const noChannels: ReturnType<RelaySession["channels"]["list"]> = {
@@ -172,6 +170,7 @@ function Composer({
   const [error, setError] = useState<string>();
   const [formattingOpen, setFormattingOpen] = useState(false);
   const [linkOpen, setLinkOpen] = useState(false);
+  const focusFormatting = useRef(false);
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -296,96 +295,36 @@ function Composer({
     setError(undefined);
   }
 
-  function commitEdit(
-    edit: Readonly<{
-      draft: MentionDraft;
-      selectionStart: number;
-      selectionEnd: number;
-    }>,
-  ) {
+  function editableOwner() {
     const element = input.current;
     if (
-      disabled ||
+      editingDisabled ||
       !outbox?.supports(9) ||
       !element?.isConnected ||
       element.disabled ||
       element.readOnly
     )
-      return false;
-    if (edit.draft.text.length > 16000) {
-      setError("Message is too long to edit");
-      return false;
-    }
-    completion.invalidate();
-    saveDraft(edit.draft);
-    restoreSelection.current = {
-      start: edit.selectionStart,
-      end: edit.selectionEnd,
-    };
-    setError(undefined);
-    return true;
+      return undefined;
+    return element.richComposer;
   }
   function format(format: ComposerFormat) {
-    const element = input.current;
-    if (!element || disabled || element.disabled || element.readOnly) return;
-    const owner = element.richComposer;
-    if (owner) {
-      const chain = owner.editor.chain().focus();
-      if (format === "link") {
-        setLinkOpen(true);
-        return;
-      }
-      if (format === "bold") chain.toggleBold().run();
-      if (format === "italic") chain.toggleItalic().run();
-      if (format === "strike") chain.toggleStrike().run();
-      if (format === "code") chain.toggleCode().run();
-      if (format === "quote") chain.toggleBlockquote().run();
-      if (format === "bullet") chain.toggleBulletList().run();
-      if (format === "number") chain.toggleOrderedList().run();
-      return;
-    }
+    const owner = editableOwner();
+    if (!owner) return;
     if (format === "link") {
       setLinkOpen(true);
       return;
     }
-    commitEdit(
-      formatComposerDraft(
-        valueRef.current,
-        element.selectionStart,
-        element.selectionEnd,
-        format,
-      ),
-    );
+    const chain = owner.editor.chain().focus();
+    if (format === "bold") chain.toggleBold().run();
+    if (format === "italic") chain.toggleItalic().run();
+    if (format === "strike") chain.toggleStrike().run();
+    if (format === "code") chain.toggleCode().run();
+    if (format === "quote") chain.toggleBlockquote().run();
+    if (format === "bullet") chain.toggleBulletList().run();
+    if (format === "number") chain.toggleOrderedList().run();
   }
-  function insertLink({
-    label: linkLabel,
-    url,
-  }: {
-    label: string;
-    url: string;
-  }) {
-    const element = input.current;
-    if (!element) return false;
-    const owner = element.richComposer;
-    if (owner) {
-      owner.editor
-        .chain()
-        .focus()
-        .extendMarkRange("link")
-        .setLink({ href: url })
-        .insertContent(linkLabel)
-        .run();
-      return true;
-    }
-    const text = markdownLink(linkLabel, url);
-    const start = element.selectionStart;
-    const end = element.selectionEnd;
-    const edited = replaceMentionDraft(valueRef.current, start, end, text);
-    return commitEdit({
-      draft: edited,
-      selectionStart: start + 1,
-      selectionEnd: start + text.lastIndexOf("]("),
-    });
+  function insertLink({ label, url }: { label: string; url: string }) {
+    return editableOwner()?.insertLink(label, url) ?? false;
   }
   async function send() {
     if (
@@ -640,6 +579,8 @@ function Composer({
           <div className={styles.composerTools}>
             {formattingOpen ? (
               <ComposerFormattingBar
+                owner={input.current?.richComposer}
+                focusOnMount={focusFormatting.current}
                 disabled={editingDisabled}
                 onFormat={format}
                 onClose={() => {
@@ -678,7 +619,10 @@ function Composer({
                   size="toolbar"
                   variant="ghost"
                   onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => setFormattingOpen(true)}
+                  onClick={(event) => {
+                    focusFormatting.current = event.detail === 0;
+                    setFormattingOpen(true);
+                  }}
                 />
               </>
             )}
@@ -738,6 +682,7 @@ function Composer({
       </form>
       <ComposerLinkDialog
         open={linkOpen}
+        disabled={editingDisabled}
         onOpenChange={setLinkOpen}
         onSubmit={insertLink}
       />

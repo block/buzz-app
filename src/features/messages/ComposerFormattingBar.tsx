@@ -1,3 +1,5 @@
+import { useLayoutEffect, useReducer, useRef } from "react";
+import type { RichComposerAdapter } from "./rich-composer-adapter";
 import {
   CodeIcon,
   LinkIcon,
@@ -34,15 +36,46 @@ const commands = [
 
 export function ComposerFormattingBar({
   disabled,
+  owner,
+  focusOnMount,
   onFormat,
   onClose,
 }: {
   disabled?: boolean;
+  owner: RichComposerAdapter | undefined;
+  focusOnMount: boolean;
   onFormat(format: ComposerFormat): void;
   onClose(): void;
 }) {
+  const bar = useRef<HTMLFieldSetElement>(null);
+  const [, refresh] = useReducer((value: number) => value + 1, 0);
+  useLayoutEffect(() => {
+    const stop = owner?.subscribe(() => refresh());
+    return () => {
+      stop?.();
+    };
+  }, [owner]);
+  useLayoutEffect(() => {
+    if (focusOnMount) bar.current?.querySelector("button")?.focus();
+  }, [focusOnMount]);
+  const activeName = {
+    quote: "blockquote",
+    bullet: "bulletList",
+    number: "orderedList",
+  };
+  const isActive = (format: ComposerFormat) =>
+    format !== "link" &&
+    !!owner?.editor.isActive(
+      format in activeName
+        ? activeName[format as keyof typeof activeName]
+        : format,
+    );
   return (
-    <fieldset className="composer-formatting-bar" aria-label="Formatting">
+    <fieldset
+      ref={bar}
+      className="composer-formatting-bar"
+      aria-label="Formatting"
+    >
       <IconButton
         aria-label="Close formatting"
         icon={<XIcon size={16} aria-hidden="true" />}
@@ -55,9 +88,10 @@ export function ComposerFormattingBar({
         <IconButton
           key={format}
           aria-label={label}
+          aria-pressed={format === "link" ? undefined : isActive(format)}
           icon={<Icon size={16} aria-hidden="true" />}
           size="toolbar"
-          variant="ghost"
+          variant={isActive(format) ? "tint" : "ghost"}
           disabled={disabled}
           onMouseDown={(event) => event.preventDefault()}
           onClick={() => onFormat(format)}

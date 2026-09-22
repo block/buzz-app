@@ -22,9 +22,21 @@ builds still require the [Tauri prerequisites](https://v2.tauri.app/start/prereq
 See [contributing](docs/contributing.md) for exact pins, registry settings,
 and the pinned pnpm package's Intel Mac limitation.
 
-Browser servers prefer port 1430 and automatically use the next open port, so
-`just web` can run from multiple worktrees. `just desktop` requires port 1430
-because its native window uses that fixed development URL.
+Both commands forward arguments to their development tool (Vite or Tauri).
+Select a port (default: 1430) with `just web --port 1431` or
+`just desktop --port 1432`. Browser servers prefer the requested port and
+use the next open port automatically; desktop requires the exact port to be free and keeps
+Vite and the native window on the same URL. To run multiple desktop copies,
+use a different port in each terminal/worktree:
+
+```sh
+just desktop --port 1430
+# In another terminal/worktree:
+just desktop --port 1431
+```
+
+Ports do not isolate account credentials or native plugin data. For separate
+plugin profiles, use the existing `BUZZODZ_PROFILE` setting described below.
 Without live opt-in they run the shell without relay identity access.
 `just iterate` applies formatting and runs fast checks plus the frontend build.
 `just scan` adds tests and native checks. [PR CI](.github/workflows/ci.yml) runs
@@ -65,7 +77,8 @@ in the non-live shell/fixture state.
    ```
 
    Open the Local URL printed by `just web`; parallel worktrees may use a port
-   above 1430. Stop the process using 1430 before starting `just desktop`.
+   above the requested port. If 1430 is busy, use `just desktop --port 1431`
+   (or another free port) instead of stopping the other copy.
 
 The broker reads the existing Keychain credential only after validating the
 public pin, refuses mismatches and never falls back to another credential. If it

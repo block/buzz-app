@@ -212,6 +212,110 @@ test("GIF search follows the relay-advertised KLIPY path with signed, bounded in
   }
 });
 
+test("media proxy returns generic files as neutralized authenticated downloads", async () => {
+  const bytes = Buffer.from("%PDF-1.7\nfixture pdf\n");
+  const h = await harness((call) => {
+    expect(call.url).toBe(`${fixtureRelayUrl}/media/file.pdf`);
+    return new Response(bytes, {
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Length": String(bytes.length),
+        "Accept-Ranges": "bytes",
+      },
+    });
+  });
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file.pdf`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe(
+      "application/octet-stream",
+    );
+    expect(response.headers.get("content-disposition")).toBe("attachment");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    expect(h.calls).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy neutralizes active content as downloads", async () => {
+  const activeTypes = ["text/html", "image/svg+xml"];
+  for (const contentType of activeTypes) {
+    const bytes = Buffer.from(`<script>${contentType}</script>`);
+    const h = await harness(
+      () =>
+        new Response(bytes, {
+          headers: {
+            "Content-Type": contentType,
+            "Content-Length": String(bytes.length),
+          },
+        }),
+    );
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      );
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(response.headers.get("content-disposition")).toBe("attachment");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await h.close();
+    }
+  }
+});
+
+test("media proxy keeps raster images inline with exact bytes", async () => {
+  const bytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "image/png",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/pixel.png`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
+test("media proxy rejects oversized generic files", async () => {
+  const h = await harness(
+    () =>
+      new Response(null, {
+        headers: {
+          "Content-Type": "application/zip",
+          "Content-Length": String(20 * 1024 * 1024 + 1),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/archive.zip`)}`,
+    );
+    expect(response.status).toBe(413);
+    expect(await response.json()).toEqual({ error: "Media budget exceeded" });
+  } finally {
+    await h.close();
+  }
+});
+
 test("media proxy streams authenticated video ranges and preserves seek headers", async () => {
   const bytes = Buffer.from("video-range");
   const h = await harness((call) => {

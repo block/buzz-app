@@ -45,6 +45,40 @@ test("built viewer loads every specimen and foundation without app connections",
     await expect(page.locator("main h1")).toBeVisible();
     await page.reload();
     await expect(page.locator("main h1")).toBeVisible();
+    if (name === "Token table") {
+      // Document width alone misses status text colliding with a swatch.
+      for (const mode of ["dark", "light"]) {
+        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+        if (await toggle.count()) await toggle.click();
+        for (const width of [390, 800, 1280]) {
+          await page.setViewportSize({ width, height: 900 });
+          const row = page
+            .getByRole("row")
+            .filter({ hasText: "bg-item-hover" });
+          const status = row
+            .getByText("proposed", { exact: true })
+            .filter({ visible: true });
+          await expect(status).toHaveCount(1);
+          const swatch = row
+            .locator("td")
+            .last()
+            .locator("[aria-hidden]")
+            .first();
+          await expect(swatch).toBeVisible();
+          await expect
+            .poll(async () => {
+              const labelBox = await status.boundingBox();
+              const swatchBox = await swatch.boundingBox();
+              return (
+                !!labelBox &&
+                !!swatchBox &&
+                labelBox.x + labelBox.width <= swatchBox.x
+              );
+            })
+            .toBe(true);
+        }
+      }
+    }
   }
   await expect(
     nav.getByRole("link", { name: /Composer|Conversation|Agent work/ }),

@@ -28,9 +28,11 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
+  CaretRightIcon,
   HashIcon,
   DotsThreeIcon,
   PlugIcon,
@@ -44,6 +46,7 @@ import {
   useRelayConnection,
 } from "../../features/relay/react";
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type { PagesReader } from "../../features/pages/service";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
@@ -57,14 +60,21 @@ import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
-import { useSidebarView } from "./useSidebarView";
 import { sidebarSections } from "./sidebar-sections";
+import { SidebarSectionIcon } from "./SidebarSectionIcon";
+import {
+  CHANNEL_SIDEBAR_DEFAULT_WIDTH,
+  CHANNEL_SIDEBAR_MAX_WIDTH,
+  CHANNEL_SIDEBAR_MIN_WIDTH,
+  useSidebarView,
+} from "./useSidebarView";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
   extensions,
   relay,
   panels,
+  pages,
   companion,
   navigation,
   navigator,
@@ -74,9 +84,18 @@ export function ChannelsPage({
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
   panels: Panels;
+  pages: PagesReader;
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  const registeredPages = useSyncExternalStore(
+    pages.subscribe,
+    pages.snapshot,
+    pages.snapshot,
+  );
+  const sessionsEnabled = registeredPages.some(
+    (page) => page.pluginId === "buzz.sessions",
+  );
   const sessionNavigation = navigation?.forSession(relay, session);
   useEffect(() => {
     if (!navigation || !sessionNavigation) return;
@@ -126,6 +145,7 @@ export function ChannelsPage({
           navigator={navigator}
           viewer={session.viewer}
           panels={panels}
+          sessionsEnabled={sessionsEnabled}
           companion={companion}
         />
       )}
@@ -138,6 +158,7 @@ function ChannelWorkspace({
   queries,
   relay,
   panels,
+  sessionsEnabled,
   scope,
   companion,
   navigation,
@@ -153,6 +174,7 @@ function ChannelWorkspace({
   queries: RelaySession;
   relay: RelayData;
   panels: Panels;
+  sessionsEnabled: boolean;
 }) {
   const list = useChannelList(queries.channels);
   const activity = useSyncExternalStore(
@@ -169,6 +191,9 @@ function ChannelWorkspace({
       .map((entry) => entry.channelId),
   ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  useEffect(() => {
+    void queries.emoji.ensure();
+  }, [queries]);
   useEffect(() => {
     if (list.status === "ready") void queries.unread.ensure();
   }, [queries, list.status]);
@@ -724,6 +749,11 @@ function ChannelWorkspace({
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
+      style={
+        {
+          "--channel-sidebar-width": `${sidebar.width}px`,
+        } as CSSProperties
+      }
     >
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
@@ -744,10 +774,15 @@ function ChannelWorkspace({
                     );
                   }}
                 >
+                  <CaretRightIcon
+                    className={styles.sectionChevron}
+                    size={17}
+                    aria-hidden="true"
+                  />
                   {section.icon && (
-                    <span aria-hidden="true">{section.icon} </span>
+                    <SidebarSectionIcon icon={section.icon} session={queries} />
                   )}
-                  {section.title}
+                  <span>{section.title}</span>
                 </summary>
                 {section.rows.map((channel) => {
                   const sessions = childrenByParent.get(channel.id);
@@ -762,6 +797,7 @@ function ChannelWorkspace({
                       channel={channel}
                       session={queries}
                       working={workingChannels.has(channel.id)}
+                      sessionsEnabled={sessionsEnabled}
                       selected={selected}
                       collapsed={sidebar.collapsed.includes(
                         `session-children:${channel.id}`,
@@ -806,6 +842,10 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
+      <ChannelSidebarResizeHandle
+        width={sidebar.width}
+        setWidth={sidebar.setWidth}
+      />
       <Panel as="article" aria-label="Conversation">
         <div className={styles.conversation}>
           {drafting && current ? (
@@ -1056,6 +1096,96 @@ function ChannelWorkspace({
         </div>
       )}
     </div>
+  );
+}
+
+function ChannelSidebarResizeHandle({
+  width,
+  setWidth,
+}: {
+  width: number;
+  setWidth(width: number): void;
+}) {
+  const handle = useRef<HTMLHRElement>(null);
+  const [renderedWidth, setRenderedWidth] = useState(width);
+  const drag = useRef<
+    { pointerId: number; startX: number; width: number } | undefined
+  >(undefined);
+  const resize = useRef(setWidth);
+  resize.current = setWidth;
+  const move = useCallback((event: PointerEvent) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    resize.current(drag.current.width + event.clientX - drag.current.startX);
+  }, []);
+  const finish = useCallback(() => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", finish);
+    window.removeEventListener("pointercancel", finish);
+    drag.current = undefined;
+    delete document.documentElement.dataset.sidebarResizing;
+    document.documentElement.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+  }, [move]);
+  const measure = useCallback(() => {
+    const sidebar = handle.current?.previousElementSibling;
+    if (!(sidebar instanceof HTMLElement)) return;
+    const next = Math.round(sidebar.getBoundingClientRect().width);
+    setRenderedWidth((current) => (current === next ? current : next));
+  }, []);
+  useLayoutEffect(measure);
+  useEffect(() => {
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [measure]);
+  useEffect(() => () => finish(), [finish]);
+
+  return (
+    <hr
+      ref={handle}
+      className={styles.sidebarResizeHandle}
+      aria-label="Resize channel sidebar"
+      aria-orientation="vertical"
+      aria-valuemin={CHANNEL_SIDEBAR_MIN_WIDTH}
+      aria-valuemax={CHANNEL_SIDEBAR_MAX_WIDTH}
+      aria-valuenow={Math.round(renderedWidth)}
+      tabIndex={0}
+      data-tooltip="Drag to resize · Double-click to reset"
+      onDoubleClick={() => setWidth(CHANNEL_SIDEBAR_DEFAULT_WIDTH)}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 48 : 16;
+        const sidebar = event.currentTarget.previousElementSibling;
+        const currentWidth =
+          sidebar instanceof HTMLElement
+            ? sidebar.getBoundingClientRect().width
+            : renderedWidth;
+        if (event.key === "ArrowLeft") setWidth(currentWidth - step);
+        else if (event.key === "ArrowRight") setWidth(currentWidth + step);
+        else if (event.key === "Home") setWidth(CHANNEL_SIDEBAR_MIN_WIDTH);
+        else if (event.key === "End") setWidth(CHANNEL_SIDEBAR_MAX_WIDTH);
+        else return;
+        event.preventDefault();
+      }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const sidebar = event.currentTarget.previousElementSibling;
+        drag.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          width:
+            sidebar instanceof HTMLElement
+              ? sidebar.getBoundingClientRect().width
+              : renderedWidth,
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", finish, { once: true });
+        window.addEventListener("pointercancel", finish, { once: true });
+        document.documentElement.dataset.sidebarResizing = "true";
+        document.documentElement.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      }}
+    />
   );
 }
 

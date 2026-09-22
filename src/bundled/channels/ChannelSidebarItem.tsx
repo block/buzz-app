@@ -19,6 +19,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   channel,
   session,
   working,
+  sessionsEnabled,
   selected,
   collapsed,
   onToggle,
@@ -32,6 +33,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   channel: ChannelSummary;
   session: RelaySession;
   working: boolean;
+  sessionsEnabled: boolean;
   selected: string | undefined;
   collapsed: boolean;
   onToggle: (key: string, open: boolean) => void;
@@ -79,6 +81,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         />
       )}
       selected={selected}
+      sessionsEnabled={sessionsEnabled}
       collapsed={collapsed}
       onToggle={(open) => onToggle(`session-children:${channel.id}`, open)}
       draft={draft}

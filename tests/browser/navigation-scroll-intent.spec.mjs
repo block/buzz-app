@@ -26,6 +26,7 @@ for (const action of [
     // Save a nonzero position, then cold-load that community with preferences held.
     await sidebar.evaluate((element) => {
       element.scrollTop = 900;
+      element.dispatchEvent(new Event("scroll"));
     });
     await button(page, "Home").first().click();
     await expect(sidebar).toHaveCount(0);

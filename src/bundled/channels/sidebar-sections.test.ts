@@ -19,7 +19,7 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
     row("session", { channelType: "session" }),
   ];
   const preferences = {
-    sections: [{ id: "channels", name: "Channels", order: 0 }],
+    sections: [{ id: "channels", name: "Channels", icon: ":party:", order: 0 }],
     assignments: {
       star: "channels",
       work: "channels",
@@ -49,6 +49,7 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
     ["forums", ["forum"]],
     ["dms", ["dm", "group-dm"]],
   ]);
+  expect(sidebarSections(roster, preferences)[1]?.icon).toBe(":party:");
   expect(
     project(roster.filter((channel) => channel.id !== "star")),
   ).not.toContainEqual(["starred", ["star"]]);

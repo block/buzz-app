@@ -21,6 +21,22 @@
   /* Keep fractional last rows reachable despite integer scroll extents. */
   padding-bottom: var(--space-half);
   scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
+}
+.feed::-webkit-scrollbar,
+.threadHistory::-webkit-scrollbar {
+  width: 8px;
+}
+.feed::-webkit-scrollbar-track,
+.threadHistory::-webkit-scrollbar-track {
+  background: transparent;
+}
+.feed::-webkit-scrollbar-thumb,
+.threadHistory::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+  background-clip: padding-box;
 }
 .feed ol {
   list-style: none;
@@ -255,6 +271,7 @@ html[data-keyboard-navigation]
   overflow: auto;
   padding: 0 var(--space-panel-inset);
   scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
 }
 .threadHistory ol {
   list-style: none;

@@ -1,6 +1,7 @@
 import { useConversationPresentation } from "../conversation/ConversationPresentation";
 import { MessageLink } from "../conversation/MessageLink";
 import { DayDivider, MessageTimestamp } from "./MessageTimestamp";
+import { sessionReference } from "../sessions/session-reference";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReplySummary } from "./ReplySummary";
@@ -52,6 +53,7 @@ import { messageCopyLink, messageCopyText } from "./message-copy";
 export type MessageRowProps = {
   row: ChannelMessage;
   getThreadRoot?: (() => ChannelMessage | undefined) | undefined;
+  sessionChip?: boolean | undefined;
   session?: RelaySession | undefined;
   scope?: string | undefined;
   unread?: UnreadCapability | undefined;
@@ -132,6 +134,7 @@ function revealFocusedThumbnail(event: FocusEvent<HTMLDivElement>) {
 export const MessageRow = memo(function MessageRow({
   row,
   getThreadRoot,
+  sessionChip = false,
   session,
   scope,
   unread,
@@ -228,7 +231,20 @@ export const MessageRow = memo(function MessageRow({
   const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const displayRow = timeReply ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
+  const reference =
+    sessionChip && session?.viewer && scope
+      ? sessionReference(
+          {
+            viewer: session.viewer,
+            communityOrigin: scope.slice(0, -(session.viewer.length + 1)),
+          },
+          row.channelId,
+          row.id,
+          row.content.slice(0, 4096).trim().replace(/\s+/g, " ").slice(0, 160),
+        )
+      : undefined;
   const canReact = !!(
+    !reference &&
     extensions &&
     session &&
     scope &&
@@ -282,7 +298,16 @@ export const MessageRow = memo(function MessageRow({
       previous.push(attachment);
     else attachmentGroups.push([attachment]);
   }
-  const body = row.diff ? (
+  const body = reference ? (
+    <MessageLink
+      url={reference.href}
+      label={reference.label}
+      registry={extensions?.links}
+      onOpenLink={onOpenLink}
+      session={session}
+      scope={scope}
+    />
+  ) : row.diff ? (
     <div>
       <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
       {row.diff.description && (
@@ -319,7 +344,7 @@ export const MessageRow = memo(function MessageRow({
     />
   );
   return (
-    <div data-message-id={row.id}>
+    <div data-message-id={row.id} data-session-chip={reference ? "" : undefined}>
       {day && <DayDivider createdAt={row.createdAt} />}
       <div ref={rowRef} className={styles.message} data-layout={layout}>
         {layout === "continuation" ? (

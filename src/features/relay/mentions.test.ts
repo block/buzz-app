@@ -280,73 +280,88 @@ it.each([false, true])(
   },
 );
 
-it("shared session roots use the same exact mention preflight and replies do not inherit presentation metadata", async () => {
-  const h = setup();
-  await h.members();
-  const draft = {
-    id: crypto.randomUUID(),
-    createdAt: Math.floor(Date.now() / 1000),
-  };
-  const id = await h.session.messages.startChannelSession(
-    "c",
-    "@Honey work",
-    [honey.pubkey],
-    draft,
-  );
-  await flush();
-  expect(h.publish.mock.calls[0]?.[0]).toMatchObject({ id, kind: 9 });
-  expect(h.publish.mock.calls[0]?.[0].tags).toEqual([
-    ["h", "c"],
-    ["p", honey.pubkey],
-    ["buzz-session", "1", "quiet"],
-    ["client-id", draft.id],
-  ]);
-  h.session.messages.reply("c", id, "@Honey followup", [honey.pubkey]);
-  await flush();
-  expect(h.publish.mock.calls[1]?.[0].tags).toContainEqual([
-    "e",
-    id,
-    "",
-    "reply",
-  ]);
-  expect(
-    h.publish.mock.calls[1]?.[0].tags.some((tag) => tag[0] === "buzz-session"),
-  ).toBe(false);
-  while (h.pending.length) {
-    h.next().respond([]);
-    await flush();
-  }
-  await h.members([viewer.pubkey], 1700000001);
-  expect(() =>
-    h.session.messages.startChannelSession("c", "@Honey gone", [honey.pubkey], {
-      ...draft,
+it.each(["quiet", "chip"] as const)(
+  "%s session roots use the same exact mention preflight and replies do not inherit presentation metadata",
+  async (presentation) => {
+    const h = setup();
+    await h.members();
+    const draft = {
       id: crypto.randomUUID(),
-    }),
-  ).toThrow(/member/);
-  expect(h.publish).toHaveBeenCalledTimes(2);
-});
+      createdAt: Math.floor(Date.now() / 1000),
+    };
+    const id = await h.session.messages.startChannelSession(
+      "c",
+      "@Honey work",
+      [honey.pubkey],
+      draft,
+      presentation,
+    );
+    await flush();
+    expect(h.publish.mock.calls[0]?.[0]).toMatchObject({ id, kind: 9 });
+    expect(h.publish.mock.calls[0]?.[0].tags).toEqual([
+      ["h", "c"],
+      ["p", honey.pubkey],
+      ["buzz-session", "1", presentation],
+      ["client-id", draft.id],
+    ]);
+    h.session.messages.reply("c", id, "@Honey followup", [honey.pubkey]);
+    await flush();
+    expect(h.publish.mock.calls[1]?.[0].tags).toContainEqual([
+      "e",
+      id,
+      "",
+      "reply",
+    ]);
+    expect(
+      h.publish.mock.calls[1]?.[0].tags.some(
+        (tag) => tag[0] === "buzz-session",
+      ),
+    ).toBe(false);
+    while (h.pending.length) {
+      h.next().respond([]);
+      await flush();
+    }
+    await h.members([viewer.pubkey], 1700000001);
+    expect(() =>
+      h.session.messages.startChannelSession(
+        "c",
+        "@Honey gone",
+        [honey.pubkey],
+        {
+          ...draft,
+          id: crypto.randomUUID(),
+        },
+      ),
+    ).toThrow(/member/);
+    expect(h.publish).toHaveBeenCalledTimes(2);
+  },
+);
 
-it("shared draft removal during signing fails unsent and cannot retry around the fresh membership guard", async () => {
-  const h = setup();
-  await h.members();
-  h.hold();
-  const id = await h.session.messages.startChannelSession(
-    "c",
-    "@Honey work",
-    [honey.pubkey],
-    { id: crypto.randomUUID(), createdAt: Math.floor(Date.now() / 1000) },
-  );
-  await flush();
-  expect(h.sign).toHaveBeenCalledTimes(1);
-  await h.members([viewer.pubkey], 1700000001);
-  h.release();
-  await flush();
-  expect(h.publish).not.toHaveBeenCalled();
-  expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
-  h.session.messages.retry(id);
-  await flush();
-  expect(h.publish).not.toHaveBeenCalled();
-});
+it.each(["quiet", "chip"] as const)(
+  "%s draft removal during signing fails unsent and cannot retry around the fresh membership guard",
+  async (presentation) => {
+    const h = setup();
+    await h.members();
+    h.hold();
+    const id = await h.session.messages.startChannelSession(
+      "c",
+      "@Honey work",
+      [honey.pubkey],
+      { id: crypto.randomUUID(), createdAt: Math.floor(Date.now() / 1000) },
+      presentation,
+    );
+    await flush();
+    expect(h.sign).toHaveBeenCalledTimes(1);
+    await h.members([viewer.pubkey], 1700000001);
+    h.release();
+    await flush();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("failed");
+    h.session.messages.retry(id);
+    await flush();
+    expect(h.publish).not.toHaveBeenCalled();
+  },
+);
 
 it.each([false, true])(
   "publishes nonmember references without addressed tags, reply=%s",

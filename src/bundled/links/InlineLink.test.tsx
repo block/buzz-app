@@ -181,3 +181,34 @@ it.each([false, true])(
     expect(markup.replace(/<[^>]+>/g, "")).toBe("the tracker");
   },
 );
+
+it("decorates only the authored Session label on a same-root canonical locator", () => {
+  const href = targetLink({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: "a".repeat(64), communityOrigin: "https://example.com" },
+    channelId: "general",
+    messageId: "b".repeat(64),
+    threadRootId: "b".repeat(64),
+  });
+  const html = renderToStaticMarkup(
+    <LinkLabelContext value="Session: <script>work</script>">
+      <LinkContentContext value={<strong>ignored formatted content</strong>}>
+        <LinkLabel href={href} />
+      </LinkContentContext>
+    </LinkLabelContext>,
+  );
+  expect(html).toContain('data-link-kind="session"');
+  expect(html).toContain("&lt;script&gt;work&lt;/script&gt;");
+  expect(html).not.toContain("<script>");
+  expect(html).not.toContain("<a");
+  expect(html).not.toContain("ignored formatted content");
+  expect(
+    renderToStaticMarkup(<LinkLabel href={href} label="Ordinary thread" />),
+  ).toContain('data-link-kind="thread"');
+  expect(
+    renderToStaticMarkup(
+      <LinkLabel href="https://example.com" label="Session: work" />,
+    ),
+  ).not.toContain('data-link-kind="session"');
+});

@@ -405,3 +405,20 @@ it.each([
     }),
   ).toThrow(/draft needs/);
 });
+
+it("ignores host-only composer properties supplied by untyped plugins", () => {
+  const h = harness({ apply() {} });
+  const element = h.service.ui.Composer({
+    startCommand: { submit: vi.fn() },
+    registerDraft: vi.fn(),
+    suspended: true,
+    channelId: "general",
+    channelName: "General",
+  } as unknown as Parameters<typeof h.service.ui.Composer>[0]);
+  expect(element.props).toMatchObject({
+    startCommand: undefined,
+    registerDraft: undefined,
+    suspended: undefined,
+    channelId: "general",
+  });
+});

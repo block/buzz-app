@@ -836,6 +836,11 @@ function Timeline({
                 scope={scope}
                 key={row.id}
                 row={row}
+                sessionChip={
+                  quietAvailable &&
+                  !!row.chipSession &&
+                  row.mentions.some((key) => agentPubkeys.has(key))
+                }
                 unread={queries.unread}
                 extensions={extensions}
                 profile={profiles.get(row.authorId)}

@@ -361,3 +361,6 @@ export const HashArrowInIcon = defineIcon("custom", HashArrowInArtwork, {
   provenance: "Original Buzz HashArrowIn; retained by explicit design request",
   intendedSizes: [{ width: 16, height: 16 }],
 });
+
+import TablerClipboardTextIcon from "@tabler/icons-react/dist/esm/icons/IconClipboardText.mjs";
+export const ClipboardTextIcon = defineIcon("tabler", TablerClipboardTextIcon);

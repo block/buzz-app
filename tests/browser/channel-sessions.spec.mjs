@@ -608,7 +608,8 @@ test("two windows share one creation claim and recover the same accepted root", 
     await expect(
       p.getByRole("button", { name: "Send message", exact: true }),
     ).toBeEnabled();
-  const lockName = `buzz-channel-session:${JSON.stringify(["sessions-fixture", "general", viewer])}`;
+  const scope = await page.evaluate(() => window.sessionsFixture.scope);
+  const lockName = `buzz-channel-session:${JSON.stringify([scope, "general", viewer])}`;
   await lockPage.evaluate(async (name) => {
     let entered;
     const started = new Promise((resolve) => {
@@ -836,5 +837,487 @@ test("two windows share one creation claim and recover the same accepted root", 
   expect(
     all.filter((event) => event.content.includes("Cleanup before stale claim")),
   ).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+// New browser boundary: real contenteditable chip/caret, clipboard source and
+// undo after the editor DOM is removed, plus signed publication wiring.
+test("Share in channel keeps the draft and exact recipients, edits one canonical chip and sends only on explicit Send", async ({
+  page,
+}, testInfo) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.goto("/tests/fixtures/channel-sessions.html?share");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await expect(input).toBeVisible();
+  await input.fill("Some context ");
+  const recipient = await page.evaluate(() => window.sessionsFixture.viewer);
+  const rootAgent = await page.evaluate(() => window.sessionsFixture.member);
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  await page
+    .getByRole("region", { name: "Mention a channel member" })
+    .getByRole("button", { name: `Fixture reader ${recipient}`, exact: true })
+    .click();
+  const before = await input.evaluate((element) => element.value);
+  await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+  await expect(input).toHaveCount(0);
+  await page
+    .getByRole("region", { name: "Sessions" })
+    .getByRole("button", { name: /Review the release checklist/ })
+    .click();
+  const detail = page.getByRole("complementary", {
+    name: "Session",
+    exact: true,
+  });
+  await expect(
+    detail.getByRole("heading", { name: "Review the release checklist" }),
+  ).toBeVisible();
+  for (const width of [390, 740, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    await expect(
+      detail.getByRole("button", { name: "Share in channel" }),
+    ).toBeInViewport();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth),
+    ).toBeLessThanOrEqual(width);
+  }
+  // The real reader reports a failed source refresh; Share must not use stale
+  // source evidence or mutate the retained channel draft.
+  await page.evaluate(async () => {
+    window.sessionsFixture.failThread(true);
+    await window.sessionsFixture.refreshThread();
+  });
+  await expect(
+    detail.getByText("Fixture thread read failed", { exact: false }),
+  ).toBeVisible();
+  await detail.getByRole("button", { name: "Share in channel" }).click();
+  await expect(detail.locator("header").getByRole("alert")).toContainText(
+    "unavailable",
+  );
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.published),
+  ).toEqual([]);
+  await page.evaluate(async () => {
+    window.sessionsFixture.failThread(false);
+    await window.sessionsFixture.refreshThread();
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.threadSnapshot()?.status),
+    )
+    .toBe("ready");
+  await detail.getByRole("button", { name: "Share in channel" }).click();
+  await expect(detail).toHaveCount(0);
+  await expect(input).toBeFocused();
+  const shared = await input.evaluate((element) => element.value);
+  expect(shared.startsWith(before)).toBe(true);
+  await expect(input.locator('[data-link-kind="session"]')).toHaveCount(1);
+  await expect(input.locator("a,button")).toHaveCount(0);
+  expect(await input.evaluate((element) => element.selectionStart)).toBe(
+    shared.length,
+  );
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", before);
+  await page.keyboard.press("ControlOrMeta+Shift+z");
+  await expect(input).toHaveJSProperty("value", shared);
+  for (const width of [390, 740, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate(
+        (mode) =>
+          document.documentElement.setAttribute("data-color-mode", mode),
+        mode,
+      );
+      await expect(input.locator('[data-link-kind="session"]')).toBeVisible();
+      await expect
+        .poll(() =>
+          input.evaluate((element) => ({
+            scroll: element.scrollWidth,
+            client: element.clientWidth,
+            chip: element
+              .querySelector('[data-link-kind="session"]')
+              .getBoundingClientRect().width,
+            fits: element.scrollWidth <= element.clientWidth,
+          })),
+        )
+        .toMatchObject({ fits: true });
+      await page.screenshot({
+        path: testInfo.outputPath(`share-${width}-${mode}.png`),
+      });
+    }
+  }
+  const clipboard = await input.evaluate((element) => {
+    element.setSelectionRange(0, element.value.length);
+    const clipboardData = new DataTransfer();
+    element.dispatchEvent(
+      new ClipboardEvent("copy", {
+        clipboardData,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    element.setSelectionRange(element.value.length, element.value.length);
+    return clipboardData.getData("text/plain");
+  });
+  expect(clipboard).toBe(shared);
+  // Paste the copied canonical source over itself using the actual editor path.
+  // Replacing only the link (not the mention) preserves exact recipient intent.
+  const reference = shared.slice(before.length).trim();
+  await input.evaluate((element, reference) => {
+    const start = element.value.indexOf(reference);
+    element.setSelectionRange(start, start + reference.length);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", reference);
+    element.dispatchEvent(
+      new ClipboardEvent("paste", {
+        clipboardData,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  }, reference);
+  await expect(input).toHaveJSProperty("value", shared);
+  await expect(input.locator('[data-link-kind="session"]')).toHaveCount(1);
+  // Double-click selects the complete source token for native replacement.
+  await input.locator('[data-link-kind="session"]').dblclick();
+  expect(
+    await input.evaluate((element) =>
+      element.value.slice(element.selectionStart, element.selectionEnd),
+    ),
+  ).toBe(reference);
+  await page.keyboard.insertText(reference.replace("Review", "Revised Review"));
+  await expect(input).toHaveJSProperty(
+    "value",
+    shared.replace("Review", "Revised Review"),
+  );
+  await expect(input.locator('[data-link-kind="session"]')).toHaveText(
+    "SessionRevised Review the release checklist",
+  );
+  await page.keyboard.press("ControlOrMeta+z");
+  await expect(input).toHaveJSProperty("value", shared);
+  await input.evaluate((element) =>
+    element.setSelectionRange(element.value.length, element.value.length),
+  );
+  // Native typing immediately after restored chip must remain after its source.
+  await page.keyboard.type("Please review.");
+  await expect(input).toHaveJSProperty("value", `${shared}Please review.`);
+  const href = shared.match(/\]\((buzz:[^)]+)\)/)?.[1];
+  expect(href).toBeTruthy();
+  const target = JSON.parse(new URL(href).searchParams.get("target"));
+  const root = await page.evaluate(() => window.sessionsFixture.rows[0].rootId);
+  expect(target).toMatchObject({
+    kind: "conversation",
+    channelId: "general",
+    messageId: root,
+    threadRootId: root,
+  });
+  expect(target.scope).toEqual({ communityOrigin: "https://sessions.example" });
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.published),
+  ).toEqual([]);
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.report.published.length),
+    )
+    .toBe(1);
+  const [event] = await page.evaluate(
+    () => window.sessionsFixture.report.published,
+  );
+  expect(event.kind).toBe(9);
+  expect(event.content).toBe(`${shared}Please review.`);
+  expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([
+    ["p", recipient],
+  ]);
+  expect(event.tags).not.toContainEqual(["p", rootAgent]);
+  expect(event.tags.filter((tag) => tag[0] === "h")).toEqual([
+    ["h", "general"],
+  ]);
+  expect(
+    event.tags.filter((tag) => ["e", "a", "session"].includes(tag[0])),
+  ).toEqual([]);
+  await expect(input).toHaveJSProperty("value", "");
+  await expect(
+    page.locator(`[data-message-id="${event.id}"] [data-link-kind="session"]`),
+  ).toBeVisible();
+  const publishedChip = page.locator(
+    `[data-message-id="${event.id}"] [data-link-kind="session"]`,
+  );
+  await publishedChip.click();
+  await expect(
+    page.getByRole("complementary", { name: "Thread", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("complementary", { name: "Session", exact: true }),
+  ).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+// New browser boundary: two real pages share localStorage, but not editor state.
+test("sharing does not overwrite a channel draft changed in another window", async ({
+  page,
+  context,
+}) => {
+  const seeds = Array.from({ length: 4 }, (_, index) =>
+    Array.from({ length: 32 }, (_, byte) => (index + 17 + byte) % 255),
+  );
+  await context.addInitScript((seeds) => {
+    window.fixtureSeeds = seeds;
+  }, seeds);
+  const other = await context.newPage();
+  try {
+    await Promise.all(
+      [page, other].map((p) =>
+        p.goto("/tests/fixtures/channel-sessions.html?share"),
+      ),
+    );
+    const local = page.getByRole("textbox", { name: "Message #General" });
+    await local.fill("Local context");
+    await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+    await page
+      .getByRole("region", { name: "Sessions" })
+      .getByRole("button", { name: /Review the release checklist/ })
+      .click();
+    await expect(
+      page.getByRole("heading", { name: "Review the release checklist" }),
+    ).toBeVisible();
+    // Observe actual storage propagation before invoking Share; no timer races.
+    await page.evaluate(() => {
+      window.draftChanged = new Promise((resolve) => {
+        window.addEventListener("storage", function changed(event) {
+          if (
+            event.key?.includes("draft:general") &&
+            event.newValue?.includes("Other window context")
+          ) {
+            window.removeEventListener("storage", changed);
+            resolve();
+          }
+        });
+      });
+    });
+    await other
+      .getByRole("textbox", { name: "Message #General" })
+      .fill("Other window context");
+    await page.evaluate(() => window.draftChanged);
+    await page.getByRole("button", { name: "Share in channel" }).click();
+    await expect(page.getByRole("alert")).toContainText(
+      "changed in another window",
+    );
+    await expect(
+      page.getByRole("complementary", { name: "Session", exact: true }),
+    ).toBeVisible();
+    const persisted = await page.evaluate(() =>
+      localStorage.getItem(
+        `buzz-view.v1:${JSON.stringify([window.sessionsFixture.scope, "draft:general"])}`,
+      ),
+    );
+    expect(JSON.parse(persisted).text).toBe("Other window context");
+    await page.getByRole("tab", { name: "Channel", exact: true }).click();
+    await expect(local).toHaveJSProperty("value", "Local context");
+    const conflict = page.getByRole("region", {
+      name: "Channel draft conflict",
+    });
+    await expect(
+      conflict.getByText("Other window context", { exact: true }),
+    ).toBeVisible();
+    await expect(local).toHaveAttribute("aria-disabled", "true");
+    await local.focus();
+    await page.keyboard.type("must not overwrite");
+    await expect(local).toHaveJSProperty("value", "Local context");
+    expect(
+      await page.evaluate(() =>
+        localStorage.getItem(
+          `buzz-view.v1:${JSON.stringify([window.sessionsFixture.scope, "draft:general"])}`,
+        ),
+      ),
+    ).toBe(persisted);
+    await conflict.getByRole("button", { name: "Load saved draft" }).click();
+    await expect(local).toHaveJSProperty("value", "Other window context");
+    await expect(local).toBeFocused();
+    await page.keyboard.press("ControlOrMeta+z");
+    await expect(local).toHaveJSProperty("value", "Local context");
+    await page.keyboard.press("ControlOrMeta+Shift+z");
+    await expect(local).toHaveJSProperty("value", "Other window context");
+    await page.getByRole("tab", { name: "Sessions", exact: true }).click();
+    await page
+      .getByRole("region", { name: "Sessions" })
+      .getByRole("button", { name: /Review the release checklist/ })
+      .click();
+    await page.getByRole("button", { name: "Share in channel" }).click();
+    await expect
+      .poll(() => local.evaluate((element) => element.value))
+      .toContain("Other window context [Session");
+    expect(
+      await page.evaluate(() => window.sessionsFixture.report.published),
+    ).toEqual([]);
+  } finally {
+    await other.close();
+  }
+});
+
+// Browser boundary: real plugin/host command wiring and native rich-editor
+// mention intent, command-hint layout/focus, navigation and chip-vs-transcript
+// DOM in both engines. Recognition permutations belong to the mounted unit test.
+test("channel /session publishes one actual chip root, opens Sessions, and the retained editor can start again", async ({
+  page,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.clock.setFixedTime(new Date("2026-09-21T14:00:00Z"));
+  await page.goto("/tests/fixtures/channel-sessions.html?share");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await expect(input).toBeVisible();
+  const member = await page.evaluate(() => window.sessionsFixture.member);
+  const prompt =
+    "Investigate the launch carefully. ".repeat(8) +
+    "Transcript-only tail https://images.example/prompt.png";
+  const hint = page.getByRole("status").filter({ hasText: "New session" });
+  await input.fill("/session");
+  await expect(hint).toContainText("Select an @agent and add a prompt.");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveJSProperty("value", "/session");
+  await expect(input).toHaveJSProperty("selectionStart", 8);
+  await expect(
+    page.getByRole("tab", { name: "Channel", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+  // Native editing remains the editor's; feedback is not a completion.
+  await page.keyboard.type("foo");
+  await expect(hint).toHaveCount(0);
+  await expect(input).toHaveJSProperty("value", "/sessionfoo");
+  await input.fill("/session");
+  for (const width of [390, 740, 1280]) {
+    await page.setViewportSize({ width, height: 850 });
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      await expect(hint).toBeVisible();
+      await expect
+        .poll(() =>
+          hint.evaluate((element) => {
+            const probe = document.createElement("span");
+            probe.style.color = "var(--text-secondary)";
+            document.body.append(probe);
+            const expected = getComputedStyle(probe).color;
+            probe.remove();
+            return getComputedStyle(element).color === expected;
+          }),
+        )
+        .toBe(true);
+      const bounds = await hint.boundingBox();
+      const editor = await input.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(bounds.y + bounds.height).toBeLessThanOrEqual(editor.y);
+      await expect
+        .poll(() =>
+          hint.evaluate(
+            (element) => element.scrollWidth <= element.clientWidth,
+          ),
+        )
+        .toBe(true);
+      await page.screenshot({
+        path: test
+          .info()
+          .outputPath(`session-command-hint-${width}-${mode}.png`),
+      });
+    }
+  }
+  await expect(input).toBeFocused();
+  await input.fill("");
+  await expect(hint).toHaveCount(0);
+  expect(
+    await page.evaluate(() => window.sessionsFixture.report.published),
+  ).toEqual([]);
+  await expect(
+    page.getByRole("complementary", { name: "Session", exact: true }),
+  ).toHaveCount(0);
+  await page.setViewportSize({ width: 1440, height: 950 });
+  const compose = async (body) => {
+    await input.fill("/session ");
+    await expect(hint).toContainText("Select an @agent and add a prompt.");
+    await expect(input).toBeFocused();
+    await expect(input).toHaveJSProperty("value", "/session ");
+    await input.press("End");
+    await page
+      .getByRole("button", { name: "Mention a member", exact: true })
+      .click();
+    await page
+      .getByRole("region", { name: "Mention a channel member" })
+      .getByRole("button", { name: `Fixture member ${member}`, exact: true })
+      .click();
+    await page.keyboard.type(body);
+  };
+  await compose(prompt);
+  await page.evaluate(() => {
+    window.publicationGate = window.sessionsFixture.holdPublication();
+  });
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  try {
+    await page.evaluate(() => window.publicationGate.started);
+    await expect(input).toHaveAttribute("contenteditable", "false");
+    await expect(hint).toHaveCount(0);
+    await expect(
+      page.getByRole("complementary", { name: "Session", exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.publicationGate.release());
+  }
+  const session = page.getByRole("complementary", {
+    name: "Session",
+    exact: true,
+  });
+  await expect(session).toBeVisible();
+  await expect(
+    session.getByRole("region", { name: "Session messages" }),
+  ).toContainText("Transcript-only tail");
+  const root = await page.evaluate(
+    () => window.sessionsFixture.report.published[0],
+  );
+  expect(root.kind).toBe(9);
+  expect(root.content).toBe(`@Fixture member ${prompt}`);
+  expect(root.tags.filter(([name]) => name === "p")).toEqual([["p", member]]);
+  expect(root.tags).toContainEqual(["h", "general"]);
+  expect(root.tags).toContainEqual(["buzz-session", "1", "chip"]);
+  expect(root.tags.some(([name]) => name === "e")).toBe(false);
+  await session.getByRole("button", { name: "Back to Sessions" }).click();
+  await page.getByRole("tab", { name: "Channel", exact: true }).click();
+  await expect(input).toHaveJSProperty("value", "");
+  const chipRow = page.locator(
+    `[data-message-id="${root.id}"][data-session-chip]`,
+  );
+  await expect(chipRow).toBeVisible();
+  await expect(chipRow.locator('[data-link-kind="session"]')).toHaveCount(1);
+  await expect(chipRow).not.toContainText("Transcript-only tail");
+  await expect(
+    chipRow.locator(
+      'a[href="https://images.example/prompt.png"], img[src="https://images.example/prompt.png"]',
+    ),
+  ).toHaveCount(0);
+  // Existing canonical link route is deliberately still the ordinary Thread.
+  await chipRow.locator('[data-link-kind="session"]').click();
+  await expect(
+    page.getByRole("complementary", { name: "Thread", exact: true }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Close thread" }).click();
+  await compose("Second prompt from the same retained editor");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect(session).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.sessionsFixture.report.published.length),
+    )
+    .toBe(2);
+  const roots = await page.evaluate(
+    () => window.sessionsFixture.report.published,
+  );
+  expect(new Set(roots.map((event) => event.id)).size).toBe(2);
+  expect(
+    roots.every((event) =>
+      event.tags.some((tag) => tag.join(":") === "buzz-session:1:chip"),
+    ),
+  ).toBe(true);
   expect(errors).toEqual([]);
 });

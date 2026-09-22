@@ -21,11 +21,13 @@ import type {
 
 export function sessionsData({
   channelType = "stream",
+  canonicalScope = false,
   rowCount = 2,
   identities,
   outboxStorage = { load: () => [], save() {} },
 }: {
   channelType?: "stream" | "forum" | "dm" | "session";
+  canonicalScope?: boolean;
   rowCount?: number;
   identities?: readonly [Key, Key, Key, Key];
   outboxStorage?: OutboxStorage;
@@ -36,6 +38,9 @@ export function sessionsData({
     keypair(),
     keypair(),
   ];
+  const scope = canonicalScope
+    ? `https://sessions.example:${viewer.pubkey}`
+    : "sessions-fixture";
   const now = Date.UTC(2026, 8, 21, 14) / 1000;
   const report = {
     queries: [] as (readonly ReadFilter[])[],
@@ -164,7 +169,7 @@ export function sessionsData({
     {
       viewer: viewer.pubkey,
       relayAuthor: authority.pubkey,
-      scope: "sessions-fixture",
+      scope,
       media: () => undefined,
       subscribe(callbacks) {
         receive = callbacks.receive;
@@ -321,7 +326,7 @@ export function sessionsData({
   };
   let connection: RelaySnapshot = {
     status: "ready",
-    scope: "sessions-fixture",
+    scope,
     generation: 1,
     viewer: viewer.pubkey,
     session,
@@ -364,6 +369,7 @@ export function sessionsData({
     rows,
     now,
     report,
+    scope,
     session,
     threadSnapshot: () => activeThread?.snapshot(),
     refreshThread() {

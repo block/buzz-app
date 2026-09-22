@@ -27,6 +27,14 @@ import { useNonmemberMentions } from "./useNonmemberMentions";
 import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberAgentsPreference } from "./mention-preferences";
+import {
+  isSessionCommand,
+  type SessionCommandHandler,
+} from "../sessions/session-command";
+import {
+  sessionReferenceTarget,
+  type SessionReference,
+} from "../sessions/session-reference";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
@@ -111,8 +119,17 @@ function recoveryFor(session: RelaySession) {
   }
   return recovery;
 }
+/** Host-only handoff. Never exposed through the plugin tool contract. */
+export type ChannelDraftHandle = {
+  appendReference(reference: SessionReference): boolean;
+  readonly error: string | undefined;
+};
 
 export type MessageComposerProps = {
+  startCommand?: SessionCommandHandler | undefined;
+  registerDraft?:
+    | ((handle: ChannelDraftHandle | undefined) => void)
+    | undefined;
   extensions?: ConversationExtensions | undefined;
   scope: string;
   session: RelaySession;
@@ -192,6 +209,8 @@ function Composer({
   sessionConversation,
   inviteAgents = false,
   trailingTool,
+  startCommand,
+  registerDraft,
 }: MessageComposerProps) {
   const active = useConversationPresentation();
   const list = useSyncExternalStore(
@@ -274,6 +293,11 @@ function Composer({
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  const commandGeneration = useRef(startCommand?.generation);
+  useEffect(() => {
+    if (!startCommand) return;
+    commandGeneration.current = startCommand.generation;
+  }, [startCommand?.generation, startCommand]);
   const focusOnMount = useRef(
     autoFocus && !disabled && typeof document !== "undefined"
       ? document.activeElement
@@ -409,6 +433,14 @@ function Composer({
   const picker = useRef<HTMLInputElement>(null);
   const form = useRef<HTMLFormElement>(null);
   const canAttach = !submission && !!session.attachments;
+  const showSessionCommand =
+    !!startCommand &&
+    !startCommand.locked &&
+    !editingDisabled &&
+    !threadRootId &&
+    !sessionConversation &&
+    !attachments.items.length &&
+    isSessionCommand(draft);
   useEffect(() => {
     if (disabled) attachments.store.cancel();
   }, [disabled, attachments.store]);
@@ -656,6 +688,72 @@ function Composer({
     completion.invalidate();
     return input.current.insertResource(resource);
   }
+
+  const shareFailure = useRef<string | undefined>(undefined);
+  useLayoutEffect(() => {
+    if (!registerDraft) return;
+    let current = true;
+    const handle: ChannelDraftHandle = {
+      get error() {
+        return shareFailure.current;
+      },
+      appendReference(reference) {
+        const target = sessionReferenceTarget(reference.href);
+        const channel = session.channels
+          .list()
+          .channels.find((item) => item.id === channelId);
+        if (
+          !current ||
+          editingDisabled ||
+          submission ||
+          threadRootId ||
+          !outbox?.supports(9) ||
+          !session.viewer ||
+          completion.composing.current ||
+          session.channels.list().status !== "ready" ||
+          !channel ||
+          channel.archived ||
+          (channel.channelType !== "stream" &&
+            channel.channelType !== "forum") ||
+          (channel.members !== undefined &&
+            !channel.members.includes(session.viewer)) ||
+          !target ||
+          target.channelId !== channelId ||
+          target.scope.communityOrigin !==
+            scope.slice(0, -(session.viewer.length + 1))
+        ) {
+          shareFailure.current =
+            "The channel draft is unavailable. Return to Channel and try again.";
+          return false;
+        }
+        const inserted = insertResource({ uri: reference.href, label: reference.label });
+        if (inserted !== true) {
+          shareFailure.current = inserted;
+          return false;
+        }
+        shareFailure.current = undefined;
+        setError(undefined);
+        input.current?.focus();
+        return true;
+      },
+    };
+    registerDraft(handle);
+    return () => {
+      current = false;
+      registerDraft(undefined);
+    };
+  });
+  useLayoutEffect(() => {
+    if (!startCommand || editing.target || submission || threadRootId) return;
+    return startCommand.bindEditor((expected) => {
+      if (valueRef.current !== expected) return false;
+      const next = { text: "", recipients: [] };
+      saveDraft(next);
+      input.current?.reset(next);
+      return true;
+    });
+  }, [startCommand, editing.target, submission, threadRootId]);
+
   function replaceCompletion(
     edit: CompletionEdit,
     query: CompletionQuery,
@@ -785,6 +883,19 @@ function Composer({
         );
       if (submission) {
         submission.submit(captured);
+        return;
+      }
+      if (
+        startCommand &&
+        !threadRootId &&
+        !sessionConversation &&
+        isSessionCommand(captured.text)
+      ) {
+        if (capturedAttachments.length)
+          throw new Error("Remove attachments before starting a session command.");
+        admission.current = true;
+        setAdmitting(true);
+        await startCommand.submit(captured, commandGeneration.current ?? -1);
         return;
       }
       let references: readonly string[] = [];
@@ -1083,6 +1194,17 @@ function Composer({
               retry={attachments.store.retry}
             />
           )}
+          {showSessionCommand && (
+            <div
+              id={`${inputId}-session-command`}
+              className={styles.sessionCommandHint}
+              role="status"
+              aria-live="polite"
+            >
+              <strong>New session</strong>{" "}
+              <span>Select an @agent and add a prompt.</span>
+            </div>
+          )}
           <div className={styles.composerInput}>
             <RichComposerInput
               inviteAgents={agentChoices}
@@ -1104,6 +1226,9 @@ function Composer({
               onEditLink={setLinkEdit}
               data-single-emoji={largeEmojiDraft || undefined}
               maxLength={16000}
+              aria-describedby={
+                showSessionCommand ? `${inputId}-session-command` : undefined
+              }
               aria-label={label}
               placeholder={placeholder ?? label}
               onFocus={() => completion.observe(true)}

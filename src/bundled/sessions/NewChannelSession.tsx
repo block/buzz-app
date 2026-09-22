@@ -17,7 +17,7 @@ import {
   mentionDraft,
   type MentionDraft,
 } from "../../features/messages/mention-draft";
-import { knownAgentPubkeys } from "../../features/agents/known";
+import { channelSessionRecipients } from "./channel-session-creation";
 import { eventDto } from "../../features/relay/events";
 import type { VisibleEvent } from "../../features/relay/projection";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -248,9 +248,6 @@ function Draft({
       return;
     const draft = mentionDraft(input);
     if (!draft.text.trim()) return;
-    const recipients = [
-      ...new Set(draft.recipients.map((item) => item.pubkey)),
-    ];
     submitting.current = true;
     setBusy(true);
     setError(undefined);
@@ -263,7 +260,7 @@ function Draft({
           // Lock wait may outlive this opening or the current roster.
           if (!lifetime.active) return;
           const existing = readChannelSessionDraft(scope, channelId);
-          if (existing) return { saved: existing, fresh: false };
+          if (existing) return { saved: existing, fresh: false as const };
           if (
             readChannelSessionEditorGeneration(
               scope,
@@ -274,27 +271,18 @@ function Draft({
             throw new Error(
               "This session editor is stale. Go back and open a new session draft.",
             );
-          const known = knownAgentPubkeys(
-            session.profiles.snapshot(),
-            session.agentLibrary.snapshot(),
+          const recipients = channelSessionRecipients(
+            session,
+            channelId,
+            draft,
           );
-          const members = session.channels
-            .list()
-            .channels.find((item) => item.id === channelId)?.members;
-          if (
-            !recipients.some((key) => known.has(key) && members?.includes(key))
-          ) {
-            throw new Error(
-              "Select at least one current channel agent with @ before sending. Typed names alone do not notify anyone.",
-            );
-          }
           const saved: ChannelSessionDraft = {
             id: crypto.randomUUID(),
             createdAt: Math.floor(Date.now() / 1000),
             draft,
           };
           saveChannelSessionDraft(scope, channelId, saved);
-          return { saved, fresh: true };
+          return { saved, fresh: true as const, recipients };
         },
       );
       if (!claim || !lifetime.active) return;
@@ -308,7 +296,7 @@ function Draft({
       const id = await session.messages.startChannelSession(
         channelId,
         draft.text,
-        recipients,
+        claim.recipients,
         saved,
       );
       const committed = { ...saved, messageId: id };

@@ -29,6 +29,7 @@ import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { useChannelSessionCommand } from "../sessions/useChannelSessionCommand";
 import { useChannelDirectories } from "./useChannelDirectories";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelHeaderMenu } from "./ChannelHeaderMenu";
@@ -82,7 +83,8 @@ import { OutboxStatus } from "./OutboxStatus";
 import { RelayTimings } from "./RelayTimings";
 import { LiveStatus } from "./LiveStatus";
 import { rejectUnhandledFileDrop } from "../../features/messages/use-file-drop";
-import { MessageComposer } from "../../features/messages/MessageComposer";
+import { sessionReference } from "../../features/sessions/session-reference";
+import { MessageComposer, type ChannelDraftHandle } from "../../features/messages/MessageComposer";
 import {
   MessageManagement,
   MessageManagementStatus,
@@ -1151,6 +1153,13 @@ function ChannelWorkspace({
       localVisit,
     ],
   );
+  const channelDraft = useRef<ChannelDraftHandle | undefined>(undefined);
+  const registerChannelDraft = useCallback(
+    (handle: ChannelDraftHandle | undefined) => {
+      channelDraft.current = handle;
+    },
+    [],
+  );
   const directories = useChannelDirectories({
     registry: extensions?.channelDirectories,
     relay,
@@ -1162,9 +1171,24 @@ function ChannelWorkspace({
       setMediaReview(undefined);
       setSettings(undefined);
     },
-    renderThread: (rootId, closeDirectoryThread) => (
+    shareReference: (rootId, title) => {
+      const handle = channelDraft.current;
+      if (!handle || !viewer || !current)
+        return "The channel draft is unavailable.";
+      const reference = sessionReference(
+        { viewer, communityOrigin: scope.slice(0, -(viewer.length + 1)) },
+        current.id,
+        rootId,
+        title,
+      );
+      return handle.appendReference(reference)
+        ? undefined
+        : (handle.error ?? "The channel draft is unavailable.");
+    },
+    renderThread: (rootId, closeDirectoryThread, share) => (
       <ThreadPanel
         presentation="session"
+        shareInChannel={share}
         extensions={extensions}
         session={queries}
         scope={scope}
@@ -1177,6 +1201,12 @@ function ChannelWorkspace({
         canOpenLink={canOpenLink}
       />
     ),
+  });
+  const sessionCommand = useChannelSessionCommand({
+    session: queries,
+    scope,
+    channelId: directoryChannelId,
+    lease: directories.commandLease,
   });
   const tabTools =
     drawerContext && !current?.archived

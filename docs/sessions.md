@@ -1039,3 +1039,261 @@ restart, commit or push was performed; native PID 70281 remains under the human'
 control and frontend changes are ready for HMR feedback. To try the change, keep
 Sessions open and have a reply arrive in an older eligible conversation already
 inside its checked sample; its row should move to the latest observed date/time.
+
+## Share in channel — 2026-09-22 checkpoint
+
+On the uncommitted Share tree based on `df04c96`, the Session detail header now
+has **Share in channel**. It returns to Channel, appends one escaped canonical
+reference to the retained draft and focuses the composer at its end. It does not
+send, invite an agent, copy a transcript, change ownership, or create another
+session. Existing draft prose and exact mention recipients remain intact; the
+append is one Undo step. Publication still requires explicit **Send** and uses
+ordinary kind-9 channel content with only the draft's selected recipients.
+
+The chip is presentation over an ordinary viewer-free Buzz conversation link:
+channel plus matching message/root IDs. Opening a published chip uses the existing
+**Thread** navigation, not the Sessions detail presentation. Copy/paste retains
+the canonical Markdown source. Double-click opens that source for editing; Undo
+restores it. Links-disabled fallback remains an ordinary readable link.
+
+The host retains only the channel draft owner while a directory is selected; its
+editor, tools and emoji demand are suspended. The handoff is host-only, not a new
+plugin command. Source-read failure, revoked destination/access, interrupted IME,
+unsupported writes and overlong drafts reject the append. A conflicting saved
+draft latches editing/send/share off without overwriting either text. Returning
+to Channel shows the local text and a saved-draft disclosure; **Load saved draft**
+requires explicit review and keeps the previous local text available with Undo.
+Malformed/unreadable storage offers retry, never a silent empty reset.
+
+Presentation follows the approved Xela5 direction: regular Phosphor
+`ClipboardText`, 16px artwork in a 28px tile, a 44px chip and 8px left / 24px right
+insets. The host remains the appearance owner. A character of editor-only width
+is reserved for the trailing native caret/space at narrow widths; published chips
+retain the normal width constraint.
+
+### Checked snapshot and regression evidence
+
+Local Apple Silicon checks on this uncommitted tree (synthetic identities only):
+
+- Root `bin/pnpm typecheck`, changed-file Biome (**21 source/test files**, no
+  warnings), and `git diff --check` pass.
+- Full affected Vitest files pass **177 tests / 8 files**, **4.21s wall / 6.89s
+  summed execution**. Slowest file: `MessageComposer.test.tsx`, **2.995s**.
+  These include the actual directory integration, composer lifecycle/conflicts,
+  thread presentation, link rendering, reference serialization and DOM offsets.
+- All four required design scripts pass: `design:typecheck`, `design:check`,
+  `design:test` (**42 tests / 8 files**) and `design:build`. The build retains
+  Vite's non-failing large-chunk advisory; no limit was changed.
+- Full `channel-sessions.spec.mjs` and `composer-links.spec.mjs` pass in Chromium
+  and WebKit: **14 checks**, **23.1s wall / 42.8s summed test execution** (rounded
+  reporter durations); slowest case is the Chromium layout journey, **5.4s**.
+  Two browser scenarios were added, none removed: actual rich-editor
+  selection/copy/paste/Undo, responsive geometry and signed publication wiring;
+  and two real pages sharing storage while retaining independent editor state.
+  The latter proves conflict propagation, edit blocking, explicit recovery and
+  recovery Undo/redo. Neither native selection/layout nor cross-page storage
+  propagation is inferred from jsdom. Lower-layer failure matrices stay in
+  Vitest; no retries, timeouts, tolerances or assertions were relaxed.
+- Fail-then-pass: Share exposed a native-paste selection exception (the mapper
+  assumed a zero-width boundary survived replacement) and WebKit's narrow
+  inline-object/caret overflow. The mapper now counts the boundary only when
+  present, in both relevant positions. Its new four-case DOM regression fails
+  **2/4** against the original mapper and passes **4/4** with the fix. Both Share
+  browser cases then pass with canonical text, exact recipient and page-error
+  assertions intact. The original broad browser attempt also timed out in
+  existing journeys; the full final files pass, without claiming all flakes
+  eliminated or attributing those unrelated timeouts to a proven source cause.
+- Existing cold/warm channel-opening checks pass serially in Chromium then
+  WebKit, **2 checks / 6.9s wall**. Cold click-to-visible upper bounds were
+  **40.7ms / 48ms** (including Playwright assertion overhead); browser-clock warm
+  ranges were **37.2–41.6ms / 41–44ms**, below the unchanged 100ms budget, with no
+  new warm head read and optional profiles still held. Exported evidence keeps
+  reader queue, broker admission/network and verification/render timings; these
+  are local fixture measurements, not a live-network SLA.
+
+Logs: `/tmp/session-share-{typecheck,biome,vitest,browser-final,opening}.log`,
+`/tmp/session-share-design-{typecheck,check,test,build}.log`, and
+`/tmp/session-share-dom-{red,green}.log`. Final Share screenshots for light/dark
+390/740/1280px in both engines are preserved under
+`/tmp/session-share-browser-artifacts/channel-sessions-Share-*/share-*.png`;
+opening timing exports are under `test-results/browser/channel-opening-*/evidence.json`.
+Xela's final synchronous visual review returned **PASS** after inspecting the
+actual final Share chip PNGs: **1280px light Chromium** and **390px dark WebKit**.
+The 44px chip rather than the reference's 42px is an intentional design-system
+choice. The parent also inspected both images and confirmed no overflow. This is
+visual review evidence, not an attended live Share try or a new test execution.
+
+Per the parent handoff, Eugene8's read-only source review passed and closed all
+prior IME and cross-window-conflict findings. Eugene's final synchronous read-only
+review after task 11 also returned **PASS**, covering the later conditional
+zero-width-boundary DOM-offset handling and editor-only CSS scope. These reviews
+do not add test executions: the coder's **177 unit, 14 browser, 42 design and 2
+channel-opening checks** above remain the recorded execution evidence.
+
+The parent verified native PID **70281** still running and the frontend module
+returning **HTTP 200**. Attended live **Share in channel** remains pending user
+feedback; process/module availability does not establish that behavior. Full scan,
+hosted CI, packaged/native acceptance and an independently captured live ACP trace
+remain separate/deferred. No live send, backend/Foundation edit, explicit app
+restart, commit or push was performed. This final handoff update is documentation
+only; no source changes, builds or tests were run for it.
+
+### Deferred UI feedback — 2026-09-22, 08:48
+
+Defer a dedicated UI pass for all session buttons: hierarchy, spacing and states.
+Session names also need a concise, meaningful title/excerpt rather than a verbatim
+160-character root excerpt, which can expose long agent error text in the header,
+directory and Share chip. Review width-aware truncation and accessible full-title
+disclosure together in that later pass. This records feedback only: no title
+logic or UI changes now, and no model/API diagnosis or model change is part of
+this task. No screenshot or live conversation data is copied into the repository.
+
+
+## Channel `/session` — gated checkpoint, 2026-09-22
+
+On the uncommitted tree based on `df04c96`, explicit Send of a leading `/session`
+in an ordinary channel strips only the command prefix and preserves selected
+exact `@` recipients. Typed names do not select agents. Bare/invalid/unavailable
+commands fail visibly, without falling through to ordinary send; thread text stays
+literal. **Production `sessionCommandValidation.enabled` remains false pending
+parent approval.** Only synthetic tests opt in; the marker proof does not enable it.
+
+The result is the actual kind-9 root with `h`, exact `p` and
+`["buzz-session", "1", "chip"]`, not a second message, new kind or backend feature.
+Channel presentation uses a canonical session reference, suppresses prompt media,
+and does not earn prompt read dwell. Full thread content remains available.
+Missing Sessions/agent evidence falls back to the ordinary readable root; malformed
+markers never acquire chip semantics. Quiet creation remains separate and tested.
+
+Command recovery has its own scoped, validated record and editor generation, not
+another editor/outbox. Web Locks arbitrate claims; retries reuse retained intent.
+Acceptance uses local ID observation, not startup queries. A returned receipt now
+updates storage **and** live/React records under the expected-ID lock, preserving
+already-accepted state and never recreating a cleared record. Cleanup compares
+live and saved input; conflicts retain acceptance and offer explicit recovery/open.
+A passive window cannot retire the owner's intent; stale editors cannot create a
+replacement. These guarantees are not exactly-once ACP execution.
+
+The sole authorized FOUNDATION source change is `conversation/service.tsx`:
+`startCommand`, `registerDraft` and `suspended` are excluded both from Composer's
+public type and at runtime after untyped props; the untyped-plugin regression passes.
+Existing Share work and deferred session-title/button feedback remain unchanged.
+
+### Checked source and limits
+
+- `bin/pnpm typecheck`, changed-file `biome check --error-on-warnings` (42 files),
+  and `git diff --check` pass. No new design-system changes in this round; the
+  earlier Share design checks were not repeated.
+- `bin/pnpm exec vitest run` on all bundled Sessions files plus command/reference,
+  marker/fold, mentions/mentions-live, conversation service/links, timeline sessions,
+  composer/DOM/thread presentation/read hook, directories and InlineLink passes:
+  **366 tests / 22 files**, **5.24s wall / 15.17s summed execution**; slowest file
+  `NewChannelSession.test.tsx`, **3.341s**. Receipt regression fails before the fix
+  (zero opens) and passes after: initial lookup held then empty, receipt held until
+  acceptance, no subsequent outbox notification, one cleanup/open and no fresh read.
+  Late accepted/cleared receipts and explicitly gated competing command claims pass;
+  chip read-mask/fallback uses real mounted React, not mocked hook lifecycle.
+- `bin/pnpm test:browser tests/browser/channel-sessions.spec.mjs tests/browser/composer-links.spec.mjs --project chromium --project webkit --no-deps`:
+  **16 pass**, **28.2s wall / 53.5s summed**; slowest WebKit composer-links **6.9s**.
+  One command browser scenario added, none removed: actual rich editor → publication
+  → Sessions → chip/thread routing → second command. Failure/race matrices stay in
+  Vitest; existing real-window storage cases still pass in both engines.
+- `bin/pnpm test:browser channel-opening.spec.mjs --project chromium-measurements --project webkit-measurements --no-deps --workers=1`:
+  **2 pass / 6.9s wall**, serial engines. Cold upper bounds **34.8/55ms**; warm
+  **38.1–41.9/41–52ms**, no extra warm head read, optional profiles held. Local
+  fixture evidence, not a network SLA; timing breakdowns remain in test artifacts.
+- Logs: `/tmp/session-command-final-{typecheck,biome,vitest,browser,opening}.log`
+  and `/tmp/session-command-receipt-{red,green}.log`. Prior isolated real-relay chip
+  proof JSON reports PASS; it does not establish deployed parity, app recovery or ACP.
+  Parent final review/enabling, hosted CI, full scan and packaged/native acceptance
+  remain pending. Native PID 70281 remains running. No live sends, new dev server,
+  native build, commit or push; only isolated browser test harness servers ran.
+
+### Channel `/session` enabled — ready to try (2026-09-22, task 26)
+
+Following user approval and parent authorization after the final independent
+source review (task 25), the temporary global `sessionCommandValidation` gate and
+its pending-validation error are removed. The task 24 gated checkpoint above is
+historical, not the current enablement state. Tests and the browser fixture now
+use the default enabled host code, without a mutable opt-in. No permission,
+plugin-registration/lifetime, Web Lock, storage, generation or outbox guard was
+removed. Missing Sessions still fails closed; mounting/re-enabling does not
+publish or automatically replay an intent. No composer props or navigation changed
+in this enablement round. Existing Share work and deferred button/long-title
+feedback remain unchanged.
+
+**Try:** in an ordinary channel, type `/session `, then **select an exact agent
+from the `@` picker**, then enter the prompt and Send. Merely typing a name is not
+selection. Acceptance opens the full Session; Channel shows a chip for that same
+kind-9 root, not an additional publication. Live command/send/ACP acceptance is
+still pending; this round made no live sends.
+
+Checks on the uncommitted tree based on `df04c96` after gate removal:
+
+- Full command (20), directory lease (29), conversation service (16) and
+  MessageComposer (57) files: **122 tests / 4 files pass**, **4.87s wall / 7.12s
+  summed execution**; slowest file `MessageComposer.test.tsx`, **3.301s**. One
+  obsolete gated-command test case was removed (command file 21 → 20); no safety
+  cases were removed. The earlier **366-test** checkpoint was not rerun and is
+  not a count for this snapshot.
+- Full `channel-sessions.spec.mjs` and `composer-links.spec.mjs`, Chromium and
+  WebKit: **16 pass**, **28.4s wall / 50.9s summed displayed test durations**;
+  slowest cases are the layout journey in each engine, **5.4s**. No browser cases
+  were added or removed. These prove fixture-backed rich-editor, publication,
+  navigation and real-window behavior, not live runner acceptance.
+- `bin/pnpm typecheck`, changed-file Biome (**42 files**, no warnings) and
+  `git diff --check` pass. Logs: `/tmp/session-command-enable-{vitest,browser,typecheck,biome}.log`.
+- The existing `/tmp/channel-sessions-chip-proof.json` reports **passed** at
+  `2026-09-22T13:34:54.897Z`, using old Buzz source `4472da6491f7d76ebcffed4b65c341a3278aa25f`
+  and app base `df04c96`. Its actual `buzz-session/1/chip` root proof covers
+  authenticated create/invite/admission, teammate-signed exact-event read,
+  Postgres content/tags/signature, same-signed retry storing one root, nonmember
+  private-channel denial, and durable roundtrip after relay restart/reconnect.
+  It used an isolated source-built relay and disposable Postgres/Redis/MinIO;
+  it does **not** establish deployed-relay parity, app recovery, ACP reply or
+  exactly-once execution. The proof was read, not rerun, during enablement.
+
+Ready to try, not broad/native validation. Hosted CI, broader validation and
+packaged/native acceptance remain deferred; no full scan, build, commit, push,
+private configuration edit or native restart was performed. Native PID 70281 was
+left running. Only isolated browser test harness servers ran.
+
+### `/session` typing feedback — 2026-09-22, task 27
+
+Typing an exact leading `/session` now shows **New session — Select an @agent
+and add a prompt.** above the ordinary channel editor. This quiet, wrapping
+caption recognizes the command; it does not validate an agent or promise plugin
+availability. Existing errors remain separate, and Send retains its fail-closed
+checks. The hint disappears for literal `/sessionfoo`, removed commands, locked
+submission and non-channel contexts. Static polite status text describes the
+input without modifying source, selection or undo; no picker, read, navigation
+or publication is triggered by the hint.
+
+Compared rendered light/dark 390/740/1280 screenshots with the existing Figma
+composer reference (`/tmp/sessions-figma-draft.png`). The caption is an intentional
+functional addition, not a state depicted in that frame; composer insets/actions
+and shared tokens remain unchanged, with no extra card. Deferred title/button
+polish remains untouched.
+
+On the uncommitted `df04c96`-based tree: **94 tests / 3 complete files** pass
+(MessageComposer, command parser and command hook; **4.16s wall / 5.39s summed**,
+slowest MessageComposer **3.086s**). The new recognition test failed before the
+fix. The complete existing browser file passes **14 cases**, Chromium + WebKit,
+**23.8s wall / 42.8s summed displayed durations**; slowest layout case **5.4s**.
+No browser cases were added/removed: its existing command journey now checks
+native focus/caret, immediate recognition/removal, no automatic publication and
+hint geometry/screenshots. TypeScript, changed-file Biome and diff checks pass.
+Logs: `/tmp/session-command-hint-{red,vitest,typecheck,biome,browser}.log`.
+Screenshots: `/tmp/session-command-hint-browser-artifacts/channel-sessions-channel-s-171fc-ined-editor-can-start-again-{chromium,webkit}/session-command-hint-{390,740,1280}-{light,dark}.png`.
+
+Ready for the running app's HMR feedback; native PID 70281 remains running and its
+live draft was not automated or sent. No scan, backend/native build, restart,
+commit or push. Live/native acceptance, broad validation and hosted CI remain
+separate; fixture screenshots are not live ACP evidence.
+
+### Native feedback checkpoint — 2026-09-22, 10:32
+
+The user reported the `/session` flow and feedback working in the running native
+app: “it works!” This is user feedback acceptance, not an independently captured
+ACP/text-reply trace or CI validation. Button/title UI polish remains deferred
+and unchanged.

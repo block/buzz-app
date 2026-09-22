@@ -1,36 +1,50 @@
+import { sessionCommandDraft } from "../../features/sessions/session-command";
 import {
   mentionDraft,
   type MentionDraft,
 } from "../../features/messages/mention-draft";
 import type { EventData } from "../../features/relay/events";
-import { isQuietSessionRoot } from "../../features/relay/channel-session";
+import {
+  sessionRootPresentation,
+  type SessionPresentation,
+} from "../../features/relay/channel-session";
 import type { DraftIdentity } from "../../features/relay/outbox";
 
 export type ChannelSessionDraft = DraftIdentity &
   Readonly<{
     draft: MentionDraft;
     messageId?: string;
+    presentation?: SessionPresentation;
+    rawDraft?: MentionDraft;
+    generation?: number;
+    viewer?: string;
+    channelId?: string;
+    scope?: string;
+    accepted?: boolean;
   }>;
 export const channelSessionDraftKey = (channelId: string) =>
   `channel-session:${channelId}:draft`;
-const key = (scope: string, channelId: string) =>
-  `buzz-channel-session.v1:${JSON.stringify([scope, channelId])}`;
+type Namespace = "draft" | "command";
+const key = (scope: string, channelId: string, namespace: Namespace) =>
+  `buzz-channel-session${namespace === "command" ? "-command" : ""}.v1:${JSON.stringify([scope, channelId])}`;
 
 const editorGenerationKey = (
   scope: string,
   channelId: string,
   viewer: string | undefined,
+  namespace: Namespace,
 ) =>
-  `buzz-channel-session-editor.v1:${JSON.stringify([scope, channelId, viewer])}`;
+  `buzz-channel-session${namespace === "command" ? "-command" : ""}-editor.v1:${JSON.stringify([scope, channelId, viewer])}`;
 
 /** Capture before mounting the editor; allocation and all writes require its lock. */
 export function readChannelSessionEditorGeneration(
   scope: string,
   channelId: string,
   viewer: string | undefined,
+  namespace: Namespace = "draft",
 ): number {
   const raw = localStorage.getItem(
-    editorGenerationKey(scope, channelId, viewer),
+    editorGenerationKey(scope, channelId, viewer, namespace),
   );
   if (raw === null) return 0;
   const generation: unknown = JSON.parse(raw);
@@ -50,9 +64,10 @@ export function saveChannelSessionEditorGeneration(
   channelId: string,
   viewer: string | undefined,
   generation: number,
+  namespace: Namespace = "draft",
 ) {
   localStorage.setItem(
-    editorGenerationKey(scope, channelId, viewer),
+    editorGenerationKey(scope, channelId, viewer, namespace),
     JSON.stringify(generation),
   );
 }
@@ -63,13 +78,14 @@ export async function withChannelSessionDraftLock<T>(
   channelId: string,
   viewer: string | undefined,
   work: () => T,
+  namespace: Namespace = "draft",
 ): Promise<T> {
   if (!viewer || typeof navigator === "undefined" || !navigator.locks)
     throw new Error(
       "Safe session creation requires browser Web Locks. Nothing was sent.",
     );
   return navigator.locks.request(
-    `buzz-channel-session:${JSON.stringify([scope, channelId, viewer])}`,
+    `buzz-channel-session${namespace === "command" ? "-command" : ""}:${JSON.stringify([scope, channelId, viewer])}`,
     { mode: "exclusive" },
     work,
   );
@@ -79,12 +95,49 @@ export async function withChannelSessionDraftLock<T>(
 export function readChannelSessionDraft(
   scope: string,
   channelId: string,
+  namespace: Namespace = "draft",
 ): ChannelSessionDraft | undefined {
-  const raw = localStorage.getItem(key(scope, channelId));
+  const raw = localStorage.getItem(key(scope, channelId, namespace));
   if (raw === null) return;
-  const value = JSON.parse(raw) as ChannelSessionDraft;
+  return validateChannelSessionDraft(
+    JSON.parse(raw),
+    scope,
+    channelId,
+    namespace,
+  );
+}
+function validateChannelSessionDraft(
+  value: ChannelSessionDraft,
+  scope: string,
+  channelId: string,
+  namespace: Namespace,
+) {
   if (
     !value ||
+    (namespace === "draft" &&
+      ((value.presentation !== undefined && value.presentation !== "quiet") ||
+        value.rawDraft !== undefined ||
+        value.generation !== undefined ||
+        value.viewer !== undefined ||
+        value.channelId !== undefined ||
+        value.scope !== undefined ||
+        value.accepted !== undefined)) ||
+    (namespace === "command" &&
+      (value.presentation !== "chip" ||
+        typeof value.rawDraft?.text !== "string" ||
+        value.rawDraft.text.length > 16000 ||
+        JSON.stringify(sessionCommandDraft(value.rawDraft)) !==
+          JSON.stringify(value.draft) ||
+        JSON.stringify(mentionDraft(value.rawDraft)) !==
+          JSON.stringify(value.rawDraft) ||
+        !Number.isSafeInteger(value.generation) ||
+        (value.generation ?? -1) < 0 ||
+        (value.generation ?? 0) >= Number.MAX_SAFE_INTEGER ||
+        value.scope !== scope ||
+        (value.accepted !== undefined &&
+          (value.accepted !== true || !value.messageId)) ||
+        !/^[0-9a-f]{64}$/.test(value.viewer ?? "") ||
+        value.channelId !== channelId)) ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
       value.id,
     ) ||
@@ -106,26 +159,38 @@ export function saveChannelSessionDraft(
   scope: string,
   channelId: string,
   value: ChannelSessionDraft,
+  namespace: Namespace = "draft",
 ) {
-  localStorage.setItem(key(scope, channelId), JSON.stringify(value));
+  validateChannelSessionDraft(value, scope, channelId, namespace);
+  localStorage.setItem(key(scope, channelId, namespace), JSON.stringify(value));
 }
 export function clearChannelSessionDraft(
   scope: string,
   channelId: string,
   viewer: string | undefined,
+  namespace: Namespace = "draft",
 ) {
   const generation = readChannelSessionEditorGeneration(
     scope,
     channelId,
     viewer,
+    namespace,
   );
   // Clear editor before advancing its generation so a new opening cannot bind old
   // durable input to the new generation. Any failure retains the creation record.
-  localStorage.removeItem(
-    `buzz-view.v1:${JSON.stringify([scope, channelSessionDraftKey(channelId)])}`,
+  if (namespace === "draft")
+    localStorage.removeItem(
+      `buzz-view.v1:${JSON.stringify([scope, channelSessionDraftKey(channelId)])}`,
+    );
+  saveChannelSessionEditorGeneration(
+    scope,
+    channelId,
+    viewer,
+    generation + 1,
+    namespace,
   );
-  saveChannelSessionEditorGeneration(scope, channelId, viewer, generation + 1);
-  localStorage.removeItem(key(scope, channelId));
+  localStorage.removeItem(key(scope, channelId, namespace));
+  return generation + 1;
 }
 
 /** An exact draft ID is a correlation key, never permission or admission evidence. */
@@ -136,7 +201,7 @@ export function matchesChannelSessionDraft(
   viewer: string | undefined,
 ) {
   if (
-    !isQuietSessionRoot(event) ||
+    sessionRootPresentation(event) !== (saved.presentation ?? "quiet") ||
     event.pubkey !== viewer ||
     event.created_at !== saved.createdAt ||
     event.content !== saved.draft.text.trim() ||

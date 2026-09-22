@@ -52,3 +52,54 @@ button.link {
   line-height: normal;
   cursor: pointer;
 }
+
+/* The Session chip owns its insets. Keep activation/focus on the host link. */
+.link:has(> .session) {
+  padding: 0;
+  margin-inline: 0;
+}
+
+/* Shared Sessions chip: approved 44px target (28px tile + 8px insets),
+   2px taller than the Figma reference. The host link owns activation. */
+.session {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: 100%;
+  box-sizing: border-box;
+  vertical-align: middle;
+  padding: var(--space-2) var(--space-6) var(--space-2) var(--space-2);
+  border-radius: calc(var(--radius-control) * 4 / 3);
+  background: var(--neutral-2);
+  color: var(--text-primary);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  font-weight: var(--text-body-sm--font-weight);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.sessionIcon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: calc(var(--radius-chip) * 4 / 3);
+  background: var(--neutral-4);
+}
+.sessionLabel {
+  flex: none;
+  color: var(--text-secondary);
+}
+.sessionTitle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* A rich-editor chip needs room for its trailing editable space/caret. WebKit
+   otherwise scrolls the pre-wrapped line past a full-width inline object. */
+[data-source] .session {
+  max-width: calc(100% - 1ch);
+}

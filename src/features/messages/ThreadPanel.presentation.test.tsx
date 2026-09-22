@@ -173,3 +173,30 @@ it.each(["thread", "session"] as const)(
     ).not.toBeInTheDocument();
   },
 );
+
+it("shares only an available exact root and retries source failure without creating another reader", async () => {
+  const { h, props } = await setup();
+  const share = vi.fn<(title: string) => string | undefined>(() => undefined);
+  render(
+    <ThreadPanel {...props} presentation="session" shareInChannel={share} />,
+    { reactStrictMode: true },
+  );
+  await waitFor(() => expect(h.threadSnapshot()?.status).toBe("ready"));
+  fireEvent.click(screen.getByRole("button", { name: "Share in channel" }));
+  expect(share).toHaveBeenCalledExactlyOnceWith("Unanswered agent request");
+  h.failThread(true);
+  await act(async () => h.refreshThread());
+  fireEvent.click(screen.getByRole("button", { name: "Share in channel" }));
+  expect(share).toHaveBeenCalledTimes(1);
+  expect(
+    screen.getByText(
+      "The session source is unavailable. Retry loading it before sharing.",
+    ),
+  ).toBeVisible();
+  h.failThread(false);
+  await act(async () => h.refreshThread());
+  fireEvent.click(screen.getByRole("button", { name: "Share in channel" }));
+  expect(share).toHaveBeenCalledTimes(2);
+  expect(h.report.activeReaders).toBe(1);
+  expect(h.report.published).toEqual([]);
+});

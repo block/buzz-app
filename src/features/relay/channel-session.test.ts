@@ -1,5 +1,10 @@
 import { expect, it } from "vitest";
-import { isQuietSessionRoot, quietSessionTag } from "./channel-session";
+import {
+  isQuietSessionRoot,
+  quietSessionTag,
+  sessionRootPresentation,
+  sessionPresentationTag,
+} from "./channel-session";
 import { foldMessages } from "./fold";
 import { keypair, signed } from "./testing";
 const author = keypair(),
@@ -57,3 +62,42 @@ it("creator and teammate fold the original marker independently of edits and zer
     false,
   );
 });
+
+it.each(["quiet", "chip"] as const)(
+  "strict %s presentation keeps original p and marker across edits",
+  (mode) => {
+    const tag = sessionPresentationTag(mode);
+    const root = signed(author, {
+      kind: 9,
+      content: "prompt",
+      tags: [["h", "c"], ["p", relay.pubkey], tag],
+      created_at: 1,
+    });
+    const edit = signed(author, {
+      kind: 40003,
+      content: "changed",
+      tags: [
+        ["h", "c"],
+        ["e", root.id],
+      ],
+      created_at: 2,
+    });
+    expect(sessionRootPresentation(root)).toBe(mode);
+    expect(foldMessages("c", relay.pubkey, [root, edit])[0]).toMatchObject({
+      [mode === "chip" ? "chipSession" : "quietSession"]: true,
+      content: "changed",
+      mentions: [relay.pubkey],
+    });
+    for (const tags of [
+      [tag, tag],
+      [["buzz-session", "1", "unknown"]],
+      [[...tag, "extra"]],
+      [tag, ["e", root.id]],
+      [tag, ["h", "other"]],
+    ])
+      expect(
+        sessionRootPresentation({ ...root, tags: [["h", "c"], ...tags] }),
+      ).toBeUndefined();
+    expect(sessionRootPresentation({ ...root, kind: 40002 })).toBeUndefined();
+  },
+);

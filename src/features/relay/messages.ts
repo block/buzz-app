@@ -4,7 +4,10 @@ import type { EventTemplate } from "nostr-tools";
 import type { ChannelMessage } from "./contracts";
 import { threadReference } from "./thread-reference";
 import type { EventData } from "./events";
-import { quietSessionTag } from "./channel-session";
+import {
+  sessionPresentationTag,
+  type SessionPresentation,
+} from "./channel-session";
 import type { DraftIdentity, Outbox, OutboxRecovery } from "./outbox";
 
 /** NIP-56 types accepted by the Buzz relay for message reports. */
@@ -171,8 +174,11 @@ export function createMessages(
       content: string,
       mentions: readonly string[],
       draft: DraftIdentity,
+      presentation: SessionPresentation = "quiet",
     ) {
       if (!channelId) throw new Error("A channel is required");
+      if (presentation !== "quiet" && presentation !== "chip")
+        throw new Error("Unsupported session presentation");
       if (!mentions.length)
         throw new Error("Explicitly mention an agent to start a session");
       return writer(9, channelId).sendDraft(
@@ -183,7 +189,7 @@ export function createMessages(
             ["h", channelId],
             ...mentionTags(channelId, mentions),
             ...emojiTags(content),
-            quietSessionTag(),
+            sessionPresentationTag(presentation),
           ],
         },
         draft,

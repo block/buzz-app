@@ -60,6 +60,7 @@ export type ThreadPanelProps = {
   navigation?: PageNavigation | undefined;
   /** Omit to embed the thread: no header or Escape dismissal; the owner supplies both. */
   close?: (() => void) | undefined;
+  shareInChannel?: ((title: string) => string | undefined) | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?(
     messageId: string,
@@ -159,6 +160,7 @@ function OwnedThreadPanel({
   revealSelected,
   requireReadyRoot,
   onDraftSaved,
+  shareInChannel,
   close,
 }: ThreadPanelProps) {
   const [title, setTitle] = useState("Session");
@@ -206,7 +208,29 @@ function OwnedThreadPanel({
   return (
     <>
       {presentation === "session" && (
-        <SessionConversationHeader title={title} back={close} />
+        <SessionConversationHeader
+          title={title}
+          back={close}
+          share={
+            view && !error && shareInChannel
+              ? () => {
+                  const snapshot = view.snapshot();
+                  const root = snapshot.root;
+                  if (snapshot.status === "error")
+                    return "The session source is unavailable. Retry loading it before sharing.";
+                  if (!root || root.id !== messageId)
+                    return "The session is still loading. Try again when its first message is available.";
+                  return shareInChannel(
+                    root.content
+                      .slice(0, 4096)
+                      .trim()
+                      .replace(/\s+/g, " ")
+                      .slice(0, 160) || "Session",
+                  );
+                }
+              : undefined
+          }
+        />
       )}
       {error ? (
         <div className={styles.empty} role="alert">

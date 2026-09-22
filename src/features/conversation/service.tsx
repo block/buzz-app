@@ -42,7 +42,12 @@ export type Conversation = {
   registerLink(renderer: LinkRenderer): void;
   ui: {
     Thread: (props: EmbeddedThreadProps) => ReactNode;
-    Composer: (props: Omit<MessageComposerProps, "extensions">) => ReactNode;
+    Composer: (
+      props: Omit<
+        MessageComposerProps,
+        "extensions" | "startCommand" | "registerDraft"
+      >,
+    ) => ReactNode;
     Message: (props: Omit<MessageRowProps, "extensions">) => ReactNode;
   };
   /** The host's date labels, so plugin text reads like the message rows. */
@@ -192,8 +197,18 @@ export class ConversationService extends Service implements Conversation {
     Thread: (props: EmbeddedThreadProps) => (
       <EmbeddedThread {...props} host={this.ctx} extensions={this} />
     ),
-    Composer: (props: Omit<MessageComposerProps, "extensions">) => (
-      <MessageComposer {...props} extensions={this} />
+    Composer: (
+      props: Omit<
+        MessageComposerProps,
+        "extensions" | "startCommand" | "registerDraft"
+      >,
+    ) => (
+      <MessageComposer
+        {...props}
+        extensions={this}
+        startCommand={undefined}
+        registerDraft={undefined}
+      />
     ),
     Message: (props: Omit<MessageRowProps, "extensions">) => (
       <MessageRow {...props} extensions={this} />

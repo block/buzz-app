@@ -90,6 +90,7 @@ export function useReading({
         .flatMap((row) => {
           const bounds = row.getBoundingClientRect();
           return row.dataset.membershipRow === undefined &&
+            row.dataset.sessionChip === undefined &&
             row.dataset.messageId &&
             bounds.height > 0 &&
             bounds.width > 0 &&

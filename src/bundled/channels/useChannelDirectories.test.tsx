@@ -129,6 +129,10 @@ function harness(creation = false) {
       signal: controller.signal,
     };
   const dispose = vi.fn();
+  const append = vi.fn<(rootId: string, title: string) => string | undefined>(
+    () => undefined,
+  );
+  let share: (title: string) => string | undefined = () => "unmounted";
   function Detail({ close }: { close(): void }) {
     useLayoutEffect(() => dispose, []);
     return (
@@ -145,7 +149,11 @@ function harness(creation = false) {
       destination,
       channelName: "C",
       onSelect() {},
-      renderThread: (_id, close) => <Detail close={close} />,
+      shareReference: append,
+      renderThread: (_id, close, command) => {
+        share = command;
+        return <Detail close={close} />;
+      },
     });
     return (
       <>
@@ -167,6 +175,8 @@ function harness(creation = false) {
     relayListeners,
     liveListeners,
     dispose,
+    append,
+    share: () => share,
     command: () => commands.openThread,
     draftCommands: () => draftCommands,
     select: () =>
@@ -461,3 +471,47 @@ it("draft navigation is revoked synchronously by exact plugin removal", () => {
   });
   expect(screen.getByText(/Sessions unavailable/)).toBeInTheDocument();
 });
+
+it("shares synchronously before switching views, keeps failures in detail and consumes each callback at most once", () => {
+  const h = harness();
+  h.select();
+  fireEvent.click(screen.getByRole("button", { name: "Open fixture root" }));
+  h.append.mockReturnValueOnce("The channel draft changed in another window.");
+  const share = h.share();
+  act(() => expect(share("Actual title")).toMatch(/another window/));
+  expect(screen.getByText("Close detail")).toBeVisible();
+  h.append.mockImplementation(() => {
+    expect(screen.getByText("Close detail")).toBeVisible();
+    return undefined;
+  });
+  act(() => {
+    expect(share("Actual title")).toBeUndefined();
+    expect(share("Actual title")).toMatch(/no longer available/);
+  });
+  expect(h.append).toHaveBeenCalledTimes(2);
+  expect(h.append).toHaveBeenLastCalledWith(rootId, "Actual title");
+  expect(screen.getByText("Channel body")).toBeVisible();
+});
+
+it.each(["plugin", "access", "session", "channel", "disconnect", "unmount"])(
+  "revokes sharing after %s without touching the draft",
+  (boundary) => {
+    const h = harness();
+    h.select();
+    fireEvent.click(screen.getByRole("button", { name: "Open fixture root" }));
+    const share = h.share();
+    act(() => {
+      if (boundary === "plugin") {
+        h.entries([]);
+        h.publish();
+      }
+      if (boundary === "access") h.access();
+      if (boundary === "session") h.replace();
+      if (boundary === "channel") h.beginNavigation();
+      if (boundary === "disconnect") h.disconnect();
+      if (boundary === "unmount") h.view.unmount();
+      expect(share("Actual title")).toMatch(/no longer available/);
+    });
+    expect(h.append).not.toHaveBeenCalled();
+  },
+);

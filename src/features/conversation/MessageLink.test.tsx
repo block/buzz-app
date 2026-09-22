@@ -262,3 +262,21 @@ it("does not present or replay copy feedback completed in an inactive conversati
   view.rerender(tree(true));
   expect(screen.queryByText("Link copied")).not.toBeInTheDocument();
 });
+
+it("keeps session labels readable and canonical anchors usable without the Links plugin", () => {
+  const href = `buzz://open?target=${encodeURIComponent(JSON.stringify({ version: 1, kind: "conversation", scope: { communityOrigin: "https://example.com" }, channelId: "general", messageId: "b".repeat(64), threadRootId: "b".repeat(64) }))}`;
+  const html = renderToStaticMarkup(
+    <MessageLink
+      url={href}
+      registry={undefined}
+      onOpenLink={() => true}
+      label="Session: Work"
+    >
+      Session: Work
+    </MessageLink>,
+  );
+  expect(html).toContain(`href="${href}"`);
+  expect(html).toContain(">Session: Work</a>");
+  expect(html).not.toContain("data-link-kind");
+  expect(resolveLink(href, [entry, { ...entry, key: "other" }])).toBe(entry);
+});

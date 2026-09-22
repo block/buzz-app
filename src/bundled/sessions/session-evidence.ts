@@ -45,7 +45,9 @@ export function sessionRoots(
 export function rootIdentities(root: ChannelMessage) {
   return [
     root.authorId,
-    ...(root.edited && !root.quietSession ? [] : root.mentions),
+    ...(root.edited && !root.quietSession && !root.chipSession
+      ? []
+      : root.mentions),
     ...root.participants,
   ].filter((key) => keyPattern.test(key));
 }

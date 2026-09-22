@@ -56,12 +56,18 @@ export function useChannelDirectories({
   channelName,
   renderThread,
   onSelect,
+  shareReference,
 }: {
   registry?: ContributionReader<ChannelThreadDirectory> | undefined;
   relay: RelayData;
   destination: Destination | undefined;
   channelName: string;
-  renderThread(rootId: string, close: () => void): ReactNode;
+  renderThread(
+    rootId: string,
+    close: () => void,
+    share: (title: string) => string | undefined,
+  ): ReactNode;
+  shareReference?(rootId: string, title: string): string | undefined;
   onSelect(): void;
 }) {
   const entries = useSyncExternalStore(
@@ -75,7 +81,9 @@ export function useChannelDirectories({
   const container = useRef<HTMLDivElement>(null);
   const tabs = useRef<HTMLDivElement>(null);
   const restore = useRef<string>(undefined);
+  const commandEpoch = useRef(0);
   const update = useCallback((next: Opening | undefined) => {
+    commandEpoch.current += 1;
     active.current = next;
     setOpening(next);
   }, []);
@@ -243,6 +251,72 @@ export function useChannelDirectories({
     return true;
   }, [selected, valid, update]);
   return {
+    /** Capture the exact registration/destination even when no tab was selected.
+     * Any subsequent tab/navigation/access/connection transition retires it. */
+    commandLease() {
+      const entry = registry
+        .snapshot()
+        .find(
+          (item) =>
+            item.pluginId === "buzz.sessions" &&
+            item.id === "sessions" &&
+            item.create,
+        );
+      if (!destination || !entry || active.current) return undefined;
+      const connection = relay.snapshot();
+      const captured = access(destination);
+      const epoch = commandEpoch.current;
+      const live = destination.session.live.snapshot().status;
+      const validCommand = () =>
+        commandEpoch.current === epoch &&
+        current.current === destination &&
+        !destination.signal?.aborted &&
+        destination.isCurrent?.() !== false &&
+        registry.snapshot().includes(entry) &&
+        relay.snapshot().status === "ready" &&
+        relay.snapshot().session === destination.session &&
+        relay.snapshot().scope === destination.scope &&
+        relay.snapshot().generation === connection.generation &&
+        captured !== "unavailable" &&
+        access(destination) === captured &&
+        destination.session.live.snapshot().status === live &&
+        live === "connected";
+      if (!validCommand()) return undefined;
+      // Latch transitions, including disconnect/reconnect or removal/re-addition.
+      let retained = true;
+      const check = () => {
+        if (!validCommand()) retained = false;
+      };
+      const stops = [
+        registry.subscribe(check),
+        relay.subscribe(check),
+        destination.session.channels.subscribeList(check),
+        destination.session.live.subscribe(check),
+      ];
+      destination.signal?.addEventListener("abort", check);
+      return {
+        valid: () => retained && validCommand(),
+        dispose() {
+          retained = false;
+          for (const stop of stops) stop();
+          destination.signal?.removeEventListener("abort", check);
+        },
+        open(rootId: string) {
+          if (!retained || !validCommand() || !/^[0-9a-f]{64}$/.test(rootId))
+            return false;
+          onSelect();
+          update({
+            entry,
+            destination,
+            rootId,
+            generation: connection.generation,
+            access: captured,
+            connection: live,
+          });
+          return true;
+        },
+      };
+    },
     selected: !!selected,
     launchers:
       !selected?.rootId &&
@@ -287,16 +361,27 @@ export function useChannelDirectories({
             fallback={unavailable(selected.entry.title)}
           >
             {selected.rootId
-              ? renderThread(selected.rootId, () => {
-                  if (!valid(selected)) return;
-                  restore.current = selected.focusId ?? "";
-                  const {
-                    rootId: _root,
-                    draft: _draft,
-                    ...directory
-                  } = selected;
-                  update(directory);
-                })
+              ? renderThread(
+                  selected.rootId,
+                  () => {
+                    if (!valid(selected)) return;
+                    restore.current = selected.focusId ?? "";
+                    const {
+                      rootId: _root,
+                      draft: _draft,
+                      ...directory
+                    } = selected;
+                    update(directory);
+                  },
+                  (title) => {
+                    if (!valid(selected) || !shareReference || !selected.rootId)
+                      return "This session is no longer available. Return to Channel and try again.";
+                    const failure = shareReference(selected.rootId, title);
+                    if (failure) return failure;
+                    update(undefined);
+                    return undefined;
+                  },
+                )
               : destination && (
                   <OwnedDirectory
                     key={selected.draft ? "draft" : "directory"}

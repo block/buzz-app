@@ -47,7 +47,7 @@ export function Select({
           >
             <BaseSelect.Popup
               data-buzz-ui=""
-              className="buzz-select-popup text-body-sm"
+              className="buzz-select-popup text-body"
             >
               <BaseSelect.List>
                 {groups.map((group) => (

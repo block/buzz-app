@@ -44,6 +44,14 @@ those checks in cached, parallel jobs with sharded browser journeys.
 Install the fast staged-file pre-commit and related-test pre-push hooks once per worktree with
 `bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#git-hooks).
 
+### Design system
+
+Run `just design` (or `bin/just design` without activation) to install locked
+dependencies, start the standalone design-system viewer, and open it in your
+browser. It uses port 1442 and does not start the desktop app or live relay broker.
+If that port is occupied, choose another with `just design --port 1444`.
+Press Ctrl+C to stop the server.
+
 ## Relay channels
 
 Live development currently requires **an existing Buzz account in the OS credential

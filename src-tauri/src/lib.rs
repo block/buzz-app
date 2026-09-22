@@ -44,7 +44,7 @@ fn title_bar_double_click_action(preference: Option<&str>) -> TitleBarDoubleClic
 }
 
 #[tauri::command]
-fn title_bar_double_click(window: tauri::Window) -> Result<(), String> {
+fn title_bar_double_click<R: tauri::Runtime>(window: tauri::Window<R>) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use objc2_foundation::{ns_string, NSUserDefaults};

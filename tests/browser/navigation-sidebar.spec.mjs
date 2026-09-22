@@ -147,6 +147,14 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeCloseTo(520, 0);
   await page.setViewportSize({ width: 800, height: wideViewport.height });
+  await handle.press("ArrowLeft");
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeLessThan(constrained.width - 8);
+  await handle.press("End");
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeCloseTo(constrained.width, 0);
   const constrainedGrip = await handle.boundingBox();
   await page.mouse.move(
     constrainedGrip.x + constrainedGrip.width / 2,

@@ -995,7 +995,14 @@ test("shared menus stay reachable near viewport edges and above a dialog", async
         zIndex: "1",
       });
     });
-    await context.click({ button: "right", position: { x: 4, y: 4 } });
+    const contextBounds = await context.boundingBox();
+    if (!contextBounds)
+      throw new Error("Context trigger has no visible bounds");
+    // Stay near the viewport edge, inside the pill rather than its cut-out corner.
+    await context.click({
+      button: "right",
+      position: { x: contextBounds.width - 4, y: contextBounds.height / 2 },
+    });
     const popup = page.getByRole("menu");
     await expect(popup).toBeVisible();
     await expect(popup).toHaveCSS("transform", "none");

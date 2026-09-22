@@ -285,7 +285,7 @@ export function WorkflowChannel({
         <p role="status">Workflow definitions are unavailable.</p>
       )}
       {snapshot.status === "error" && (
-        <p role="alert" className="text-red-12">
+        <p role="alert" className="text-danger">
           {snapshot.error ??
             "Configurations could not be read. Use Refresh configurations to retry."}
         </p>
@@ -369,7 +369,7 @@ export function WorkflowChannel({
               operations.
             </p>
             {error && (
-              <p role="alert" className="text-red-12">
+              <p role="alert" className="text-danger">
                 {error}
               </p>
             )}

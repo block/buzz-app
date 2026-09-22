@@ -501,6 +501,26 @@ test("avatar specimens preserve human and agent identity shapes in both modes", 
           element.clientWidth / 2,
       ),
     ).toBe(true);
+    for (const name of ["View Morgan profile", "View Alex profile"]) {
+      const button = page.getByRole("button", { name, exact: true });
+      await button.scrollIntoViewIfNeeded();
+      const artwork = button.locator(".buzz-avatar");
+      const inner = await button.evaluate((element) => ({
+        width: element.clientWidth,
+        height: element.clientHeight,
+      }));
+      await expect(artwork).toHaveCSS("width", `${inner.width}px`);
+      await expect(artwork).toHaveCSS("height", `${inner.height}px`);
+      if (name === "View Morgan profile") {
+        await expect(artwork.locator("img")).toHaveAttribute(
+          "data-loaded",
+          "true",
+        );
+        await expect(artwork.locator("img")).toHaveCSS("opacity", "1");
+      } else {
+        await expect(artwork).toHaveText("A");
+      }
+    }
     const sizes = page.getByRole("img", { name: "Morgan Martin", exact: true });
     for (const [index, size] of [24, 32, 40].entries()) {
       await expect(sizes.nth(index)).toHaveCSS("width", `${size}px`);

@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import {
   useCallback,
   useEffect,
@@ -62,9 +63,9 @@ export function SessionMessageTarget(props: Props) {
     <div className={styles.timeline}>
       <div className={styles.targetNavigation}>
         <span>Selected message</span>
-        <button type="button" onClick={props.onLatest}>
+        <Button type="button" onClick={props.onLatest}>
           Back to latest
-        </button>
+        </Button>
       </div>
       {failed === navigation || navigation.signal.aborted ? (
         <UnavailableMessage onRetry={props.onRetry} />
@@ -162,9 +163,9 @@ function UnavailableMessage({ onRetry }: Pick<Props, "onRetry">) {
   return (
     <div className={messages.empty} role="alert">
       <p>The selected message could not be opened.</p>
-      <button type="button" onClick={onRetry}>
+      <Button type="button" onClick={onRetry}>
         Retry message
-      </button>
+      </Button>
     </div>
   );
 }

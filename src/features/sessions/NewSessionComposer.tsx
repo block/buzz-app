@@ -1,3 +1,4 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ChannelSummary } from "../relay/contracts";
@@ -301,9 +302,9 @@ export function NewSessionComposer({
       )}
       {error && <p role="alert">{error}</p>}
       {error && failedId && (
-        <button type="button" disabled={busy} onClick={() => void editFailed()}>
+        <Button type="button" disabled={busy} onClick={() => void editFailed()}>
           Edit and retry
-        </button>
+        </Button>
       )}
     </div>
   );

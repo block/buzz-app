@@ -81,7 +81,7 @@ export function WorkflowOperations({
           <div key={operation.eventId}>
             <p role="status">{messages[operation.action][operation.outcome]}</p>
             {operation.error && (
-              <p className="text-red-12">{operation.error}</p>
+              <p className="text-danger">{operation.error}</p>
             )}
             <div className="workflow-toolbar">
               {operation.action === "save" &&

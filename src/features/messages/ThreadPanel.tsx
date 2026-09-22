@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { Button } from "../../shared/design-system/ui/Button";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -140,9 +141,9 @@ function OwnedThreadPanel({
   return error ? (
     <div className={styles.empty} role="alert">
       <p>{error}</p>
-      <button type="button" onClick={() => setAttempt((value) => value + 1)}>
+      <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
         Retry thread
-      </button>
+      </Button>
     </div>
   ) : view ? (
     <ThreadMessages
@@ -399,13 +400,15 @@ function ThreadMessages({
                 : {})}
             />
             {videoAttachment && mediaPlayback && (
-              <button
-                type="button"
-                className={styles.mediaCommentAction}
-                onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
-              >
-                Comment at {formatMediaTime(mediaPlayback.seconds)}
-              </button>
+              <span className={styles.mediaCommentAction}>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
+                >
+                  Comment at {formatMediaTime(mediaPlayback.seconds)}
+                </Button>
+              </span>
             )}
           </>
         ) : (
@@ -462,9 +465,9 @@ function ThreadMessages({
         )}
         {(snapshot.error || snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
-            <button type="button" onClick={() => void view.refresh()}>
+            <Button type="button" onClick={() => void view.refresh()}>
               Retry thread
-            </button>
+            </Button>
           </div>
         )}
       </section>

@@ -273,8 +273,9 @@ test("Settings edits the local profile inline without publishing to a community"
       .getByRole("region", { name: "Profile", exact: true })
       .getByRole("status"),
   ).toHaveText("Profile updated.");
-  await expect(button(page, "Your profile")).toHaveAttribute(
-    "title",
+  await button(page, "Your profile").hover();
+  await expect(page.getByRole("tooltip")).toHaveText("Updated local profile");
+  await expect(button(page, "Your profile")).toHaveAccessibleDescription(
     "Updated local profile",
   );
   await name.fill("Discard after saving");

@@ -1,3 +1,4 @@
+import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
@@ -353,6 +354,24 @@ function AvatarSpecimen() {
             fallback="Morgan"
           />
         </Specimen>
+      </SpecimenGroup>
+      <SpecimenGroup label="Profile buttons">
+        <div className="component-specimen-row">
+          <IconButton
+            aria-label="View Morgan profile"
+            size="large"
+            shape="round"
+            icon={
+              <Avatar src={avatarUrl} alt="" fallback="Morgan" size="fill" />
+            }
+          />
+          <IconButton
+            aria-label="View Alex profile"
+            size="large"
+            shape="round"
+            icon={<Avatar alt="" fallback="Alex" size="fill" />}
+          />
+        </div>
       </SpecimenGroup>
       <SpecimenGroup label="Fill an owning layout box">
         <div className="size-40 overflow-hidden rounded-2xl">
@@ -935,6 +954,30 @@ function DialogSpecimen() {
   );
 }
 
+function AlertDialogSpecimen() {
+  const [open, setOpen] = useState(false);
+  return (
+    <SpecimenFrame>
+      <Button onClick={() => setOpen(true)}>Discard example changes</Button>
+      {open && (
+        <AlertDialog
+          title="Discard changes?"
+          description="Your unsaved example changes will be lost."
+          onClose={() => setOpen(false)}
+          actions={
+            <>
+              <Button onClick={() => setOpen(false)}>Keep editing</Button>
+              <Button variant="destructive" onClick={() => setOpen(false)}>
+                Discard
+              </Button>
+            </>
+          }
+        />
+      )}
+    </SpecimenFrame>
+  );
+}
+
 function RadioGroupSpecimen() {
   const [summary, setSummary] = useState(false);
   const [delivery, setDelivery] = useState("all");
@@ -1010,6 +1053,7 @@ function RadioGroupSpecimen() {
 }
 
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
+  "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimen,
   tooltip: () => (
     <SpecimenFrame>

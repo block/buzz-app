@@ -273,25 +273,7 @@ export const RAMPS: Ramp[] = [
    PUBLIC ROLES
    ============================================================ */
 
-/**
- * There is no identity-group generator any more, and that is the point.
- *
- * A helper here built five roles from one line of a hue lookup — `bg-accent`,
- * `bg-accent-tint`, `text-accent`, and so on — which is exactly how twenty status
- * roles came to exist without anyone designing them. Every one of those roles
- * held the same palette step in both modes, so each was a name in front of a
- * number.
- *
- * Screens now write the step: `bg-purple-9`, `bg-purple-3`, `text-purple-12`.
- * Safe here and not in Tailwind because **every step is authored per mode**, so a
- * class still behaves in light and dark. The step-to-role mapping in DESIGN.md
- * survives as guidance for *which* step to reach for; it is no longer a
- * generator.
- *
- * A name comes back when a repeated accent PATTERN appears — a tinted callout on
- * four screens — and it will be named for the pattern, not the colour.
- */
-
+/** Semantic roles name color jobs; the palette remains an implementation detail. */
 export const ROLE_GROUPS: RoleGroup[] = [
   {
     id: "semantic-surface",
@@ -317,6 +299,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--surface-popover",
         pointsAt: "neutral-1 light / neutral-5 dark",
         use: "A menu, dialog or other raised surface.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-inverse",
+        variable: "--surface-inverse",
+        pointsAt: "neutral-11 light / neutral-11 dark",
+        use: "Image and video stages; pair labels with text-inverse.",
         status: "core",
       },
       {
@@ -358,7 +347,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
         token: "text-inverse",
         variable: "--text-inverse",
         pointsAt: "neutral-1 light / neutral-1 dark",
-        use: "Text on prominent actions.",
+        use: "Text on prominent actions and inverse media surfaces.",
         status: "core",
       },
       {
@@ -387,6 +376,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         variable: "--text-success",
         pointsAt: "green-12 light / green-12 dark",
         use: "Success text.",
+        status: "core",
+      },
+      {
+        token: "text-link",
+        variable: "--text-link",
+        pointsAt: "blue-12 light / blue-12 dark",
+        use: "Inline links and mentions in prose.",
         status: "core",
       },
       {
@@ -544,6 +540,13 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-affordance-link-hover",
+        variable: "--affordance-link-hover",
+        pointsAt: "blue-4 light / blue-4 dark",
+        use: "An inline link under a pointer.",
+        status: "core",
+      },
+      {
         token: "bg-affordance-accent",
         variable: "--affordance-accent",
         pointsAt: "purple-3 light / purple-3 dark",
@@ -578,7 +581,7 @@ export const ROLE_GROUPS: RoleGroup[] = [
     id: "surfaces",
     name: "Structural surfaces",
     description:
-      "Legacy aliases maintained during migration. The original rationale was: each takes a different step in light and dark, so no single class like `bg-neutral-1` is correct in both. That is the whole test for whether a colour earns a name. Ask one question: is it behind, on, above, or in? (`bg-hover` was here and is now written as `bg-neutral-4` \u2014 it was the same step in both modes. Hover is a *relationship*, one step more contrast than whatever is underneath, which no single token could express anyway.)",
+      "Compatibility aliases forward to semantic surface roles. New screens use surface-base, surface-panel and surface-popover directly.",
     roles: [
       {
         token: "bg-app",

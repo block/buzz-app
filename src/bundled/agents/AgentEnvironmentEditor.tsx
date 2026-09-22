@@ -116,7 +116,7 @@ export function AgentEnvironmentEditor({
         </Button>
       </div>
       {error && (
-        <p role="alert" className="text-red-12">
+        <p role="alert" className="text-danger">
           {error}
         </p>
       )}

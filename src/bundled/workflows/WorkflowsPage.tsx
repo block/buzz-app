@@ -66,7 +66,7 @@ export function WorkflowCommunity({
       {channels.status === "loading" && <p role="status">Reading channels…</p>}
       {channels.status === "error" && (
         <div>
-          <p role="alert" className="text-red-12">
+          <p role="alert" className="text-danger">
             {channels.error ?? "Channels could not be read."}
           </p>
           <Button onClick={() => session.channels.refreshList?.()}>

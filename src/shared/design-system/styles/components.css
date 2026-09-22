@@ -109,8 +109,12 @@
     padding: 0;
   }
 
-  /* Keep pointer-origin keyboard traversal rooted at the button in WebKit. */
+  /* Fill artwork needs a sized parent; inherit the control's avatar shape.
+     Keep pointer-origin keyboard traversal rooted at the button in WebKit. */
   .buzz-button[data-icon-variant] .buzz-button-label {
+    width: 100%;
+    height: 100%;
+    border-radius: inherit;
     pointer-events: none;
   }
 
@@ -606,7 +610,7 @@
   .search-field {
     display: flex;
     width: 100%;
-    height: var(--size-control);
+    min-height: var(--size-control);
     align-items: center;
     gap: var(--space-row-gap);
     border-radius: var(--radius-control);
@@ -688,13 +692,13 @@
     display: inline-flex;
     width: 100%;
     min-width: 0;
-    height: var(--size-row);
+    min-height: var(--size-row);
     align-items: center;
     gap: var(--space-row-gap);
     overflow: hidden;
     border: 0;
     border-radius: var(--radius-row);
-    padding: 0 var(--space-control-inset);
+    padding: var(--space-1) var(--space-control-inset);
     background: transparent;
     color: var(--text-standard);
     font: inherit;

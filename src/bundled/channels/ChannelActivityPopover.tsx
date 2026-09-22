@@ -1,3 +1,4 @@
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { Popover } from "@base-ui/react/popover";
 import {
   useCallback,
@@ -41,30 +42,35 @@ function ActivityRow({
   const profile = profiles.get(item.authorId);
   const name = profile?.name ?? "Someone";
   return (
-    <button
-      type="button"
-      className={styles.activityItem}
-      aria-label={`Open unread thread from ${name}: ${item.preview}`}
-      onClick={() => onOpen(item)}
-    >
-      <Avatar
-        name={name}
-        src={profile?.picture ? session.media(profile.picture) : undefined}
-        className={styles.activityAvatar ?? ""}
-      />
-      <span className={styles.activityItemBody}>
-        <span className={styles.activityItemHeading}>
-          <strong>{name}</strong>
-          <span className={styles.activityTimestamp}>
-            {elapsed(item.createdAt)}
+    <div className={styles.activityItem}>
+      <NavigationItem
+        type="button"
+        aria-label={`Open unread thread from ${name}: ${item.preview}`}
+        onClick={() => onOpen(item)}
+        icon={
+          <Avatar
+            name={name}
+            src={profile?.picture ? session.media(profile.picture) : undefined}
+            className={styles.activityAvatar ?? ""}
+          />
+        }
+        label={
+          <span className={styles.activityItemBody}>
+            <span className={styles.activityItemHeading}>
+              <strong>{name}</strong>
+              <span className={styles.activityTimestamp}>
+                {elapsed(item.createdAt)}
+              </span>
+            </span>
+            <span className={styles.activityItemMeta}>
+              Thread
+              {item.unreadCount > 1 ? ` · ${item.unreadCount} unread` : ""}
+            </span>
+            <span className={styles.activityItemPreview}>{item.preview}</span>
           </span>
-        </span>
-        <span className={styles.activityItemMeta}>
-          Thread{item.unreadCount > 1 ? ` · ${item.unreadCount} unread` : ""}
-        </span>
-        <span className={styles.activityItemPreview}>{item.preview}</span>
-      </span>
-    </button>
+        }
+      />
+    </div>
   );
 }
 

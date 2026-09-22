@@ -3,7 +3,7 @@ import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, test, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState } from "react";
+import { createRef, useState } from "react";
 import { Dialog } from "./Dialog";
 import { Button } from "./Button";
 import { Input } from "./Input";
@@ -13,6 +13,85 @@ import { Tabs } from "./Tabs";
 import { NavigationItem } from "./NavigationItem";
 
 afterEach(cleanup);
+
+test.each([true, "true"] as const)(
+  "expanded button hints dismiss without replacing the trigger (%s)",
+  async (expanded) => {
+    const user = userEvent.setup();
+    const ref = createRef<HTMLButtonElement>();
+    const control = (value: boolean | "true") => (
+      <>
+        <p id="picker-help">Choose a symbol.</p>
+        <Button
+          ref={ref}
+          title="Open symbols"
+          aria-label="Symbols"
+          aria-describedby="picker-help"
+          aria-expanded={value}
+        >
+          Symbols
+        </Button>
+      </>
+    );
+    const view = render(control(false));
+    const trigger = screen.getByRole("button", { name: "Symbols" });
+    await user.tab();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Open symbols",
+    );
+    view.rerender(control(expanded));
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    expect(ref.current).toBe(trigger);
+    expect(trigger).toHaveFocus();
+    expect(trigger).toHaveAccessibleName("Symbols");
+    expect(trigger).toHaveAttribute("aria-describedby", "picker-help");
+    view.rerender(control(false));
+    expect(ref.current).toBe(trigger);
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument();
+    await user.hover(trigger);
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Open symbols",
+    );
+    await user.keyboard("{Escape}");
+    await waitFor(() =>
+      expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+    );
+    expect(trigger).toHaveAccessibleDescription("Choose a symbol.");
+  },
+);
+
+test("button titles use the shared hint while preserving refs and activation", async () => {
+  const user = userEvent.setup();
+  const activate = vi.fn();
+  const ref = createRef<HTMLButtonElement>();
+  render(
+    <Button
+      ref={ref}
+      title="Send this draft"
+      aria-label="Send"
+      onClick={activate}
+    >
+      Send
+    </Button>,
+  );
+  const button = screen.getByRole("button", { name: "Send" });
+  expect(ref.current).toBe(button);
+  expect(button).not.toHaveAttribute("title");
+  await user.hover(button);
+  expect(await screen.findByRole("tooltip")).toHaveTextContent(
+    "Send this draft",
+  );
+  expect(button).toHaveAccessibleDescription("Send this draft");
+  await user.click(button);
+  expect(activate).toHaveBeenCalledTimes(1);
+  await user.keyboard("{Escape}");
+  await waitFor(() =>
+    expect(screen.queryByRole("tooltip")).not.toBeInTheDocument(),
+  );
+  expect(button).toHaveAccessibleName("Send");
+});
 
 test("pending dialogs reject close and Escape, then allow dismissal once released", async () => {
   const user = userEvent.setup();
@@ -127,6 +206,32 @@ test("navigation keeps warm-read events and data attributes on the focusable but
   expect(row).toHaveAttribute("aria-current", "page");
   await user.hover(row);
   expect(warm).toHaveBeenCalled();
+  await user.click(row);
+  expect(select).toHaveBeenCalledTimes(1);
+});
+
+test("navigation rows keep rich session labels readable and selected", async () => {
+  const user = userEvent.setup();
+  const select = vi.fn();
+  render(
+    <NavigationItem
+      selected
+      label={
+        <>
+          <small>Release planning</small> <span>Review the proposal</span>{" "}
+          <span role="img" aria-label="Unread messages">
+            •
+          </span>
+        </>
+      }
+      onClick={select}
+    />,
+  );
+  const row = screen.getByRole("button", {
+    name: "Release planning Review the proposal Unread messages",
+  });
+  expect(row).toHaveAttribute("aria-current", "page");
+  expect(row).toHaveAttribute("data-buzz-ui");
   await user.click(row);
   expect(select).toHaveBeenCalledTimes(1);
 });

@@ -134,7 +134,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
     /observed unread messages/,
   );
   await expect(ordinary.locator("[data-channel-priority]")).toHaveCount(0);
-  await expect(ordinary.locator("span").first()).toHaveCSS(
+  await expect(ordinary.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
     "500",
   );
@@ -160,11 +160,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   const transitionProperties = await cue(page, "below").evaluate((el) =>
     getComputedStyle(el).transitionProperty.split(", "),
   );
-  expect(transitionProperties).toEqual([
-    "background-color",
-    "color",
-    "border-color",
-  ]);
+  expect(transitionProperties).toEqual(["background-color", "color"]);
   await expect(cue(page, "above")).toHaveCount(0);
   // Keep actionable DMs below while moving only ordinary unread above: priority
   // is derived from the destinations on each edge, not from the whole roster.
@@ -226,7 +222,7 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await page.mouse.wheel(0, -10000);
   await expect(cue(page, "above")).toHaveCount(0);
   await expect(cue(page, "below")).toBeVisible();
-  await page.getByRole("textbox", { name: "Search channels" }).focus();
+  await page.getByRole("searchbox", { name: "Search channels" }).focus();
   await page.keyboard.press("Tab"); // Set keyboard modality from the visible search, not an offscreen row.
   await cue(page, "below").focus();
   await expect(cue(page, "below")).toHaveCSS("outline-width", "2px");
@@ -249,7 +245,7 @@ test("search, resizing, collapsed groups and new unread evidence update only the
 }) => {
   await open(page, app);
   await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
-  const search = page.getByRole("textbox", { name: "Search channels" });
+  const search = page.getByRole("searchbox", { name: "Search channels" });
   await search.fill("Alpha");
   await expect(cue(page, "below")).toHaveCount(0);
   await expect(cue(page, "above")).toHaveCount(0);

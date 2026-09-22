@@ -279,7 +279,7 @@ export function AgentModelPicker({
         )
       )}
       {fresh?.modelOverridden && (
-        <p className="text-body-sm text-amber-12">
+        <p className="text-body-sm text-warning">
           A saved BUZZ_AGENT_MODEL override takes precedence. Change it in
           Advanced to use this selection.
         </p>

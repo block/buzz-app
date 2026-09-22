@@ -1,11 +1,13 @@
 import { useEffect, useSyncExternalStore } from "react";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons/index";
-import { groupAgentLibrary } from "../../features/agents/library";
+import { identityTiles, identityGroups } from "./identity-tiles";
+import { useIdentityNames } from "../../features/identity-names/react";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 
 export function AgentLibrary({ session }: { session: RelaySession }) {
+  const resolveName = useIdentityNames(session.names);
   const library = session.agentLibrary;
   const archives = session.archives;
   const snapshot = useSyncExternalStore(
@@ -26,7 +28,7 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
     void library.refresh();
     void archives.refresh();
   }, [library, archives]);
-  const { groups, custom, unknown } = groupAgentLibrary(
+  const { identities, profiles } = identityTiles(
     snapshot,
     (key) => archives.state(key) === "archived",
   );
@@ -68,56 +70,50 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
       )}
       {snapshot.status === "ready" && (
         <>
-          <section aria-label="Library templates" className="space-y-3">
+          <section aria-label="Library identities" className="space-y-3">
             <h2 className="m-0 flex items-center gap-2 text-heading">
-              Library templates{" "}
+              Library identities
               <span className="rounded-md bg-surface-inset px-2 py-0.5 text-body-sm font-normal text-secondary">
-                {groups.length}
+                {identities.length}
               </span>
             </h2>
-            {!groups.length && (
-              <p className="py-8 text-center text-body text-secondary">
-                No selected agents in your Buzz library.
-              </p>
+            {!identities.length && (
+              <p>No visible identities in your Buzz library.</p>
             )}
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
-              {groups.map((group) => (
-                <AgentCard
-                  key={group.id}
-                  name={group.name}
-                  avatar={group.avatar ?? group.identities[0]?.avatar}
-                  identities={group.identities}
-                  session={session}
-                />
-              ))}
-            </div>
+            {identityGroups(snapshot.definitions, identities).map((group) => (
+              <section
+                key={group.id ?? "unlinked"}
+                aria-label={group.name}
+                className="space-y-3"
+              >
+                <h3 className="m-0 text-label text-secondary">{group.name}</h3>
+                <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
+                  {group.identities.map((identity) => (
+                    <AgentCard
+                      key={identity.pubkey}
+                      name={resolveName(identity.pubkey, identity.name)}
+                      avatar={identity.avatar}
+                      identities={[identity]}
+                      session={session}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
           </section>
-          {!!custom.length && (
-            <section aria-label="Custom agents" className="space-y-3">
-              <h2 className="m-0 text-heading">Custom agents</h2>
+          {!!profiles.length && (
+            <section
+              aria-label="Profiles without identities"
+              className="space-y-3"
+            >
+              <h2 className="m-0 text-heading">Profiles without identities</h2>
               <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
-                {custom.map((identity) => (
+                {profiles.map((profile) => (
                   <AgentCard
-                    key={identity.pubkey}
-                    name={identity.name}
-                    avatar={identity.avatar}
-                    identities={[identity]}
-                    session={session}
-                  />
-                ))}
-              </div>
-            </section>
-          )}
-          {!!unknown.length && (
-            <section aria-label="Unknown agents" className="space-y-3">
-              <h2 className="m-0 text-heading">Other identities</h2>
-              <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,180px),1fr))] gap-4">
-                {unknown.map((identity) => (
-                  <AgentCard
-                    key={identity.pubkey}
-                    name={identity.name}
-                    avatar={identity.avatar}
-                    identities={[identity]}
+                    key={profile.id}
+                    name={profile.name}
+                    avatar={profile.avatar}
+                    identities={[]}
                     session={session}
                   />
                 ))}

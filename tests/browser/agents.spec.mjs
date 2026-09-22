@@ -22,29 +22,35 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agents.html`,
     );
     const agents = page.getByRole("region", {
-      name: "Library templates",
+      name: "Library identities",
       exact: true,
     });
     await expect(
       agents.getByRole("heading", { name: "A Brain", exact: true }),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     const keys = await page.evaluate(() => window.agentFixture.agents);
     await expect
-      .poll(() => agents.locator("img").evaluate((image) => image.naturalWidth))
+      .poll(() =>
+        agents
+          .locator("img")
+          .first()
+          .evaluate((image) => image.naturalWidth),
+      )
       .toBeGreaterThan(0);
-    await expect(agents.locator("img")).toHaveCSS("opacity", "1");
+    await expect(agents.locator("img").first()).toHaveCSS("opacity", "1");
     await expect(agents.locator("[data-avatar-shape]")).toHaveCount(2);
     for (const avatar of await agents.locator("[data-avatar-shape]").all())
       await expect(avatar).toHaveAttribute("data-avatar-shape", "squircle");
     await expect(
-      agents.getByRole("img", { name: "A Brain", exact: true }),
+      agents.getByRole("img", { name: /^A Brain identity/ }),
     ).toHaveCount(2);
 
     for (const key of keys)
       await expect(agents.getByText(key, { exact: true })).toBeHidden();
-    await agents
-      .getByRole("button", { name: "A Brain: 2 identities", exact: true })
-      .click();
+    for (const button of await agents
+      .getByRole("button", { name: "Public key", exact: true })
+      .all())
+      await button.click();
     for (const key of keys)
       await expect(agents.getByText(key, { exact: true })).toBeVisible();
     await expect(
@@ -139,7 +145,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
     await expect(
-      page.getByText("No selected agents in your Buzz library."),
+      page.getByText("No visible identities in your Buzz library."),
     ).toBeVisible();
     await expect(agents.getByRole("article")).toHaveCount(0);
     await page
@@ -165,7 +171,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
     await page
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
-    await expect(agents.getByRole("article")).toHaveCount(2);
+    await expect(agents.getByRole("article")).toHaveCount(1);
     await expect(agents.getByText(keys[0], { exact: true })).toHaveCount(0);
     await page
       .getByRole("button", { name: "Toggle archive", exact: true })
@@ -177,9 +183,10 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
     await expect(agents.getByRole("article")).toHaveCount(2);
-    await agents
-      .getByRole("button", { name: "A Brain: 2 identities", exact: true })
-      .click();
+    for (const button of await agents
+      .getByRole("button", { name: "Public key", exact: true })
+      .all())
+      await button.click();
     for (const key of keys)
       await expect(agents.getByText(key, { exact: true })).toBeVisible();
     await expect(page.getByText(/Archive visibility is unknown/)).toBeVisible();
@@ -223,13 +230,13 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .click();
     await expect(
       agents.getByRole("heading", { name: "B Brain", exact: true }),
-    ).toHaveCount(2);
+    ).toHaveCount(1);
     await expect(page.getByText("A Brain", { exact: true })).toHaveCount(0);
     await page
       .getByRole("button", { name: "Community A", exact: true })
       .click();
     await expect(
-      agents.getByRole("heading", { name: "A Brain", exact: true }),
+      agents.getByRole("heading", { name: /^A Brain identity/ }),
     ).toHaveCount(2);
     await page
       .getByRole("button", { name: "Clear cache", exact: true })

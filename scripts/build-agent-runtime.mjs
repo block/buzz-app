@@ -3,6 +3,9 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   readFile,
+  lstat,
+  access,
+  constants,
   mkdir,
   mkdtemp,
   copyFile,
@@ -48,6 +51,46 @@ const target = (await run(join(root, "bin/rustc"), ["-vV"], true)).match(
   /^host: (.+)$/m,
 )?.[1];
 if (!target) throw new Error("Could not resolve pinned Rust target");
+const destination = join(root, "src-tauri/resources/agent-runtime");
+const filenames = spec.tools.map((name) =>
+  process.platform === "win32" ? `${name}.exe` : name,
+);
+async function currentBundle() {
+  try {
+    if (!(await lstat(destination)).isDirectory()) return false;
+    const manifestPath = join(destination, "manifest.json");
+    const meta = await lstat(manifestPath);
+    if (!meta.isFile() || meta.size > 16384) return false;
+    const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+    if (
+      Object.keys(manifest).length !== 4 ||
+      manifest.version !== 1 ||
+      manifest.revision !== spec.revision ||
+      manifest.target !== target ||
+      Object.keys(manifest.files).length !== filenames.length
+    )
+      return false;
+    for (const filename of filenames) {
+      const path = join(destination, filename);
+      if (!(await lstat(path)).isFile()) return false;
+      await access(path, constants.X_OK);
+      const hash = createHash("sha256")
+        .update(await readFile(path))
+        .digest("hex");
+      if (manifest.files[filename] !== hash) return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+if (await currentBundle()) {
+  console.log(`Agent runtime ready (${spec.revision}, ${target})`);
+  process.exit(0);
+}
+console.log(
+  "Preparing the agent runtime; the first build can take several minutes.",
+);
 await mkdir(join(root, "target"), { recursive: true });
 const stage = await mkdtemp(join(root, "target/agent-runtime-stage-"));
 try {
@@ -67,7 +110,6 @@ try {
     "buzz-cli",
     "git-credential-nostr",
   ]);
-  const destination = join(root, "src-tauri/resources/agent-runtime");
   await mkdir(destination, { recursive: true });
   const files = {};
   for (const name of spec.tools) {

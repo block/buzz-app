@@ -54,9 +54,10 @@ export function AgentCreateDialog({
     state.data?.createAvailable &&
     control.create
   );
+  const runtimeBlocked = !state.data?.runtimeAvailable && !saved;
   const blocked = busy || state.busy || state.status !== "ready";
   const create = async () => {
-    if (blocked || !available || !control.create) return;
+    if (blocked || runtimeBlocked || !available || !control.create) return;
     setError(undefined);
     setBusy(true);
     try {
@@ -129,6 +130,13 @@ export function AgentCreateDialog({
                 an agent.
               </p>
             )}
+            {runtimeBlocked && (
+              <p role="alert">
+                This app’s agent runtime is unavailable. Repair or rebuild the
+                desktop app before creating an agent.
+                {state.data?.runtimeMessage && ` ${state.data.runtimeMessage}`}
+              </p>
+            )}
             {busy && (
               <p role="status">
                 You can close this dialog to stop another agent. Saving
@@ -158,7 +166,7 @@ export function AgentCreateDialog({
               <Button
                 type="submit"
                 variant="primary"
-                disabled={blocked || !available}
+                disabled={blocked || runtimeBlocked || !available}
               >
                 {busy ? "Saving…" : saved ? "Retry profile" : "Create agent"}
               </Button>

@@ -107,18 +107,26 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
     const before = submittedHeads.length;
     // Browser-clock click → first visible row → paint, excluding Playwright IPC.
     for (const name of ["Alpha", "Beta", "Alpha", "Beta"]) {
-      const visibleMs = await page
+      const timing = await page
         .getByRole("button", { name, exact: true })
         .evaluate(
           async (button, { name, ids }) => {
             const start = performance.now();
             button.click();
+            const clickDispatchMs = performance.now() - start;
+            const frames = [];
+            let firstVisibleMs;
+            let paintOpportunity;
             await new Promise((resolve, reject) => {
               const deadline = setTimeout(
                 () => reject(new Error("warm switch did not paint")),
                 1000,
               );
-              const check = () => {
+              const check = (timestamp) => {
+                frames.push({
+                  frameMs: timestamp - start,
+                  callbackMs: performance.now() - start,
+                });
                 const composer = document.querySelector(
                   `[role="textbox"][aria-label="Message #${name}"]`,
                 );
@@ -140,14 +148,27 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
                     },
                   );
                 if (!visible || !composer) return requestAnimationFrame(check);
-                requestAnimationFrame(() => {
+                firstVisibleMs = performance.now() - start;
+                requestAnimationFrame((timestamp) => {
+                  paintOpportunity = {
+                    frameMs: timestamp - start,
+                    callbackMs: performance.now() - start,
+                  };
                   clearTimeout(deadline);
                   resolve();
                 });
               };
               requestAnimationFrame(check);
             });
-            return performance.now() - start;
+            const warmVisibleMs = performance.now() - start;
+            return {
+              warmVisibleMs,
+              // Synchronous button.click() only, not all React/render work.
+              clickDispatchMs,
+              frames,
+              firstVisibleMs,
+              paintOpportunity,
+            };
           },
           {
             name,
@@ -156,8 +177,8 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
               .map((event) => event.id),
           },
         );
-      app.report.measurements.push({ name, warmVisibleMs: visibleMs });
-      expect(visibleMs).toBeLessThan(100);
+      app.report.measurements.push({ name, ...timing });
+      expect(timing.warmVisibleMs).toBeLessThan(100);
     }
     expect(submittedHeads).toHaveLength(before);
     const diagnostics = page

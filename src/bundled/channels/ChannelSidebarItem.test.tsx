@@ -57,6 +57,7 @@ it("keeps live unread updates and uses replacement session callbacks across row 
     channel: { id: "alpha", name: "Alpha", channelType: "stream" as const },
     session: first.session,
     working: false,
+    sessionsEnabled: true,
     selected: undefined,
     collapsed: false,
     onToggle: vi.fn(),

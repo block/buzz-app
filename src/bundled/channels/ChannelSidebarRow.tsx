@@ -18,6 +18,7 @@ export function ChannelSidebarRow({
   childContent,
   wrapSelect,
   selected,
+  sessionsEnabled,
   sessions,
   draft,
   draftSelected,
@@ -33,6 +34,7 @@ export function ChannelSidebarRow({
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
+  sessionsEnabled: boolean;
   sessions: readonly ChannelSummary[];
   draft: boolean;
   draftSelected: boolean;
@@ -47,6 +49,7 @@ export function ChannelSidebarRow({
   const hasChildren = draft || sessions.length > 0;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
   const canParent =
+    sessionsEnabled &&
     channel.channelType !== "dm" &&
     channel.channelType !== "session" &&
     !channel.archived;

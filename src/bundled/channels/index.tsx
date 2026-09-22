@@ -11,6 +11,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
   const extensions = ctx.conversation;
   const relay = ctx.relay;
   const panels = ctx.panels;
+  const pages = ctx.pages;
   const navigator = ctx.navigation;
   ctx.pages.register({
     id: "channels",
@@ -25,6 +26,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
         extensions={extensions}
         relay={relay}
         panels={panels}
+        pages={pages}
         companion={companion}
       />
     ),

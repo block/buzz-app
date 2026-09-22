@@ -184,6 +184,34 @@ sessionSidebar(
   },
 );
 
+test("session actions follow the Sessions plugin availability", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  await button(page, "Alpha").hover();
+  await expect(
+    page.getByRole("button", { name: "More options for Alpha" }),
+  ).toBeVisible();
+
+  await button(page, "Your profile").click();
+  await button(page, "Settings").click();
+  await button(page, "Plugins").click();
+  const plugins = page.getByRole("region", { name: "Plugins", exact: true });
+  const sessions = plugins.getByRole("article").filter({
+    has: page.getByRole("heading", { name: "Sessions", exact: true }),
+  });
+  const toggle = sessions.getByRole("switch", { name: "Enable Sessions" });
+  await toggle.click();
+  await expect(toggle).toHaveAttribute("aria-checked", "false");
+
+  await button(page, "Messages").first().click();
+  await button(page, "Alpha").hover();
+  await expect(
+    page.getByRole("button", { name: "More options for Alpha" }),
+  ).toHaveCount(0);
+});
+
 test("channel navigation preserves sidebar DOM, group state and scroll", async ({
   page,
   app,

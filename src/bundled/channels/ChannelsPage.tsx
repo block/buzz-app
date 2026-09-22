@@ -46,6 +46,7 @@ import {
   useRelayConnection,
 } from "../../features/relay/react";
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type { PagesReader } from "../../features/pages/service";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
@@ -73,6 +74,7 @@ export function ChannelsPage({
   extensions,
   relay,
   panels,
+  pages,
   companion,
   navigation,
   navigator,
@@ -82,9 +84,18 @@ export function ChannelsPage({
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
   panels: Panels;
+  pages: PagesReader;
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  const registeredPages = useSyncExternalStore(
+    pages.subscribe,
+    pages.snapshot,
+    pages.snapshot,
+  );
+  const sessionsEnabled = registeredPages.some(
+    (page) => page.pluginId === "buzz.sessions",
+  );
   const sessionNavigation = navigation?.forSession(relay, session);
   useEffect(() => {
     if (!navigation || !sessionNavigation) return;
@@ -134,6 +145,7 @@ export function ChannelsPage({
           navigator={navigator}
           viewer={session.viewer}
           panels={panels}
+          sessionsEnabled={sessionsEnabled}
           companion={companion}
         />
       )}
@@ -146,6 +158,7 @@ function ChannelWorkspace({
   queries,
   relay,
   panels,
+  sessionsEnabled,
   scope,
   companion,
   navigation,
@@ -161,6 +174,7 @@ function ChannelWorkspace({
   queries: RelaySession;
   relay: RelayData;
   panels: Panels;
+  sessionsEnabled: boolean;
 }) {
   const list = useChannelList(queries.channels);
   const activity = useSyncExternalStore(
@@ -728,6 +742,7 @@ function ChannelWorkspace({
                       channel={channel}
                       session={queries}
                       working={workingChannels.has(channel.id)}
+                      sessionsEnabled={sessionsEnabled}
                       selected={selected}
                       collapsed={sidebar.collapsed.includes(
                         `session-children:${channel.id}`,

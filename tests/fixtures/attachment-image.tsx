@@ -37,7 +37,7 @@ function Fixture() {
           <AttachmentImage
             attachment={{
               url,
-              video: false,
+              kind: "image",
               ...(hash ? { blurhash: hash } : {}),
             }}
             url={url}

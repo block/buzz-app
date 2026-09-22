@@ -13,6 +13,7 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { FileAttachment } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
@@ -207,7 +208,16 @@ export const MessageRow = memo(function MessageRow({
             const url = safeMessageUrl(attachment.url);
             if (!url) return null;
             const source = media(url);
-            if (!attachment.video && source)
+            if (attachment.kind === "file")
+              return (
+                <FileAttachment
+                  key={url}
+                  attachment={{ ...attachment, url }}
+                  source={source}
+                  onOpenLink={onOpenLink}
+                />
+              );
+            if (attachment.kind === "image" && source)
               return (
                 <AttachmentImage
                   key={url}
@@ -229,7 +239,7 @@ export const MessageRow = memo(function MessageRow({
                 attachment={{ ...attachment, url }}
                 media={media}
                 mode={mediaMode}
-                {...(attachment.video && mediaSeekTo !== undefined
+                {...(attachment.kind === "video" && mediaSeekTo !== undefined
                   ? {
                       seekTo: mediaSeekTo,
                       ...(mediaSeekRequest !== undefined

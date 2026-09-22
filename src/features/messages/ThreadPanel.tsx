@@ -279,7 +279,9 @@ function ThreadMessages({
     },
     [rootId, onOpenMediaReview],
   );
-  const videoAttachment = snapshot.root?.attachments.find((item) => item.video);
+  const videoAttachment = snapshot.root?.attachments.find(
+    (item) => item.kind === "video",
+  );
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.
   useEffect(() => {

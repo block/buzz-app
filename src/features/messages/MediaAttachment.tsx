@@ -90,18 +90,22 @@ export function MediaAttachment({
   if (!source)
     return (
       <span className={styles.attachmentUnavailable} role="status">
-        {attachment.video ? "Video unavailable" : "Image unavailable"}
+        {attachment.kind === "video"
+          ? "Video unavailable"
+          : "Image unavailable"}
       </span>
     );
 
   if (failed)
     return (
       <span className={styles.attachmentUnavailable} role="status">
-        {attachment.video ? "Video unavailable" : "Image unavailable"}
+        {attachment.kind === "video"
+          ? "Video unavailable"
+          : "Image unavailable"}
       </span>
     );
 
-  if (!attachment.video)
+  if (attachment.kind === "image")
     return (
       <>
         <button
@@ -141,6 +145,13 @@ export function MediaAttachment({
             document.body,
           )}
       </>
+    );
+
+  if (attachment.kind !== "video")
+    return (
+      <span className={styles.attachmentUnavailable} role="status">
+        Attachment unavailable
+      </span>
     );
 
   const videoElement = (

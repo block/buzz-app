@@ -49,6 +49,7 @@ it("scopes native names to the session community and follows edits and disposal"
       }),
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
   };
   const names = bindNames(source, {

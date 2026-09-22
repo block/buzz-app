@@ -1266,6 +1266,7 @@ export function createRelaySession(
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
+              agentLibrary.reconnect();
               emoji.reconnect();
               unread.reconnect();
               for (const refresh of refreshers) void refresh();

@@ -87,6 +87,7 @@ it("rebinds a live name view on plugin replacement and disable", async () => {
     manifest: { id: "test.agents", name: "Agents", apiVersion: 1 as const },
     source: "bundled" as const,
     enabled: true,
+    reloadable: false,
     revision,
     previous: null,
     error: null,

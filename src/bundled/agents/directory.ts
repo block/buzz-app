@@ -18,8 +18,8 @@ export function createAgentDirectory(
     id: "agents",
     ...(control ? { subscribe: control.subscribe } : {}),
     activate(source) {
-      void source.agentLibrary.refresh();
       void control?.refresh();
+      return source.agentLibrary.retain();
     },
     resolve(source, pubkey) {
       const key = pubkey.toLowerCase();

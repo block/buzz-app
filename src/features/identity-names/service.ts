@@ -10,12 +10,13 @@ export type NameSource = {
     snapshot(): AgentLibrary & { status: string };
     subscribe(listener: () => void): () => void;
     refresh(): Promise<void>;
+    retain(): () => void;
   };
 };
 export type NameProvider = {
   id: string;
   resolve(source: NameSource, pubkey: string): string | undefined;
-  activate(source: NameSource): void;
+  activate(source: NameSource): undefined | (() => void);
   subscribe?(listener: () => void): () => void;
 };
 export type IdentityName = Readonly<{
@@ -78,6 +79,7 @@ export function bindNames(
   let provider: NameProvider | undefined;
   let stopLibrary: (() => void) | undefined;
   let stopProvider: (() => void) | undefined;
+  let deactivate: (() => void) | undefined;
   const listeners = new Set<() => void>();
   const emit = () => {
     if (closed) return;
@@ -90,6 +92,8 @@ export function bindNames(
     // Competing providers do not acquire last-writer authority.
     const next = entries.length === 1 ? entries[0] : undefined;
     if (provider === next) return;
+    deactivate?.();
+    deactivate = undefined;
     stopLibrary?.();
     stopLibrary = undefined;
     stopProvider?.();
@@ -98,7 +102,7 @@ export function bindNames(
     if (provider) {
       stopLibrary = source.agentLibrary.subscribe(emit);
       stopProvider = provider.subscribe?.(emit);
-      provider.activate(source);
+      deactivate = provider.activate(source);
     }
     emit();
   };
@@ -128,6 +132,7 @@ export function bindNames(
     dispose() {
       closed = true;
       provider = undefined;
+      deactivate?.();
       stopLibrary?.();
       stopProvider?.();
       for (const stop of stops) stop();

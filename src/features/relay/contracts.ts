@@ -1,10 +1,13 @@
 import type { CustomEmoji } from "./emoji";
+import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
 /** Folded, read-only channel state. Rows are domain data, not wire events or presentation. */
 export type ChannelSummary = Readonly<{
   id: string;
   name: string;
   preview?: string | undefined;
+  /** Readable public nonmember channel; not part of the joined roster. */
+  readOnly?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
@@ -97,6 +100,9 @@ export type ChannelWindow = Readonly<{
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
   list(): ChannelList;
+  /** Bounded discovery lookup; never inserts public previews into list(). */
+  get?(channelId: string): ChannelSummary | undefined;
+  resolve?(channelIds: readonly string[], options?: ReadOptions): Promise<void>;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;

@@ -9,8 +9,11 @@ export function createMessages(
   find: (id: string) => EventData | undefined,
   emojiTags: (content: string) => string[][],
   validateMentions: (channelId: string, pubkeys: readonly string[]) => void,
+  canParticipate: (channelId: string) => boolean = () => true,
 ) {
-  const writer = (kind: number) => {
+  const writer = (kind: number, channelId: string) => {
+    if (!canParticipate(channelId))
+      throw new Error("Join the conversation before posting");
     if (!outbox?.supports(kind))
       throw new Error("This connection cannot publish that operation");
     return outbox;
@@ -33,7 +36,7 @@ export function createMessages(
   return Object.freeze({
     send(channelId: string, content: string, mentions: readonly string[] = []) {
       if (!channelId) throw new Error("A channel is required");
-      return writer(9).send({
+      return writer(9, channelId).send({
         kind: 9,
         content: text(content),
         tags: [
@@ -52,7 +55,7 @@ export function createMessages(
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
         throw new Error("A valid thread root is required");
-      return writer(9).send({
+      return writer(9, channelId).send({
         kind: 9,
         content: text(content),
         tags: [
@@ -71,7 +74,7 @@ export function createMessages(
         throw new Error("Only your own messages can be edited");
       const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channelId) throw new Error("Message has no channel");
-      return writer(40003).send({
+      return writer(40003, channelId).send({
         kind: 40003,
         content: text(content),
         tags: [["h", channelId], ["e", messageId], ...emojiTags(content)],
@@ -85,7 +88,7 @@ export function createMessages(
       if (!channelId) throw new Error("Message has no channel");
       const value = text(content);
       if (!validReactionContent(value)) throw new Error("Reaction is too long");
-      return writer(7).send({
+      return writer(7, channelId).send({
         kind: 7,
         content: value,
         tags: [["h", channelId], ["e", messageId], ...emojiTags(value)],

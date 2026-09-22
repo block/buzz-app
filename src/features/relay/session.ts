@@ -256,6 +256,42 @@ export function createRelaySession(
     }
     if (closed || epoch !== accessEpoch)
       throw new DOMException("Stale relay read", "AbortError");
+    // Ranked global search needs channel authority before visibility filtering.
+    // Store metadata reads use channelTraffic=false, so this cannot recurse.
+    if (
+      channelTraffic &&
+      filters.every(
+        (filter) =>
+          filter.search !== undefined &&
+          !filter["#h"]?.length &&
+          !!filter.kinds?.length &&
+          filter.kinds.every((kind) => [9, 40002].includes(kind)),
+      )
+    ) {
+      const ids = [
+        ...new Set(
+          events.flatMap((event) => {
+            const tags = event.tags.filter(([name]) => name === "h");
+            return [9, 40002].includes(event.kind) &&
+              tags.length === 1 &&
+              tags[0]?.[1]
+              ? [tags[0][1]]
+              : [];
+          }),
+        ),
+      ];
+      await channels.queries.resolve?.(ids, settings);
+      events = events.filter((event) => {
+        const destinations = event.tags.filter(([name]) => name === "h");
+        const id = destinations[0]?.[1];
+        return (
+          destinations.length === 1 && !!id && !!channels.queries.get?.(id)
+        );
+      });
+      settings?.signal?.throwIfAborted();
+      if (closed || epoch !== accessEpoch)
+        throw new DOMException("Stale relay search", "AbortError");
+    }
     const visible = accept(events, channelTraffic);
     // Discovery must see signed grants/removals even when their channel is
     // currently denied; only the store interprets roster completeness.
@@ -386,7 +422,7 @@ export function createRelaySession(
     outbox: writes?.outbox,
     local: localViews,
     host: transport?.workflows,
-    canAccess: (channelId) => canAccess(channelId),
+    canAccess: (channelId) => channels.canParticipate(channelId),
     notify,
   });
   const readScope = `${transport?.scope ?? transport?.relayAuthor ?? "offline"}:${transport?.viewer ?? ""}`;
@@ -441,6 +477,12 @@ export function createRelaySession(
     if (closed) return;
     liveView = Object.freeze({
       ...liveSnapshot,
+      ...(channels.suspendedPreviews().length
+        ? {
+            error:
+              "Public preview access needs rechecking; retry live updates.",
+          }
+        : {}),
       roster: channels.roster(),
       heads: Object.freeze(
         [...catchups].map(([channelId, { state, error }]) =>
@@ -460,6 +502,7 @@ export function createRelaySession(
     },
     retry() {
       channels.retryList();
+      revalidatePreviews(channels.suspendedPreviews());
       for (const id of channels.demandedChannels()) demandChannel(id);
       traffic?.retry();
     },
@@ -694,6 +737,7 @@ export function createRelaySession(
         retainedEvent(id),
       emoji.tags,
       validateMentions,
+      (id) => channels.canParticipate(id),
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
@@ -902,6 +946,16 @@ export function createRelaySession(
       return view;
     },
   });
+  function revalidatePreviews(ids: readonly string[]) {
+    for (let start = 0; start < ids.length; start += 128) {
+      void channels.queries
+        .resolve?.(ids.slice(start, start + 128), { signal: lifetime.signal })
+        // A failed/cancelled lookup stays suspended and visible in live status.
+        // Retry is deliberate; no independent recovery timer or signed denial.
+        .catch(() => {})
+        .finally(publishLive);
+    }
+  }
   let rosterTimer: ReturnType<typeof setTimeout> | undefined;
   function refreshRoster() {
     if (closed || rosterTimer) return;
@@ -915,7 +969,12 @@ export function createRelaySession(
   }
   const updateInterests = () => {
     if (closed) return;
-    const ids = channels.queries.list().channels.map((channel) => channel.id);
+    const ids = [
+      ...new Set([
+        ...channels.queries.list().channels.map((channel) => channel.id),
+        ...channels.demandedChannels().filter((id) => channels.canAccess(id)),
+      ]),
+    ];
     const wanted = new Set(ids);
     for (const id of catchups.keys()) if (!wanted.has(id)) catchups.delete(id);
     try {
@@ -955,7 +1014,7 @@ export function createRelaySession(
     );
   function demandChannel(channelId: string): boolean {
     if (closed) return false;
-    traffic?.prioritize?.(channels.demandedChannels());
+    updateInterests();
     const job = catchups.get(channelId);
     if (!job || job.generation !== liveGeneration || job.state === "verified")
       return false;
@@ -1163,6 +1222,19 @@ export function createRelaySession(
       )
         refreshRoster();
       liveSnapshot = snapshot;
+      // Suspend every affected preview before any recheck: one revocation can
+      // cancel another read, but must never leave its old public grant readable.
+      const previews = snapshot.routes
+        .filter(
+          (route) =>
+            revoked(route) &&
+            !previous.has(route.id) &&
+            route.channelId &&
+            channels.queries.get?.(route.channelId)?.readOnly,
+        )
+        .map((route) => route.channelId as string);
+      channels.suspendPreviews(previews);
+      revalidatePreviews(previews);
       publishLive();
     },
     established(channelId) {
@@ -1228,7 +1300,7 @@ export function createRelaySession(
       archives.clear();
       workflows.clear();
       await channels.clearCache();
-      publishLive();
+      updateInterests();
     },
     dispose() {
       closed = true;

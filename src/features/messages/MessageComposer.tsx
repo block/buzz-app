@@ -85,6 +85,18 @@ export type MessageComposerProps = {
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function MessageComposer(props: MessageComposerProps) {
+  const list = useSyncExternalStore(
+    props.session.channels?.get
+      ? props.session.channels.subscribeList
+      : noChannelSubscription,
+    props.session.channels?.get
+      ? props.session.channels.list
+      : noChannelSnapshot,
+  );
+  const readOnly =
+    !props.submission &&
+    !!props.session.channels?.get &&
+    !list.channels.some((channel) => channel.id === props.channelId);
   return (
     <Composer
       key={`${props.submission?.draftKey ?? ""}:${messageViewKey(
@@ -94,6 +106,7 @@ export function MessageComposer(props: MessageComposerProps) {
         props.threadRootId,
       )}`}
       {...props}
+      disabled={props.disabled || readOnly}
     />
   );
 }

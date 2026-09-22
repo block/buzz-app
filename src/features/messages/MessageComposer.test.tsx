@@ -1097,3 +1097,55 @@ it("keeps retry submission available while a new-session draft is locked", () =>
   });
   expect(h.messages.send).not.toHaveBeenCalled();
 });
+
+it.each([
+  {},
+  { threadRootId: "thread" },
+  { threadRootId: "thread", mediaTimeSeconds: 12 },
+])(
+  "disables nonmember channel/thread/media composers and follows membership changes: %j",
+  (destination) => {
+    const h = mount(destination);
+    const listeners = new Set<() => void>();
+    let list: ReturnType<RelaySession["channels"]["list"]> = {
+      status: "ready",
+      channels: [],
+    };
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          window: () => {
+            throw new Error("Unused fixture window");
+          },
+          subscribeWindow: () => () => {},
+          ensureList() {},
+          ensure() {},
+          loadOlder() {},
+          list: () => list,
+          get: () => ({ id: "channel", name: "Public", readOnly: true }),
+          subscribeList: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+        } as RelaySession["channels"],
+      },
+    });
+    expect(h.input()).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(h.input(), { key: "Enter" });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.messages.reply).not.toHaveBeenCalled();
+    act(() => {
+      list = { status: "ready", channels: [{ id: "channel", name: "Joined" }] };
+      for (const listener of listeners) listener();
+    });
+    expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+    act(() => {
+      list = { status: "ready", channels: [] };
+      for (const listener of listeners) listener();
+    });
+    expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  },
+);

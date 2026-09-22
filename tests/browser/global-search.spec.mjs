@@ -99,3 +99,58 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
 });
+
+// Real portal → routed timeline/thread ownership and focus, in both browser engines.
+test.describe("public search destination", () => {
+  test.use({ openSearch: true });
+  test("opens a public nonmember exact reply without enabling writes or adding a sidebar row", async ({
+    page,
+    app,
+  }) => {
+    await page.goto(app.origin);
+    await expect(button(page, "Search Buzz")).toBeVisible();
+    for (const mode of ["cold", "warm"]) {
+      await button(page, "Search Buzz").click();
+      const input = page.getByRole("combobox", { name: "Search Buzz" });
+      await input.fill("crew-search");
+      const result = page.getByRole("option", {
+        name: /crew-search exact public reply/,
+      });
+      await expect(result).toBeVisible();
+      const start = performance.now();
+      await result.click();
+      const thread = page.getByRole("region", {
+        name: "Thread messages",
+        exact: true,
+      });
+      const row = thread.locator(`[data-message-id="${app.searchTarget.id}"]`);
+      await expect(row).toBeVisible();
+      await expect(row).toBeFocused();
+      app.report.measurements.push({
+        mode,
+        clickToFocusedMs: performance.now() - start,
+      });
+      await expect(
+        page.getByText(
+          "Read-only preview · You haven’t joined this conversation.",
+        ),
+      ).toBeVisible();
+      await expect(
+        page.getByRole("textbox", { name: "Message #open", exact: true }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await expect(
+        page.getByRole("textbox", { name: "Reply to thread", exact: true }),
+      ).toHaveAttribute("aria-disabled", "true");
+      await expect(
+        page
+          .getByRole("complementary", { name: "Channel sidebar" })
+          .getByRole("button", { name: "open", exact: true }),
+      ).toHaveCount(0);
+    }
+    expect(
+      app.report.queries
+        .filter(({ filter }) => filter.search)
+        .every(({ filter }) => !filter["#h"]),
+    ).toBe(true);
+  });
+});

@@ -211,9 +211,7 @@ function CommunitySearch({
           current.selected !== client.selected ||
           services.communities.relay.snapshot().session !==
             connection.session ||
-          !connection.session.channels
-            .list()
-            .channels.some((channel) => channel.id === channelId)
+          !connection.session.channels.get?.(channelId)
         )
           return;
         close();

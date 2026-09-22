@@ -47,10 +47,7 @@ export function SearchResults({
       ),
     [list.channels],
   );
-  const channelKey = channels.length
-    ? JSON.stringify(channels.map((channel) => channel.id).sort())
-    : "";
-  const search = useSearchMessages(session, query.trim(), channelKey);
+  const search = useSearchMessages(session, query.trim());
   const names = new Map(
     channels.map((channel) => [
       channel.id,
@@ -93,7 +90,7 @@ export function SearchResults({
   const messages: SearchDestination[] = search.messages.map((message) => ({
     key: message.id,
     label: message.preview,
-    detail: `${names.get(message.channelId) ?? "Conversation"} · ${profiles.get(message.authorId)?.name ?? message.authorId.slice(0, 10)} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+    detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${profiles.get(message.authorId)?.name ?? message.authorId.slice(0, 10)} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
     icon: ChatCircleIcon,
     run: () => openConversation(message.channelId, message.id),
   }));
@@ -130,7 +127,7 @@ export function SearchResults({
           </div>
         )}
         {list.coverage === "partial" && (
-          <p>Only the loaded joined conversations are searched.</p>
+          <p>Conversation names include only loaded joined conversations.</p>
         )}
         {search.loading && <p>Searching messages…</p>}
         {search.error && (
@@ -146,7 +143,7 @@ export function SearchResults({
           !search.error &&
           !messages.length &&
           list.status === "ready" && (
-            <p>No matching messages in joined conversations.</p>
+            <p>No matching messages in accessible conversations.</p>
           )}
         {!query.trim() && <p>Type to search messages in this community.</p>}
       </div>

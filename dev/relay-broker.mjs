@@ -934,7 +934,7 @@ export function relayBrokerPlugin({
             )
               return json(res, 413, { error: "Media budget exceeded" });
             const headers = {
-              "Content-Type": download ? "application/octet-stream" : type,
+              "Content-Type": download ? "application/octet-stream" : mediaType,
               "Cache-Control": "private, max-age=3600",
               "X-Content-Type-Options": "nosniff",
               ...(download ? { "Content-Disposition": "attachment" } : {}),

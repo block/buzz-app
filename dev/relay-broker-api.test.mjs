@@ -302,6 +302,30 @@ test("media proxy neutralizes comma-joined content types as downloads", async ()
   }
 });
 
+test("media proxy strips smuggled inline content type parameters", async () => {
+  const bytes = Buffer.from("fake png then svg");
+  const h = await harness(
+    () =>
+      new Response(bytes, {
+        headers: {
+          "Content-Type": "image/png;x, image/svg+xml",
+          "Content-Length": String(bytes.length),
+        },
+      }),
+  );
+  try {
+    const response = await fetch(
+      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+    );
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(response.headers.get("content-disposition")).toBeNull();
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+  } finally {
+    await h.close();
+  }
+});
+
 test("media proxy neutralizes missing or empty content types as downloads", async () => {
   for (const headers of [{}, { "Content-Type": "" }]) {
     const bytes = Buffer.from("unknown bytes");
@@ -380,7 +404,7 @@ test("media proxy streams authenticated video ranges and preserves seek headers"
     return new Response(bytes, {
       status: 206,
       headers: {
-        "Content-Type": "video/mp4",
+        "Content-Type": 'video/mp4; codecs="avc1.42E01E"',
         "Content-Length": String(bytes.length),
         "Content-Range": "bytes 100-110/1000",
         "Accept-Ranges": "bytes",

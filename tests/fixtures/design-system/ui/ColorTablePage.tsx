@@ -35,6 +35,8 @@ interface TableRow {
   /** Which layer this row belongs to. */
   layer: "role" | "ramp" | "backdrop" | "choice";
   group: string;
+  /** Lifecycle label applies to public roles; raw values have no lifecycle. */
+  status?: "core" | "proposed" | "deprecated";
 }
 
 function collectRows(): TableRow[] {
@@ -47,6 +49,7 @@ function collectRows(): TableRow[] {
         variable: role.variable,
         layer: "role",
         group: group.name,
+        status: role.status,
       });
     }
   }
@@ -238,9 +241,10 @@ function TokenTable({
         paints
       </caption>
       <colgroup>
-        <col className="w-1/3" />
-        <col className="w-1/3" />
-        <col className="w-1/3" />
+        <col className="w-[29%]" />
+        <col className="w-[25%]" />
+        <col className="w-[16%]" />
+        <col className="w-[30%]" />
       </colgroup>
       <thead>
         <tr className="border-primary border-b">
@@ -249,6 +253,9 @@ function TokenTable({
           </th>
           <th scope="col" className="py-2 pr-4 text-body text-tertiary">
             Base
+          </th>
+          <th scope="col" className="py-2 pr-4 text-body text-tertiary">
+            Status
           </th>
           <th scope="col" className="py-2 text-body text-tertiary">
             Value
@@ -268,7 +275,7 @@ function TokenTable({
                 <tr>
                   <th
                     scope="colgroup"
-                    colSpan={3}
+                    colSpan={4}
                     className="pt-6 pb-1 text-body-sm text-tertiary"
                   >
                     {headingRow}
@@ -289,6 +296,11 @@ function TokenTable({
                   ) : (
                     <span className="text-body-sm text-tertiary">—</span>
                   )}
+                </td>
+                <td className="py-2.5 pr-4 align-top">
+                  <span className="text-body-sm text-secondary">
+                    {row.status ?? "—"}
+                  </span>
                 </td>
                 <td className="py-2.5 align-top">
                   <span className="flex min-w-0 items-start gap-2">

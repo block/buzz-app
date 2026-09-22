@@ -572,6 +572,8 @@
   --bg-app: var(--gradient-1);
   --bg-panel: var(--surface-panel); /* dark: neutral-3 */
   --bg-float: var(--surface-popover); /* dark: neutral-5 */
+  --bg-item-hover: var(--neutral-3); /* dark: neutral-4 */
+  --bg-item-selected: var(--neutral-3); /* dark: neutral-5 */
   --bg-scrim: #00000060;
   --border-control: var(--border-prominent);
   /* Emoji artwork scales with text without becoming a readable type role. */
@@ -684,6 +686,8 @@
 .dark {
   --bg-panel: var(--surface-panel);
   --bg-float: var(--surface-popover);
+  --bg-item-hover: var(--neutral-4);
+  --bg-item-selected: var(--neutral-5);
   --bg-scrim: #000000a6;
   --border-control: var(--border-prominent);
   --bg-chrome-selected: var(--neutral-5);
@@ -866,6 +870,8 @@
   --color-inset: var(--neutral-2);
   --color-panel: var(--bg-panel);
   --color-float: var(--bg-float);
+  --color-item-hover: var(--bg-item-hover);
+  --color-item-selected: var(--bg-item-selected);
 
   /* TEXT COLOUR REGISTERS IN ITS OWN NAMESPACE, like borders below.
      Not `--color-*`.

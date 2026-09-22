@@ -601,6 +601,22 @@ export const ROLE_GROUPS: RoleGroup[] = [
         use: "Anything hovering above the page: menus, dialogs, tooltips, toasts. Shares a light value with bg-panel and diverges in dark, because a shadow cannot carry elevation on a near-black background.",
         status: "core",
       },
+      {
+        token: "bg-item-hover",
+        variable: "--bg-item-hover",
+        pointsAt: "neutral 3 light / neutral 4 dark",
+        use: "A selectable item hovering on a panel. Use the paired selected role for its lasting selection.",
+        status: "proposed",
+        owner: "Morgan",
+      },
+      {
+        token: "bg-item-selected",
+        variable: "--bg-item-selected",
+        pointsAt: "neutral 3 light / neutral 5 dark",
+        use: "A selected item on a panel: navigation destinations, choices, and other persistent selections. It is not for selection in chrome or on glass.",
+        status: "proposed",
+        owner: "Morgan",
+      },
     ],
   },
   {

@@ -50,6 +50,17 @@
     inset 0 -1px 0 var(--rim-shade);
 }
 
+/* An opaque surface above a panel: menus, selects, popovers, and previews.
+   The outer material is intentionally one utility so those components cannot
+   drift in fill, boundary, radius, or elevation while retaining independent
+   content layout and behavior. */
+@utility floating-surface {
+  border: 1px solid var(--border-primary);
+  border-radius: var(--radius-panel);
+  background: var(--bg-float);
+  box-shadow: var(--shadow-sm);
+}
+
 /*
  * Interactive glass: the material plus its hover, for a glass surface you can
  * click. Separate utilities rather than a `:hover` inside the two above,

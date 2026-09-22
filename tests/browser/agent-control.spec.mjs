@@ -199,9 +199,10 @@ test("local controls preserve drafts, confirm operations and distinguish disable
     await page.setViewportSize({ width: 390, height: 844 });
     await panel.getByRole("button", { name: "Add agent" }).blur();
     await page.mouse.move(0, 0);
+    // Primary aliases prominent: dark resting fill is white, grey is hover.
     await expect(panel.getByRole("button", { name: "Add agent" })).toHaveCSS(
       "background-color",
-      "rgb(199, 199, 199)",
+      "rgb(255, 255, 255)",
     );
     await page.screenshot({
       path: test.info().outputPath("agent-controls-dark-narrow.png"),

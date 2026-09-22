@@ -257,9 +257,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       ),
     ).toBe(true);
   }
-  const primary = page
-    .getByRole("button", { name: "Save", exact: true })
-    .first();
+  const primary = page.getByRole("button", { name: "prominent", exact: true });
   await primary.click();
   await expect(page.locator("html")).not.toHaveAttribute(
     "data-keyboard-navigation",
@@ -270,7 +268,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       : "Tab";
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "Save", exact: true }).nth(1),
+    page.getByRole("button", { name: "subtle", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -282,7 +280,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
   );
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "Save", exact: true }).nth(1),
+    page.getByRole("button", { name: "subtle", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -432,7 +430,7 @@ test("built component references retain anatomy and fallback identity", async ({
     .locator("tbody tr")
     .filter({ hasText: "Unselected tab" })
     .first();
-  await expect(selectedTabRow).toContainText("text-secondary");
+  await expect(selectedTabRow).toContainText("text-subtle");
   await expect(selectedTabRow.locator("td")).toHaveCount(6);
 
   await page.goto(`${viewer}#/design/components/avatar`);
@@ -562,5 +560,145 @@ test("typography shows the size ramp and renders xsmall mono details", async ({
   }
   await expect(
     page.getByRole("link", { name: "Typography source specification" }),
-  ).toHaveAttribute("href", /eff766161ba8aaee3258ca107f0d904dd542c708/);
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json",
+  );
+});
+
+// Native label focus and reset/FormData behavior must agree in real engines.
+// Detailed cancellation, controlled state and external form cases live in RTL.
+test("textarea labels focus explicit IDs and preserve edits", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/textarea`);
+  const textarea = page.getByRole("textbox", {
+    name: "Description",
+    exact: true,
+  });
+  await page
+    .locator("label")
+    .filter({ hasText: /^Description$/ })
+    .click();
+  await expect(textarea).toBeFocused();
+  await textarea.fill("Updated summary");
+  await expect(textarea).toHaveValue("Updated summary");
+});
+
+test("native form reset keeps choice appearance and submitted values together", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Notification preferences" });
+  const checkbox = form.getByRole("checkbox", { name: "Include a summary" });
+  const all = form.getByRole("radio", { name: "All updates" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await checkbox.click();
+  await mentions.click();
+  await expect(checkbox).not.toBeChecked();
+  await expect(mentions).toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ notifications: "mentions" });
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(checkbox).toBeChecked();
+  await expect(all).toBeChecked();
+  await expect(mentions).not.toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ notifications: "all", summary: "yes" });
+});
+
+test("invalid input and textarea boundaries remain visible in both themes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/field`);
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    const controls = page.getByRole("textbox");
+    await expect(controls).toHaveCount(2);
+    for (const control of await controls.all()) {
+      await expect(control).toHaveAttribute("aria-invalid", "true");
+      const ratio = await control.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const luminance = (color: string) => {
+          const components = color
+            .match(/[\d.]+/g)
+            ?.slice(0, 3)
+            .map(Number);
+          if (components?.length !== 3)
+            throw new Error(`Unexpected color ${color}`);
+          const linear = components.map((component) => {
+            const value = component / 255;
+            return value <= 0.04045
+              ? value / 12.92
+              : ((value + 0.055) / 1.055) ** 2.4;
+          });
+          const [red = 0, green = 0, blue = 0] = linear;
+          return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+        };
+        const border = luminance(style.borderTopColor);
+        const background = luminance(style.backgroundColor);
+        return (
+          (Math.max(border, background) + 0.05) /
+          (Math.min(border, background) + 0.05)
+        );
+      });
+      expect(ratio).toBeGreaterThanOrEqual(3);
+    }
+  }
+});
+
+// These cases verify native reset against actual hidden form inputs, not only ARIA.
+test("controlled choices keep the owner's unchanged values after native reset", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Controlled preferences" });
+  const checkbox = form.getByRole("checkbox", { name: "Include a summary" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await checkbox.click();
+  await mentions.click();
+  await expect(checkbox).toBeChecked();
+  await expect(mentions).toBeChecked();
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(checkbox).toBeChecked();
+  await expect(mentions).toBeChecked();
+  await expect(
+    form.locator('input[type="radio"][value="mentions"]'),
+  ).toBeChecked();
+  await expect(
+    form.locator('input[type="checkbox"][name="summary"]'),
+  ).toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ delivery: "mentions", summary: "yes" });
+});
+
+test("radios enabled after mount remain synchronized on native reset", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/radio-group`);
+  const form = page.getByRole("form", { name: "Deferred preferences" });
+  const all = form.getByRole("radio", { name: "All updates" });
+  const mentions = form.getByRole("radio", { name: "Mentions only" });
+  await expect(all).toBeDisabled();
+  await form.getByRole("button", { name: "Enable choices" }).click();
+  await mentions.click();
+  await expect(mentions).toBeChecked();
+  await form.getByRole("button", { name: "Reset preferences" }).click();
+  await expect(all).toBeChecked();
+  await expect(mentions).not.toBeChecked();
+  expect(
+    await form.evaluate((element) =>
+      Object.fromEntries(new FormData(element as HTMLFormElement)),
+    ),
+  ).toEqual({ delivery: "all" });
 });

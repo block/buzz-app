@@ -170,7 +170,7 @@ export function AlignmentRules() {
         <p className="text-body-sm text-secondary">
           Reference: BlockUI’s September 2026 specification snapshot. Some
           reference metrics remain provisional. The examples use Inter and
-          Tabler; no proprietary fonts, icons, or implementation are included.
+          Phosphor; no proprietary fonts, icons, or implementation are included.
         </p>
       </Section>
     </>

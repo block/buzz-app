@@ -195,3 +195,6 @@ export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
     "Buzz-owned mark based on GitHub’s issue symbol and Phosphor Circle geometry.",
   intendedSizes: [{ width: 22, height: 22 }],
 });
+
+import { CircleNotchIcon as PhosphorCircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
+export const CircleNotchIcon = defineIcon("phosphor", PhosphorCircleNotchIcon);

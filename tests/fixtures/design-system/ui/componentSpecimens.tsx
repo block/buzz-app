@@ -1,3 +1,11 @@
+import { Field } from "../../../../src/shared/design-system/ui/Field";
+import { Input } from "../../../../src/shared/design-system/ui/Input";
+import { Textarea } from "../../../../src/shared/design-system/ui/Textarea";
+import {
+  Radio,
+  RadioGroup,
+} from "../../../../src/shared/design-system/ui/RadioGroup";
+import { Checkbox } from "../../../../src/shared/design-system/ui/Checkbox";
 import avatarUrl from "../assets/avatar.png";
 import { PanelSwapPlaygrounds } from "./PanelSwapPlaygrounds";
 import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorkspace";
@@ -100,47 +108,40 @@ function Specimen({
 
 function ButtonSpecimen() {
   return (
-    <div className="component-specimen-stack">
-      <SpecimenGroup label="Variants">
-        <div className="component-specimen-row">
-          <Specimen prop='variant="primary"'>
-            <Button variant="primary">Save</Button>
-          </Specimen>
-          <Specimen prop='variant="quiet"'>
-            <Button variant="quiet">Save</Button>
-          </Specimen>
-          <Specimen prop='variant="ghost"'>
-            <Button variant="ghost">Save</Button>
-          </Specimen>
+    <>
+      <SpecimenGroup label="Emphasis">
+        <div className="flex flex-wrap items-center gap-3">
+          {(
+            ["prominent", "subtle", "ghost", "destructive", "outline"] as const
+          ).map((variant) => (
+            <Button key={variant} variant={variant}>
+              {variant}
+            </Button>
+          ))}
         </div>
       </SpecimenGroup>
       <SpecimenGroup label="Sizes">
-        <div className="component-specimen-row">
-          <Specimen prop='size="compact"'>
-            <Button variant="quiet" size="compact">
-              Save
+        <div className="flex flex-wrap items-center gap-3">
+          {(["sm", "md", "lg"] as const).map((size) => (
+            <Button key={size} size={size} variant="prominent">
+              Save · {size}
             </Button>
-          </Specimen>
-          <Specimen prop='size="default"'>
-            <Button variant="quiet">Save</Button>
-          </Specimen>
+          ))}
         </div>
       </SpecimenGroup>
       <SpecimenGroup label="States">
-        <div className="component-specimen-row">
-          <Specimen>
-            <Button variant="primary">Save</Button>
-          </Specimen>
-          <Specimen prop="disabled">
-            <Button variant="quiet" disabled>
-              Save
-            </Button>
-          </Specimen>
+        <div className="flex flex-wrap items-center gap-3">
+          <Button loading variant="prominent">
+            Save changes
+          </Button>
+          <Button disabled>Unavailable</Button>
+          <Button>Allow notifications for this workspace</Button>
         </div>
       </SpecimenGroup>
-    </div>
+    </>
   );
 }
+
 function IconButtonSpecimen() {
   const icons = {
     add: <PlusIcon size={16} aria-hidden="true" />,
@@ -888,7 +889,120 @@ function SelectSpecimen() {
   );
 }
 
+function RadioGroupSpecimen() {
+  const [summary, setSummary] = useState(false);
+  const [delivery, setDelivery] = useState("all");
+  const [enabled, setEnabled] = useState(false);
+  return (
+    <>
+      <SpecimenGroup label="Native form reset">
+        <SpecimenFrame>
+          <form aria-label="Notification preferences">
+            <Field label="Notifications">
+              <RadioGroup name="notifications" defaultValue="all">
+                <Radio value="all" label="All updates" variant="card" />
+                <Radio value="mentions" label="Mentions only" variant="card" />
+                <Radio value="none" label="Unavailable" disabled />
+              </RadioGroup>
+            </Field>
+            <Checkbox
+              name="summary"
+              value="yes"
+              label="Include a summary"
+              defaultChecked
+            />
+            <Button type="reset">Reset preferences</Button>
+          </form>
+        </SpecimenFrame>
+      </SpecimenGroup>
+      <SpecimenGroup label="Controlled form reset">
+        <SpecimenFrame>
+          <form aria-label="Controlled preferences">
+            <Field label="Delivery">
+              <RadioGroup
+                name="delivery"
+                value={delivery}
+                onValueChange={setDelivery}
+              >
+                <Radio value="all" label="All updates" />
+                <Radio value="mentions" label="Mentions only" />
+              </RadioGroup>
+            </Field>
+            <Checkbox
+              name="summary"
+              value="yes"
+              label="Include a summary"
+              checked={summary}
+              onCheckedChange={setSummary}
+            />
+            <Button type="reset">Reset preferences</Button>
+          </form>
+        </SpecimenFrame>
+      </SpecimenGroup>
+      <SpecimenGroup label="Initially disabled choices">
+        <SpecimenFrame>
+          <form aria-label="Deferred preferences">
+            <Button onClick={() => setEnabled(true)} disabled={enabled}>
+              Enable choices
+            </Button>
+            <Field label="Delivery">
+              <RadioGroup
+                name="delivery"
+                defaultValue="all"
+                disabled={!enabled}
+              >
+                <Radio value="all" label="All updates" />
+                <Radio value="mentions" label="Mentions only" />
+              </RadioGroup>
+            </Field>
+            <Button type="reset">Reset preferences</Button>
+          </form>
+        </SpecimenFrame>
+      </SpecimenGroup>
+    </>
+  );
+}
+
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
+  field: () => (
+    <SpecimenFrame>
+      <Field
+        label="Workspace name"
+        description="Choose a name your team will recognize."
+        error="Enter a name."
+      >
+        <Input required />
+      </Field>
+      <Field label="Workspace description" error="Enter a description.">
+        <Textarea id="workspace-description" required rows={3} />
+      </Field>
+    </SpecimenFrame>
+  ),
+  input: () => (
+    <SpecimenFrame>
+      <Field label="Workspace name">
+        <Input placeholder="Project notes" />
+      </Field>
+      <Field label="Unavailable">
+        <Input disabled value="Example" />
+      </Field>
+    </SpecimenFrame>
+  ),
+  textarea: () => (
+    <SpecimenFrame>
+      <Field label="Description" description="A short summary.">
+        <Textarea id="description-control" rows={3} />
+      </Field>
+    </SpecimenFrame>
+  ),
+  "radio-group": RadioGroupSpecimen,
+  checkbox: () => (
+    <SpecimenFrame>
+      <Checkbox label="Include a summary" />
+      <Checkbox label="Some selected" indeterminate />
+      <Checkbox label="Unavailable" disabled />
+    </SpecimenFrame>
+  ),
   "swap-workspace": PanelSwapPlaygrounds,
   "flex-workspace": FlexWorkspace,
   workspace: BentoSpecimen,

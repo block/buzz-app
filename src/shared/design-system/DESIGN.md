@@ -80,6 +80,19 @@ Buzz is a place where people build together and bring their agents into the room
 - **A redundant fill on glass is not free — it compounds.** Two identical translucent layers are not one layer: `glass-2` over `glass-2` composites to **0.77 alpha**, a value no token holds. Four panels each set the same fill as the container they exactly covered, so panels meant to be the most translucent surface in the system read as nearly solid. Before giving a region a glass fill, check whether its parent already is glass; if the region covers it, it needs no fill of its own.
 - **A component that can sit on either the gradient or a panel says so, with a variant.** `Tabs` takes `chrome` (a glass pill for the app backdrop) or `panel` (an underline for a plain surface); `IconButton` has the same axis as its `chrome` variant. The failure that earned it: the chrome container is `glass-2`, which over a white panel composites to pure white, and its selected pill is `neutral-1` — also pure white. Container and selection became one colour with only a shadow between them, and no guard could see it because the component had no way to state which background it expected. **The fix was never to retint `--bg-chrome-selected`** — that moves the collision rather than removing it. **One component with a variant, not two components:** behaviour, keyboard model, accessibility, props, and the Base UI parts underneath are identical, so a sibling component would duplicate all of it to change how selection is drawn, and the two would drift exactly as the four hand-assembled chrome surfaces did. When adding a component that could appear in both places, give it the axis and put both on its specimen page — the chrome-only specimen is why this defect survived until it appeared on a real screen.
 
+## Controls
+
+Button uses prominent, subtle, ghost, destructive and outline emphasis. Its
+32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
+increase height at larger text settings. Text buttons use pill corners. Fields
+use the shared control corner. Legacy Button names map to these variants during
+migration; do not add new primary/quiet or compact/default call sites.
+
+Field groups label, input, help and error using Base UI. Input and Textarea
+carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
+independent choice and Switch for an immediate on/off setting. Use the native
+form semantics exposed by those Base UI primitives rather than duplicating them.
+
 ## State
 
 - **Design default, hover, pressed, focus, selected, disabled and loading states where they apply.** Pressed changes fill without moving the control. Loading keeps the label footprint and prevents repeated activation; CSS alone cannot enforce it.

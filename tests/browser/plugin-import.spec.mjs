@@ -131,7 +131,8 @@ test("Settings text buttons contain enlarged labels without resizing icon button
           const bounds = root.getBoundingClientRect();
           for (const button of root.querySelectorAll("button.buzz-button")) {
             const box = button.getBoundingClientRect();
-            if (scale === 100 && box.height !== 36)
+            // Shared md controls are 40px at 100%; enlarged labels may grow.
+            if (scale === 100 && box.height !== 40)
               failures.push(`${button.textContent}: default height changed`);
             const text = document.createRange();
             text.selectNodeContents(button);
@@ -190,10 +191,10 @@ test("Settings text buttons contain enlarged labels without resizing icon button
               .map((button) => {
                 const box = button.getBoundingClientRect();
                 const sizes = {
-                  compact: 30,
+                  compact: 32,
                   toolbar: 32,
-                  default: 36,
-                  large: 40,
+                  default: 40,
+                  large: 52,
                 };
                 return (
                   box.width === sizes[button.dataset.iconSize] &&

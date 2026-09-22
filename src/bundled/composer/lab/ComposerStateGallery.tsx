@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { MessageComposer } from "../../../features/messages/MessageComposer";
 import { ComposerCopyPreview } from "./ComposerCopyPreview";
 import { useComposerFixture } from "./fixture";
@@ -47,6 +47,32 @@ function ValidationError() {
   } as typeof props.session;
   return <MessageComposer {...props} session={session} />;
 }
+function VideoTyping() {
+  const props = useComposerFixture({ threadRootId: "preview-video" });
+  const [time, setTime] = useState<number | undefined>(42);
+  const [typing] = useState(() => [
+    {
+      pubkey: "a".repeat(64),
+      channelId: props.channelId,
+      threadRootId: "preview-video",
+    },
+  ]);
+  const session = {
+    ...props.session,
+    typing: {
+      ...props.session.typing,
+      snapshot: () => typing,
+    },
+  };
+  return (
+    <MessageComposer
+      {...props}
+      session={session}
+      {...(time === undefined ? {} : { mediaTimeSeconds: time })}
+      clearMediaTime={() => setTime(undefined)}
+    />
+  );
+}
 export function ComposerStateGallery() {
   return (
     <>
@@ -72,6 +98,12 @@ export function ComposerStateGallery() {
             description="This connection can read but cannot send messages."
           >
             <ReadOnly />
+          </Example>
+          <Example
+            title="Video reply with typing"
+            description="Typing stays clear of the video timestamp and its remove control."
+          >
+            <VideoTyping />
           </Example>
           <Example
             title="Validation and recovery"

@@ -1,12 +1,9 @@
 .typing {
-  height: 0;
-  margin-bottom: calc(-1 * var(--space-1h));
-  flex-shrink: 0;
-  overflow: visible;
-  color: var(--text-muted);
+  overflow: hidden;
+  color: var(--text-subtle);
   font-size: var(--text-caption);
-  line-height: 1.5;
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
   white-space: nowrap;
   text-overflow: ellipsis;
-  transform: translateY(calc(-1lh - var(--space-2)));
 }

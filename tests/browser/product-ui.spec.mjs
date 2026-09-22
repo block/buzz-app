@@ -97,4 +97,55 @@ test("catalogue preserves disabled, read-only and failed-send recovery examples"
     "value",
     "Retry this message",
   );
+  const video = page.getByRole("region", {
+    name: "Video reply with typing",
+    exact: true,
+  });
+  for (const width of [360, 768, 1440]) {
+    await page.setViewportSize({ width, height: 950 });
+    const typing = await video
+      .getByRole("status", { name: "Typing activity" })
+      .boundingBox();
+    const editor = await video.getByRole("textbox").boundingBox();
+    const remove = await video
+      .getByRole("button", { name: "Remove video time" })
+      .boundingBox();
+    expect(typing.y + typing.height).toBeLessThanOrEqual(editor.y);
+    expect(typing.y + typing.height).toBeLessThanOrEqual(remove.y);
+  }
+  await video.getByRole("button", { name: "Remove video time" }).click();
+  await expect(
+    video.getByRole("button", { name: "Remove video time" }),
+  ).toHaveCount(0);
+  await expect(
+    video.getByRole("status", { name: "Typing activity" }),
+  ).toContainText("Alice is typing");
+});
+
+// Placeholder is visible copy, not the stable accessible editing label.
+test("context examples distinguish channel, thread and DM prompts", async ({
+  page,
+}) => {
+  await page.goto(url);
+  const playground = page.getByRole("region", { name: "Composer playground" });
+  for (const [option, copy, label] of [
+    [
+      "Channel · New message",
+      "Send a message in #buzz-design",
+      "Message #buzz-design",
+    ],
+    ["Thread · Reply", "Reply in thread", "Reply to thread"],
+    [
+      "Direct message · New message",
+      "Start a new message",
+      "Message #buzz-design",
+    ],
+    ["Direct message · Reply", "Message...", "Message #buzz-design"],
+  ]) {
+    await page.getByRole("combobox", { name: "Preview context" }).click();
+    await page.getByRole("option", { name: option, exact: true }).click();
+    await expect(
+      playground.getByRole("textbox", { name: label, exact: true }),
+    ).toHaveAttribute("data-placeholder", copy);
+  }
 });

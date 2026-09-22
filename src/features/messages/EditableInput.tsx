@@ -389,7 +389,7 @@ export function EditableInput({
         ref={element}
         role="textbox"
         aria-multiline="true"
-        aria-label={placeholder}
+        aria-label={events["aria-label"] ?? placeholder}
         aria-disabled={disabled || undefined}
         contentEditable={!disabled}
         suppressContentEditableWarning

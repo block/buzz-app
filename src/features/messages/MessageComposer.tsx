@@ -62,6 +62,7 @@ export type MessageComposerProps = {
   channelId: string;
   channelName: string;
   label?: string | undefined;
+  placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
@@ -104,6 +105,7 @@ function Composer({
   channelId,
   channelName,
   label: customLabel,
+  placeholder,
   onSend,
   onOpenLink,
   canOpenLink,
@@ -493,11 +495,13 @@ function Composer({
       <>
         {accessories}
         <footer className={styles.composer}>
-          <TypingIndicator
-            session={session}
-            channelId={channelId}
-            threadRootId={threadRootId}
-          />
+          <div className={styles.composerStatus}>
+            <TypingIndicator
+              session={session}
+              channelId={channelId}
+              threadRootId={threadRootId}
+            />
+          </div>
           This relay connection supports reading only.
         </footer>
       </>
@@ -516,11 +520,13 @@ function Composer({
         }}
       >
         {!disabled && !submission && (
-          <TypingIndicator
-            session={session}
-            channelId={channelId}
-            threadRootId={threadRootId}
-          />
+          <div className={styles.composerStatus}>
+            <TypingIndicator
+              session={session}
+              channelId={channelId}
+              threadRootId={threadRootId}
+            />
+          </div>
         )}
         <label className="sr-only" htmlFor={inputId}>
           {label}
@@ -554,7 +560,8 @@ function Composer({
             onUndo={undo}
             data-single-emoji={largeEmojiDraft || undefined}
             maxLength={16000}
-            placeholder={label}
+            placeholder={placeholder ?? label}
+            aria-label={label}
             onFocus={() => completion.observe(true)}
             onBlur={() => {
               completion.invalidate();

@@ -1097,3 +1097,10 @@ it("keeps retry submission available while a new-session draft is locked", () =>
   });
   expect(h.messages.send).not.toHaveBeenCalled();
 });
+
+it("keeps the accessible editor label separate from contextual placeholder copy", () => {
+  mount({ label: "Write a message", placeholder: "Start a new message" });
+  expect(
+    screen.getByRole("textbox", { name: "Write a message" }),
+  ).toHaveAttribute("data-placeholder", "Start a new message");
+});

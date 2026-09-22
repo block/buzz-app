@@ -1,0 +1,84 @@
+import { test, expect } from "./fixture.mjs";
+
+const button = (page, name) => page.getByRole("button", { name, exact: true });
+// Browser layout and native focus across the portal cannot be proved in jsdom.
+test("top-bar search and avatar share a vertical center", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  // A photo has different inline baseline behavior from the initial-letter fallback.
+  await page.route("https://avatar.invalid/photo.svg", (route) =>
+    route.fulfill({
+      contentType: "image/svg+xml",
+      body: '<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40"><rect width="40" height="40" fill="navy"/></svg>',
+    }),
+  );
+  await page.evaluate(() => {
+    const key = Object.keys(localStorage).find((key) =>
+      key.startsWith("buzz-client.v1:"),
+    );
+    const saved = JSON.parse(localStorage.getItem(key));
+    saved.profile.picture = "https://avatar.invalid/photo.svg";
+    localStorage.setItem(key, JSON.stringify(saved));
+  });
+  await page.reload();
+  await expect(button(page, "Your profile").locator("img")).toHaveAttribute(
+    "data-loaded",
+    "true",
+  );
+  const search = await button(page, "Search Buzz").boundingBox();
+  const profile = await button(page, "Your profile").boundingBox();
+  expect(search).not.toBeNull();
+  expect(profile).not.toBeNull();
+  expect(search.y + search.height / 2).toBeCloseTo(
+    profile.y + profile.height / 2,
+    1,
+  );
+});
+
+test("search arrows traverse pages and conversations, Enter opens and Escape restores focus", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const trigger = button(page, "Search Buzz");
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "Search Buzz" });
+  const input = dialog.getByRole("searchbox", { name: "Search Buzz" });
+  await expect(input).toHaveAttribute("spellcheck", "false");
+  await expect(input).toHaveAttribute("autocorrect", "off");
+  await expect(input).toHaveAttribute("autocapitalize", "off");
+  await expect(input).toHaveAttribute("autocomplete", "off");
+  await expect(input).toBeFocused();
+  const home = button(dialog, "Home");
+  await input.press("ArrowDown");
+  await expect(home).toBeFocused();
+  await home.press("ArrowDown");
+  await expect(button(dialog, "Messages")).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(home).toBeFocused();
+  await page.keyboard.press("ArrowUp");
+  await expect(input).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  const modifier = await page.evaluate(() =>
+    /Mac|iPhone|iPad/.test(navigator.platform) ? "Meta" : "Control",
+  );
+  await page.keyboard.press(`${modifier}+k`);
+  await expect(input).toBeFocused();
+  await input.fill("Alpha");
+  const alpha = dialog
+    .locator("[data-search-result]")
+    .filter({ hasText: "Alpha" })
+    .first();
+  await expect(alpha).toBeVisible();
+  await input.press("ArrowDown");
+  await expect(alpha).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(dialog).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+  ).toBeVisible();
+});

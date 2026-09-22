@@ -48,7 +48,7 @@ export function ProfileButton({
     };
   }, [open]);
   return (
-    <div ref={container} className="relative">
+    <div ref={container} className="relative flex items-center">
       <IconButton
         type="button"
         ref={trigger}

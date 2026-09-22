@@ -20,7 +20,6 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   session,
   working,
   selected,
-  search,
   collapsed,
   onToggle,
   draft,
@@ -34,7 +33,6 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   session: RelaySession;
   working: boolean;
   selected: string | undefined;
-  search: string;
   collapsed: boolean;
   onToggle: (key: string, open: boolean) => void;
   draft: boolean;
@@ -82,16 +80,10 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       )}
       selected={selected}
       collapsed={collapsed}
-      onToggle={(open) => {
-        if (!search) onToggle(`session-children:${channel.id}`, open);
-      }}
+      onToggle={(open) => onToggle(`session-children:${channel.id}`, open)}
       draft={draft}
       draftSelected={draftSelected}
-      sessions={sessions.filter(
-        (child) =>
-          channel.name.toLowerCase().includes(search.toLowerCase()) ||
-          child.name.toLowerCase().includes(search.toLowerCase()),
-      )}
+      sessions={sessions}
       childContent={(child) => (
         <UnreadBadge
           session={session}

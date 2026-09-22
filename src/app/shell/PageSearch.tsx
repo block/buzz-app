@@ -116,6 +116,10 @@ export function PageSearch({
                 placeholder="Search pages, conversations and messages…"
                 value={query}
                 onValueChange={setQuery}
+                spellCheck={false}
+                autoCorrect="off"
+                autoCapitalize="off"
+                autoComplete="off"
                 maxLength={256}
               />
               <div className="mt-3 max-h-[55vh] space-y-3 overflow-y-auto">

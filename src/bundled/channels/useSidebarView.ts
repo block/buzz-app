@@ -1,14 +1,13 @@
 import { useCallback, useLayoutEffect, useRef, useState } from "react";
 import { readView, writeView } from "../../shared/view-state";
 
-type SidebarView = { search: string; collapsed: string[]; scrollTop: number };
+type SidebarView = { collapsed: string[]; scrollTop: number };
 
 function restore(scope: string): SidebarView {
   const raw = readView<unknown>(scope, "channel-sidebar", null);
   const saved =
     raw && typeof raw === "object" ? (raw as Partial<SidebarView>) : {};
   return {
-    search: typeof saved.search === "string" ? saved.search : "",
     collapsed: Array.isArray(saved.collapsed)
       ? saved.collapsed.filter((key): key is string => typeof key === "string")
       : [],
@@ -83,12 +82,7 @@ export function useSidebarView(scope: string, ready: boolean) {
   );
   return {
     list,
-    search: view.search,
     collapsed: view.collapsed,
-    setSearch: (search: string) => {
-      pending.current = false;
-      update({ ...intent.current, search });
-    },
     toggle,
   };
 }

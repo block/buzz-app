@@ -1,7 +1,6 @@
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
-import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -234,7 +233,6 @@ function ChannelWorkspace({
     scope,
     list.status === "ready" && preferences.status !== "loading",
   );
-  const { search } = sidebar;
   const channels = useChannelLabels(list.channels, queries.profiles);
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
@@ -668,51 +666,27 @@ function ChannelWorkspace({
     [scope, viewer, current, showingThread],
   );
   const drawer = useChannelPanels(panels, drawerContext);
-  const visible = useMemo(
-    () =>
-      channels.filter(
-        (channel) =>
-          channel.name.toLowerCase().includes(search.toLowerCase()) ||
-          childrenByParent
-            .get(channel.id)
-            ?.some((child) =>
-              child.name.toLowerCase().includes(search.toLowerCase()),
-            ),
-      ),
-    [channels, search, childrenByParent],
-  );
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
     >
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
-          <div className={styles.search}>
-            <SearchField
-              variant="navigator"
-              label="Search channels"
-              placeholder="Search"
-              value={search}
-              onValueChange={sidebar.setSearch}
-            />
-          </div>
           <SidebarUnread listRef={sidebar.list}>
-            {sidebarSections(visible, preferences.data).map((section) => (
+            {sidebarSections(channels, preferences.data).map((section) => (
               <details
                 key={section.key}
                 className={styles.channelSection}
-                open={!!search || !sidebar.collapsed.includes(section.key)}
+                open={!sidebar.collapsed.includes(section.key)}
               >
                 {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
                 <summary
                   onClick={(event) => {
                     event.preventDefault();
-                    // Only user intent changes the saved layout, never search expansion.
-                    if (!search)
-                      sidebar.toggle(
-                        section.key,
-                        sidebar.collapsed.includes(section.key),
-                      );
+                    sidebar.toggle(
+                      section.key,
+                      sidebar.collapsed.includes(section.key),
+                    );
                   }}
                 >
                   {section.icon && (
@@ -734,13 +708,9 @@ function ChannelWorkspace({
                       session={queries}
                       working={workingChannels.has(channel.id)}
                       selected={selected}
-                      search={search}
-                      collapsed={
-                        !search &&
-                        sidebar.collapsed.includes(
-                          `session-children:${channel.id}`,
-                        )
-                      }
+                      collapsed={sidebar.collapsed.includes(
+                        `session-children:${channel.id}`,
+                      )}
                       onToggle={sidebar.toggle}
                       draft={draftParents.includes(channel.id)}
                       draftSelected={drafting && draftParent === channel.id}
@@ -761,10 +731,8 @@ function ChannelWorkspace({
                 {list.error}
               </p>
             )}
-            {list.status === "ready" && !visible.length && (
-              <p className={styles.empty}>
-                {search ? "No matching channels." : "No channels yet."}
-              </p>
+            {list.status === "ready" && !channels.length && (
+              <p className={styles.empty}>No channels yet.</p>
             )}
           </SidebarUnread>
           {preferences.status !== "ready" && (

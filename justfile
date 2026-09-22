@@ -18,6 +18,11 @@ web *args: install
 desktop *args: install
     node scripts/desktop-dev.mjs "$@"
 
+# Open the design system in a browser; forward Vite arguments (e.g. --port 1444).
+[positional-arguments]
+design *args: install
+    pnpm design:dev "$@"
+
 # Run buzzodz; forward arguments unchanged (Rust required).
 [positional-arguments]
 cli *args:

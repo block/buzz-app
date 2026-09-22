@@ -58,6 +58,11 @@ need their own validation.
   implicit runner arguments. Explicit `--config` arguments merge afterward and can
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
+- `just design [args...]`: install locked dependencies, start the standalone
+  design-system viewer, and open it in your browser. Arguments pass through to
+  Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port
+  fails rather than switching automatically. This starts neither Tauri nor the
+  live relay broker. Press Ctrl+C to stop it.
 - To pause notifications in your local dev server, set `BUZZ_DEV_NOTIFICATIONS=0`
   in `.env.local` and restart the server. Only `0` pauses alerts and permission
   requests; removing the setting restores normal behavior. Saved preferences are

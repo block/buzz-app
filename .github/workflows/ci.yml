@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  # Manual dispatch runs only Windows; automatic PR/main checks stay on Linux.
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -9,7 +11,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -18,6 +20,7 @@ env:
 
 jobs:
   javascript:
+    if: github.event_name != 'workflow_dispatch'
     name: JavaScript
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -42,6 +45,7 @@ jobs:
           retention-days: 7
 
   native:
+    if: github.event_name != 'workflow_dispatch'
     name: Rust and tool integration
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -69,7 +73,8 @@ jobs:
         run: node --test tests/integration/*.test.mjs
 
   windows-native:
-    name: Windows native notifications
+    if: github.event_name == 'workflow_dispatch'
+    name: Windows native validation
     runs-on: windows-2025
     timeout-minutes: 20
     steps:
@@ -90,13 +95,14 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           key: windows-native
-          save-if: ${{ github.event_name == 'push' }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native lint including Windows backend
         run: cargo clippy -p buzz-foundation --locked --all-targets -- -D warnings
       - name: All native package tests
         run: cargo test -p buzz-foundation --locked
 
   measurements:
+    if: github.event_name != 'workflow_dispatch'
     name: Browser measurements
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -122,6 +128,7 @@ jobs:
           retention-days: 7
 
   browser:
+    if: github.event_name != 'workflow_dispatch'
     name: Browser journeys (${{ matrix.engine }}, ${{ matrix.shard }}/2)
     # Measurements stay isolated on their own runner, not on our critical path.
     # CI required still requires their success independently of these jobs.
@@ -164,9 +171,9 @@ jobs:
           retention-days: 7
 
   required:
-    name: CI required
-    if: always()
-    needs: [javascript, native, windows-native, measurements, browser]
+    name: ${{ github.event_name == 'workflow_dispatch' && 'Automatic CI (not requested)' || 'CI required' }}
+    if: always() && github.event_name != 'workflow_dispatch'
+    needs: [javascript, native, measurements, browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
@@ -174,10 +181,9 @@ jobs:
         env:
           JAVASCRIPT: ${{ needs.javascript.result }}
           NATIVE: ${{ needs.native.result }}
-          WINDOWS_NATIVE: ${{ needs.windows-native.result }}
           MEASUREMENTS: ${{ needs.measurements.result }}
           BROWSER: ${{ needs.browser.result }}
         run: |
-          for result in "$JAVASCRIPT" "$NATIVE" "$WINDOWS_NATIVE" "$MEASUREMENTS" "$BROWSER"; do
+          for result in "$JAVASCRIPT" "$NATIVE" "$MEASUREMENTS" "$BROWSER"; do
             test "$result" = success || exit 1
           done

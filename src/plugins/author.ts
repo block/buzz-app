@@ -68,3 +68,14 @@ export type {
   NotificationInput,
   NotificationCategoryDescriptor,
 } from "../features/notifications/service";
+
+export type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+  AgentEdit,
+  AgentAction,
+  ControlSnapshot,
+  AgentImportPreview,
+  ImportSource,
+} from "../features/agents/control";

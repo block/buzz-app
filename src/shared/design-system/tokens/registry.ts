@@ -896,7 +896,7 @@ export const TYPE_FAMILIES = [
 
 /** Source for the primitive ladder and resolved roles displayed below. */
 export const TYPE_SOURCE =
-  "https://github.com/block/buzz-app/blob/main/src/shared/design-system/styles/typography.css";
+  "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json";
 
 /** Active size primitives, with xsmall sharing the 12px step. */
 export const TYPE_RAMPS = [

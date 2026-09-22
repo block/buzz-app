@@ -123,8 +123,9 @@ Values scale with the host text-size preference.
 - Preserve text preferences and browser zoom. Author values in scaled rem and
   keep layout geometry independent of text scaling.
 
-Typography follows the adopted Block UI scale, using public fonts. The values
-documented above define this system, including the 12px xsmall role.
+Typography provenance: the ramp and role settings derive from the pinned
+[Block UI typography specification](https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json).
+The values documented above define this system, including the 12px xsmall role.
 
 ## Both modes
 

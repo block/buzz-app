@@ -528,8 +528,5 @@ test("typography shows the size ramp and renders xsmall mono details", async ({
   }
   await expect(
     page.getByRole("link", { name: "Typography source specification" }),
-  ).toHaveAttribute(
-    "href",
-    "https://github.com/block/buzz-app/blob/main/src/shared/design-system/styles/typography.css",
-  );
+  ).toHaveAttribute("href", /eff766161ba8aaee3258ca107f0d904dd542c708/);
 });

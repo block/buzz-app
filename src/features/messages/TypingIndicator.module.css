@@ -1,6 +1,6 @@
 .typing {
   height: 0;
-  margin-bottom: calc(-1 * var(--space-1h));
+  margin-bottom: calc(-1 * var(--space-1));
   flex-shrink: 0;
   overflow: visible;
   color: var(--text-muted);

@@ -159,6 +159,23 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await expect(profile).toHaveAttribute("aria-current", "page");
   await expect(profileContent).toBeVisible();
   await expect(pluginContent).toHaveCount(0);
+  // Exercise the real shell's destination allowlist, not just the settings component.
+  const messages = sections.getByRole("button", {
+    name: "Messages",
+    exact: true,
+  });
+  await messages.click();
+  await expect(messages).toHaveAttribute("aria-current", "page");
+  const remember = page.getByRole("switch", {
+    name: "Remember mentioned agents",
+  });
+  await expect(remember).toBeChecked();
+  await remember.click();
+  await expect(remember).not.toBeChecked();
+  await profile.click();
+  await messages.click();
+  await expect(remember).not.toBeChecked();
+  await profile.click();
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await profile.focus();
@@ -211,6 +228,8 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(
       sections.getByRole("button", { name: "Appearance", exact: true }),
     ).toBeFocused();
+    await tab();
+    await expect(messages).toBeFocused();
     await tab();
     await expect(
       sections.getByRole("button", { name: "Notifications", exact: true }),

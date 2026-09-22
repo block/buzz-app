@@ -218,11 +218,33 @@ test("independent packed author consumer and native-installed contribution survi
       .getByRole("button", { name: "Insert mixed", exact: true })
       .click();
     await expect(draft).toHaveJSProperty("value", "Hi @Member and @Member ");
+    // Two authored spans refer to one notification identity and removal control.
+    const member = await page.evaluate(() => window.conversationFixture.member);
+    const mixedRecipients = page.getByRole("region", {
+      name: "Notification recipients",
+    });
+    await expect(mixedRecipients.getByRole("button")).toHaveCount(1);
     await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(2);
+      mixedRecipients.getByRole("button", {
+        name: `Remove mention Member ${member}`,
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(
+            localStorage.getItem('buzz-view.v1:["a","draft:general"]'),
+          ),
+        ),
+      )
+      .toEqual({
+        text: "Hi @Member and @Member ",
+        recipients: [
+          { pubkey: member, name: "Member", start: 3, end: 10 },
+          { pubkey: member, name: "Member", start: 15, end: 22 },
+        ],
+      });
     await page.evaluate(() => window.conversationFixture.saveEdit());
     await page.evaluate(() => window.conversationFixture.removeProbe());
     expect(
@@ -257,7 +279,6 @@ test("independent packed author consumer and native-installed contribution survi
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
-    const member = await page.evaluate(() => window.conversationFixture.member);
     await page
       .getByRole("button", { name: `Member ${member}`, exact: true })
       .click();

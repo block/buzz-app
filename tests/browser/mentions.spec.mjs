@@ -6,6 +6,10 @@ import { fileURLToPath } from "node:url";
 test("actual composer selects namesakes by exact key, publishes channel/reply tags, and blocks removed members", async ({
   page,
 }) => {
+  // This journey exercises one-message recipients; prefill-on has separate coverage.
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
@@ -74,8 +78,16 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       .getByRole("region", { name: "Notification recipients" })
       .getByRole("button")
       .first();
-    await expect(chip).toHaveCSS("background-color", "rgb(51, 51, 51)");
-    await expect(chip).toHaveCSS("color", "rgb(255, 255, 255)");
+    const removal = chip.locator("[data-avatar-shape] > span").last();
+    await expect(removal).toHaveCSS("opacity", "0");
+    await chip.hover();
+    await expect(removal).toHaveCSS("opacity", "1");
+    expect(
+      await removal.evaluate((el) => {
+        const style = getComputedStyle(el);
+        return style.color !== style.backgroundColor;
+      }),
+    ).toBe(true);
     await page.screenshot({
       path: test.info().outputPath("mention-recipients.png"),
     });

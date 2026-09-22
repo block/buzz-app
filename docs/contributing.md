@@ -162,6 +162,10 @@ While shaping the first version, default to **edit → human tries the running a
   which can include tests absent from the feature branch. Inspect incoming changes
   that overlap changed UI contracts (including accessible names), integrate them,
   and run the affected test files rather than assuming branch-only passes cover them.
+  Shared access-gating changes also affect standalone composer/reaction fixtures,
+  broker filter models, and restored-navigation/unread journeys. Repair stale
+  fixtures without loosening authority, then finish those journeys: an early mock
+  failure can mask a later production lifecycle regression.
   Fix failures and rerun the affected gate rather than repeating unchanged successful
   work. **Validated** means the
   required checks passed, not merely that the screen looked right; pending CI

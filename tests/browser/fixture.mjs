@@ -775,6 +775,7 @@ export const test = base.extend({
     const relay = productionBroker
       ? policyRelay({
           viewer,
+          relayAuthor: getPublicKey(relayKey),
           answer,
           report,
           pending,

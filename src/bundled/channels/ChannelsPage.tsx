@@ -261,10 +261,15 @@ function ChannelWorkspace({
     (channel) => channel.id === requestedChannel,
   );
   useEffect(() => {
+    // Let initial membership discovery settle before resolving an omitted target.
+    // A premature exact lookup publishes a one-channel list and starts readers
+    // that the completing full roster then invalidates.
     if (
       !requestedChannel ||
       !navigation ||
       joinedRequest ||
+      list.status === "idle" ||
+      list.status === "loading" ||
       !queries.channels.resolve
     )
       return;
@@ -285,7 +290,7 @@ function ChannelWorkspace({
         }
       });
     return () => controller.abort();
-  }, [requestedChannel, navigation, joinedRequest, queries]);
+  }, [requestedChannel, navigation, joinedRequest, queries, list.status]);
   const resolving =
     !!requestedChannel &&
     !joinedRequest &&

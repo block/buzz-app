@@ -102,7 +102,7 @@ test("search arrows traverse pages and conversations, Enter opens and Escape res
 
 // Real portal → routed timeline/thread ownership and focus, in both browser engines.
 test.describe("public search destination", () => {
-  test.use({ openSearch: true });
+  test.use({ openSearch: true, productionBroker: true });
   test("opens a public nonmember exact reply without enabling writes or adding a sidebar row", async ({
     page,
     app,

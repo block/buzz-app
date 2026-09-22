@@ -76,20 +76,18 @@ test("channel sidebar resizes from the full gutter and persists", async ({
     "Drag to resize · Double-click to reset",
   );
   await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2);
-  expect(
-    await handle.evaluate(
-      (element) => getComputedStyle(element, "::before").opacity,
-    ),
-  ).toBe("0");
-  await expect
-    .poll(
-      () =>
-        handle.evaluate(
-          (element) => getComputedStyle(element, "::before").opacity,
-        ),
-      { timeout: 1_000 },
-    )
-    .toBe("1");
+  const tooltip = () =>
+    handle.evaluate((element) => {
+      const style = getComputedStyle(element, "::before");
+      return { delay: style.transitionDelay, opacity: style.opacity };
+    });
+  await expect.poll(tooltip).toEqual({ delay: "0.6s", opacity: "0" });
+  await page.addStyleTag({
+    content: `[aria-label="Resize channel sidebar"]:hover::before {
+      transition: none !important;
+    }`,
+  });
+  await expect.poll(async () => (await tooltip()).opacity).toBe("1");
 
   await handle.press("ArrowRight");
   await expect
@@ -130,6 +128,44 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width)
     .toBeCloseTo(260, 0);
+
+  await handle.press("End");
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeCloseTo(520, 0);
+  const wideViewport = page.viewportSize();
+  await page.setViewportSize({ width: 800, height: wideViewport.height });
+  const constrained = await sidebar.boundingBox();
+  expect(constrained.width).toBeLessThan(520);
+  await expect(handle).toHaveAttribute(
+    "aria-valuenow",
+    String(Math.round(constrained.width)),
+  );
+
+  await page.setViewportSize(wideViewport);
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeCloseTo(520, 0);
+  await page.setViewportSize({ width: 800, height: wideViewport.height });
+  const constrainedGrip = await handle.boundingBox();
+  await page.mouse.move(
+    constrainedGrip.x + constrainedGrip.width / 2,
+    constrainedGrip.y + constrainedGrip.height / 2,
+  );
+  await page.mouse.down();
+  await page.mouse.move(
+    constrainedGrip.x + constrainedGrip.width / 2 - 32,
+    constrainedGrip.y + constrainedGrip.height / 2,
+  );
+  await page.mouse.up();
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeLessThan(constrained.width - 24);
+  const explicitlyResized = await sidebar.boundingBox();
+  await page.setViewportSize(wideViewport);
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width)
+    .toBeCloseTo(explicitlyResized.width, 0);
 });
 
 sessionSidebar(

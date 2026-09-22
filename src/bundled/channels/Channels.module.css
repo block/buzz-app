@@ -296,12 +296,15 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
   }
   .withPanel .panelStack {
     position: absolute;
-    grid-column: auto;
+    grid-column: 3;
     inset: 0 0 0 auto;
-    width: min(420px, calc(100% - 206px));
+    width: min(420px, 100%);
     z-index: 2;
     box-shadow: var(--elevation-dock);
     margin-left: 0;
+  }
+  .withPanel .sidebarResizeHandle {
+    z-index: 1;
   }
 }
 @media (max-width: 650px) {
@@ -314,6 +317,7 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
     pointer-events: none;
   }
   .withPanel .panelStack {
+    grid-column: 1 / -1;
     width: 100%;
   }
   .roster {

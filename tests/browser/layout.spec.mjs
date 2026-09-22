@@ -288,6 +288,39 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   ).toBeVisible();
 });
 
+test("narrow link panels begin after the rendered sidebar", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 832 });
+  await open(page, app);
+  await page
+    .getByRole("separator", { name: "Resize channel sidebar" })
+    .press("End");
+  await page.setViewportSize({ width: 800, height: 600 });
+  await link(page, app, "https://github.com/block/buzz/pull/7");
+
+  const sidebar = await box(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  );
+  const conversation = await box(
+    page.getByRole("article", { name: "Conversation", exact: true }),
+  );
+  const dock = await box(panel(page));
+  near(conversation.x - sidebar.x - sidebar.width, 8);
+  near(dock.x, conversation.x);
+  expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
+  expect(
+    await page
+      .getByRole("separator", { name: "Resize channel sidebar" })
+      .evaluate((element) => Number(getComputedStyle(element).zIndex)),
+  ).toBeLessThan(
+    await panel(page).evaluate((element) =>
+      Number(getComputedStyle(element.parentElement).zIndex),
+    ),
+  );
+});
+
 readingTest(
   "panel resizing preserves bottom follow and the visible reading anchor",
   async ({ page, app }) => {

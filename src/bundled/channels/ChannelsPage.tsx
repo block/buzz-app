@@ -1044,6 +1044,8 @@ function ChannelSidebarResizeHandle({
   width: number;
   setWidth(width: number): void;
 }) {
+  const handle = useRef<HTMLHRElement>(null);
+  const [renderedWidth, setRenderedWidth] = useState(width);
   const drag = useRef<
     { pointerId: number; startX: number; width: number } | undefined
   >(undefined);
@@ -1063,16 +1065,28 @@ function ChannelSidebarResizeHandle({
     document.documentElement.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
   }, [move]);
+  const measure = useCallback(() => {
+    const sidebar = handle.current?.previousElementSibling;
+    if (!(sidebar instanceof HTMLElement)) return;
+    const next = Math.round(sidebar.getBoundingClientRect().width);
+    setRenderedWidth((current) => (current === next ? current : next));
+  }, []);
+  useLayoutEffect(measure);
+  useEffect(() => {
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [measure]);
   useEffect(() => () => finish(), [finish]);
 
   return (
     <hr
+      ref={handle}
       className={styles.sidebarResizeHandle}
       aria-label="Resize channel sidebar"
       aria-orientation="vertical"
       aria-valuemin={CHANNEL_SIDEBAR_MIN_WIDTH}
       aria-valuemax={CHANNEL_SIDEBAR_MAX_WIDTH}
-      aria-valuenow={width}
+      aria-valuenow={Math.round(renderedWidth)}
       tabIndex={0}
       data-tooltip="Drag to resize · Double-click to reset"
       onDoubleClick={() => setWidth(CHANNEL_SIDEBAR_DEFAULT_WIDTH)}
@@ -1088,10 +1102,14 @@ function ChannelSidebarResizeHandle({
       onPointerDown={(event) => {
         if (event.button !== 0) return;
         event.preventDefault();
+        const sidebar = event.currentTarget.previousElementSibling;
         drag.current = {
           pointerId: event.pointerId,
           startX: event.clientX,
-          width,
+          width:
+            sidebar instanceof HTMLElement
+              ? sidebar.getBoundingClientRect().width
+              : renderedWidth,
         };
         window.addEventListener("pointermove", move);
         window.addEventListener("pointerup", finish, { once: true });

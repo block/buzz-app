@@ -26,6 +26,3 @@ The community dialog's standalone profile mode has no current production caller.
 Its profile step is reachable through the three-step Add a community preview.
 The backdrop is simplified context, not the full app shell. These previews do not
 replace browser regression coverage or native integration checks.
-
-[Review screenshots](../../../docs/reviews/dialog-polish/README.md) capture all
-12 default light-mode scenes, including the initial Add a community step.

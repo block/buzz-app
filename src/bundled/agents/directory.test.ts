@@ -147,6 +147,7 @@ it("suffixes equal names across profiles, without merging keys or suffixing uniq
       snapshot: () => library,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
   };
   for (const key of [a, b, c, d]) {
@@ -202,6 +203,7 @@ it("recomputes collisions for native edits, community scope, and profile fallbac
       snapshot: () => library,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
   };
   const provider = createAgentDirectory({
@@ -275,6 +277,7 @@ it("includes native-only identities but ignores other-community and unready nati
       snapshot: () => library,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
   };
   const provider = createAgentDirectory({

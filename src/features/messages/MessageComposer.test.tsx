@@ -1047,6 +1047,7 @@ it.each(
         snapshot: () => library,
         subscribe: () => () => {},
         refresh: async () => {},
+        retain: () => () => {},
       },
       workSessions: {
         addAgents,
@@ -1186,6 +1187,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       snapshot: () => library,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
   } as unknown as RelaySession;
   view.retarget({ session, sessionConversation: true });
@@ -1428,6 +1430,7 @@ it("keeps inline recipient identity and source stable through directory collisio
           };
         },
         refresh: async () => {},
+        retain: () => () => {},
       },
     },
     { snapshot: () => [provider], subscribe: () => () => {} },

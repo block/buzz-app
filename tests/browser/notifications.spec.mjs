@@ -403,9 +403,9 @@ test("an installed producer shares policy and OS click navigation, including aft
   await expect(
     page.getByRole("heading", { name: "Appearance", exact: true }),
   ).toBeVisible();
-  expect(
-    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
-  ).toBe("opened");
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
 });
 
 test("asynchronous browser display failure reaches Settings once without redelivery", async ({
@@ -416,9 +416,9 @@ test("asynchronous browser display failure reaches Settings once without redeliv
   liveMessage(app, "Browser display error");
   await expect.poll(() => systemCount(page)).toBe(1);
   await page.evaluate(() => window.notificationEvents[0].onerror?.());
-  await expect(page.getByRole("alert")).toHaveText(
-    "The browser could not display a notification.",
-  );
+  await expect(
+    page.getByRole("dialog", { name: "Notification failed", exact: true }),
+  ).toContainText("The browser could not display a notification.");
   expect(
     await page.evaluate(() => {
       const item = window.notificationEvents[0];

@@ -258,7 +258,10 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       ),
     ).toBe(true);
   }
-  const primary = page.getByRole("button", { name: "prominent", exact: true });
+  const primary = page.getByRole("button", {
+    name: "prominent lg",
+    exact: true,
+  });
   await primary.click();
   await expect(page.locator("html")).not.toHaveAttribute(
     "data-keyboard-navigation",
@@ -269,7 +272,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       : "Tab";
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle", exact: true }),
+    page.getByRole("button", { name: "subtle sm", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -281,7 +284,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
   );
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle", exact: true }),
+    page.getByRole("button", { name: "subtle sm", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -724,6 +727,183 @@ test("radios enabled after mount remain synchronized on native reset", async ({
   ).toEqual({ delivery: "all" });
 });
 
+// Real CSS geometry, loading colors, and input modality cannot be proved in jsdom.
+test("buttons and icon buttons share size geometry and preserve loading and disabled treatments", async ({
+  page,
+}) => {
+  for (const kind of ["button", "icon-button"]) {
+    await page.goto(`${viewer}#/design/components/${kind}`);
+    const samples = page.getByRole("region", {
+      name: kind === "button" ? "Button variants" : "Icon button variants",
+      exact: true,
+    });
+    await expect(samples).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    for (const mode of ["light", "dark"]) {
+      const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+      if (await toggle.count()) await toggle.click();
+      for (const [size, height, artwork] of [
+        ["sm", 32, 16],
+        ["md", 40, 24],
+        ["lg", 52, 24],
+      ] as const) {
+        const button = samples.getByRole("button", {
+          name: `prominent ${size}`,
+          exact: true,
+        });
+        await expect(button).toHaveCSS("height", `${height}px`);
+        await expect(button.locator("svg")).toHaveCSS("width", `${artwork}px`);
+        if (kind === "icon-button") {
+          await expect(button).toHaveCSS("width", `${height}px`);
+          await expect
+            .poll(() =>
+              button.evaluate(
+                (el) =>
+                  parseFloat(getComputedStyle(el).borderRadius) >=
+                  el.clientWidth / 2,
+              ),
+            )
+            .toBe(true);
+        } else {
+          await expect(button).toHaveCSS(
+            "padding-left",
+            size === "sm" ? "16px" : "24px",
+          );
+        }
+      }
+      const prominent = samples.getByRole("button", {
+        name: "prominent md",
+        exact: true,
+      });
+      // Theme switching uses real color transitions; resolve their endpoint
+      // before recording the resting colors used by the loading assertion.
+      const expected = await prominent.evaluate((el) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--text-inverse)";
+        probe.style.backgroundColor = "var(--affordance-prominent)";
+        el.append(probe);
+        const styles = getComputedStyle(probe);
+        const result = {
+          color: styles.color,
+          background: styles.backgroundColor,
+        };
+        probe.remove();
+        return result;
+      });
+      await expect(prominent).toHaveCSS("color", expected.color);
+      await expect(prominent).toHaveCSS(
+        "background-color",
+        expected.background,
+      );
+      const resting = await prominent.evaluate((el) => ({
+        width: el.getBoundingClientRect().width,
+        height: el.getBoundingClientRect().height,
+        color: getComputedStyle(el).color,
+        background: getComputedStyle(el).backgroundColor,
+      }));
+      await samples.getByRole("button", { name: "Show loading" }).click();
+      await expect(prominent).toHaveAttribute("aria-busy", "true");
+      await expect(prominent).toHaveCSS("color", resting.color);
+      await expect(prominent).toHaveCSS("background-color", resting.background);
+      const loading = await prominent.boundingBox();
+      expect(loading?.width).toBe(resting.width);
+      expect(loading?.height).toBe(resting.height);
+      await samples.getByRole("button", { name: "Show disabled" }).click();
+      await expect(prominent).toBeDisabled();
+      for (const variant of ["ghost", "outline", "link"]) {
+        const button = samples.getByRole("button", {
+          name: `${variant} md`,
+          exact: true,
+        });
+        await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      }
+      await expect(
+        samples.getByRole("button", { name: "outline md", exact: true }),
+      ).not.toHaveCSS("box-shadow", "none");
+      await samples.getByRole("button", { name: "Show enabled" }).click();
+      await expect(prominent).toBeEnabled();
+    }
+  }
+});
+
+test("button loading keeps focus and wrapping fits narrow enlarged layouts", async ({
+  page,
+  browserName,
+}) => {
+  await page.goto(`${viewer}#/design/components/button`);
+  const save = page.getByRole("button", { name: "Save changes", exact: true });
+  await save.focus();
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  await page.keyboard.press(`Shift+${tab}`);
+  await page.keyboard.press(tab);
+  await expect(save).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(save).toHaveAttribute("aria-busy", "true");
+  await expect(save).toBeFocused();
+  await expect(save).toHaveCSS("outline-style", "solid");
+  await page.keyboard.press("Enter");
+  await expect(save).toHaveAttribute("aria-busy", "true");
+  await page
+    .getByRole("button", { name: "Complete saving", exact: true })
+    .click();
+  await expect(save).not.toHaveAttribute("aria-busy", "true");
+  await save.click();
+  await expect(save).toHaveCSS("outline-style", "none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(save.locator(".buzz-button-spinner")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await page
+    .getByRole("button", { name: "Complete saving", exact: true })
+    .click();
+  const expanded = page.getByRole("button", {
+    name: "Show details",
+    exact: true,
+  });
+  await expanded.click();
+  await expect(expanded).toHaveAttribute("aria-expanded", "true");
+  await page.mouse.move(0, 0);
+  await expect(page.locator("#button-example-details")).toBeVisible();
+  await expect(expanded).toHaveCSS(
+    "background-color",
+    await expanded.evaluate((el) => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = "var(--affordance-subtle-pressed)";
+      el.append(probe);
+      const color = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return color;
+    }),
+  );
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    const long = page.getByRole("button", {
+      name: "Allow notifications for this workspace",
+      exact: true,
+    });
+    await expect
+      .poll(() => long.evaluate((el) => el.scrollWidth <= el.clientWidth))
+      .toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(() => {
+      document.documentElement.style.removeProperty("font-size");
+    });
+  }
+});
+
 test("dialog motion retains exit presence and respects immediate interaction paths", async ({
   page,
 }) => {
@@ -902,7 +1082,14 @@ test("shared menus stay reachable near viewport edges and above a dialog", async
         zIndex: "1",
       });
     });
-    await context.click({ button: "right", position: { x: 4, y: 4 } });
+    const contextBounds = await context.boundingBox();
+    if (!contextBounds)
+      throw new Error("Context trigger has no visible bounds");
+    // Stay near the viewport edge, inside the pill rather than its cut-out corner.
+    await context.click({
+      button: "right",
+      position: { x: contextBounds.width - 4, y: contextBounds.height / 2 },
+    });
     const popup = page.getByRole("menu");
     await expect(popup).toBeVisible();
     await expect(popup).toHaveCSS("transform", "none");
@@ -1074,4 +1261,131 @@ test("built Messages gallery renders isolated product states and follows viewer 
   await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
   expect(failures).toEqual([]);
   expect(sockets).toEqual([]);
+});
+
+// Real layout/focus coverage: a DOM emulator cannot prove portal stacking or scroll reachability.
+test("toast recovery stays reachable across themes, sizes, keyboard scrolling and modals", async ({
+  page,
+}, testInfo) => {
+  await page.goto(`${viewer}#/design/components/toast`);
+  const region = page.getByRole("region", { name: "App notifications" });
+  const recovery = page.getByRole("dialog", {
+    name: "Changes weren’t saved",
+    exact: true,
+  });
+  for (const mode of ["light", "dark"]) {
+    const theme = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await theme.count()) await theme.click();
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 844 });
+      await page
+        .getByRole("button", { name: "Show recovery", exact: true })
+        .focus();
+      await page.keyboard.press("Enter");
+      await expect(recovery).toBeInViewport();
+      await expect(
+        page.getByRole("button", { name: "Show recovery", exact: true }),
+      ).toBeFocused();
+      const box = await region.boundingBox();
+      if (!box) throw new Error("Toast viewport has no geometry");
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.y + box.height).toBeLessThan(844 - 160);
+      await page.keyboard.press("F6");
+      await expect(region).toBeFocused();
+      await page.keyboard.press("Tab");
+      await expect(recovery).toBeFocused();
+      await page.keyboard.press("Escape");
+      await expect(recovery).toBeVisible();
+      await page.keyboard.press("Tab");
+      await expect(
+        page.getByRole("button", { name: "Retry saving", exact: true }),
+      ).toBeFocused();
+      await page.screenshot({
+        path: testInfo.outputPath(`toast-${mode}-${width}.png`),
+      });
+      await page.keyboard.press("Enter");
+      await expect(recovery).toHaveCount(0);
+    }
+  }
+
+  await page.setViewportSize({ width: 480, height: 400 });
+  await page.evaluate(() =>
+    document.documentElement.style.setProperty("--type-scale", "1.2"),
+  );
+  await page
+    .getByRole("button", { name: "Show recovery", exact: true })
+    .click();
+  await page.keyboard.press("F6");
+  await page.keyboard.press("Tab");
+  await page.keyboard.press("Tab");
+  const shortRetry = page.getByRole("button", {
+    name: "Retry saving",
+    exact: true,
+  });
+  await expect(shortRetry).toBeFocused();
+  await shortRetry.click();
+  await expect(recovery).toHaveCount(0);
+  await page.evaluate(() =>
+    document.documentElement.style.removeProperty("--type-scale"),
+  );
+  await page.setViewportSize({ width: 1280, height: 844 });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.getByRole("button", { name: "Show recovery stack" }).click();
+  await expect(region.getByRole("dialog")).toHaveCount(6);
+  await expect(region.getByRole("dialog").first()).toHaveCSS(
+    "transition-duration",
+    "0s",
+  );
+  await page.keyboard.press("F6");
+  // Newest first, with no inert overflow entries: reach the oldest through real Tab scrolling.
+  for (let id = 6; id >= 1; id--) {
+    await page.keyboard.press("Tab");
+    await expect(
+      page.getByRole("dialog", { name: `Recovery ${id}`, exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Tab");
+    const resolve = page.getByRole("button", {
+      name: `Resolve ${id}`,
+      exact: true,
+    });
+    await expect(resolve).toBeFocused();
+    const actionBox = await resolve.boundingBox();
+    const viewportBox = await region.boundingBox();
+    if (!actionBox || !viewportBox)
+      throw new Error("Recovery action has no geometry");
+    expect(actionBox.y).toBeGreaterThanOrEqual(viewportBox.y);
+    expect(actionBox.y + actionBox.height).toBeLessThanOrEqual(
+      viewportBox.y + viewportBox.height,
+    );
+  }
+  expect(await region.evaluate((element) => element.scrollTop)).toBeGreaterThan(
+    0,
+  );
+  await page.keyboard.press("Enter");
+  await expect(
+    page.getByRole("dialog", { name: "Recovery 1", exact: true }),
+  ).toHaveCount(0);
+
+  await page.getByRole("button", { name: "Open example dialog" }).click();
+  const modal = page.getByRole("dialog", {
+    name: "Example dialog",
+    exact: true,
+  });
+  await expect(modal).toBeVisible();
+  await expect(region).toHaveCount(1); // Base UI keeps live regions announced during modals.
+  await page.keyboard.press("F6");
+  await expect
+    .poll(() =>
+      modal.evaluate((element) => element.contains(document.activeElement)),
+    )
+    .toBe(true);
+  await page.keyboard.press("Escape");
+  await expect(modal).toHaveCount(0);
+  await expect(region.getByRole("dialog")).toHaveCount(5);
+  await page
+    .getByRole("navigation", { name: "Design system" })
+    .getByRole("link", { name: "Button", exact: true })
+    .click();
+  await expect(region).toHaveCount(0); // Leaving the owner clears the stack.
 });

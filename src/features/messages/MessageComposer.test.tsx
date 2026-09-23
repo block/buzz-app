@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../../bundled/agents/directory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -21,12 +23,14 @@ import type {
   CompletionResult,
   InlineRenderer,
 } from "../conversation/contracts";
+import type { AgentLibrarySnapshot } from "../agents/library";
 import { AgentMentionContext } from "../agents/mention-context";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
+import type { Profile } from "../relay/contracts";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
@@ -115,18 +119,34 @@ function mount(
     reply: vi.fn<RelaySession["messages"]["reply"]>(() => "reply-id"),
   };
   const typing: ReturnType<RelaySession["typing"]["snapshot"]> = [];
-  const profiles = new Map();
-  const library = { status: "ready", identities: [], definitions: [] };
+  let profiles: ReadonlyMap<string, Profile> = new Map();
+  const profileListeners = new Set<() => void>();
+  const libraryListeners = new Set<() => void>();
+  let library: AgentLibrarySnapshot = {
+    status: "ready",
+    identities: [],
+    definitions: [],
+  };
   const session = {
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
     profiles: {
       snapshot: () => profiles,
-      subscribe: () => () => {},
+      subscribe(listener: () => void) {
+        profileListeners.add(listener);
+        return () => {
+          profileListeners.delete(listener);
+        };
+      },
       ensure: vi.fn(async () => {}),
     },
     agentLibrary: {
       snapshot: () => library,
+      subscribe(listener: () => void) {
+        libraryListeners.add(listener);
+        return () => libraryListeners.delete(listener);
+      },
+      refresh: vi.fn(async () => {}),
     },
     emoji: {
       snapshot: () => emoji,
@@ -221,6 +241,18 @@ function mount(
     retarget(next: Partial<MessageComposerProps>) {
       props = { ...props, ...next };
       view.rerender(tree());
+    },
+    setProfiles(next: ReadonlyMap<string, Profile>) {
+      act(() => {
+        profiles = next;
+        for (const listener of profileListeners) listener();
+      });
+    },
+    setLibrary(identities: AgentLibrarySnapshot["identities"]) {
+      act(() => {
+        library = { ...library, identities };
+        for (const listener of libraryListeners) listener();
+      });
     },
     setEmoji(entries: readonly CustomEmoji[]) {
       act(() => {
@@ -522,8 +554,10 @@ it.each([undefined, "root"])(
       }),
     ).toHaveLength(2);
     expect(
-      screen.queryByRole("region", { name: "Notification recipients" }),
-    ).not.toBeInTheDocument();
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(2);
     h.submit();
     expect(
       (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
@@ -538,6 +572,82 @@ it.each([undefined, "root"])(
     ).toEqual([]);
   },
 );
+
+it("restores live profile avatars with one removal control per exact recipient", async () => {
+  const h = mount();
+  const media = vi
+    .spyOn(h.session, "media")
+    .mockImplementation((url) =>
+      url ? `https://media.test/${url}` : undefined,
+    );
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+    h.commands().insertMention(second);
+  });
+  let region = screen.getByRole("region", {
+    name: "Explicit mentions",
+  });
+  const controls = within(region).getAllByRole("button");
+  expect(controls).toHaveLength(2);
+  expect(controls[1]).toHaveTextContent("H");
+  // Profiles can arrive after draft restoration; artwork must update without an edit.
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", picture: "person.png" }],
+      [second.pubkey, { name: "Honey", picture: "agent.png", isAgent: true }],
+    ]),
+  );
+  expect(controls[0]?.querySelector(".buzz-avatar")).toHaveAttribute(
+    "data-avatar-shape",
+    "circle",
+  );
+  expect(controls[1]?.querySelector(".buzz-avatar")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
+  expect(controls[1]?.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://media.test/agent.png",
+  );
+  expect(media).toHaveBeenCalledWith("agent.png", "small");
+  // Loaded-library hints update both artwork layers without another keystroke;
+  // clearing them removes only that fallback, not self-declared agent metadata.
+  for (const control of controls)
+    expect(control.querySelectorAll("[data-avatar-shape]")).toHaveLength(2);
+  for (const identities of [[first], []]) {
+    h.setLibrary(identities);
+    for (const [index, control] of controls.entries())
+      for (const artwork of control.querySelectorAll("[data-avatar-shape]"))
+        expect(artwork).toHaveAttribute(
+          "data-avatar-shape",
+          index === 1 || identities.length ? "squircle" : "circle",
+        );
+  }
+  expect(h.session.agentLibrary.refresh).not.toHaveBeenCalled();
+  h.retarget({ disabled: true });
+  for (const control of controls) expect(control).toBeDisabled();
+  h.retarget({ disabled: false, extensions: undefined });
+  // The optional picker does not own saved intent or its removal controls.
+  region = screen.getByRole("region", { name: "Explicit mentions" });
+  await h.user.click(
+    within(region).getByRole("button", {
+      name: `Remove mention Honey ${second.pubkey}`,
+    }),
+  );
+  expect(within(region).getAllByRole("button")).toHaveLength(1);
+  expect(h.input()).toHaveValue("@Honey @Honey @Honey ");
+  expect(h.input().querySelectorAll(".inline-chip")).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    "@Honey @Honey @Honey ",
+    [first.pubkey],
+  );
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+});
 
 // Explicit notification intent must remain visible even where Markdown previews are suppressed.
 it.each([
@@ -1045,6 +1155,7 @@ it.each(
         snapshot: () => library,
         subscribe: () => () => {},
         refresh: async () => {},
+        retain: () => () => {},
       },
       workSessions: {
         addAgents,
@@ -1098,9 +1209,13 @@ it.each(
   },
 );
 
-it.each([undefined, "root"])(
-  "resolves a sole session agent before calling shared send/reply, root=%s",
-  async (root) => {
+it.each(
+  [undefined, "root"].flatMap((root) =>
+    [false, true].map((removeMention) => ({ root, removeMention })),
+  ),
+)(
+  "resolves a sole session agent before send/reply: root=$root, removed=$removeMention",
+  async ({ root, removeMention }) => {
     const view = mount();
     const channel = {
       id: "channel",
@@ -1132,7 +1247,25 @@ it.each([undefined, "root"])(
       sessionConversation: true,
       ...(root ? { threadRootId: root } : {}),
     });
-    view.fill("Keep going");
+    view.fill("Keep going ");
+    if (removeMention) {
+      await view.user.click(
+        screen.getByRole("button", { name: "First Honey" }),
+      );
+      const remove = screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      });
+      await view.user.hover(remove);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Remove explicit mention of Honey (aaaaaaaa)",
+      );
+      await view.user.click(remove);
+      expect(view.input()).toHaveValue("Keep going @Honey ");
+      expect(view.input().querySelector(".inline-chip")).toBeNull();
+      expect(
+        screen.queryByRole("region", { name: "Explicit mentions" }),
+      ).not.toBeInTheDocument();
+    }
     view.submit();
     await waitFor(() =>
       expect(
@@ -1143,13 +1276,13 @@ it.each([undefined, "root"])(
       expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
         "channel",
         root,
-        "Keep going",
+        removeMention ? "Keep going @Honey " : "Keep going ",
         [first.pubkey],
       );
     else
       expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
         "channel",
-        "Keep going",
+        removeMention ? "Keep going @Honey " : "Keep going ",
         [first.pubkey],
       );
     expect(session.workSessions.addAgents).not.toHaveBeenCalled();
@@ -1184,6 +1317,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       snapshot: () => library,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
   } as unknown as RelaySession;
   view.retarget({ session, sessionConversation: true });
@@ -1211,6 +1345,24 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       expect.any(String),
       [first.pubkey],
     ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  // The remembered explicit mention still overrides the picker until removed.
+  expect(view.input()).toHaveValue("@Honey ");
+  await view.user.click(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  expect(view.input()).toHaveValue("@Honey ");
+  expect(view.input().querySelector(".inline-chip")).toBeNull();
+  view.submit();
+  await waitFor(() =>
+    expect(view.messages.send).toHaveBeenLastCalledWith("channel", "@Honey ", [
+      second.pubkey,
+    ]),
   );
   expect(session.workSessions.addAgents).not.toHaveBeenCalled();
 });
@@ -1314,6 +1466,15 @@ it.each([undefined, "root"])(
       second.pubkey,
     ]);
     expect(h.input()).toHaveValue("@Honey ");
+    const recipients = screen.getByRole("region", {
+      name: "Explicit mentions",
+    });
+    expect(within(recipients).getAllByRole("button")).toHaveLength(1);
+    expect(
+      within(recipients).getByRole("button", {
+        name: `Remove mention Honey ${second.pubkey}`,
+      }),
+    ).toBeVisible();
     expect(
       within(h.input()).getAllByRole("img", { name: "Agent Honey" }),
     ).toHaveLength(1);
@@ -1408,3 +1569,55 @@ it.each([
     expect(h.input()).toHaveAttribute("aria-disabled", "true");
   },
 );
+
+it("keeps inline recipient identity and source stable through directory collision changes", async () => {
+  const h = mount();
+  const listeners = new Set<() => void>();
+  let identities = [first, second];
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    {
+      profiles: h.session.profiles,
+      agentLibrary: {
+        snapshot: () => ({ status: "ready", definitions: [], identities }),
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+        refresh: async () => {},
+        retain: () => () => {},
+      },
+    },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  h.retarget({ session: { ...h.session, names } });
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
+  const chips = () => within(h.input()).getAllByRole("img");
+  const labels = () => chips().map((chip) => chip.textContent);
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  const source = h.input().value;
+  act(() => {
+    identities = [first, { ...second, name: "Renamed Honey" }];
+    for (const notify of listeners) notify();
+  });
+  // Selected chips disclose authored recipients, independently of live directory labels.
+  expect(names.resolve(second.pubkey)).toBe("Renamed Honey");
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  expect(h.input()).toHaveValue(source);
+  act(() => {
+    identities = [first, second];
+    for (const notify of listeners) notify();
+  });
+  expect(names.lookup(first.pubkey)?.qualifier).toBeTruthy();
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  h.input().setSelectionRange(7, 13);
+  act(() => h.commands().insertText(""));
+  expect(labels()).toEqual(["@Honey"]);
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  h.unmount();
+  names.dispose();
+});

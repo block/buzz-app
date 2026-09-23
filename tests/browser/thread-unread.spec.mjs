@@ -78,11 +78,16 @@ test("thread buttons show observed unread independently, clear only after readin
     "font-weight",
     "500",
   );
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Mark unread on this device", exact: true })
     .click();
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await expect(
     alpha.getByRole("img", { name: /Marked unread on this device only/ }),
   ).toBeAttached();
@@ -132,9 +137,9 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(first).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   const hover = await first.evaluate((el) => {
     const s = getComputedStyle(el);
-    return { border: s.borderTopColor, radius: s.borderTopLeftRadius };
+    return { border: s.borderTopWidth, radius: s.borderTopLeftRadius };
   });
-  expect(hover.border).toBe("rgba(0, 0, 0, 0)");
+  expect(hover.border).toBe("0px");
   expect(hover.radius).not.toBe("0px");
   await first.screenshot({
     path: testInfo.outputPath("thread-button-hover.png"),

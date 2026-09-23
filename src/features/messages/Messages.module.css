@@ -327,6 +327,47 @@ html[data-keyboard-navigation]
   letter-spacing: var(--text-caption--letter-spacing);
 }
 
+.composerLeadingTools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: var(--space-half);
+  border-radius: var(--radius-control);
+}
+.composerLeadingTools:empty {
+  display: none;
+}
+.composerLeadingTools:has(.mentionRecipients) {
+  padding-inline: var(--space-half);
+  background: var(--affordance-accent);
+}
+.mentionRecipients {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  max-width: 100%;
+  gap: var(--space-half);
+}
+.mentionRecipientArtwork {
+  display: grid;
+  position: relative;
+  overflow: hidden;
+}
+.mentionRecipientRemove {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--affordance-prominent);
+  color: var(--text-inverse);
+  opacity: 0;
+}
+.mentionRecipients
+  [data-mention-recipient]:not([data-disabled]):is(:hover, :focus-visible)
+  .mentionRecipientRemove {
+  opacity: 1;
+}
 .mediaAttachments {
   display: grid;
   justify-items: start;

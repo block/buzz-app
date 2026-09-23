@@ -3,9 +3,9 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import {
   ChatCircleIcon,
-  HashIcon,
   UsersIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { UnreadBadge } from "./UnreadBadge";
@@ -29,6 +29,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onSelect,
   onNewSession,
   onOpenThread,
+  onHideDm,
 }: {
   channel: ChannelSummary;
   session: RelaySession;
@@ -43,13 +44,14 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onSelect: (id: string) => void;
   onNewSession: (id: string) => void;
   onOpenThread: (channelId: string, rootId: string) => void;
+  onHideDm?: (id: string) => void;
 }) {
   const Icon =
     channel.channelType === "dm"
       ? (channel.participants?.length ?? 0) > 1
         ? UsersIcon
         : ChatCircleIcon
-      : HashIcon;
+      : channelIcon(channel);
   return (
     <ChannelSidebarRow
       channel={channel}
@@ -97,6 +99,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       onPrepare={(id) => session.channels.prepare?.(id)}
       onSelect={onSelect}
       onNewSession={onNewSession}
+      {...(onHideDm ? { onHideDm } : {})}
     />
   );
 });

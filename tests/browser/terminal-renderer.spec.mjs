@@ -3,7 +3,7 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
-test("real xterm retains output across detach, handles input and resize, and releases app shortcut", async ({
+test("real xterm retains output across detach, handles input and resize, and does not reserve absent shortcuts", async ({
   page,
 }) => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
@@ -191,21 +191,10 @@ test("real xterm retains output across detach, handles input and resize, and rel
       .poll(() => xterm.evaluate((el) => getComputedStyle(el).backgroundColor))
       .toBe(lightBackground);
     await page.locator(".xterm-helper-textarea").focus();
-    const before = await input.textContent();
-    const modifier = (await page.evaluate(() =>
-      /Mac|iPhone|iPad/.test(navigator.platform),
-    ))
-      ? "Meta"
-      : "Control";
-    await page.evaluate(() => {
-      window.terminalChord = false;
-      window.addEventListener("keydown", (e) => {
-        if (e.key === "j") window.terminalChord = !e.defaultPrevented;
-      });
-    });
-    await page.keyboard.press(`${modifier}+j`);
-    expect(await page.evaluate(() => window.terminalChord)).toBe(true);
-    await expect(input).toHaveText(before);
+    // With no dispatcher/registration, even the old toggle chord belongs to
+    // the terminal. The plugin/dispatcher handoff is covered below.
+    await page.keyboard.press("Control+j");
+    await expect(input).toHaveText('"hello\\u0003\\n"');
     // Fresh dark startup, bounded static splash (including reduced motion).
     await page.emulateMedia({ reducedMotion: "reduce" });
     await page.reload();
@@ -296,11 +285,12 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expectToken(launcher, "background-color", "--purple-3");
     const restart = button("Restart");
     await expect(restart).toHaveClass("buzz-button");
-    await expect(restart).toHaveCSS("border-top-width", "1px");
+    await expect(restart).toHaveCSS("border-top-width", "0px");
     const hide = button("Hide terminal");
     // Pointer focus is quiet; keyboard navigation paints the actual control.
     await button("Enlarge text").click();
-    await expect(restart).toHaveCSS("font-size", "24px");
+    // The shared small-button label role is 14px, scaled to 150%.
+    await expect(restart).toHaveCSS("font-size", "21px");
     // Keep the operation pending while its disabled color finishes animating.
     // A short fixture delay can expire between Playwright's assertion samples.
     await page.evaluate(() => window.terminalPanel.holdClose());
@@ -548,6 +538,124 @@ test("real xterm replies survive scope switches while stale input and retired wr
       if (operation === "end")
         await page.evaluate(() => window.terminalSession.dispose());
     }
+    expect(errors).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
+// Browser-only: real xterm's capture-phase handler can write PTY bytes and stop
+// propagation. Exercise the actual bundled registration, store and dispatcher.
+test("focused terminal follows rebind, restore and reset without swallowing the chord or writing it to the shell", async ({
+  page,
+}) => {
+  // Force the non-Apple mapping even on macOS: Ctrl+U is xterm's line kill.
+  await page.addInitScript(() =>
+    Object.defineProperty(navigator, "platform", {
+      value: "Linux x86_64",
+      configurable: true,
+    }),
+  );
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/terminal-panel.html`,
+    );
+    const launcher = page.getByRole("button", {
+      name: "Toggle channel terminal",
+      exact: true,
+    });
+    const drawer = page.getByRole("region", { name: "Terminal drawer" });
+    const textarea = drawer.locator(".xterm-helper-textarea");
+    const settings = page.getByRole("button", {
+      name: "Shortcut settings",
+      exact: true,
+    });
+    const row = page.getByRole("article", {
+      name: "Toggle channel terminal",
+      exact: true,
+    });
+    await settings.click();
+    await row
+      .getByRole("button", {
+        name: "Change shortcut for Toggle channel terminal",
+        exact: true,
+      })
+      .click();
+    await page.keyboard.press("Control+u");
+    await expect(row.getByText("Modified")).toBeVisible();
+    await launcher.click();
+    await expect(drawer.locator(".xterm-rows")).toContainText(
+      "FIXTURE_SHELL_READY",
+    );
+    await page.evaluate(() => {
+      window.retainedTerminal = document.querySelector(".xterm");
+    });
+    await expect(textarea).toBeFocused();
+    await page.keyboard.type("hello");
+    await page.keyboard.press("Control+c");
+    await expect
+      .poll(() => page.evaluate(() => window.terminalPanel.written()))
+      .toBe("hello\u0003");
+    const toggles = await page.evaluate(() => window.terminalPanel.toggles());
+    await page.keyboard.press("Control+u");
+    await expect(drawer).toHaveCount(0);
+    expect(await page.evaluate(() => window.terminalPanel.toggles())).toBe(
+      toggles + 1,
+    );
+    expect(await page.evaluate(() => window.terminalPanel.written())).toBe(
+      "hello\u0003",
+    );
+    await launcher.click();
+    await expect(textarea).toBeFocused();
+    expect(
+      await page.evaluate(
+        () => window.retainedTerminal === document.querySelector(".xterm"),
+      ),
+    ).toBe(true);
+    await page.keyboard.press("Control+j"); // Old binding now reaches the shell.
+    await expect
+      .poll(() => page.evaluate(() => window.terminalPanel.written()))
+      .toBe("hello\u0003\n");
+    await row
+      .getByRole("button", {
+        name: "Reset shortcut for Toggle channel terminal",
+        exact: true,
+      })
+      .click();
+    await textarea.focus();
+    await page.keyboard.press("Control+u"); // Reset releases Ctrl+U again.
+    await expect
+      .poll(() => page.evaluate(() => window.terminalPanel.written()))
+      .toBe("hello\u0003\n\u0015");
+    await page.keyboard.press("Control+j");
+    await expect(drawer).toHaveCount(0);
+    // Restore from device storage; modified Enter would otherwise write CR.
+    await row
+      .getByRole("button", {
+        name: "Change shortcut for Toggle channel terminal",
+        exact: true,
+      })
+      .click();
+    await page.keyboard.press("Control+Enter");
+    await expect(row.getByRole("alert")).toContainText("Saved");
+    await page.reload();
+    await launcher.click();
+    await expect(textarea).toBeFocused();
+    await page.keyboard.press("Control+Enter");
+    await expect(drawer).toHaveCount(0);
+    expect(await page.evaluate(() => window.terminalPanel.toggles())).toBe(2);
+    expect(await page.evaluate(() => window.terminalPanel.written())).toBe("");
+    await page.evaluate(() => window.terminalPanel.dispose());
     expect(errors).toEqual([]);
   } finally {
     await server.close();

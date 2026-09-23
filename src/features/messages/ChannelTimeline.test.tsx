@@ -794,12 +794,21 @@ it.each([false, true])(
     h.unmount();
   },
 );
-it("late measurements do not convert reading-anchor restoration to bottom follow", () => {
+it("late measurements restore the reading anchor instead of converting it to bottom follow", () => {
   const h = setup({ mounted: [{ id: "last", y: 42 }] });
   h.scroll();
   h.element.clientWidth = 650;
   h.resize();
   h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "start",
+    offset: -42,
+  });
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows(false);
+  h.gesture();
+  h.flush();
   h.measureRows();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
   h.unmount();

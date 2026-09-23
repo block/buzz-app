@@ -1,12 +1,13 @@
 import { expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { TableIcon } from "../../shared/design-system/icons/index";
+import { LockIcon, TableIcon } from "../../shared/design-system/icons/index";
 import styles from "../../shared/InlineReference.module.css";
 import { targetLink } from "../../features/navigation/targets";
 import { InlineLink, LinkLabel, linkKind } from "./InlineLink";
 import {
   LinkLabelContext,
   LinkContentContext,
+  LinkChannelPrivateContext,
 } from "../../features/conversation/LinkLabelContext";
 
 it("identifies exact GitHub hosts, ordinary websites, and valid Buzz locators", () => {
@@ -44,6 +45,18 @@ it.each([
   expect(html).toContain(`data-link-kind="${kind}"`);
   expect(html.replace(/<[^>]+>/g, "")).toBe(label);
   expect(html).toContain('href="buzz://');
+});
+
+it("renders private channel links with the design-system lock icon", () => {
+  const markup = renderToStaticMarkup(
+    <LinkChannelPrivateContext value>
+      <InlineLink href="buzz://channel/private">#private</InlineLink>
+    </LinkChannelPrivateContext>,
+  );
+  expect(markup).toContain(
+    renderToStaticMarkup(<LockIcon className={styles.icon} />),
+  );
+  expect(markup.replace(/<[^>]+>/g, "")).toBe("private");
 });
 
 it.each([

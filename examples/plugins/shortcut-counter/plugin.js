@@ -12,6 +12,8 @@ export function apply(ctx) {
     id: "increment",
     title: "Increment shortcut counter",
     binding: { key: "k", mod: true, shift: true },
+    // Settings order within the Shortcut counter category.
+    order: 10,
     run: increment,
   });
   ctx.pages.register({

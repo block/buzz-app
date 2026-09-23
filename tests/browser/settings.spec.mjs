@@ -229,6 +229,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
       sections.getByRole("button", { name: "Appearance", exact: true }),
     ).toBeFocused();
     await tab();
+    await expect(
+      sections.getByRole("button", { name: "Shortcuts", exact: true }),
+    ).toBeFocused();
+    await tab();
     await expect(messages).toBeFocused();
     await tab();
     await expect(

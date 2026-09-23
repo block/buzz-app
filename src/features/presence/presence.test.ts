@@ -110,6 +110,31 @@ it("fences remove/re-add, hide and cache invalidation while a snapshot is held",
   expect(h.owner.status(key(3))).toBe("unknown");
   h.owner.dispose();
 });
+it.each([false, true])(
+  "keeps the five-second start gate across remount (timeline retained: %s)",
+  async (retainTimeline) => {
+    const h = setup();
+    try {
+      if (retainTimeline) h.owner.subscribe(key(2), () => {});
+      const remove = h.owner.subscribe(key(3), () => {});
+      await vi.advanceTimersByTimeAsync(100);
+      expect(h.read).toHaveBeenCalledOnce();
+      expect(h.owner.status(key(3))).toBe("online");
+      remove();
+      h.owner.subscribe(key(3), () => {});
+      expect(h.owner.status(key(3))).toBe("unknown");
+      await vi.advanceTimersByTimeAsync(4999);
+      expect(h.read).toHaveBeenCalledOnce();
+      expect(h.owner.status(key(3))).toBe("unknown");
+      await vi.advanceTimersByTimeAsync(1);
+      expect(h.read).toHaveBeenCalledTimes(2);
+      expect(h.owner.status(key(3))).toBe("online");
+    } finally {
+      h.owner.dispose();
+    }
+  },
+);
+
 it("local skips expire evidence; network failures enforce a minute delay even for new demand", async () => {
   const h = setup();
   h.owner.subscribe(key(3), () => {});

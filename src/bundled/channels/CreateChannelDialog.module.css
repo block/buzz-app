@@ -1,0 +1,45 @@
+.form {
+  display: grid;
+  gap: var(--space-5);
+}
+
+.descriptionAction {
+  justify-self: start;
+  margin-block-start: calc(-1 * var(--space-3));
+}
+
+.descriptionAction [data-buzz-ui] {
+  min-height: auto;
+  border-radius: 0;
+  padding: 0;
+  color: var(--text-standard);
+}
+
+.descriptionAction [data-buzz-ui]:hover:not([data-disabled]) {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.form [data-create-channel-name]::placeholder {
+  color: var(--text-tertiary);
+}
+
+.privateAction {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.privateAction label {
+  cursor: pointer;
+}
+
+.privateAction:has([data-disabled]) label {
+  color: var(--text-unavailable);
+  cursor: not-allowed;
+}
+
+.error {
+  margin: 0;
+  color: var(--text-danger);
+}

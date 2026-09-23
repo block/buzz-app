@@ -8,7 +8,7 @@
   background: transparent;
   transition:
     color var(--duration-state) var(--easing-state),
-    background-color var(--duration-state) var(--easing-state);
+    background-color 90ms cubic-bezier(0.23, 1, 0.32, 1);
 }
 .row:hover:not([data-selected]) {
   background: var(--affordance-subtle);
@@ -27,12 +27,31 @@
   opacity: 0;
   pointer-events: none;
   flex-shrink: 0;
-  margin-right: var(--space-chip-inset);
+  transition: opacity 90ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.row .remove {
+  position: absolute;
+  inset-block: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: calc(var(--size-row) + var(--space-control-inset));
+  border-radius: inherit;
+  background-color: inherit;
 }
 .row:is(:hover, :has(:focus-visible)) .more,
 .row .more:has([data-popup-open]) {
   opacity: 1;
   pointer-events: auto;
+}
+.row .remove [data-icon-variant] {
+  color: var(--text-subtle);
+  transition-duration: 90ms;
+}
+.row .remove [data-icon-variant]:is(:hover, :focus-visible) {
+  color: var(--text-standard);
 }
 .iconSpace {
   width: 17px;
@@ -92,4 +111,8 @@
 .childLabel > [data-channel-unread-title="true"] {
   color: var(--text-standard);
   font-weight: var(--type-weight-medium);
+}
+
+.sessions.sessions [data-buzz-ui][data-variant="row"] {
+  border-radius: var(--radius-pill);
 }

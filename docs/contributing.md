@@ -47,6 +47,14 @@ need their own validation.
 - `just web [args...]`: install locked dependencies and forward arguments to Vite,
   e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
   (default: 1430) or the next available port, allowing parallel browser development.
+  Use `just web profile` for opt-in Chromium and broker CPU profiles. Profiling
+  binds only `127.0.0.1`; wildcard, hostname, and IPv6 `--host` values are rejected
+  so the captured page and development broker have one unambiguous owner. Use
+  `just web profile --network` to additionally record sanitized browser network
+  metadata in `network.json`; payloads, cookies, authorization headers, query strings,
+  fragments, and WebSocket frame data are omitted. Press Ctrl+C to finalize the
+  capture; the command prints the `.profiles/...-web` output directory. Load
+  `.cpuprofile` files in Chromium DevTools (**Performance** > **Load profile**).
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
@@ -61,6 +69,13 @@ need their own validation.
   implicit runner arguments. Explicit `--config` arguments merge afterward and can
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
+  On macOS, `just desktop profile` uses Instruments' Time Profiler to launch and
+  record only the Buzz native parent process, not every process on the desktop.
+  WebKit subprocesses and the Vite broker are outside this native trace; use web
+  profiling when renderer/broker CPU coverage is required. Native file watching is
+  disabled during capture. Press Ctrl+C to finalize and validate the trace; the
+  path, which opens in Instruments. Use `just profile-clean` to remove all generated
+  web and desktop captures.
 - `just design [args...]`: install locked dependencies, start the standalone
   design-system viewer, and open it in your browser. Arguments pass through to
   Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port
@@ -70,6 +85,10 @@ need their own validation.
   in `.env.local` and restart the server. Only `0` pauses alerts and permission
   requests; removing the setting restores normal behavior. Saved preferences are
   untouched and production builds ignore the variable.
+- To open the default relay's community on a fresh dev port, set
+  `BUZZ_DEV_OPEN_RELAY=1` alongside `BUZZ_RELAY_URL` in `.env.local` and restart
+  the server. Only `1` enables it; a viewer's existing saved choice on that port,
+  including Personal space, wins. Production builds ignore the variable.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe
@@ -252,6 +271,11 @@ configuration/dependencies and hook-runner changes select this job; a missing ba
 runs it conservatively. Its selection is independent of the unit-test skip, so
 CSS-only and viewer-only errors still block a push. Documentation-only and
 native-only pushes skip both jobs. Both selected jobs must pass.
+On a busy machine, set `BUZZ_TEST_WORKERS=2 git push` to limit Vitest worker
+concurrency in the hook. The optional value must be a positive integer; leaving
+it unset preserves Vitest's default. This also applies to direct Vitest runs and
+does not change test selection, timeouts, assertions, or retries.
+
 Neither job fetches, installs dependencies, formats, builds Rust, or starts browsers.
 The design job disables pnpm dependency auto-repair. Install dependencies when
 switching branches, not during a push.

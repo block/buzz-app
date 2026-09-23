@@ -13,6 +13,7 @@
       "!!.hermit",
       "!!dist",
       "!!dist-author",
+      "!!.profiles",
       "!!src-tauri/target",
       "!!src-tauri/gen",
       "!!target",

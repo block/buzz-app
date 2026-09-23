@@ -153,6 +153,10 @@ export class DiscoveryState {
     const event = this.metadata.get(id);
     return !!event && event.tags.some((entry) => entry[0] === "hidden");
   }
+  isPrivate(id: string): boolean {
+    const event = this.metadata.get(id);
+    return !!event && event.tags.some(([name]) => name === "private");
+  }
   isSession(id: string): boolean {
     const event = this.metadata.get(id);
     return (
@@ -191,6 +195,7 @@ export class DiscoveryState {
         ].sort(),
       ),
       ...(this.hidden(id) ? { hidden: true } : {}),
+      ...(this.isPrivate(id) ? { private: true } : {}),
       ...(channelType ? { channelType } : {}),
       ...(channelType === "session" && event
         ? {

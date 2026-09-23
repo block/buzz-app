@@ -1,0 +1,19 @@
+/* DESIGN PASS PENDING: provisional black-and-white UI; not yet part of the design system. */
+.combo,
+.keys {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+}
+.key {
+  display: inline-flex;
+  min-width: var(--space-6);
+  height: var(--space-6);
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-chip);
+  padding: 0 var(--space-chip-inset);
+  background: var(--surface-inset);
+  color: var(--text-standard);
+}

@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { expectPhosphor } from "./phosphor.mjs";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 test.use({
   largeSidebar: true,
@@ -188,17 +189,23 @@ sessionSidebar(
     const regular = page.locator('[data-channel-id="beta"]');
     const disclosure = page.getByRole("button", { name: /sessions in/ });
     const x = async (locator) => (await locator.boundingBox())?.x;
+    const centerX = async (locator) => {
+      const bounds = await locator.boundingBox();
+      if (!bounds) throw new Error("Sidebar icon has no visible bounds");
+      return bounds.x + bounds.width / 2;
+    };
     const label = (row) => row.locator(".navigation-item-label");
 
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(regular).toBeVisible();
-    const regularIconX = await x(regular.locator("svg").first());
-    const parentIconX = await x(disclosure.locator("svg:visible"));
+    await expectPhosphor(regular.locator("svg").first(), "hash");
+    const regularIconX = await centerX(regular.locator("svg").first());
+    const parentIconX = await centerX(disclosure.locator("svg:visible"));
     expect(parentIconX).toBeCloseTo(regularIconX, 0);
 
     await parent.hover();
-    const chevronX = await x(disclosure.locator("svg:visible"));
+    const chevronX = await centerX(disclosure.locator("svg:visible"));
     expect(chevronX).toBeCloseTo(regularIconX, 0);
     expect(await x(label(parent))).toBeCloseTo(await x(label(regular)), 0);
     expect(await x(label(child))).toBeCloseTo(await x(label(regular)), 0);
@@ -207,6 +214,15 @@ sessionSidebar(
       "xpath=ancestor::*[@data-channel-sidebar-row]",
     );
     const more = page.getByRole("button", { name: /More options for/ }).first();
+    await expect(more).toHaveAttribute("data-icon-shape", "round");
+    const [parentSurfaceBox, moreBox] = await Promise.all([
+      parentSurface.boundingBox(),
+      more.boundingBox(),
+    ]);
+    expect(parentSurfaceBox.x + parentSurfaceBox.width).toBeCloseTo(
+      moreBox.x + moreBox.width,
+      0,
+    );
     expect(
       await more.evaluate(
         (action, row) => row.contains(action),
@@ -227,6 +243,115 @@ sessionSidebar(
     const draft = page.getByRole("button", { name: /New session draft in/ });
     await expect(draft).toBeVisible();
     expect(await x(label(draft))).toBeCloseTo(await x(label(regular)), 0);
+
+    await child.click();
+    await expectPhosphor(
+      page
+        .getByRole("article", { name: "Conversation" })
+        .locator(".panel-header-title > svg"),
+      "lock",
+    );
+  },
+);
+
+sessionSidebar(
+  "session rows use pill hovers and Channels opens the shared creation dialog",
+  async ({ page, app }) => {
+    await page.goto(app.origin);
+    await button(page, "Messages").first().click();
+    const child = page.locator('[data-channel-id="alpha"]');
+    await expect(child).toBeVisible();
+    await child.hover();
+    await expect(child).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+
+    const channels = page
+      .getByRole("navigation", { name: "Subscribed channels" })
+      .locator("details")
+      .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
+    const summary = channels.locator("summary");
+    const create = page.getByRole("button", { name: "Create channel" });
+    const createContainer = create.locator("..");
+    await expect(createContainer).toHaveCSS("opacity", "0");
+    await summary.hover();
+    await expect(createContainer).toHaveCSS("opacity", "1");
+    await expect(create).toHaveAttribute("data-icon-shape", "round");
+    const [summaryBox, createBox] = await Promise.all([
+      summary.boundingBox(),
+      create.boundingBox(),
+    ]);
+    expect(summaryBox.x + summaryBox.width).toBeCloseTo(
+      createBox.x + createBox.width,
+      0,
+    );
+    await create.click();
+
+    const dialog = page.getByRole("dialog", { name: "Create a channel" });
+    await expect(dialog).toBeVisible();
+    await expect(dialog.getByRole("textbox", { name: "Name" })).toBeFocused();
+    await expect(dialog.getByRole("radio", { name: /Ongoing/ })).toBeChecked();
+    await expect(
+      dialog.getByRole("switch", { name: "Private" }),
+    ).not.toBeChecked();
+    await expect(
+      dialog.getByRole("textbox", { name: "Description" }),
+    ).toHaveCount(0);
+    const addDescription = dialog.getByRole("button", {
+      name: "Add a description",
+    });
+    const formTypography = await Promise.all(
+      [
+        addDescription,
+        dialog.getByText("Name", { exact: true }),
+        dialog.getByText("Private", { exact: true }),
+        dialog.getByText("Ongoing", { exact: true }),
+      ].map((element) =>
+        element.evaluate((node) => {
+          const style = getComputedStyle(node);
+          return { color: style.color, fontSize: style.fontSize };
+        }),
+      ),
+    );
+    const placeholderColor = await dialog
+      .getByRole("textbox", { name: "Name" })
+      .evaluate((node) => getComputedStyle(node, "::placeholder").color);
+    const tertiaryColor = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--text-tertiary)";
+      document.body.append(probe);
+      const color = getComputedStyle(probe).color;
+      probe.remove();
+      return color;
+    });
+    expect(formTypography[0].color).toBe(formTypography[1].color);
+    expect(placeholderColor).toBe(tertiaryColor);
+    expect(formTypography[2].fontSize).toBe(formTypography[3].fontSize);
+    await expect(addDescription).toHaveCSS("border-radius", "0px");
+    await addDescription.hover();
+    await expect(addDescription).toHaveCSS("text-decoration-line", "underline");
+    await expect(addDescription).toHaveCSS(
+      "background-color",
+      "rgba(0, 0, 0, 0)",
+    );
+    await addDescription.click();
+    await expect(
+      dialog.getByRole("textbox", { name: "Description" }),
+    ).toBeFocused();
+    await dialog.getByRole("radio", { name: /Temporary/ }).click();
+    await expect(
+      dialog.getByRole("radio", { name: /Temporary/ }),
+    ).toBeChecked();
+    await dialog.getByRole("switch", { name: "Private" }).click();
+    await expect(dialog.getByRole("switch", { name: "Private" })).toBeChecked();
+    await expect(dialog.getByRole("button", { name: "Cancel" })).toHaveCount(0);
+    await dialog
+      .getByRole("button", { name: "Close channel creation" })
+      .click();
+    await expect(dialog).toHaveCount(0);
+    await expect(create).toBeFocused();
+    await page
+      .getByRole("article", { name: "Conversation" })
+      .hover({ position: { x: 20, y: 20 } });
+    await expect(createContainer).toHaveCSS("opacity", "0");
   },
 );
 

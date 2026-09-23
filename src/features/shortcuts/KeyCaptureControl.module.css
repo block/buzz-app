@@ -1,0 +1,6 @@
+/* DESIGN PASS PENDING: provisional capture composition; Input owns its appearance. */
+.listening {
+  width: var(--size-navigator);
+  max-width: 100%;
+  min-width: 0;
+}

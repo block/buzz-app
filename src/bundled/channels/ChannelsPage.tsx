@@ -3,6 +3,8 @@ import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { CreateSidebarSection } from "./CreateSidebarSection";
+import { SidebarGroupIcon } from "./SidebarGroupIcon";
 import { useChannelPanels } from "./useChannelPanels";
 import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import type { PageNavigation } from "../../features/navigation/service";
@@ -68,7 +70,6 @@ import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
 import { useHiddenDms } from "./useHiddenDms";
-import { SidebarSectionIcon } from "./SidebarSectionIcon";
 import {
   CreateChannelDialog,
   type CreateChannelInput,
@@ -79,6 +80,7 @@ import {
   CHANNEL_SIDEBAR_MIN_WIDTH,
   useSidebarView,
 } from "./useSidebarView";
+import { useSidebarStartup } from "./useSidebarStartup";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -223,9 +225,7 @@ function ChannelWorkspace({
   useEffect(() => {
     void queries.emoji.ensure();
   }, [queries]);
-  useEffect(() => {
-    if (list.status === "ready") void queries.unread.ensure();
-  }, [queries, list.status]);
+  const startup = useSidebarStartup(queries, list, preferences);
   const available = useSyncExternalStore(
     panels.subscribe,
     panels.snapshot,
@@ -290,28 +290,19 @@ function ChannelWorkspace({
   );
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sectionMenu, setSectionMenu] = useState<{ key: string }>();
-  const [sortWrite, setSortWrite] = useState<{ key: string; error?: string }>();
-  const sortIntent = useRef(0);
   const [rowMenu, setRowMenu] = useState<{
     channel: ChannelSummary;
     sectionId?: string;
     anchor?: HTMLElement;
   }>();
-  const rowMenuGeneration = useRef(0);
-  const [groupWrite, setGroupWrite] = useState<{
-    channelId: string;
-    pending: boolean;
-    error?: string;
-  }>();
+  const pendingCreate = useRef<ChannelSummary | undefined>(undefined);
+  const [creatingFor, setCreatingFor] = useState<ChannelSummary>();
   const [rowFocus, setRowFocus] = useState<{
     channelId: string;
     sectionKey: string;
   }>();
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const sidebar = useSidebarView(
-    scope,
-    list.status === "ready" && preferences.status !== "loading",
-  );
+  const sidebar = useSidebarView(scope, startup.ready);
   const channels = useChannelLabels(
     list.channels,
     queries.profiles,
@@ -842,33 +833,24 @@ function ChannelWorkspace({
     preferences.data,
     hiddenDms.hiddenIds,
   );
-  const closeSectionMenu = useCallback(() => {
-    sortIntent.current++;
-    setSectionMenu(undefined);
-    setSortWrite(undefined);
-  }, []);
-  const setSectionSort = async (key: string, mode: "alpha" | "recent") => {
-    const intent = ++sortIntent.current;
-    setSortWrite({ key });
-    try {
-      await preferences.setSort(
+  const sections = sidebarSections(
+    startup.ready ? visible : [],
+    preferences.data,
+  );
+  const closeSectionMenu = useCallback(() => setSectionMenu(undefined), []);
+  const setSectionSort = (key: string, mode: "alpha" | "recent") => {
+    // The session applies the choice immediately and owns rollback/retry state.
+    void preferences
+      .setSort(
         key.startsWith("group:") ? `section:${key.slice(6)}` : key,
         mode,
         preferences.data?.sections.map((section) => section.id) ?? [],
-      );
-      if (sortIntent.current === intent) closeSectionMenu();
-    } catch (error) {
-      if (sortIntent.current !== intent) return;
-      setSortWrite({
-        key,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+      )
+      .catch(() => {});
+    closeSectionMenu();
   };
   const closeRowMenu = useCallback(() => {
-    rowMenuGeneration.current++;
     setRowMenu(undefined);
-    setGroupWrite(undefined);
   }, []);
   useLayoutEffect(() => {
     if (!rowFocus) return;
@@ -883,8 +865,6 @@ function ChannelWorkspace({
   }, [rowFocus, sidebar.list]);
   const openRowMenu = useCallback(
     (channel: ChannelSummary, sectionId?: string, anchor?: HTMLElement) => {
-      rowMenuGeneration.current++;
-      setGroupWrite(undefined);
       setRowMenu({
         channel,
         ...(sectionId ? { sectionId } : {}),
@@ -893,44 +873,38 @@ function ChannelWorkspace({
     },
     [],
   );
-  const assignGroup = async (channelId: string, sectionId?: string) => {
-    const generation = rowMenuGeneration.current;
-    setGroupWrite({ channelId, pending: true });
-    try {
-      await preferences.assign(channelId, sectionId);
-      if (generation !== rowMenuGeneration.current) return;
-      const sectionKey = sectionId ? `group:${sectionId}` : "channels";
-      sidebar.toggle(sectionKey, true);
-      setRowFocus({ channelId, sectionKey });
-      closeRowMenu();
-    } catch (error) {
-      if (generation !== rowMenuGeneration.current) return;
-      setGroupWrite({
-        channelId,
-        pending: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  const focusChannelPlacement = (channelId: string) => {
+    const data = queries.sidebarPreferences.snapshot().data;
+    const sectionId = data?.assignments[channelId];
+    const sectionKey = data?.starred.includes(channelId)
+      ? "starred"
+      : sectionId
+        ? `group:${sectionId}`
+        : "channels";
+    sidebar.toggle(sectionKey, true);
+    setRowFocus({ channelId, sectionKey });
   };
-  const setChannelStar = async (channelId: string, starred: boolean) => {
-    const generation = rowMenuGeneration.current;
-    setGroupWrite({ channelId, pending: true });
-    try {
-      await preferences.setStar(channelId, starred);
-      if (generation !== rowMenuGeneration.current) return;
-      const sectionKey = starred ? "starred" : "channels";
-      sidebar.toggle(sectionKey, true);
-      setRowFocus({ channelId, sectionKey });
-      closeRowMenu();
-    } catch (error) {
-      if (generation !== rowMenuGeneration.current) return;
-      setGroupWrite({
-        channelId,
-        pending: false,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
+  const moveChannel = (
+    channelId: string,
+    operation: () => Promise<unknown>,
+  ) => {
+    const saving = operation(); // Publishes optimistic placement synchronously.
+    closeRowMenu();
+    focusChannelPlacement(channelId);
+    void saving.catch(() => {
+      // The session exposes retry even after page/menu unmount. Restore a row
+      // focus lost to rollback, but never steal focus from another control.
+      if (
+        sidebar.list.current?.isConnected &&
+        document.activeElement === document.body
+      )
+        focusChannelPlacement(channelId);
+    });
   };
+  const assignGroup = (channelId: string, sectionId?: string) =>
+    moveChannel(channelId, () => preferences.assign(channelId, sectionId));
+  const setChannelStar = (channelId: string, starred: boolean) =>
+    moveChannel(channelId, () => preferences.setStar(channelId, starred));
   return (
     <div
       className={`${styles.board} ${showingSettings || panel || showingThread || companion ? styles.withPanel : ""}`}
@@ -940,6 +914,21 @@ function ChannelWorkspace({
         } as CSSProperties
       }
     >
+      {creatingFor && (
+        <CreateSidebarSection
+          channelName={creatingFor.name}
+          create={(section) => {
+            moveChannel(creatingFor.id, () =>
+              preferences.createAndAssign(creatingFor.id, section),
+            );
+            setCreatingFor(undefined);
+          }}
+          close={() => {
+            focusChannelPlacement(creatingFor.id);
+            setCreatingFor(undefined);
+          }}
+        />
+      )}
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
           <SidebarUnread listRef={sidebar.list}>
@@ -968,7 +957,7 @@ function ChannelWorkspace({
                       aria-hidden="true"
                     />
                     {section.icon && (
-                      <SidebarSectionIcon
+                      <SidebarGroupIcon
                         icon={section.icon}
                         session={queries}
                       />
@@ -1036,7 +1025,10 @@ function ChannelWorkspace({
                           </MenuIcon>
                           Sort
                         </MenuSubmenuTrigger>
-                        <MenuSubmenuPopup aria-label={`Sort ${section.title}`}>
+                        <MenuSubmenuPopup
+                          aria-label={`Sort ${section.title}`}
+                          finalFocus={false}
+                        >
                           <MenuRadioGroup
                             value={
                               preferences.data?.sort?.[
@@ -1051,9 +1043,6 @@ function ChannelWorkspace({
                                 mode as "alpha" | "recent",
                               )
                             }
-                            disabled={
-                              sortWrite?.key === section.key && !sortWrite.error
-                            }
                           >
                             <MenuRadioItem closeOnClick={false} value="recent">
                               Recent
@@ -1062,12 +1051,6 @@ function ChannelWorkspace({
                               A–Z
                             </MenuRadioItem>
                           </MenuRadioGroup>
-                          {sortWrite?.key === section.key &&
-                            !sortWrite.error && <p role="status">Saving…</p>}
-                          {sortWrite?.key === section.key &&
-                            sortWrite.error && (
-                              <p role="alert">{sortWrite.error}</p>
-                            )}
                         </MenuSubmenuPopup>
                       </MenuSubmenu>
                     </MenuPopup>
@@ -1127,6 +1110,12 @@ function ChannelWorkspace({
                   <ContextMenuRoot
                     key={channel.id}
                     open={menuOpen}
+                    onOpenChangeComplete={(open) => {
+                      if (!open && pendingCreate.current?.id === channel.id) {
+                        setCreatingFor(pendingCreate.current);
+                        pendingCreate.current = undefined;
+                      }
+                    }}
                     onOpenChange={(open) => {
                       if (open) openRowMenu(channel, currentSectionId);
                       else if (menuOpen) closeRowMenu();
@@ -1159,76 +1148,92 @@ function ChannelWorkspace({
                       aria-label={`Actions for ${channel.name}`}
                       anchor={menuOpen ? rowMenu.anchor : undefined}
                       finalFocus={() =>
-                        sidebar.list.current?.querySelector<HTMLButtonElement>(
-                          `[data-channel-id="${CSS.escape(channel.id)}"]`,
-                        ) ?? false
+                        pendingCreate.current
+                          ? false
+                          : (sidebar.list.current?.querySelector<HTMLButtonElement>(
+                              `[data-channel-id="${CSS.escape(channel.id)}"]`,
+                            ) ?? false)
                       }
                     >
-                      <MenuGroup>
-                        <MenuGroupLabel>Move to…</MenuGroupLabel>
-                      </MenuGroup>
-                      <MenuRadioGroup
-                        value={
-                          starred
-                            ? "starred"
-                            : currentSectionId
-                              ? `group:${currentSectionId}`
-                              : "channels"
-                        }
-                        onValueChange={(destination) => {
-                          if (destination === "starred")
-                            void setChannelStar(channel.id, true);
-                          else
-                            void assignGroup(
-                              channel.id,
-                              destination.slice("group:".length),
-                            );
-                        }}
-                        disabled={
-                          groupWrite?.channelId === channel.id &&
-                          groupWrite.pending
-                        }
-                      >
-                        <MenuRadioItem value="starred" closeOnClick={false}>
-                          <MenuIcon>★</MenuIcon>
-                          Starred
-                        </MenuRadioItem>
-                        {preferences.data?.sections.map((group) => (
-                          <MenuRadioItem
-                            key={group.id}
-                            value={`group:${group.id}`}
-                            closeOnClick={false}
-                          >
-                            {group.icon && <MenuIcon>{group.icon}</MenuIcon>}
-                            {group.name}
-                          </MenuRadioItem>
-                        ))}
-                      </MenuRadioGroup>
-                      {(starred || currentSectionId) && (
-                        <>
-                          <MenuSeparator />
-                          <MenuItem
-                            closeOnClick={false}
-                            disabled={
-                              groupWrite?.channelId === channel.id &&
-                              groupWrite.pending
+                      <MenuSubmenu>
+                        <MenuSubmenuTrigger>Move channel</MenuSubmenuTrigger>
+                        <MenuSubmenuPopup
+                          aria-label={`Move ${channel.name} to section`}
+                          // The root restores by channel identity after relocation;
+                          // a nested popup must not refocus its retired trigger.
+                          finalFocus={false}
+                        >
+                          <MenuGroup>
+                            <MenuGroupLabel>Move to…</MenuGroupLabel>
+                          </MenuGroup>
+                          <MenuRadioGroup
+                            value={
+                              starred
+                                ? "starred"
+                                : currentSectionId
+                                  ? `group:${currentSectionId}`
+                                  : "channels"
                             }
-                            onClick={() => {
-                              if (starred)
-                                void setChannelStar(channel.id, false);
-                              else void assignGroup(channel.id);
+                            onValueChange={(destination) => {
+                              if (destination === "starred")
+                                void setChannelStar(channel.id, !starred);
+                              else {
+                                const groupId = destination.slice(
+                                  "group:".length,
+                                );
+                                void assignGroup(
+                                  channel.id,
+                                  groupId === currentSectionId
+                                    ? undefined
+                                    : groupId,
+                                );
+                              }
                             }}
                           >
-                            Remove from {section.title}
+                            <MenuRadioItem value="starred" closeOnClick={false}>
+                              <MenuIcon>★</MenuIcon>
+                              Starred
+                            </MenuRadioItem>
+                            {preferences.data?.sections.map((group) => (
+                              <MenuRadioItem
+                                key={group.id}
+                                value={`group:${group.id}`}
+                                closeOnClick={false}
+                              >
+                                {group.icon && (
+                                  <MenuIcon>
+                                    <SidebarGroupIcon
+                                      icon={group.icon}
+                                      session={queries}
+                                    />
+                                  </MenuIcon>
+                                )}
+                                {group.name}
+                              </MenuRadioItem>
+                            ))}
+                          </MenuRadioGroup>
+                          <MenuSeparator />
+                          <MenuItem
+                            onClick={() => {
+                              pendingCreate.current = channel;
+                            }}
+                          >
+                            <MenuIcon>＋</MenuIcon>Create new…
                           </MenuItem>
-                        </>
-                      )}
-                      {groupWrite?.channelId === channel.id &&
-                        groupWrite.pending && <p role="status">Saving…</p>}
-                      {groupWrite?.channelId === channel.id &&
-                        groupWrite.error && (
-                          <p role="alert">{groupWrite.error}</p>
-                        )}
+                          {(starred || currentSectionId) && (
+                            <MenuItem
+                              closeOnClick={false}
+                              onClick={() => {
+                                if (starred)
+                                  void setChannelStar(channel.id, false);
+                                else void assignGroup(channel.id);
+                              }}
+                            >
+                              Remove from {section.title}
+                            </MenuItem>
+                          )}
+                        </MenuSubmenuPopup>
+                      </MenuSubmenu>
                     </MenuPopup>
                   </ContextMenuRoot>
                 );
@@ -1236,19 +1241,80 @@ function ChannelWorkspace({
                 </details>
               );
             })}
-            {list.status === "loading" && !list.channels.length && (
-              <p className={styles.empty}>Loading your channels…</p>
+            {!startup.ready && (
+              <p className={styles.empty} role="status">Loading your sidebar…</p>
             )}
             {list.status === "error" && (
               <p role="alert" className={styles.empty}>
                 {list.error}
               </p>
             )}
-            {list.status === "ready" && !channels.length && (
+            {startup.ready && list.status === "ready" && !channels.length && (
               <p className={styles.empty}>No channels yet.</p>
             )}
           </SidebarUnread>
-          {preferences.status === "error" ? (
+        {startup.updating && (
+          <p className={styles.preferenceNotice} role="status">
+            Updating sidebar details…
+          </p>
+        )}
+        {preferences.sortErrors?.map(({ group, mode, error }) => (
+          <div key={group} className={styles.preferenceNotice} role="alert">
+            <p>
+              Couldn’t save the sort order for{" "}
+              {sections.find(
+                ({ key }) =>
+                  key ===
+                  (group.startsWith("section:")
+                    ? `group:${group.slice(8)}`
+                    : group),
+              )?.title ?? "this section"}
+              . {error}
+            </p>
+            <button type="button" onClick={() => setSectionSort(group, mode)}>
+              Retry sort
+            </button>
+            <button
+              type="button"
+              onClick={() => preferences.dismissSortError(group)}
+            >
+              Dismiss
+            </button>
+          </div>
+        ))}
+        {preferences.moves
+          ?.filter((move) => !move.pending)
+          .map((move) => (
+            <div key={move.id} className={styles.preferenceNotice} role="alert">
+              <p>
+                Couldn’t save the move for{" "}
+                {channels.find(({ id }) => id === move.channelId)?.name ??
+                  "this channel"}
+                . {move.error}
+              </p>
+              <p>
+                The previous placement is shown. A partial save may already
+                exist on the relay.
+              </p>
+              <button
+                type="button"
+                onClick={() =>
+                  moveChannel(move.channelId, () =>
+                    preferences.retryMove(move.channelId),
+                  )
+                }
+              >
+                Retry move
+              </button>
+              <button
+                type="button"
+                onClick={() => preferences.dismissMoveError(move.channelId)}
+              >
+                Dismiss
+              </button>
+            </div>
+          ))}
+          {startup.ready && preferences.status === "error" ? (
             <ToastNotice
               title="Saved groups and stars couldn’t refresh"
               description="Your conversations are still available."
@@ -1258,7 +1324,7 @@ function ChannelWorkspace({
                 Retry
               </Button>
             </ToastNotice>
-          ) : preferences.status !== "ready" ? (
+          ) : startup.ready && preferences.status === "unsupported" ? (
             <p className={styles.preferenceNotice} role="status">
               {preferences.status === "loading"
                 ? "Loading saved groups and stars…"

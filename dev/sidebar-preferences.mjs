@@ -69,7 +69,24 @@ function validAssignmentIntent(intent) {
       (typeof intent.sectionId === "string" &&
         intent.sectionId.trim().length > 0 &&
         intent.sectionId.length <= 256)) &&
-    Object.keys(intent).every((key) => ["channelId", "sectionId"].includes(key))
+    (intent.createSection === undefined ||
+      (intent.sectionId === undefined &&
+        intent.createSection &&
+        typeof intent.createSection === "object" &&
+        !Array.isArray(intent.createSection) &&
+        typeof intent.createSection.id === "string" &&
+        /^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/.test(
+          intent.createSection.id,
+        ) &&
+        typeof intent.createSection.name === "string" &&
+        intent.createSection.name.trim().length > 0 &&
+        intent.createSection.name.length <= 256 &&
+        Object.keys(intent.createSection).every((key) =>
+          ["id", "name"].includes(key),
+        ))) &&
+    Object.keys(intent).every((key) =>
+      ["channelId", "sectionId", "createSection"].includes(key),
+    )
   );
 }
 export function assertSidebarAssignmentIntent(intent) {
@@ -124,24 +141,41 @@ export function prepareSidebarAssignment(
   assertSidebarAssignmentIntent(intent);
   const viewer = getPublicKey(secret);
   const current = parseSectionsEvent(events, secret);
+  const sectionId = intent.createSection?.id ?? intent.sectionId;
+  let sections = current.blob.sections;
+  let created = false;
+  if (intent.createSection) {
+    const name = intent.createSection.name.trim();
+    const existing = sections.find((section) => section.id === sectionId);
+    // The dialog retains one ID across retries, including an unknown publish
+    // outcome. Never duplicate or silently rename a section on retry.
+    if (existing && existing.name !== name)
+      throw new Error("The new section changed; reload and try again");
+    if (!existing) {
+      const order =
+        Math.max(-1, ...sections.map((section) => section.order)) + 1;
+      sections = [...sections, { id: sectionId, name, order }];
+      created = true;
+    }
+  }
   if (
-    intent.sectionId !== undefined &&
-    !current.blob.sections.some((section) => section.id === intent.sectionId)
+    sectionId !== undefined &&
+    !sections.some((section) => section.id === sectionId)
   )
     throw new Error("Sidebar group no longer exists");
   const assignments = {
     ...current.blob.assignments,
-    ...(intent.sectionId === undefined
-      ? {}
-      : { [intent.channelId]: intent.sectionId }),
+    ...(sectionId === undefined ? {} : { [intent.channelId]: sectionId }),
   };
-  if (intent.sectionId === undefined) delete assignments[intent.channelId];
-  const blob = { ...current.blob, assignments };
+  if (sectionId === undefined) delete assignments[intent.channelId];
+  const blob = { ...current.blob, sections, assignments };
   const groups = projectSidebarPreferences(blob, undefined);
+  if (Buffer.byteLength(JSON.stringify(blob)) > 128 * 1024)
+    throw new Error("Sidebar plaintext budget exceeded");
   const previous = Object.hasOwn(current.blob.assignments, intent.channelId)
     ? current.blob.assignments[intent.channelId]
     : undefined;
-  if (previous === intent.sectionId) return { groups };
+  if (!created && previous === sectionId) return { groups };
   const key = nip44.v2.utils.getConversationKey(secret, viewer);
   let content;
   try {

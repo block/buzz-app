@@ -278,3 +278,45 @@ it("activity uses the purpose-bound 128-channel broker route without widening ge
     h.transport.channelActivity(["room-0"], new AbortController().signal),
   ).rejects.toThrow();
 });
+
+it("real broker creates and assigns a section through the signed, confirmed narrow command", async () => {
+  const h = await harness();
+  const intent = {
+    channelId: "alpha",
+    createSection: {
+      id: "12345678-1234-1234-1234-123456789abc",
+      name: "Launch",
+    },
+  };
+  const result = await h.transport.writeSidebarAssignment(
+    intent,
+    new AbortController().signal,
+  );
+  expect(result).toEqual({
+    sections: [{ ...intent.createSection, order: 0 }],
+    assignments: { alpha: intent.createSection.id },
+  });
+  expect(h.calls.map(({ url }) => new URL(url).pathname)).toEqual([
+    "/query",
+    "/events",
+    "/query",
+  ]);
+  expect(
+    await h.transport.writeSidebarAssignment(
+      intent,
+      new AbortController().signal,
+    ),
+  ).toEqual(result);
+  expect(h.calls.filter(({ url }) => url.endsWith("/events"))).toHaveLength(1);
+  const before = h.calls.length;
+  expect(
+    (
+      await h.post(
+        { ...intent, sectionId: "work" },
+        undefined,
+        "sidebar-assignment",
+      )
+    ).status,
+  ).toBe(400);
+  expect(h.calls).toHaveLength(before);
+});

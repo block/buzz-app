@@ -92,6 +92,8 @@ export type ChannelList = Readonly<{
   /** Set when the viewer's roster read hit its cap; omitted channels are then not evidence of removal. */
   coverage?: "partial";
   asOf?: number;
+  /** Initial Recent ordering observation, independent of roster/access readiness. */
+  activityStatus?: "idle" | "loading" | "ready" | "error" | "unavailable";
   channels: readonly ChannelSummary[];
   error?: string;
 }>;

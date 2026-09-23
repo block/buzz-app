@@ -90,7 +90,7 @@ it("applies a confirmed assignment to the retained session snapshot", async () =
     expect(Object.isFrozen(preferences.snapshot().data?.assignments)).toBe(
       true,
     );
-    expect(listener).toHaveBeenCalledOnce();
+    expect(listener).toHaveBeenCalledTimes(2); // optimistic placement, then confirmation
   } finally {
     owner.dispose();
   }
@@ -110,7 +110,13 @@ it("keeps the last confirmed snapshot when an assignment fails", async () => {
     await expect(preferences.assign("alpha")).rejects.toThrow(
       "relay rejected write",
     );
-    expect(preferences.snapshot()).toBe(retained);
+    expect(preferences.snapshot().data).toEqual(retained.data);
+    expect(preferences.snapshot().moves).toEqual([
+      expect.objectContaining({
+        pending: false,
+        error: "relay rejected write",
+      }),
+    ]);
   } finally {
     owner.dispose();
   }
@@ -343,7 +349,11 @@ it("serializes confirmed assignment and star writes without losing either projec
     const pending = preferences.setStar("alpha", true);
     await started.promise;
     const queued = preferences.assign("beta", "work");
-    expect(preferences.snapshot().data).toEqual(data);
+    expect(preferences.snapshot().data).toEqual({
+      ...data,
+      assignments: { alpha: "work", beta: "work" },
+      starred: ["alpha"],
+    });
     expect(assign).not.toHaveBeenCalled();
     gate.resolve(["alpha", "beta"]);
     await Promise.all([pending, queued]);
@@ -381,8 +391,11 @@ it("failed Star retains the confirmed snapshot and a retry can unstar", async ()
     await expect(preferences.setStar("beta", false)).rejects.toThrow(
       "publish rejected",
     );
-    expect(preferences.snapshot()).toBe(retained);
-    await preferences.setStar("beta", false);
+    expect(preferences.snapshot().data).toEqual(retained.data);
+    expect(preferences.snapshot().moves).toEqual([
+      expect.objectContaining({ pending: false, error: "publish rejected" }),
+    ]);
+    await preferences.retryMove("beta");
     expect(preferences.snapshot().data).toEqual({ ...data, starred: [] });
   } finally {
     owner.dispose();

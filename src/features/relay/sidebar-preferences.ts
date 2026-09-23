@@ -24,6 +24,7 @@ export type SidebarPreferences = SidebarGroups &
 export type SidebarAssignmentIntent = Readonly<{
   channelId: string;
   sectionId?: string;
+  createSection?: Readonly<{ id: string; name: string }>;
 }>;
 export type SidebarSortMutator = (
   group: string,

@@ -73,22 +73,45 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   try {
     await menu.getByRole("menuitemradio", { name: "Recent" }).click();
     await requestStarted;
-    await expect(menu.getByRole("status")).toHaveText("Saving…");
+    await expect(menu).not.toBeVisible();
+    await expect(trigger).toBeFocused();
+    await expect(page.getByText(/Saving(?: sidebar changes)?…/)).toHaveCount(0);
+    await openSort();
+    await expect(
+      menu.getByRole("menuitemradio", { name: "A–Z" }),
+    ).toBeEnabled();
     await expect(
       menu.getByRole("menuitemradio", { name: "Recent" }),
     ).toHaveAttribute("aria-checked", "true");
     await expect.poll(order).not.toEqual(alphaOrder);
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
   } finally {
     release();
   }
-  await expect(menu.getByRole("alert")).toHaveText(
-    "Relay request failed (502)",
-  );
+  const error = page
+    .getByRole("alert")
+    .filter({ hasText: "Couldn’t save the sort order for Channels" });
+  await expect(error).toContainText("Relay request failed (502)");
   await expect.poll(order).toEqual(alphaOrder);
   await page.unroute("**/sidebar-sort");
-  await menu.getByRole("menuitemradio", { name: "Recent" }).click();
-  await expect(menu).not.toBeVisible();
-  await expect(trigger).toBeFocused();
+  // Error ownership is session-scoped, not coupled to the dismissed menu/page.
+  await page.getByRole("button", { name: "Home", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Messages", exact: true })
+    .first()
+    .click();
+  await expect(error).toBeVisible();
+  async function confirmedSort(action) {
+    const response = page.waitForResponse("**/sidebar-sort");
+    await action();
+    expect((await response).ok()).toBe(true);
+    await (await response).finished();
+  }
+  await confirmedSort(() =>
+    error.getByRole("button", { name: "Retry sort" }).click(),
+  );
+  await expect(error).toHaveCount(0);
   await expect.poll(order).not.toEqual(alphaOrder);
   expect(app.report.sidebarPublications.at(-1)).toMatchObject({
     coordinate: "channel-sort",
@@ -129,7 +152,9 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await expect(
     workMenu.getByRole("menuitemradio", { name: "A–Z" }),
   ).toHaveAttribute("aria-checked", "true");
-  await workMenu.getByRole("menuitemradio", { name: "Recent" }).click();
+  await confirmedSort(() =>
+    workMenu.getByRole("menuitemradio", { name: "Recent" }).click(),
+  );
   await expect(workMenu).not.toBeVisible();
   expect(app.report.sidebarPublications.at(-1).blob.groups).toEqual({
     channels: "recent",
@@ -137,11 +162,107 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   });
   await expect.poll(order).toEqual(recentOrder);
   await openSort();
-  await menu.getByRole("menuitemradio", { name: "A–Z" }).click();
+  await confirmedSort(() =>
+    menu.getByRole("menuitemradio", { name: "A–Z" }).click(),
+  );
   await expect(menu).not.toBeVisible();
   await expect.poll(order).toEqual(alphaOrder);
   expect(app.report.sidebarPublications.at(-1).blob.groups).toEqual({
     "section:work": "recent",
   });
   expect(app.report.unexpected).toEqual([]);
+});
+
+// Cold-start paint is a composition contract: real saved sort, activity response,
+// and independent conversation opening. Timer/order permutations live in RTL.
+test.describe("cold sidebar presentation", () => {
+  test.use({ initialSidebarSort: { channels: "recent" } });
+  test("reveals saved placement and Recent together without blocking the conversation", async ({
+    page,
+    app,
+  }, testInfo) => {
+    let releasePreferences, releaseActivity;
+    const preferences = new Promise((resolve) => {
+      releasePreferences = resolve;
+    });
+    const activity = new Promise((resolve) => {
+      releaseActivity = resolve;
+    });
+    let preferencesStarted, activityStarted;
+    const decoding = new Promise((resolve) => {
+      preferencesStarted = resolve;
+    });
+    const ordering = new Promise((resolve) => {
+      activityStarted = resolve;
+    });
+    await page.clock.install();
+    await page.clock.pauseAt(new Date());
+    await page.addInitScript(() =>
+      localStorage.setItem("buzz-appearance.v1", "dark"),
+    );
+    await page.route("**/sidebar-preferences", async (route) => {
+      const response = await route.fetch();
+      preferencesStarted();
+      await preferences;
+      await route.fulfill({ response });
+    });
+    await page.route("**/channel-activity", async (route) => {
+      const response = await route.fetch();
+      activityStarted();
+      await activity;
+      await route.fulfill({ response });
+    });
+    const sidebar = page.getByRole("navigation", {
+      name: "Subscribed channels",
+    });
+    try {
+      await page.goto(app.origin);
+      await page
+        .getByRole("button", { name: "Messages", exact: true })
+        .first()
+        .click();
+      await decoding;
+      await expect(sidebar.getByRole("status")).toHaveText(
+        "Loading your sidebar…",
+      );
+      await expect(sidebar.locator("[data-channel-id]")).toHaveCount(0);
+      await expect(
+        page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
+      ).toBeVisible();
+      await page.screenshot({
+        path: testInfo.outputPath("sidebar-cold-loading.png"),
+        clip: { x: 0, y: 0, width: 540, height: 460 },
+      });
+      releasePreferences();
+      await ordering;
+      await expect(sidebar.locator("[data-channel-id]")).toHaveCount(0);
+      releaseActivity();
+      const rows = sidebar.locator(
+        '[data-sidebar-section="channels"] [data-channel-id]',
+      );
+      await expect(rows.first()).toBeVisible();
+      expect(
+        await rows.evaluateAll((elements) =>
+          elements.slice(0, 3).map((el) => el.dataset.channelId),
+        ),
+      ).toEqual(["willow", "maple", "cedar"]);
+      await expect(
+        sidebar.locator(
+          '[data-sidebar-section="group:work"] [data-channel-id="beta"]',
+        ),
+      ).toBeVisible();
+      await expect(sidebar.getByRole("status")).toHaveCount(0);
+      await page.screenshot({
+        path: testInfo.outputPath("sidebar-cold-revealed.png"),
+        clip: { x: 0, y: 0, width: 540, height: 460 },
+      });
+    } finally {
+      releasePreferences();
+      releaseActivity();
+      // Remove the gates before resumed timers can start a fresh intercepted read.
+      await page.unroute("**/sidebar-preferences");
+      await page.unroute("**/channel-activity");
+      await page.clock.resume();
+    }
+  });
 });

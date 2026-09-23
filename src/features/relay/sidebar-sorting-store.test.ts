@@ -57,6 +57,9 @@ it("independent optimistic choices survive older success and failure in queue or
     expect(preferences.snapshot().data?.sort).toEqual({
       "section:work": "recent",
     });
+    expect(preferences.snapshot().sortErrors).toEqual([
+      { group: "channels", mode: "recent", error: "offline" },
+    ]);
     take(pending).resolve({ "section:work": "recent" });
     await second;
     expect(preferences.snapshot().data).toEqual({
@@ -169,6 +172,7 @@ it.each(["clear", "dispose"] as const)(
       )[3].aborted,
     ).toBe(true);
     expect(preferences.snapshot().data).toBeUndefined();
+    expect(preferences.snapshot().sortErrors).toBeUndefined();
     owner.dispose();
   },
 );
@@ -193,6 +197,74 @@ it("caller cancellation rolls back only its own intent and skips its queued publ
     await failed;
     expect(sort).toHaveBeenCalledTimes(1);
     expect(preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
+    expect(preferences.snapshot().sortErrors).toBeUndefined();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("a superseded failure cannot expose retry or roll back a newer choice", async () => {
+  const { owner, preferences, pending } = setup();
+  try {
+    await preferences.ensure();
+    const first = preferences.setSort("channels", "recent", []);
+    const failed = expect(first).rejects.toThrow("offline");
+    const second = preferences.setSort("channels", "alpha", []);
+    await flush();
+    take(pending).reject(new Error("offline"));
+    await failed;
+    expect(preferences.snapshot().sortErrors).toBeUndefined();
+    expect(preferences.snapshot().data?.sort).toEqual({});
+    await flush();
+    take(pending).resolve({});
+    await second;
+    expect(preferences.snapshot().sortErrors).toBeUndefined();
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("sort failure survives observer removal, supports retry, and dismisses per section", async () => {
+  const { owner, preferences, pending } = setup();
+  try {
+    await preferences.ensure();
+    const off = preferences.subscribe(vi.fn());
+    const first = preferences.setSort("channels", "recent", []);
+    const failed = expect(first).rejects.toThrow("offline");
+    off();
+    await flush();
+    take(pending).reject(new Error("offline"));
+    await failed;
+    const again = preferences.subscribe(vi.fn());
+    await preferences.ensure();
+    const failure = preferences.snapshot().sortErrors?.[0];
+    expect(failure).toEqual({
+      group: "channels",
+      mode: "recent",
+      error: "offline",
+    });
+    assert.exists(failure);
+    const retry = preferences.setSort(failure.group, failure.mode, []);
+    expect(preferences.snapshot().sortErrors).toBeUndefined();
+    expect(preferences.snapshot().data?.sort).toEqual({ channels: "recent" });
+    await flush();
+    take(pending).resolve({ channels: "recent" });
+    await retry;
+    for (const group of ["channels", "forums"]) {
+      const rejected = expect(
+        preferences.setSort(group, "alpha", []),
+      ).rejects.toThrow("offline");
+      await flush();
+      take(pending).reject(new Error("offline"));
+      await rejected;
+    }
+    preferences.dismissSortError("channels");
+    expect(preferences.snapshot().sortErrors).toEqual([
+      { group: "forums", mode: "alpha", error: "offline" },
+    ]);
+    again();
+    owner.clear();
+    expect(preferences.snapshot().sortErrors).toBeUndefined();
   } finally {
     owner.dispose();
   }

@@ -81,31 +81,39 @@ unstar tombstones are retained. Invalid/unreadable/over-budget heads fail closed
 only a successful absent-head read can seed a coordinate. Same-host writes are
 serialized per relay. This is confirmed whole-record replacement, not atomic
 cross-device merging, a durable pending outbox, or automatic retry: simultaneous
-writers on different hosts can still race. Failure retains the last fully confirmed UI
-placement and offers an explicit retry; a failed confirmation may follow a
-publication that reached the relay.
+writers on different hosts can still race. Failed moves roll back to the last fully
+confirmed placement while preserving newer pending choices, and offer explicit
+retry outside the closed menu. A failed confirmation may follow a publication
+that reached the relay.
 
 The session preference owner serializes local commands and fences refreshes,
 caller cancellation, cache clear and disposal. `session.ts` only composes host
 capabilities with session lifetime and a bounded deadline. Cache clear cancels
 pending work but cannot retract a publication already accepted by the relay.
 Stream rows expose these actions by right-click/long-press, Shift+F10 or the
-Context Menu key. Menus remain open during saving and failed-save retry; confirmed
-relocation expands the destination and restores focus by channel identity. Starred
-is a built-in group pinned first, offered alongside saved groups in one "Move to…"
-chooser. Placement is exclusive. "Remove from Starred" and "Remove from [group]"
-return to Channels, never to a remembered group. Moving out of Starred directly
-into a saved group is supported.
+Context Menu key. **Move channel ▸** contains Starred, saved groups,
+**Create new…**, and removal to Channels. Choosing a destination immediately
+closes the menu, moves the row, expands its destination and restores focus by
+channel identity. The root menu alone restores focus; nested popup cleanup must
+not refocus a retired trigger. Saving runs silently in the background; only failed
+saves expose Retry / Dismiss below the sidebar. Starred is pinned first; placement is exclusive. "Remove from Starred"
+and "Remove from [group]" return to Channels, never to a remembered group. Choosing
+the already-selected Starred or saved group performs that same removal. Moving
+out of Starred directly into a saved group is supported.
 
 The legacy format still stores stars and assignments separately. The preference
 owner confirms the requested assignment (or its removal) **before** clearing Star;
 removal always checks the fresh assignment head, not just the cached projection.
-Only the complete move updates local placement, and refreshes cannot expose an
-intermediate write. If the second write fails, the channel remains Starred and an
-explicit retry finishes the move; a reload reflects whatever reached the relay.
-This is ordered two-record persistence, not an atomic multi-device move. A prior
-assignment may remain stored while starred but is never used as an Unstar target.
-Forums/DMs assignment and group CRUD/reorder remain outside these actions.
+Pending intents overlay the last fully confirmed placement. Only a complete move
+advances that baseline, and refreshes cannot expose an intermediate write. If the
+second write fails, the channel rolls back unless a newer move superseded it;
+explicit retry finishes the failed intent. A reload reflects whatever reached the
+relay. This is ordered two-record persistence, not an atomic multi-device move.
+A prior assignment may remain stored while starred but is never used as an
+Unstar target. Create new names a section and assigns this channel in one encrypted
+section-record write before clearing Star; retries reuse that section ID. It does
+not create a channel. Forums/DMs assignment and general group CRUD/reorder remain
+outside these actions.
 Hosts without the write capabilities retain the read-only projection.
 
 Each section (Starred, saved groups, Channels, Forums and DMs) defaults to A–Z
@@ -127,13 +135,29 @@ A–Z removes an override. The host verifies/decrypts the current head, preserve
 unrelated raw entries, publishes only a changed intent, and re-reads to confirm.
 The session applies sort choices optimistically and serializes writes with the
 other preference commands. Failure rolls back only that intent, preserving newer
-pending choices and unrelated preferences; the open menu offers explicit retry.
+pending choices and unrelated preferences. Choosing a sort closes the menu immediately;
+it can be reopened and changed again while saving. Only failures show Retry / Dismiss
+below the sidebar, retained by the session across page exits. A newer choice for the
+same section supersedes an older failure.
 The same whole-record/multi-device limitations above apply. Hosts without the
 sort writer retain read-only ordering. Native-adapter parity is not added here.
 
+Cold Messages entry uses one page-owned sidebar reveal boundary. After the roster
+becomes available, it waits for saved preferences, roster metadata, the initial
+unread repair and (only for Recent) activity settlement, for at most **1.5 seconds**.
+Conversation opening and access checks do not wait for this presentation latch.
+Failures count as settled; the existing owners retain their errors and last-good
+state. At the deadline usable rows are revealed with an **Updating sidebar details…**
+notice while outstanding work completes. Names, badges or order may still change
+in this slow-dependency fallback; it is not a claim of complete unread history.
+Warm page returns retain reveal and initial unread-settlement flags by session,
+not copies of rows or access data. Community/viewer/connection replacement mounts
+a fresh workspace; revoked rows disappear from the current roster immediately.
+Optional participant-profile enrichment stays independent of sidebar readiness.
+
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
-They are saved on page exit and restored before paint when the roster and groups
-are available; navigation history does not own them. Search lives in the top-bar
+They are saved on page exit and restored before paint at the sidebar reveal
+boundary; navigation history does not own them. Search lives in the top-bar
 palette; legacy sidebar filters are ignored. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.

@@ -27,6 +27,7 @@ import {
 import { createTyping } from "./typing";
 import { createUnread } from "./unread";
 import type { IncomingListener, IncomingMessage } from "./incoming";
+import type { ChannelList } from "./contracts";
 import { objectBody } from "./body";
 import { readSidebarPreferences } from "./sidebar-preferences";
 import { createChannelActivity } from "./channel-activity";
@@ -546,7 +547,10 @@ export function createRelaySession(
     notify,
   });
   let sourceChannelList = channels.queries.list();
-  let activityChannelList = sourceChannelList;
+  let activityChannelList: ChannelList = Object.freeze({
+    ...sourceChannelList,
+    activityStatus: channelActivity.status(),
+  });
   let channelActivityRevision = channelActivity.revision();
   const channelQueries = Object.freeze({
     ...channels.queries,
@@ -566,11 +570,15 @@ export function createRelaySession(
           ? channel
           : Object.freeze({ ...channel, lastActivityAt });
       });
-      activityChannelList = projected.every(
-        (channel, index) => channel === snapshot.channels[index],
-      )
-        ? snapshot
-        : Object.freeze({ ...snapshot, channels: Object.freeze(projected) });
+      activityChannelList = Object.freeze({
+        ...snapshot,
+        activityStatus: channelActivity.status(),
+        channels: projected.every(
+          (channel, index) => channel === snapshot.channels[index],
+        )
+          ? snapshot.channels
+          : Object.freeze(projected),
+      });
       return activityChannelList;
     },
     subscribeList(listener: () => void) {

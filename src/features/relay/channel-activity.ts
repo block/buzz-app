@@ -22,6 +22,9 @@ export function createChannelActivity(
   let generation = 0;
   let revision = 0;
   let closed = false;
+  let status: "idle" | "loading" | "ready" | "error" | "unavailable" = read
+    ? "idle"
+    : "unavailable";
   let active: AbortController | undefined;
   const listeners = new Set<() => void>();
   const publish = () => {
@@ -42,6 +45,7 @@ export function createChannelActivity(
     if (changed) publish();
   };
   return {
+    status: () => status,
     last: (channelId: string) => values.get(channelId),
     revision: () => revision,
     subscribe(listener: () => void) {
@@ -58,6 +62,8 @@ export function createChannelActivity(
       active?.abort();
       const controller = new AbortController();
       active = controller;
+      status = "loading";
+      publish();
       const refreshed = new Map<string, number>();
       try {
         for (let offset = 0; offset < ids.length; offset += CHANNEL_BATCH) {
@@ -80,6 +86,8 @@ export function createChannelActivity(
         }
       } catch (error) {
         if (closed || controller.signal.aborted || epoch !== generation) return;
+        status = "error";
+        publish();
         throw error;
       } finally {
         if (active === controller) active = undefined;
@@ -101,11 +109,7 @@ export function createChannelActivity(
         else next.set(id, result);
       }
       for (const id of next.keys()) if (!wanted.has(id)) next.delete(id);
-      if (
-        next.size === values.size &&
-        [...next].every(([id, value]) => values.get(id) === value)
-      )
-        return;
+      status = "ready";
       values = next;
       publish();
     },
@@ -113,13 +117,19 @@ export function createChannelActivity(
       generation++;
       active?.abort();
       active = undefined;
+      if (status === "loading") {
+        status = "idle";
+        publish();
+      }
     },
     clear() {
       if (closed) return;
       generation++;
       active?.abort();
       active = undefined;
-      if (!values.size) return;
+      const emptyStatus = read ? "idle" : "unavailable";
+      if (!values.size && status === emptyStatus) return;
+      status = emptyStatus;
       values = new Map();
       publish();
     },

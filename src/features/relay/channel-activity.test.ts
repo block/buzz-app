@@ -52,7 +52,8 @@ it("reads authoritative activity in 128-channel batches across message and forum
   expect(activity.last(ids[0] ?? "")).toBe(100);
   expect(activity.last(ids[128] ?? "")).toBe(101);
   expect(activity.last(ids[256] ?? "")).toBe(102);
-  expect(changed).toHaveBeenCalledOnce();
+  expect(changed).toHaveBeenCalledTimes(2);
+  expect(activity.status()).toBe("ready");
 });
 
 it("keeps the last good projection on failure and never rolls back newer live activity", async () => {
@@ -183,4 +184,23 @@ it("ignores unsupported kinds, ambiguous scopes and out-of-batch activity", asyn
   owner.accept([ambiguous, unsupported]);
   expect(owner.last("alpha")).toBe(40);
   owner.dispose();
+});
+
+it("publishes settled readiness even for empty activity and failure without changing values", async () => {
+  const wire = deferredReader();
+  const activity = createChannelActivity(wire.read);
+  expect(activity.status()).toBe("idle");
+  const empty = activity.refresh(["quiet"]);
+  expect(activity.status()).toBe("loading");
+  take(wire.pending).resolve([]);
+  await empty;
+  expect(activity.status()).toBe("ready");
+  const failure = activity.refresh(["quiet"]);
+  const rejected = expect(failure).rejects.toThrow("offline");
+  take(wire.pending).reject(new Error("offline"));
+  await rejected;
+  expect(activity.status()).toBe("error");
+  activity.clear();
+  expect(activity.status()).toBe("idle");
+  activity.dispose();
 });

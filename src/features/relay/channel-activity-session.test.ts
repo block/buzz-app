@@ -84,10 +84,12 @@ it("reads no roster activity for A–Z, deduplicates Recent demand, and projects
     expect(h.activity).not.toHaveBeenCalled();
     await h.preferences.setSort("channels", "recent", []);
     expect(h.activity).toHaveBeenCalledOnce();
+    expect(h.channels.list().activityStatus).toBe("loading");
     expect(h.pending[0]?.ids).toEqual(["alpha", "beta"]);
     take(h.pending).resolve([message(h.peer, "alpha", "history", 50)]);
     await flush();
     const first = h.channels.list();
+    expect(first.activityStatus).toBe("ready");
     expect(first.channels.find((c) => c.id === "alpha")?.lastActivityAt).toBe(
       50,
     );

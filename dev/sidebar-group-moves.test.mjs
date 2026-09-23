@@ -144,7 +144,10 @@ it("does not clear Star when assignment publication fails", async () => {
       "assignment rejected",
     );
     expect(h.star).not.toHaveBeenCalled();
-    expect(h.prefs.snapshot()).toBe(before);
+    expect(h.prefs.snapshot().data).toEqual(before.data);
+    expect(h.prefs.snapshot().moves).toEqual([
+      expect.objectContaining({ pending: false, error: expect.any(String) }),
+    ]);
     expect((await h.read()).starred).toEqual(["alpha"]);
     await h.prefs.setStar("alpha", false);
     expect((await h.read()).assignments).toEqual({ beta: "work" });
@@ -161,7 +164,10 @@ it("keeps Starred after a partial failure and retry cannot resurrect the old gro
     await expect(h.prefs.setStar("alpha", false)).rejects.toThrow(
       "star rejected",
     );
-    expect(h.prefs.snapshot()).toBe(before);
+    expect(h.prefs.snapshot().data).toEqual(before.data);
+    expect(h.prefs.snapshot().moves).toEqual([
+      expect.objectContaining({ pending: false, error: expect.any(String) }),
+    ]);
     const partial = await h.read();
     expect(partial.assignments).toEqual({ beta: "work" });
     expect(partial.starred).toEqual(["alpha"]);
@@ -194,8 +200,12 @@ it("a refresh during the two-write move cannot expose the intermediate assignmen
     const before = h.prefs.snapshot();
     const pending = h.prefs.setStar("alpha", false);
     await entered;
+    const optimistic = h.prefs.snapshot();
+    expect(optimistic.data.assignments).toEqual({ beta: "work" });
+    expect(optimistic.data.starred).toEqual([]);
     const refresh = h.prefs.refresh();
-    expect(h.prefs.snapshot()).toBe(before);
+    expect(h.prefs.snapshot()).toBe(optimistic);
+    expect(before.data.starred).toEqual(["alpha"]);
     expect(h.read).toHaveBeenCalledOnce();
     release();
     await Promise.all([pending, refresh]);
@@ -232,8 +242,10 @@ it("failed move plus an older refresh cannot strand the preference status at loa
     release(before);
     await refresh;
     expect(h.prefs.snapshot()).toEqual({
-      status: "error",
-      error: "assignment failed",
+      status: "ready",
+      moves: [
+        expect.objectContaining({ pending: false, error: "assignment failed" }),
+      ],
       data: before,
     });
     await h.prefs.refresh();
@@ -263,6 +275,35 @@ it("cancellation between records prevents clearing Star and retry finishes from 
     const restored = await h.read();
     expect(restored.assignments).toEqual({ beta: "work" });
     expect(restored.starred).toEqual([]);
+  } finally {
+    h.owner.dispose();
+  }
+});
+
+it("create-and-move from Starred retries one durable section after partial failure", async () => {
+  const h = await setup();
+  const section = {
+    id: "12345678-1234-1234-1234-123456789abc",
+    name: "Launch",
+  };
+  try {
+    const before = h.prefs.snapshot();
+    h.star.mockRejectedValueOnce(new Error("star rejected"));
+    await expect(h.prefs.createAndAssign("alpha", section)).rejects.toThrow(
+      "star rejected",
+    );
+    expect(h.prefs.snapshot().data).toEqual(before.data);
+    expect(h.prefs.snapshot().moves).toEqual([
+      expect.objectContaining({ pending: false, error: expect.any(String) }),
+    ]);
+    expect(h.publications).toEqual(["channel-sections"]);
+    await h.prefs.createAndAssign("alpha", section);
+    expect(h.publications).toEqual(["channel-sections", "channel-stars"]);
+    const restored = await h.read();
+    expect(restored.sections).toHaveLength(2);
+    expect(restored.assignments).toEqual({ alpha: section.id, beta: "work" });
+    expect(restored.starred).toEqual([]);
+    expect(h.prefs.snapshot().data).toEqual(restored);
   } finally {
     h.owner.dispose();
   }

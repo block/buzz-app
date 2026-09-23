@@ -1,4 +1,7 @@
-import type { SidebarGroups } from "../src/features/relay/sidebar-preferences";
+import type {
+  SidebarAssignmentIntent,
+  SidebarGroups,
+} from "../src/features/relay/sidebar-preferences";
 import type { RelayEvent } from "../src/features/relay/events";
 
 export function decodeSidebarPreferences(
@@ -7,18 +10,15 @@ export function decodeSidebarPreferences(
 ): import("../src/features/relay/sidebar-preferences").SidebarPreferences;
 export function assertSidebarAssignmentIntent(
   intent: unknown,
-): asserts intent is {
-  channelId: string;
-  sectionId?: string;
-};
+): asserts intent is SidebarAssignmentIntent;
 export function prepareSidebarAssignment(
   events: readonly RelayEvent[],
-  intent: { channelId: string; sectionId?: string },
+  intent: SidebarAssignmentIntent,
   secret: Uint8Array,
   now?: number,
 ): { groups: SidebarGroups; event?: RelayEvent };
 export function mutateSidebarAssignment(
-  intent: { channelId: string; sectionId?: string },
+  intent: SidebarAssignmentIntent,
   secret: Uint8Array,
   readHead: () => Promise<readonly RelayEvent[]>,
   publish: (event: RelayEvent) => Promise<void>,

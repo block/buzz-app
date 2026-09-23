@@ -38,7 +38,10 @@ export const test = base.extend({
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
+  sidebarIcons: [false, { option: true }],
+  channelNames: [{}, { option: true }],
   sortingSidebar: [false, { option: true }],
+  initialSidebarSort: [{}, { option: true }],
   expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   dmLabels: [false, { option: true }],
@@ -67,7 +70,10 @@ export const test = base.extend({
       sessionParents,
       sidebarUnread,
       savedSidebar,
+      sidebarIcons,
+      channelNames,
       sortingSidebar,
+      initialSidebarSort,
       expectedPageFailure,
       largeSidebar,
       dmLabels,
@@ -158,7 +164,24 @@ export const test = base.extend({
             "channel-sections",
             {
               version: 1,
-              sections: [{ id: "work", name: "Work", order: 0 }],
+              sections: [
+                {
+                  id: "work",
+                  name: "Work",
+                  order: 0,
+                  ...(sidebarIcons ? { icon: ":stamp:" } : {}),
+                },
+                ...(sidebarIcons
+                  ? [
+                      {
+                        id: "missing",
+                        name: "Unavailable",
+                        order: 1,
+                        icon: ":unavailable_icon:",
+                      },
+                    ]
+                  : []),
+              ],
               assignments: { beta: "work" },
             },
           ],
@@ -169,7 +192,7 @@ export const test = base.extend({
               channels: { alpha: { starred: true, updatedAt: 1 } },
             },
           ],
-          ["channel-sort", { version: 1, groups: {} }],
+          ["channel-sort", { version: 1, groups: initialSidebarSort }],
         ]) {
           records.set(
             coordinate,
@@ -519,7 +542,7 @@ export const test = base.extend({
           .map((id) =>
             sign(39000, [
               ["d", id],
-              ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
+              ["name", channelNames[id] ?? (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id)],
               ...(id === "open" ? [["public"], ["t", "stream"]] : []),
               ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
               ...(sessionChannels.includes(id)
@@ -558,7 +581,23 @@ export const test = base.extend({
           "#d": ["buzz:custom-emoji"],
           limit: 500,
         });
-        return [];
+        return sidebarIcons
+          ? [
+              sign(
+                30030,
+                [
+                  ["d", "buzz:custom-emoji"],
+                  [
+                    "emoji",
+                    "stamp",
+                    `https://${community}.example/media/stamp.png`,
+                  ],
+                ],
+                "",
+                userKey,
+              ),
+            ]
+          : [];
       }
       if (filter.kinds?.includes(0))
         return [
@@ -1290,11 +1329,12 @@ export const test = base.extend({
         observerFailures.splice(match, 1);
         return true;
       };
-      // The Star retry journey injects one specific failed host request. Match
-      // that exact URL once, not every 502 or every console error in the test.
+      // Preference retry journeys inject specific failed host requests. Match
+      // each exact URL once, not every 502 or every console error in the test.
       const starFailures = [
         ...(report.sidebarStarFailures ?? []),
         ...(report.sidebarSortFailures ?? []),
+        ...(report.sidebarAssignmentFailures ?? []),
       ];
       const injectedStarFailure = (message, index) => {
         if (

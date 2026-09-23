@@ -18,9 +18,13 @@ export function useSidebarPreferences(
     status: snapshot.status === "idle" ? ("loading" as const) : snapshot.status,
     writable: queries.writable,
     assign: queries.assign,
+    createAndAssign: queries.createAndAssign,
+    retryMove: queries.retryMove,
+    dismissMoveError: queries.dismissMoveError,
     starWritable: queries.starWritable,
     sortWritable: queries.sortWritable,
     setSort: queries.setSort,
+    dismissSortError: queries.dismissSortError,
     setStar: queries.setStar,
     reload: queries.refresh,
   };

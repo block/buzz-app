@@ -159,8 +159,7 @@ const change = (title: string) =>
 const capture = (title: string) =>
   screen.getByRole("textbox", { name: `New shortcut for ${title}` });
 
-it("lists live host and plugin shortcuts grouped by owner, searchable, and follows plugin state", async () => {
-  const user = userEvent.setup();
+it("lists live host and plugin shortcuts without search or intro text and follows plugin state", async () => {
   const h = await harness();
   try {
     render(
@@ -213,24 +212,12 @@ it("lists live host and plugin shortcuts grouped by owner, searchable, and follo
       screen.getByRole("button", { name: "Reset all shortcuts" }),
     ).toBeDisabled();
 
-    const search = screen.getByRole("searchbox", { name: "Search shortcuts" });
-    await user.type(search, "counter");
-    expect(screen.getAllByRole("article")).toHaveLength(2);
-    expect(row("Increment shortcut counter")).toBeInTheDocument();
-    expect(row("First action")).toBeInTheDocument();
-    await user.clear(search);
-    await user.type(search, "⌘J");
-    expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(row("Toggle channel terminal")).toBeInTheDocument();
-    await user.clear(search);
-    await user.type(search, "command ,");
-    expect(screen.getAllByRole("article")).toHaveLength(1);
-    expect(row("Open Settings")).toBeInTheDocument();
-    await user.clear(search);
-    await user.type(search, "zzz");
-    expect(screen.queryAllByRole("article")).toHaveLength(0);
-    expect(screen.getByText("No matching shortcuts.")).toBeInTheDocument();
-    await user.clear(search);
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Every shortcut from Buzz and your enabled plugins. Choose Change, then press the new keys; Escape cancels. Saved on this device.",
+      ),
+    ).not.toBeInTheDocument();
 
     act(() => h.setActive("buzz.terminal", false));
     expect(

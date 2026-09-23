@@ -8,7 +8,6 @@ import {
 import { isTauri } from "@tauri-apps/api/core";
 import { Button } from "../shared/design-system/ui/Button";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
-import { SearchField } from "../shared/design-system/ui/SearchField";
 import {
   sameBinding,
   type KeyBinding,
@@ -114,7 +113,6 @@ export function ShortcutSettings({
     plugins.subscribe,
     plugins.snapshot,
   );
-  const [query, setQuery] = useState("");
   const [editing, setEditing] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
 
@@ -183,24 +181,6 @@ export function ShortcutSettings({
           target.effective.some((current) => sameBinding(current, binding)),
         ),
     );
-  const needle = query.trim().toLowerCase();
-  const visible = needle
-    ? groups
-        .map((group) => ({
-          ...group,
-          rows: group.rows.filter((row) =>
-            [
-              row.title,
-              row.owner,
-              ...row.effective.flatMap((binding) => {
-                const { text, label } = formatBinding(binding, apple);
-                return [text, label];
-              }),
-            ].some((text) => text.toLowerCase().includes(needle)),
-          ),
-        }))
-        .filter((group) => group.rows.length)
-    : groups;
   const modified = Object.keys(overrides).length > 0;
 
   const start = (key: string) => {
@@ -270,19 +250,9 @@ export function ShortcutSettings({
         Shortcuts
       </h2>
       <div className="grid gap-5">
-        <p className="m-0 text-body-sm text-subtle">
-          Every shortcut from Buzz and your enabled plugins. Choose Change, then
-          press the new keys; Escape cancels. Saved on this device.
-        </p>
-        <SearchField
-          value={query}
-          onValueChange={setQuery}
-          label="Search shortcuts"
-          placeholder="Search shortcuts"
-        />
-        {visible.length ? (
+        {groups.length ? (
           <div>
-            {visible.map((group) => (
+            {groups.map((group) => (
               <NavigationSection key={group.id} label={group.label}>
                 <div className="divide-y divide-line">
                   {group.rows.map((row) => (
@@ -309,9 +279,7 @@ export function ShortcutSettings({
           </div>
         ) : (
           <p className="m-0 px-control-inset text-body-sm text-subtle">
-            {rows.length
-              ? "No matching shortcuts."
-              : "No shortcuts are available yet."}
+            No shortcuts are available yet.
           </p>
         )}
         <div className="flex flex-wrap items-center gap-3">

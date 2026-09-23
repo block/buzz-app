@@ -12,6 +12,7 @@ import {
   PaletteIcon,
   BellIcon,
   ChatCircleIcon,
+  KeyboardIcon,
   WrenchIcon,
 } from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
@@ -23,6 +24,9 @@ import type { Appearance } from "../shared/theme/service";
 import { AppearanceSettings } from "./AppearanceSettings";
 import { NotificationSettings } from "./NotificationSettings";
 import type { NotificationsService } from "../features/notifications/service";
+import type { ShortcutsService } from "../features/shortcuts/service";
+import type { ShortcutBindings } from "../features/shortcuts/preferences";
+import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
 import { MessageSettings } from "./MessageSettings";
 
@@ -32,6 +36,7 @@ const baseSections: Section[] = [
   { id: "profile", label: "Profile", icon: UserIcon },
   { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
   { id: "appearance", label: "Appearance", icon: PaletteIcon },
+  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
   { id: "messages", label: "Messages", icon: ChatCircleIcon },
   { id: "notifications", label: "Notifications", icon: BellIcon },
 ];
@@ -50,6 +55,8 @@ export function Settings({
   plugins,
   communities,
   appearance,
+  shortcuts,
+  shortcutBindings,
   notifications,
   navigation,
   onSection,
@@ -57,6 +64,8 @@ export function Settings({
   plugins: PluginManager;
   communities: Communities;
   appearance: Appearance;
+  shortcuts: ShortcutsService;
+  shortcutBindings: ShortcutBindings;
   notifications: NotificationsService;
   navigation?:
     | import("../features/navigation/service").PageNavigation
@@ -122,6 +131,13 @@ export function Settings({
               <AppearanceSettings
                 appearance={appearance}
                 active={selected === "appearance"}
+              />
+            </div>
+            <div hidden={selected !== "shortcuts"}>
+              <ShortcutSettings
+                shortcuts={shortcuts}
+                bindings={shortcutBindings}
+                plugins={plugins}
               />
             </div>
             <div hidden={selected !== "messages"}>

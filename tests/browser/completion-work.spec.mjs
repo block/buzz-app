@@ -111,3 +111,76 @@ test("mention typing does not repeat cold reads or create phantom popup layout a
   ).toBeVisible();
   await expect(input).not.toHaveAttribute("aria-controls");
 });
+
+// Native Enter/Tab must not turn a completed plain-text name into a recipient.
+test("qualified names preserve keyboard selection and completed-name dismissal", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
+  await page.goto("/tests/fixtures/mentions.html?identity-names");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  const options = page.getByRole("option");
+  const chips = input.locator(".inline-chip");
+  const publications = () =>
+    page.evaluate(() => window.mentionFixture.publications);
+  const keys = await page.evaluate(() => [
+    window.mentionFixture.first,
+    window.mentionFixture.second,
+  ]);
+
+  // A multi-word display name still completes even when its source name differs.
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.list().status))
+    .toBe("ready");
+  await page.evaluate(() => window.mentionFixture.collide(false));
+  await input.fill("@Other");
+  await expect(options).toHaveCount(1);
+  await input.pressSequentially(" H");
+  await expect(options).toHaveCount(1);
+  await expect(options).toContainText("Other Honey");
+  await input.press("Tab");
+  await expect(chips).toHaveText("@Honey");
+  await input.press("Enter");
+  await expect.poll(publications).toHaveLength(1);
+  expect((await publications())[0].tags.filter(([tag]) => tag === "p")).toEqual(
+    [["p", keys[1]]],
+  );
+
+  await page.evaluate(() => window.mentionFixture.collide(true));
+  for (const accept of ["Enter", "Tab"]) {
+    await input.fill("@Hon");
+    await expect(options).toHaveCount(2);
+    await expect(options.first()).toContainText("Honey · ");
+    const selectedKey = (await options.first().innerText()).includes(keys[0])
+      ? keys[0]
+      : keys[1];
+    await input.press(accept);
+    await expect(chips).toHaveText("@Honey");
+    await expect(input).toHaveJSProperty("value", "@Honey ");
+    await expect(page.getByRole("listbox")).toHaveCount(0);
+    const count = (await publications()).length;
+    await input.press("Enter");
+    await expect.poll(publications).toHaveLength(count + 1);
+    expect(
+      (await publications())[count].tags.filter(([tag]) => tag === "p"),
+    ).toEqual([["p", selectedKey]]);
+  }
+
+  // Typing a completed name dismisses the same real producer; Tab must not select.
+  await input.fill("@Honey");
+  await expect(options).toHaveCount(2);
+  await input.press("Space");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await input.press("Tab");
+  await expect(chips).toHaveCount(0);
+  await expect(input).toHaveJSProperty("value", "@Honey ");
+  const count = (await publications()).length;
+  await input.focus();
+  await input.press("Enter");
+  await expect.poll(publications).toHaveLength(count + 1);
+  const plain = (await publications())[count];
+  expect(plain.content).toBe("@Honey");
+  expect(plain.tags.filter(([tag]) => tag === "p")).toEqual([]);
+});

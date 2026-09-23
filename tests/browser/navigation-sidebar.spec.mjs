@@ -188,17 +188,22 @@ sessionSidebar(
     const regular = page.locator('[data-channel-id="beta"]');
     const disclosure = page.getByRole("button", { name: /sessions in/ });
     const x = async (locator) => (await locator.boundingBox())?.x;
+    const centerX = async (locator) => {
+      const bounds = await locator.boundingBox();
+      if (!bounds) throw new Error("Sidebar icon has no visible bounds");
+      return bounds.x + bounds.width / 2;
+    };
     const label = (row) => row.locator(".navigation-item-label");
 
     await expect(parent).toBeVisible();
     await expect(child).toBeVisible();
     await expect(regular).toBeVisible();
-    const regularIconX = await x(regular.locator("svg").first());
-    const parentIconX = await x(disclosure.locator("svg:visible"));
+    const regularIconX = await centerX(regular.locator("svg").first());
+    const parentIconX = await centerX(disclosure.locator("svg:visible"));
     expect(parentIconX).toBeCloseTo(regularIconX, 0);
 
     await parent.hover();
-    const chevronX = await x(disclosure.locator("svg:visible"));
+    const chevronX = await centerX(disclosure.locator("svg:visible"));
     expect(chevronX).toBeCloseTo(regularIconX, 0);
     expect(await x(label(parent))).toBeCloseTo(await x(label(regular)), 0);
     expect(await x(label(child))).toBeCloseTo(await x(label(regular)), 0);

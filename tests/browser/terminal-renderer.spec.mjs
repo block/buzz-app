@@ -296,11 +296,12 @@ test("terminal shared controls keep focus, recovery and layout in both modes", a
     await expectToken(launcher, "background-color", "--purple-3");
     const restart = button("Restart");
     await expect(restart).toHaveClass("buzz-button");
-    await expect(restart).toHaveCSS("border-top-width", "1px");
+    await expect(restart).toHaveCSS("border-top-width", "0px");
     const hide = button("Hide terminal");
     // Pointer focus is quiet; keyboard navigation paints the actual control.
     await button("Enlarge text").click();
-    await expect(restart).toHaveCSS("font-size", "24px");
+    // The shared small-button label role is 14px, scaled to 150%.
+    await expect(restart).toHaveCSS("font-size", "21px");
     // Keep the operation pending while its disabled color finishes animating.
     // A short fixture delay can expire between Playwright's assertion samples.
     await page.evaluate(() => window.terminalPanel.holdClose());

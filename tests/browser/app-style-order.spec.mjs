@@ -28,10 +28,21 @@ test("app startup preserves shared shell control styling", async ({ page }) => {
       for (const control of controls) {
         await expect(control).toBeVisible();
         await expect(control).toHaveCSS("padding-left", "0px");
-        // Shared controls reserve a transparent border for outline variants.
-        await expect(control).toHaveCSS("border-top-width", "1px");
-        await expect(control).toHaveCSS("border-top-color", "rgba(0, 0, 0, 0)");
+        // Shared controls draw outlines with an inset shadow, not a border.
+        await expect(control).toHaveCSS("border-top-width", "0px");
       }
+      const search = controls[2];
+      const glassHover = await search.evaluate((element) => {
+        const probe = document.createElement("span");
+        probe.style.backgroundColor = "var(--bg-glass-primary-hover)";
+        element.append(probe);
+        const color = getComputedStyle(probe).backgroundColor;
+        probe.remove();
+        return color;
+      });
+      await search.hover();
+      await expect(search).toHaveCSS("background-color", glassHover);
+      await page.mouse.move(0, 0);
     }
   }
 });

@@ -763,7 +763,9 @@ it("keeps deleted edits and reactions removed, including a delete-of-aux arrivin
   h.traffic.receive([
     signed(alice, { kind: 5, content: "", tags: [["e", reaction.id]] }),
   ]);
-  expect(h.view.snapshot().replies[0]?.reactions).toEqual([{ content: "+" }]);
+  expect(h.view.snapshot().replies[0]?.reactions).toEqual([
+    { content: "+", events: [{ id: reaction.id, authorId: viewer.pubkey }] },
+  ]);
   h.traffic.receive([
     signed(viewer, { kind: 5, content: "", tags: [["e", reaction.id]] }),
   ]);

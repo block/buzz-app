@@ -281,6 +281,41 @@ export function validMessageTemplate(event) {
     })()
   );
 }
+/** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
+export function validMessageDeletion(event) {
+  if (
+    event?.kind !== 5 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length > 106 ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        ["h", "e", "k", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const channels = event.tags.filter(([name]) => name === "h");
+  const targets = event.tags.filter(([name]) => name === "e");
+  const kinds = event.tags.filter(([name]) => name === "k");
+  return (
+    channels.length === 1 &&
+    channels[0][1].length > 0 &&
+    channels[0][1].length <= 256 &&
+    targets.length > 0 &&
+    targets.length <= 100 &&
+    targets.every(([, id]) => /^[0-9a-f]{64}$/.test(id)) &&
+    new Set(targets.map(([, id]) => id)).size === targets.length &&
+    kinds.length > 0 &&
+    kinds.length <= 3 &&
+    kinds.every(([, kind]) => ["7", "9", "40002"].includes(kind))
+  );
+}
+
 /** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
 export function validAgentEnrollment(event) {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -1249,6 +1284,16 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
+            } else if (
+              filters?.kind === 5 &&
+              Array.isArray(filters.tags) &&
+              filters.tags.some((tag) => Array.isArray(tag) && tag[0] === "h")
+            ) {
+              if (!validMessageDeletion(filters))
+                return json(res, 400, {
+                  error: "Message removal rejected",
+                  sent: false,
+                });
             } else if (![7, 9].includes(filters?.kind)) {
               try {
                 validateWorkflowEvent(

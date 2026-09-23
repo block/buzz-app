@@ -98,6 +98,13 @@ async function captureEditEvidence(page, testInfo) {
       contentType: "application/json",
     });
     // Use the existing app export, not a new session/projection access hook.
+    // Settings now owns the mounted diagnostics; open it only after raw capture.
+    const settings = page.getByRole("button", {
+      name: "Channel settings",
+      exact: true,
+    });
+    if ((await settings.getAttribute("aria-expanded")) !== "true")
+      await settings.click();
     const [result] = await Promise.all([
       page.waitForEvent("download", { timeout: 1000 }),
       page

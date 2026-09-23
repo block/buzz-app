@@ -23,6 +23,21 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   });
   await trigger.click();
   await expect(panel).toBeVisible();
+  // Diagnostics moved from a popup to this real shared Panel surface.
+  const tokens = await page.addStyleTag({
+    content: `:root, :root[data-color-mode] {
+      --surface-panel: rgb(23, 45, 67);
+      --border-standard: rgb(45, 67, 89);
+      --radius-panel: 19px;
+    }`,
+  });
+  try {
+    await expect(panel).toHaveCSS("background-color", "rgb(23, 45, 67)");
+    await expect(panel).toHaveCSS("border-top-color", "rgb(45, 67, 89)");
+    await expect(panel).toHaveCSS("border-radius", "19px");
+  } finally {
+    await tokens.evaluate((node) => node.remove());
+  }
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
   const close = panel.getByRole("button", { name: "Close channel settings" });
   await expect(close).toBeFocused();

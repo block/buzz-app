@@ -316,7 +316,9 @@ test("narrow link panels begin after the rendered sidebar", async ({
       .evaluate((element) => Number(getComputedStyle(element).zIndex)),
   ).toBeLessThan(
     await panel(page).evaluate((element) =>
-      Number(getComputedStyle(element.parentElement).zIndex),
+      Number(
+        getComputedStyle(element.closest('[class*="_panelStack_"]')).zIndex,
+      ),
     ),
   );
 });

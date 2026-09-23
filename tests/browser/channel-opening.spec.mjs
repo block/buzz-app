@@ -181,6 +181,9 @@ test("cold opening bypasses held DM labels; warm switching paints within 100ms w
       expect(timing.warmVisibleMs).toBeLessThan(100);
     }
     expect(submittedHeads).toHaveLength(before);
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
     const diagnostics = page
       .locator("summary")
       .filter({ hasText: /^Relay timings$/ });

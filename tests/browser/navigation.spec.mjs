@@ -46,10 +46,8 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),
   ).toHaveAttribute("aria-current", "page");
+  // Option/Alt arrows are native editing controls, not Buzz history shortcuts.
   await page.keyboard.press("Alt+ArrowLeft");
-  await expect(
-    sections.getByRole("button", { name: "Profile", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
   await page.keyboard.press("Alt+ArrowRight");
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),

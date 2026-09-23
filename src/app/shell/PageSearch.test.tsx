@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { Context } from "@deepseek-ai/cordis";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -9,8 +11,13 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
-import { PageSearch } from "./PageSearch";
+import { PageSearch, type SearchServices } from "./PageSearch";
 import type { RegisteredPage } from "../../features/pages/service";
+import {
+  createShortcutBindings,
+  SHORTCUT_BINDINGS_KEY,
+} from "../../features/shortcuts/preferences";
+import { ShortcutsService } from "../../features/shortcuts/service";
 
 afterEach(() => {
   cleanup();
@@ -148,4 +155,82 @@ it("invalidates selection when result identities change, even at the same index"
   expect(input).not.toHaveAttribute("aria-activedescendant");
   await user.keyboard("{ArrowUp}{Enter}");
   expect(select).toHaveBeenCalledExactlyOnceWith("test/first");
+});
+
+it("shows the live search shortcut in the trigger hint and follows a rebind", async () => {
+  Object.defineProperty(navigator, "platform", {
+    configurable: true,
+    value: "MacIntel",
+  });
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  try {
+    // Only the shortcut services are read while the dialog is closed.
+    render(
+      <PageSearch
+        pages={[]}
+        onSelect={vi.fn()}
+        services={
+          { shortcuts, shortcutBindings: bindings } as unknown as SearchServices
+        }
+      />,
+    );
+    // The title renders as a focus/hover tooltip rather than a native attribute.
+    const user = userEvent.setup();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent(
+      "Search Buzz (⌘K)",
+    );
+    act(() =>
+      bindings.set("global-search", { key: "p", mod: true, shift: true }),
+    );
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Search Buzz (⇧⌘P)");
+    act(() => bindings.reset());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Search Buzz (⌘K)");
+  } finally {
+    Reflect.deleteProperty(navigator, "platform");
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("renders a restored prototype-named search key and remains resettable", async () => {
+  localStorage.setItem(
+    SHORTCUT_BINDINGS_KEY,
+    JSON.stringify({ "global-search": { key: "constructor", mod: true } }),
+  );
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  try {
+    render(
+      <PageSearch
+        pages={[]}
+        onSelect={vi.fn()}
+        services={
+          { shortcuts, shortcutBindings: bindings } as unknown as SearchServices
+        }
+      />,
+    );
+    const user = userEvent.setup();
+    await user.tab();
+    expect(screen.getByRole("button", { name: "Search Buzz" })).toHaveFocus();
+    expect(await screen.findByRole("tooltip")).toHaveTextContent("constructor");
+    act(() => bindings.reset());
+    expect(screen.getByRole("tooltip")).toHaveTextContent("Ctrl+K");
+  } finally {
+    bindings.dispose();
+    localStorage.clear();
+    await root.fiber.dispose();
+  }
 });

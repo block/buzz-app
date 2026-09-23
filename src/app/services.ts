@@ -10,6 +10,7 @@ import {
   notificationAuthorized,
 } from "../features/notifications/messages";
 import { ShortcutsService } from "../features/shortcuts/service";
+import { createShortcutBindings } from "../features/shortcuts/preferences";
 import { ConversationService } from "../features/conversation/service";
 import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
@@ -22,6 +23,7 @@ import { withTimeout } from "../plugins/timeout";
 
 export function createServices() {
   const appearance = createAppearance();
+  const shortcutBindings = createShortcutBindings();
   const ctx = new Context();
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
@@ -29,7 +31,7 @@ export function createServices() {
   const agentControl = provideAgentControl(ctx);
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
-  const shortcuts = new ShortcutsService(ctx);
+  const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -38,6 +40,7 @@ export function createServices() {
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
     identityNames,
+    import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
   );
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));
@@ -60,6 +63,7 @@ export function createServices() {
     navigation,
     navigationHost,
     shortcuts,
+    shortcutBindings,
     conversation,
     pages,
     panels,
@@ -69,6 +73,7 @@ export function createServices() {
     appearance,
     dispose() {
       appearance.dispose();
+      shortcutBindings.dispose();
       // Start root cancellation without waiting for plugin-owned cleanup. Cordis
       // starts sibling effects independently; the runtime still owns replacement
       // barriers. A timeout reports incomplete cleanup, never successful disposal.

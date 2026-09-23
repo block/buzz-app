@@ -1,3 +1,8 @@
+import { Context } from "@deepseek-ai/cordis";
+import { ShortcutsService } from "../../src/features/shortcuts/service";
+import { createShortcutBindings } from "../../src/features/shortcuts/preferences";
+import { ShortcutSettings } from "../../src/app/ShortcutSettings";
+import type { PluginManager } from "../../src/plugins/manager";
 import { useState } from "react";
 import { createRoot } from "react-dom/client";
 import "@fontsource-variable/inter/wght.css";
@@ -27,8 +32,20 @@ let failClose = false;
 let closing: Promise<void> | undefined;
 let releaseClose: (() => void) | undefined;
 let closePending = false;
+let written = "";
+let toggles = 0;
+const bindings = createShortcutBindings(window);
+const scope = new Context();
+scope.provide("pluginStatus", {
+  isActive: () => true,
+  subscribe: () => () => {},
+});
+const shortcuts = new ShortcutsService(scope, window, bindings);
 Object.assign(window, {
   terminalPanel: {
+    written: () => written,
+    toggles: () => toggles,
+    dispose: () => scope.fiber.dispose(),
     holdClose() {
       closing = new Promise<void>((resolve) => {
         releaseClose = resolve;
@@ -55,7 +72,9 @@ const bridge: TerminalBridge = {
     output = false;
     return { data, exited: false };
   },
-  write: async () => {},
+  write: async (_owner, _id, data) => {
+    written += data;
+  },
   resize: async () => {},
   close: async () => {
     closePending = true;
@@ -71,22 +90,27 @@ const bridge: TerminalBridge = {
 };
 Object.assign(nativeBridge, bridge);
 let contribution: Panel | undefined;
-apply({
-  panels: {
-    register: (panel: Panel) => {
-      contribution = panel;
-    },
+scope.provide("panels", {
+  register: (panel: Panel) => {
+    contribution = panel;
   },
-  shortcuts: { register: () => {} },
-  effect: () => {},
-  relay: {
-    snapshot: () => ({
-      scope: context.scope,
-      viewer: context.viewer,
-      status: "ready",
-    }),
-  },
-} as unknown as Parameters<typeof apply>[0]);
+} as unknown as typeof scope.panels);
+scope.provide("relay", {
+  snapshot: () => ({
+    scope: context.scope,
+    viewer: context.viewer,
+    status: "ready",
+  }),
+} as unknown as typeof scope.relay);
+await scope
+  .extend({ pluginOwner: { id: "buzz.terminal", revision: "fixture" } })
+  .plugin((ctx) => apply(ctx))
+  .await();
+const pluginState = { configuration: { status: "loading" } };
+const plugins = {
+  subscribe: () => () => {},
+  snapshot: () => pluginState,
+} as unknown as Pick<PluginManager, "subscribe" | "snapshot">;
 if (!contribution?.channelLauncher)
   throw new Error("Missing terminal contribution");
 const Launcher = contribution.channelLauncher;
@@ -94,8 +118,19 @@ const Content = contribution.component;
 function Fixture() {
   useKeyboardFocusVisibility();
   const [visible, show] = useState(false);
+  const [settings, showSettings] = useState(false);
   return (
     <>
+      <button type="button" onClick={() => showSettings((value) => !value)}>
+        Shortcut settings
+      </button>
+      {settings && (
+        <ShortcutSettings
+          shortcuts={shortcuts}
+          bindings={bindings}
+          plugins={plugins}
+        />
+      )}
       <button
         type="button"
         onClick={() => {
@@ -132,7 +167,10 @@ function Fixture() {
             context={context}
             pressed={visible}
             available={() => true}
-            toggle={() => show((value) => !value)}
+            toggle={() => {
+              toggles++;
+              show((value) => !value);
+            }}
           />
         </nav>
         {visible && (

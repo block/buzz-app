@@ -1,4 +1,5 @@
 // FOUNDATION: One dispatcher; plugin readiness/lifetime remain owned by Cordis.
+import { TERMINAL_KEY_EVENT } from "./terminal-key-event";
 import { Service, type Context } from "@deepseek-ai/cordis";
 import {
   createContributions,
@@ -107,10 +108,15 @@ export class ShortcutsService extends Service implements Shortcuts {
         console.error(`Shortcut failed: ${shortcut.id}`, error);
       }
     };
+    // Only xterm needs an early handoff: ordinary editors still handle keys first.
+    const terminalKey = (event: Event) =>
+      dispatch((event as CustomEvent<KeyboardEvent>).detail);
     ctx.effect(() => {
+      host?.addEventListener(TERMINAL_KEY_EVENT, terminalKey);
       host?.addEventListener("keydown", dispatch);
       return () => {
         host?.removeEventListener("keydown", dispatch);
+        host?.removeEventListener(TERMINAL_KEY_EVENT, terminalKey);
         this.hostBindings.clear();
         this.publishHost();
       };

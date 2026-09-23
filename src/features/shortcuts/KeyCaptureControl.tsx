@@ -1,5 +1,6 @@
 // DESIGN PASS PENDING: provisional black-and-white UI; not yet part of the design system.
-import { useEffect, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
+import { Input } from "../../shared/design-system/ui/Input";
 import type { KeyBinding } from "./bindings";
 import styles from "./KeyCaptureControl.module.css";
 
@@ -47,45 +48,62 @@ export function KeyCaptureControl({
   onCancel: () => void;
 }) {
   const input = useRef<HTMLInputElement>(null);
+  const instructionId = useId();
   useEffect(() => {
     input.current?.focus();
   }, []);
   return (
-    <input
-      ref={input}
-      type="text"
-      readOnly
-      value="Press a shortcut…"
-      aria-label={label}
-      aria-describedby={describedBy}
-      data-state="listening"
-      data-design-pass="pending"
-      className={`${styles.listening} text-mono-sm`}
-      onBlur={onCancel}
-      onKeyDown={(event) => {
-        if (event.nativeEvent.isComposing || event.keyCode === 229) return;
-        event.preventDefault();
-        event.stopPropagation();
-        if (MODIFIER_KEYS.has(event.key)) return;
-        // Someone pressing Shift+Escape or Command+Escape is backing out, not
-        // choosing a binding, so Escape never reaches onCapture.
-        if (event.key === "Escape") {
-          onCancel();
-          return;
-        }
-        // AltGr can report Control+Alt, but the dispatcher always ignores it.
-        if (event.getModifierState("AltGraph")) return;
-        const mod = apple ? event.metaKey : event.ctrlKey;
-        onCapture({
-          binding: {
-            key: event.key.length === 1 ? event.key.toLowerCase() : event.key,
-            ...(mod && { mod }),
-            ...(event.shiftKey && { shift: true }),
-            ...(event.altKey && { alt: true }),
-          },
-          otherPrimary: apple ? event.ctrlKey : event.metaKey,
-        });
-      }}
-    />
+    <div className={styles.listening} data-design-pass="pending">
+      <span id={instructionId} className="sr-only">
+        Press Escape to cancel, or Tab to leave shortcut capture.
+      </span>
+      <Input
+        ref={input}
+        type="text"
+        readOnly
+        value="Press a shortcut…"
+        aria-label={label}
+        aria-describedby={[instructionId, describedBy]
+          .filter(Boolean)
+          .join(" ")}
+        data-state="listening"
+        data-design-pass="pending"
+        onBlur={onCancel}
+        onKeyDown={(event) => {
+          if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+          if (
+            event.key === "Tab" &&
+            !event.ctrlKey &&
+            !event.metaKey &&
+            !event.altKey
+          ) {
+            // Preserve native focus traversal, but not a plugin's Tab binding.
+            event.stopPropagation();
+            return;
+          }
+          event.preventDefault();
+          event.stopPropagation();
+          if (MODIFIER_KEYS.has(event.key)) return;
+          // Someone pressing Shift+Escape or Command+Escape is backing out, not
+          // choosing a binding, so Escape never reaches onCapture.
+          if (event.key === "Escape") {
+            onCancel();
+            return;
+          }
+          // AltGr can report Control+Alt, but the dispatcher always ignores it.
+          if (event.getModifierState("AltGraph")) return;
+          const mod = apple ? event.metaKey : event.ctrlKey;
+          onCapture({
+            binding: {
+              key: event.key.length === 1 ? event.key.toLowerCase() : event.key,
+              ...(mod && { mod }),
+              ...(event.shiftKey && { shift: true }),
+              ...(event.altKey && { alt: true }),
+            },
+            otherPrimary: apple ? event.ctrlKey : event.metaKey,
+          });
+        }}
+      />
+    </div>
   );
 }

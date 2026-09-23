@@ -7,15 +7,14 @@ import type { PluginInfo } from "../../plugins/types";
 import type { KeyBinding, Shortcut } from "./bindings";
 
 function browser(apple = true) {
-  const listeners = new Set<(event: KeyboardEvent) => void>();
+  const listeners = new Map<string, (event: KeyboardEvent) => void>();
   let modal = false;
   const host = {
     navigator: { platform: apple ? "MacIntel" : "Linux x86_64" },
     document: { querySelector: () => (modal ? {} : null) },
-    addEventListener: (_: string, fn: (event: KeyboardEvent) => void) =>
-      listeners.add(fn),
-    removeEventListener: (_: string, fn: (event: KeyboardEvent) => void) =>
-      listeners.delete(fn),
+    addEventListener: (type: string, fn: (event: KeyboardEvent) => void) =>
+      listeners.set(type, fn),
+    removeEventListener: (type: string) => listeners.delete(type),
   } as unknown as Window;
   return {
     host,
@@ -41,7 +40,7 @@ function browser(apple = true) {
         },
         ...init,
       } as KeyboardEvent;
-      for (const dispatch of listeners) dispatch(event);
+      listeners.get("keydown")?.(event);
       return event;
     },
   };

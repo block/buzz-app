@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { formatBinding } from "./format";
 import { afterEach, expect, it, vi } from "vitest";
 import {
   createShortcutBindings,
@@ -166,3 +167,22 @@ it("never hands out an inherited property: a prototype-named key is a stored bin
   expect("constructor" in parseOverrides(null)).toBe(false);
   bindings.dispose();
 });
+
+it.each(["constructor", "__proto__", "toString", "hasOwnProperty"])(
+  "restores and formats a prototype-named key safely: %s",
+  (key) => {
+    localStorage.setItem(
+      SHORTCUT_BINDINGS_KEY,
+      JSON.stringify({ "global-search": { key, mod: true } }),
+    );
+    const bindings = createShortcutBindings(window);
+    try {
+      const restored = bindings.snapshot().overrides["global-search"];
+      if (!restored) throw new Error("Missing restored binding");
+      expect(formatBinding(restored, true).label).toBe(`Command ${key}`);
+      expect(formatBinding(restored, false).label).toBe(`Control ${key}`);
+    } finally {
+      bindings.dispose();
+    }
+  },
+);

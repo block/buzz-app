@@ -1,12 +1,6 @@
-/* DESIGN PASS PENDING: provisional black-and-white UI; not yet part of the design system. */
+/* DESIGN PASS PENDING: provisional capture composition; Input owns its appearance. */
 .listening {
-  min-width: var(--size-navigator);
-  min-height: var(--size-control-sm);
-  border: 1px solid var(--border-standard);
-  border-radius: var(--radius-control);
-  padding: 0 var(--space-3);
-  background: var(--surface-inset);
-  color: var(--text-standard);
-  caret-color: transparent;
-  cursor: default;
+  width: var(--size-navigator);
+  max-width: 100%;
+  min-width: 0;
 }

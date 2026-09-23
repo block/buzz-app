@@ -555,7 +555,12 @@ stored override falls back to the registered default rather than stopping
 dispatch. `formatBinding` in
 `features/shortcuts/format.ts` renders any `KeyBinding` for the current platform;
 plugins that print their own hint (the bundled terminal does) show their registered
-default because overrides are host state.
+default because overrides are host state. Xterm is the intentional local-first
+exception: before translating a keydown into PTY input, it synchronously forwards
+the original event to this same dispatcher through a private DOM handoff. Eligible
+app shortcuts (including live rebinds) win there; unhandled keys stay with xterm.
+No plugin shortcut API or preference access is added. Ordinary editors continue
+to handle keys before the window's bubbling dispatcher.
 
 Known limitations. Capture and matching both use the logical `KeyboardEvent.key`.
 On macOS an Option chord reports the composed character, so Option+K is stored

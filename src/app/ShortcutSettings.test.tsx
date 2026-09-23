@@ -413,10 +413,10 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "Ctrl+K is already used by Search Buzz (Buzz).",
     );
-    expect(screen.getByRole("alert")).toHaveClass("text-danger");
+    expect(screen.getByRole("alert")).toHaveClass("text-standard");
     expect(input).toHaveAttribute(
       "aria-describedby",
-      screen.getByRole("alert").id,
+      expect.stringContaining(screen.getByRole("alert").id),
     );
     fireEvent.keyDown(input, { key: "j", ctrlKey: true });
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -481,7 +481,7 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
     fireEvent.keyDown(capture("Open Settings"), { key: "z", ctrlKey: true });
     const warning = within(row("Open Settings")).getByRole("alert");
     expect(warning).toHaveTextContent("message editor handles Ctrl+Z");
-    expect(warning).toHaveClass("text-warning");
+    expect(warning).toHaveClass("text-standard");
     expect(h.bindings.resolve("settings")).toEqual([{ key: "z", mod: true }]);
     for (const [key, chord] of [
       ["y", "Ctrl+Shift+Y"],
@@ -599,7 +599,7 @@ it.each([true, false])(
           "Saved. The message editor handles",
         );
         expect(within(row(title)).getByRole("alert")).toHaveClass(
-          "text-warning",
+          "text-standard",
         );
         expect(h.bindings.resolve("settings")).toEqual([
           { key: "Enter", ...modifiers },
@@ -693,6 +693,7 @@ it("keeps a change active when saving fails and offers a retry", async () => {
     });
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("could not be saved on this device");
+    expect(alert).toHaveClass("text-standard");
     expect(
       within(row("Toggle channel terminal")).getByText("Modified"),
     ).toBeInTheDocument();
@@ -898,3 +899,42 @@ it("keeps the host group distinct from a plugin whose manifest id is buzz", asyn
     await h.dispose();
   }
 });
+
+it.each([false, true])(
+  "Tab leaves capture without saving (backwards=%s)",
+  async (shift) => {
+    const h = await harness();
+    const user = userEvent.setup();
+    try {
+      const run = vi.fn();
+      await h.contribute("example.tab", {
+        id: "tab",
+        title: "Plugin Tab",
+        binding: { key: "Tab", shift },
+        allowInEditable: true,
+        run,
+      });
+      render(
+        <ShortcutSettings
+          shortcuts={h.shortcuts}
+          bindings={h.bindings}
+          plugins={h.plugins}
+        />,
+      );
+      await user.click(change("Open Settings"));
+      expect(capture("Open Settings")).toHaveAccessibleDescription(
+        /Press Escape to cancel, or Tab to leave/,
+      );
+      await user.tab({ shift });
+      expect(
+        screen.queryByRole("textbox", { name: /New shortcut/ }),
+      ).toBeNull();
+      expect(h.bindings.snapshot().overrides).toEqual({});
+      expect(h.runs.settings).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(document.activeElement).not.toBe(document.body);
+    } finally {
+      await h.dispose();
+    }
+  },
+);

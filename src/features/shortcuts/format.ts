@@ -47,7 +47,10 @@ export function formatBinding(
   binding: KeyBinding,
   apple: boolean,
 ): FormattedBinding {
-  const special = SPECIAL_KEYS[binding.key.toLowerCase()];
+  const normalized = binding.key.toLowerCase();
+  const special = Object.hasOwn(SPECIAL_KEYS, normalized)
+    ? SPECIAL_KEYS[normalized]
+    : undefined;
   const key: Words = special ?? [
     binding.key.length === 1 ? binding.key.toUpperCase() : binding.key,
     binding.key.length === 1 ? binding.key.toUpperCase() : binding.key,

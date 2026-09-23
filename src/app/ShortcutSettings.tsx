@@ -255,7 +255,7 @@ export function ShortcutSettings({
           <div>
             {groups.map((group) => (
               <NavigationSection key={group.id} label={group.label}>
-                <div className="divide-y divide-line">
+                <div className="divide-y divide-standard">
                   {group.rows.map((row) => (
                     <ShortcutRow
                       key={row.key}
@@ -297,7 +297,7 @@ export function ShortcutSettings({
           </Button>
         </div>
         {error && (
-          <div role="alert" className="grid gap-3 text-body-sm text-danger">
+          <div role="alert" className="grid gap-3 text-body-sm text-standard">
             <p className="m-0">{error}</p>
             <div>
               <Button type="button" onClick={bindings.retry}>
@@ -356,7 +356,7 @@ function ShortcutRow({
       className="flex flex-wrap items-center justify-between gap-3 px-5 py-3"
       aria-labelledby={titleId}
     >
-      <div className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1 basis-[var(--size-navigator)]">
         <h3 id={titleId} className="m-0 text-label font-medium">
           {row.title}
         </h3>
@@ -375,13 +375,13 @@ function ShortcutRow({
           <p
             id={noticeId}
             role="alert"
-            className={`m-0 text-body-sm ${notice.tone === "error" ? "text-danger" : "text-warning"}`}
+            className="m-0 text-body-sm text-standard"
           >
             {notice.message}
           </p>
         )}
       </div>
-      <div className="actions items-center">
+      <div className="actions max-w-full items-center">
         {listening ? (
           <KeyCaptureControl
             apple={apple}

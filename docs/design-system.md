@@ -118,12 +118,12 @@ does not overlap. Independent plugins that hard-code sizes and third-party shado
 widgets need their own adapter; this is not a forced CSS rewrite of arbitrary code.
 
 Settings → Shortcuts lists every host and active plugin shortcut from the live
-dispatcher, grouped by owner, with each owner's deliberate numeric order, search,
+dispatcher, grouped by owner, with each owner's deliberate numeric order,
 per-row Change/Reset and Reset all. Buzz's host rows use a functional sequence
 (navigation, text sizing, search/settings, then development-only actions); plugins
 choose the order of their own actions. Equal orders use stable registry identity
 and then title as tie-breakers. It
-is built from existing components (`SearchField`, `Button`, `NavigationSection`,
+is built from existing components (`Input`, `Button`, `NavigationSection`,
 the Plugins-list row pattern) and `formatBinding`, which renders chords as glyphs
 in Control, Option, Shift, Command order on Apple platforms (⇧⌘K) and as words
 elsewhere (Ctrl+Shift+K), with a plain-words accessible label. A row whose chord
@@ -132,9 +132,14 @@ subtle text, no colour. Two pieces are
 provisional and await a design pass: the key-combo `<kbd>` chip
 (`src/features/shortcuts/KeyCombo.tsx`) and the inline key-capture control
 (`src/features/shortcuts/KeyCaptureControl.tsx`). Both are deliberately
-black-and-white on standard text, surface, border and radius tokens, live outside
+black-and-white: capture composes the shared Input with feature-owned sizing
+and keyboard handling; notices retain explicit alert text in neutral roles.
+The keycaps use standard text, surface, border and radius tokens. Both live outside
 `src/shared/design-system/ui/`, and are marked with a `DESIGN PASS PENDING` file
 comment and `data-design-pass="pending"` on their root so they are greppable.
+Capture keeps the shared keyboard-focus treatment. Escape cancels; Tab/Shift+Tab
+leave capture without saving, with an accessible instruction explaining the exit.
+Rows wrap their actions before the title collapses.
 
 `tests/browser/shortcuts.spec.mjs` covers real key dispatch to Settings and actual
 message/composer text, draft/node preservation, reset/limits/reload, modal/editor/

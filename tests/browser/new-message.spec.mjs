@@ -71,7 +71,7 @@ const test = base.extend({
       relayUrl: fixtureRelayUrl,
       communityAliases: fixtureAliases,
       identity: () => key,
-      agentLibrary: () => [],
+      agentLibrary: () => ({ definitions: [], identities: [] }),
       authority: async () => ({ relayAuthor: author }),
       socketFactory: socket.factory,
       upstreamFetch: async (url, init) => {

@@ -77,7 +77,12 @@ export function createMessages(
       return writer(40003, channelId).send({
         kind: 40003,
         content: text(content),
-        tags: [["h", channelId], ["e", messageId], ...emojiTags(content)],
+        tags: [
+          ["h", channelId],
+          ["e", messageId],
+          ...original.tags.filter((tag) => tag[0] === "imeta"),
+          ...emojiTags(content),
+        ],
       });
     },
     react(messageId: string, content: string) {

@@ -11,10 +11,12 @@ export function ChannelSettingsPanel({
   channel,
   close,
   children,
+  setupTools,
 }: {
   channel: ChannelSummary | undefined;
   close(): void;
   children: ReactNode;
+  setupTools?: ReactNode;
 }) {
   const closeButton = useRef<HTMLButtonElement>(null);
   useEffect(() => {
@@ -83,6 +85,7 @@ export function ChannelSettingsPanel({
               </dl>
             </>
           )}
+          {setupTools}
           <details className={styles.settingsDiagnostics}>
             <summary>Diagnostics</summary>
             <div className={styles.settingsTools}>{children}</div>

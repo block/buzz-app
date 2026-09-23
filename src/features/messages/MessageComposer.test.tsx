@@ -24,12 +24,14 @@ import type {
   InlineRenderer,
 } from "../conversation/contracts";
 import type { AgentLibrarySnapshot } from "../agents/library";
-import { AgentMentionContext } from "../agents/mention-context";
+import { createAgentChoices } from "../agents/choices";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
-import type { RelaySession } from "../relay/session";
+import { createRelaySession, type RelaySession } from "../relay/session";
+import { keypair, metadata, roster, signed } from "../relay/testing";
+import type { EventTemplate } from "nostr-tools";
 import type { Profile } from "../relay/contracts";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
@@ -127,6 +129,10 @@ function mount(
     identities: [],
     definitions: [],
   };
+  const channelList = {
+    status: "ready" as const,
+    channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
+  };
   const session = {
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
@@ -161,6 +167,10 @@ function mount(
     },
     media: (url: string) => url,
     outbox: { supports: () => true },
+    channels: {
+      list: () => channelList,
+      subscribeList: () => () => {},
+    },
   } as unknown as RelaySession;
   const onSend = vi.fn();
   const inline: readonly Contribution<InlineRenderer>[] = [
@@ -200,11 +210,24 @@ function mount(
     },
     ...options,
   };
-  const tree = () => (
-    <AgentMentionContext.Provider value={control}>
-      <MessageComposer {...props} />
-    </AgentMentionContext.Provider>
-  );
+  const bindChoices = () => {
+    const library = props.session.agentLibrary;
+    props = {
+      ...props,
+      session: {
+        ...props.session,
+        scope: props.scope,
+        agentChoices: createAgentChoices({
+          scope: props.scope,
+          library: { ...library, retain: () => () => {} },
+          native: control,
+          signal: new AbortController().signal,
+        }),
+      },
+    };
+  };
+  bindChoices();
+  const tree = () => <MessageComposer {...props} />;
   const view = render(tree(), {
     reactStrictMode: true,
   });
@@ -239,7 +262,11 @@ function mount(
       });
     },
     retarget(next: Partial<MessageComposerProps>) {
+      const changedSession =
+        (next.session !== undefined && next.session !== props.session) ||
+        (next.scope !== undefined && next.scope !== props.scope);
       props = { ...props, ...next };
+      if (changedSession) bindChoices();
       view.rerender(tree());
     },
     setProfiles(next: ReadonlyMap<string, Profile>) {
@@ -1044,7 +1071,8 @@ for (const threadRootId of [undefined, "f".repeat(64)])
       expect(send).toHaveBeenCalledOnce();
       expect(retry).not.toHaveBeenCalled();
       expect(send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
-      expect(h.input().value).toBe("");
+      // Native evidence now shares the ordinary remember-agent classification.
+      expect(h.input().value).toBe("@Honey ");
     } finally {
       control.dispose();
     }
@@ -1621,3 +1649,79 @@ it("keeps inline recipient identity and source stable through directory collisio
   h.unmount();
   names.dispose();
 });
+
+it.each([false, true])(
+  "leaves removed-person rejection to the real session without enrolling anyone (mixed native=%s)",
+  async (mixed) => {
+    const viewer = keypair(),
+      relay = keypair();
+    const scope = `https://relay.example.test:${viewer.pubkey}`;
+    const f = controlFixture();
+    f.agent.pubkey = second.pubkey;
+    const native = createAgentControl(f.host);
+    await native.refresh();
+    let members = [viewer.pubkey, first.pubkey];
+    let time = 1700000000;
+    const sign = vi.fn(async (template: EventTemplate) =>
+      signed(viewer, template),
+    );
+    const publish = vi.fn(async () => {});
+    const readLibrary = vi.fn(async () => ({
+      definitions: [],
+      identities: [],
+    }));
+    const owner = createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        scope: "https://relay.example.test",
+        media: () => undefined,
+        query: async (filters) =>
+          filters.flatMap((filter) =>
+            filter.kinds?.includes(39002)
+              ? [roster(relay, "channel", members, time)]
+              : filter.kinds?.includes(39000)
+                ? [metadata(relay, "channel", "General")]
+                : [],
+          ),
+        readAgentLibrary: readLibrary,
+        writer: { kinds: [9, 9000], sign, publish },
+      },
+      { outboxStorage: { load: () => [], save() {} }, agentChoices: native },
+    );
+    const refresh = () =>
+      owner.session.read(
+        [
+          { kinds: [39002], "#d": ["channel"], limit: 1 },
+          { kinds: [39000], "#d": ["channel"], limit: 1 },
+        ],
+        { fresh: true },
+      );
+    await refresh();
+    const h = mount({ session: owner.session, scope }, native);
+    try {
+      fireEvent.click(screen.getByRole("button", { name: "First Honey" }));
+      if (mixed)
+        fireEvent.click(screen.getByRole("button", { name: "Second Honey" }));
+      const draft = h.input().value;
+      members = [viewer.pubkey];
+      time++;
+      await act(refresh);
+      // An ordinary removed recipient must reject synchronously. Awaiting an
+      // async act here would hide a transient enrollment lock on the composer.
+      h.submit();
+      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        "no longer a channel member",
+      );
+      expect(h.input()).toHaveValue(draft);
+      expect(sign).not.toHaveBeenCalled();
+      expect(publish).not.toHaveBeenCalled();
+      expect(readLibrary).not.toHaveBeenCalled();
+    } finally {
+      h.unmount();
+      owner.dispose();
+      native.dispose();
+    }
+  },
+);

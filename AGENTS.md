@@ -41,6 +41,11 @@ callers, and relevant design docs; preserve documented product decisions and
 ownership boundaries. Resolve answerable questions from evidence; ask before
 deviating from agreed scope or product behavior.
 
+Agent selection must consume `session.agentChoices`, not independently reconstruct
+native/legacy inventories. Keep usable partial choices distinct from complete
+inference evidence; preserve each action's membership/archive policy. See
+[shared agent selection](docs/agents.md#shared-agent-selection).
+
 Target **9/10+ for minimalness, elegance, and correctness**: the smallest complete
 solution, clear ownership, and no known material defects. Prefer existing patterns
 and subtraction. No opportunistic refactors, speculative abstractions, or new

@@ -1,5 +1,14 @@
 // FOUNDATION: Type-only author entry. Runtime capabilities come from injected ctx.
 export type { PluginManifest, PluginModule } from "./api";
+export type { SettingsCard, SettingsCards } from "../features/settings/service";
+export type {
+  TemplateDraft,
+  TemplateEditorProps,
+  GroupDefaultProps,
+  SaveTemplateProps,
+  TemplateProvider,
+  TemplateProviders,
+} from "../features/channel-templates/provider";
 export type { Context } from "@deepseek-ai/cordis";
 export type { Page, Pages } from "../features/pages/service";
 export type {

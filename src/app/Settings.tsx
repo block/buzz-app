@@ -29,6 +29,8 @@ import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
 import { MessageSettings } from "./MessageSettings";
+import type { SettingsCards } from "../features/settings/service";
+import { OwnedContribution } from "../plugins/OwnedContribution";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
@@ -52,6 +54,7 @@ const sections: Section[] = developerMode
   : baseSections;
 
 export function Settings({
+  cards,
   plugins,
   communities,
   appearance,
@@ -61,6 +64,7 @@ export function Settings({
   navigation,
   onSection,
 }: {
+  cards: SettingsCards;
   plugins: PluginManager;
   communities: Communities;
   appearance: Appearance;
@@ -72,6 +76,7 @@ export function Settings({
     | undefined;
   onSection?: (section: string) => void;
 }) {
+  const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
   const [selected, setSelected] =
     useState<(typeof sections)[number]["id"]>("profile");
   const requestedSection =
@@ -142,6 +147,19 @@ export function Settings({
             </div>
             <div hidden={selected !== "messages"}>
               <MessageSettings active={selected === "messages"} />
+              {selected === "messages" &&
+                contributed.map((card) => (
+                  <OwnedContribution
+                    key={card.key}
+                    entry={card}
+                    registry={cards}
+                  >
+                    {(entry, active) => {
+                      const Card = entry.component;
+                      return <Card active={active} />;
+                    }}
+                  </OwnedContribution>
+                ))}
             </div>
             <div hidden={selected !== "profile"}>
               <ProfileSettings communities={communities} />

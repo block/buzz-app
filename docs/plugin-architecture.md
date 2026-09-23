@@ -99,6 +99,41 @@ pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
 agent execution remain future shared capabilities.
 
+### Optional channel templates and Settings cards
+
+`ctx.settingsCards.register({ id, title, component })` contributes a card under
+Settings → Messages, not a new route. Cards receive `active()` and use ordinary
+session capabilities through injection. Host boundaries isolate rendering errors;
+exact registration identity and mounted lifetime revoke callbacks on removal.
+
+Templates & teams (`buzz.channel-templates`) is bundled **off by default** in both
+browser and desktop catalogs. Explicit saved overrides win. Enable it under
+Settings → Plugins, then manage recipes under Settings → Messages. Channels owns
+personal groups and the existing + creation buttons, independently of this plugin.
+
+`ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
+one optional composition provider. With zero or multiple active providers, no
+optional controls are selected. This host-matched preview is not a workflow API:
+Channels owns form/draft data and final dispatch; the session owns signing,
+membership, Canvas writes, exact receipts and partial-setup recovery. Settings and
+provider components must check `active()` before accepting delayed work or starting
+new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
+
+Disabling preserves saved group default references but does not apply them to new
+intent. Accepted drafts remain visibly summarized, with an explicit Clear action;
+re-enable does not overwrite edits or automatically apply an unresolved old default.
+Frozen setup stays visible/resumable without any template/agent catalog. Disabling
+is not cancellation of already accepted writes. Group-only and Canvas-only setup
+require no agent-library readiness; real agent selections still receive fresh host
+validation. Template-specific library demand belongs to mounted plugin controls;
+shared group/catalog storage remains session-owned.
+
+Colocated regressions cover app registration, exact-contribution revocation,
+accepted-draft retention and session/outbox recovery. They are not live cross-window
+or packaged/native acceptance; validation results and remaining gates belong in the
+pull request. Updating the native bundled catalog requires a desktop rebuild/restart;
+frontend hot reload alone cannot add the entry.
+
 ### Composer accessories
 
 `ctx.conversation.registerAccessory({ id, title, order?, component })` contributes

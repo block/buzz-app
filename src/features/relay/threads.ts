@@ -83,6 +83,8 @@ export function createThreadView({
     : undefined;
   let remote: readonly RelayEvent[] = [];
   let staged: readonly RelayEvent[] = [];
+  // Strict reads require transport-supplied binding authority. Missing scope is
+  // a configuration error, not evidence of an old relay that permits fallback.
   let mode: "probe" | "older" | "legacy" = canonicalChannel.test(channelId)
     ? "probe"
     : "legacy";
@@ -359,13 +361,41 @@ export function createThreadView({
         if (!event) throw new Error("The selected message is unavailable.");
         rootId = threadReference(event)?.rootId ?? event.id;
       }
+      const rootFilter: ReadFilter = {
+        ids: [rootId],
+        "#h": [channelId],
+        limit: 1,
+      };
+      let root: readonly RelayEvent[] = [];
+      if (mode !== "legacy") {
+        // Strict requests cannot batch an ID lookup with a window. Admit the
+        // verified root first so channel-less root aux has visibility evidence.
+        // Revalidate once per run, not once per page of a retained-range repair.
+        const rootResponse = await reader.read([rootFilter], {
+          signal: owned.signal,
+        });
+        if (!active()) return;
+        root = admit(rootResponse);
+        if (!active()) return;
+        if (
+          !root.some(
+            (event) =>
+              event.id === rootId &&
+              contentKind(event) &&
+              inChannel(event, channelId) &&
+              !threadReference(event),
+          )
+        ) {
+          rootUnavailable = true;
+          cursor = undefined;
+          pages = 0;
+          publish({ canLoadMore: false });
+          throw new Error("The original thread message is unavailable.");
+        }
+        if (!retain(union(remote, related(root)))) return;
+      }
       let more = false;
       for (let page = 0; page < targetPages; page++) {
-        const rootFilter: ReadFilter = {
-          ids: [rootId],
-          "#h": [channelId],
-          limit: 1,
-        };
         const filter: ReadFilter = {
           kinds: [9, 40002],
           "#h": [channelId],
@@ -377,30 +407,6 @@ export function createThreadView({
         let response: readonly RelayEvent[];
         let bounds: ReturnType<typeof threadBounds> | undefined;
         if (mode !== "legacy") {
-          // Strict requests cannot batch an ID lookup with a window. Admit the
-          // verified root first so channel-less root aux has visibility evidence.
-          const rootResponse = await reader.read([rootFilter], {
-            signal: owned.signal,
-          });
-          if (!active()) return;
-          const root = admit(rootResponse);
-          if (!active()) return;
-          if (
-            !root.some(
-              (event) =>
-                event.id === rootId &&
-                contentKind(event) &&
-                inChannel(event, channelId) &&
-                !threadReference(event),
-            )
-          ) {
-            rootUnavailable = true;
-            cursor = undefined;
-            pages = 0;
-            publish({ canLoadMore: false });
-            throw new Error("The original thread message is unavailable.");
-          }
-          if (!retain(union(remote, related(root)))) return;
           try {
             const page = await reader.read(
               [

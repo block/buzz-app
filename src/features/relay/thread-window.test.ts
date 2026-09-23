@@ -188,7 +188,13 @@ it("pages 303 tied replies newest-first, deduplicates live rows and repairs reta
       tags: [["e", oldest.id]],
     }),
   ];
+  const beforeRepair = h.requests.length;
   await h.view.refresh();
+  const repair = h.requests.slice(beforeRepair);
+  expect(repair).toHaveLength(8);
+  expect(repair[0]).toEqual([{ ids: [root.id], "#h": [channel], limit: 1 }]);
+  expect(repair.slice(1).every(([filter]) => filter?.thread_window)).toBe(true);
+  expect(repair.every((filters) => filters.length === 1)).toBe(true);
   expect(
     h.view.snapshot().replies.find((r) => r.id === oldest.id)?.content,
   ).toBe("edited oldest");
@@ -444,36 +450,89 @@ it("refreshes retained strict pages after establishment while preserving live de
   await vi.waitFor(() =>
     expect(h.view.snapshot().replies[0]?.content).toBe("repaired"),
   );
-  expect(h.requests.length).toBe(before + 4);
+  expect(h.view.snapshot().status).toBe("ready");
+  expect(h.requests.slice(before)).toMatchObject([
+    [{ ids: [root.id] }],
+    [{ thread_window: true }],
+    [{ thread_window: true, until: two.created_at, before_id: two.id }],
+  ]);
   expect(h.view.snapshot().replies.map((row) => row.id)).toEqual([one.id]);
 });
 
-it.each(["dispose", "clear", "revoke"])(
-  "fences a held strict response after %s",
-  async (action) => {
-    let release!: (events: readonly RelayEvent[]) => void;
-    const held = new Promise<readonly RelayEvent[]>((resolve) => {
-      release = resolve;
-    });
-    let pending: ReadFilter | undefined;
-    const h = await setup((filter) => {
-      if (filter.ids) return [root];
-      pending = filter;
-      return held;
-    });
-    const loading = h.view.refresh();
+it("revalidates a missing strict root before repair and preserves tombstones on retry", async () => {
+  const row = reply(0);
+  let missing = false;
+  const h = await setup((filter) =>
+    filter.ids ? (missing ? [] : [root]) : [row, bounds(filter)],
+  );
+  await h.view.refresh();
+  h.traffic.receive([
+    signed(author, {
+      kind: 5,
+      created_at: 500,
+      content: "",
+      tags: [["e", row.id]],
+    }),
+  ]);
+  missing = true;
+  const before = h.requests.length;
+  await h.view.refresh();
+  expect(h.requests.slice(before)).toEqual([
+    [{ ids: [root.id], "#h": [channel], limit: 1 }],
+  ]);
+  expect(h.view.snapshot()).toMatchObject({
+    status: "error",
+    root: undefined,
+    replies: [],
+    canLoadMore: false,
+  });
+  expect(h.view.snapshot().error).toContain(
+    "original thread message is unavailable",
+  );
+  missing = false;
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    root: { id: root.id },
+    replies: [],
+    canLoadMore: false,
+  });
+});
+
+it.each([
+  ["dispose", "root"],
+  ["clear", "root"],
+  ["revoke", "root"],
+  ["dispose", "window"],
+  ["clear", "window"],
+  ["revoke", "window"],
+])("fences %s during a held strict %s read", async (action, phase) => {
+  let release!: (events: readonly RelayEvent[]) => void;
+  const held = new Promise<readonly RelayEvent[]>((resolve) => {
+    release = resolve;
+  });
+  let pending: ReadFilter | undefined;
+  const h = await setup((filter) => {
+    if (phase === "window" && filter.ids) return [root];
+    pending = filter;
+    return held;
+  });
+  const loading = h.view.refresh();
+  try {
     await vi.waitFor(() => expect(pending).toBeDefined());
-    assert.exists(pending);
     if (action === "dispose") h.dispose();
     else if (action === "clear") await h.clearCache();
     else h.traffic.receive([roster(relay, channel, [], 1_700_000_001)]);
-    release([reply(0), bounds(pending)]);
-    await loading;
-    expect(h.view.snapshot().replies).toEqual([]);
-    expect(h.view.snapshot().root).toBeUndefined();
-    expect(h.requests).toHaveLength(2);
-  },
-);
+  } finally {
+    release(
+      phase === "root" ? [root] : pending ? [reply(0), bounds(pending)] : [],
+    );
+  }
+  await loading;
+  expect(h.view.snapshot().replies).toEqual([]);
+  expect(h.view.snapshot().root).toBeUndefined();
+  expect(h.requests).toHaveLength(phase === "root" ? 1 : 2);
+});
 
 it.each([8_210_266_876_800, Number.MAX_SAFE_INTEGER])(
   "rejects signed timestamps outside chrono's domain (%s) before admission",

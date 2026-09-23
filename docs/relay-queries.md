@@ -113,9 +113,18 @@ ID, and traverses with explicit content kinds, `#h`, one root `#e`, depth 100 an
 the root lookup. The existing verified reader validates exactly one kind-39007
 bounds event, relay signer, exact tags, version/direction and full host/viewer/request
 binding before any page enters session reconciliation. The destination's authority,
-not the local broker host, supplies the binding. Strict continuation echoes signed
-`until`/`before_id`; only bounds establish exhaustion, including empty pages whose
-raw scan cursor does not occur among delivered events.
+not the local broker host, supplies the binding. Both shipped transports provide
+this authority through `ReadTransport.scope`; its absence is a configuration error,
+not evidence of an old relay, and does not permit legacy fallback. Strict
+continuation echoes signed `until`/`before_id`; only bounds establish exhaustion,
+including empty pages whose raw scan cursor does not occur among delivered events.
+
+Strict root admission/validation runs once before each load or refresh traversal,
+not between the pages of a retained-range repair: repairing N pages uses one root
+read plus N independently verified window reads. Each separate scrollback load
+still reads the root. Root deletion observed live and access revocation retain their
+existing session paths; a later refresh/load revalidates the root. Neither the root
+lookup nor the page sequence provides an atomic snapshot.
 
 A first probe returning verified replies but no bounds is discarded and restarted
 with clean legacy `thread_cursor`/`thread_cursor_id` state. Empty unsigned responses

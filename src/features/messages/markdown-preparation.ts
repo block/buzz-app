@@ -15,7 +15,7 @@ export type PreparedMarkdown =
       literalRanges: readonly LiteralRange[];
     }>;
 
-const literalContext = (type: string) =>
+export const isLiteralMarkdownContext = (type: string) =>
   [
     "code",
     "inlineCode",
@@ -36,7 +36,10 @@ function literalRanges(
   while (pending.length) {
     const node = pending.pop();
     if (!node) continue;
-    if (literalContext(node.type) && (includeLinks || node.type !== "link")) {
+    if (
+      isLiteralMarkdownContext(node.type) &&
+      (includeLinks || node.type !== "link")
+    ) {
       const start = node.position?.start.offset;
       const end = node.position?.end.offset;
       if (start !== undefined && end !== undefined)
@@ -67,8 +70,7 @@ export function prepareMarkdown(content: string): PreparedMarkdown {
   );
   if (normalized !== content) {
     scan = scanMarkdown(normalized);
-    if (scan.tooDeep)
-      return Object.freeze({ kind: "plain", content: normalized });
+    if (scan.tooDeep) return Object.freeze({ kind: "plain", content });
   }
 
   return Object.freeze({

@@ -36,7 +36,11 @@ import { emojiMatches, messageParts } from "../relay/emoji";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionParts } from "./profile-mentions";
-import { prepareMarkdown, type LiteralRange } from "./markdown-preparation";
+import {
+  isLiteralMarkdownContext,
+  prepareMarkdown,
+  type LiteralRange,
+} from "./markdown-preparation";
 
 type MarkdownNode = {
   type: string;
@@ -60,18 +64,6 @@ type ProtectedContent = {
   prefix: string;
   parts: InlinePart[];
 };
-const literalContext = (type: string) =>
-  [
-    "code",
-    "inlineCode",
-    "link",
-    "linkReference",
-    "image",
-    "imageReference",
-    "definition",
-    "html",
-  ].includes(type);
-
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
 function protectInlineContent(
@@ -192,7 +184,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
   };
   return (tree: MarkdownNode) => {
     const visit = (parent: MarkdownNode) => {
-      if (literalContext(parent.type)) {
+      if (isLiteralMarkdownContext(parent.type)) {
         restoreLiteral(parent);
         return;
       }

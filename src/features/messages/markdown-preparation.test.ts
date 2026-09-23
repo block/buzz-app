@@ -32,6 +32,11 @@ describe("prepareMarkdown", () => {
     ]);
   });
 
+  it("preserves the signed body when normalization crosses the depth guard", () => {
+    const content = `${"> ".repeat(98)}[label]\\(https://example.test\\)`;
+    expect(prepareMarkdown(content)).toEqual({ kind: "plain", content });
+  });
+
   it("falls back at both attacker-controlled boundaries", () => {
     expect(prepareMarkdown("a".repeat(MAX_MARKDOWN_LENGTH + 1)).kind).toBe(
       "plain",

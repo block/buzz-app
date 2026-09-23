@@ -60,6 +60,14 @@ export function useHiddenDms(
 ) {
   const [hidden, setHidden] = useState(() => restore(scope));
   const hiddenKey = hidden.map((entry) => entry.id).join("\u0000");
+  const dmRosterKey =
+    list.status === "ready"
+      ? list.channels
+          .filter((channel) => channel.channelType === "dm")
+          .map((channel) => channel.id)
+          .sort()
+          .join("\u0000")
+      : "";
   const current = useRef(hidden);
   const update = useCallback(
     (next: HiddenDm[]) => {
@@ -146,8 +154,9 @@ export function useHiddenDms(
   }, [hidden, session, show, update]);
 
   useEffect(() => {
-    if (!hiddenKey || list.status !== "ready") return;
+    if (!hiddenKey || !dmRosterKey) return;
     const controller = new AbortController();
+    const dmIds = new Set(dmRosterKey.split("\u0000"));
     // The shared unread repair is roster-wide and capped. Compare a bounded
     // per-DM history window so a late-arriving message need not be the head.
     void (async () => {
@@ -155,16 +164,23 @@ export function useHiddenDms(
         if (controller.signal.aborted) return;
         const entry = current.current.find((item) => item.id === id);
         if (!entry) continue;
-        const channel = list.channels.find((item) => item.id === id);
-        if (channel?.channelType !== "dm") continue;
+        if (!dmIds.has(id)) continue;
         for (
           let attempt = 0;
           attempt < 3 && !controller.signal.aborted;
           attempt++
         ) {
           try {
+            // Save a deeper initial window so deleting a recent head does not
+            // make older pre-hide history look like a new message.
             const events = await session.read(
-              [{ kinds: [9, 40002], "#h": [id], limit: 50 }],
+              [
+                {
+                  kinds: [9, 40002],
+                  "#h": [id],
+                  limit: entry.knownIds ? 50 : 100,
+                },
+              ],
               {
                 signal: controller.signal,
                 priority: "background",
@@ -179,22 +195,11 @@ export function useHiddenDms(
               const changed =
                 entry.knownIds &&
                 ids.some((eventId) => !entry.knownIds?.includes(eventId));
-              const deletedHead =
-                entry.baseline &&
-                !ids.includes(entry.baseline.id) &&
-                latest &&
-                (latest.createdAt < entry.baseline.createdAt ||
-                  (latest.createdAt === entry.baseline.createdAt &&
-                    latest.id > entry.baseline.id));
-              if (changed && !deletedHead) {
+              if (changed) {
                 show([id]);
                 break;
               }
-              if (
-                entry.baseline === undefined ||
-                !entry.knownIds ||
-                deletedHead
-              )
+              if (entry.baseline === undefined || !entry.knownIds)
                 update(
                   current.current.map((item) =>
                     item === entry
@@ -215,7 +220,7 @@ export function useHiddenDms(
       }
     })();
     return () => controller.abort();
-  }, [hiddenKey, session, list, show, update]);
+  }, [hiddenKey, session, dmRosterKey, show, update]);
 
   return { hiddenIds: new Set(hidden.map((entry) => entry.id)), hide };
 }

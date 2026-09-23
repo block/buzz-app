@@ -1,3 +1,4 @@
+import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { useId, useState } from "react";
@@ -90,18 +91,19 @@ export function WorkflowEditor({
   return (
     <section aria-label="Workflow editor" className="workflow-editor">
       <div className="workflow-toolbar">
-        <label htmlFor={`${id}-1`} className="workflow-field workflow-name">
-          Workflow name
-          <Input
-            id={`${id}-1`}
-            value={fields.name ?? ""}
-            disabled={readOnly || busy || locked || !fields.editable}
-            autoCapitalize="off"
-            onValueChange={(name) =>
-              changeHeader(yamlWithWorkflowName(yaml, name), { name })
-            }
-          />
-        </label>
+        <div className="workflow-name">
+          <Field label="Workflow name">
+            <Input
+              id={`${id}-1`}
+              value={fields.name ?? ""}
+              disabled={readOnly || busy || locked || !fields.editable}
+              autoCapitalize="off"
+              onValueChange={(name) =>
+                changeHeader(yamlWithWorkflowName(yaml, name), { name })
+              }
+            />
+          </Field>
+        </div>
         <Switch
           label="Enabled in configuration"
           checked={fields.enabled !== false}
@@ -140,11 +142,12 @@ export function WorkflowEditor({
           disabled={readOnly || busy || locked}
         />
       ) : (
-        <div className="workflow-field">
-          <label htmlFor={`${id}-yaml`}>Workflow YAML</label>
+        <Field
+          label="Workflow YAML"
+          description="Original text is kept until you edit. Form changes may reformat YAML. Schedules use UTC."
+        >
           <Textarea
             id={`${id}-yaml`}
-            aria-describedby={`${id}-yaml-help`}
             variant="code"
             rows={18}
             spellCheck={false}
@@ -156,11 +159,7 @@ export function WorkflowEditor({
               onChange(event.currentTarget.value);
             }}
           />
-          <span id={`${id}-yaml-help`} className="text-body-sm text-secondary">
-            Original text is kept until you edit. Form changes may reformat
-            YAML. Schedules use UTC.
-          </span>
-        </div>
+        </Field>
       )}
       {error && (
         <p role="status" className="text-danger">

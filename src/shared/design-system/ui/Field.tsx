@@ -8,6 +8,10 @@ export type FieldProps = Omit<
   label: ReactNode;
   description?: ReactNode;
   error?: ReactNode;
+  nativeLabel?: boolean;
+  /** Explicit target for controls whose Base UI root lives outside this Field. */
+  controlId?: string;
+  labelVisibility?: "visible" | "hidden";
 };
 
 /** Base UI connects the label, description, error and contained control. */
@@ -17,6 +21,9 @@ export function Field({
   error,
   children,
   invalid,
+  labelVisibility = "visible",
+  nativeLabel = true,
+  controlId,
   ...props
 }: FieldProps) {
   return (
@@ -26,7 +33,16 @@ export function Field({
       data-buzz-ui=""
       className="buzz-field"
     >
-      <BaseField.Label className="buzz-field-label">{label}</BaseField.Label>
+      <BaseField.Label
+        nativeLabel={nativeLabel}
+        {...(controlId ? { htmlFor: controlId } : {})}
+        render={nativeLabel ? undefined : <span />}
+        className={
+          labelVisibility === "hidden" ? "sr-only" : "buzz-field-label"
+        }
+      >
+        {label}
+      </BaseField.Label>
       {children}
       {description && (
         <BaseField.Description className="buzz-field-description">

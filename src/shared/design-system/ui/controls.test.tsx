@@ -477,3 +477,29 @@ test.each(["disabled", "late-mounted"])(
     ).toEqual({ delivery: "all" });
   },
 );
+
+test("search connects errors and disables clear in read-only mode", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  render(
+    <SearchField
+      label="Search records"
+      value="design"
+      onValueChange={change}
+      readOnly
+      description="Filter the list."
+      error="Search is unavailable."
+    />,
+  );
+  const input = screen.getByRole("searchbox", { name: "Search records" });
+  expect(input).toHaveAccessibleDescription(
+    /Filter the list.*Search is unavailable/,
+  );
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  const clear = screen.getByRole("button", { name: "Clear search records" });
+  expect(clear).toBeDisabled();
+  await user.click(clear);
+  await user.type(input, "changed");
+  expect(input).toHaveValue("design");
+  expect(change).not.toHaveBeenCalled();
+});

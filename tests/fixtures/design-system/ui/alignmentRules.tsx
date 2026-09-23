@@ -52,7 +52,7 @@ const RULES = [
         "Reading text",
         "body-medium; reference default 16px",
         "text-body → text-body-lg in the reading paragraph",
-        "Compare 14 with 16px-equivalent locally, not a global body change.",
+        "Buzz currently maps text-body to 14px / 20px by design direction.",
       ],
       [
         "Control labels",

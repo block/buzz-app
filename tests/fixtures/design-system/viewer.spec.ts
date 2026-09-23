@@ -161,7 +161,7 @@ test("foundation proposals are independent, local, and usable in both modes", as
     if (await theme.count()) await theme.click();
     await expect(proposal.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "16px",
+      "14px",
     );
     await expect(proposal.locator(".alignment-project")).toHaveCSS(
       "row-gap",
@@ -179,7 +179,7 @@ test("foundation proposals are independent, local, and usable in both modes", as
     );
     await expect(proposal.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "16px",
+      "14px",
     );
     await expect(proposal.locator(".alignment-project")).toHaveCSS(
       "row-gap",
@@ -199,7 +199,7 @@ test("foundation proposals are independent, local, and usable in both modes", as
     );
     await expect(current.locator("[data-reading]")).toHaveCSS(
       "font-size",
-      "16px",
+      "14px",
     );
     await expect(current.locator(".alignment-project")).toHaveCSS(
       "row-gap",
@@ -316,8 +316,7 @@ test("switch keyboard activation matches pointer state and focus in both modes",
       await expect(switches.nth(1)).toBeFocused();
       await page.keyboard.press(`Shift+${tab}`);
       await expect(control).toBeFocused();
-      await expect(control).toHaveCSS("outline-style", "solid");
-      await expect(control).toHaveCSS("outline-width", "2px");
+      await expect(control).toHaveCSS("outline-style", "none");
       await page.keyboard.press("Space");
       await expect(control).not.toBeChecked();
       await page.keyboard.press("Enter");
@@ -648,6 +647,7 @@ test("invalid input and textarea boundaries remain visible in both themes", asyn
     await expect(controls).toHaveCount(2);
     for (const control of await controls.all()) {
       await expect(control).toHaveAttribute("aria-invalid", "true");
+      await expect(control).toHaveCSS("box-shadow", /0px 0px 0px 1px inset/);
       const ratio = await control.evaluate((element) => {
         const style = getComputedStyle(element);
         const luminance = (color: string) => {
@@ -666,7 +666,10 @@ test("invalid input and textarea boundaries remain visible in both themes", asyn
           const [red = 0, green = 0, blue = 0] = linear;
           return red * 0.2126 + green * 0.7152 + blue * 0.0722;
         };
-        const border = luminance(style.borderTopColor);
+        const strokeColor = style.boxShadow.match(/rgba?\([^)]+\)/)?.[0];
+        if (!strokeColor)
+          throw new Error(`Missing inset stroke: ${style.boxShadow}`);
+        const border = luminance(strokeColor);
         const background = luminance(style.backgroundColor);
         return (
           (Math.max(border, background) + 0.05) /
@@ -843,7 +846,7 @@ test("button loading keeps focus and wrapping fits narrow enlarged layouts", asy
   await page.keyboard.press("Enter");
   await expect(save).toHaveAttribute("aria-busy", "true");
   await expect(save).toBeFocused();
-  await expect(save).toHaveCSS("outline-style", "solid");
+  await expect(save).toHaveCSS("outline-style", "none");
   await page.keyboard.press("Enter");
   await expect(save).toHaveAttribute("aria-busy", "true");
   await page
@@ -992,7 +995,7 @@ test("dialog motion retains exit presence and respects immediate interaction pat
 });
 
 // Real engines own :focus-visible, input modality and portal focus transfer.
-test("menu items retain keyboard-only focus rings through choices and submenus in both modes", async ({
+test("menu items retain keyboard navigation with hidden focus outlines in both modes", async ({
   page,
   browserName,
 }) => {
@@ -1034,17 +1037,15 @@ test("menu items retain keyboard-only focus rings through choices and submenus i
     await page.keyboard.press("ArrowDown");
     for (const item of [action, checkbox, submenu]) {
       await expect(item).toBeFocused();
-      await expect(item).toHaveCSS("outline-style", "solid");
-      await expect(item).toHaveCSS("outline-width", "2px");
+      await expect(item).toHaveCSS("outline-style", "none");
       if (item !== submenu) await page.keyboard.press("ArrowDown");
     }
     await page.keyboard.press("ArrowRight");
     await expect(recent).toBeFocused();
-    await expect(recent).toHaveCSS("outline-style", "solid");
-    await expect(recent).toHaveCSS("outline-width", "2px");
+    await expect(recent).toHaveCSS("outline-style", "none");
     await page.keyboard.press("ArrowDown");
     await expect(alpha).toBeFocused();
-    await expect(alpha).toHaveCSS("outline-style", "solid");
+    await expect(alpha).toHaveCSS("outline-style", "none");
     await page.keyboard.press("Escape");
     await expect(submenu).toBeFocused();
     await page.keyboard.press("Escape");

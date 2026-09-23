@@ -1,3 +1,4 @@
+import { Field } from "../../shared/design-system/ui/Field";
 import { useId } from "react";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
@@ -23,16 +24,17 @@ export function WorkflowForm({
   const id = useId();
   return (
     <fieldset className="workflow-form" disabled={disabled}>
-      <label htmlFor={`${id}-1`} className="workflow-field">
-        Description
+      <Field label="Description">
         <Input
           id={`${id}-1`}
           value={state.description}
           onValueChange={(description) => onChange({ ...state, description })}
         />
-      </label>
+      </Field>
       <Select
         label="Trigger"
+        variant="field"
+        disabled={disabled}
         value={state.trigger.on}
         groups={[
           {
@@ -52,8 +54,7 @@ export function WorkflowForm({
         }}
       />
       {state.trigger.on === "reaction_added" && (
-        <label htmlFor={`${id}-2`} className="workflow-field">
-          Emoji (optional)
+        <Field label="Emoji (optional)">
           <Input
             id={`${id}-2`}
             value={state.trigger.emoji ?? ""}
@@ -61,24 +62,24 @@ export function WorkflowForm({
               onChange({ ...state, trigger: { ...state.trigger, emoji } })
             }
           />
-        </label>
+        </Field>
       )}
       <details>
         <summary>Trigger options</summary>
-        <label htmlFor={`${id}-3`} className="workflow-field">
-          Trigger condition (optional)
-          <Input
-            id={`${id}-3`}
-            value={state.trigger.filter ?? ""}
-            onValueChange={(filter) =>
-              onChange({ ...state, trigger: { ...state.trigger, filter } })
-            }
-          />
-          <span className="text-body-sm text-secondary">
-            An evalexpr expression; leave empty to match every event of this
-            type.
-          </span>
-        </label>
+        <div className="workflow-options">
+          <Field
+            label="Trigger condition (optional)"
+            description="An evalexpr expression; leave empty to match every event of this type."
+          >
+            <Input
+              id={`${id}-3`}
+              value={state.trigger.filter ?? ""}
+              onValueChange={(filter) =>
+                onChange({ ...state, trigger: { ...state.trigger, filter } })
+              }
+            />
+          </Field>
+        </div>
       </details>
       <ol className="workflow-steps">
         {state.steps.map((step, index) => (
@@ -102,8 +103,7 @@ export function WorkflowForm({
             </div>
             {step.action === "send_message" ? (
               <>
-                <div className="workflow-field">
-                  <label htmlFor={`${id}-text-${step.id}`}>Message text</label>
+                <Field label="Message text">
                   <Textarea
                     id={`${id}-text-${step.id}`}
                     value={step.text ?? ""}
@@ -117,7 +117,7 @@ export function WorkflowForm({
                       )
                     }
                   />
-                </div>
+                </Field>
                 <Switch
                   label="Reply in the triggering thread"
                   checked={step.replyInThread === true}
@@ -128,8 +128,7 @@ export function WorkflowForm({
                 />
               </>
             ) : (
-              <label htmlFor={`${id}-6${step.id}`} className="workflow-field">
-                Delay duration
+              <Field label="Delay duration">
                 <Input
                   id={`${id}-6${step.id}`}
                   value={step.duration ?? ""}
@@ -138,48 +137,46 @@ export function WorkflowForm({
                     onChange(formWithStep(state, step.id, { duration }))
                   }
                 />
-              </label>
+              </Field>
             )}
             <details>
               <summary>Step options</summary>
-              <p className="text-mono-sm text-secondary">{step.id}</p>
-              <label htmlFor={`${id}-4${step.id}`} className="workflow-field">
-                Step name (optional)
-                <Input
-                  id={`${id}-4${step.id}`}
-                  value={step.name ?? ""}
-                  onValueChange={(name) =>
-                    onChange(formWithStep(state, step.id, { name }))
-                  }
-                />
-              </label>
-              {step.action === "send_message" && (
-                <label htmlFor={`${id}-5${step.id}`} className="workflow-field">
-                  Destination channel UUID (optional)
+              <div className="workflow-options">
+                <p className="text-mono-sm text-secondary">{step.id}</p>
+                <Field label="Step name (optional)">
                   <Input
-                    id={`${id}-5${step.id}`}
-                    value={step.channel ?? ""}
-                    onValueChange={(channel) =>
-                      onChange(formWithStep(state, step.id, { channel }))
+                    id={`${id}-4${step.id}`}
+                    value={step.name ?? ""}
+                    onValueChange={(name) =>
+                      onChange(formWithStep(state, step.id, { name }))
                     }
                   />
-                  <span className="text-body-sm text-secondary">
-                    Blank uses this workflow’s channel. The relay checks
-                    destination access.
-                  </span>
-                </label>
-              )}
-              <label htmlFor={`${id}-7${step.id}`} className="workflow-field">
-                Step timeout (optional)
-                <Input
-                  id={`${id}-7${step.id}`}
-                  value={step.timeoutSecs ?? ""}
-                  placeholder="30s"
-                  onValueChange={(timeoutSecs) =>
-                    onChange(formWithStep(state, step.id, { timeoutSecs }))
-                  }
-                />
-              </label>{" "}
+                </Field>
+                {step.action === "send_message" && (
+                  <Field
+                    label="Destination channel UUID (optional)"
+                    description="Blank uses this workflow’s channel. The relay checks destination access."
+                  >
+                    <Input
+                      id={`${id}-5${step.id}`}
+                      value={step.channel ?? ""}
+                      onValueChange={(channel) =>
+                        onChange(formWithStep(state, step.id, { channel }))
+                      }
+                    />
+                  </Field>
+                )}
+                <Field label="Step timeout (optional)">
+                  <Input
+                    id={`${id}-7${step.id}`}
+                    value={step.timeoutSecs ?? ""}
+                    placeholder="30s"
+                    onValueChange={(timeoutSecs) =>
+                      onChange(formWithStep(state, step.id, { timeoutSecs }))
+                    }
+                  />
+                </Field>
+              </div>
             </details>
           </li>
         ))}

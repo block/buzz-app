@@ -81,7 +81,7 @@ while :; do /bin/sleep 0.1; done
         )
     })
     .collect();
-    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":1,"revision":"84b0fd04b7831657df2873c3a835412f47cebb03","target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
+    fs::write(directory.join("manifest.json"), serde_json::to_vec(&json!({"version":1,"revision":"48884848f566d02c42ce07636636c4ad5f164c27","target":env!("BUZZ_RUNTIME_TARGET"),"files":files})).unwrap()).unwrap();
     RuntimeBundle::new(directory.into()).unwrap()
 }
 fn wait_for_contents<T>(path: &Path, parse: impl Fn(&str) -> Option<T>) -> T {

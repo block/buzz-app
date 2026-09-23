@@ -202,7 +202,7 @@ resources. Production has no disposable storage override or preview launch mode.
   Cancel, context change, page unmount and root disposal retire the ticket. Native
   admission remains occupied until the old task's future has actually dropped.
 - The immutable `buzz-agent` dependency is pinned to
-  `84b0fd04b7831657df2873c3a835412f47cebb03`; no local-checkout dependency. It owns
+  `48884848f566d02c42ce07636636c4ad5f164c27`; no local-checkout dependency. It owns
   OAuth PKCE, refresh, catalog parsing/filtering and per-page bounds. It retains current Buzz endpoint/redirect semantics. Native rejects over 10,000
   projected models or oversized IDs.
 - OAuth credentials remain under this app's
@@ -243,7 +243,7 @@ bin/cargo build -p buzz-foundation
 ```
 
 `runtime/agent-runtime.json` pins the five tools to published revision
-`84b0fd04b7831657df2873c3a835412f47cebb03`. The build script uses pinned Cargo,
+`48884848f566d02c42ce07636636c4ad5f164c27`. The build script uses pinned Cargo,
 `cargo install --git --rev --locked`, scrubs injected Buzz/provider environment,
 and stages binaries plus revision/target/SHA256 manifest in
 `src-tauri/resources/agent-runtime`. Native build copies them to

@@ -23,10 +23,16 @@ const descriptor = (body, origin = relay) => {
   };
 };
 const deferred = () => Promise.withResolvers();
-async function harness(respond) {
+async function harness(respond, completed = () => {}) {
   const calls = [];
   let handler;
-  const server = createServer((req, res) => handler(req, res, () => res.end()));
+  const server = createServer(async (req, res) => {
+    try {
+      await handler(req, res, () => res.end());
+    } finally {
+      completed(req);
+    }
+  });
   const plugin = relayBrokerPlugin({
     relayUrl: relay,
     identity: () => key.slice(),
@@ -287,27 +293,45 @@ test("response budget cancels the upstream reader and releases admission", async
 test("two in-flight uploads bound admission; disconnect cancels upstream and frees its slot", async () => {
   const started = [deferred(), deferred(), deferred()];
   const aborted = deferred();
+  const settleAbort = deferred();
+  const completed = deferred();
   const release = deferred();
   let count = 0;
-  const h = await harness(async (_, init) => {
-    const index = count++;
-    started[index].resolve();
-    if (index === 0)
-      await new Promise((_, reject) =>
-        init.signal.addEventListener(
-          "abort",
-          () => {
-            aborted.resolve();
-            reject(init.signal.reason);
-          },
-          { once: true },
-        ),
-      );
-    else await release.promise;
-    return Response.json(descriptor(init.body));
-  });
+  const h = await harness(
+    async (_, init) => {
+      const index = count++;
+      started[index].resolve();
+      if (index === 0) {
+        await new Promise((resolve) => {
+          init.signal.addEventListener(
+            "abort",
+            () => {
+              aborted.resolve();
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        // Hold cancellation settlement: an unrelated GET must not prove cleanup.
+        await settleAbort.promise;
+        throw init.signal.reason;
+      }
+      await release.promise;
+      return Response.json(descriptor(init.body));
+    },
+    (req) => {
+      if (req.headers["x-test-upload"] === "first") completed.resolve();
+    },
+  );
   const cancel = new AbortController();
-  const first = h.post("first", { signal: cancel.signal });
+  const first = h.post("first", {
+    signal: cancel.signal,
+    headers: {
+      Origin: h.base,
+      "Content-Type": "application/octet-stream",
+      "X-Test-Upload": "first",
+    },
+  });
   const failure = expect(first).rejects.toThrow();
   let second, third;
   try {
@@ -318,8 +342,11 @@ test("two in-flight uploads bound admission; disconnect cancels upstream and fre
     cancel.abort();
     await failure;
     await aborted.promise;
-    // A completed GET is the middleware turn barrier after abort cleanup.
     await fetch(`${h.base}/api/relay/identity`);
+    expect((await h.post()).status).toBe(429);
+    settleAbort.resolve();
+    // Await the actual middleware lifetime, including stream/disk cleanup and slot release.
+    await completed.promise;
     third = h.post("third");
     await started[2].promise;
     release.resolve();
@@ -327,6 +354,7 @@ test("two in-flight uploads bound admission; disconnect cancels upstream and fre
     expect((await third).status).toBe(200);
   } finally {
     cancel.abort();
+    settleAbort.resolve();
     release.resolve();
     await Promise.allSettled([first, second, third]);
     await h.close();

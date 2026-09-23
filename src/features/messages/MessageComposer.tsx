@@ -574,24 +574,50 @@ function Composer({
     />
   );
   const renderLeadingTools = (tools: ReactNode) => (
-    <div className={styles.composerLeadingTools}>
-      {tools}
-      {!!value.recipients.length && (
-        <RecipientAvatars
-          session={session}
-          recipients={value.recipients}
-          disabled={editingDisabled}
-          remove={(pubkey) =>
-            saveDraft({
-              ...value,
-              recipients: value.recipients.filter(
-                (item) => item.pubkey !== pubkey,
-              ),
-            })
-          }
-        />
+    <>
+      <div className={styles.composerLeadingTools}>
+        {tools}
+        {!!value.recipients.length && (
+          <RecipientAvatars
+            session={session}
+            recipients={value.recipients}
+            disabled={editingDisabled}
+            remove={(pubkey) =>
+              saveDraft({
+                ...value,
+                recipients: value.recipients.filter(
+                  (item) => item.pubkey !== pubkey,
+                ),
+              })
+            }
+          />
+        )}
+      </div>
+      {canAttach && (
+        <>
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            aria-label="Choose attachments"
+            onChange={(event) => {
+              attachFiles(Array.from(event.currentTarget.files ?? []));
+              event.currentTarget.value = "";
+            }}
+          />
+          <IconButton
+            size="sm"
+            type="button"
+            aria-label="Attach files"
+            title="Attach files"
+            disabled={editingDisabled}
+            onClick={() => picker.current?.click()}
+            icon={<PaperclipIcon size={16} />}
+          />
+        </>
       )}
-    </div>
+    </>
   );
   if (!outbox?.supports(9))
     return (
@@ -776,30 +802,6 @@ function Composer({
           )}
         <div className={styles.composerActions}>
           <div className={styles.composerTools}>
-            {canAttach && (
-              <>
-                <input
-                  ref={picker}
-                  type="file"
-                  multiple
-                  hidden
-                  aria-label="Choose attachments"
-                  onChange={(event) => {
-                    attachFiles(Array.from(event.currentTarget.files ?? []));
-                    event.currentTarget.value = "";
-                  }}
-                />
-                <IconButton
-                  size="sm"
-                  type="button"
-                  aria-label="Attach files"
-                  title="Attach files"
-                  disabled={editingDisabled}
-                  onClick={() => picker.current?.click()}
-                  icon={<PaperclipIcon size={16} />}
-                />
-              </>
-            )}
             {extensions ? (
               <ComposerTools
                 registry={extensions.tools}

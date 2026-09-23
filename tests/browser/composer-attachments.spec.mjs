@@ -102,6 +102,82 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
   }
 });
 
+// Browser-only boundary: toolbar geometry and keyboard order with real contributed tools.
+test("paperclip follows mentions and recipients, before the remaining tools", async ({
+  page,
+}) => {
+  const server = await createServer({
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  await server.listen();
+  try {
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?attachments`,
+    );
+    const mention = page.getByRole("button", {
+      name: "Mention a member",
+      exact: true,
+    });
+    const attach = page.getByRole("button", {
+      name: "Attach files",
+      exact: true,
+    });
+    const emoji = page.getByRole("button", {
+      name: "Insert emoji",
+      exact: true,
+    });
+    await expect(mention).toBeVisible();
+    await expect(attach).toBeEnabled();
+    await expect(emoji).toBeVisible();
+    await mention.click();
+    const pubkey = await page.evaluate(() => window.mentionFixture.first);
+    await page
+      .getByRole("region", { name: "Mention a member or agent" })
+      .getByRole("button", { name: `Honey ${pubkey}`, exact: true })
+      .click();
+    const recipient = page
+      .getByRole("region", { name: "Explicit mentions" })
+      .getByRole("button");
+    await expect(recipient).toBeVisible();
+    await mention.focus();
+    for (const next of [recipient, attach, emoji]) {
+      await page.keyboard.press("Tab");
+      await expect(next).toBeFocused();
+    }
+    const recipientBox = await recipient.boundingBox();
+    const attachBox = await attach.boundingBox();
+    const emojiBox = await emoji.boundingBox();
+    expect(attachBox.x).toBeGreaterThanOrEqual(
+      recipientBox.x + recipientBox.width,
+    );
+    expect(emojiBox.x).toBeGreaterThanOrEqual(attachBox.x + attachBox.width);
+    expect(
+      Math.abs(
+        attachBox.y +
+          attachBox.height / 2 -
+          (recipientBox.y + recipientBox.height / 2),
+      ),
+    ).toBeLessThanOrEqual(2);
+    await page.screenshot({
+      path: test.info().outputPath("attachment-toolbar.png"),
+    });
+    await page.evaluate(() =>
+      window.mentionFixture.change("disable", "buzz.mentions"),
+    );
+    await expect(mention).toHaveCount(0);
+    await expect(attach).toBeEnabled();
+    await recipient.focus();
+    await page.keyboard.press("Tab");
+    await expect(attach).toBeFocused();
+  } finally {
+    await server.close();
+  }
+});
+
 // Browser-only boundary: real decoders/canvas, module worker/Wasm and browser output MIME.
 test("preparation preserves snapshot/animation and uses lossless WebP for pixel cleanup", async ({
   page,

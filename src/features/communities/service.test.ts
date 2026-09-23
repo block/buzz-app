@@ -11,8 +11,12 @@ const roots: Context[] = [];
 const requests: string[] = [];
 function setup(saved?: unknown, savedViewer = viewer, openRelay = "") {
   const storage = new Map<string, string>();
-  if (saved)
-    storage.set(`buzz-client.v1:${savedViewer}`, JSON.stringify(saved));
+  // A string is stored verbatim so cases can pin the exact stored text.
+  if (saved !== undefined)
+    storage.set(
+      `buzz-client.v1:${savedViewer}`,
+      typeof saved === "string" ? saved : JSON.stringify(saved),
+    );
   vi.stubGlobal("localStorage", {
     getItem: (key: string) => storage.get(key) ?? null,
     setItem: (key: string, value: string) => storage.set(key, value),
@@ -453,6 +457,34 @@ it("opens the configured relay for an identity without a saved record and rememb
     { id: "primary", name: "primary.example" },
   ]);
   expect(aliased.snapshot().selected).toBe("primary");
+});
+
+it("does not seed the configured relay over a stored falsy record", async () => {
+  const client = setup("null", viewer, "https://third.example");
+  await flush();
+  await flush();
+  expect(client.snapshot()).toMatchObject({
+    status: "ready",
+    memberships: [],
+    selected: null,
+  });
+  expect(requests).toEqual(["/api/relay/identity"]);
+  expect(localStorage.getItem(`buzz-client.v1:${viewer}`)).toBe("null");
+});
+
+it("does not seed the configured relay over a stored malformed record", async () => {
+  const client = setup('{"memberships":', viewer, "https://third.example");
+  await flush();
+  await flush();
+  expect(client.snapshot()).toMatchObject({
+    status: "ready",
+    memberships: [],
+    selected: null,
+  });
+  expect(requests).toEqual(["/api/relay/identity"]);
+  expect(localStorage.getItem(`buzz-client.v1:${viewer}`)).toBe(
+    '{"memberships":',
+  );
 });
 
 it("keeps a saved record, including Personal space, instead of the configured relay", async () => {

@@ -111,9 +111,8 @@ export function createCommunities(ctx: Context, live: boolean, openRelay = "") {
         let saved = empty();
         let seeded = false;
         try {
-          const raw = JSON.parse(
-            localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null",
-          );
+          const stored = localStorage.getItem(`buzz-client.v1:${viewer}`);
+          const raw = JSON.parse(stored ?? "null");
           if (raw)
             saved = {
               profile: {
@@ -167,9 +166,10 @@ export function createCommunities(ctx: Context, live: boolean, openRelay = "") {
                 : [],
               selected: null,
             };
-          else if (openRelay) {
+          else if (openRelay && stored === null) {
             // Development opt-in for a viewer with no saved record on this origin.
-            // Any saved record, including Personal space, wins over the seed.
+            // Any stored record, including Personal space or one this reader
+            // cannot understand, wins over the seed.
             const { id, name } = communityDestination(openRelay);
             saved = { ...saved, memberships: [{ id, name }], selected: id };
             seeded = true;

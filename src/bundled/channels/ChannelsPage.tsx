@@ -1363,7 +1363,8 @@ function ChannelWorkspace({
           close={() => setMediaReview(undefined)}
         />
       )}
-      {!showingMediaReview &&
+      {!composingMessage &&
+        !showingMediaReview &&
         (showingSettings || panel || showingThread || companion) && (
           <div className={styles.panelStack}>
             {showingSettings && (

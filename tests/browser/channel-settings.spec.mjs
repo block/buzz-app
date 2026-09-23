@@ -73,4 +73,13 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   expect(narrow.y + narrow.height).toBeLessThanOrEqual(800);
   await close.click();
   await expect(trigger).toBeFocused();
+  await page.setViewportSize({ width: 1440, height: 950 });
+  await trigger.click();
+  await expect(panel).toBeVisible();
+  await page.locator("summary", { hasText: "DMs" }).hover();
+  await page.getByRole("button", { name: "New message", exact: true }).click();
+  await expect(
+    page.getByRole("region", { name: "New message", exact: true }),
+  ).toBeVisible();
+  await expect(panel).toHaveCount(0);
 });

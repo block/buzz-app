@@ -55,9 +55,12 @@ const readers = {
 const platforms = Object.keys(readers) as (keyof typeof readers)[];
 
 beforeEach(() => {
+  // Neutralize every BUZZ_ input the config reads: loadEnv would otherwise mix
+  // a developer's .env.local into what these tests assert.
   vi.stubEnv("BUZZ_RELAY_URL", "");
   vi.stubEnv("BUZZ_COMMUNITY_ALIASES", "");
   vi.stubEnv("BUZZ_DEV_VIEWER", "");
+  vi.stubEnv("BUZZ_DEV_OPEN_RELAY", "");
   onPlatform("darwin");
   readCredential.mockReset();
   readCredential.mockReturnValue(Buffer.from(credential));

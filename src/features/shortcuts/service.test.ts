@@ -1,6 +1,7 @@
 import { Context } from "@deepseek-ai/cordis";
 import { expect, it, vi } from "vitest";
 import { ShortcutsService } from "./service";
+import { createShortcutBindings } from "./preferences";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
 import type { KeyBinding, Shortcut } from "./bindings";
@@ -295,7 +296,7 @@ it("resolves user overrides at match time for plugin and host bindings", async (
   const b = browser(),
     root = new Context(),
     calls: string[] = [];
-  const overrides = new Map<string, KeyBinding>();
+  const overrides = new Map<string, readonly KeyBinding[]>();
   const runtime = new PluginRuntime(root, async (info) => ({
     inject: ["shortcuts"],
     apply(ctx) {
@@ -315,7 +316,7 @@ it("resolves user overrides at match time for plugin and host bindings", async (
     // No override: the registered default applies.
     b.key();
     expect(calls).toEqual(["a:one"]);
-    overrides.set("a/action", { key: "p", mod: true, shift: true });
+    overrides.set("a/action", [{ key: "p", mod: true, shift: true }]);
     expect(b.key().defaultPrevented).toBe(false);
     expect(b.key("p", { shiftKey: true }).defaultPrevented).toBe(true);
     expect(calls).toEqual(["a:one", "a:one"]);
@@ -336,7 +337,7 @@ it("resolves user overrides at match time for plugin and host bindings", async (
       id: "host-action",
       binding: { key: "h", mod: true },
     });
-    overrides.set("host-action", { key: "p", mod: true, shift: true });
+    overrides.set("host-action", [{ key: "p", mod: true, shift: true }]);
     b.key("p", { shiftKey: true });
     expect(hostRun).toHaveBeenCalledTimes(1);
     expect(calls).toHaveLength(3);
@@ -351,6 +352,63 @@ it("resolves user overrides at match time for plugin and host bindings", async (
     await runtime.dispose();
     await root.fiber.dispose();
   }
+});
+
+it("keeps dispatching when a host id shadows an Object.prototype name or a resolver misbehaves", async () => {
+  const b = browser(),
+    root = new Context(),
+    run = vi.fn();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const store = createShortcutBindings(undefined);
+  const service = new ShortcutsService(root, b.host, store);
+  try {
+    // "constructor" passes the host id rule; the lookup must yield a binding
+    // list or nothing, never Object.prototype.constructor.
+    service.registerHost({ ...shortcut(run), id: "constructor" });
+    expect(store.resolve("constructor")).toBeUndefined();
+    expect(b.key().defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(1);
+    store.set("constructor", { key: "p", mod: true });
+    expect(store.resolve("constructor")).toEqual([{ key: "p", mod: true }]);
+    expect(b.key().defaultPrevented).toBe(false);
+    expect(b.key("p").defaultPrevented).toBe(true);
+    expect(run).toHaveBeenCalledTimes(2);
+  } finally {
+    store.dispose();
+    await root.fiber.dispose();
+  }
+  // Anything that is not a nonempty binding list means the registered default.
+  for (const result of [
+    Object,
+    "⌘P",
+    { key: "p", mod: true },
+    [],
+    [{ key: 5 }],
+    [{ key: "p", mod: "yes" }],
+    null,
+  ]) {
+    const ctx = new Context(),
+      fallback = vi.fn();
+    ctx.provide("pluginStatus", {
+      isActive: () => true,
+      subscribe: () => () => {},
+    });
+    const broken = new ShortcutsService(ctx, b.host, {
+      resolve: () => result as never,
+    });
+    try {
+      broken.registerHost(shortcut(fallback));
+      expect(b.key("p").defaultPrevented).toBe(false);
+      expect(b.key().defaultPrevented).toBe(true);
+      expect(fallback).toHaveBeenCalledTimes(1);
+    } finally {
+      await ctx.fiber.dispose();
+    }
+  }
+  expect(b.listeners.size).toBe(0);
 });
 
 it("exposes host bindings to the host with change notifications", async () => {

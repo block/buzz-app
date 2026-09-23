@@ -122,7 +122,9 @@ dispatcher, grouped by owner, with search, per-row Change/Reset and Reset all. I
 is built from existing components (`SearchField`, `Button`, `NavigationSection`,
 the Plugins-list row pattern) and `formatBinding`, which renders chords as glyphs
 in Control, Option, Shift, Command order on Apple platforms (⇧⌘K) and as words
-elsewhere (Ctrl+Shift+K), with a plain-words accessible label. Two pieces are
+elsewhere (Ctrl+Shift+K), with a plain-words accessible label. A row whose chord
+another listed shortcut also answers to carries a plain "Also used by …" line in
+subtle text, no colour. Two pieces are
 provisional and await a design pass: the key-combo `<kbd>` chip
 (`src/features/shortcuts/KeyCombo.tsx`) and the inline key-capture control
 (`src/features/shortcuts/KeyCaptureControl.tsx`). Both are deliberately

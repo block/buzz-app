@@ -13,23 +13,35 @@ const RESTORE_ERROR =
 const SAVE_ERROR =
   "Your shortcuts are active, but could not be saved on this device. Try again.";
 
+const freezeBinding = ({ key, mod, shift, alt }: KeyBinding): KeyBinding =>
+  Object.freeze({
+    key,
+    ...(mod !== undefined && { mod }),
+    ...(shift !== undefined && { shift }),
+    ...(alt !== undefined && { alt }),
+  });
+/**
+ * Keys are host ids and contribution keys chosen elsewhere, so the record has
+ * no prototype: `overrides.constructor` is a stored binding or undefined, never
+ * Object.prototype's function.
+ */
+const freezeOverrides = (
+  entries: Iterable<readonly [string, KeyBinding]>,
+): ShortcutOverrides => {
+  const overrides: Record<string, KeyBinding> = Object.create(null);
+  for (const [key, binding] of entries) overrides[key] = freezeBinding(binding);
+  return Object.freeze(overrides);
+};
+const NO_OVERRIDES = freezeOverrides([]);
+
 /** Keeps every well-formed entry and drops only malformed ones. */
 export function parseOverrides(raw: unknown): ShortcutOverrides {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const entries = Object.entries(raw as Record<string, unknown>).filter(
-    ([key, binding]) => key.length > 0 && isKeyBinding(binding),
-  ) as [string, KeyBinding][];
-  return Object.freeze(
-    Object.fromEntries(
-      entries.map(([key, { key: name, mod, shift, alt }]) => [
-        key,
-        Object.freeze({
-          key: name,
-          ...(mod !== undefined && { mod }),
-          ...(shift !== undefined && { shift }),
-          ...(alt !== undefined && { alt }),
-        }),
-      ]),
+  if (!raw || typeof raw !== "object" || Array.isArray(raw))
+    return NO_OVERRIDES;
+  return freezeOverrides(
+    Object.entries(raw as Record<string, unknown>).filter(
+      (entry): entry is [string, KeyBinding] =>
+        entry[0].length > 0 && isKeyBinding(entry[1]),
     ),
   );
 }
@@ -37,23 +49,35 @@ export function parseOverrides(raw: unknown): ShortcutOverrides {
 export function createShortcutBindings(
   host: Window | undefined = typeof window === "undefined" ? undefined : window,
 ) {
-  let state: ShortcutBindingsSnapshot = { overrides: {}, error: null };
+  let state: ShortcutBindingsSnapshot = {
+    overrides: NO_OVERRIDES,
+    error: null,
+  };
+  // What the dispatcher reads on every keydown: one frozen alias list per key,
+  // built once per change so matching never allocates and a Map lookup never
+  // reaches an inherited property.
+  let resolved: ReadonlyMap<string, readonly KeyBinding[]> = new Map();
   let disposed = false;
   const listeners = new Set<() => void>();
-  const notify = () => {
+  const publish = (next: ShortcutBindingsSnapshot) => {
+    state = next;
+    resolved = new Map(
+      Object.entries(next.overrides).map(
+        ([key, binding]) => [key, Object.freeze([binding])] as const,
+      ),
+    );
     for (const listener of listeners) listener();
   };
   const restore = () => {
     try {
       const raw = host?.localStorage.getItem(SHORTCUT_BINDINGS_KEY);
-      state = {
-        overrides: raw ? parseOverrides(JSON.parse(raw)) : {},
+      publish({
+        overrides: raw ? parseOverrides(JSON.parse(raw)) : NO_OVERRIDES,
         error: null,
-      };
+      });
     } catch {
-      state = { overrides: {}, error: RESTORE_ERROR };
+      publish({ overrides: NO_OVERRIDES, error: RESTORE_ERROR });
     }
-    notify();
   };
   // The change applies in memory even when the save fails; the page offers a retry.
   const commit = (overrides: ShortcutOverrides) => {
@@ -69,8 +93,7 @@ export function createShortcutBindings(
     } catch {
       error = SAVE_ERROR;
     }
-    state = { overrides, error };
-    notify();
+    publish({ overrides, error });
   };
   const onStorage = (event: StorageEvent) => {
     if (event.key !== SHORTCUT_BINDINGS_KEY && event.key !== null) return;
@@ -94,24 +117,20 @@ export function createShortcutBindings(
       };
     },
     /** Dispatcher lookup at match time; undefined means the registered default. */
-    resolve: (key: string) => state.overrides[key],
+    resolve: (key: string) => resolved.get(key),
     set(key: string, binding: KeyBinding | null) {
       if (disposed) return;
       if (binding !== null && !isKeyBinding(binding))
         throw new Error("Invalid shortcut binding");
-      const rest = Object.fromEntries(
-        Object.entries(state.overrides).filter(([entry]) => entry !== key),
+      const rest = Object.entries(state.overrides).filter(
+        ([entry]) => entry !== key,
       );
       commit(
-        Object.freeze(
-          binding === null
-            ? rest
-            : { ...rest, [key]: Object.freeze({ ...binding }) },
-        ),
+        freezeOverrides(binding === null ? rest : [...rest, [key, binding]]),
       );
     },
     reset() {
-      if (!disposed) commit(Object.freeze({}));
+      if (!disposed) commit(NO_OVERRIDES);
     },
     /** Re-attempt persisting what is already active after a failed save. */
     retry() {

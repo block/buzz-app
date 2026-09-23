@@ -530,8 +530,25 @@ an override; the override follows the plugin across disable, re-enable and
 replacement, and an override whose owner is no longer installed is ignored rather
 than deleted. Rebinding replaces an alias set with the single chosen chord; reset
 restores every alias. Host chords stay reserved: the page refuses to assign a chord
-that another listed shortcut already uses, host or plugin, and warns when a chord
-is one the message editor handles locally. `formatBinding` in
+that another listed shortcut already uses, host or plugin, refuses the copy, cut,
+paste and select-all chords (and close-window/quit in the desktop build) because a
+match would prevent their default everywhere, and warns when a chord is one the
+message editor handles locally. A conflict can still appear after capture, for
+example when a plugin that was disabled at the time is re-enabled with the same
+default or a new plugin ships one; the dispatcher then resolves it silently, so
+each affected row shows an "Also used by …" line naming the others. A malformed
+stored override falls back to the registered default rather than stopping
+dispatch. `formatBinding` in
 `features/shortcuts/format.ts` renders any `KeyBinding` for the current platform;
 plugins that print their own hint (the bundled terminal does) show their registered
 default because overrides are host state.
+
+Known limitations. Capture and matching both use the logical `KeyboardEvent.key`.
+On macOS an Option chord reports the composed character, so Option+K is stored
+and shown as `⌥˚`, and Shift+digit chords store the punctuation (`!` rather than
+`1`). This is internally consistent, so the binding fires, but it depends on the
+active keyboard layout and the displayed chord can differ from the keys pressed.
+The intended fix is to match Alt/Option chords on the physical `event.code` in
+both the capture control and the dispatcher's `matches`, which is a coordinated
+change to the plugin-facing matching rules and is deliberately not part of the
+Settings page.

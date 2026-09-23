@@ -44,11 +44,17 @@ it("restores what it can, reports unreadable storage, and resolves at lookup tim
     },
     error: null,
   });
-  expect(bindings.resolve("example.counter/increment")).toEqual({
-    key: "u",
-    mod: true,
-    shift: true,
-  });
+  expect(bindings.resolve("example.counter/increment")).toEqual([
+    { key: "u", mod: true, shift: true },
+  ]);
+  // One frozen alias list per key, reused on every lookup: the dispatcher
+  // never wraps or allocates on keydown.
+  expect(bindings.resolve("example.counter/increment")).toBe(
+    bindings.resolve("example.counter/increment"),
+  );
+  expect(Object.isFrozen(bindings.resolve("example.counter/increment"))).toBe(
+    true,
+  );
   expect(bindings.resolve("broken")).toBeUndefined();
   expect(bindings.resolve("missing")).toBeUndefined();
   bindings.dispose();
@@ -74,7 +80,7 @@ it("applies changes in memory when saving fails, retries, and clears storage whe
       throw new Error("storage unavailable");
     });
   bindings.set("settings", { key: ";", mod: true });
-  expect(bindings.resolve("settings")).toEqual({ key: ";", mod: true });
+  expect(bindings.resolve("settings")).toEqual([{ key: ";", mod: true }]);
   expect(bindings.snapshot().error).toContain("could not be saved");
   expect(listener).toHaveBeenCalledTimes(1);
   write.mockRestore();
@@ -119,7 +125,7 @@ it("re-reads on same-origin storage events and ignores unrelated keys", () => {
     }),
   );
   expect(listener).toHaveBeenCalledTimes(1);
-  expect(bindings.resolve("settings")).toEqual({ key: ";", mod: true });
+  expect(bindings.resolve("settings")).toEqual([{ key: ";", mod: true }]);
   localStorage.clear();
   window.dispatchEvent(
     new StorageEvent("storage", { key: null, storageArea: localStorage }),
@@ -138,4 +144,25 @@ it("re-reads on same-origin storage events and ignores unrelated keys", () => {
   );
   expect(listener).toHaveBeenCalledTimes(2);
   expect(bindings.snapshot().overrides).toEqual({});
+});
+
+it("never hands out an inherited property: a prototype-named key is a stored binding or nothing", () => {
+  localStorage.setItem(
+    SHORTCUT_BINDINGS_KEY,
+    JSON.stringify({ constructor: { key: "p", mod: true } }),
+  );
+  const bindings = createShortcutBindings(window);
+  expect(bindings.resolve("constructor")).toEqual([{ key: "p", mod: true }]);
+  for (const key of ["toString", "hasOwnProperty", "valueOf", "__proto__"]) {
+    expect(bindings.resolve(key)).toBeUndefined();
+    expect(key in bindings.snapshot().overrides).toBe(false);
+  }
+  bindings.set("constructor", null);
+  expect(bindings.resolve("constructor")).toBeUndefined();
+  expect("constructor" in bindings.snapshot().overrides).toBe(false);
+  expect("constructor" in parseOverrides({ settings: { key: "k" } })).toBe(
+    false,
+  );
+  expect("constructor" in parseOverrides(null)).toBe(false);
+  bindings.dispose();
 });

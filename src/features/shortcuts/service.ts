@@ -6,9 +6,11 @@ import {
 } from "../../plugins/contributions";
 import {
   inEditable,
+  isBindingList,
   matches,
   normalizeShortcut,
   type KeyBinding,
+  type NormalizedShortcut,
   type Shortcut,
 } from "./bindings";
 export type { KeyBinding, Shortcut } from "./bindings";
@@ -20,7 +22,8 @@ export type Shortcuts = {
 };
 /** Device-local user rebinds, keyed by host id or namespaced contribution key. */
 export type BindingOverrides = {
-  resolve(key: string): KeyBinding | undefined;
+  /** A stored override is a nonempty alias list; anything else means the default. */
+  resolve(key: string): readonly KeyBinding[] | undefined;
 };
 declare module "@deepseek-ai/cordis" {
   interface Context {
@@ -30,9 +33,9 @@ declare module "@deepseek-ai/cordis" {
 
 export class ShortcutsService extends Service implements Shortcuts {
   private readonly contributions;
-  private readonly hostBindings = new Map<string, Shortcut>();
+  private readonly hostBindings = new Map<string, NormalizedShortcut>();
   private readonly hostListeners = new Set<() => void>();
-  private hostReady: readonly Shortcut[] = Object.freeze([]);
+  private hostReady: readonly NormalizedShortcut[] = Object.freeze([]);
   constructor(
     ctx: Context,
     host: Window | undefined = typeof window === "undefined"
@@ -41,12 +44,16 @@ export class ShortcutsService extends Service implements Shortcuts {
     overrides?: BindingOverrides,
   ) {
     super(ctx, "shortcuts");
-    this.contributions = createContributions<Shortcut>(ctx);
+    this.contributions = createContributions<NormalizedShortcut>(ctx);
     const apple = /Mac|iPhone|iPad/.test(host?.navigator.platform ?? "");
     // The effective chord is resolved at match time, so a rebind never requires
-    // re-registration and survives plugin disable/enable.
-    const bindingsFor = (shortcut: Shortcut, key: string) =>
-      overrides?.resolve(key) ?? shortcut.binding;
+    // re-registration and survives plugin disable/enable. Anything that is not
+    // a binding list (a malformed store entry, an inherited property under a
+    // key such as "constructor") means the default, so dispatch cannot throw.
+    const bindingsFor = (shortcut: NormalizedShortcut, key: string) => {
+      const override = overrides?.resolve(key);
+      return isBindingList(override) ? override : shortcut.binding;
+    };
     const dispatch = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented ||

@@ -5,10 +5,15 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { isTauri } from "@tauri-apps/api/core";
 import { Button } from "../shared/design-system/ui/Button";
 import { NavigationSection } from "../shared/design-system/ui/NavigationSection";
 import { SearchField } from "../shared/design-system/ui/SearchField";
-import { sameBinding, type KeyBinding } from "../features/shortcuts/bindings";
+import {
+  sameBinding,
+  type KeyBinding,
+  type NormalizedShortcut,
+} from "../features/shortcuts/bindings";
 import { formatBinding, isApplePlatform } from "../features/shortcuts/format";
 import { KeyCombo } from "../features/shortcuts/KeyCombo";
 import {
@@ -16,7 +21,7 @@ import {
   type CapturedChord,
 } from "../features/shortcuts/KeyCaptureControl";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
-import type { Shortcut, ShortcutsService } from "../features/shortcuts/service";
+import type { ShortcutsService } from "../features/shortcuts/service";
 import type { PluginManager } from "../plugins/manager";
 
 type Row = Readonly<{
@@ -34,16 +39,31 @@ type Notice = Readonly<{
   message: string;
 }>;
 
-/** Chords the message editor handles locally before the window dispatcher. */
+/** Chords the message editor handles locally before the window dispatcher: undo/redo and line/document jumps. */
 const EDITOR_CHORDS: readonly KeyBinding[] = [
   { key: "z", mod: true },
   { key: "z", mod: true, shift: true },
   { key: "y", mod: true },
+  { key: "y", mod: true, shift: true },
   { key: "Home", mod: true },
+  { key: "Home", mod: true, shift: true },
   { key: "End", mod: true },
+  { key: "End", mod: true, shift: true },
 ];
-const bindingsOf = (shortcut: Shortcut): readonly KeyBinding[] =>
-  "key" in shortcut.binding ? [shortcut.binding] : shortcut.binding;
+/** Copy, paste, cut and select all: a matching shortcut would preventDefault them everywhere. */
+const CLIPBOARD_CHORDS: readonly KeyBinding[] = [
+  { key: "c", mod: true },
+  { key: "v", mod: true },
+  { key: "x", mod: true },
+  { key: "a", mod: true },
+];
+/** Close window and quit: the desktop shell owns these, so they are refused there. */
+const DESKTOP_CHORDS: readonly KeyBinding[] = [
+  { key: "q", mod: true },
+  { key: "w", mod: true },
+];
+const includes = (chords: readonly KeyBinding[], binding: KeyBinding) =>
+  chords.some((chord) => sameBinding(chord, binding));
 const byTitle = (a: Row, b: Row) =>
   a.title.localeCompare(b.title) || a.key.localeCompare(b.key);
 
@@ -57,12 +77,15 @@ export function ShortcutSettings({
   bindings,
   plugins,
   apple = isApplePlatform(navigator.platform),
+  desktop = isTauri(),
 }: {
   shortcuts: ShortcutsService;
   bindings: ShortcutBindings;
   /** Display names for plugin groups come from the catalog. */
   plugins: Pick<PluginManager, "subscribe" | "snapshot">;
   apple?: boolean;
+  /** Packaged desktop build, where close/quit chords belong to the shell. */
+  desktop?: boolean;
 }) {
   const host = useSyncExternalStore(
     shortcuts.hostSubscribe,
@@ -90,21 +113,26 @@ export function ShortcutSettings({
           (plugin) => plugin.manifest.id === id,
         )?.manifest.name
       : undefined) ?? id;
-  const row = (key: string, shortcut: Shortcut, owner: string): Row => {
-    const defaults = bindingsOf(shortcut);
+  const row = (
+    key: string,
+    shortcut: NormalizedShortcut,
+    owner: string,
+  ): Row => {
     const override = overrides[key];
     return {
       key,
       title: shortcut.title,
       owner,
-      defaults,
+      defaults: shortcut.binding,
       override,
-      effective: override ? [override] : defaults,
+      effective: override ? [override] : shortcut.binding,
     };
   };
+  // Group ids are namespaced so a plugin whose manifest id is "buzz" or "host"
+  // cannot share a React key with the host group.
   const groups: Group[] = [
     {
-      id: "buzz",
+      id: "host",
       label: "Buzz",
       rows: host.map((shortcut) => row(shortcut.id, shortcut, "Buzz")),
     },
@@ -112,7 +140,7 @@ export function ShortcutSettings({
       .map((pluginId) => {
         const label = pluginName(pluginId);
         return {
-          id: pluginId,
+          id: `plugin:${pluginId}`,
           label,
           rows: contributed
             .filter((shortcut) => shortcut.pluginId === pluginId)
@@ -124,6 +152,17 @@ export function ShortcutSettings({
     .map((group) => ({ ...group, rows: [...group.rows].sort(byTitle) }))
     .filter((group) => group.rows.length);
   const rows = groups.flatMap((group) => group.rows);
+  // A chord can become shared after capture (a plugin enabled later, a new
+  // default in a release). The dispatcher then picks one silently, so each
+  // affected row names the others.
+  const sharedWith = (target: Row) =>
+    rows.filter(
+      (other) =>
+        other.key !== target.key &&
+        other.effective.some((binding) =>
+          target.effective.some((current) => sameBinding(current, binding)),
+        ),
+    );
   const needle = query.trim().toLowerCase();
   const visible = needle
     ? groups
@@ -160,6 +199,8 @@ export function ShortcutSettings({
     const chord = formatBinding(binding, apple).text;
     const refuse = (message: string) =>
       setNotice({ key: target.key, tone: "error", message });
+    if (binding.key === "Dead" || binding.key === "Unidentified")
+      return refuse("That key can’t be used for a shortcut. Try another.");
     if (otherPrimary)
       return refuse(
         apple
@@ -170,8 +211,14 @@ export function ShortcutSettings({
       return refuse(
         `Include ${apple ? "Command or Option" : "Control or Alt"} so ordinary typing keeps working.`,
       );
-    if (binding.key === "Dead" || binding.key === "Unidentified")
-      return refuse("That key can’t be used for a shortcut. Try another.");
+    if (includes(CLIPBOARD_CHORDS, binding))
+      return refuse(
+        `${chord} is reserved for copy, cut, paste and select all. Try another.`,
+      );
+    if (desktop && includes(DESKTOP_CHORDS, binding))
+      return refuse(
+        `${chord} is reserved for closing the window and quitting Buzz. Try another.`,
+      );
     const conflict = rows.find(
       (row) =>
         row.key !== target.key &&
@@ -187,7 +234,7 @@ export function ShortcutSettings({
     bindings.set(target.key, isDefault ? null : binding);
     setEditing(null);
     setNotice(
-      EDITOR_CHORDS.some((current) => sameBinding(current, binding))
+      includes(EDITOR_CHORDS, binding)
         ? {
             key: target.key,
             tone: "warning",
@@ -223,6 +270,7 @@ export function ShortcutSettings({
                       key={row.key}
                       row={row}
                       apple={apple}
+                      sharedWith={sharedWith(row)}
                       listening={editing === row.key}
                       notice={notice?.key === row.key ? notice : null}
                       onStart={() => start(row.key)}
@@ -277,6 +325,7 @@ export function ShortcutSettings({
 function ShortcutRow({
   row,
   apple,
+  sharedWith,
   listening,
   notice,
   onStart,
@@ -286,6 +335,8 @@ function ShortcutRow({
 }: {
   row: Row;
   apple: boolean;
+  /** Other listed shortcuts whose effective chord this row also answers to. */
+  sharedWith: readonly Row[];
   listening: boolean;
   notice: Notice | null;
   onStart: () => void;
@@ -297,17 +348,19 @@ function ShortcutRow({
   const noticeId = useId();
   const change = useRef<HTMLButtonElement>(null);
   const wasListening = useRef(listening);
-  // Return focus to the row's action when the capture control goes away
-  // without the person having moved focus somewhere else.
+  const resetting = useRef(false);
+  // Return focus to the row's action when the capture control or the Reset
+  // button goes away without the person having moved focus somewhere else.
   useEffect(() => {
+    const stopped = wasListening.current && !listening;
+    wasListening.current = listening;
     if (
-      wasListening.current &&
-      !listening &&
+      (stopped || (resetting.current && !row.override)) &&
       document.activeElement === document.body
     )
       change.current?.focus();
-    wasListening.current = listening;
-  }, [listening]);
+    resetting.current = false;
+  }, [listening, row.override]);
   const primary = row.effective[0];
   return (
     <article
@@ -320,6 +373,14 @@ function ShortcutRow({
         </h3>
         {row.override && (
           <p className="m-0 text-body-sm text-subtle">Modified</p>
+        )}
+        {sharedWith.length > 0 && (
+          <p className="m-0 text-body-sm text-subtle">
+            Also used by{" "}
+            {sharedWith
+              .map((other) => `${other.title} (${other.owner})`)
+              .join(", ")}
+          </p>
         )}
         {notice && (
           <p
@@ -363,7 +424,10 @@ function ShortcutRow({
             type="button"
             size="sm"
             aria-label={`Reset shortcut for ${row.title}`}
-            onClick={onReset}
+            onClick={() => {
+              resetting.current = true;
+              onReset();
+            }}
           >
             Reset
           </Button>

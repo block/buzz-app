@@ -123,6 +123,7 @@ async function harness() {
     runs,
     bindings,
     shortcuts,
+    contribute,
     plugins: catalog([
       info("example.counter", "Shortcut counter"),
       info("buzz.terminal", "Terminal"),
@@ -267,6 +268,21 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
     expect(screen.getByRole("alert")).toHaveTextContent(
       "The Windows/Command key isn’t used for shortcuts on this device.",
     );
+    // Dead and unidentified keys, and the chords copy, paste and select all need.
+    fireEvent.keyDown(input, { key: "Dead", altKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "That key can’t be used for a shortcut. Try another.",
+    );
+    fireEvent.keyDown(input, { key: "Unidentified", ctrlKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "That key can’t be used for a shortcut. Try another.",
+    );
+    for (const key of ["c", "v", "x", "a"]) {
+      fireEvent.keyDown(input, { key, ctrlKey: true });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        `Ctrl+${key.toUpperCase()} is reserved for copy, cut, paste and select all. Try another.`,
+      );
+    }
     // Conflicts are reported by title and owner; nothing is saved or fired.
     fireEvent.keyDown(input, { key: "k", ctrlKey: true });
     expect(screen.getByRole("alert")).toHaveTextContent(
@@ -308,15 +324,28 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
       screen.getByRole("button", { name: `Reset shortcut for ${title}` }),
     );
     expect(within(row(title)).queryByText("Modified")).toBeNull();
+    // Reset unmounts its own button; keyboard focus stays anchored in the row.
+    expect(change(title)).toHaveFocus();
     expect(h.bindings.resolve("example.counter/increment")).toBeUndefined();
     h.press("k", { shiftKey: true });
     expect(h.runs.increment).toHaveBeenCalledTimes(2);
 
-    // Escape and blur cancel without saving; focus returns to the row action.
-    await user.click(change("Open Settings"));
-    fireEvent.keyDown(capture("Open Settings"), { key: "Escape" });
-    expect(screen.queryByRole("textbox", { name: /New shortcut/ })).toBeNull();
-    expect(change("Open Settings")).toHaveFocus();
+    // Escape cancels whatever else is held, as does blur; nothing is saved and
+    // focus returns to the row action.
+    for (const held of [
+      {},
+      { shiftKey: true },
+      { ctrlKey: true },
+      { metaKey: true, altKey: true },
+    ]) {
+      await user.click(change("Open Settings"));
+      fireEvent.keyDown(capture("Open Settings"), { key: "Escape", ...held });
+      expect(
+        screen.queryByRole("textbox", { name: /New shortcut/ }),
+      ).toBeNull();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(change("Open Settings")).toHaveFocus();
+    }
     await user.click(change("Open Settings"));
     await user.click(document.body);
     expect(screen.queryByRole("textbox", { name: /New shortcut/ })).toBeNull();
@@ -328,7 +357,21 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
     const warning = within(row("Open Settings")).getByRole("alert");
     expect(warning).toHaveTextContent("message editor handles Ctrl+Z");
     expect(warning).toHaveClass("text-warning");
-    expect(h.bindings.resolve("settings")).toEqual({ key: "z", mod: true });
+    expect(h.bindings.resolve("settings")).toEqual([{ key: "z", mod: true }]);
+    for (const [key, chord] of [
+      ["y", "Ctrl+Shift+Y"],
+      ["End", "Ctrl+Shift+End"],
+    ] as const) {
+      await user.click(change("Open Settings"));
+      fireEvent.keyDown(capture("Open Settings"), {
+        key,
+        ctrlKey: true,
+        shiftKey: true,
+      });
+      expect(within(row("Open Settings")).getByRole("alert")).toHaveTextContent(
+        `message editor handles ${chord}`,
+      );
+    }
     await user.click(change("Toggle channel terminal"));
     fireEvent.keyDown(capture("Toggle channel terminal"), {
       key: ",",
@@ -422,6 +465,194 @@ it("keeps a change active when saving fails and offers a retry", async () => {
       JSON.stringify({ "buzz.terminal/toggle": { key: "u", mod: true } }),
     );
   } finally {
+    await h.dispose();
+  }
+});
+
+it("stores Option and Shift chords as the composed key on Apple platforms (known limitation)", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    // macOS reports the composed character for Option chords: Option+K is "˚".
+    // Capture and dispatch both read event.key, so the chord fires but is
+    // layout-dependent and displays as the composed character.
+    const terminal = "Toggle channel terminal";
+    await user.click(change(terminal));
+    fireEvent.keyDown(capture(terminal), { key: "˚", altKey: true });
+    expect(within(row(terminal)).getByText("Option ˚")).toBeInTheDocument();
+    expect(
+      row(terminal).querySelector("[data-design-pass='pending']"),
+    ).toHaveAttribute("data-binding", "⌥˚");
+    expect(h.bindings.resolve("buzz.terminal/toggle")).toEqual([
+      { key: "˚", alt: true },
+    ]);
+    expect(fireEvent.keyDown(document.body, { key: "˚", altKey: true })).toBe(
+      false,
+    );
+    expect(h.runs.terminal).toHaveBeenCalledTimes(1);
+    // Shift+digit likewise stores the punctuation the layout produced.
+    const settings = "Open Settings";
+    await user.click(change(settings));
+    fireEvent.keyDown(capture(settings), {
+      key: "!",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(
+      within(row(settings)).getByText("Shift Command !"),
+    ).toBeInTheDocument();
+    expect(h.bindings.resolve("settings")).toEqual([
+      { key: "!", mod: true, shift: true },
+    ]);
+    expect(h.press("!", { shiftKey: true })).toBe(false);
+    expect(h.runs.settings).toHaveBeenCalledTimes(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("refuses close and quit chords only in the desktop build", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    const desktop = render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+        desktop
+      />,
+    );
+    const title = "Open Settings";
+    await user.click(change(title));
+    for (const key of ["q", "w"]) {
+      fireEvent.keyDown(capture(title), { key, metaKey: true });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        `⌘${key.toUpperCase()} is reserved for closing the window and quitting Buzz. Try another.`,
+      );
+    }
+    expect(h.bindings.snapshot().overrides).toEqual({});
+    desktop.unmount();
+    // A browser tab handles these before the page sees them, so nothing is lost.
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    await user.click(change(title));
+    fireEvent.keyDown(capture(title), { key: "w", metaKey: true });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(row(title)).getByText("Command W")).toBeInTheDocument();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("marks rows that share an effective chord once a plugin is re-enabled, and clears the marker on reset", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    const counter = "Increment shortcut counter";
+    const terminal = "Toggle channel terminal";
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    // With the terminal disabled its chord is not listed, so Ctrl+J is accepted.
+    act(() => h.setActive("buzz.terminal", false));
+    await user.click(change(counter));
+    fireEvent.keyDown(capture(counter), { key: "j", ctrlKey: true });
+    expect(within(row(counter)).getByText("Control J")).toBeInTheDocument();
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    // Re-enabling brings the default back; the dispatcher would pick one silently.
+    act(() => h.setActive("buzz.terminal", true));
+    const marker = within(row(counter)).getByText(
+      "Also used by Toggle channel terminal (Terminal)",
+    );
+    expect(marker).toHaveClass("text-subtle");
+    expect(marker).not.toHaveClass("text-danger");
+    expect(marker).not.toHaveClass("text-warning");
+    expect(marker).not.toHaveAttribute("role");
+    expect(
+      within(row(terminal)).getByText(
+        "Also used by Increment shortcut counter (Shortcut counter)",
+      ),
+    ).toBeInTheDocument();
+    h.press("j");
+    expect(h.runs.terminal).toHaveBeenCalledTimes(1);
+    expect(h.runs.increment).not.toHaveBeenCalled();
+    // A host chord shared with a plugin is marked on both rows as well.
+    act(() => h.bindings.set("global-search", { key: "j", mod: true }));
+    expect(
+      within(row("Search Buzz")).getByText(/^Also used by/),
+    ).toHaveTextContent(
+      "Also used by Increment shortcut counter (Shortcut counter), Toggle channel terminal (Terminal)",
+    );
+    act(() => h.bindings.set("global-search", null));
+    expect(within(row("Search Buzz")).queryByText(/Also used by/)).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: `Reset shortcut for ${counter}` }),
+    );
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    expect(change(counter)).toHaveFocus();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("keeps the host group distinct from a plugin whose manifest id is buzz", async () => {
+  const h = await harness();
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await h.contribute("buzz", {
+      id: "ping",
+      title: "Ping",
+      binding: { key: "p", mod: true },
+      run: vi.fn(),
+    });
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={catalog([
+          info("example.counter", "Shortcut counter"),
+          info("buzz.terminal", "Terminal"),
+          info("buzz", "Buzz plugin"),
+        ])}
+        apple
+      />,
+    );
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "Shortcuts",
+      "Buzz",
+      "Buzz plugin",
+      "Shortcut counter",
+      "Terminal",
+    ]);
+    expect(row("Ping")).toBeInTheDocument();
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    error.mockRestore();
     await h.dispose();
   }
 });

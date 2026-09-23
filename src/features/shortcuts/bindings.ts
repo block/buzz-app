@@ -19,7 +19,11 @@ export type Shortcut = Readonly<{
   repeat?: boolean;
 }>;
 
-export function normalizeShortcut(shortcut: Shortcut): Shortcut {
+/** What the registries hold: aliases are always a frozen array, never a bare binding. */
+export type NormalizedShortcut = Shortcut &
+  Readonly<{ binding: readonly KeyBinding[] }>;
+
+export function normalizeShortcut(shortcut: Shortcut): NormalizedShortcut {
   if (
     !shortcut ||
     typeof shortcut.id !== "string" ||
@@ -69,12 +73,17 @@ export function sameBinding(a: KeyBinding, b: KeyBinding) {
   );
 }
 
+/** Nonempty list of well-formed bindings: the shape stored overrides must take. */
+export function isBindingList(value: unknown): value is readonly KeyBinding[] {
+  return Array.isArray(value) && value.length > 0 && value.every(isKeyBinding);
+}
+
+/** Callers pass the registered alias array or a stored override; nothing is wrapped here. */
 export function matches(
-  candidates: KeyBinding | readonly KeyBinding[],
+  bindings: readonly KeyBinding[],
   event: KeyboardEvent,
   apple: boolean,
 ) {
-  const bindings = Array.isArray(candidates) ? candidates : [candidates];
   return bindings.some(
     (binding) =>
       binding.key.toLowerCase() === event.key.toLowerCase() &&

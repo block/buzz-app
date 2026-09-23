@@ -30,7 +30,8 @@ const MODIFIER_KEYS = new Set([
 /**
  * Focused listening control. Its own keydown handler consumes the event before
  * the window dispatcher sees it, so the shortcut being rebound never fires.
- * Escape and losing focus cancel; the owner decides whether a chord is accepted.
+ * Escape (whatever else is held) and losing focus cancel; the owner decides
+ * whether a chord is accepted.
  */
 export function KeyCaptureControl({
   apple,
@@ -66,8 +67,9 @@ export function KeyCaptureControl({
         event.preventDefault();
         event.stopPropagation();
         if (MODIFIER_KEYS.has(event.key)) return;
-        const held = event.metaKey || event.ctrlKey || event.altKey;
-        if (event.key === "Escape" && !held && !event.shiftKey) {
+        // Someone pressing Shift+Escape or Command+Escape is backing out, not
+        // choosing a binding, so Escape never reaches onCapture.
+        if (event.key === "Escape") {
           onCancel();
           return;
         }

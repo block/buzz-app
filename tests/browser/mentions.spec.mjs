@@ -158,7 +158,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     );
     const chip = input.locator(".inline-chip").first();
     const recipients = page.getByRole("region", {
-      name: "Notification recipients",
+      name: "Explicit mentions",
     });
     await expect(recipients.getByRole("button")).toHaveCount(2);
     await expect(

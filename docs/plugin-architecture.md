@@ -404,10 +404,11 @@ removes its intent under the existing draft rules.
 **User intent outlives the tool that created it.** Disabling Mentions removes its
 chooser, not selected recipients, their inline chips and avatar removal controls,
 scoped drafts or pending messages. Editing or deleting a selected mention removes
-its notification intent. Removing an avatar clears that identity's notification
-intent without changing the authored text. The session still owns roster/profile data, membership
-checks, signing and publication/retry. Plugins remain trusted same-process code;
-revocable editor commands do not sandbox the session capabilities they receive.
+its explicit mention intent. Removing an avatar clears that identity's explicit
+mention intent without changing the authored text. This does not suppress Sessions
+routing: the selected agent or sole session agent can still be addressed. The session
+still owns roster/profile data, membership checks, signing and publication/retry.
+Plugins remain trusted same-process code; revocable editor commands do not sandbox the session capabilities they receive.
 
 This preview is host-matched: a tool using `insertMention` needs a host providing
 that command. The generated type-only `@buzz/author` package and `apiVersion: 1`

@@ -6,8 +6,20 @@ directory. Agents retains agent-specific configuration/operations; this slice
 adds no ownership/running badge, editor, agent-library read or execution API.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
+The in-pane preview reads the same session-owned turn snapshot: working, unknown
+and ended counts plus the latest turn signal, restricted to this exact public key
+and originating channel (including threads). No context means no preview, never an
+all-channel fallback. Connecting, interrupted, unavailable and empty states are
+explicit; silence is not idle, and ended is not necessarily succeeded. Counts
+cover retained turn evidence, not a complete history or raw event count.
+
 This action is offered for any public identity: it does not infer that the identity
-is an owned/running agent. Missing telemetry is explained by the activity panel.
+is an owned/running agent. Public agent hints never grant telemetry access. The
+existing observer admission and session access-reset/generation fences remain the
+authority; the child adds no library read, capture lease, socket, timer or store.
+Disabling Agent Activity removes the preview/action and clears capture. Profile
+opening subscribes only to the existing snapshot; it never starts telemetry.
+Raw records, channel switching and live-feed retry remain in the activity panel.
 
 Guarded invitations that fail or have an unknown outcome remain saved in the
 outbox. Its generic Retry action is withheld for these records. Retrying the
@@ -50,7 +62,7 @@ Remove from outbox does not revoke an invitation already dispatched to the relay
 
 ## UI and iteration
 
-Avatar, name, about, exact copyable npub, and an optional contextual activity action. Shared design-system Avatar and
+Avatar, name, about, exact copyable npub, and an optional compact activity preview/action. Shared design-system Avatar and
 Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or

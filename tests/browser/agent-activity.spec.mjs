@@ -359,6 +359,11 @@ test("profile activity opens the exact agent and originating channel before its 
     name: "Profile",
     exact: true,
   });
+  await expect(
+    profile.getByRole("region", { name: "Activity preview" }),
+  ).toContainText(
+    "No turn activity received for this identity in this channel.",
+  );
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();
@@ -413,6 +418,9 @@ test("profile activity opens the exact agent and originating channel before its 
   await panel.press("Escape");
   await expect(avatar).toBeFocused();
   await avatar.click();
+  await expect(
+    profile.getByRole("region", { name: "Activity preview" }),
+  ).toContainText("1 working · 0 unknown · 0 ended");
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();

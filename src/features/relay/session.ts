@@ -820,6 +820,7 @@ export function createRelaySession(
       writes?.local.subscribe(listener) ?? (() => {}),
     snapshot: () => pendingCreation()?.input,
     async create(input: ChannelCreationInput) {
+      if (!transport) throw new Error("The community connection changed.");
       const normalized: ChannelCreationInput = {
         name: input.name.trim(),
         visibility: input.visibility,
@@ -856,7 +857,11 @@ export function createRelaySession(
       const pending = pendingChannelCreation;
       try {
         await workSessions.delivered(pending.operation);
-        await workSessions.refresh(pending.id, {}, false);
+        await workSessions.refresh(
+          pending.id,
+          { member: transport.viewer },
+          false,
+        );
         await writes?.outbox.dismiss(pending.operation);
         pendingChannelCreation = undefined;
         return pending.id;

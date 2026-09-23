@@ -6,8 +6,8 @@ import type { ChannelQueries } from "./contracts";
 import {
   keypair,
   message,
-  metadata,
   roster,
+  flush,
   scriptedTransport,
   signed,
 } from "./testing";
@@ -141,12 +141,30 @@ it("removes a successfully refreshed channel creation from durable recovery", as
       .find(({ event }) => event.kind === 9007)
       ?.event.tags.find(([name]) => name === "h")?.[1];
     expect(id).toBeTypeOf("string");
+    const publicMetadata = signed(relay, {
+      kind: 39000,
+      content: JSON.stringify({ name: "Release notes" }),
+      tags: [["d", id ?? ""], ["name", "Release notes"], ["public"]],
+    });
     await vi.waitFor(() => expect(wire.pending).toHaveLength(2));
     for (const request of [wire.next(), wire.next()])
-      request.respond([
-        roster(relay, id ?? "", [viewer.pubkey]),
-        metadata(relay, id ?? "", "Release notes"),
-      ]);
+      request.respond([publicMetadata]);
+    await vi.waitFor(() =>
+      expect(owner.session.channels.get?.(id ?? "")?.readOnly).toBe(true),
+    );
+    let resolved = false;
+    void creating.then(() => {
+      resolved = true;
+    });
+    await flush();
+    expect(resolved).toBe(false);
+    expect(records.some(({ event }) => event.kind === 9007)).toBe(true);
+
+    owner.session.channels.refreshList?.();
+    await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
+    wire
+      .next()
+      .respond([roster(relay, id ?? "", [viewer.pubkey]), publicMetadata]);
     await expect(creating).resolves.toBe(id);
     await vi.waitFor(() =>
       expect(records.some(({ event }) => event.kind === 9007)).toBe(false),

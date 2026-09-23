@@ -1,6 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
-import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
@@ -264,44 +264,36 @@ export function normalizeWebViteArgs(values) {
   };
 }
 
-async function reservePort(port) {
-  const servers = [];
-  try {
-    for (const host of ["127.0.0.1", "::1"]) {
-      const server = createServer();
-      await new Promise((resolve, reject) => {
-        server.once("error", reject);
-        server.listen(port, host, resolve);
-      });
-      servers.push(server);
-    }
-    return servers;
-  } catch (error) {
-    await Promise.all(
-      servers.map((server) => new Promise((resolve) => server.close(resolve))),
-    );
-    throw error;
-  }
-}
-
-function viteBindFailure(child) {
-  return new Promise((_, reject) => {
+export function viteReadyToken(child, token, signal) {
+  return new Promise((resolve, reject) => {
     let output = "";
+    const marker = `BUZZ_PROFILE_VITE_READY:${token}`;
+    const finish = (error) => {
+      cleanup();
+      if (error) reject(error);
+      else resolve();
+    };
     const onData = (chunk) => {
       output += chunk;
-      if (/Port \d+ is (?:already )?in use/.test(output)) {
-        cleanup();
-        reject(new Error("Vite could not bind the profiling port."));
-      }
+      if (output.includes(marker)) finish();
+      else if (/Port \d+ is (?:already )?in use/.test(output))
+        finish(new Error("Vite could not bind the profiling port."));
       if (output.length > 16_384) output = output.slice(-8_192);
     };
+    const onExit = () =>
+      finish(new Error("Vite exited before owning the profiling port."));
+    const onAbort = () =>
+      finish(new DOMException("Profiling startup cancelled.", "AbortError"));
     const cleanup = () => {
       child.stdout.off("data", onData);
       child.stderr.off("data", onData);
+      child.off("exit", onExit);
+      signal.removeEventListener("abort", onAbort);
     };
     child.stdout.on("data", onData);
     child.stderr.on("data", onData);
-    child.once("exit", cleanup);
+    child.once("exit", onExit);
+    signal.addEventListener("abort", onAbort, { once: true });
   });
 }
 
@@ -475,19 +467,7 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   });
 
   const control = stopController();
-  let reservations;
-  try {
-    reservations = await reservePort(vite.port);
-  } catch (error) {
-    throw new Error(`Profiling port ${vite.port} is already in use.`, {
-      cause: error,
-    });
-  }
-  await Promise.all(
-    reservations.map(
-      (server) => new Promise((resolve) => server.close(resolve)),
-    ),
-  );
+  const readyToken = randomUUID();
   const nodeOptions = [process.env.NODE_OPTIONS, "--inspect=127.0.0.1:0"]
     .filter(Boolean)
     .join(" ");
@@ -495,7 +475,11 @@ async function profileWeb({ directory, profileArgs, args, network }) {
     process.execPath,
     ["node_modules/vite/bin/vite.js", ...vite.args],
     {
-      env: { ...process.env, NODE_OPTIONS: nodeOptions },
+      env: {
+        ...process.env,
+        BUZZ_PROFILE_VITE_READY_TOKEN: readyToken,
+        NODE_OPTIONS: nodeOptions,
+      },
       stdio: ["inherit", "pipe", "pipe"],
     },
   );
@@ -518,10 +502,8 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   let outcome;
   const failures = [];
   try {
-    await Promise.race([
-      waitForViteReady(url, viteProcess, control.abort.signal),
-      viteBindFailure(viteProcess),
-    ]);
+    await viteReadyToken(viteProcess, readyToken, control.abort.signal);
+    await waitForViteReady(url, viteProcess, control.abort.signal);
     control.abort.signal.throwIfAborted();
     nodeProfiler = inspectorClient(await inspectorUrl);
     await nodeProfiler.send("Profiler.enable");

@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 import {
   inspectorClient,
   normalizeWebViteArgs,
   safeUrl,
+  viteReadyToken,
 } from "../../scripts/profile-dev.mjs";
 
 test("web profiling canonicalizes its Vite port and strict-port contract", () => {
@@ -22,6 +24,38 @@ test("web profiling canonicalizes its Vite port and strict-port contract", () =>
     () => normalizeWebViteArgs(["--no-strictPort"]),
     /requires --strictPort/,
   );
+});
+
+test("web profiling waits for its authenticated Vite listening marker", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const abort = new AbortController();
+  let settled = false;
+  const ready = viteReadyToken(child, "owned-token", abort.signal).then(
+    () => (settled = true),
+  );
+
+  child.stdout.emit("data", "BUZZ_PROFILE_VITE_READY:other-token\n");
+  await Promise.resolve();
+  assert.equal(settled, false);
+
+  child.stderr.emit("data", "BUZZ_PROFILE_VITE_READY:owned-token\n");
+  await ready;
+  assert.equal(settled, true);
+});
+
+test("web profiling rejects Vite bind failure before readiness", async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const ready = viteReadyToken(
+    child,
+    "owned-token",
+    new AbortController().signal,
+  );
+  child.stderr.emit("data", "Error: Port 1430 is already in use\n");
+  await assert.rejects(ready, /could not bind/);
 });
 
 test("network URLs redact opaque payloads and strip HTTP secrets", () => {

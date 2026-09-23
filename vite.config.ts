@@ -32,6 +32,16 @@ export default defineConfig(async ({ command, mode }) => {
         communityAliases: aliases,
       }),
     );
+  const profileReadyToken = process.env.BUZZ_PROFILE_VITE_READY_TOKEN;
+  if (profileReadyToken)
+    plugins.push({
+      name: "buzz-profile-ready",
+      configureServer(server) {
+        server.httpServer?.once("listening", () => {
+          console.log(`BUZZ_PROFILE_VITE_READY:${profileReadyToken}`);
+        });
+      },
+    });
   return {
     plugins,
     define: {

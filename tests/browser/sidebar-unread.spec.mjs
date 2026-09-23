@@ -395,15 +395,12 @@ test("session changes discard the previous sidebar targets and manual unread sti
   const held = new Promise((resolve) => {
     release = resolve;
   });
-  let requested = false;
-  await page.route(
-    "**/api/relay/secondary/sidebar-preferences",
-    async (route) => {
-      requested = true;
-      await held;
-      await route.continue();
-    },
-  );
+  const pendingRoutes = [];
+  await page.route("**/api/relay/secondary/sidebar-preferences", (route) => {
+    const pending = held.then(() => route.continue());
+    pendingRoutes.push(pending);
+    return pending;
+  });
   try {
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
@@ -427,13 +424,19 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await page
       .getByRole("button", { name: "Channel settings", exact: true })
       .click();
-    await expect.poll(() => requested).toBe(true);
+    await expect.poll(() => pendingRoutes.length).toBeGreaterThan(0);
+    // A new session reveals its roster after the bounded startup wait even if
+    // preferences are still blocked. Scrolling the empty loading view is a no-op.
+    await expect(row(page, "alpha")).toBeVisible();
+    await expect(
+      page.getByText("Updating sidebar details…", { exact: true }),
+    ).toBeVisible();
     await scroll(page, 1800);
     await expect(cue(page, "above")).toBeVisible();
     // Completing delayed preferences must not replace the user's newer viewport.
     release();
     await expect(
-      page.getByText("Loading saved groups and stars…", { exact: true }),
+      page.getByText("Updating sidebar details…", { exact: true }),
     ).toBeHidden();
     expect(await list(page).evaluate((element) => element.scrollTop)).toBe(
       1800,
@@ -447,6 +450,7 @@ test("session changes discard the previous sidebar targets and manual unread sti
     ).toBeAttached();
   } finally {
     release();
+    await Promise.all(pendingRoutes);
     await page.unroute("**/api/relay/secondary/sidebar-preferences");
   }
 });

@@ -95,7 +95,10 @@ export function sidebarSections(
       title: "DMs",
       icon: undefined,
       rows: sort(
-        active.filter((channel) => channel.channelType === "dm" && !hiddenDms.has(channel.id)),
+        active.filter(
+          (channel) =>
+            channel.channelType === "dm" && !hiddenDms.has(channel.id),
+        ),
         "dms",
       ),
     },

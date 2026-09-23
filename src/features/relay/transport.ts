@@ -585,7 +585,7 @@ export async function connectBrokerTransport(
               signal,
             });
             if (!result.ok) throw httpReadError(result.status);
-            return parseEvents(await result.json(), signal);
+            return parseEvents(await result.json(), verify, signal);
           },
         }
       : {}),

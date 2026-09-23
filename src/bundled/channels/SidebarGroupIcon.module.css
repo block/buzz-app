@@ -11,7 +11,7 @@
 .placeholder {
   position: absolute;
   inset: 0;
-  background: var(--neutral-4);
+  background: var(--border-standard);
 }
 .image {
   display: block;

@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, type ReactElement } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -30,6 +30,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onNewSession,
   onOpenThread,
   onHideDm,
+  wrapSelect,
 }: {
   channel: ChannelSummary;
   session: RelaySession;
@@ -45,6 +46,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onNewSession: (id: string) => void;
   onOpenThread: (channelId: string, rootId: string) => void;
   onHideDm?: (id: string) => void;
+  wrapSelect?: (trigger: ReactElement) => ReactElement;
 }) {
   const Icon =
     channel.channelType === "dm"
@@ -52,6 +54,15 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         ? UsersIcon
         : ChatCircleIcon
       : channelIcon(channel);
+  const activityTrigger = (trigger: ReactElement) => (
+    <ChannelActivityPopover
+      session={session}
+      channelId={channel.id}
+      channelName={channel.name}
+      onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
+      trigger={trigger}
+    />
+  );
   return (
     <ChannelSidebarRow
       channel={channel}
@@ -73,15 +84,10 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
           />
         </>
       }
-      wrapSelect={(trigger) => (
-        <ChannelActivityPopover
-          session={session}
-          channelId={channel.id}
-          channelName={channel.name}
-          onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
-          trigger={trigger}
-        />
-      )}
+      wrapSelect={(trigger) => {
+        const activity = activityTrigger(trigger);
+        return wrapSelect ? wrapSelect(activity) : activity;
+      }}
       selected={selected}
       sessionsEnabled={sessionsEnabled}
       collapsed={collapsed}

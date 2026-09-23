@@ -27,6 +27,11 @@ export const ArrowsClockwiseIcon = defineIcon(
   "phosphor",
   PhosphorArrowsClockwiseIcon,
 );
+import { ArrowsDownUpIcon as PhosphorArrowsDownUpIcon } from "@phosphor-icons/react/dist/csr/ArrowsDownUp";
+export const ArrowsDownUpIcon = defineIcon(
+  "phosphor",
+  PhosphorArrowsDownUpIcon,
+);
 import { ArrowsInIcon as PhosphorArrowsInIcon } from "@phosphor-icons/react/dist/csr/ArrowsIn";
 export const ArrowsInIcon = defineIcon("phosphor", PhosphorArrowsInIcon);
 import { ArrowsOutIcon as PhosphorArrowsOutIcon } from "@phosphor-icons/react/dist/csr/ArrowsOut";

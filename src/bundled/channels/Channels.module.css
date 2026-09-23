@@ -566,3 +566,8 @@ html[data-keyboard-navigation]
   border-radius: 50%;
   background: var(--affordance-accent-prominent);
 }
+
+.sectionSortAction {
+  flex-shrink: 0;
+  margin-block: calc(-1 * var(--space-1));
+}

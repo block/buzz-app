@@ -127,7 +127,7 @@ test("group icons resolve custom media without overlapping labels, and the creat
   for (const width of [1440, 360]) {
     await page.setViewportSize({ width, height: 950 });
     const layout = await dialog.locator("p").evaluate((element) => {
-      const name = element.querySelector("span");
+      const name = element.querySelector("span[title]");
       const range = document.createRange();
       range.selectNodeContents(name);
       const box = element.getBoundingClientRect();

@@ -1,5 +1,7 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useId, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Dialog } from "../../shared/design-system/ui/Dialog";
+import { Input } from "../../shared/design-system/ui/Input";
 import styles from "./CreateSidebarSection.module.css";
 
 /** Mounted after the launching menu closes, so focus has one modal owner. */
@@ -12,62 +14,58 @@ export function CreateSidebarSection({
   create: (section: { id: string; name: string }) => void;
   close: () => void;
 }) {
-  const dialog = useRef<HTMLDialogElement>(null);
-  const title = useId();
+  const formId = useId();
+  const input = useRef<HTMLInputElement>(null);
   const [name, setName] = useState("");
   const submitted = useRef(false);
-  useEffect(() => {
-    const element = dialog.current;
-    element?.showModal();
-    return () => element?.close();
-  }, []);
-  const dismiss = () => {
-    dialog.current?.close();
-    close();
-  };
   return (
-    <dialog
-      ref={dialog}
-      aria-labelledby={title}
-      data-buzz-ui=""
-      className={`${styles.dialog} text-body-sm`}
-      onCancel={(event) => {
-        event.preventDefault();
-        dismiss();
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) close();
       }}
+      title="Create new section"
+      description={
+        <span className={styles.description}>
+          Move <span title={channelName}>{channelName}</span> into a new
+          section.
+        </span>
+      }
+      initialFocus={input}
+      finalFocus={false}
+      actions={
+        <>
+          <Button onClick={close}>Cancel</Button>
+          <Button
+            form={formId}
+            type="submit"
+            variant="prominent"
+            disabled={!name.trim()}
+          >
+            Create and move
+          </Button>
+        </>
+      }
     >
       <form
+        id={formId}
         onSubmit={(event) => {
           event.preventDefault();
           if (submitted.current || !name.trim()) return;
           submitted.current = true;
-          dialog.current?.close();
           create({ id: crypto.randomUUID(), name: name.trim() });
         }}
       >
-        <h2 id={title} className="text-heading">
-          Create new section
-        </h2>
-        <p className={styles.description}>
-          Move <span title={channelName}>{channelName}</span> into a new
-          section.
-        </p>
-        <input
+        <Input
+          ref={input}
           aria-label="Section name"
           placeholder="Section name"
-          className={styles.input}
           required
           maxLength={256}
           value={name}
           onChange={(event) => setName(event.target.value)}
         />
-        <div className={styles.actions}>
-          <Button onClick={dismiss}>Cancel</Button>
-          <Button type="submit" variant="primary" disabled={!name.trim()}>
-            Create and move
-          </Button>
-        </div>
       </form>
-    </dialog>
+    </Dialog>
   );
 }

@@ -153,7 +153,12 @@ export const test = base.extend({
         : [];
     const sortingIds = sortingSidebar ? ["cedar", "maple", "willow"] : [];
     const rosterIds = [
-      ...new Set([...channels, ...dmIds, ...sortingIds, ...Object.values(sessionParents)]),
+      ...new Set([
+        ...channels,
+        ...dmIds,
+        ...sortingIds,
+        ...Object.values(sessionParents),
+      ]),
     ];
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
@@ -542,7 +547,11 @@ export const test = base.extend({
           .map((id) =>
             sign(39000, [
               ["d", id],
-              ["name", channelNames[id] ?? (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id)],
+              [
+                "name",
+                channelNames[id] ??
+                  (id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id),
+              ],
               ...(id === "open" ? [["public"], ["t", "stream"]] : []),
               ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
               ...(sessionChannels.includes(id)

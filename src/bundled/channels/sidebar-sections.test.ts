@@ -112,6 +112,7 @@ it("sorts every section independently with deterministic inactive and tie fallba
     ]),
   ).toEqual([
     ["group:work", ["new", "a-id", "z-id", "quiet-a", "quiet-b"]],
+    ["channels", []],
     ["forums", ["forum-new", "forum-old"]],
   ]);
   expect(sidebarSections(roster)[0]?.rows.map((channel) => channel.id)).toEqual(
@@ -130,10 +131,14 @@ it("Star placement is exclusive and Unstar restores the saved assignment", () =>
       section.key,
       section.rows.map((channel) => channel.id),
     ]);
-  expect(placements(saved.starred)).toEqual([["starred", ["alpha", "beta"]]]);
+  expect(placements(saved.starred)).toEqual([
+    ["starred", ["alpha", "beta"]],
+    ["channels", []],
+  ]);
   expect(placements(["alpha"])).toEqual([
     ["starred", ["alpha"]],
     ["group:work", ["beta"]],
+    ["channels", []],
   ]);
   expect(saved.assignments).toEqual({ beta: "work" });
 });

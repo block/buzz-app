@@ -79,6 +79,11 @@ test("row menu moves and removes a channel optimistically, retaining keyboard na
   await expect(
     menu.getByRole("menuitemradio", { name: "Work" }),
   ).toHaveAttribute("aria-checked", "true");
+  // Checked state renders before Base UI transfers focus into the reopened
+  // submenu. Establish keyboard ownership before sending its next command.
+  await expect(
+    menu.getByRole("menuitemradio", { name: "Starred", exact: true }),
+  ).toBeFocused();
   await page.keyboard.press("End");
   await expect(
     menu.getByRole("menuitem", { name: "Remove from Work" }),

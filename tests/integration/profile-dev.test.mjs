@@ -226,11 +226,16 @@ for (const held of [
   "Profiler.enable",
   "Profiler.setSamplingInterval",
   "Profiler.start",
+  "startTracing",
   "goto",
 ]) {
   for (const late of ["resolve", "reject"]) {
     test(`web startup cancels held ${held} before late ${late}`, async (t) => {
-      const fixture = await webFixture(t, { held, late });
+      const fixture = await webFixture(t, {
+        held,
+        late,
+        trace: held === "startTracing",
+      });
       await fixture.wait("held");
       fixture.child.kill("SIGINT");
       // Cleanup must finish without releasing the stalled startup operation.
@@ -309,4 +314,46 @@ test("web capture still finalizes renderer, broker, and network artifacts on Ctr
     assert.ok(profile.endTime >= profile.startTime);
   }
   assert.match(fixture.log(), /Profile saved to/);
+});
+
+test("traced web capture replaces the renderer profile with a DevTools trace", async (t) => {
+  const fixture = await webFixture(t, { trace: true });
+  await fixture.wait("capturing");
+  fixture.child.kill("SIGINT");
+  assert.equal((await fixture.wait("settled")).error, undefined);
+  await fixture.wait("browserClosed");
+  fixture.child.send("finish");
+  assert.deepEqual(await fixture.exited, [0, null], fixture.log());
+  const calls = fixture.messages
+    .filter(({ type }) => type === "call")
+    .map(({ name }) => name);
+  assert.equal(calls.includes("Profiler.start"), false);
+  assert.ok(calls.indexOf("stopTracing") > calls.indexOf("startTracing"));
+  assert.deepEqual(
+    (await readdir(path.join(fixture.directory, "profiles"))).sort(),
+    [
+      "chromium-trace.json",
+      "manifest.json",
+      "network.json",
+      "vite-broker.cpuprofile",
+    ],
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        path.join(fixture.directory, "profiles/chromium-trace.json"),
+        "utf8",
+      ),
+    ),
+    { traceEvents: [] },
+  );
+  assert.deepEqual(
+    JSON.parse(
+      await readFile(
+        path.join(fixture.directory, "profiles/manifest.json"),
+        "utf8",
+      ),
+    ).coverage,
+    ["chromium-trace", "vite-broker", "chromium-network"],
+  );
 });

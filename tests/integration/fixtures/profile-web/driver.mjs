@@ -16,6 +16,7 @@ try {
     profileArgs: [],
     args: [],
     network: true,
+    trace: JSON.parse(process.env.BUZZ_TEST_SCENARIO).trace === true,
   });
   process.send({ type: "settled" });
 } catch (error) {

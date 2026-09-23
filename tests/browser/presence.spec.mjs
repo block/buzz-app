@@ -346,11 +346,9 @@ test.describe("large mounted thread", () => {
       expect(filter.authors.length).toBeLessThanOrEqual(256);
       expect(new Set(filter.authors).size).toBe(filter.authors.length);
     }
-    const starts = app.report.queries.filter(({ filter }) =>
-      filter.kinds?.includes(20001),
-    );
-    for (let i = 1; i < starts.length; i++)
-      expect(starts[i].at - starts[i - 1].at).toBeGreaterThanOrEqual(4990);
+    // Exact five-second start gates are covered with controlled clocks in
+    // presence.test.ts and http-admission.test.ts. Relay receipt timestamps
+    // include variable signing/fixture delay and cannot measure admission spacing.
     expect(
       app.relay.requests.some(({ filter }) => filter.kinds.includes(20001)),
     ).toBe(false);

@@ -175,6 +175,33 @@ it("a partial quota body retains its host owner until normalization installs coo
   expect(lane.idle()).toBe(true);
 });
 
+it.each([0, 1000, 6000])(
+  "presence enforces exactly five seconds between admissions and one active flight (%ims response)",
+  async (responseMs) => {
+    vi.useFakeTimers();
+    const lane = createApiAdmission();
+    const release = lane.tryPresence();
+    expect(release).toBeTypeOf("function");
+    await vi.advanceTimersByTimeAsync(responseMs);
+    expect(lane.tryPresence()).toBeUndefined();
+    release?.();
+    if (responseMs < 5000) {
+      await vi.advanceTimersByTimeAsync(4999 - responseMs);
+      expect(lane.tryPresence()).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(1);
+    }
+    const next = lane.tryPresence();
+    expect(next).toBeTypeOf("function");
+    next?.();
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(lane.tryPresence()).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    const last = lane.tryPresence();
+    expect(last).toBeTypeOf("function");
+    last?.();
+  },
+);
+
 it("presence starts alongside held ordinary work but retains its own flight, pacing and shared cooldown", async () => {
   vi.useFakeTimers();
   const lane = createApiAdmission();

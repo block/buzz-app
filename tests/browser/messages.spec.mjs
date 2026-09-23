@@ -280,14 +280,12 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(history.locator("table")).toContainText("wide-column-one-");
     await expect(history.locator("pre code")).toContainText("wide-content-");
     // Exercise native popup navigation without depending on a public website.
-    await page
-      .context()
-      .route("https://example.com/**", (route) =>
-        route.fulfill({
-          contentType: "text/html",
-          body: "<p>External destination</p>",
-        }),
-      );
+    await page.context().route("https://example.com/**", (route) =>
+      route.fulfill({
+        contentType: "text/html",
+        body: "<p>External destination</p>",
+      }),
+    );
     const safeLink = history.getByRole("link", { name: "Safe link" });
     await expect(safeLink).toHaveAttribute("href", "https://example.com/path");
     await expect(safeLink).toHaveAttribute("rel", "noopener noreferrer");

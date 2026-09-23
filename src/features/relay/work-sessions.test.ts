@@ -106,6 +106,79 @@ it("restores an unconfirmed ordinary channel without creating a second identity"
   }
 });
 
+it("retains a seen channel creation while creator membership is unconfirmed", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  const creation = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Release notes"],
+      ["visibility", "open"],
+      ["channel_type", "stream"],
+    ],
+  });
+  let records: readonly OutgoingEvent[] = [
+    { event: creation, signed: creation, delivery: "seen" },
+  ];
+  const sign = vi.fn(async () => creation);
+  const publish = vi.fn(async () => {});
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: { kinds: [9, 9000, 9007], sign, publish },
+    },
+    {
+      outboxStorage: {
+        load: () => structuredClone(records),
+        save: (next) => {
+          records = structuredClone(next);
+        },
+      },
+    },
+  );
+  const input = { name: "Release notes", visibility: "open" as const };
+  try {
+    await vi.waitFor(() =>
+      expect(owner.session.channelCreation.snapshot()).toEqual(input),
+    );
+    const creating = owner.session.channelCreation.create(input);
+    await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
+    const publicMetadata = signed(relay, {
+      kind: 39000,
+      content: JSON.stringify({ name: "Release notes" }),
+      tags: [["d", id], ["name", "Release notes"], ["public"]],
+    });
+    wire.next().respond([publicMetadata]);
+    await vi.waitFor(() =>
+      expect(owner.session.channels.get?.(id)?.readOnly).toBe(true),
+    );
+    expect(sign).not.toHaveBeenCalled();
+    expect(publish).not.toHaveBeenCalled();
+    expect(owner.session.channelCreation.snapshot()).toEqual(input);
+    expect(records).toContainEqual(
+      expect.objectContaining({
+        event: expect.objectContaining({ id: creation.id }),
+        delivery: "seen",
+      }),
+    );
+
+    owner.session.channels.refreshList?.();
+    await vi.waitFor(() => expect(wire.pending.length).toBeGreaterThan(0));
+    wire.next().respond([roster(relay, id, [viewer.pubkey]), publicMetadata]);
+    await expect(creating).resolves.toBe(id);
+    await vi.waitFor(() =>
+      expect(records.some(({ event }) => event.id === creation.id)).toBe(false),
+    );
+    expect(owner.session.channelCreation.snapshot()).toBeUndefined();
+  } finally {
+    owner.dispose();
+  }
+});
+
 it("removes a successfully refreshed channel creation from durable recovery", async () => {
   const viewer = keypair(),
     relay = keypair();

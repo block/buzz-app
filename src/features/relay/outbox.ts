@@ -517,10 +517,8 @@ export function createOutbox(
       if (closed || attempts.has(id)) return;
       deliveryWork.delete(id);
       const retained = completed.peek(id);
-      const previous =
-        find(id) ??
-        (retained && awaitsReceipt(retained.event) ? retained : undefined);
-      if (previous && awaitsReceipt(previous.event)) completed.delete(id);
+      const previous = find(id) ?? retained;
+      if (retained) completed.delete(id);
       snapshot = Object.freeze(snapshot.filter((item) => item.event.id !== id));
       notify();
       try {

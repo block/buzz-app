@@ -95,7 +95,7 @@ function restoredChannelCreation(
 function parseChannelCreation(
   item: OutgoingEvent,
 ): PendingChannelCreation | undefined {
-  if (item.event.kind !== 9007 || item.delivery === "seen") return;
+  if (item.event.kind !== 9007) return;
   const tags = item.event.tags.filter(([name]) => name !== "client-id");
   const [h, name, visibility, channelType, ...optional] = tags;
   const optionalNames = optional.map(([key]) => key);

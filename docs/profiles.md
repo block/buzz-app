@@ -89,3 +89,19 @@ channels; `sidebar-unread.spec.mjs` holds unread evidence through real EOSE and
 checks its badges without retries. Access-loss/disconnect cancellation is unchanged.
 Broad scan and native build/package acceptance remain deferred to an agreed
 integration batch. No sending/signing behavior changed.
+
+## Visible channels and linked instances
+
+The profile's read-only channel section uses the current viewer's `session.channels`
+list and exact `ChannelSummary.members` from relay-authored rosters. It excludes
+archived and non-DM hidden channels. Loading/error/partial discovery is not an
+empty membership claim; retry uses `refreshList`. Rows navigate using the existing
+scoped conversation destination when a valid community scope and navigation
+capability exist, otherwise remain plain text.
+
+On native hosts, linked instances use `agentControl`'s exact managed `pubkey` and
+normalized `relayUrl` for the active community. The subsection is absent without
+native control or a valid community scope; it never derives ownership from the
+old Buzz library, self-declared profile markers, or names. The Agents page route
+opens management, not a per-instance page. No membership or agent mutation is
+performed by the profile. Neither list is a cross-community/global directory.

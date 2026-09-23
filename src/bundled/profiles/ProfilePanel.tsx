@@ -1,3 +1,7 @@
+import type { AgentControl } from "../../features/agents/control";
+import { ProfileInstances } from "./ProfileInstances";
+import type { Navigation } from "../../features/navigation/controller";
+import { ProfileChannels } from "./ProfileChannels";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { PresenceIndicator } from "../../features/presence/react";
 import {
@@ -24,7 +28,13 @@ export function ProfilePanel({
   relay,
   target,
   context,
-}: PanelProps & { relay: RelayData }) {
+  navigation,
+  control,
+}: PanelProps & {
+  relay: RelayData;
+  navigation?: Navigation;
+  control?: AgentControl;
+}) {
   const connection = useRelayConnection(relay);
   const pubkey = profileKey(target);
   if (!pubkey) return <p>Unsupported profile.</p>;
@@ -36,6 +46,10 @@ export function ProfilePanel({
       session={connection.session}
       pubkey={pubkey}
       context={context}
+      navigation={navigation}
+      control={control}
+      scope={connection.scope}
+      viewer={connection.viewer}
     />
   );
 }
@@ -43,10 +57,18 @@ function ProfileDetails({
   session,
   pubkey,
   context,
+  navigation,
+  control,
+  scope,
+  viewer,
 }: {
   session: RelaySession;
   pubkey: string;
   context: PanelProps["context"];
+  navigation: Navigation | undefined;
+  control: AgentControl | undefined;
+  scope: string | undefined;
+  viewer: string | undefined;
 }) {
   const selection = useMemo(
     () => selectProfiles(session.profiles, [pubkey]),
@@ -125,6 +147,22 @@ function ProfileDetails({
             Owner-only agent telemetry in this channel, if published.
           </p>
         </div>
+      )}
+      <ProfileChannels
+        session={session}
+        pubkey={pubkey}
+        navigation={navigation}
+        scope={scope}
+        viewer={viewer}
+      />
+      {control && (
+        <ProfileInstances
+          control={control}
+          pubkey={pubkey}
+          navigation={navigation}
+          scope={scope}
+          viewer={viewer}
+        />
       )}
       <div className={styles.publicKey}>
         <div className={styles.keyHeading}>

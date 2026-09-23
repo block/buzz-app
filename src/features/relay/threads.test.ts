@@ -194,6 +194,74 @@ it("resolves a selected broadcast reply to its actual root", async () => {
   expect(view.snapshot().root?.id).toBe(root.id);
 });
 
+it("preserves folded identities across status changes and extends them across pages", async () => {
+  const h = seeded();
+  const first = reply("first", 10);
+  const initial = h.view.refresh();
+  const request = h.next();
+  const loading = h.view.snapshot();
+  request.respond([root, first]);
+  await initial;
+
+  const ready = h.view.snapshot();
+  expect(ready.root).toBe(loading.root);
+  const retainedRoot = ready.root;
+  const retainedReply = ready.replies[0];
+  const retainedReplies = ready.replies;
+
+  const more = h.view.loadMore();
+  expect(h.view.snapshot()).toMatchObject({ status: "loading" });
+  expect(h.view.snapshot().root).toBe(retainedRoot);
+  expect(h.view.snapshot().replies).toBe(retainedReplies);
+  const second = reply("second", 20);
+  h.next().respond([root, second]);
+  await more;
+
+  expect(h.view.snapshot().root).toBe(retainedRoot);
+  expect(h.view.snapshot().replies[0]).toBe(retainedReply);
+  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
+    "first",
+    "second",
+  ]);
+});
+
+it("preserves folded identities when a page fails", async () => {
+  const h = seeded();
+  const first = reply("first", 10);
+  const initial = h.view.refresh();
+  h.next().respond([root, first]);
+  await initial;
+  const ready = h.view.snapshot();
+
+  const more = h.view.loadMore();
+  expect(h.view.snapshot().root).toBe(ready.root);
+  expect(h.view.snapshot().replies).toBe(ready.replies);
+  h.next().fail(new Error("offline"));
+  await more;
+
+  expect(h.view.snapshot()).toMatchObject({ status: "error" });
+  expect(h.view.snapshot().root).toBe(ready.root);
+  expect(h.view.snapshot().replies).toBe(ready.replies);
+});
+
+it("does not invalidate folded content for duplicate or unrelated live traffic", async () => {
+  const h = seeded();
+  const first = reply("first", 10);
+  const loading = h.view.refresh();
+  h.next().respond([root, first]);
+  await loading;
+  const before = h.view.snapshot();
+
+  h.traffic.receive([
+    first,
+    message(alice, "b", "another channel", 11),
+    message(alice, "a", "not a reply", 12),
+  ]);
+
+  expect(h.view.snapshot().root).toBe(before.root);
+  expect(h.view.snapshot().replies).toBe(before.replies);
+});
+
 it("updates nested replies and reply-targeted overlays without a new socket or arbitrary e-tag matches", async () => {
   const h = seeded();
   const parent = reply("parent", 10),

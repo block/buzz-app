@@ -1,3 +1,4 @@
+import { brokerUpload, type AttachmentUpload } from "./attachments";
 import { workflowHost } from "../workflows/http";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
@@ -48,6 +49,7 @@ export interface RelayWriter {
   ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  readonly uploadAttachment?: AttachmentUpload;
   readonly workflows?: WorkflowHost;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
@@ -222,6 +224,7 @@ export async function connectBrokerTransport(
     archiveAuthority?: unknown;
     writeKinds?: number[];
     workflowReads?: boolean;
+    attachmentUploads?: boolean;
     relayUrl?: string;
     live?: boolean;
     presence?: boolean;
@@ -251,6 +254,9 @@ export async function connectBrokerTransport(
   });
   return {
     profiling,
+    ...(session.attachmentUploads === true && session.relayUrl
+      ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
+      : {}),
     ...(session.presence && session.live
       ? {
           async presenceSnapshot(

@@ -11,9 +11,9 @@ import styles from "./CreateChannelDialog.module.css";
 
 export type CreateChannelInput = {
   name: string;
-  description?: string;
+  description?: string | undefined;
   visibility: "open" | "private";
-  ttlSeconds?: number;
+  ttlSeconds?: number | undefined;
 };
 
 export function CreateChannelDialog({

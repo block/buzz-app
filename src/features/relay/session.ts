@@ -98,6 +98,9 @@ function parseChannelCreation(
   if (item.event.kind !== 9007) return;
   const tags = item.event.tags.filter(([name]) => name !== "client-id");
   const [h, name, visibility, channelType, ...optional] = tags;
+  const id = h?.[1];
+  const channelName = name?.[1];
+  const channelVisibility = visibility?.[1];
   const optionalNames = optional.map(([key]) => key);
   const validOptionalOrder = [[], ["about"], ["ttl"], ["about", "ttl"]].some(
     (names) =>
@@ -108,13 +111,16 @@ function parseChannelCreation(
     item.event.content !== "" ||
     h?.length !== 2 ||
     h[0] !== "h" ||
-    !channelId.test(h[1]) ||
+    id === undefined ||
+    !channelId.test(id) ||
     name?.length !== 2 ||
     name[0] !== "name" ||
-    !name[1].trim() ||
+    channelName === undefined ||
+    !channelName.trim() ||
     visibility?.length !== 2 ||
     visibility[0] !== "visibility" ||
-    !["open", "private"].includes(visibility[1]) ||
+    channelVisibility === undefined ||
+    !["open", "private"].includes(channelVisibility) ||
     channelType?.length !== 2 ||
     channelType[0] !== "channel_type" ||
     channelType[1] !== "stream" ||
@@ -122,7 +128,7 @@ function parseChannelCreation(
     optional.some((tag) => tag.length !== 2)
   )
     return;
-  const description = optional.find(([key]) => key === "about")?.[1].trim();
+  const description = optional.find(([key]) => key === "about")?.[1]?.trim();
   if (sessionMetadata(description) !== undefined) return;
   const ttlValue = optional.find(([key]) => key === "ttl")?.[1];
   const ttlSeconds = ttlValue === undefined ? undefined : Number(ttlValue);
@@ -134,14 +140,14 @@ function parseChannelCreation(
   )
     return;
   const input: ChannelCreationInput = Object.freeze({
-    name: name[1].trim(),
-    visibility: visibility[1] as "open" | "private",
+    name: channelName.trim(),
+    visibility: channelVisibility as "open" | "private",
     ...(description ? { description } : {}),
     ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
   });
   return Object.freeze({
     signature: JSON.stringify(input),
-    id: h[1],
+    id,
     operation: item.event.id,
     input,
   });
@@ -861,6 +867,7 @@ export function createRelaySession(
         restoredOperation = pendingChannelCreation.operation;
       }
       const pending = pendingChannelCreation;
+      if (!pending) throw new Error("Channel creation could not be prepared.");
       try {
         await workSessions.delivered(pending.operation);
         await workSessions.refresh(

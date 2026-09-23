@@ -249,4 +249,6 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       Object.defineProperty(globalThis, "localStorage", originalStorage);
     else delete globalThis.localStorage;
   }
-});
+  // A real Vite server, the whole service graph and every page render take
+  // seconds alone, so the default budget expires under a parallel suite.
+}, 30_000);

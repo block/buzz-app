@@ -17,9 +17,15 @@ export type Shortcut = Readonly<{
   allowInModal?: boolean;
   /** Held keys are consumed but run only once unless opted in. */
   repeat?: boolean;
+  /** Lower values appear first within this owner's Settings category; defaults to zero. */
+  order?: number;
 }>;
 
-export function normalizeShortcut(shortcut: Shortcut): Shortcut {
+/** What the registries hold: aliases are always a frozen array, never a bare binding. */
+export type NormalizedShortcut = Shortcut &
+  Readonly<{ binding: readonly KeyBinding[]; order: number }>;
+
+export function normalizeShortcut(shortcut: Shortcut): NormalizedShortcut {
   if (
     !shortcut ||
     typeof shortcut.id !== "string" ||
@@ -30,41 +36,58 @@ export function normalizeShortcut(shortcut: Shortcut): Shortcut {
     (shortcut.when !== undefined && typeof shortcut.when !== "function") ||
     [shortcut.allowInEditable, shortcut.allowInModal, shortcut.repeat].some(
       (value) => value !== undefined && typeof value !== "boolean",
-    )
+    ) ||
+    (shortcut.order !== undefined && typeof shortcut.order !== "number")
   )
     throw new Error("A shortcut needs an id, title, binding and run function");
   const bindings = Array.isArray(shortcut.binding)
     ? shortcut.binding
     : [shortcut.binding];
-  if (
-    !bindings.length ||
-    bindings.some(
-      (binding) =>
-        !binding ||
-        typeof binding.key !== "string" ||
-        binding.key.length === 0 ||
-        [binding.mod, binding.shift, binding.alt].some(
-          (value) => value !== undefined && typeof value !== "boolean",
-        ),
-    )
-  )
+  if (!bindings.length || !bindings.every(isKeyBinding))
     throw new Error("Invalid shortcut binding");
   return Object.freeze({
     ...shortcut,
+    order: Number.isFinite(shortcut.order) ? (shortcut.order ?? 0) : 0,
     binding: Object.freeze(
       bindings.map((binding) => Object.freeze({ ...binding })),
     ),
   });
 }
 
+/** Shape check shared by registration and stored user overrides. */
+export function isKeyBinding(value: unknown): value is KeyBinding {
+  if (!value || typeof value !== "object") return false;
+  const binding = value as Record<string, unknown>;
+  return (
+    typeof binding.key === "string" &&
+    binding.key.length > 0 &&
+    [binding.mod, binding.shift, binding.alt].every(
+      (flag) => flag === undefined || typeof flag === "boolean",
+    )
+  );
+}
+
+/** Same chord under the dispatcher's rules: case-insensitive key, exact modifiers. */
+export function sameBinding(a: KeyBinding, b: KeyBinding) {
+  return (
+    a.key.toLowerCase() === b.key.toLowerCase() &&
+    !!a.mod === !!b.mod &&
+    !!a.shift === !!b.shift &&
+    !!a.alt === !!b.alt
+  );
+}
+
+/** Nonempty list of well-formed bindings: the shape stored overrides must take. */
+export function isBindingList(value: unknown): value is readonly KeyBinding[] {
+  return Array.isArray(value) && value.length > 0 && value.every(isKeyBinding);
+}
+
+/** Callers pass the registered alias array or a stored override; nothing is wrapped here. */
 export function matches(
-  shortcut: Shortcut,
+  bindings: readonly KeyBinding[],
   event: KeyboardEvent,
   apple: boolean,
 ) {
-  const bindings = Array.isArray(shortcut.binding)
-    ? shortcut.binding
-    : [shortcut.binding];
   return bindings.some(
     (binding) =>
       binding.key.toLowerCase() === event.key.toLowerCase() &&

@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { provideNavigation } from "../features/navigation/service";
@@ -13,6 +20,8 @@ const contexts: Context[] = [];
 afterEach(async () => {
   cleanup();
   for (const ctx of contexts.splice(0)) await ctx.fiber.dispose();
+  vi.useRealTimers();
+  vi.restoreAllMocks();
   localStorage.clear();
   vi.unstubAllEnvs();
 });
@@ -46,7 +55,9 @@ it.each([true, false])(
     const saved = localStorage.getItem(
       `buzz-notification-preferences.v1:${"a".repeat(64)}`,
     );
-    render(<NotificationSettings notifications={service} />);
+    render(<NotificationSettings notifications={service} />, {
+      wrapper: ToastProvider,
+    });
     const toggle = screen.getByRole("switch", { name: "Desktop alerts" });
     if (paused) {
       expect(toggle).toHaveAttribute("aria-disabled", "true");
@@ -91,3 +102,97 @@ it.each([true, false])(
     ).toBe(saved);
   },
 );
+
+it("keeps both preference recovery paths scoped to the visible section", () => {
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  ctx.effect(() => () => runtime.dispose());
+  const service = new NotificationsService(
+    ctx,
+    provideNavigation(ctx).navigation,
+    {
+      label: "Browser",
+      permission: async () => "default",
+      requestPermission: async () => "default",
+      show: async () => {},
+      dispose() {},
+    },
+  );
+  service.selectViewer("a".repeat(64));
+  service.updatePreferences({ enabled: false });
+  const fail = () =>
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new Error("denied");
+    });
+  const write = fail();
+  act(() => {
+    service.updatePreferences({ enabled: true });
+  });
+  const view = render(
+    <ToastProvider>
+      <NotificationSettings notifications={service} active={false} />
+    </ToastProvider>,
+  );
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  view.rerender(
+    <ToastProvider>
+      <NotificationSettings notifications={service} />
+    </ToastProvider>,
+  );
+  expect(
+    screen.getByRole("button", { name: "Retry saving choices" }),
+  ).toBeEnabled();
+  expect(
+    screen.getByRole("button", { name: "Reload saved choices" }),
+  ).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Reload saved choices" }));
+  expect(service.snapshot().preferences.enabled).toBe(false);
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  act(() => {
+    service.updatePreferences({ enabled: true });
+  });
+  write.mockRestore();
+  fireEvent.click(screen.getByRole("button", { name: "Retry saving choices" }));
+  expect(service.snapshot().preferencesError).toBeNull();
+  expect(service.snapshot().preferences.enabled).toBe(true);
+});
+
+it("repeated identical permission failures retain feedback without leaving Settings", async () => {
+  const ctx = new Context();
+  contexts.push(ctx);
+  const runtime = new PluginRuntime(ctx, async () => ({ apply() {} }));
+  ctx.effect(() => () => runtime.dispose());
+  const permission = vi.fn(async () => {
+    throw new Error("Permission unavailable");
+  });
+  const service = new NotificationsService(
+    ctx,
+    provideNavigation(ctx).navigation,
+    {
+      label: "Browser",
+      permission,
+      requestPermission: async () => "default",
+      show: async () => {},
+      dispose() {},
+    },
+  );
+  await service.refreshPermission();
+  vi.useFakeTimers();
+  vi.spyOn(document, "hasFocus").mockReturnValue(true);
+  render(<NotificationSettings notifications={service} />, {
+    wrapper: ToastProvider,
+  });
+  const notice = () =>
+    screen.getByRole("dialog", { name: "Notification failed" });
+  expect(notice()).toHaveTextContent("Permission unavailable");
+  await act(() => vi.advanceTimersByTimeAsync(9000));
+  fireEvent.keyDown(notice(), { key: "Escape" });
+  expect(
+    screen.queryByRole("button", { name: "Dismiss notification" }),
+  ).not.toBeInTheDocument();
+  await act(async () => {
+    fireEvent.click(screen.getByRole("button", { name: "Check permission" }));
+  });
+  expect(notice()).toHaveTextContent("Permission unavailable");
+});

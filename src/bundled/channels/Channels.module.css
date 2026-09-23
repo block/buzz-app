@@ -72,12 +72,20 @@
   flex-direction: column;
   gap: var(--space-half);
 }
+/* The cue floats over scrolled rows, so it needs the panel surface beneath
+   it: the outline control is transparent by design and would otherwise
+   show the channel names it covers. `display: grid` keeps the wrapper flush
+   with the control so no sliver of fill shows around the pill. */
 .unreadEdge {
   position: absolute;
   left: 50%;
+  display: grid;
   transform: translateX(-50%);
   width: max-content;
   max-width: calc(100% - 8px);
+  border-radius: var(--radius-pill);
+  background: var(--surface-panel);
+  box-shadow: var(--shadow-sm);
 }
 .unreadEdge[data-edge="above"] {
   top: 4px;
@@ -260,6 +268,14 @@ html[data-keyboard-navigation]
   gap: var(--space-1);
   margin-left: var(--space-panel-gap);
 }
+.retainedPanel {
+  display: grid;
+  min-height: 0;
+  min-width: 0;
+}
+.retainedPanel[hidden] {
+  display: none;
+}
 .companion {
   display: grid;
   grid-template-rows: minmax(0, 1fr);
@@ -344,56 +360,70 @@ html[data-keyboard-navigation]
     letter-spacing: var(--text-caption--letter-spacing);
   }
 }
-.diagnostics {
-  position: relative;
-  flex-shrink: 0;
+.settingsPanel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
-.diagnostics > summary {
+.settingsContent {
+  overflow: auto;
+  padding: var(--space-5);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+.settingsIdentity {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding-block: var(--space-5);
+  text-align: center;
+  overflow-wrap: anywhere;
+}
+.settingsIcon {
   display: grid;
   place-items: center;
-  width: 30px;
-  height: 30px;
-  border-radius: var(--radius-row);
-  cursor: pointer;
-  list-style: none;
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-pill);
+  background: var(--affordance-prominent);
+  color: var(--text-inverse);
+}
+.settingsDetails {
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-card);
+}
+.settingsDetails > div {
+  padding: var(--space-4);
+}
+.settingsDetails > div + div {
+  border-top: 1px solid var(--border-standard);
+}
+.settingsDetails dd {
+  margin: var(--space-1) 0 0;
   color: var(--text-subtle);
 }
-.diagnostics > summary::-webkit-details-marker {
-  display: none;
+.settingsId {
+  overflow-wrap: anywhere;
 }
-.diagnostics > summary:hover {
-  background: var(--affordance-selected);
-}
-.diagnosticsMenu {
-  @apply popover-surface;
-  position: absolute;
-  right: 0;
-  top: 36px;
-  width: min(300px, 70vw);
-  max-height: 60vh;
-  overflow: auto;
-  padding: var(--space-3);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-}
-.diagnosticsMenu summary {
+.settingsDiagnostics > summary {
   cursor: pointer;
-  padding: var(--space-1) 0;
+  color: var(--text-subtle);
 }
-.liveStatus {
+.settingsTools {
   display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  background: var(--affordance-warning);
-  color: var(--text-warning);
-  border-bottom: 1px solid var(--border-standard);
+  flex-direction: column;
+  gap: var(--space-3);
+  padding-top: var(--space-4);
+  overflow-wrap: anywhere;
+}
+.settingsTools summary {
+  cursor: pointer;
 }
 
 .unreadState {

@@ -1,8 +1,10 @@
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
+import { ChannelSettingsPanel } from "./ChannelSettingsPanel";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
 import {
@@ -384,6 +386,22 @@ function ChannelWorkspace({
       ? navigation.target.threadRootId
       : undefined;
   const currentId = current?.id;
+  const [settings, setSettings] = useState<{
+    channelId: string | undefined;
+    entryId: string | undefined;
+  }>();
+  const settingsTrigger = useRef<HTMLButtonElement>(null);
+  const showingSettings =
+    !!settings &&
+    settings.channelId === currentId &&
+    settings.entryId === navigation?.entryId;
+  useEffect(() => {
+    if (settings && !showingSettings) setSettings(undefined);
+  }, [settings, showingSettings]);
+  const closeSettings = () => {
+    setSettings(undefined);
+    settingsTrigger.current?.focus({ preventScroll: true });
+  };
   const drafting =
     !!draftParent && draftParent === currentId && !requestedMessage;
   useEffect(() => {
@@ -486,6 +504,7 @@ function ChannelWorkspace({
   }, []);
   const startSession = useCallback(
     (parentId: string) => {
+      setSettings(undefined);
       select(parentId);
       setDraftParent(parentId);
       sidebar.toggle(`session-children:${parentId}`, true);
@@ -529,6 +548,7 @@ function ChannelWorkspace({
   const openThread = useCallback(
     (messageId: string, threadRootId: string) => {
       if (!currentId) return;
+      setSettings(undefined);
       const target = navigator?.snapshot().entry.target;
       if (
         target?.kind === "conversation" &&
@@ -579,6 +599,7 @@ function ChannelWorkspace({
   const openMediaReview = useCallback(
     (messageId: string, attachment: Attachment, initialTime: number) => {
       if (!current) return;
+      setSettings(undefined);
       mediaReviewTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -608,6 +629,7 @@ function ChannelWorkspace({
   }, [mediaReview, list]);
   const openActivityThread = useCallback(
     (channelId: string, rootId: string) => {
+      setSettings(undefined);
       threadTrigger.current =
         sidebar.list.current?.querySelector<HTMLElement>(
           `[data-channel-id="${CSS.escape(channelId)}"]`,
@@ -700,6 +722,7 @@ function ChannelWorkspace({
       const candidate = panels.resolve(url);
       const context = linkContext.current;
       if (context.channelId && candidate) {
+        setSettings(undefined);
         panelTrigger.current =
           document.activeElement instanceof HTMLElement
             ? document.activeElement
@@ -774,7 +797,9 @@ function ChannelWorkspace({
         : undefined,
     [scope, viewer, current, showingThread],
   );
-  const drawer = useChannelPanels(panels, drawerContext);
+  const drawer = useChannelPanels(panels, drawerContext, () =>
+    setSettings(undefined),
+  );
   const sections = sidebarSections(
     channels,
     preferences.data,
@@ -782,7 +807,7 @@ function ChannelWorkspace({
   );
   return (
     <div
-      className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
+      className={`${styles.board} ${showingSettings || panel || showingThread || companion ? styles.withPanel : ""}`}
       style={
         {
           "--channel-sidebar-width": `${sidebar.width}px`,
@@ -890,20 +915,23 @@ function ChannelWorkspace({
               <p className={styles.empty}>No channels yet.</p>
             )}
           </SidebarUnread>
-          {preferences.status !== "ready" && (
-            <div className={styles.preferenceNotice} role="status">
+          {preferences.status === "error" ? (
+            <ToastNotice
+              title="Saved groups and stars couldn’t refresh"
+              description="Your conversations are still available."
+              tone="warning"
+            >
+              <Button type="button" size="sm" onClick={preferences.reload}>
+                Retry
+              </Button>
+            </ToastNotice>
+          ) : preferences.status !== "ready" ? (
+            <p className={styles.preferenceNotice} role="status">
               {preferences.status === "loading"
                 ? "Loading saved groups and stars…"
-                : preferences.status === "unsupported"
-                  ? "Saved groups and stars aren’t supported by this host yet."
-                  : "Couldn’t refresh saved groups and stars. Your conversations are still available."}
-              {preferences.status === "error" && (
-                <Button type="button" onClick={preferences.reload}>
-                  Retry
-                </Button>
-              )}
-            </div>
-          )}
+                : "Saved groups and stars aren’t supported by this host yet."}
+            </p>
+          ) : null}
         </div>
       </Panel>
       <CreateChannelDialog
@@ -959,71 +987,24 @@ function ChannelWorkspace({
                   actions={
                     <>
                       {drawer.launchers}
-                      <details className={styles.diagnostics}>
-                        <summary
-                          aria-label="Conversation options"
-                          title="Conversation options"
-                        >
-                          <DotsThreeIcon size={19} aria-hidden="true" />
-                        </summary>
-                        <div className={styles.diagnosticsMenu}>
-                          <UnreadOptions
-                            session={queries}
-                            channelId={current?.id}
-                          />
-                          <details>
-                            <summary>Diagnostics</summary>
-                            <LiveStatus
-                              live={queries.live}
-                              channelId={current?.id}
-                              partialRoster={list.coverage === "partial"}
-                              diagnostics
-                            />
-                            <p>
-                              {list.coverage === "partial"
-                                ? "Partial roster"
-                                : "Roster"}{" "}
-                              · {channels.length} channels
-                            </p>
-                            <Button
-                              type="button"
-                              onClick={() => queries.channels.refreshList?.()}
-                            >
-                              Refresh channels
-                            </Button>
-                            {preferences.error && (
-                              <p>Saved groups and stars: {preferences.error}</p>
-                            )}
-                            {preferences.status !== "unsupported" && (
-                              <Button
-                                type="button"
-                                disabled={preferences.status === "loading"}
-                                onClick={preferences.reload}
-                              >
-                                Refresh groups and stars
-                              </Button>
-                            )}
-                            {current && (
-                              <Button
-                                type="button"
-                                onClick={() =>
-                                  queries.channels.refresh?.(current.id)
-                                }
-                              >
-                                Refresh messages
-                              </Button>
-                            )}
-                            {queries.outbox ? (
-                              <OutboxStatus
-                                outbox={queries.outbox}
-                                profiling={queries.profiling}
-                              />
-                            ) : (
-                              <RelayTimings profiling={queries.profiling} />
-                            )}
-                          </details>
-                        </div>
-                      </details>
+                      <IconButton
+                        ref={settingsTrigger}
+                        size="toolbar"
+                        aria-label="Channel settings"
+                        title="Channel settings"
+                        aria-expanded={showingSettings}
+                        onClick={() => {
+                          if (showingSettings) closeSettings();
+                          else {
+                            drawer.close();
+                            setSettings({
+                              channelId: currentId,
+                              entryId: navigation?.entryId,
+                            });
+                          }
+                        }}
+                        icon={<DotsThreeIcon size={19} aria-hidden="true" />}
+                      />
                     </>
                   }
                 />
@@ -1130,42 +1111,100 @@ function ChannelWorkspace({
           close={() => setMediaReview(undefined)}
         />
       )}
-      {!showingMediaReview && (panel || showingThread || companion) && (
-        <div className={styles.panelStack}>
-          {showingThread && (
-            <ThreadPanel
-              sessionConversation={current?.channelType === "session"}
-              extensions={extensions}
-              session={queries}
-              scope={scope}
-              channelName={current?.name ?? ""}
-              channelId={showingThread.channelId}
-              messageId={showingThread.messageId}
-              navigation={showingThread.navigation}
-              close={closeThread}
-              onOpenLink={openLink}
-              onOpenMediaReview={openMediaReview}
-              canOpenLink={canOpenLink}
-            />
-          )}
+      {!showingMediaReview &&
+        (showingSettings || panel || showingThread || companion) && (
+          <div className={styles.panelStack}>
+            {showingSettings && (
+              <ChannelSettingsPanel
+                key={currentId ?? "channels"}
+                channel={current}
+                close={closeSettings}
+              >
+                <UnreadOptions session={queries} channelId={current?.id} />
+                <LiveStatus
+                  live={queries.live}
+                  channelId={current?.id}
+                  partialRoster={list.coverage === "partial"}
+                  diagnostics
+                />
+                <p>
+                  {list.coverage === "partial" ? "Partial roster" : "Roster"} ·{" "}
+                  {channels.length} channels
+                </p>
+                <Button
+                  type="button"
+                  onClick={() => queries.channels.refreshList?.()}
+                >
+                  Refresh channels
+                </Button>
+                {preferences.error && (
+                  <p>Saved groups and stars: {preferences.error}</p>
+                )}
+                {preferences.status !== "unsupported" && (
+                  <Button
+                    type="button"
+                    disabled={preferences.status === "loading"}
+                    onClick={preferences.reload}
+                  >
+                    Refresh groups and stars
+                  </Button>
+                )}
+                {current && (
+                  <Button
+                    type="button"
+                    onClick={() => queries.channels.refresh?.(current.id)}
+                  >
+                    Refresh messages
+                  </Button>
+                )}
+                {queries.outbox ? (
+                  <OutboxStatus
+                    outbox={queries.outbox}
+                    profiling={queries.profiling}
+                  />
+                ) : (
+                  <RelayTimings profiling={queries.profiling} />
+                )}
+              </ChannelSettingsPanel>
+            )}
+            {showingThread && (
+              <div className={styles.retainedPanel} hidden={showingSettings}>
+                <ThreadPanel
+                  sessionConversation={current?.channelType === "session"}
+                  extensions={extensions}
+                  session={queries}
+                  scope={scope}
+                  channelName={current?.name ?? ""}
+                  channelId={showingThread.channelId}
+                  messageId={showingThread.messageId}
+                  navigation={showingThread.navigation}
+                  close={closeThread}
+                  onOpenLink={openLink}
+                  onOpenMediaReview={openMediaReview}
+                  canOpenLink={canOpenLink}
+                />
+              </div>
+            )}
 
-          {panel && opened && (
-            <PanelCard
-              key="target"
-              panel={panel}
-              target={opened.target}
-              context={panelContext}
-              close={close}
-              closeLabel="Close channel panel"
-            />
-          )}
-          {companion && (
-            <div key="companion" className={styles.companion}>
-              {companion}
-            </div>
-          )}
-        </div>
-      )}
+            {panel && opened && (
+              <div className={styles.retainedPanel} hidden={showingSettings}>
+                <PanelCard
+                  key="target"
+                  panel={panel}
+                  target={opened.target}
+                  context={panelContext}
+                  close={close}
+                  closeLabel="Close channel panel"
+                />
+              </div>
+            )}
+            {companion && (
+              <div key="companion" className={styles.companion}>
+                {companion}
+              </div>
+            )}
+          </div>
+        )}
     </div>
   );
 }

@@ -26,7 +26,8 @@ Sessions are focused work conversations built on ordinary private channels.
   channel-style titles. The avatar-and-name picker sits before @ and opens upward.
   Explicit mentions take precedence over the selected agent. Without a selection,
   a sole agent already in the session is addressed automatically; multiple agents
-  require a recipient.
+  require a recipient. Removing a mention avatar clears only its explicit mention
+  intent and preserves the draft text; it does not suppress this automatic routing.
 - Published replies appear in the main session conversation. Sessions uses normal
   paged channel queries and complete message overlays, without new relay filters.
   Existing thread replies are also presented inline.

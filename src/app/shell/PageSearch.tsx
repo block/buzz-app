@@ -12,7 +12,14 @@ import { Button } from "../../shared/design-system/ui/Button";
 import type { RegisteredPage } from "../../features/pages/service";
 import { communityDestination } from "../../features/communities/destination";
 import { useRelayConnection } from "../../features/relay/react";
+import type { KeyBinding } from "../../features/shortcuts/bindings";
+import {
+  formatBinding,
+  isApplePlatform,
+} from "../../features/shortcuts/format";
+import type { ShortcutBindingsSnapshot } from "../../features/shortcuts/preferences";
 import type { AppServices } from "../services";
+import { HOST_SHORTCUT_ORDER } from "../shortcuts";
 import {
   orderPages,
   pagePresentation,
@@ -27,8 +34,13 @@ import { SearchResults } from "./SearchResults";
 
 export type SearchServices = Pick<
   AppServices,
-  "communities" | "shortcuts" | "navigation"
+  "communities" | "shortcuts" | "shortcutBindings" | "navigation"
 >;
+const SEARCH_ID = "global-search";
+const SEARCH_BINDING: KeyBinding = { key: "k", mod: true };
+const NO_OVERRIDES: ShortcutBindingsSnapshot = { overrides: {}, error: null };
+const noSubscribe = () => () => {};
+const noOverrides = () => NO_OVERRIDES;
 
 export function PageSearch({
   pages,
@@ -55,13 +67,19 @@ export function PageSearch({
   useEffect(
     () =>
       services?.shortcuts.registerHost({
-        id: "global-search",
+        id: SEARCH_ID,
         title: "Search Buzz",
-        binding: { key: "k", mod: true },
+        binding: SEARCH_BINDING,
+        order: HOST_SHORTCUT_ORDER.search,
         allowInEditable: true,
         run: begin,
       }),
     [services, begin],
+  );
+  // The hint follows the person's rebind, derived from the same binding object.
+  const { overrides } = useSyncExternalStore(
+    services?.shortcutBindings.subscribe ?? noSubscribe,
+    services?.shortcutBindings.snapshot ?? noOverrides,
   );
   const destinations: SearchDestination[] = [
     { key: "home", ...shellPresentation.home },
@@ -82,7 +100,10 @@ export function PageSearch({
         setOpen(false);
       },
     }));
-  const shortcut = /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl+K";
+  const shortcut = formatBinding(
+    overrides[SEARCH_ID] ?? SEARCH_BINDING,
+    isApplePlatform(navigator.platform),
+  ).text;
   return (
     <>
       <IconButton

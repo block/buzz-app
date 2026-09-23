@@ -1,6 +1,7 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
 import { createPresence } from "../presence/presence";
 import type { PresenceActivity } from "../presence/activity";
+import { bindNames, type IdentityNames } from "../identity-names/service";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -67,6 +68,7 @@ export type EventViewSnapshot = Readonly<{
 export function createRelaySession(
   transport: ReadTransport | null,
   options: ChannelStoreOptions & {
+    identityNames?: IdentityNames | undefined;
     presenceActivity?: PresenceActivity;
     outboxStorage?: OutboxStorage;
     readStateStorage?: ReadStateStorage;
@@ -381,6 +383,13 @@ export function createRelaySession(
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
   const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
+  const nameSource = {
+    profiles: profiles.queries,
+    agentLibrary: agentLibrary.queries,
+    relayUrl: transport?.scope,
+  };
+  const identityNames =
+    options.identityNames?.bind(nameSource) ?? bindNames(nameSource);
   const activity = createAgentActivity(
     !!transport?.agentActivity && !!transport.subscribe,
     (generation) => traffic?.observe?.(generation),
@@ -808,6 +817,7 @@ export function createRelaySession(
       return { ...thread.view, dispose };
     },
     channels: channels.queries,
+    names: identityNames,
     profiles: profiles.queries,
     emoji: emoji.queries,
     agentLibrary: agentLibrary.queries,
@@ -1256,6 +1266,7 @@ export function createRelaySession(
           const timer = setTimeout(() => {
             timers.delete(timer);
             if (!closed) {
+              agentLibrary.reconnect();
               emoji.reconnect();
               unread.reconnect();
               for (const refresh of refreshers) void refresh();
@@ -1334,6 +1345,7 @@ export function createRelaySession(
       profiles.dispose();
       emoji.dispose();
       workflows.dispose();
+      identityNames.dispose();
       agentLibrary.dispose();
       archives.dispose();
     },

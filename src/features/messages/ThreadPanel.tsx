@@ -262,6 +262,8 @@ function ThreadMessages({
   }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
+  const [replyFocus, setReplyFocus] = useState(0);
+  const focusReply = useCallback(() => setReplyFocus((value) => value + 1), []);
   const [mediaPlayback, setMediaPlayback] = useState<MediaPlayback>();
   const [mediaCommentTime, setMediaCommentTime] = useState<number>();
   const [mediaSeek, setMediaSeek] = useState<{
@@ -386,6 +388,7 @@ function ThreadMessages({
               extensions={extensions}
               session={session}
               scope={scope}
+              onReply={focusReply}
               row={snapshot.root}
               profile={profiles.get(snapshot.root.authorId)}
               participantProfiles={profiles}
@@ -435,6 +438,7 @@ function ThreadMessages({
                 extensions={extensions}
                 session={session}
                 scope={scope}
+                onReply={snapshot.root ? focusReply : undefined}
                 row={row}
                 profile={profiles.get(row.authorId)}
                 participantProfiles={profiles}
@@ -481,6 +485,7 @@ function ThreadMessages({
           channelId={channelId}
           channelName={channelName}
           threadRootId={snapshot.root.id}
+          focusRequest={replyFocus}
           onOpenLink={onOpenLink}
           canOpenLink={canOpenLink}
           {...(videoAttachment && mediaCommentTime !== undefined

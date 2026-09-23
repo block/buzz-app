@@ -59,6 +59,7 @@ const customEmoji = {
 } satisfies NonNullable<ChannelMessage["emoji"]>[number];
 const reaction = {
   content: ":wave:",
+  events: [{ id: root.id, authorId: viewer.pubkey }],
   emoji: customEmoji,
 } satisfies ChannelMessage["reactions"][number];
 const rowValue = (): ChannelMessage => ({
@@ -271,6 +272,31 @@ it("drops shared row identity when any compared field changes", () => {
           },
         ],
       }),
+    ],
+    [
+      "reactions.events.id",
+      (row) => ({
+        ...row,
+        reactions: [
+          {
+            ...reaction,
+            events: [{ id: replacementId, authorId: viewer.pubkey }],
+          },
+        ],
+      }),
+    ],
+    [
+      "reactions.events.authorId",
+      (row) => ({
+        ...row,
+        reactions: [
+          { ...reaction, events: [{ id: root.id, authorId: alice.pubkey }] },
+        ],
+      }),
+    ],
+    [
+      "reactions.events.count",
+      (row) => ({ ...row, reactions: [{ ...reaction, events: [] }] }),
     ],
     ["threadRootId", (row) => ({ ...row, threadRootId: replacementId })],
     ["replyCount", (row) => ({ ...row, replyCount: 2 })],

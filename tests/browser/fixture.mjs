@@ -755,6 +755,37 @@ export const test = base.extend({
         relay.publish(community, event);
         return;
       }
+      if ([7, 5].includes(event.kind)) {
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        const history = histories.get(`${community}/${channel}`);
+        expect(history).toBeDefined();
+        const ids = event.tags
+          .filter(([name]) => name === "e")
+          .map(([, id]) => id);
+        expect(ids.length).toBeGreaterThan(0);
+        for (const id of ids) {
+          const target = [
+            ...history,
+            ...[...threadReplies.values()].flat(),
+          ].find((row) => row.id === id);
+          expect(target).toBeDefined();
+          expect(target.tags).toContainEqual(["h", channel]);
+          if (event.kind === 7) expect(target.kind).toBe(9);
+          else {
+            expect(target.pubkey).toBe(viewer);
+            expect([7, 9]).toContain(target.kind);
+            expect(event.tags).toContainEqual(["k", String(target.kind)]);
+          }
+        }
+        if (event.kind === 7) expect(ids).toHaveLength(1);
+        if (!history.some((row) => row.id === event.id)) {
+          history.push(event);
+          targetEvents.push(event);
+        }
+        report.publications.push({ community, event });
+        relay.publish(community, event);
+        return;
+      }
       expect(event.kind).toBe(30078);
       expect(event.tags).toContainEqual(["t", "read-state"]);
       const blob = JSON.parse(

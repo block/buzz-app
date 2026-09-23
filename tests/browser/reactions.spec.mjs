@@ -39,10 +39,14 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       page.getByRole("button", { name: "Add reaction", exact: true }),
     ).toHaveCount(6);
     await root.hover();
-    await root.hover();
     await plus.click();
     const search = page.locator('em-emoji-picker input[type="search"]');
     await expect(search).toBeVisible();
+    await search.hover();
+    await search.focus();
+    await expect(
+      root.getByRole("group", { name: "Message actions" }),
+    ).toHaveCSS("opacity", "1");
     const padding = await search.evaluate((input) => {
       const field = input.getBoundingClientRect();
       const picker = input

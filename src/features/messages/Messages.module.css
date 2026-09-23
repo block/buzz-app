@@ -1103,7 +1103,8 @@ button.mediaPreview {
   }
   .message:hover .messageActions,
   .message:focus-within .messageActions,
-  .messageActions[data-open] {
+  .messageActions[data-open],
+  .messageActions:has([aria-expanded="true"]) {
     opacity: 1;
     pointer-events: auto;
   }

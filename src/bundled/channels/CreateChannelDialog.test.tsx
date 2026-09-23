@@ -118,3 +118,53 @@ it("blocks edits during creation without applying disabled control styles", asyn
   finishCreation();
   await waitFor(() => expect(onOpenChange).toHaveBeenCalledWith(false));
 });
+
+it("restores an unconfirmed channel draft after closing and reopening", () => {
+  const pending = {
+    name: "release-notes",
+    description: "Updates for the team",
+    visibility: "private" as const,
+    ttlSeconds: 604800,
+  };
+  const onOpenChange = vi.fn();
+  const onCreate = vi.fn(async () => {});
+  const { rerender } = render(
+    <CreateChannelDialog
+      open
+      pending={pending}
+      onOpenChange={onOpenChange}
+      onCreate={onCreate}
+    />,
+  );
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "release-notes",
+  );
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+    "Updates for the team",
+  );
+  expect(screen.getByRole("radio", { name: /Temporary/ })).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Private" })).toBeChecked();
+
+  rerender(
+    <CreateChannelDialog
+      open={false}
+      pending={pending}
+      onOpenChange={onOpenChange}
+      onCreate={onCreate}
+    />,
+  );
+  rerender(
+    <CreateChannelDialog
+      open
+      pending={pending}
+      onOpenChange={onOpenChange}
+      onCreate={onCreate}
+    />,
+  );
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue(
+    "release-notes",
+  );
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+    "Updates for the team",
+  );
+});

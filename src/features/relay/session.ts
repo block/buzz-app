@@ -2,6 +2,7 @@
 import { createPresence } from "../presence/presence";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
+import { sessionMetadata } from "../sessions/metadata";
 import { createWorkflows } from "../workflows/capability";
 import { isWorkflowOperation } from "../workflows/protocol";
 import {
@@ -46,6 +47,7 @@ import {
   PublishRejected,
   browserOutboxStorage,
   createOutbox,
+  type LocalEvents,
   type OutboxStorage,
 } from "./outbox";
 import { createMessages } from "./messages";
@@ -64,6 +66,79 @@ export type EventViewSnapshot = Readonly<{
   events: readonly VisibleEvent[];
   error?: string | undefined;
 }>;
+
+type ChannelCreationInput = Readonly<{
+  name: string;
+  description?: string | undefined;
+  visibility: "open" | "private";
+  ttlSeconds?: number | undefined;
+}>;
+type PendingChannelCreation = Readonly<{
+  signature: string;
+  id: string;
+  operation: string;
+  input: ChannelCreationInput;
+}>;
+const channelId =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+function restoredChannelCreation(
+  events: LocalEvents | undefined,
+): PendingChannelCreation | undefined {
+  const item = [...(events?.snapshot() ?? [])]
+    .reverse()
+    .find(({ event, delivery }) => event.kind === 9007 && delivery !== "seen");
+  if (!item) return;
+  const tags = item.event.tags.filter(([name]) => name !== "client-id");
+  const [h, name, visibility, channelType, ...optional] = tags;
+  const optionalNames = optional.map(([key]) => key);
+  const validOptionalOrder = [[], ["about"], ["ttl"], ["about", "ttl"]].some(
+    (names) =>
+      names.length === optionalNames.length &&
+      names.every((key, index) => key === optionalNames[index]),
+  );
+  if (
+    item.event.content !== "" ||
+    h?.length !== 2 ||
+    h[0] !== "h" ||
+    !channelId.test(h[1]) ||
+    name?.length !== 2 ||
+    name[0] !== "name" ||
+    !name[1].trim() ||
+    visibility?.length !== 2 ||
+    visibility[0] !== "visibility" ||
+    !["open", "private"].includes(visibility[1]) ||
+    channelType?.length !== 2 ||
+    channelType[0] !== "channel_type" ||
+    channelType[1] !== "stream" ||
+    !validOptionalOrder ||
+    optional.some((tag) => tag.length !== 2)
+  )
+    return;
+  const description = optional.find(([key]) => key === "about")?.[1].trim();
+  if (sessionMetadata(description) !== undefined) return;
+  const ttlValue = optional.find(([key]) => key === "ttl")?.[1];
+  const ttlSeconds = ttlValue === undefined ? undefined : Number(ttlValue);
+  if (
+    ttlSeconds !== undefined &&
+    (!Number.isInteger(ttlSeconds) ||
+      ttlSeconds <= 0 ||
+      ttlSeconds > 2_147_483_647)
+  )
+    return;
+  const input: ChannelCreationInput = Object.freeze({
+    name: name[1].trim(),
+    visibility: visibility[1] as "open" | "private",
+    ...(description ? { description } : {}),
+    ...(ttlSeconds !== undefined ? { ttlSeconds } : {}),
+  });
+  return Object.freeze({
+    signature: JSON.stringify(input),
+    id: h[1],
+    operation: item.event.id,
+    input,
+  });
+}
 /** Compose once per relay/viewer. Plugins get one interface; the host owns disposal. */
 export function createRelaySession(
   transport: ReadTransport | null,
@@ -721,22 +796,24 @@ export function createRelaySession(
     },
     transport?.relayAuthor,
   );
-  let pendingChannelCreation:
-    | {
-        signature: string;
-        id: string;
-        operation: string;
-      }
-    | undefined;
+  let pendingChannelCreation: PendingChannelCreation | undefined =
+    restoredChannelCreation(writes?.local);
+  let restoredOperation = pendingChannelCreation?.operation;
+  const pendingCreation = () => {
+    const restored = restoredChannelCreation(writes?.local);
+    if (restored?.operation !== restoredOperation) {
+      restoredOperation = restored?.operation;
+      pendingChannelCreation = restored;
+    }
+    return pendingChannelCreation;
+  };
   const channelCreation = Object.freeze({
     available: workSessions.available,
-    async create(input: {
-      name: string;
-      description?: string | undefined;
-      visibility: "open" | "private";
-      ttlSeconds?: number | undefined;
-    }) {
-      const normalized = {
+    subscribe: (listener: () => void) =>
+      writes?.local.subscribe(listener) ?? (() => {}),
+    snapshot: () => pendingCreation()?.input,
+    async create(input: ChannelCreationInput) {
+      const normalized: ChannelCreationInput = {
         name: input.name.trim(),
         visibility: input.visibility,
         ...(input.description?.trim()
@@ -747,8 +824,10 @@ export function createRelaySession(
           : {}),
       };
       const signature = JSON.stringify(normalized);
-      if (pendingChannelCreation?.signature !== signature) {
-        if (pendingChannelCreation)
+      await writes?.ready;
+      const existing = pendingCreation();
+      if (existing?.signature !== signature) {
+        if (existing)
           throw new Error(
             "Another channel is still awaiting confirmation. Retry it before changing the details.",
           );
@@ -756,6 +835,7 @@ export function createRelaySession(
         pendingChannelCreation = {
           signature,
           id,
+          input: Object.freeze(normalized),
           operation: workSessions.createChannel(
             id,
             normalized.name,
@@ -764,6 +844,7 @@ export function createRelaySession(
             normalized.ttlSeconds,
           ),
         };
+        restoredOperation = pendingChannelCreation.operation;
       }
       const pending = pendingChannelCreation;
       try {

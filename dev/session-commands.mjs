@@ -39,6 +39,7 @@ export function validChannelCommand(event) {
     const ttlValue = ttl?.[1];
     return (
       event.content === "" &&
+      tags.length >= expected.length &&
       validOptionalOrder &&
       tags
         .slice(0, expected.length)

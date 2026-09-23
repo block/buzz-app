@@ -167,6 +167,24 @@ it("allows bounded ordinary stream creation without a Sessions marker", () => {
   }
 });
 
+it("rejects every truncated mandatory creation-tag prefix", () => {
+  const create = {
+    kind: 9007,
+    created_at: 1,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Release notes"],
+      ["visibility", "open"],
+      ["channel_type", "stream"],
+    ],
+  };
+  for (let length = 0; length < create.tags.length; length++)
+    expect(
+      validChannelCommand({ ...create, tags: create.tags.slice(0, length) }),
+    ).toBe(false);
+});
+
 it("does not add temporary cleanup to Sessions metadata", () => {
   const create = {
     kind: 9007,

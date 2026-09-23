@@ -20,11 +20,13 @@ export function CreateChannelDialog({
   open,
   onOpenChange,
   onCreate,
+  pending,
   finalFocus,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   onCreate(input: CreateChannelInput): Promise<void>;
+  pending?: CreateChannelInput | undefined;
   finalFocus?: RefObject<HTMLElement | null> | undefined;
 }) {
   const input = useRef<HTMLInputElement>(null);
@@ -47,13 +49,13 @@ export function CreateChannelDialog({
   }, []);
   useEffect(() => {
     if (!open) return;
-    setName("");
-    setDescriptionVisible(false);
-    setDescription("");
-    setLifetime("ongoing");
-    setPrivateChannel(false);
+    setName(pending?.name ?? "");
+    setDescriptionVisible(!!pending?.description);
+    setDescription(pending?.description ?? "");
+    setLifetime(pending?.ttlSeconds === undefined ? "ongoing" : "temporary");
+    setPrivateChannel(pending?.visibility === "private");
     setError("");
-  }, [open]);
+  }, [open, pending]);
   useEffect(() => {
     if (open && descriptionVisible) descriptionInput.current?.focus();
   }, [descriptionVisible, open]);

@@ -213,6 +213,11 @@ function ChannelWorkspace({
   );
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const createChannelTrigger = useRef<HTMLButtonElement>(null);
+  const pendingChannelCreation = useSyncExternalStore(
+    queries.channelCreation.subscribe,
+    queries.channelCreation.snapshot,
+    queries.channelCreation.snapshot,
+  );
   const [draftParent, setDraftParent] = useState<string>();
   const [draftParents, setDraftParents] = useState<string[]>(() => {
     const saved = readView<unknown>(scope, "sessions:channel-drafts", []);
@@ -897,6 +902,7 @@ function ChannelWorkspace({
         open={createChannelOpen}
         onOpenChange={setCreateChannelOpen}
         onCreate={createChannel}
+        pending={pendingChannelCreation}
         finalFocus={createChannelTrigger}
       />
       <ChannelSidebarResizeHandle

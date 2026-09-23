@@ -8,6 +8,78 @@ import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 const event = message(keypair(), "session", "Work", 1);
 
+it("restores an unconfirmed ordinary channel without creating a second identity", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  const creation = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", id],
+      ["name", "Release notes"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", "Updates for the team"],
+      ["ttl", "604800"],
+    ],
+  });
+  let records: readonly OutgoingEvent[] = [
+    { event: creation, signed: creation, delivery: "unknown" },
+  ];
+  const sign = vi.fn(async () => creation);
+  const publish = vi.fn(async () => {
+    throw new Error("acknowledgement lost");
+  });
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async () => [],
+      writer: { kinds: [9, 9000, 9007], sign, publish },
+    },
+    {
+      outboxStorage: {
+        load: () => structuredClone(records),
+        save: (next) => {
+          records = structuredClone(next);
+        },
+      },
+    },
+  );
+  try {
+    await vi.waitFor(() =>
+      expect(owner.session.channelCreation.snapshot()).toEqual({
+        name: "Release notes",
+        description: "Updates for the team",
+        visibility: "private",
+        ttlSeconds: 604800,
+      }),
+    );
+    await expect(
+      owner.session.channelCreation.create({
+        name: "Different",
+        visibility: "open",
+      }),
+    ).rejects.toThrow(/still awaiting confirmation/);
+    await expect(
+      owner.session.channelCreation.create({
+        name: "Release notes",
+        description: "Updates for the team",
+        visibility: "private",
+        ttlSeconds: 604800,
+      }),
+    ).rejects.toThrow(/acknowledgement lost/);
+    expect(sign).not.toHaveBeenCalled();
+    expect(publish).toHaveBeenCalledOnce();
+    expect(owner.session.outbox?.snapshot()).toHaveLength(1);
+    expect(owner.session.outbox?.snapshot()[0]?.event.id).toBe(creation.id);
+  } finally {
+    owner.dispose();
+  }
+});
+
 it.each([true, false])(
   "confirms an exact own creation without admitting a channel missing its roster (receipt: %s)",
   async (found) => {

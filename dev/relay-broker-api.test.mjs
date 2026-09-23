@@ -1070,3 +1070,29 @@ test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
     }
   },
 );
+
+test.each(["sign", "publish"])(
+  "%s rejects truncated channel creation tags as a client error",
+  async (route) => {
+    const h = await harness(success, { channelCreation: true });
+    try {
+      const required = [
+        ["h", "11111111-1111-4111-8111-111111111111"],
+        ["name", "Work"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+      ];
+      for (let length = 0; length < required.length; length++) {
+        const response = await h.post(route, {
+          kind: 9007,
+          created_at: 1700000000,
+          content: "",
+          tags: required.slice(0, length),
+        });
+        expect(response.status).toBe(400);
+      }
+    } finally {
+      await h.close();
+    }
+  },
+);

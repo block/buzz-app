@@ -96,6 +96,9 @@ test("DM hide control removes a row and a new message restores it", async ({
     .toBe(primary);
   await hide.click();
   await expect(dm).toHaveCount(0);
+  await expect(list(page).locator("button[data-channel-id]:focus")).toHaveCount(
+    1,
+  );
   await page.reload();
   await expect(row(page, "dm-031")).toBeVisible();
   await expect(dm).toHaveCount(0);

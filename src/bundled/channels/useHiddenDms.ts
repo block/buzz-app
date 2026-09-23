@@ -4,8 +4,25 @@ import type { ChannelList } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 
 type MessageHead = Readonly<{ id: string; createdAt: number }>;
-type HiddenDm = { id: string; baseline?: MessageHead | null };
+type HiddenDm = {
+  id: string;
+  baseline?: MessageHead | null;
+  knownIds?: readonly string[];
+};
 const key = "hidden-dms";
+
+function pause(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    if (signal.aborted) return resolve();
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
+    signal.addEventListener("abort", done, { once: true });
+  });
+}
 
 function restore(scope: string): HiddenDm[] {
   const saved = readView<unknown>(scope, key, []);
@@ -14,6 +31,7 @@ function restore(scope: string): HiddenDm[] {
     if (!entry || typeof entry !== "object" || typeof entry.id !== "string")
       return [];
     const baseline = entry.baseline;
+    const knownIds = entry.knownIds;
     return [
       {
         id: entry.id,
@@ -24,6 +42,10 @@ function restore(scope: string): HiddenDm[] {
           typeof baseline.createdAt === "number" &&
           Number.isFinite(baseline.createdAt))
           ? { baseline }
+          : {}),
+        ...(Array.isArray(knownIds) &&
+        knownIds.every((id): id is string => typeof id === "string")
+          ? { knownIds }
           : {}),
       },
     ];
@@ -37,18 +59,13 @@ export function useHiddenDms(
   list: ChannelList,
 ) {
   const [hidden, setHidden] = useState(() => restore(scope));
+  const hiddenKey = hidden.map((entry) => entry.id).join("\u0000");
   const current = useRef(hidden);
   const update = useCallback(
     (next: HiddenDm[]) => {
       current.current = next;
       setHidden(next);
-      // An unresolved baseline is only an optimistic hide; it cannot be
-      // recovered safely after closing before its first verified head read.
-      writeView(
-        scope,
-        key,
-        next.filter((entry) => entry.baseline !== undefined),
-      );
+      writeView(scope, key, next);
     },
     [scope],
   );
@@ -94,8 +111,9 @@ export function useHiddenDms(
             latest.id < entry.baseline.id)
         )
           return [];
-        // A deletion can reveal an older head. Keep hiding from that head.
-        return [{ ...entry, baseline: latest }];
+        // The direct history read can distinguish an older arrival from a
+        // deletion that exposed old history. A head rollback alone cannot.
+        return [entry];
       });
       if (
         next.length !== current.current.length ||
@@ -128,39 +146,76 @@ export function useHiddenDms(
   }, [hidden, session, show, update]);
 
   useEffect(() => {
-    if (!hidden.length || list.status !== "ready") return;
+    if (!hiddenKey || list.status !== "ready") return;
     const controller = new AbortController();
-    // The shared unread repair is roster-wide and capped. Check each hidden DM's
-    // latest verified message so an offline arrival can restore it on return.
+    // The shared unread repair is roster-wide and capped. Compare a bounded
+    // per-DM history window so a late-arriving message need not be the head.
     void (async () => {
-      for (const entry of hidden) {
+      for (const id of hiddenKey.split("\u0000")) {
         if (controller.signal.aborted) return;
-        const { id } = entry;
+        const entry = current.current.find((item) => item.id === id);
+        if (!entry) continue;
         const channel = list.channels.find((item) => item.id === id);
         if (channel?.channelType !== "dm") continue;
-        try {
-          await session.read([{ kinds: [9, 40002], "#h": [id], limit: 1 }], {
-            signal: controller.signal,
-            priority: "background",
-          });
-          if (entry.baseline === undefined && current.current.includes(entry)) {
-            const latest = session.unread.snapshot({
-              kind: "channel",
-              channelId: id,
-            }).latestMessage;
-            update(
-              current.current.map((item) =>
-                item === entry ? { ...item, baseline: latest ?? null } : item,
-              ),
+        for (
+          let attempt = 0;
+          attempt < 3 && !controller.signal.aborted;
+          attempt++
+        ) {
+          try {
+            const events = await session.read(
+              [{ kinds: [9, 40002], "#h": [id], limit: 50 }],
+              {
+                signal: controller.signal,
+                priority: "background",
+              },
             );
+            if (current.current.includes(entry)) {
+              const latest = session.unread.snapshot({
+                kind: "channel",
+                channelId: id,
+              }).latestMessage;
+              const ids = events.map((event) => event.id);
+              const changed =
+                entry.knownIds &&
+                ids.some((eventId) => !entry.knownIds?.includes(eventId));
+              const deletedHead =
+                entry.baseline &&
+                !ids.includes(entry.baseline.id) &&
+                latest &&
+                (latest.createdAt < entry.baseline.createdAt ||
+                  (latest.createdAt === entry.baseline.createdAt &&
+                    latest.id > entry.baseline.id));
+              if (changed && !deletedHead) {
+                show([id]);
+                break;
+              }
+              if (
+                entry.baseline === undefined ||
+                !entry.knownIds ||
+                deletedHead
+              )
+                update(
+                  current.current.map((item) =>
+                    item === entry
+                      ? {
+                          ...item,
+                          baseline: latest ?? null,
+                          knownIds: ids,
+                        }
+                      : item,
+                  ),
+                );
+            }
+            break;
+          } catch {
+            if (attempt < 2) await pause(500 * 2 ** attempt, controller.signal);
           }
-        } catch {
-          // Live delivery and a later mount can still restore the row.
         }
       }
     })();
     return () => controller.abort();
-  }, [hidden, session, list, update]);
+  }, [hiddenKey, session, list, show, update]);
 
   return { hiddenIds: new Set(hidden.map((entry) => entry.id)), hide };
 }

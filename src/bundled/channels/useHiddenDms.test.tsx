@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { IncomingListener } from "../../features/relay/incoming";
 import type { ChannelList } from "../../features/relay/contracts";
+import { readView } from "../../shared/view-state";
 import { useHiddenDms } from "./useHiddenDms";
 
 afterEach(() => {
@@ -30,9 +31,15 @@ function fixture() {
   >[0];
   const outgoing = new Set<ObserveSend>();
   let onRead = () => {};
+  let historyIds = ["before"];
+  let failures = 0;
   const read = vi.fn(async () => {
+    if (failures > 0) {
+      failures--;
+      throw new Error("Temporary relay failure");
+    }
     onRead();
-    return [];
+    return historyIds.map((id) => ({ id }));
   });
   const session = {
     channels: {
@@ -65,6 +72,12 @@ function fixture() {
     read,
     onNextRead(callback: () => void) {
       onRead = callback;
+    },
+    history(ids: string[]) {
+      historyIds = ids;
+    },
+    failNextRead() {
+      failures++;
     },
     evidence(id: string, createdAt: number) {
       latest = { id, createdAt };
@@ -161,7 +174,7 @@ it("checks a hidden DM directly on return for messages missed while closed", asy
   });
   expect(restored.result.current.hiddenIds.has("dm")).toBe(false);
   expect(h.read).toHaveBeenCalledWith(
-    [{ kinds: [9, 40002], "#h": ["dm"], limit: 1 }],
+    [{ kinds: [9, 40002], "#h": ["dm"], limit: 50 }],
     expect.objectContaining({ priority: "background" }),
   );
 });
@@ -208,16 +221,80 @@ it("does not restore from historical evidence when the head was unknown at hide"
   expect(view.result.current.hiddenIds.has("dm")).toBe(false);
 });
 
-it("keeps a DM hidden when deleting its latest message reveals older history", () => {
+it("persists a hide while its first baseline read is pending", () => {
+  const h = fixture();
+  h.clearHead();
+  const view = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  act(() => view.result.current.hide("dm"));
+  expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+  expect(readView("community:alice", "hidden-dms", [])).toEqual([{ id: "dm" }]);
+  view.unmount();
+  const restored = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  expect(restored.result.current.hiddenIds.has("dm")).toBe(true);
+});
+
+it("restores for an offline message that sorts behind the previous head", async () => {
+  const h = fixture();
+  const first = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  act(() => first.result.current.hide("dm"));
+  await act(async () => {
+    await Promise.resolve();
+  });
+  first.unmount();
+  h.history(["before", "late-old"]);
+  const restored = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(restored.result.current.hiddenIds.has("dm")).toBe(false);
+});
+
+it("retries a transient hidden-DM history failure", async () => {
+  vi.useFakeTimers();
+  const h = fixture();
+  h.failNextRead();
+  const view = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  act(() => view.result.current.hide("dm"));
+  expect(h.read).toHaveBeenCalledTimes(1);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(500);
+  });
+  expect(h.read).toHaveBeenCalledTimes(2);
+  expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+});
+
+it("keeps a DM hidden when deleting its latest message reveals older history", async () => {
   const h = fixture();
   const view = renderHook(() =>
     useHiddenDms("community:alice", h.session, h.list),
   );
   act(() => view.result.current.hide("dm"));
+  await act(async () => {
+    await Promise.resolve();
+  });
   act(() => h.evidence("older", 89));
   expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+  view.unmount();
+  h.history(["older"]);
+  const restored = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(restored.result.current.hiddenIds.has("dm")).toBe(true);
   act(() => h.evidence("new-message", 91));
-  expect(view.result.current.hiddenIds.has("dm")).toBe(false);
+  expect(restored.result.current.hiddenIds.has("dm")).toBe(false);
 });
 
 it("restores a hidden DM after an outgoing message is delivered", () => {

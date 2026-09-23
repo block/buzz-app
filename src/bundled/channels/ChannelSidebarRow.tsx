@@ -172,7 +172,23 @@ export function ChannelSidebarRow({
               size="compact"
               shape="round"
               aria-label={`Remove ${channel.name} from DMs`}
-              onClick={() => onHideDm(channel.id)}
+              onClick={(event) => {
+                const section = event.currentTarget.closest("details");
+                const rows = [
+                  ...(section?.querySelectorAll<HTMLElement>(
+                    "button[data-channel-id]",
+                  ) ?? []),
+                ];
+                const index = rows.findIndex(
+                  (row) => row.dataset.channelId === channel.id,
+                );
+                (
+                  rows[index + 1] ??
+                  rows[index - 1] ??
+                  section?.querySelector<HTMLElement>("summary")
+                )?.focus();
+                onHideDm(channel.id);
+              }}
               icon={<XIcon size={15} aria-hidden="true" />}
             />
           </span>

@@ -1,8 +1,8 @@
-import { expect, it, vi } from "vitest";
+import { beforeAll, describe, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { keypair, profile, roster, signed } from "./testing";
 import { PublishRejected } from "./outbox";
-import type { ReadFilter } from "./events";
+import type { ReadFilter, RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
 
 const id = "11111111-1111-4111-8111-111111111111";
@@ -221,37 +221,45 @@ it("loads a small directory preview followed by bounded overlapping batches with
   }
 });
 
-it("browses beyond the shared profile budget without evicting or republishing conversation names", async () => {
-  const t = setup();
-  try {
-    await t.owner.session.profiles.ensure([t.other.pubkey]);
-    const before = t.owner.session.profiles.snapshot();
-    expect(before.get(t.other.pubkey)?.name).toBe("Other");
-    const changed = vi.fn();
-    const unsubscribe = t.owner.session.profiles.subscribe(changed);
-    const directory = Array.from({ length: 1030 }, (_, i) =>
+describe("directory browsing beyond the shared profile budget", () => {
+  let directory: RelayEvent[];
+  beforeAll(() => {
+    // Signing 1,030 distinct authors is fixture setup, separate from the timed
+    // browsing behavior. Keep the dataset larger than the 1,024-profile cache.
+    directory = Array.from({ length: 1030 }, (_, i) =>
       profile(keypair(), { name: `Directory ${i}` }),
     );
-    t.query.mockImplementation(async (filters) => {
-      const filter = filters[0];
-      const start = ((filter?.page ?? 1) - 1) * (filter?.limit ?? 100);
-      return directory.slice(start, start + (filter?.limit ?? 100));
-    });
-    const signal = new AbortController().signal;
-    const seen = new Set<string>();
-    for (let page = 1; page <= 36; page++) {
-      const result = await t.dm.people("", page, signal);
-      for (const person of result.people) seen.add(person.pubkey);
-      expect(t.owner.session.profiles.snapshot()).toBe(before);
-      if (!result.hasMore) break;
+  });
+
+  it("browses beyond the shared profile budget without evicting or republishing conversation names", async () => {
+    const t = setup();
+    try {
+      await t.owner.session.profiles.ensure([t.other.pubkey]);
+      const before = t.owner.session.profiles.snapshot();
+      expect(before.get(t.other.pubkey)?.name).toBe("Other");
+      const changed = vi.fn();
+      const unsubscribe = t.owner.session.profiles.subscribe(changed);
+      t.query.mockImplementation(async (filters) => {
+        const filter = filters[0];
+        const start = ((filter?.page ?? 1) - 1) * (filter?.limit ?? 100);
+        return directory.slice(start, start + (filter?.limit ?? 100));
+      });
+      const signal = new AbortController().signal;
+      const seen = new Set<string>();
+      for (let page = 1; page <= 36; page++) {
+        const result = await t.dm.people("", page, signal);
+        for (const person of result.people) seen.add(person.pubkey);
+        expect(t.owner.session.profiles.snapshot()).toBe(before);
+        if (!result.hasMore) break;
+      }
+      expect(seen.size).toBe(1030);
+      expect(changed).not.toHaveBeenCalled();
+      expect(
+        t.owner.session.profiles.snapshot().get(t.other.pubkey)?.name,
+      ).toBe("Other");
+      unsubscribe();
+    } finally {
+      t.owner.dispose();
     }
-    expect(seen.size).toBe(1030);
-    expect(changed).not.toHaveBeenCalled();
-    expect(t.owner.session.profiles.snapshot().get(t.other.pubkey)?.name).toBe(
-      "Other",
-    );
-    unsubscribe();
-  } finally {
-    t.owner.dispose();
-  }
+  });
 });

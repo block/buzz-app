@@ -1,3 +1,4 @@
+import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validSessionCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
@@ -407,6 +408,7 @@ export function relayBrokerPlugin({
       let inflight = 0;
       let presenceFlight = false;
       let sidebarUploads = 0;
+      let attachmentUploads = 0;
       let libraryRead;
       const streams = new Map();
       const admissions = createHostAdmission();
@@ -904,6 +906,33 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/stats" && req.method === "GET")
             return json(res, 200, { ...stats, connects: upstream.connects() });
+          if (route === "/api/relay/upload" && req.method === "POST") {
+            if (attachmentUploads >= 2)
+              return json(res, 429, { code: "capacity" });
+            attachmentUploads++;
+            try {
+              const result = await uploadAttachment(
+                req,
+                relay,
+                key,
+                fetchUpstream,
+                cancel.signal,
+              );
+              return json(res, 200, result);
+            } catch (error) {
+              if (!res.destroyed)
+                return json(
+                  res,
+                  error instanceof UploadError ? error.status : 502,
+                  {
+                    code: error instanceof UploadError ? error.code : "failed",
+                  },
+                );
+            } finally {
+              attachmentUploads--;
+            }
+            return;
+          }
           if (route === "/api/relay/media" && req.method === "GET") {
             const target = new URL(url.searchParams.get("url") ?? "", relay);
             if (

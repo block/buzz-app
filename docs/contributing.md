@@ -53,9 +53,13 @@ need their own validation.
   so the captured page and development broker have one unambiguous owner. Use
   `just web profile --network` to additionally record sanitized browser network
   metadata in `network.json`; payloads, cookies, authorization headers, query strings,
-  fragments, and WebSocket frame data are omitted. Press Ctrl+C to finalize the
-  capture; the command prints the `.profiles/...-web` output directory. Load
-  `.cpuprofile` files in Chromium DevTools (**Performance** > **Load profile**).
+  fragments, and WebSocket frame data are omitted. Use `just web profile --trace`
+  to record a Chromium DevTools Performance trace (`chromium-trace.json`, with
+  style/layout/paint events, React's performance tracks, and denser CPU samples)
+  in place of `chromium-renderer.cpuprofile`; traces are large, so keep traced
+  sessions short. Press Ctrl+C to finalize the capture; the command prints the
+  `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
+  Chromium DevTools (**Performance** > **Load profile**).
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.

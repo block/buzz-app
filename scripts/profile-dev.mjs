@@ -501,11 +501,17 @@ export function networkRecorder(session, directory) {
   };
 }
 
-export async function profileWeb({ directory, profileArgs, args, network }) {
+export async function profileWeb({
+  directory,
+  profileArgs,
+  args,
+  network,
+  trace = false,
+}) {
   const vite = normalizeWebViteArgs(args);
   await recordManifest(directory, "web", profileArgs, {
     coverage: [
-      "chromium-renderer",
+      trace ? "chromium-trace" : "chromium-renderer",
       "vite-broker",
       ...(network ? ["chromium-network"] : []),
     ],
@@ -551,6 +557,7 @@ export async function profileWeb({ directory, profileArgs, args, network }) {
   let networkCapture;
   let nodeProfiler;
   let rendererStarted = false;
+  let tracing = false;
   let brokerStarted = false;
   let captureStarted = false;
   let outcome;
@@ -592,12 +599,19 @@ export async function profileWeb({ directory, profileArgs, args, network }) {
       networkCapture = networkRecorder(session, directory);
       await networkCapture.start(page, duringStartup);
     }
-    await duringStartup(() => session.send("Profiler.enable"));
-    await duringStartup(() =>
-      session.send("Profiler.setSamplingInterval", { interval: 1000 }),
-    );
-    await duringStartup(() => session.send("Profiler.start"));
-    rendererStarted = true;
+    if (trace) {
+      // The DevTools trace carries denser renderer CPU samples; a second
+      // sampler would only add overhead to the recorded timings.
+      await duringStartup(() => browser.startTracing(page));
+      tracing = true;
+    } else {
+      await duringStartup(() => session.send("Profiler.enable"));
+      await duringStartup(() =>
+        session.send("Profiler.setSamplingInterval", { interval: 1000 }),
+      );
+      await duringStartup(() => session.send("Profiler.start"));
+      rendererStarted = true;
+    }
     await duringStartup(() => page.goto(url));
     control.abort.signal.throwIfAborted();
     captureStarted = true;
@@ -617,6 +631,16 @@ export async function profileWeb({ directory, profileArgs, args, network }) {
         await writeFile(
           `${directory}/chromium-renderer.cpuprofile`,
           `${JSON.stringify(rendererProfile)}\n`,
+        );
+      } catch (error) {
+        failures.push(error);
+      }
+    }
+    if (tracing) {
+      try {
+        await writeFile(
+          `${directory}/chromium-trace.json`,
+          await browser.stopTracing(),
         );
       } catch (error) {
         failures.push(error);
@@ -750,7 +774,10 @@ async function main() {
   const target = process.argv[2];
   const profileArgs = process.argv.slice(3);
   const network = target === "web" && profileArgs.includes("--network");
-  const args = profileArgs.filter((argument) => argument !== "--network");
+  const trace = target === "web" && profileArgs.includes("--trace");
+  const args = profileArgs.filter(
+    (argument) => argument !== "--network" && argument !== "--trace",
+  );
   if (target !== "web" && target !== "desktop") {
     console.error(
       "Usage: node scripts/profile-dev.mjs <web|desktop> [arguments]",
@@ -770,7 +797,7 @@ async function main() {
   const directory = `${root}.profiles/${stamp}-${target}`;
   await mkdir(directory, { recursive: true });
   if (target === "web")
-    await profileWeb({ directory, profileArgs, args, network });
+    await profileWeb({ directory, profileArgs, args, network, trace });
   else await profileDesktop({ directory, profileArgs, args });
 }
 

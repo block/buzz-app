@@ -22,6 +22,18 @@ test("web profiling canonicalizes its Vite port and strict-port contract", () =>
     /only one --port/,
   );
   assert.throws(
+    () => normalizeWebViteArgs(["--host"]),
+    /requires --host 127\.0\.0\.1/,
+  );
+  assert.throws(
+    () => normalizeWebViteArgs(["--host", "0.0.0.0"]),
+    /requires --host 127\.0\.0\.1/,
+  );
+  assert.throws(
+    () => normalizeWebViteArgs(["--host=::1"]),
+    /requires --host 127\.0\.0\.1/,
+  );
+  assert.throws(
     () => normalizeWebViteArgs(["--no-strictPort"]),
     /requires --strictPort/,
   );
@@ -32,13 +44,13 @@ test("web profiling derives navigation from its owned listener", () => {
     viteListenerUrl({ address: "127.0.0.1", port: 1430 }),
     "http://127.0.0.1:1430",
   );
-  assert.equal(
-    viteListenerUrl({ address: "::1", port: 1430 }),
-    "http://[::1]:1430",
+  assert.throws(
+    () => viteListenerUrl({ address: "::1", port: 1430 }),
+    /required profiling host/,
   );
-  assert.equal(
-    viteListenerUrl({ address: "::", port: 1430 }),
-    "http://[::1]:1430",
+  assert.throws(
+    () => viteListenerUrl({ address: "0.0.0.0", port: 1430 }),
+    /required profiling host/,
   );
 });
 

@@ -227,6 +227,7 @@ export function normalizeWebViteArgs(values) {
   const normalized = [];
   let port = 1430;
   let sawPort = false;
+  let sawHost = false;
   for (let index = 0; index < values.length; index++) {
     const value = values[index];
     if (value === "--")
@@ -245,6 +246,15 @@ export function normalizeWebViteArgs(values) {
       port = Number(value.slice(7));
       continue;
     }
+    if (value === "--host" || value.startsWith("--host=")) {
+      if (sawHost)
+        throw new Error("Web profiling accepts only one --host option.");
+      sawHost = true;
+      const host = value === "--host" ? values[++index] : value.slice(7);
+      if (host !== "127.0.0.1")
+        throw new Error("Web profiling requires --host 127.0.0.1.");
+      continue;
+    }
     if (
       value === "--strictPort" ||
       value === "--no-strictPort" ||
@@ -260,7 +270,14 @@ export function normalizeWebViteArgs(values) {
     throw new Error("--port must be an integer between 1 and 65535.");
   return {
     port,
-    args: [...normalized, "--port", String(port), "--strictPort"],
+    args: [
+      ...normalized,
+      "--host",
+      "127.0.0.1",
+      "--port",
+      String(port),
+      "--strictPort",
+    ],
   };
 }
 
@@ -273,13 +290,9 @@ export function viteListenerUrl(address) {
     address.port > 65535
   )
     throw new Error("Vite reported an invalid profiling listener address.");
-  let host = address.address;
-  if (host === "0.0.0.0") host = "127.0.0.1";
-  else if (host === "::") host = "::1";
-  if (typeof host !== "string" || !host)
-    throw new Error("Vite reported an invalid profiling listener address.");
-  if (host.includes(":")) host = `[${host}]`;
-  return `http://${host}:${address.port}`;
+  if (address.address !== "127.0.0.1")
+    throw new Error("Vite did not bind the required profiling host.");
+  return `http://127.0.0.1:${address.port}`;
 }
 
 export function viteReadyToken(child, token, signal) {

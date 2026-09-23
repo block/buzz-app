@@ -47,7 +47,9 @@ need their own validation.
 - `just web [args...]`: install locked dependencies and forward arguments to Vite,
   e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
   (default: 1430) or the next available port, allowing parallel browser development.
-  Use `just web profile` for opt-in Chromium and broker CPU profiles, or
+  Use `just web profile` for opt-in Chromium and broker CPU profiles. Profiling
+  binds only `127.0.0.1`; wildcard, hostname, and IPv6 `--host` values are rejected
+  so the captured page and development broker have one unambiguous owner. Use
   `just web profile --network` to additionally record sanitized browser network
   metadata in `network.json`; payloads, cookies, authorization headers, query strings,
   fragments, and WebSocket frame data are omitted. Press Ctrl+C to finalize the

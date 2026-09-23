@@ -8,12 +8,12 @@ export function SidebarSectionIcon({
   session,
 }: {
   icon: string;
-  session: RelaySession;
+  session: RelaySession | undefined;
 }) {
   const catalog = useSyncExternalStore(
-    session.emoji.subscribe,
-    session.emoji.snapshot,
-    session.emoji.snapshot,
+    session?.emoji.subscribe ?? (() => () => {}),
+    session?.emoji.snapshot ?? (() => undefined),
+    session?.emoji.snapshot ?? (() => undefined),
   );
   const match = /^:([^:\s]+):$/.exec(icon);
   const shortcode = match ? normalizeShortcode(match[1] ?? "") : undefined;
@@ -21,13 +21,13 @@ export function SidebarSectionIcon({
   const [failed, setFailed] = useState<string>();
 
   useEffect(() => {
-    if (shortcode) void session.emoji.ensure();
+    if (shortcode) void session?.emoji.ensure();
   }, [session, shortcode]);
 
   const custom = shortcode
-    ? catalog.entries.find((entry) => entry.shortcode === shortcode)
+    ? catalog?.entries.find((entry) => entry.shortcode === shortcode)
     : undefined;
-  const source = custom ? session.media(custom.url) : undefined;
+  const source = custom ? session?.media(custom.url) : undefined;
   useEffect(() => {
     setLoaded(undefined);
     setFailed(undefined);
@@ -52,7 +52,7 @@ export function SidebarSectionIcon({
       ? failed === source
         ? icon
         : undefined
-      : catalog.status === "ready"
+      : !session || catalog?.status === "ready"
         ? icon
         : undefined;
 

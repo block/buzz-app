@@ -29,8 +29,9 @@ export function createHeadPersistence(
   const scope = `${viewer}:${relay}`;
   let closed = false;
   let opening: Promise<IDBDatabase> | undefined;
+  let operations = Promise.resolve();
   function database() {
-    if (closed || typeof indexedDB === "undefined")
+    if (typeof indexedDB === "undefined")
       return Promise.reject(new Error("Cache unavailable"));
     opening ??= new Promise<IDBDatabase>((resolve, reject) => {
       const request = indexedDB.open(DB, 1);
@@ -52,7 +53,7 @@ export function createHeadPersistence(
       };
       request.onsuccess = () => {
         clearTimeout(timeout);
-        if (closed || expired) {
+        if (expired) {
           request.result.close();
           reject(new Error("Cache closed"));
           return;
@@ -63,30 +64,39 @@ export function createHeadPersistence(
     });
     return opening;
   }
-  async function transact<T>(
+  function transact<T>(
     mode: IDBTransactionMode,
     work: (store: IDBObjectStore, done: (value: T) => void) => void,
   ): Promise<T> {
-    const db = await database();
-    if (closed) throw new Error("Cache closed");
-    return new Promise<T>((resolve, reject) => {
-      const tx = db.transaction(STORE, mode);
-      let result: T;
-      const timeout = setTimeout(() => {
-        tx.abort();
-      }, 2000);
-      tx.oncomplete = () => {
-        clearTimeout(timeout);
-        resolve(result);
-      };
-      tx.onabort = tx.onerror = () => {
-        clearTimeout(timeout);
-        reject(tx.error ?? new Error("Cache transaction aborted"));
-      };
-      work(tx.objectStore(STORE), (value) => {
-        result = value;
+    // Admission is synchronous. A retired session cannot start new operations,
+    // but its already-admitted write → clear sequence must finish in that order.
+    if (closed) return Promise.reject(new Error("Cache closed"));
+    const operation = operations.then(async () => {
+      const db = await database();
+      return new Promise<T>((resolve, reject) => {
+        const tx = db.transaction(STORE, mode);
+        let result: T;
+        const timeout = setTimeout(() => {
+          tx.abort();
+        }, 2000);
+        tx.oncomplete = () => {
+          clearTimeout(timeout);
+          resolve(result);
+        };
+        tx.onabort = tx.onerror = () => {
+          clearTimeout(timeout);
+          reject(tx.error ?? new Error("Cache transaction aborted"));
+        };
+        work(tx.objectStore(STORE), (value) => {
+          result = value;
+        });
       });
     });
+    operations = operation.then(
+      () => {},
+      () => {},
+    );
+    return operation;
   }
   return {
     read: () =>
@@ -164,9 +174,11 @@ export function createHeadPersistence(
       }),
     close() {
       closed = true;
-      void opening?.then(
-        (db) => db.close(),
-        () => {},
+      void operations.then(() =>
+        opening?.then(
+          (db) => db.close(),
+          () => {},
+        ),
       );
     },
   };

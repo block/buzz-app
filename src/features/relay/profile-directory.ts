@@ -134,6 +134,11 @@ export function createProfileDirectory(
     accept,
     clear,
     event: (id: string) => events.peek(id),
+    events: () =>
+      events.keys().flatMap((id) => {
+        const event = events.peek(id);
+        return event ? [event] : [];
+      }),
     stats: () => events.stats(),
     dispose() {
       closed = true;

@@ -60,9 +60,11 @@ Keep page-specific navigation and arrangement in the plugin; compose shared mess
 components rather than copying them. Session reconciliation, authorization, retained
 reads and durable outbox recovery remain host-owned even if Channels is disabled.
 
-The workspace React key includes community/viewer scope **and** connection
-generation. This resets session-owned component state on switching or reconnecting;
-drafts, channel selection and reading geometry retain their stable scope keys.
+The sidebar chrome is keyed by community/viewer scope and stays mounted through
+connection readiness and retry. Its conversation workspace is additionally keyed
+by connection generation, resetting session-owned controls and transient local
+thread/draft selection. Persisted drafts, selected channel and reading geometry
+retain their stable scope keys.
 
 Saved sidebar groups, ordering, assignments and stars live in the session's
 `sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
@@ -71,7 +73,46 @@ good snapshot through loading/errors. Page exits neither restart nor cancel that
 read. Cache clearing and session disposal cancel it and discard decoded data;
 late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
-authorized roster. There is no new disk cache or automatic cross-device sync.
+authorized roster. Automatic cross-device synchronization is unchanged.
+
+### Local-first sidebar presentation
+
+The host relay service owns a one-way presentation projection beside its live
+session. Once local identity and canonical community origin are established, it
+restores a coherent last-known sidebar while connection discovery runs in parallel.
+Previously seen channel names and groups may therefore appear before fresh access
+verification, including a name revoked while the app was closed. Those rows are
+inert: they do not grant navigation, message access, preparation or writes. After
+roster readiness, visible IDs come only from the live session; retained signed
+metadata fills pending lookups without seeding the authority-bearing channel store.
+
+`buzz-read-models-v1` IndexedDB stores versioned checkpoints partitioned by canonical
+origin + viewer and carrying the relay authority. Records contain signed channel
+metadata/rosters and necessary profile events, plus encrypted kind-30078 preference
+events, never decoded plaintext groups/stars. Restoration reverifies signed records
+and uses the registered, scoped local broker decoder; it needs the local broker,
+not upstream connectivity. Channel names/profile records themselves are not encrypted
+at rest. The cache is capped at 4 MiB per record and eight scopes / 8 MiB per origin;
+oldest-written scopes are evicted transactionally. It contains no messages, drafts,
+outbox or other durable intent.
+
+Complete roster omissions and explicit denials invalidate removed presentation and
+its durable checkpoint even after preference decoding fails; partial responses do
+not infer removal. Current membership always wins, metadata uses signed replaceable
+version ordering, successful empty preferences replace old groups, and failed optional
+refreshes retain the last good projection. Restore/clear/disposal epochs fence late
+work. Mutating checkpoint operations are ordered; head-cache operations admitted
+before session teardown drain before their database closes. Storage failures remain
+best-effort, not a secure-deletion guarantee. Corrupt, blocked, oversized or
+unsupported checkpoints fall back to network startup. Schema changes must either
+validate/migrate or discard the disposable version, never migrate durable intent.
+
+This is the sidebar slice of local-first reads, not a universal offline sync cache.
+The production-broker browser regression holds `/session` and then metadata over a
+warm reload, proving inert saved names/groups, preserved DM grouping and one viewport
+through readiness. Store tests cover restore races, denial/writeback, clear/close,
+partitioning and budgets. Browser engines do not establish actual desktop restart
+latency or packaged-broker support.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They are saved on page exit and restored before paint when the roster and groups

@@ -14,6 +14,7 @@ import styles from "./ChannelSidebarRow.module.css";
 
 export function ChannelSidebarRow({
   channel,
+  disabled = false,
   icon,
   badge,
   childContent,
@@ -31,6 +32,7 @@ export function ChannelSidebarRow({
   onHideDm,
 }: {
   channel: ChannelSummary;
+  disabled?: boolean;
   icon: ReactNode;
   badge?: ReactNode;
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
@@ -52,6 +54,7 @@ export function ChannelSidebarRow({
   const hasChildren = draft || sessions.length > 0;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
   const canParent =
+    !disabled &&
     sessionsEnabled &&
     channel.channelType !== "dm" &&
     channel.channelType !== "session" &&
@@ -59,12 +62,13 @@ export function ChannelSidebarRow({
   const selectButton = (
     <NavigationItem
       type="button"
+      disabled={disabled}
       data-channel-id={channel.id}
       aria-current={
         selected === channel.id && !draftSelected ? "page" : undefined
       }
-      onPointerEnter={() => onPrepare(channel.id)}
-      onFocus={() => onPrepare(channel.id)}
+      onPointerEnter={() => !disabled && onPrepare(channel.id)}
+      onFocus={() => !disabled && onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}
       selected={selected === channel.id && !draftSelected}
       label={<span className={styles.label}>{channel.name}</span>}
@@ -165,7 +169,7 @@ export function ChannelSidebarRow({
             </Menu.Portal>
           </Menu.Root>
         )}
-        {channel.channelType === "dm" && onHideDm && (
+        {!disabled && channel.channelType === "dm" && onHideDm && (
           <span className={`${styles.more} ${styles.remove}`}>
             <IconButton
               type="button"
@@ -201,6 +205,7 @@ export function ChannelSidebarRow({
             icon={<span className={styles.iconSpace} aria-hidden="true" />}
             label="New session"
             trailing={<small>Draft</small>}
+            disabled={disabled}
             aria-label={`New session draft in ${channel.name}`}
             selected={draftSelected}
             onClick={() => onNewSession(channel.id)}
@@ -211,11 +216,12 @@ export function ChannelSidebarRow({
             key={child.id}
             type="button"
             icon={<span className={styles.iconSpace} aria-hidden="true" />}
+            disabled={disabled}
             data-channel-id={child.id}
             aria-label={`${child.name}, session in ${channel.name}`}
             aria-current={selected === child.id ? "page" : undefined}
-            onPointerEnter={() => onPrepare(child.id)}
-            onFocus={() => onPrepare(child.id)}
+            onPointerEnter={() => !disabled && onPrepare(child.id)}
+            onFocus={() => !disabled && onPrepare(child.id)}
             onClick={() => onSelect(child.id)}
             selected={selected === child.id}
             label={

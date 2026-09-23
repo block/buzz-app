@@ -226,6 +226,22 @@ export class DiscoveryState {
         : {}),
     };
   }
+  presentationState() {
+    return {
+      ready: this.complete || this.rosters.size > 0,
+      complete: this.complete,
+      denied: [...this.denied],
+    };
+  }
+  /** Signed inputs for last-known presentation only, never restored into authority. */
+  presentation(): RelayEvent[] {
+    return [...this.rosters.entries()]
+      .filter(([id]) => this.authorized(id))
+      .flatMap(([id, roster]) => {
+        const metadata = this.metadata.get(id);
+        return metadata ? [roster, metadata] : [roster];
+      });
+  }
   channels(): ChannelSummary[] {
     return [...this.rosters.keys()]
       .filter((id) => this.authorized(id))

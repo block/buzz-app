@@ -22,7 +22,7 @@
   position: relative;
   overflow: hidden;
 }
-.withPanel {
+.board:has(> .panelStack) {
   grid-template-columns:
     minmax(124px, min(var(--channel-sidebar-width, 260px), calc(100% - 652px)))
     var(--space-panel-gap) minmax(320px, 1.1fr) minmax(316px, 1fr);
@@ -319,7 +319,7 @@ html[data-keyboard-navigation]
 }
 @media (max-width: 1000px) {
   .board,
-  .withPanel {
+  .board:has(> .panelStack) {
     grid-template-columns:
       minmax(
         124px,
@@ -328,7 +328,7 @@ html[data-keyboard-navigation]
       var(--space-panel-gap)
       minmax(0, 1fr);
   }
-  .withPanel .panelStack {
+  .board:has(> .panelStack) .panelStack {
     position: absolute;
     grid-column: 3;
     inset: 0 0 0 auto;
@@ -337,20 +337,20 @@ html[data-keyboard-navigation]
     box-shadow: var(--elevation-dock);
     margin-left: 0;
   }
-  .withPanel .sidebarResizeHandle {
+  .board:has(> .panelStack) .sidebarResizeHandle {
     z-index: 1;
   }
 }
 @media (max-width: 650px) {
   .board,
-  .withPanel {
+  .board:has(> .panelStack) {
     grid-template-columns: 124px 4px minmax(0, 1fr);
   }
   .sidebarResizeHandle {
     visibility: hidden;
     pointer-events: none;
   }
-  .withPanel .panelStack {
+  .board:has(> .panelStack) .panelStack {
     grid-column: 1 / -1;
     width: 100%;
   }

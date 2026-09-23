@@ -204,6 +204,36 @@ export async function registerBrokerCommunity(
 }
 
 /** Dev-only: a same-origin broker (see dev/relay-broker.mjs) holds the key and signs reads. */
+/** Local host decoding is available before upstream session discovery. */
+export async function decodeBrokerSidebar(
+  community: string,
+  events: readonly RelayEvent[],
+  signal: AbortSignal,
+): Promise<SidebarPreferences> {
+  await registerBrokerCommunity(community, signal);
+  return decodeSidebarAt(
+    `/api/relay/${encodeURIComponent(community)}`,
+    events,
+    signal,
+  );
+}
+async function decodeSidebarAt(
+  endpoint: string,
+  events: readonly RelayEvent[],
+  signal: AbortSignal,
+): Promise<SidebarPreferences> {
+  const result = await fetch(`${endpoint}/sidebar-preferences`, {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(events),
+    signal,
+  });
+  if (!result.ok)
+    throw new Error(`Local decoder failed (HTTP ${result.status})`);
+  return result.json();
+}
+
 export async function connectBrokerTransport(
   base = "",
   signal?: AbortSignal,
@@ -344,16 +374,7 @@ export async function connectBrokerTransport(
             events: readonly RelayEvent[],
             signal: AbortSignal,
           ): Promise<SidebarPreferences> {
-            const result = await fetch(`${endpoint}/sidebar-preferences`, {
-              method: "POST",
-              credentials: "same-origin",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify(events),
-              signal,
-            });
-            if (!result.ok)
-              throw new Error(`Local decoder failed (HTTP ${result.status})`);
-            return result.json();
+            return decodeSidebarAt(endpoint, events, signal);
           },
         }
       : {}),

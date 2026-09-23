@@ -3,7 +3,10 @@ import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
 import { provideRelay, type RelayData } from "../relay/service";
-import { connectBrokerTransport } from "../relay/transport";
+import {
+  connectBrokerTransport,
+  decodeBrokerSidebar,
+} from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 
 export type PersonalProfile = { name: string; picture: string };
@@ -82,7 +85,7 @@ export function createCommunities(
     for (const fn of listeners) fn();
     emitRelay();
   };
-  const acquire = (id: string) => {
+  const acquire = (id: string, viewer = state.viewer) => {
     let session = sessions.get(id);
     if (!session) {
       session = provideRelay(
@@ -90,6 +93,14 @@ export function createCommunities(
         (signal) => connectBrokerTransport("", signal, id),
         presenceActivity,
         identityNames,
+        viewer
+          ? {
+              viewer,
+              community: communityDestination(id).url,
+              decode: (events, signal) =>
+                decodeBrokerSidebar(id, events, signal),
+            }
+          : undefined,
       );
       sessions.set(id, session);
       session.subscribe(() => {
@@ -199,7 +210,7 @@ export function createCommunities(
         }
         if (!saved.memberships.some((m) => m.id === saved.selected))
           saved.selected = null;
-        if (saved.selected) acquire(saved.selected);
+        if (saved.selected) acquire(saved.selected, viewer);
         // A seeded record is saved once so later configuration changes cannot revoke it.
         update({ ...saved, viewer, status: "ready" }, seeded);
       })

@@ -79,8 +79,8 @@ beforeEach(() => {
           viewer,
           relayAuthor: "b".repeat(64),
           relayUrl: url.includes("/primary/")
-            ? "https://primary.test"
-            : "https://other.test",
+            ? "https://primary.example"
+            : "https://secondary.example",
           live: true,
         });
       // Pending reads deliberately ignore abort; shutdown must still abort their

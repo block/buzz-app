@@ -32,7 +32,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onHideDm,
 }: {
   channel: ChannelSummary;
-  session: RelaySession;
+  session: RelaySession | undefined;
   working: boolean;
   sessionsEnabled: boolean;
   selected: string | undefined;
@@ -55,33 +55,42 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   return (
     <ChannelSidebarRow
       channel={channel}
+      disabled={!session}
       icon={<Icon size={17} />}
       badge={
-        <>
-          {working && (
-            <span
-              className={styles.working}
-              role="img"
-              aria-label="Agent working"
-              title="Agent working in this channel"
+        session && (
+          <>
+            {working && (
+              <span
+                className={styles.working}
+                role="img"
+                aria-label="Agent working"
+                title="Agent working in this channel"
+              />
+            )}
+            <UnreadBadge
+              session={session}
+              channelId={channel.id}
+              dm={channel.channelType === "dm"}
             />
-          )}
-          <UnreadBadge
-            session={session}
-            channelId={channel.id}
-            dm={channel.channelType === "dm"}
-          />
-        </>
+          </>
+        )
       }
-      wrapSelect={(trigger) => (
-        <ChannelActivityPopover
-          session={session}
-          channelId={channel.id}
-          channelName={channel.name}
-          onOpenThread={(item) => onOpenThread(item.channelId, item.rootId)}
-          trigger={trigger}
-        />
-      )}
+      wrapSelect={
+        session
+          ? (trigger) => (
+              <ChannelActivityPopover
+                session={session}
+                channelId={channel.id}
+                channelName={channel.name}
+                onOpenThread={(item) =>
+                  onOpenThread(item.channelId, item.rootId)
+                }
+                trigger={trigger}
+              />
+            )
+          : undefined
+      }
       selected={selected}
       sessionsEnabled={sessionsEnabled}
       collapsed={collapsed}
@@ -89,14 +98,18 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       draft={draft}
       draftSelected={draftSelected}
       sessions={sessions}
-      childContent={(child) => (
-        <UnreadBadge
-          session={session}
-          channelId={child.id}
-          label={child.name}
-        />
-      )}
-      onPrepare={(id) => session.channels.prepare?.(id)}
+      childContent={
+        session
+          ? (child) => (
+              <UnreadBadge
+                session={session}
+                channelId={child.id}
+                label={child.name}
+              />
+            )
+          : undefined
+      }
+      onPrepare={(id) => session?.channels.prepare?.(id)}
       onSelect={onSelect}
       onNewSession={onNewSession}
       {...(onHideDm ? { onHideDm } : {})}

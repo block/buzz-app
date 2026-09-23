@@ -35,6 +35,7 @@ const nonIconDependencies = new Set([
   "blurhash",
   "dockview-react",
   "emoji-mart",
+  "fake-indexeddb",
   "flexlayout-react",
   "jsdom",
   "mdast-util-from-markdown",

@@ -70,8 +70,8 @@ beforeEach(() => {
           relayAuthor: "b".repeat(64),
           live: true,
           relayUrl: url.includes("/primary/")
-            ? "https://primary.test"
-            : "https://other.test",
+            ? "https://primary.example"
+            : "https://secondary.example",
         });
       if (url.endsWith("/stream"))
         return new Response(

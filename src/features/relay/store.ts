@@ -999,6 +999,8 @@ export function createChannelStore(
     }
   }
   async function clearCache() {
+    // Admit deletion before any in-memory notification can retire this owner.
+    const cleared = persistence?.clear().catch(() => {});
     epoch++;
     hydration = undefined;
     warmCandidates.clear();
@@ -1010,7 +1012,7 @@ export function createChannelStore(
     for (const state of [...windows.values()]) evict(state);
     heads.clear();
     tails.clear();
-    await persistence?.clear().catch(() => {});
+    await cleared;
   }
   /** One background head read at a time; warm never competes with demand reads
    * for foreground slots and is dropped wholesale when the session resets. */
@@ -1466,6 +1468,10 @@ export function createChannelStore(
       if (rosterRefresh.state === "error" || rosterRefresh.state === "deferred")
         void discover(true);
     },
+    presentation: () => ({
+      ...discovery?.presentationState(),
+      events: discovery?.presentation() ?? [],
+    }),
     canAccess: authorized,
     canParticipate: (id: string) => discovery?.canParticipate(id) ?? false,
     purgeAccess,

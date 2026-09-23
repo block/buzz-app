@@ -114,6 +114,14 @@ test.describe("public search destination", () => {
         name: /crew-search exact public reply/,
       });
       await expect(result).toBeVisible();
+      // Search resolves access before showing the result. Opening must make
+      // exactly one additional fresh lookup, not a snapshot-publication loop.
+      const exactReads = (kind) =>
+        app.report.queries.filter(
+          ({ filter }) =>
+            filter.kinds?.includes(kind) && filter["#d"]?.includes("open"),
+        ).length;
+      const before = [exactReads(39000), exactReads(39002)];
       const start = performance.now();
       await result.click();
       const thread = page.getByRole("region", {
@@ -143,6 +151,9 @@ test.describe("public search destination", () => {
           .getByRole("complementary", { name: "Channel sidebar" })
           .getByRole("button", { name: "open", exact: true }),
       ).toHaveCount(0);
+      expect([exactReads(39000), exactReads(39002)]).toEqual(
+        before.map((count) => count + 1),
+      );
     }
     expect(
       app.report.queries

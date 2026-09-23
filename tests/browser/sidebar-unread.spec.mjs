@@ -428,16 +428,18 @@ test("session changes discard the previous sidebar targets and manual unread sti
       .getByRole("button", { name: "Channel settings", exact: true })
       .click();
     await expect.poll(() => requested).toBe(true);
-    await scroll(page, 1800);
-    await expect(cue(page, "above")).toBeVisible();
-    // Completing delayed preferences must not replace the user's newer viewport.
+    // Cold scope has no coherent sidebar until preferences settle. Old-scope
+    // targets stay absent; once rendered, only this scope's unread participates.
+    await expect(list(page).locator("[data-channel-id]")).toHaveCount(0);
     release();
     await expect(
       page.getByText("Loading saved groups and stars…", { exact: true }),
     ).toBeHidden();
-    expect(await list(page).evaluate((element) => element.scrollTop)).toBe(
-      1800,
-    );
+    await expect
+      .poll(() => list(page).locator("[data-channel-id]").count())
+      .toBeGreaterThan(100);
+    await scroll(page, 1800);
+    await expect(cue(page, "above")).toBeVisible();
     await cue(page, "above").click();
     await expect.poll(() => inView(page, "alpha")).toBe(true);
     await expect(

@@ -752,6 +752,7 @@ export function createRelaySession(
         "A selected recipient is no longer a channel member; remove them or refresh membership",
       );
   }
+  let sidebarRecords: readonly RelayEvent[] | undefined;
   const sidebarPreferences = createSidebarPreferencesStore(
     async (signal?: AbortSignal) => {
       const decode = transport?.decodeSidebarPreferences;
@@ -786,7 +787,12 @@ export function createRelaySession(
           },
         },
         transport.viewer,
-        decode,
+        async (events, signal) => {
+          const data = await decode(events, signal);
+          signal.throwIfAborted();
+          sidebarRecords = events;
+          return data;
+        },
         combined,
       );
     },
@@ -1497,13 +1503,22 @@ export function createRelaySession(
 
   return {
     session,
+    presentation: () => ({
+      ...channels.presentation(),
+      profiles: profiles.events(),
+      preferences: sidebarPreferences.queries.snapshot().data,
+      preferenceEvents: sidebarRecords,
+      accessEpoch,
+    }),
     async clearCache() {
+      const cleared = channels.clearCache();
       accessEpoch++;
       cancelUploads();
       cacheClearEpoch++;
       activity.clear();
       presence.clear();
       typing.clear();
+      sidebarRecords = undefined;
       sidebarPreferences.clear();
       // New windows must not yield to or receive errors from retired owners.
       catchups.clear();
@@ -1517,8 +1532,8 @@ export function createRelaySession(
       agentLibrary.clear();
       archives.clear();
       workflows.clear();
-      await channels.clearCache();
-      updateInterests();
+      await cleared;
+      if (!closed) updateInterests();
     },
     dispose() {
       closed = true;

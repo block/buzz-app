@@ -103,3 +103,44 @@ it("keeps live unread updates and uses replacement session callbacks across row 
   expect(replacement).toHaveBeenCalledWith("alpha");
   expect(onSelect).toHaveBeenCalledTimes(1);
 });
+
+it("keeps preview parents, children and drafts inert until real session capabilities attach", async () => {
+  const user = userEvent.setup();
+  const active = owner();
+  const props = {
+    channel: { id: "alpha", name: "Alpha", channelType: "stream" as const },
+    session: undefined,
+    working: false,
+    sessionsEnabled: true,
+    selected: undefined,
+    collapsed: false,
+    onToggle: vi.fn(),
+    draft: true,
+    draftSelected: false,
+    sessions: [{ id: "child", name: "Child", channelType: "session" as const }],
+    onSelect: vi.fn(),
+    onNewSession: vi.fn(),
+    onOpenThread: vi.fn(),
+  };
+  const view = render(<ChannelSidebarItem {...props} />);
+  const parent = screen.getByRole("button", { name: "Alpha" });
+  const child = screen.getByRole("button", { name: "Child, session in Alpha" });
+  const draft = screen.getByRole("button", {
+    name: "New session draft in Alpha",
+  });
+  for (const button of [parent, child, draft]) {
+    expect(button).toBeDisabled();
+    await user.hover(button);
+    await user.click(button);
+  }
+  expect(props.onSelect).not.toHaveBeenCalled();
+  expect(props.onNewSession).not.toHaveBeenCalled();
+  expect(
+    screen.queryByRole("button", { name: "More options for Alpha" }),
+  ).not.toBeInTheDocument();
+  expect(active.listeners.size).toBe(0);
+  view.rerender(<ChannelSidebarItem {...props} session={active.session} />);
+  await user.click(screen.getByRole("button", { name: "Alpha" }));
+  expect(props.onSelect).toHaveBeenCalledWith("alpha");
+  expect(active.listeners.size).toBeGreaterThan(0);
+});

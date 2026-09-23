@@ -15,7 +15,7 @@ for (const action of [
   "returned to top",
   "scroll event pending",
 ]) {
-  test(`delayed sidebar restoration respects ${action} viewport`, async ({
+  test(`warm sidebar refresh respects ${action} viewport`, async ({
     page,
     app,
   }) => {
@@ -23,7 +23,34 @@ for (const action of [
     const sidebar = page.getByRole("navigation", {
       name: "Subscribed channels",
     });
-    // Save a nonzero position, then cold-load that community with preferences held.
+    // Save a coherent checkpoint + nonzero position. Hold only the upstream
+    // preference refresh: local decoding must remain available on warm restart.
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            new Promise((resolve, reject) => {
+              const request = indexedDB.open("buzz-read-models-v1", 1);
+              request.onerror = () => reject(request.error);
+              request.onsuccess = () => {
+                const db = request.result,
+                  tx = db.transaction("scopes");
+                const get = tx.objectStore("scopes").getAll();
+                tx.oncomplete = () => {
+                  db.close();
+                  resolve(
+                    get.result.some(
+                      ({ value }) =>
+                        value.events.filter((event) => event.kind === 39000)
+                          .length > 100,
+                    ),
+                  );
+                };
+              };
+            }),
+        ),
+      )
+      .toBe(true);
     await sidebar.evaluate((element) => {
       element.scrollTop = 900;
       element.dispatchEvent(new Event("scroll"));
@@ -35,14 +62,22 @@ for (const action of [
       release = resolve;
     });
     let requested = false;
-    await page.route(
-      "**/api/relay/primary/sidebar-preferences",
-      async (route) => {
-        requested = true;
-        await held;
+    await page.route("**/api/relay/primary/query", async (route) => {
+      const filters = route.request().postDataJSON();
+      if (
+        !filters.some(
+          (filter) =>
+            filter.kinds?.includes(30078) &&
+            filter["#d"]?.includes("channel-sections"),
+        )
+      ) {
         await route.continue();
-      },
-    );
+        return;
+      }
+      requested = true;
+      await held;
+      await route.continue();
+    });
     try {
       await page.reload();
       await button(page, "Messages").first().click();
@@ -52,8 +87,8 @@ for (const action of [
       await expect.poll(() => requested).toBe(true);
       await expect(
         page.getByText("Loading saved groups and stars…", { exact: true }),
-      ).toBeVisible();
-      expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(0);
+      ).toBeHidden();
+      expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(900);
       if (action === "scroll event pending") {
         // Model compositor movement visible before the main-thread scroll
         // callback. The restoration must inspect the current position too.
@@ -74,7 +109,7 @@ for (const action of [
       }
       if (action !== "untouched") {
         await sidebar.hover({ position: { x: 10, y: 100 } });
-        await page.mouse.wheel(0, 1800);
+        await page.mouse.wheel(0, 900);
         await expect
           .poll(() => sidebar.evaluate((element) => element.scrollTop))
           .toBe(1800);
@@ -85,16 +120,23 @@ for (const action of [
           .poll(() => sidebar.evaluate((element) => element.scrollTop))
           .toBe(0);
       }
+      const refreshed = page.waitForResponse((response) =>
+        response.url().endsWith("/sidebar-preferences"),
+      );
       release();
-      await expect(
-        page.getByText("Loading saved groups and stars…", { exact: true }),
-      ).toBeHidden();
+      await refreshed;
+      await page.evaluate(
+        () =>
+          new Promise((resolve) =>
+            requestAnimationFrame(() => requestAnimationFrame(resolve)),
+          ),
+      );
       expect(await sidebar.evaluate((element) => element.scrollTop)).toBe(
         action === "untouched" ? 900 : action === "returned to top" ? 0 : 1800,
       );
     } finally {
       release();
-      await page.unroute("**/api/relay/primary/sidebar-preferences");
+      await page.unroute("**/api/relay/primary/query");
     }
   });
 }

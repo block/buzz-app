@@ -7,7 +7,8 @@ import { provideRelay, type RelayData } from "../relay/service";
 import { connectBrokerTransport } from "../relay/transport";
 import { communityDestination, isCommunityAlias } from "./destination";
 
-export type PersonalProfile = { name: string; picture: string };
+export const PROFILE_ABOUT_MAX_LENGTH = 500;
+export type PersonalProfile = { name: string; picture: string; about?: string };
 export type Membership = { id: string; name: string; icon?: string };
 type Saved = {
   profile: PersonalProfile;
@@ -20,7 +21,7 @@ export type ClientSnapshot = Saved & {
   error?: string;
 };
 const empty = (): Saved => ({
-  profile: { name: "", picture: "" },
+  profile: { name: "", picture: "", about: "" },
   memberships: [],
   selected: null,
 });
@@ -136,6 +137,10 @@ export function createCommunities(
                 picture:
                   typeof raw.profile?.picture === "string"
                     ? raw.profile.picture
+                    : "",
+                about:
+                  typeof raw.profile?.about === "string"
+                    ? raw.profile.about
                     : "",
               },
               memberships: Array.isArray(raw.memberships)

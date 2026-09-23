@@ -20,7 +20,7 @@ export const parseColorMode = (value: unknown): ColorMode =>
 export const parseColorModePreference = (
   value: unknown,
 ): ColorModePreference =>
-  value === "system" ? "system" : parseColorMode(value);
+  value === "light" || value === "dark" ? value : "system";
 
 export interface AppearanceSnapshot {
   readonly preference: ColorModePreference;
@@ -41,7 +41,7 @@ export function createAppearance(
         : "light"
       : preference;
   let state: AppearanceSnapshot = {
-    preference: "light",
+    preference: "system",
     mode: "light",
     error: null,
     fontScale: 1,

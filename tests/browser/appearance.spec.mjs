@@ -44,9 +44,17 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
   await page.goto(app.origin);
   await expectMode(page, "light");
   await settings(page);
+  const system = page.getByRole("radio", { name: "System", exact: true });
   const light = page.getByRole("radio", { name: "Light", exact: true });
   const dark = page.getByRole("radio", { name: "Dark", exact: true });
-  await expect(light).toBeChecked();
+  await expect(system).toBeChecked();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expectMode(page, "dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expectMode(page, "light");
+  await light.check();
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expectMode(page, "light");
   await light.focus();
   await page.keyboard.press("ArrowRight");
   await expect(dark).toBeChecked();

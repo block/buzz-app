@@ -136,6 +136,8 @@ export const MicrosoftTeamsLogoIcon = defineIcon(
 );
 import { MinusIcon as PhosphorMinusIcon } from "@phosphor-icons/react/dist/csr/Minus";
 export const MinusIcon = defineIcon("phosphor", PhosphorMinusIcon);
+import { MonitorIcon as PhosphorMonitorIcon } from "@phosphor-icons/react/dist/csr/Monitor";
+export const MonitorIcon = defineIcon("phosphor", PhosphorMonitorIcon);
 import { MoonIcon as PhosphorMoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
 export const MoonIcon = defineIcon("phosphor", PhosphorMoonIcon);
 import { MonitorIcon as PhosphorMonitorIcon } from "@phosphor-icons/react/dist/csr/Monitor";

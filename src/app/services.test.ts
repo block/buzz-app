@@ -227,7 +227,7 @@ it("seeds and persists the configured relay through the real app composition", a
     "/api/relay/https%3A%2F%2Fthird.example/session",
   );
   expect(JSON.parse(values.get(`buzz-client.v1:${viewer}`) ?? "null")).toEqual({
-    profile: { name: "", picture: "" },
+    profile: { name: "", picture: "", about: "" },
     memberships: [membership],
     selected: membership.id,
   });

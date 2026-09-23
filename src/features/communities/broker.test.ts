@@ -119,7 +119,8 @@ it("routes reads, profile publication, invite claims and delayed writes to their
     const profile = await post("secondary", "profile", {
       name: "Community name",
       picture: "",
-      existing: { about: "preserved" },
+      about: "Updated description",
+      existing: { about: "preserved", website: "https://example.test" },
     });
     expect(profile.ok).toBe(true);
     expect(calls[1]?.url).toBe("https://secondary.example/events");
@@ -129,7 +130,8 @@ it("routes reads, profile publication, invite claims and delayed writes to their
     expect(profileEvent.kind).toBe(0);
     expect(JSON.parse(profileEvent.content)).toMatchObject({
       display_name: "Community name",
-      about: "preserved",
+      about: "Updated description",
+      website: "https://example.test",
     });
     expect(verifyEvent(profileEvent)).toBe(true);
     await post("secondary", "accept-policy", {

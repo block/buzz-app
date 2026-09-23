@@ -1717,10 +1717,14 @@ export function relayBrokerPlugin({
               filters.name.length > 100 ||
               typeof filters?.picture !== "string" ||
               filters.picture.length > 2048 ||
-              (filters.picture && !/^https:\/\//.test(filters.picture))
+              (filters.picture && !/^https:\/\//.test(filters.picture)) ||
+              (filters.about !== undefined &&
+                (typeof filters.about !== "string" ||
+                  filters.about.length > 500))
             )
               return json(res, 400, {
-                error: "Profile needs a name and an optional HTTPS picture URL",
+                error:
+                  "Profile needs a name, an optional HTTPS picture URL, and a description of 500 characters or fewer",
               });
             // Preserve fields this small editor does not expose.
             const content = {
@@ -1728,6 +1732,12 @@ export function relayBrokerPlugin({
               name: filters.name.trim(),
               display_name: filters.name.trim(),
               picture: filters.picture,
+              about:
+                filters.about === undefined
+                  ? typeof filters.existing?.about === "string"
+                    ? filters.existing.about
+                    : ""
+                  : filters.about.trim(),
             };
             if (Buffer.byteLength(JSON.stringify(content)) > 16000)
               return json(res, 400, { error: "Profile too large" });

@@ -1,34 +1,11 @@
 import { spawn } from "node:child_process";
-import { createWriteStream } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
-const target = process.argv[2];
-const profileArgs = process.argv.slice(3);
-const network = target === "web" && profileArgs.includes("--network");
-const args = profileArgs.filter((argument) => argument !== "--network");
-if (target !== "web" && target !== "desktop") {
-  console.error(
-    "Usage: node scripts/profile-dev.mjs <web|desktop> [arguments]",
-  );
-  process.exit(1);
-}
-if (process.platform !== "darwin") {
-  console.error("Development profiling currently supports macOS only.");
-  process.exit(1);
-}
-
-const stamp = new Date()
-  .toISOString()
-  .replaceAll(":", "-")
-  .replace(/\.\d{3}Z$/, "Z");
-const directory = `${root}.profiles/${stamp}-${target}`;
-await mkdir(directory, { recursive: true });
 
 const children = new Set();
-let stopping;
 let forced = false;
 
 function run(command, commandArgs, options = {}) {
@@ -48,22 +25,28 @@ function mirror(child) {
   child.stderr?.pipe(process.stderr);
 }
 
-function waitForInspector(child) {
+export function waitForInspector(child) {
   return new Promise((resolve, reject) => {
     let pending = "";
     const onData = (chunk) => {
       pending += chunk;
       const match = pending.match(/Debugger listening on (ws:\/\/\S+)/);
       if (match) {
-        child.stderr.off("data", onData);
+        cleanup();
         resolve(match[1]);
       }
       if (pending.length > 16_384) pending = pending.slice(-8_192);
     };
+    const onExit = () => {
+      cleanup();
+      reject(new Error("Vite exited before its Node inspector became ready."));
+    };
+    const cleanup = () => {
+      child.stderr.off("data", onData);
+      child.off("exit", onExit);
+    };
     child.stderr.on("data", onData);
-    child.once("exit", () =>
-      reject(new Error("Vite exited before its Node inspector became ready.")),
-    );
+    child.once("exit", onExit);
   });
 }
 
@@ -78,10 +61,17 @@ async function commandSucceeds(command, commandArgs) {
   });
 }
 
-function inspectorClient(url) {
+export function inspectorClient(url) {
   const socket = new WebSocket(url);
   const pending = new Map();
   let nextId = 1;
+  let terminalError;
+  const fail = (error) => {
+    if (terminalError) return;
+    terminalError = error;
+    for (const request of pending.values()) request.reject(error);
+    pending.clear();
+  };
   socket.addEventListener("message", ({ data }) => {
     const message = JSON.parse(data);
     if (!message.id) return;
@@ -91,24 +81,46 @@ function inspectorClient(url) {
     if (message.error) request.reject(new Error(message.error.message));
     else request.resolve(message.result);
   });
+  let rejectReady;
   const ready = new Promise((resolve, reject) => {
+    rejectReady = reject;
     socket.addEventListener("open", resolve, { once: true });
     socket.addEventListener(
       "error",
-      () => reject(new Error(`Could not connect to Node inspector at ${url}.`)),
+      () => {
+        const error = new Error(
+          `Could not connect to Node inspector at ${url}.`,
+        );
+        fail(error);
+        reject(error);
+      },
       { once: true },
     );
+  });
+  socket.addEventListener("close", () => {
+    const error = new Error("Node inspector connection closed.");
+    fail(error);
+    rejectReady(error);
   });
   return {
     async send(method, params) {
       await ready;
+      if (terminalError) throw terminalError;
       return await new Promise((resolve, reject) => {
         const id = nextId++;
         pending.set(id, { resolve, reject });
-        socket.send(JSON.stringify({ id, method, params }));
+        try {
+          socket.send(JSON.stringify({ id, method, params }));
+        } catch (error) {
+          pending.delete(id);
+          reject(error);
+        }
       });
     },
     close() {
+      const error = new Error("Node inspector connection closed.");
+      fail(error);
+      rejectReady(error);
       socket.close();
     },
   };
@@ -118,7 +130,10 @@ function signal(child, name) {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null)
     return;
   try {
-    process.kill(-child.pid, name);
+    const desktopLauncher = child.spawnargs?.includes(
+      "scripts/desktop-dev.mjs",
+    );
+    process.kill(desktopLauncher ? child.pid : -child.pid, name);
   } catch (error) {
     if (error.code !== "ESRCH") throw error;
   }
@@ -136,7 +151,7 @@ async function output(command, commandArgs) {
   });
 }
 
-async function recordManifest(extra = {}) {
+async function recordManifest(directory, target, profileArgs, extra = {}) {
   await writeFile(
     `${directory}/manifest.json`,
     `${JSON.stringify(
@@ -178,10 +193,13 @@ async function stopChildren() {
   for (const child of children) signal(child, "SIGTERM");
 }
 
-function installSignals(stop) {
+function stopController() {
+  const abort = new AbortController();
+  let resolve;
+  const requested = new Promise((value) => (resolve = value));
   for (const name of ["SIGINT", "SIGTERM"]) {
     process.on(name, () => {
-      if (stopping) {
+      if (abort.signal.aborted) {
         forced = true;
         for (const child of children) signal(child, "SIGKILL");
         return;
@@ -189,14 +207,11 @@ function installSignals(stop) {
       console.log(
         `\n${name === "SIGINT" ? "Ctrl-C" : name} received; finalizing profile...`,
       );
-      stopping = Promise.resolve()
-        .then(stop)
-        .catch((error) => {
-          console.error(error);
-          process.exitCode = 1;
-        });
+      abort.abort();
+      resolve({ reason: "signal", code: 0 });
     });
   }
+  return { abort, requested };
 }
 
 function vitePort(values) {
@@ -208,15 +223,18 @@ function vitePort(values) {
   return 1430;
 }
 
-async function waitForServer(url, child) {
+async function waitForServer(url, child, signal) {
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
+    signal.throwIfAborted();
     if (child.exitCode !== null)
       throw new Error(`Vite exited before ${url} became ready.`);
     try {
-      const response = await fetch(url);
+      const response = await fetch(url, { signal });
       if (response.ok) return;
-    } catch {}
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   throw new Error(`Timed out waiting for ${url}.`);
@@ -234,7 +252,7 @@ function headerValue(headers, name) {
   return undefined;
 }
 
-function networkRecorder(session) {
+export function networkRecorder(session, directory) {
   const requests = new Map();
   const webSockets = new Map();
   const startedAt = new Date().toISOString();
@@ -360,31 +378,16 @@ function networkRecorder(session) {
   };
 }
 
-async function writeProtocolStream(session, handle, destination) {
-  const output = createWriteStream(destination);
-  try {
-    for (;;) {
-      const { data, base64Encoded, eof } = await session.send("IO.read", {
-        handle,
-      });
-      output.write(data, base64Encoded ? "base64" : "utf8");
-      if (eof) break;
-    }
-    await session.send("IO.close", { handle });
-  } finally {
-    await new Promise((resolve, reject) => {
-      output.once("error", reject);
-      output.end(resolve);
-    });
-  }
+export function webViteArgs(values) {
+  return values.includes("--strictPort") ? values : [...values, "--strictPort"];
 }
 
-async function profileWeb() {
+async function profileWeb({ directory, profileArgs, args, network }) {
   const port = vitePort(args);
   if (!Number.isInteger(port) || port < 1 || port > 65535)
     throw new Error("--port must be an integer between 1 and 65535.");
   const url = `http://localhost:${port}`;
-  await recordManifest({
+  await recordManifest(directory, "web", profileArgs, {
     coverage: [
       "chromium-renderer",
       "vite-broker",
@@ -392,44 +395,111 @@ async function profileWeb() {
     ],
     network,
   });
+
+  const control = stopController();
+  const cancelled = control.requested.then(() => {
+    throw new DOMException("Profiling startup cancelled.", "AbortError");
+  });
   const nodeOptions = [process.env.NODE_OPTIONS, "--inspect=127.0.0.1:0"]
     .filter(Boolean)
     .join(" ");
   const vite = run(
     process.execPath,
-    ["node_modules/vite/bin/vite.js", ...args],
+    ["node_modules/vite/bin/vite.js", ...webViteArgs(args)],
     {
       env: { ...process.env, NODE_OPTIONS: nodeOptions },
       stdio: ["inherit", "pipe", "pipe"],
     },
   );
   const inspectorUrl = waitForInspector(vite);
+  const viteExit = new Promise((resolve) =>
+    vite.once("exit", (code, signal) =>
+      resolve({ reason: "vite", code: code ?? (signal ? 1 : 0) }),
+    ),
+  );
   mirror(vite);
+
   let browser;
   let session;
   let networkCapture;
-  let tracingComplete;
   let nodeProfiler;
-  const stop = async () => {
-    let failure;
-    try {
-      let rendererProfile;
-      let brokerProfile;
-      if (session) {
+  let rendererStarted = false;
+  let brokerStarted = false;
+  let captureStarted = false;
+  let outcome;
+  const failures = [];
+  try {
+    await waitForServer(url, vite, control.abort.signal);
+    control.abort.signal.throwIfAborted();
+    nodeProfiler = inspectorClient(
+      await Promise.race([inspectorUrl, cancelled]),
+    );
+    await nodeProfiler.send("Profiler.enable");
+    await nodeProfiler.send("Profiler.setSamplingInterval", { interval: 1000 });
+    await nodeProfiler.send("Profiler.start");
+    brokerStarted = true;
+    control.abort.signal.throwIfAborted();
+
+    const { chromium } = await import("@playwright/test");
+    const browserLaunch = chromium.launch({
+      channel: "chrome",
+      headless: false,
+      handleSIGINT: false,
+      handleSIGTERM: false,
+    });
+    void browserLaunch.then((launched) => {
+      if (control.abort.signal.aborted && launched !== browser)
+        return launched.close();
+    });
+    browser = await Promise.race([browserLaunch, cancelled]);
+    control.abort.signal.throwIfAborted();
+    const page = await browser.newPage();
+    session = await page.context().newCDPSession(page);
+    if (network) {
+      networkCapture = networkRecorder(session, directory);
+      await networkCapture.start(page);
+    }
+    await session.send("Profiler.enable");
+    await session.send("Profiler.setSamplingInterval", { interval: 1000 });
+    await session.send("Profiler.start");
+    rendererStarted = true;
+    await page.goto(url);
+    control.abort.signal.throwIfAborted();
+    captureStarted = true;
+    console.log(
+      `\nProfiling ${url}. Press Ctrl-C to stop and save the profile.`,
+    );
+    outcome = await Promise.race([control.requested, viteExit]);
+  } catch (error) {
+    if (!control.abort.signal.aborted) failures.push(error);
+    outcome ??= { reason: "startup", code: 1 };
+  } finally {
+    let rendererProfile;
+    let brokerProfile;
+    if (rendererStarted) {
+      try {
         ({ profile: rendererProfile } = await session.send("Profiler.stop"));
         await writeFile(
           `${directory}/chromium-renderer.cpuprofile`,
           `${JSON.stringify(rendererProfile)}\n`,
         );
+      } catch (error) {
+        failures.push(error);
       }
-      if (nodeProfiler) {
+    }
+    if (brokerStarted) {
+      try {
         ({ profile: brokerProfile } = await nodeProfiler.send("Profiler.stop"));
         await writeFile(
           `${directory}/vite-broker.cpuprofile`,
           `${JSON.stringify(brokerProfile)}\n`,
         );
+      } catch (error) {
+        failures.push(error);
       }
-      if (networkCapture) {
+    }
+    if (networkCapture) {
+      try {
         await networkCapture.write({
           renderer: rendererProfile && {
             startTimeMicroseconds: rendererProfile.startTime,
@@ -441,132 +511,127 @@ async function profileWeb() {
             note: "Node inspector monotonic epoch is isolate-specific; align by capture start/end rather than assuming the renderer epoch.",
           },
         });
-        const complete = tracingComplete;
-        await session.send("Tracing.end");
-        const { stream } = await complete;
-        await writeProtocolStream(
-          session,
-          stream,
-          `${directory}/chrome-performance.json`,
-        );
+      } catch (error) {
+        failures.push(error);
       }
-    } catch (error) {
-      failure = error;
-    } finally {
-      nodeProfiler?.close();
-      await browser?.close();
-      await stopChildren();
     }
-    if (failure) throw failure;
-    console.log(`\nProfile saved to ${directory}`);
-    process.exitCode = forced ? 130 : 0;
-  };
-  installSignals(stop);
-  await waitForServer(url, vite);
-  nodeProfiler = inspectorClient(await inspectorUrl);
-  await nodeProfiler.send("Profiler.enable");
-  await nodeProfiler.send("Profiler.setSamplingInterval", { interval: 1000 });
-  await nodeProfiler.send("Profiler.start");
-  const { chromium } = await import("@playwright/test");
-  browser = await chromium.launch({
-    channel: "chrome",
-    headless: false,
-    handleSIGINT: false,
-    handleSIGTERM: false,
-  });
-  const page = await browser.newPage();
-  session = await page.context().newCDPSession(page);
-  if (network) {
-    networkCapture = networkRecorder(session);
-    await networkCapture.start(page);
-    tracingComplete = new Promise((resolve) =>
-      session.once("Tracing.tracingComplete", resolve),
+    nodeProfiler?.close();
+    try {
+      await browser?.close();
+    } catch (error) {
+      failures.push(error);
+    }
+    await stopChildren();
+  }
+
+  if (!captureStarted) {
+    throw new Error(
+      `Profiling stopped during startup; partial artifacts remain at ${directory}.`,
+      { cause: failures[0] },
     );
-    await session.send("Tracing.start", {
-      categories: [
-        "devtools.timeline",
-        "v8.execute",
-        "loading",
-        "disabled-by-default-devtools.timeline",
-        "disabled-by-default-devtools.timeline.frame",
-        "disabled-by-default-v8.cpu_profiler",
-        "disabled-by-default-v8.cpu_profiler.hires",
-      ].join(","),
-      options: "sampling-frequency=10000",
-      transferMode: "ReturnAsStream",
-    });
   }
-  await session.send("Profiler.enable");
-  await session.send("Profiler.setSamplingInterval", { interval: 1000 });
-  await session.send("Profiler.start");
-  await page.goto(url);
-  console.log(`\nProfiling ${url}. Press Ctrl-C to stop and save the profile.`);
-  const code = await new Promise((resolve) =>
-    vite.once("exit", (value) => resolve(value ?? 0)),
-  );
-  if (!stopping) {
-    await stop();
-    process.exitCode = code;
-  }
+  if (failures.length) throw failures[0];
+  console.log(`\nProfile saved to ${directory}`);
+  process.exitCode = forced ? 130 : (outcome?.code ?? 0);
 }
 
-async function profileDesktop() {
-  const trace = `${directory}/desktop-time-profile.trace`;
-  await recordManifest({
-    coverage: ["all-native-processes"],
-    caveat: "JavaScriptCore stacks may not resolve to application JavaScript.",
-  });
-  run("xcrun", [
-    "xctrace",
-    "record",
-    "--template",
-    "Time Profiler",
-    "--all-processes",
-    "--output",
-    trace,
-    "--no-prompt",
-  ]);
-  let desktop;
-  const stop = async () => {
-    await stopChildren();
+function hasRunnerArgument(values) {
+  return values.some(
+    (value) =>
+      value === "--runner" || value === "-r" || value.startsWith("--runner="),
+  );
+}
+
+async function waitForTrace(trace) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
     if (
-      !(await commandSucceeds("xcrun", [
+      await commandSucceeds("xcrun", [
         "xctrace",
         "export",
         "--input",
         trace,
         "--toc",
-      ]))
-    ) {
-      throw new Error(
-        `Instruments left an incomplete trace at ${trace}; rerun and press Ctrl-C only once.`,
-      );
-    }
-    console.log(`\nProfile saved to ${trace}`);
-    process.exitCode = forced ? 130 : 0;
-  };
-  installSignals(stop);
-  // xctrace has no machine-readable readiness event without coupling to a custom notification.
-  // Start compilation immediately: Time Profiler records system-wide, including processes created afterward.
-  desktop = run(process.execPath, ["scripts/desktop-dev.mjs", ...args]);
-  console.log(
-    "\nProfiling the desktop process tree. Press Ctrl-C to stop and save the profile.",
-  );
-  const code = await new Promise((resolve) =>
-    desktop.once("exit", (value) => resolve(value ?? 0)),
-  );
-  if (!stopping) {
-    await stop();
-    process.exitCode = code;
+      ])
+    )
+      return;
+    await new Promise((resolve) => setTimeout(resolve, 250));
   }
+  throw new Error(
+    `Instruments left an incomplete trace at ${trace}; rerun and press Ctrl-C only once.`,
+  );
 }
 
-try {
-  if (target === "web") await profileWeb();
-  else await profileDesktop();
-  await stopping;
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
+async function profileDesktop({ directory, profileArgs, args }) {
+  if (hasRunnerArgument(args))
+    throw new Error("Desktop profiling owns Tauri's --runner option.");
+  const trace = `${directory}/desktop-time-profile.trace`;
+  await recordManifest(directory, "desktop", profileArgs, {
+    coverage: ["launched-desktop-application"],
+    caveat:
+      "Instruments launches and records the Buzz application process instead of all macOS processes. JavaScriptCore stacks may not resolve to application JavaScript.",
+  });
+  const control = stopController();
+  const runner = fileURLToPath(
+    new URL("./profile-desktop-runner.mjs", import.meta.url),
+  );
+  const desktop = run(
+    process.execPath,
+    ["scripts/desktop-dev.mjs", "--runner", runner, ...args],
+    { env: { ...process.env, BUZZ_PROFILE_TRACE: trace }, detached: false },
+  );
+  const desktopExit = new Promise((resolve) =>
+    desktop.once("exit", (code, signal) =>
+      resolve({ reason: "desktop", code: code ?? (signal ? 1 : 0) }),
+    ),
+  );
+  console.log(
+    "\nProfiling the launched Buzz desktop application. Press Ctrl-C to stop and save the profile.",
+  );
+  const outcome = await Promise.race([control.requested, desktopExit]);
   await stopChildren();
-  process.exitCode = 1;
+  await waitForTrace(trace);
+  console.log(`\nProfile saved to ${trace}`);
+  process.exitCode = forced ? 130 : outcome.code;
+}
+
+async function main() {
+  const target = process.argv[2];
+  const profileArgs = process.argv.slice(3);
+  const network = target === "web" && profileArgs.includes("--network");
+  const args = profileArgs.filter((argument) => argument !== "--network");
+  if (target !== "web" && target !== "desktop") {
+    console.error(
+      "Usage: node scripts/profile-dev.mjs <web|desktop> [arguments]",
+    );
+    process.exitCode = 1;
+    return;
+  }
+  if (process.platform !== "darwin") {
+    console.error("Development profiling currently supports macOS only.");
+    process.exitCode = 1;
+    return;
+  }
+  const stamp = new Date()
+    .toISOString()
+    .replaceAll(":", "-")
+    .replace(/\.\d{3}Z$/, "Z");
+  const directory = `${root}.profiles/${stamp}-${target}`;
+  await mkdir(directory, { recursive: true });
+  if (target === "web")
+    await profileWeb({ directory, profileArgs, args, network });
+  else await profileDesktop({ directory, profileArgs, args });
+}
+
+if (
+  process.argv[1] &&
+  import.meta.url === new URL(process.argv[1], "file:").href
+) {
+  try {
+    await main();
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    await stopChildren();
+    process.exitCode = 1;
+  }
 }

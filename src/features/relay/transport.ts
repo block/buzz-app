@@ -1,4 +1,5 @@
 import { brokerUpload, type AttachmentUpload } from "./attachments";
+import { withPhotoPreparation } from "./photo-preparation";
 import { workflowHost } from "../workflows/http";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
@@ -255,7 +256,11 @@ export async function connectBrokerTransport(
   return {
     profiling,
     ...(session.attachmentUploads === true && session.relayUrl
-      ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
+      ? {
+          uploadAttachment: withPhotoPreparation(
+            brokerUpload(endpoint, session.relayUrl),
+          ),
+        }
       : {}),
     ...(session.presence && session.live
       ? {

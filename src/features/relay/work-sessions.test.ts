@@ -3,7 +3,14 @@ import { SESSION_CHANNEL_DESCRIPTION } from "../sessions/metadata";
 import { createWorkSessions } from "./work-sessions";
 import type { Outbox, OutgoingEvent } from "./outbox";
 import type { ChannelQueries } from "./contracts";
-import { keypair, message, roster, signed } from "./testing";
+import {
+  keypair,
+  message,
+  metadata,
+  roster,
+  scriptedTransport,
+  signed,
+} from "./testing";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
 const event = message(keypair(), "session", "Work", 1);
@@ -94,6 +101,57 @@ it("restores an unconfirmed ordinary channel without creating a second identity"
         ?.snapshot()
         .filter((item) => item.event.id === creation.id),
     ).toHaveLength(1);
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("removes a successfully refreshed channel creation from durable recovery", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let records: readonly OutgoingEvent[] = [];
+  const owner = createRelaySession(
+    {
+      ...wire.transport,
+      writer: {
+        kinds: [9, 9000, 9007],
+        sign: async (template) => signed(viewer, template),
+        publish: async () => {},
+      },
+    },
+    {
+      outboxStorage: {
+        load: () => structuredClone(records),
+        save: (next) => {
+          records = structuredClone(next);
+        },
+      },
+    },
+  );
+  try {
+    const creating = owner.session.channelCreation.create({
+      name: "Release notes",
+      visibility: "open",
+    });
+    await vi.waitFor(() =>
+      expect(records.some(({ event }) => event.kind === 9007)).toBe(true),
+    );
+    const id = records
+      .find(({ event }) => event.kind === 9007)
+      ?.event.tags.find(([name]) => name === "h")?.[1];
+    expect(id).toBeTypeOf("string");
+    await vi.waitFor(() => expect(wire.pending).toHaveLength(2));
+    for (const request of [wire.next(), wire.next()])
+      request.respond([
+        roster(relay, id ?? "", [viewer.pubkey]),
+        metadata(relay, id ?? "", "Release notes"),
+      ]);
+    await expect(creating).resolves.toBe(id);
+    await vi.waitFor(() =>
+      expect(records.some(({ event }) => event.kind === 9007)).toBe(false),
+    );
+    expect(owner.session.channelCreation.snapshot()).toBeUndefined();
   } finally {
     owner.dispose();
   }

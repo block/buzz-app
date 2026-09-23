@@ -857,6 +857,7 @@ export function createRelaySession(
       try {
         await workSessions.delivered(pending.operation);
         await workSessions.refresh(pending.id, {}, false);
+        await writes?.outbox.dismiss(pending.operation);
         pendingChannelCreation = undefined;
         return pending.id;
       } catch (error) {

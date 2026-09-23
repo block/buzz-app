@@ -151,12 +151,12 @@ export function mountEmojiMart({
       --color-c: var(--text-metadata);
       --em-color-border: var(--border-standard);
       --em-color-border-over: var(--affordance-selected);
-      --buzz-category-fill: var(--affordance-selected);
+      --buzz-category-fill: var(--picker-control-fill);
       --buzz-category-icon: var(--text-subtle);
       --buzz-category-icon-selected: var(--text-standard);
       --buzz-category-label: var(--text-subtle);
       --buzz-scrollbar-thumb: var(--border-prominent);
-      background: var(--surface-panel);
+      background: var(--picker-surface);
       color: var(--text-standard);
       font-family: var(--font-sans);
     }
@@ -193,7 +193,7 @@ export function mountEmojiMart({
       width: 100% !important;
     }
     .category .sticky {
-      background: var(--surface-panel);
+      background: var(--picker-surface);
       color: var(--buzz-category-label);
       font-size: var(--text-caption);
       font-weight: var(--type-weight-normal);
@@ -220,11 +220,6 @@ export function mountEmojiMart({
     }
     .search input[type="search"]:focus {
       background: var(--picker-search-background);
-      box-shadow: 0 0 0 1px var(--picker-search-background);
-      outline: none;
-    }
-    :host([data-keyboard-navigation]) .search input[type="search"]:focus-visible {
-      background: var(--picker-search-background);
       box-shadow: 0 0 0 2px var(--picker-search-ring);
       outline: none;
     }
@@ -249,7 +244,7 @@ export function mountEmojiMart({
     }
 
     .spacer {
-      height: 0;
+      height: var(--picker-search-top-space, var(--space-1));
     }
     .spacer + .flex.flex-middle {
       padding-bottom: var(--space-1);
@@ -265,6 +260,8 @@ export function mountEmojiMart({
       max-height: 32px !important;
     }
     .scroll .category > :not(.sticky) > .flex {
+      display: grid;
+      grid-template-columns: repeat(${perLine}, ${emojiButtonSize}px);
       justify-content: space-between;
     }
     .scroll .category button {

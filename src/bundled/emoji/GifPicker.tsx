@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
+import { XCircleIcon } from "../../shared/design-system/icons/index";
 import { fetchKlipyGifs, type KlipyGif } from "../../features/relay/gifs";
 import styles from "./Emoji.module.css";
 
@@ -103,24 +103,41 @@ export function GifPicker({
 
   return (
     <div className={styles.gifPicker}>
-      <div className={styles.gifSearch}>
-        <SearchField
-          inputRef={input}
-          label="Search GIFs"
+      <label className={styles.gifSearch}>
+        <input
+          ref={input}
+          aria-label="Search GIFs"
+          type="search"
           placeholder="Search GIFs"
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
           value={query}
-          onValueChange={(value) => {
-            setQuery(value);
-            onQueryChange(value);
+          onChange={(event) => {
+            setQuery(event.target.value);
+            onQueryChange(event.target.value);
           }}
           onKeyDown={(event) => {
             if (event.key === "Enter") event.preventDefault();
           }}
         />
-      </div>
+        {query && (
+          <button
+            className={styles.gifClear}
+            type="button"
+            aria-label="Clear"
+            title="Clear"
+            onMouseDown={(event) => event.preventDefault()}
+            onClick={() => {
+              setQuery("");
+              onQueryChange("");
+              input.current?.focus();
+            }}
+          >
+            <XCircleIcon size={16} weight="fill" aria-hidden="true" />
+          </button>
+        )}
+      </label>
       <div ref={results} className={styles.gifResults}>
         {!gifs && !error ? (
           <div

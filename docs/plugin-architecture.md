@@ -480,6 +480,8 @@ export function apply(ctx: Context) {
     id: "show-details",
     title: "Show details",
     binding: { key: "k", mod: true, shift: true },
+    // Optional Settings presentation order within this plugin's category.
+    order: 10,
     when: () => detailsViewIsAvailable(),
     run: () => showDetails(),
   };
@@ -509,6 +511,14 @@ modal). `snapshot`/`subscribe` expose ready plugin registrations, not host bindi
 or a promise that every binding wins every current focus conflict. The host-only
 registration method is deliberately absent from the injected type contract; plugins
 remain trusted same-process code, not sandboxed adversaries.
+
+`order` is optional and defaults to `0`. It controls only the row order in Settings
+within this plugin's category; lower values appear first. Equal orders use the
+stable namespaced contribution key (`pluginId/shortcutId`), then title, as
+presentation tie-breakers. The host category keeps its explicit host title/key
+ordering policy. Presentation order does not affect dispatch precedence, and
+shortcuts with duplicate titles remain separate rows because registry keys—not
+titles—identify bindings and their overrides.
 
 See [`shortcut-counter`](../examples/plugins/shortcut-counter/README.md) for a
 self-contained external plugin using the real service without a DOM listener.

@@ -28,11 +28,19 @@ type Row = Readonly<{
   key: string;
   title: string;
   owner: string;
+  /** Plugin-defined presentation order; host rows use the host policy below. */
+  order: number;
   defaults: readonly KeyBinding[];
   override: KeyBinding | undefined;
   effective: readonly KeyBinding[];
 }>;
-type Group = Readonly<{ id: string; label: string; rows: readonly Row[] }>;
+type Group = Readonly<{
+  id: string;
+  label: string;
+  /** Stable owner identity for equal display labels. */
+  sortKey: string;
+  rows: readonly Row[];
+}>;
 type Notice = Readonly<{
   key: string;
   tone: "error" | "warning";
@@ -64,8 +72,13 @@ const DESKTOP_CHORDS: readonly KeyBinding[] = [
 ];
 const includes = (chords: readonly KeyBinding[], binding: KeyBinding) =>
   chords.some((chord) => sameBinding(chord, binding));
-const byTitle = (a: Row, b: Row) =>
+/** Host ordering is intentionally title/key based; plugin order is part of their API. */
+const byHostPresentation = (a: Row, b: Row) =>
   a.title.localeCompare(b.title) || a.key.localeCompare(b.key);
+const byPluginPresentation = (a: Row, b: Row) =>
+  a.order - b.order ||
+  a.key.localeCompare(b.key) ||
+  a.title.localeCompare(b.title);
 
 /**
  * Lists every host binding and every active plugin contribution from the live
@@ -123,6 +136,7 @@ export function ShortcutSettings({
       key,
       title: shortcut.title,
       owner,
+      order: shortcut.order,
       defaults: shortcut.binding,
       override,
       effective: override ? [override] : shortcut.binding,
@@ -134,6 +148,7 @@ export function ShortcutSettings({
     {
       id: "host",
       label: "Buzz",
+      sortKey: "",
       rows: host.map((shortcut) => row(shortcut.id, shortcut, "Buzz")),
     },
     ...[...new Set(contributed.map((shortcut) => shortcut.pluginId))]
@@ -142,14 +157,23 @@ export function ShortcutSettings({
         return {
           id: `plugin:${pluginId}`,
           label,
+          sortKey: pluginId,
           rows: contributed
             .filter((shortcut) => shortcut.pluginId === pluginId)
             .map((shortcut) => row(shortcut.key, shortcut, label)),
         };
       })
-      .sort((a, b) => a.label.localeCompare(b.label)),
+      .sort(
+        (a, b) =>
+          a.label.localeCompare(b.label) || a.sortKey.localeCompare(b.sortKey),
+      ),
   ]
-    .map((group) => ({ ...group, rows: [...group.rows].sort(byTitle) }))
+    .map((group) => ({
+      ...group,
+      rows: [...group.rows].sort(
+        group.id === "host" ? byHostPresentation : byPluginPresentation,
+      ),
+    }))
     .filter((group) => group.rows.length);
   const rows = groups.flatMap((group) => group.rows);
   // A chord can become shared after capture (a plugin enabled later, a new

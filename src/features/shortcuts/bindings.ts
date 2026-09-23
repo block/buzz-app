@@ -17,11 +17,13 @@ export type Shortcut = Readonly<{
   allowInModal?: boolean;
   /** Held keys are consumed but run only once unless opted in. */
   repeat?: boolean;
+  /** Lower values appear first within this plugin's Settings category; defaults to zero. */
+  order?: number;
 }>;
 
 /** What the registries hold: aliases are always a frozen array, never a bare binding. */
 export type NormalizedShortcut = Shortcut &
-  Readonly<{ binding: readonly KeyBinding[] }>;
+  Readonly<{ binding: readonly KeyBinding[]; order: number }>;
 
 export function normalizeShortcut(shortcut: Shortcut): NormalizedShortcut {
   if (
@@ -34,7 +36,8 @@ export function normalizeShortcut(shortcut: Shortcut): NormalizedShortcut {
     (shortcut.when !== undefined && typeof shortcut.when !== "function") ||
     [shortcut.allowInEditable, shortcut.allowInModal, shortcut.repeat].some(
       (value) => value !== undefined && typeof value !== "boolean",
-    )
+    ) ||
+    (shortcut.order !== undefined && typeof shortcut.order !== "number")
   )
     throw new Error("A shortcut needs an id, title, binding and run function");
   const bindings = Array.isArray(shortcut.binding)
@@ -44,6 +47,7 @@ export function normalizeShortcut(shortcut: Shortcut): NormalizedShortcut {
     throw new Error("Invalid shortcut binding");
   return Object.freeze({
     ...shortcut,
+    order: Number.isFinite(shortcut.order) ? (shortcut.order ?? 0) : 0,
     binding: Object.freeze(
       bindings.map((binding) => Object.freeze({ ...binding })),
     ),

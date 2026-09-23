@@ -111,7 +111,15 @@ async function harness() {
     id: "increment",
     title: "Increment shortcut counter",
     binding: { key: "k", mod: true, shift: true },
+    order: 10,
     run: runs.increment,
+  });
+  await contribute("example.counter", {
+    id: "first",
+    title: "First action",
+    binding: { key: "l", mod: true, shift: true },
+    order: -10,
+    run: vi.fn(),
   });
   await contribute("buzz.terminal", {
     id: "toggle",
@@ -180,6 +188,7 @@ it("lists live host and plugin shortcuts grouped by owner, searchable, and follo
       "Increase text size",
       "Open Settings",
       "Search Buzz",
+      "First action",
       "Increment shortcut counter",
       "Toggle channel terminal",
     ]);
@@ -203,8 +212,9 @@ it("lists live host and plugin shortcuts grouped by owner, searchable, and follo
 
     const search = screen.getByRole("searchbox", { name: "Search shortcuts" });
     await user.type(search, "counter");
-    expect(screen.getAllByRole("article")).toHaveLength(1);
+    expect(screen.getAllByRole("article")).toHaveLength(2);
     expect(row("Increment shortcut counter")).toBeInTheDocument();
+    expect(row("First action")).toBeInTheDocument();
     await user.clear(search);
     await user.type(search, "⌘J");
     expect(screen.getAllByRole("article")).toHaveLength(1);
@@ -223,9 +233,57 @@ it("lists live host and plugin shortcuts grouped by owner, searchable, and follo
     expect(
       screen.queryByRole("heading", { name: "Terminal" }),
     ).not.toBeInTheDocument();
-    expect(screen.getAllByRole("article")).toHaveLength(4);
+    expect(screen.getAllByRole("article")).toHaveLength(5);
     act(() => h.setActive("buzz.terminal", true));
     expect(row("Toggle channel terminal")).toBeInTheDocument();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("orders plugin rows by metadata then contribution key without merging duplicate titles", async () => {
+  const h = await harness();
+  try {
+    await h.contribute("example.counter", {
+      id: "aaa",
+      title: "Increment shortcut counter",
+      binding: { key: "l", mod: true },
+      order: 10,
+      run: vi.fn(),
+    });
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    expect(
+      screen
+        .getAllByRole("article")
+        .map(
+          (article) =>
+            within(article).getByRole("heading", { level: 3 }).textContent,
+        ),
+    ).toEqual([
+      "Increase text size",
+      "Open Settings",
+      "Search Buzz",
+      "First action",
+      "Increment shortcut counter",
+      "Increment shortcut counter",
+      "Toggle channel terminal",
+    ]);
+    const duplicates = screen.getAllByRole("article", {
+      name: "Increment shortcut counter",
+    });
+    const [firstDuplicate, secondDuplicate] = duplicates;
+    if (!firstDuplicate || !secondDuplicate)
+      throw new Error("Missing duplicate row");
+    expect(within(firstDuplicate).getByText("Control L")).toBeInTheDocument();
+    expect(
+      within(secondDuplicate).getByText("Control Shift K"),
+    ).toBeInTheDocument();
   } finally {
     await h.dispose();
   }

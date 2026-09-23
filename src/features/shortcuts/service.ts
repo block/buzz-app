@@ -13,8 +13,8 @@ import {
   type NormalizedShortcut,
   type Shortcut,
 } from "./bindings";
-export type { KeyBinding, Shortcut } from "./bindings";
-export type RegisteredShortcut = Contribution<Shortcut>;
+export type { KeyBinding, NormalizedShortcut, Shortcut } from "./bindings";
+export type RegisteredShortcut = Contribution<NormalizedShortcut>;
 export type Shortcuts = {
   register(shortcut: Shortcut): void;
   snapshot(): readonly RegisteredShortcut[];

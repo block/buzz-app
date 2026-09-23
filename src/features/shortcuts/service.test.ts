@@ -213,6 +213,44 @@ it("hides bindings before async apply finishes and after failed activation", asy
   }
 });
 
+it("normalizes presentation order without changing the registered shortcut contract", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const service = new ShortcutsService(root, undefined);
+  try {
+    const owner = root.extend({
+      pluginOwner: { id: "ordered", revision: "one" },
+    });
+    await owner.plugin((ctx) => {
+      ctx.shortcuts.register({
+        ...shortcut(),
+        id: "default-order",
+      });
+      ctx.shortcuts.register({
+        ...shortcut(),
+        id: "custom-order",
+        order: -5,
+      });
+      ctx.shortcuts.register({
+        ...shortcut(),
+        id: "non-finite-order",
+        order: Number.POSITIVE_INFINITY,
+      });
+    });
+    expect(service.snapshot().map(({ id, order }) => ({ id, order }))).toEqual([
+      { id: "default-order", order: 0 },
+      { id: "custom-order", order: -5 },
+      { id: "non-finite-order", order: 0 },
+    ]);
+    await owner.fiber.dispose();
+  } finally {
+    await root.fiber.dispose();
+  }
+});
+
 it("validates and copies bindings, keeps owner checks, and contains async handler failures", async () => {
   const b = browser(),
     root = new Context();

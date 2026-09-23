@@ -16,9 +16,17 @@ export type NameSource = {
 };
 export type NameProvider = {
   id: string;
-  resolve(source: NameSource, pubkey: string): string | undefined;
+  resolve(
+    source: NameSource,
+    pubkey: string,
+    candidates?: readonly string[],
+  ): string | undefined;
   activate(source: NameSource): undefined | (() => void);
-  qualifier?(source: NameSource, pubkey: string): string | undefined;
+  qualifier?(
+    source: NameSource,
+    pubkey: string,
+    candidates?: readonly string[],
+  ): string | undefined;
   subscribe?(listener: () => void): () => void;
 };
 export type IdentityName = Readonly<{
@@ -27,8 +35,15 @@ export type IdentityName = Readonly<{
   source: "agent-directory" | "public-profile";
 }>;
 export interface IdentityNameView {
-  lookup(pubkey: string): IdentityName | undefined;
-  resolve(pubkey: string, fallback?: string): string | undefined;
+  lookup(
+    pubkey: string,
+    candidates?: readonly string[],
+  ): IdentityName | undefined;
+  resolve(
+    pubkey: string,
+    fallback?: string,
+    candidates?: readonly string[],
+  ): string | undefined;
   snapshot(): number;
   subscribe(listener: () => void): () => void;
 }
@@ -112,13 +127,16 @@ export function bindNames(
   const stops = [source.profiles.subscribe(emit)];
   if (providers) stops.push(providers.subscribe(select));
   select();
-  const lookup = (pubkey: string): IdentityName | undefined => {
+  const lookup = (
+    pubkey: string,
+    candidates?: readonly string[],
+  ): IdentityName | undefined => {
     if (closed) return undefined;
-    const local = provider?.resolve(source, pubkey);
+    const local = provider?.resolve(source, pubkey, candidates);
     if (local)
       return {
         name: local,
-        qualifier: provider?.qualifier?.(source, pubkey),
+        qualifier: provider?.qualifier?.(source, pubkey, candidates),
         source: "agent-directory",
       };
     const name = source.profiles.snapshot().get(pubkey)?.name;
@@ -126,8 +144,8 @@ export function bindNames(
   };
   return {
     lookup,
-    resolve(pubkey, fallback) {
-      return lookup(pubkey)?.name ?? fallback;
+    resolve(pubkey, fallback, candidates) {
+      return lookup(pubkey, candidates)?.name ?? fallback;
     },
     snapshot: () => revision,
     subscribe(listener) {

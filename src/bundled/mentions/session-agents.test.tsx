@@ -553,3 +553,70 @@ it("selects the exact recipient behind a context-aware owner label", async () =>
   library.dispose();
   test.library.dispose();
 });
+
+it("keeps an outside namesake discoverable and qualifies the actual choice set", async () => {
+  const test = setup();
+  const member = "a".repeat(64),
+    outside = test.key,
+    unrelated = "d".repeat(64);
+  const profiles = new Map(
+    [member, outside, unrelated].map((key) => [
+      key,
+      { name: "Larry", isAgent: true as const },
+    ]),
+  );
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [{ pubkey: outside, name: "Larry" }],
+  }));
+  const session = {
+    ...test.session,
+    agentLibrary: library.queries,
+    profiles: { ...test.session.profiles, snapshot: () => profiles },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: library.queries },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const select = vi.fn(() => true);
+  const view = render(
+    <MentionPicker
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  expect(
+    await screen.findByRole("button", { name: `Larry ${member}` }),
+  ).toBeInTheDocument();
+  view.rerender(
+    <MentionPicker
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={select}
+    />,
+  );
+  const outsideButton = await screen.findByRole("button", {
+    name: new RegExp(`Larry · .+ ${outside}`),
+  });
+  expect(
+    screen.getByRole("button", { name: new RegExp(`Larry · .+ ${member}`) }),
+  ).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: new RegExp(unrelated) }),
+  ).not.toBeInTheDocument();
+  await user.click(outsideButton);
+  expect(select).toHaveBeenCalledWith({ pubkey: outside, name: "Larry" });
+  view.unmount();
+  names.dispose();
+  library.dispose();
+  test.library.dispose();
+});

@@ -1008,3 +1008,71 @@ it.each([
     "secret",
   );
 });
+
+it("keeps one channel Larry plain despite global namesakes and follows membership changes", () => {
+  const owned = createRelaySession(null);
+  const listeners = new Set<() => void>();
+  const people = new Map(
+    [mic, smith, other].map((key) => [
+      key,
+      { name: "Larry", isAgent: true as const },
+    ]),
+  );
+  let list = {
+    status: "ready" as const,
+    channels: [{ id: "channel", name: "Here", members: [mic] }],
+  };
+  const session = {
+    ...owned.session,
+    profiles: { ...owned.session.profiles, snapshot: () => people },
+    channels: {
+      ...owned.session.channels,
+      list: () => list,
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    { profiles: session.profiles, agentLibrary: session.agentLibrary },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const open = vi.fn(() => true);
+  const mounted = mount(
+    <MessageMarkdown
+      {...props("@Larry", {
+        session: { ...session, names },
+        participantProfiles: people,
+        patch: { mentions: [mic] },
+        onOpenLink: open,
+      })}
+    />,
+  );
+  expect(names.resolve(mic)).not.toBe("Larry");
+  const button = mounted.getByRole("button", { name: "View Larry profile" });
+  fireEvent.click(button);
+  expect(open).toHaveBeenCalledWith(profileTarget(mic));
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "channel", name: "Here", members: [mic, smith] }],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(button.textContent).toMatch(/^Larry · /);
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "channel", name: "Here", members: [mic] }],
+    };
+    for (const listener of listeners) listener();
+  });
+  expect(button.textContent).toBe("Larry");
+  mounted.unmount();
+  names.dispose();
+  owned.dispose();
+});

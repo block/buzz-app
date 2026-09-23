@@ -11,24 +11,28 @@ export type NamingIdentity = {
 export function resolveIdentityNames(
   identities: readonly NamingIdentity[],
   viewer?: string,
+  candidates?: readonly string[],
 ) {
   const unique = new Map(
     identities.map((row) => [row.pubkey.toLowerCase(), row]),
   );
-  const rows = [...unique].map(([key, identity]) => {
-    const mine =
-      !!viewer && (key === viewer || identity.ownerPubkey === viewer);
-    return {
-      key,
-      identity,
-      base: identity.name.trim(),
-      label: identity.name.trim(),
-      priority: identity.isAgent ? (mine ? 2 : 3) : key === viewer ? 0 : 1,
-      mine,
-      length: 0,
-      suffix: undefined as string | undefined,
-    };
-  });
+  const selected = candidates && new Set(candidates);
+  const rows = [...unique]
+    .filter(([key]) => !selected || selected.has(key))
+    .map(([key, identity]) => {
+      const mine =
+        !!viewer && (key === viewer || identity.ownerPubkey === viewer);
+      return {
+        key,
+        identity,
+        base: identity.name.trim(),
+        label: identity.name.trim(),
+        priority: identity.isAgent ? (mine ? 2 : 3) : key === viewer ? 0 : 1,
+        mine,
+        length: 0,
+        suffix: undefined as string | undefined,
+      };
+    });
   // Recheck finished labels, including collisions with literal names and suffixes.
   for (;;) {
     const groups = new Map<string, typeof rows>();

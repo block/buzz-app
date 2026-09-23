@@ -29,13 +29,22 @@ export function createAgentDirectory(
       void control?.refresh();
       return source.agentLibrary.retain();
     },
-    resolve(source, pubkey) {
+    resolve(source, pubkey, candidates) {
       const key = pubkey.toLowerCase();
       const native = control?.snapshot();
       const relayUrl = source.relayUrl;
       const library = source.agentLibrary.snapshot();
       const profiles = source.profiles.snapshot();
-      const inputs = [library, native, profiles, relayUrl, source.viewer];
+      // Include the requested identity even for historical non-member references.
+      const selection = candidates && [...new Set([...candidates, key])].sort();
+      const inputs = [
+        library,
+        native,
+        profiles,
+        relayUrl,
+        source.viewer,
+        selection?.join(":"),
+      ];
       if (
         !cached ||
         inputs.some((input, index) => input !== cached?.inputs[index])
@@ -79,6 +88,7 @@ export function createAgentDirectory(
         const resolved = resolveIdentityNames(
           [...identities.values()],
           source.viewer,
+          selection,
         );
         const suffixes = new Map<string, string>();
         for (const [key, label] of resolved) {
@@ -89,8 +99,8 @@ export function createAgentDirectory(
       }
       return cached.names.get(key);
     },
-    qualifier(source, pubkey) {
-      this.resolve(source, pubkey);
+    qualifier(source, pubkey, candidates) {
+      this.resolve(source, pubkey, candidates);
       return cached?.suffixes.get(pubkey.toLowerCase());
     },
   };

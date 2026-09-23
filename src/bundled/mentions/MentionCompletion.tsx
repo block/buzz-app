@@ -7,6 +7,7 @@ import type { RelaySession } from "../../features/relay/session";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { matchesMentionQuery } from "./mention-query";
+import { peopleOrder } from "../../features/profiles/people-order";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
@@ -85,18 +86,18 @@ export function MentionCompletion({
       query.query,
       candidates.flatMap(({ recipient, label }) => [recipient.name, label]),
     );
+    const order = peopleOrder(query.query);
     const matching =
       admitted && !channel?.archived
         ? candidates
             .filter(({ recipient, label }) =>
               `${label} ${recipient.pubkey}`.toLowerCase().includes(needle),
             )
-            .sort(
-              (a, b) =>
-                Number(!a.label.toLowerCase().startsWith(needle)) -
-                  Number(!b.label.toLowerCase().startsWith(needle)) ||
-                a.label.localeCompare(b.label) ||
-                a.recipient.pubkey.localeCompare(b.recipient.pubkey),
+            .sort((a, b) =>
+              order(
+                { name: a.label, pubkey: a.recipient.pubkey },
+                { name: b.label, pubkey: b.recipient.pubkey },
+              ),
             )
         : [];
     const membershipMissing = (!inviteAgents || !!channel) && !channel?.members;

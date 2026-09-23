@@ -7,6 +7,10 @@ import {
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
+import {
+  directMessageEvent,
+  directMessageReceipt,
+} from "./direct-messages.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
@@ -674,6 +678,7 @@ export function relayBrokerPlugin({
               viewer,
               ...(await getAuthority(relay)),
               relayUrl: relay,
+              directMessages: true,
               writeKinds: [
                 7,
                 9,
@@ -1142,6 +1147,7 @@ export function relayBrokerPlugin({
               "/api/relay/channel-kit-prepare",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
+              "/api/relay/direct-message",
               "/api/relay/authorize-agent",
               "/api/relay/claim",
               "/api/relay/accept-policy",
@@ -1210,6 +1216,17 @@ export function relayBrokerPlugin({
             }
           }
           const profile = route === "/api/relay/profile";
+          const directMessage = route === "/api/relay/direct-message";
+          if (directMessage) {
+            try {
+              filters = directMessageEvent(filters, viewer, key);
+            } catch {
+              return json(res, 400, {
+                error: "Choose between one and eight other people.",
+                sent: false,
+              });
+            }
+          }
           const claim = route === "/api/relay/claim";
           const policy = route === "/api/relay/accept-policy";
           const gifs = route === "/api/relay/gifs";
@@ -1380,6 +1397,7 @@ export function relayBrokerPlugin({
               return json(res, 400, { error: "Invalid outgoing signature" });
           } else if (
             !profile &&
+            !directMessage &&
             !claim &&
             !policy &&
             !gifs &&
@@ -1426,7 +1444,7 @@ export function relayBrokerPlugin({
             workflowPath ??
             (gifs
               ? gifSearchPath
-              : profile
+              : profile || directMessage
                 ? "/events"
                 : claim
                   ? "/api/invites/claim"
@@ -1553,6 +1571,15 @@ export function relayBrokerPlugin({
               if (presence && failure.quota === "api")
                 lane.pause(failure.retryAfterMs);
               return json(res, response.status, failure);
+            }
+            if (directMessage) {
+              try {
+                return json(res, 200, directMessageReceipt(text, filters.id));
+              } catch {
+                return json(res, 502, {
+                  error: "The direct message could not be opened. Try again.",
+                });
+              }
             }
             if (profile) {
               const receipt = JSON.parse(text);

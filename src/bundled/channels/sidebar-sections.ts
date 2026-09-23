@@ -65,6 +65,6 @@ export function sidebarSections(
       ),
     },
   ].filter(
-    (section) => isChannelSectionKey(section.key) || section.rows.length,
+    (section) => isChannelSectionKey(section.key) || section.key === "dms" || section.rows.length,
   );
 }

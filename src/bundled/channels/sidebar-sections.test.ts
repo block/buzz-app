@@ -67,6 +67,7 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
   ).not.toContainEqual(["starred", ["star"]]);
   expect(sidebarSections([])).toEqual([
     { key: "channels", title: "Channels", icon: undefined, rows: [] },
+    { key: "dms", title: "DMs", icon: undefined, rows: [] },
   ]);
   expect(
     sidebarSections(roster).flatMap((section) =>

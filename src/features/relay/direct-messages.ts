@@ -1,0 +1,176 @@
+import { foldProfiles } from "./profiles";
+import type { ChannelQueries } from "./contracts";
+import type { ReadTransport } from "./transport";
+import type { RelayReader } from "./reader";
+import type { Outbox } from "./outbox";
+
+/** Opening is idempotent by participant set; first messages use the durable outbox. */
+export function createDirectMessages(
+  transport: ReadTransport | null,
+  reader: RelayReader,
+  channels: ChannelQueries,
+  outbox: Outbox | undefined,
+  journal: Pick<Outbox, "snapshot" | "subscribe"> | undefined,
+  lifetime: AbortSignal,
+  directoryReader: RelayReader,
+) {
+  const available = !!transport?.openDirectMessage && !!outbox?.supports(9);
+  return Object.freeze({
+    available,
+    async people(query: string, page: number, signal: AbortSignal) {
+      const active = AbortSignal.any([lifetime, signal]);
+      if (query.length > 100 || !Number.isSafeInteger(page) || page < 1)
+        throw new Error("Invalid people search.");
+      // Browse batches overlap the preview; identity deduplication keeps it stable.
+      // Search profiles can carry large metadata, so keep every search page small
+      // enough for the reader's response budget instead of expanding to 100.
+      const browsing = !query.trim();
+      const limit = browsing ? (page === 1 ? 15 : 100) : 30;
+      const relayPage = browsing && page > 1 ? page - 1 : page;
+      const events = await directoryReader.read(
+        [
+          {
+            kinds: [0],
+            limit,
+            page: relayPage,
+            ...(query.trim()
+              ? { search: query.trim(), search_mode: "prefix" as const }
+              : {}),
+          },
+        ],
+        { signal: active, priority: page === 1 ? "foreground" : "background" },
+      );
+      active.throwIfAborted();
+      return {
+        people: [...foldProfiles(events)]
+          .filter(([pubkey]) => pubkey !== transport?.viewer)
+          .map(([pubkey, profile]) => ({ pubkey, ...profile })),
+        hasMore: events.length >= limit,
+      };
+    },
+    async open(pubkeys: readonly string[], signal: AbortSignal) {
+      if (!available || !transport?.openDirectMessage)
+        throw new Error("This connection cannot start direct messages.");
+      if (
+        !pubkeys.length ||
+        pubkeys.length > 8 ||
+        new Set(pubkeys).size !== pubkeys.length ||
+        pubkeys.some(
+          (key) => !/^[0-9a-f]{64}$/.test(key) || key === transport.viewer,
+        )
+      )
+        throw new Error("Choose between one and eight other people.");
+      const active = AbortSignal.any([lifetime, signal]);
+      active.throwIfAborted();
+      const id = await transport.openDirectMessage(pubkeys, active);
+      active.throwIfAborted();
+      // Only signed discovery can admit the returned channel. Never trust a receipt as membership.
+      await reader.read(
+        [
+          {
+            kinds: [39000, 39002],
+            authors: [transport.relayAuthor],
+            "#d": [id],
+            limit: 2,
+          },
+        ],
+        { signal: active, fresh: true },
+      );
+      active.throwIfAborted();
+      const channel = channels.list().channels.find((item) => item.id === id);
+      const expected = new Set([transport.viewer, ...pubkeys]);
+      if (
+        channel?.channelType !== "dm" ||
+        channel.archived ||
+        channel.members?.length !== expected.size ||
+        !channel.members.every((key) => expected.has(key))
+      )
+        throw new Error(
+          "The conversation’s participants could not be confirmed. Try again.",
+        );
+      return id;
+    },
+    delivery(id: string) {
+      return journal?.snapshot().find((item) => item.event.id === id)?.delivery;
+    },
+    async delivered(id: string, channelId: string, signal: AbortSignal) {
+      if (!outbox || !journal || !transport)
+        throw new Error("Sending is unavailable.");
+      const active = AbortSignal.any([lifetime, signal]);
+      active.throwIfAborted();
+      const previous = journal.snapshot().find((item) => item.event.id === id);
+      if (!previous) {
+        const events = await reader.read(
+          [
+            {
+              ids: [id],
+              kinds: [9],
+              authors: [transport.viewer],
+              "#h": [channelId],
+              limit: 1,
+            },
+          ],
+          { signal: active, fresh: true },
+        );
+        active.throwIfAborted();
+        if (
+          events.some(
+            (event) =>
+              event.id === id &&
+              event.kind === 9 &&
+              event.pubkey === transport.viewer &&
+              event.tags.some(
+                ([name, value]) => name === "h" && value === channelId,
+              ),
+          )
+        )
+          return;
+        throw new Error(
+          "The earlier send could not be confirmed. Reconnect and retry.",
+        );
+      }
+      if (
+        previous.event.kind !== 9 ||
+        !previous.event.tags.some(
+          ([name, value]) => name === "h" && value === channelId,
+        )
+      )
+        throw new Error(
+          "The saved message does not belong to this conversation.",
+        );
+      if (previous.delivery === "failed" || previous.delivery === "unknown")
+        outbox.retry(id);
+      // The outbox owns delivery deadlines. This waiter only follows its state.
+      await new Promise<void>((resolve, reject) => {
+        let stop = () => {};
+        const finish = (error?: Error) => {
+          stop();
+          active.removeEventListener("abort", abort);
+          error ? reject(error) : resolve();
+        };
+        const abort = () =>
+          finish(
+            new DOMException("Message submission cancelled", "AbortError"),
+          );
+        const inspect = () => {
+          const item = journal
+            .snapshot()
+            .find((entry) => entry.event.id === id);
+          if (item?.delivery === "accepted" || item?.delivery === "seen")
+            finish();
+          else if (item?.delivery === "failed" || item?.delivery === "unknown")
+            finish(
+              new Error(
+                item.error ??
+                  "The message could not be confirmed. Retry to continue.",
+              ),
+            );
+        };
+        stop = journal.subscribe(inspect);
+        active.addEventListener("abort", abort, { once: true });
+        if (active.aborted) abort();
+        else inspect();
+      });
+    },
+  });
+}

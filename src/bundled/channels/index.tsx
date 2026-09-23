@@ -34,6 +34,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     layout: "workspace",
     companion: true,
     handlesNavigation: true,
+    route: { version: 1, validate: (params) => params === "new-message" },
     component: ({ companion, navigation }) => (
       <ChannelsPage
         providers={providers}

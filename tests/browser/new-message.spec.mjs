@@ -1,0 +1,511 @@
+import { test as base, expect } from "@playwright/test";
+import { preview } from "vite";
+import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
+import { relayBrokerPlugin } from "../../dev/relay-broker.mjs";
+import { brokerSocket } from "../broker-socket.mjs";
+import { fixtureAliases, fixtureRelayUrl } from "../relay-config.ts";
+import { buildApp } from "./build.mjs";
+
+// Actual app, composer, session and broker; only the upstream relay is modeled.
+// Ephemeral identities and a network fence prevent any live message or profile write.
+const test = base.extend({
+  developmentReact: [false, { scope: "worker" }],
+  pluginFixtures: [false, { scope: "worker" }],
+  compiledApp: [buildApp, { scope: "worker" }],
+  app: async ({ compiledApp, page, context }, use) => {
+    const key = generateSecretKey(),
+      relay = generateSecretKey();
+    const viewer = getPublicKey(key),
+      author = getPublicKey(relay);
+    const sign = (secret, kind, tags, body = "") =>
+      finalizeEvent(
+        {
+          kind,
+          tags,
+          content: body,
+          created_at: Math.floor(Date.now() / 1000),
+        },
+        secret,
+      );
+    const people = Array.from({ length: 35 }, (_, i) => {
+      const secret = generateSecretKey();
+      return sign(
+        secret,
+        0,
+        [],
+        JSON.stringify({
+          name:
+            i === 0
+              ? "Avery Chen"
+              : i === 1
+                ? "Build Agent"
+                : `Person ${String(i + 1).padStart(2, "0")}`,
+          is_agent: i === 1,
+        }),
+      );
+    });
+    const channel = "11111111-1111-4111-8111-111111111111";
+    const events = [
+      sign(key, 0, [], JSON.stringify({ name: "Browser Fixture" })),
+      ...people,
+    ];
+    const commands = [],
+      reads = [],
+      errors = [];
+    let failOpen = false,
+      hold = false,
+      release = () => {};
+    let directoryReady = Promise.resolve(),
+      releaseDirectory = () => {};
+    let backgroundReady = Promise.resolve(),
+      releaseBackground = () => {};
+    const socket = brokerSocket(async (event) => {
+      if (hold)
+        await new Promise((resolve) => {
+          release = resolve;
+        });
+      events.push(event);
+      return "saved";
+    });
+    const broker = relayBrokerPlugin({
+      relayUrl: fixtureRelayUrl,
+      communityAliases: fixtureAliases,
+      identity: () => key,
+      agentLibrary: () => [],
+      authority: async () => ({ relayAuthor: author }),
+      socketFactory: socket.factory,
+      upstreamFetch: async (url, init) => {
+        const body = init?.body ? JSON.parse(init.body) : undefined;
+        if (String(url).endsWith("/events")) {
+          commands.push(body);
+          if (failOpen) {
+            failOpen = false;
+            return new Response("offline", { status: 503 });
+          }
+          const members = [
+            viewer,
+            ...body.tags
+              .filter(([tag]) => tag === "p")
+              .map(([, pubkey]) => pubkey),
+          ];
+          events.push(
+            sign(
+              relay,
+              39000,
+              [
+                ["d", channel],
+                ["t", "dm"],
+              ],
+              JSON.stringify({ name: "Avery Chen", channel_type: "dm" }),
+            ),
+          );
+          events.push(
+            sign(relay, 39002, [
+              ["d", channel],
+              ...members.map((pubkey) => ["p", pubkey]),
+            ]),
+          );
+          return Response.json({
+            accepted: true,
+            event_id: body.id,
+            message: `response:${JSON.stringify({ channel_id: channel })}`,
+          });
+        }
+        if (String(url).endsWith("/query")) {
+          reads.push(...body);
+          if (body.some((filter) => filter.kinds?.includes(0) && filter.page))
+            await directoryReady;
+          if (
+            body.some(
+              (filter) => filter.kinds?.includes(0) && filter.limit === 100,
+            )
+          )
+            await backgroundReady;
+          const result = new Map();
+          for (const filter of body) {
+            let rows = events.filter(
+              (event) =>
+                (!filter.kinds || filter.kinds.includes(event.kind)) &&
+                (!filter.authors || filter.authors.includes(event.pubkey)) &&
+                (!filter.ids || filter.ids.includes(event.id)) &&
+                Object.entries(filter).every(
+                  ([tag, values]) =>
+                    !tag.startsWith("#") ||
+                    event.tags.some(
+                      ([key, value]) =>
+                        key === tag.slice(1) && values.includes(value),
+                    ),
+                ) &&
+                (!filter.search ||
+                  JSON.parse(event.content)
+                    .name.toLowerCase()
+                    .includes(filter.search.toLowerCase())),
+            );
+            if (filter.page)
+              rows = rows.slice(
+                (filter.page - 1) * filter.limit,
+                filter.page * filter.limit,
+              );
+            else if (filter.limit) rows = rows.slice(0, filter.limit);
+            for (const row of rows) result.set(row.id, row);
+            if (filter.top_level) {
+              const id = filter["#h"][0];
+              const bounds = sign(
+                relay,
+                39006,
+                [
+                  ["h", id],
+                  ["d", `${id}:head`],
+                ],
+                JSON.stringify({ has_more: false, next_cursor: null }),
+              );
+              result.set(bounds.id, bounds);
+            }
+          }
+          return Response.json([...result.values()]);
+        }
+        return Response.json({});
+      },
+    });
+    const server = await preview({
+      ...compiledApp.config,
+      plugins: [
+        {
+          name: "direct-message-fixture",
+          configurePreviewServer: (server) => broker.configureServer(server),
+        },
+      ],
+      preview: { host: "127.0.0.1", port: 0, strictPort: true },
+    });
+    const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+    await context.route("**/*", (route) =>
+      new URL(route.request().url()).origin === origin
+        ? route.continue()
+        : route.abort(),
+    );
+    await context.routeWebSocket("**/*", (socket) => socket.close());
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.addInitScript(
+      ({ viewer }) => {
+        const key = `buzz-client.v1:${viewer}`;
+        if (!localStorage.getItem(key))
+          localStorage.setItem(
+            key,
+            JSON.stringify({
+              profile: { name: "Browser Fixture", picture: "" },
+              memberships: [{ id: "primary", name: "Primary" }],
+              selected: "primary",
+            }),
+          );
+        window.removalSounds = 0;
+        HTMLMediaElement.prototype.play = async function () {
+          if (this.src.includes("plop.m4a")) window.removalSounds++;
+        };
+      },
+      { viewer },
+    );
+    try {
+      await use({
+        origin,
+        reads,
+        commands,
+        publications: socket.publications,
+        errors,
+        holdPeople: () => {
+          directoryReady = new Promise((resolve) => {
+            releaseDirectory = resolve;
+          });
+        },
+        showPeople: () => releaseDirectory(),
+        holdBackground: () => {
+          backgroundReady = new Promise((resolve) => {
+            releaseBackground = resolve;
+          });
+        },
+        showBackground: () => releaseBackground(),
+        failOpening: () => {
+          failOpen = true;
+        },
+        holdDelivery: () => {
+          hold = true;
+        },
+        confirm: () => {
+          hold = false;
+          release();
+        },
+      });
+    } finally {
+      releaseDirectory();
+      releaseBackground();
+      release();
+      server.httpServer.closeAllConnections();
+      await new Promise((resolve) => server.httpServer.close(resolve));
+    }
+  },
+});
+async function open(page, app) {
+  await page.goto(app.origin);
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Messages", exact: true })
+    .click();
+  const header = page.locator("summary", { hasText: "DMs" });
+  await header.hover();
+  await header
+    .getByRole("button", { name: "New message", exact: true })
+    .click();
+  await expect(header.locator("..")).toHaveAttribute("open", "");
+}
+
+test("empty compose, keyboard selection, pagination, removal effects, retry, then confirmed normal timeline", async ({
+  page,
+  app,
+}, info) => {
+  app.holdPeople();
+  app.holdBackground();
+  await open(page, app);
+  const loading = page.getByRole("status", { name: "Loading people" });
+  await expect(loading).toBeVisible();
+  await expect(loading.locator('[class*="loadingRow"]')).toHaveCount(10);
+  const picker = page.getByRole("listbox", { name: "People" });
+  const pickerHeight = await picker.evaluate(
+    (element) => element.parentElement.getBoundingClientRect().height,
+  );
+  const expectStablePicker = () =>
+    expect
+      .poll(() =>
+        picker.evaluate(
+          (element) => element.parentElement.getBoundingClientRect().height,
+        ),
+      )
+      .toBe(pickerHeight);
+  const shimmer = loading.locator('[class*="loadingAvatar"]').first();
+  await expect
+    .poll(() =>
+      shimmer.evaluate(
+        (element) => getComputedStyle(element, "::after").animationName,
+      ),
+    )
+    .toContain("peopleShimmer");
+  await page.screenshot({ path: info.outputPath("new-message-loading.png") });
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect
+    .poll(() =>
+      shimmer.evaluate(
+        (element) => getComputedStyle(element, "::after").animationName,
+      ),
+    )
+    .toBe("none");
+  await page.emulateMedia({ reducedMotion: "no-preference" });
+  app.showPeople();
+  await expect(
+    page.getByRole("option", { name: "Avery Chen", exact: true }),
+  ).toBeVisible();
+  // Fifteen profiles include the viewer and an uncontrolled agent; thirteen rows paint first.
+  await expect(page.getByRole("option")).toHaveCount(13);
+  const initialPeople = await page.getByRole("option").allTextContents();
+  await expect
+    .poll(() =>
+      app.reads.some(
+        (filter) => filter.kinds?.includes(0) && filter.limit === 100,
+      ),
+    )
+    .toBe(true);
+  // Background discovery starts without scrolling and preserves the preview's order.
+  app.showBackground();
+  await expect(page.getByRole("option")).toHaveCount(34);
+  await expect(
+    page.getByRole("option", { name: "Build Agent, Agent", exact: true }),
+  ).toHaveCount(0);
+  expect(
+    (await page.getByRole("option").allTextContents()).slice(
+      0,
+      initialPeople.length,
+    ),
+  ).toEqual(initialPeople);
+  await expect(loading).toHaveCount(0);
+  await expectStablePicker();
+  const input = page.getByRole("combobox", { name: "Message recipients" });
+  await expect(input).toBeFocused();
+  // Shared popover portals out of the header and dismisses without stealing focus.
+  await expect(
+    page.getByRole("group", { name: "Recipients" }).getByRole("listbox"),
+  ).toHaveCount(0);
+  await page.locator("[data-new-message-body]").click();
+  await expect(picker).toHaveCount(0);
+  await input.click();
+  await expect(picker).toBeVisible();
+  await expect(input).toBeFocused();
+  await input.press("Escape");
+  await expect(picker).toHaveCount(0);
+  await page.getByText("To:", { exact: true }).click();
+  await expect(picker).toBeVisible();
+  await expect(input).toBeFocused();
+  await expect(
+    page.getByRole("option", { name: "Avery Chen", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator("[data-new-message-body]")).toBeEmpty();
+  await expect(
+    page.getByRole("textbox", {
+      name: "New message",
+    }),
+  ).toHaveAttribute("contenteditable", "false");
+  await expect(
+    page.getByRole("textbox", { name: "New message", exact: true }),
+  ).toHaveAttribute("data-placeholder", "");
+  for (const name of ["Mention a member", "Insert emoji"]) {
+    const tool = page.getByRole("button", { name, exact: true });
+    await expect(tool).toBeDisabled();
+    await expect(tool).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  }
+  await expect(page.locator("[data-message-id]")).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath("new-message-empty.png") });
+  const loadedPeople = await page.getByRole("option").allTextContents();
+  const directoryReads = () =>
+    app.reads.filter(
+      (filter) => filter.kinds?.includes(0) && filter.page && !filter.search,
+    ).length;
+  const beforeReopen = directoryReads();
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Home", exact: true })
+    .click();
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Messages", exact: true })
+    .click();
+  const dmHeader = page.locator("summary", { hasText: "DMs" });
+  await dmHeader.hover();
+  await dmHeader
+    .getByRole("button", { name: "New message", exact: true })
+    .click();
+  await expect(page.getByRole("option")).toHaveCount(34);
+  expect(await page.getByRole("option").allTextContents()).toEqual(
+    loadedPeople,
+  );
+  expect(directoryReads()).toBe(beforeReopen);
+  await expect(
+    page.getByRole("option", { name: "Person 35", exact: true }),
+  ).toBeAttached();
+  // A partly visible row under the pointer must not snap fully into view.
+  const partial = page.getByRole("option", { name: "Person 34", exact: true });
+  const scrollTop = await partial.evaluate((row) => {
+    const list = row.parentElement;
+    list.scrollTop +=
+      row.getBoundingClientRect().bottom -
+      list.getBoundingClientRect().bottom -
+      16;
+    return list.scrollTop;
+  });
+  await partial.dispatchEvent("pointermove", { pointerType: "mouse" });
+  await expect(partial).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(() => picker.evaluate((element) => element.scrollTop))
+    .toBe(scrollTop);
+  // Keyboard navigation still brings the next row into view without moving focus.
+  await input.press("ArrowDown");
+  const last = page.getByRole("option", { name: "Person 35", exact: true });
+  await expect(last).toHaveAttribute("aria-selected", "true");
+  await expect
+    .poll(() =>
+      last.evaluate(
+        (row) =>
+          row.getBoundingClientRect().bottom <=
+          row.parentElement.getBoundingClientRect().bottom + 1,
+      ),
+    )
+    .toBe(true);
+  await expect(input).toBeFocused();
+  await input.fill("Person 0");
+  await expect(page.getByRole("option")).toHaveCount(7);
+  await expect
+    .poll(() => picker.evaluate((element) => element.clientHeight))
+    .toBe(280);
+  await expect
+    .poll(() => picker.evaluate((element) => element.scrollHeight))
+    .toBe(280);
+  await page.screenshot({
+    path: info.outputPath("new-message-short-results.png"),
+  });
+  await input.fill("Person");
+  await expect(page.getByRole("option")).toHaveCount(33);
+  await expectStablePicker();
+  await input.fill("Nobody matches this name");
+  await expect(
+    page.getByText("No matching people.", { exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => picker.evaluate((element) => element.clientHeight))
+    .toBeLessThan(100);
+  app.holdPeople();
+  const searchReads = app.reads.filter((filter) => filter.search).length;
+  await input.fill("Avery");
+  await expect(loading).toHaveCount(0);
+  await expect(
+    page.getByRole("option", { name: "Avery Chen", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => picker.evaluate((element) => element.clientHeight))
+    .toBe(40);
+  await page.screenshot({
+    path: info.outputPath("new-message-one-result.png"),
+  });
+  expect(app.reads.filter((filter) => filter.search).length).toBe(searchReads);
+  app.showPeople();
+  await input.press("Enter");
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("");
+  await expect(
+    page.getByRole("button", { name: "Remove Avery Chen" }),
+  ).toBeVisible();
+  await page.getByRole("option", { name: "Person 03", exact: true }).click();
+  await page.screenshot({
+    path: info.outputPath("new-message-recipients.png"),
+  });
+  await page.getByRole("button", { name: "Remove Person 03" }).click();
+  await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(1);
+  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(1);
+  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await input.press("Backspace");
+  await expect.poll(() => page.evaluate(() => window.removalSounds)).toBe(2);
+  await expect(page.locator('img[src$="poof1@3x.png"]')).toHaveCount(0);
+  await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  const composer = page.getByRole("textbox", {
+    name: "Message Avery Chen",
+    exact: true,
+  });
+  await composer.fill("Our first direct message");
+  app.failOpening();
+  await composer.press("Enter");
+  await expect(page.getByRole("alert")).toBeVisible();
+  await expect(composer).toHaveText("Our first direct message");
+  await expect(
+    page.getByRole("button", { name: "Remove Avery Chen" }),
+  ).toBeVisible();
+  app.holdDelivery();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() => app.publications.filter((event) => event.kind === 9).length)
+    .toBe(1);
+  await expect(input).toBeDisabled();
+  await expect(
+    page.getByRole("region", { name: "New message", exact: true }),
+  ).toBeVisible();
+  app.confirm();
+  await expect(
+    page.getByRole("region", { name: "New message", exact: true }),
+  ).toHaveCount(0);
+  const message = page.locator("[data-message-id]", {
+    hasText: "Our first direct message",
+  });
+  await expect(message).toHaveCount(1);
+  await expect(message).toBeVisible();
+  await expect(message.locator("time")).toBeVisible();
+  await expect(page.locator('[class*="_day_"]')).toHaveCount(0);
+  await expect(
+    page.getByRole("textbox", { name: "Message #Avery Chen" }),
+  ).toBeVisible();
+  await page.screenshot({ path: info.outputPath("new-message-delivered.png") });
+  expect(app.errors).toEqual([]);
+});

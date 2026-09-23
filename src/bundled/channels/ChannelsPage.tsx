@@ -4,6 +4,7 @@ import { OwnedContribution } from "../../plugins/OwnedContribution";
 import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
 import { Select } from "../../shared/design-system/ui/Select";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
+import { NewMessage } from "../../features/direct-messages/NewMessage";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -197,6 +198,11 @@ function ChannelWorkspace({
   panels: Panels;
   sessionsEnabled: boolean;
 }) {
+  const [localNewMessage, setLocalNewMessage] = useState(false);
+  const composingMessage = navigator
+    ? navigation?.target.kind === "page" &&
+      navigation.target.route?.params === "new-message"
+    : localNewMessage;
   const list = useChannelList(queries.channels);
   const workingIds = useSyncExternalStore(
     queries.agentActivity.subscribeWorking,
@@ -294,6 +300,7 @@ function ChannelWorkspace({
   }>();
   const select = useCallback(
     (id: string) => {
+      setLocalNewMessage(false);
       setDraftParent(undefined);
       navigate(id);
       setThread(undefined);
@@ -392,6 +399,10 @@ function ChannelWorkspace({
   const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
+    if (composingMessage) {
+      navigation?.complete({ status: "opened" });
+      return;
+    }
     if (requestedChannel && !resolving && list.status === "ready" && !current)
       navigation?.complete({ status: "failed", reason: "unavailable" });
     if (!requestedChannel && !current && list.status === "ready")
@@ -409,6 +420,7 @@ function ChannelWorkspace({
       });
     }
   }, [
+    composingMessage,
     requestedChannel,
     resolving,
     current,
@@ -893,7 +905,7 @@ function ChannelWorkspace({
   );
   return (
     <div
-      className={`${styles.board} ${showingSettings || panel || showingThread || companion ? styles.withPanel : ""}`}
+      className={`${styles.board} ${!composingMessage && (showingSettings || panel || showingThread || companion) ? styles.withPanel : ""}`}
       style={
         {
           "--channel-sidebar-width": `${sidebar.width}px`,
@@ -1010,6 +1022,41 @@ function ChannelWorkspace({
                         />
                       </span>
                     )}
+                    {section.key === "dms" && (
+                      <span className={styles.sectionAction}>
+                        <IconButton
+                          type="button"
+                          size="compact"
+                          shape="round"
+                          aria-label="New message"
+                          title="New message"
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            setThread(undefined);
+                            open(undefined);
+                            setDraftParent(undefined);
+                            setLocalNewMessage(true);
+                            if (navigator && viewer)
+                              void navigator.open({
+                                version: 1,
+                                kind: "page",
+                                pluginId: "buzz.channels",
+                                pageId: "channels",
+                                scope: {
+                                  viewer,
+                                  communityOrigin: scope.slice(
+                                    0,
+                                    -(viewer.length + 1),
+                                  ),
+                                },
+                                route: { version: 1, params: "new-message" },
+                              });
+                          }}
+                          icon={<PlusIcon size={16} aria-hidden="true" />}
+                        />
+                      </span>
+                    )}
                   </summary>
                   {section.rows.map((channel) => {
                     const sessions = childrenByParent.get(channel.id);
@@ -1031,7 +1078,7 @@ function ChannelWorkspace({
                         session={queries}
                         working={workingChannels.has(channel.id)}
                         sessionsEnabled={sessionsEnabled}
-                        selected={selected}
+                        selected={composingMessage ? undefined : selected}
                         collapsed={sidebar.collapsed.includes(
                           `session-children:${channel.id}`,
                         )}
@@ -1114,7 +1161,17 @@ function ChannelWorkspace({
           onDragOver={rejectUnhandledFileDrop}
           onDrop={rejectUnhandledFileDrop}
         >
-          {drafting && current ? (
+          {composingMessage ? (
+            <NewMessage
+              session={queries}
+              scope={scope}
+              extensions={extensions}
+              onStarted={(channelId, id) => {
+                setSent({ channelId, id });
+                select(channelId);
+              }}
+            />
+          ) : drafting && current ? (
             <NewSessionView parentName={current.name}>
               <NewSessionComposer
                 extensions={extensions}

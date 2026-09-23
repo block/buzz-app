@@ -131,7 +131,9 @@ Pointer hover uses shared state timing; expanded triggers retain pressed emphasi
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
 IconButton defaults to round across all sizes and variants. Use `shape="control"`
-only when a rectangular control shape is explicitly needed.
+only when a rectangular control shape is explicitly needed. Disabled ghost icons
+remain unfilled; their muted foreground communicates unavailability without
+adding a container to an otherwise empty toolbar.
 
 Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an

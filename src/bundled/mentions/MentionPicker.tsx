@@ -20,6 +20,7 @@ import type { RelaySession } from "../../features/relay/session";
 import styles from "./Mentions.module.css";
 
 import type { ComposerToolProps } from "../../features/conversation/contracts";
+import { peopleOrder } from "../../features/profiles/people-order";
 
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
@@ -88,16 +89,24 @@ export function MentionPicker({
       current = false;
     };
   }, [session, open, memberKey]);
+  const order = peopleOrder(search);
   const candidates = mentionChoices(
     [...(inviteAgents ? agents.identities : []), ...available],
     channel?.members ?? [],
     profiles,
     resolveName,
-  ).filter(({ recipient, label }) =>
-    `${label} ${recipient.pubkey}`
-      .toLowerCase()
-      .includes(search.trim().toLowerCase()),
-  );
+  )
+    .filter(({ recipient, label }) =>
+      `${label} ${recipient.pubkey}`
+        .toLowerCase()
+        .includes(search.trim().toLowerCase()),
+    )
+    .sort((a, b) =>
+      order(
+        { name: a.label, pubkey: a.recipient.pubkey },
+        { name: b.label, pubkey: b.recipient.pubkey },
+      ),
+    );
   return (
     <fieldset
       disabled={disabled}

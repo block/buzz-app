@@ -77,6 +77,7 @@ export type MessageComposerProps = {
   channelId: string;
   channelName: string;
   label?: string | undefined;
+  placeholder?: string | undefined;
   sessionConversation?: boolean | undefined;
   trailingTool?: ReactNode;
   inviteAgents?: boolean | undefined;
@@ -122,6 +123,7 @@ function Composer({
   channelId,
   channelName,
   label: customLabel,
+  placeholder,
   onSend,
   editMessages,
   onOpenLink,
@@ -803,7 +805,8 @@ function Composer({
             onUndo={undo}
             data-single-emoji={largeEmojiDraft || undefined}
             maxLength={16000}
-            placeholder={label}
+            aria-label={label}
+            placeholder={placeholder ?? label}
             onFocus={() => completion.observe(true)}
             onBlur={() => {
               completion.invalidate();

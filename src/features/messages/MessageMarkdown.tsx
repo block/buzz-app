@@ -3,14 +3,16 @@ import {
   Children,
   createContext,
   isValidElement,
+  memo,
   useContext,
+  useMemo,
   type ComponentPropsWithoutRef,
   type ReactNode,
 } from "react";
 import type { RelaySession } from "../relay/session";
 import { MessageLink } from "../conversation/MessageLink";
 import { parseBuzzLink } from "../navigation/buzz-links";
-import { messageLinkParts, normalizeWrappedLinks } from "./message-link-parts";
+import { messageLinkParts } from "./message-link-parts";
 import {
   ReferenceText,
   channelForLink,
@@ -31,13 +33,14 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import { InlineText } from "../conversation/InlineText";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { emojiMatches, messageParts } from "../relay/emoji";
-import {
-  MAX_MARKDOWN_LENGTH,
-  scanMarkdown,
-  safeMessageUrl,
-} from "../relay/message-content";
+import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { profileMentionParts } from "./profile-mentions";
+import {
+  isLiteralMarkdownContext,
+  prepareMarkdown,
+  type LiteralRange,
+} from "./markdown-preparation";
 
 type MarkdownNode = {
   type: string;
@@ -61,38 +64,17 @@ type ProtectedContent = {
   prefix: string;
   parts: InlinePart[];
 };
-const literalContext = (type: string) =>
-  [
-    "code",
-    "inlineCode",
-    "link",
-    "linkReference",
-    "image",
-    "imageReference",
-    "definition",
-    "html",
-  ].includes(type);
-
 /** Bind exact names on the FULL signed body, before Markdown decodes escapes or
  * divides emphasis. Reference labels must also survive unchanged for resolution. */
 function protectInlineContent(
-  row: ChannelMessage,
+  row: Pick<
+    ChannelMessage,
+    "content" | "edited" | "attachmentContentRemoved" | "mentions" | "emoji"
+  >,
   profiles: ReadonlyMap<string, Profile> | undefined,
-  tree: MarkdownNode,
+  literalRanges: readonly LiteralRange[],
   agents: typeof emptyReferenceDirectory.agents,
 ): ProtectedContent {
-  const literalRanges: { start: number; end: number }[] = [];
-  const visit = (node: MarkdownNode) => {
-    if (literalContext(node.type)) {
-      const start = node.position?.start.offset;
-      const end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        literalRanges.push({ start, end });
-    } else {
-      for (const child of node.children ?? []) visit(child);
-    }
-  };
-  visit(tree);
   let rangeIndex = 0;
   const isLiteral = (start: number, end: number) => {
     while (
@@ -158,6 +140,26 @@ function protectInlineContent(
 const placeholderPattern = (protectedContent: ProtectedContent) =>
   new RegExp(`${protectedContent.prefix}(\\d+)\uE002`, "g");
 
+function inlineProtectionKey(
+  row: ChannelMessage,
+  profiles: ReadonlyMap<string, Profile> | undefined,
+  agents: typeof emptyReferenceDirectory.agents,
+) {
+  const mentions = row.mentions.map((id) => [id, profiles?.get(id)?.name]);
+  const mentioned = new Set(row.mentions);
+  const agentNames = agents
+    .filter((agent) => mentioned.has(agent.pubkey))
+    .map((agent) => [agent.pubkey, agent.name]);
+  const emoji = row.emoji?.map(({ shortcode, url }) => [shortcode, url]);
+  return JSON.stringify([
+    row.edited === true,
+    row.attachmentContentRemoved === true,
+    mentions,
+    agentNames,
+    emoji,
+  ]);
+}
+
 /** Offer only Markdown prose to profile controls and inline plugins. */
 function remarkInlineContent(protectedContent: ProtectedContent) {
   const restore = (value: string) =>
@@ -182,7 +184,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
   };
   return (tree: MarkdownNode) => {
     const visit = (parent: MarkdownNode) => {
-      if (literalContext(parent.type)) {
+      if (isLiteralMarkdownContext(parent.type)) {
         restoreLiteral(parent);
         return;
       }
@@ -284,29 +286,50 @@ export function MessageMarkdown({
   interactive?: boolean;
 }) {
   const resolveName = useIdentityNames(session?.names);
-  if (row.content.length > MAX_MARKDOWN_LENGTH)
-    return <div className={styles.plainText}>{row.content}</div>;
-  let scan = scanMarkdown(row.content);
-  if (scan.tooDeep)
-    return <div className={styles.plainText}>{row.content}</div>;
-
-  const literalRanges: { start: number; end: number }[] = [];
-  const collectLiterals = (node: MarkdownNode) => {
-    if (literalContext(node.type) && node.type !== "link") {
-      const start = node.position?.start.offset,
-        end = node.position?.end.offset;
-      if (start !== undefined && end !== undefined)
-        literalRanges.push({ start, end });
-    } else for (const child of node.children ?? []) collectLiterals(child);
-  };
-  collectLiterals(scan.tree);
-  const normalized = normalizeWrappedLinks(row.content, (start, end) =>
-    literalRanges.some((range) => start < range.end && end > range.start),
+  const prepared = useMemo(() => prepareMarkdown(row.content), [row.content]);
+  if (prepared.kind === "plain")
+    return <div className={styles.plainText}>{prepared.content}</div>;
+  return (
+    <PreparedMessageMarkdown
+      row={row}
+      prepared={prepared}
+      directory={directory}
+      session={session}
+      scope={scope}
+      extensions={extensions}
+      media={media}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+      participantProfiles={participantProfiles}
+      resolveName={resolveName}
+      largeEmoji={largeEmoji}
+      interactive={interactive}
+    />
   );
-  if (normalized !== row.content) {
-    row = { ...row, content: normalized };
-    scan = scanMarkdown(normalized);
-  }
+}
+
+function PreparedMessageMarkdown({
+  row: sourceRow,
+  prepared,
+  directory = emptyReferenceDirectory,
+  session,
+  scope,
+  extensions,
+  media,
+  onOpenLink,
+  canOpenLink,
+  participantProfiles,
+  resolveName,
+  largeEmoji = false,
+  interactive = true,
+}: Parameters<typeof MessageMarkdown>[0] & {
+  prepared: Extract<ReturnType<typeof prepareMarkdown>, { kind: "markdown" }>;
+  resolveName: (pubkey: string, fallback: string) => string;
+}) {
+  const row =
+    prepared.content === sourceRow.content
+      ? sourceRow
+      : { ...sourceRow, content: prepared.content };
   const renderLink = (url: string, label?: string, children?: ReactNode) => {
     const channel = channelForLink(url, scope, directory.channels);
     return (
@@ -358,11 +381,32 @@ export function MessageMarkdown({
     });
   };
 
-  const protectedContent = protectInlineContent(
-    row,
-    participantProfiles ?? directory.profiles,
-    scan.tree,
+  const profiles = participantProfiles ?? directory.profiles;
+  const protectionKey = inlineProtectionKey(
+    sourceRow,
+    profiles,
     directory.agents,
+  );
+  // The key contains every row/profile/agent/emoji value consumed below. It
+  // avoids reparsing for equivalent folded rows without hiding live inputs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: semantic key
+  const protectedContent = useMemo(
+    () =>
+      protectInlineContent(
+        {
+          content: prepared.content,
+          ...(sourceRow.edited ? { edited: true as const } : {}),
+          ...(sourceRow.attachmentContentRemoved
+            ? { attachmentContentRemoved: true as const }
+            : {}),
+          mentions: sourceRow.mentions,
+          ...(sourceRow.emoji ? { emoji: sourceRow.emoji } : {}),
+        },
+        profiles,
+        prepared.literalRanges,
+        directory.agents,
+      ),
+    [prepared.content, prepared.literalRanges, protectionKey],
   );
   const components: MessageComponents = {
     p: ({ node: _node, ...props }) => (
@@ -435,19 +479,29 @@ export function MessageMarkdown({
 
   const markdown = (
     <MessageComponentsContext value={components}>
-      <Markdown
-        remarkPlugins={[
-          remarkGfm,
-          remarkBreaks,
-          [remarkInlineContent, protectedContent],
-        ]}
-        components={markdownComponents}
-        skipHtml
-        urlTransform={transformUrl}
-      >
-        {protectedContent.content}
-      </Markdown>
+      <MarkdownBody protectedContent={protectedContent} />
     </MessageComponentsContext>
   );
   return largeEmoji ? markdown : <div className={styles.text}>{markdown}</div>;
 }
+
+const MarkdownBody = memo(function MarkdownBody({
+  protectedContent,
+}: {
+  protectedContent: ProtectedContent;
+}) {
+  return (
+    <Markdown
+      remarkPlugins={[
+        remarkGfm,
+        remarkBreaks,
+        [remarkInlineContent, protectedContent],
+      ]}
+      components={markdownComponents}
+      skipHtml
+      urlTransform={transformUrl}
+    >
+      {protectedContent.content}
+    </Markdown>
+  );
+});

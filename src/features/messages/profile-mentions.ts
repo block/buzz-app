@@ -6,7 +6,10 @@ type Part = { text: string; target?: string | undefined };
 /** Display only: signed recipients bound by an unedited body's exact known names.
  * This does not infer notification intent or resolve a name against a directory. */
 export function profileMentionParts(
-  row: ChannelMessage,
+  row: Pick<
+    ChannelMessage,
+    "content" | "edited" | "attachmentContentRemoved" | "mentions"
+  >,
   profiles: ReadonlyMap<string, Profile> | undefined,
   agents: AgentLibrary["identities"] = [],
 ): Part[] {

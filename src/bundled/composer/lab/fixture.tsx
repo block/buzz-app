@@ -55,6 +55,12 @@ const session = {
     refreshList: () => {},
   },
   agentLibrary: { snapshot: () => library, subscribe: empty },
+  agentChoices: {
+    snapshot: () => library,
+    subscribe: empty,
+    retain: empty,
+    refresh: async () => {},
+  },
   emoji: {
     snapshot: () => emojiSnapshot,
     subscribe: empty,

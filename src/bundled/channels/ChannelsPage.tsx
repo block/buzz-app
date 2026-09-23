@@ -1,3 +1,8 @@
+import { personalGroups } from "../../features/channel-templates/setup";
+import type { TemplateProviders } from "../../features/channel-templates/provider";
+import { OwnedContribution } from "../../plugins/OwnedContribution";
+import { ChannelCanvasDialog } from "./ChannelCanvasDialog";
+import { Select } from "../../shared/design-system/ui/Select";
 import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
@@ -80,6 +85,7 @@ import {
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
+  providers,
   extensions,
   relay,
   panels,
@@ -88,6 +94,7 @@ export function ChannelsPage({
   navigation,
   navigator,
 }: {
+  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   relay: RelayData;
   navigation?: PageNavigation | undefined;
@@ -145,6 +152,7 @@ export function ChannelsPage({
         </PanelFrame>
       ) : (
         <ChannelWorkspace
+          providers={providers}
           extensions={extensions}
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
           scope={session.scope ?? "disconnected"}
@@ -163,6 +171,7 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
+  providers,
   extensions,
   queries,
   relay,
@@ -174,6 +183,7 @@ function ChannelWorkspace({
   navigator,
   viewer,
 }: {
+  providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
   scope: string;
@@ -200,6 +210,27 @@ function ChannelWorkspace({
       .map((entry) => entry.channelId),
   ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const kitState = useSyncExternalStore(
+    queries.channelKit.subscribe,
+    queries.channelKit.snapshot,
+  );
+  const templateProviders = useSyncExternalStore(
+    providers.subscribe,
+    providers.snapshot,
+  );
+  const templateProvider =
+    templateProviders.length === 1 ? templateProviders[0] : undefined;
+  useEffect(() => {
+    queries.channelKit.ensure();
+  }, [queries]);
+  const groupEntry = personalGroups(kitState.entries);
+  const personal =
+    groupEntry?.record.value.type === "groups"
+      ? groupEntry.record.value
+      : undefined;
+  const [canvasOpen, setCanvasOpen] = useState(false);
+  const [initialGroup, setInitialGroup] = useState("");
+  const [kitError, setKitError] = useState("");
   const hiddenDms = useHiddenDms(scope, queries, list);
   useEffect(() => {
     void queries.emoji.ensure();
@@ -832,7 +863,17 @@ function ChannelWorkspace({
   );
   const sections = sidebarSections(
     channels,
-    preferences.data,
+    personal
+      ? {
+          sections: personal.groups.map((g, order) => ({
+            id: g.id,
+            name: g.name,
+            order,
+          })),
+          assignments: personal.assignments,
+          starred: preferences.data?.starred ?? [],
+        }
+      : preferences.data,
     hiddenDms.hiddenIds,
   );
   return (
@@ -846,6 +887,55 @@ function ChannelWorkspace({
     >
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
+          {kitState.status === "error" && (
+            <p role="alert">
+              {kitState.error}{" "}
+              <Button onClick={() => void queries.channelKit.refresh()}>
+                Retry templates
+              </Button>
+            </p>
+          )}
+          {kitError && <p role="alert">{kitError}</p>}
+          {pendingChannelCreation && (
+            <div>
+              <Button size="sm" onClick={() => setCreateChannelOpen(true)}>
+                Resume unfinished channel setup
+              </Button>
+              {queries.channelCreation.partialChannel() && (
+                <>
+                  <Button
+                    size="sm"
+                    onClick={() => {
+                      const id = queries.channelCreation.partialChannel();
+                      if (id) select(id);
+                    }}
+                  >
+                    Open partial channel
+                  </Button>
+                  <Button
+                    size="sm"
+                    onClick={async () => {
+                      if (
+                        window.confirm(
+                          "Keep this channel without finishing setup? Existing members and Canvas stay; pending outbox writes are not cancelled.",
+                        )
+                      ) {
+                        try {
+                          const id =
+                            await queries.channelCreation.keepPartial();
+                          if (id) select(id);
+                        } catch (error) {
+                          setKitError(String(error));
+                        }
+                      }
+                    }}
+                  >
+                    Keep partial channel
+                  </Button>
+                </>
+              )}
+            </div>
+          )}
           <SidebarUnread listRef={sidebar.list}>
             {sections.map((section) => {
               const showsCreateChannel = isChannelSectionKey(section.key);
@@ -894,6 +984,11 @@ function ChannelWorkspace({
                             event.preventDefault();
                             event.stopPropagation();
                             createChannelTrigger.current = event.currentTarget;
+                            setInitialGroup(
+                              personal && section.key.startsWith("group:")
+                                ? section.key.slice(6)
+                                : "",
+                            );
                             setCreateChannelOpen(true);
                           }}
                           icon={<PlusIcon size={16} aria-hidden="true" />}
@@ -970,7 +1065,22 @@ function ChannelWorkspace({
         onCreate={createChannel}
         pending={pendingChannelCreation}
         finalFocus={createChannelTrigger}
+        session={queries}
+        providers={providers}
+        groups={personal}
+        initialGroup={initialGroup}
+        groupsReady={kitState.status === "ready"}
       />
+      {current && !current.readOnly && canvasOpen && (
+        <ChannelCanvasDialog
+          key={`${scope}:${current.id}`}
+          canvas={queries.canvas}
+          scope={scope}
+          channelId={current.id}
+          open={canvasOpen}
+          onOpenChange={setCanvasOpen}
+        />
+      )}
       <ChannelSidebarResizeHandle
         width={sidebar.width}
         setWidth={sidebar.setWidth}
@@ -1146,6 +1256,69 @@ function ChannelWorkspace({
           <div className={styles.panelStack}>
             {showingSettings && (
               <ChannelSettingsPanel
+                setupTools={
+                  current && (
+                    <div style={{ display: "grid", gap: "var(--space-3)" }}>
+                      {!current.readOnly && (
+                        <Button onClick={() => setCanvasOpen(true)}>
+                          Canvas
+                        </Button>
+                      )}
+                      {templateProvider && (
+                        <OwnedContribution
+                          key={current.id}
+                          entry={templateProvider}
+                          registry={providers}
+                        >
+                          {(entry, active) => {
+                            const SaveAs = entry.saveAs;
+                            return (
+                              <SaveAs
+                                session={queries}
+                                channel={current}
+                                active={active}
+                              />
+                            );
+                          }}
+                        </OwnedContribution>
+                      )}
+                      {personal && (
+                        <Select
+                          label="Personal group"
+                          variant="field"
+                          value={personal.assignments[current.id] ?? ""}
+                          groups={[
+                            {
+                              label: "",
+                              options: [
+                                { value: "", label: "No group" },
+                                ...personal.groups.map((g) => ({
+                                  value: g.id,
+                                  label: g.name,
+                                })),
+                              ],
+                            },
+                          ]}
+                          onValueChange={async (groupId) => {
+                            const assignments = { ...personal.assignments };
+                            if (groupId) assignments[current.id] = groupId;
+                            else delete assignments[current.id];
+                            setKitError("");
+                            try {
+                              await queries.channelKit.save(
+                                { ...personal, assignments },
+                                groupEntry?.eventId,
+                              );
+                            } catch (error) {
+                              setKitError(String(error));
+                            }
+                          }}
+                        />
+                      )}
+                      {kitError && <p role="alert">{kitError}</p>}
+                    </div>
+                  )
+                }
                 key={currentId ?? "channels"}
                 channel={current}
                 close={closeSettings}

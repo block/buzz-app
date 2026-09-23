@@ -1,4 +1,5 @@
 // FOUNDATION: Client identity and membership selection outlive community query sessions.
+import type { AgentControl } from "../agents/control";
 import type { IdentityNames } from "../identity-names/service";
 import { createPresenceActivity } from "../presence/activity";
 import { Context } from "@deepseek-ai/cordis";
@@ -28,6 +29,7 @@ export function createCommunities(
   live: boolean,
   identityNames?: IdentityNames,
   openRelay = "",
+  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ) {
   let state: ClientSnapshot = {
     ...empty(),
@@ -90,6 +92,7 @@ export function createCommunities(
         (signal) => connectBrokerTransport("", signal, id),
         presenceActivity,
         identityNames,
+        agentChoices,
       );
       sessions.set(id, session);
       session.subscribe(() => {

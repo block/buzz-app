@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package exposes injected agentControl without host ownership", async () => {
+test("generated author package exposes injected agentControl and host operations", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -32,14 +32,31 @@ test("generated author package exposes injected agentControl without host owners
     await writeFile(
       join(dir, "consumer.ts"),
       `
-import type { Context, AgentControl } from "@buzz/author";
-export const inject = ["agentControl"];
+import type { Context, AgentControl, Host, PluginManifest } from "@buzz/author";
+export const manifest: PluginManifest = {
+  id: "example.plugin", name: "Example", apiVersion: 1,
+  host: {
+    commands: [{ id: "status", program: "example-cli", args: ["status"] }],
+    networkOrigins: ["https://api.example.com"],
+  },
+};
+export const inject = ["agentControl", "host"];
 export function apply(ctx: Context) {
   const control: AgentControl = ctx.agentControl;
   void control.refresh();
   void control.action("sample", "stop");
+  const host: Host = ctx.host;
+  void host.runCommand("status").then((output: string | null) => void output);
+  void host.request({
+    url: "https://api.example.com/graphql",
+    method: "POST",
+    headers: { Authorization: "Bearer sample" },
+    body: "{}",
+  }).then((response) => void response.status);
   // @ts-expect-error Native process lifetime is not plugin-owned.
   control.dispose();
+  // @ts-expect-error Programs must be declared in the manifest, not supplied at runtime.
+  host.runCommand("example-cli", ["status"]);
 }
 // @ts-expect-error Host construction is not exported to plugin authors.
 import type { provideAgentControl } from "@buzz/author";

@@ -144,6 +144,7 @@ fn init(directory: &Path, id: &str, name: &str) -> Result<()> {
         id: id.into(),
         name: name.into(),
         api_version: 1,
+        host: None,
     };
     manifest.validate()?;
     // Never overwrite an existing source directory.

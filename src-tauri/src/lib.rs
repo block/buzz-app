@@ -1,6 +1,8 @@
 mod agent_models;
 mod agents;
 mod dock;
+mod host_command;
+mod host_request;
 mod notifications;
 mod terminal;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
@@ -14,6 +16,8 @@ use buzzodz_plugins::{
     Catalog, InstallationResult, Manager,
 };
 use dock::{dock_permission, unread_indicator_set};
+use host_command::plugin_host_run_command;
+use host_request::plugin_host_request;
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
 use std::collections::HashMap;
@@ -332,6 +336,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         plugin_reload,
         plugin_module,
         plugin_recover,
+        plugin_host_run_command,
+        plugin_host_request,
         agent_control_create_prepare,
         agent_control_create_commit,
         agent_control_creation_profile,

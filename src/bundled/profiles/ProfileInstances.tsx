@@ -59,9 +59,7 @@ export function ProfileInstances({
       ) : (
         <ul className="m-0 list-none p-0">
           {instances.map((agent) => (
-            <li key={agent.id}>
-              {agent.name} · {agent.status}
-            </li>
+            <li key={agent.id}>{agent.name}</li>
           ))}
         </ul>
       )}

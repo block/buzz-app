@@ -81,8 +81,8 @@ it("uses native exact identity and community, never library display links", () =
     busy: false,
     error: null,
   });
-  expect(screen.getByText(/matched · stopped/)).toBeTruthy();
-  expect(screen.queryByText(/wrong-key|wrong-relay/)).toBeNull();
+  expect(screen.getByText("matched")).toBeTruthy();
+  expect(screen.queryByText(/wrong-key|wrong-relay|stopped/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "View in Agents" }));
   expect(f.open).toHaveBeenCalledWith({
     version: 1,

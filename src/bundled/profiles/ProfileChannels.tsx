@@ -24,8 +24,7 @@ export function ProfileChannels({
     (channel) =>
       !channel.archived &&
       !channel.hidden &&
-      channel.channelType !== "dm" &&
-      channel.channelType !== "session" &&
+      (channel.channelType === "stream" || channel.channelType === "forum") &&
       channel.members?.includes(pubkey),
   );
   return (
@@ -51,6 +50,12 @@ export function ProfileChannels({
           </Button>
         </div>
       )}
+      {(list.status === "ready" || list.status === "error") &&
+        list.channels.some((channel) => !channel.channelType) && (
+          <p className="m-0 text-body-sm text-secondary">
+            Channels without metadata are omitted until their type is known.
+          </p>
+        )}
       {list.status === "ready" && !channels.length && (
         <p>
           {list.coverage === "partial"

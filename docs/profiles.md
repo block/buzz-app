@@ -94,7 +94,9 @@ integration batch. No sending/signing behavior changed.
 
 The profile's read-only channel section uses the current viewer's `session.channels`
 list and exact `ChannelSummary.members` from relay-authored rosters. It excludes
-archived, hidden, DM and session conversations. Verified rows remain visible
+archived, hidden, DM and session conversations. Only positively identified stream
+and forum rows render; when metadata is missing, unclassified rows are omitted
+until their type is known. Verified classified rows remain visible
 alongside a transient list error; loading/error/partial discovery is not an
 empty membership claim; retry uses `refreshList`. Rows navigate using the existing
 scoped conversation destination when a valid community scope and navigation

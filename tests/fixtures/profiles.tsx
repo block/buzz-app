@@ -14,6 +14,9 @@ import { PagesService } from "../../src/features/pages/service";
 import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import { createRelaySession } from "../../src/features/relay/session";
+import { createAgentControl } from "../../src/features/agents/control";
+import { createNavigationController } from "../../src/features/navigation/controller";
+import { createMemoryHistory } from "../../src/features/navigation/history";
 import type {
   RelayData,
   RelaySnapshot,
@@ -22,9 +25,9 @@ import {
   bounds,
   keypair,
   message,
-  metadata,
   profile,
   roster,
+  signed,
   summary,
 } from "../../src/features/relay/testing";
 import { profileTarget } from "../../src/features/profiles/target";
@@ -77,8 +80,24 @@ function session() {
           ];
         if (filter.kinds?.includes(39000))
           return [
-            metadata(authority, "one", "One"),
-            metadata(authority, "two", "Two"),
+            signed(authority, {
+              kind: 39000,
+              content: JSON.stringify({ name: "One" }),
+              tags: [
+                ["d", "one"],
+                ["name", "One"],
+                ["t", "stream"],
+              ],
+            }),
+            signed(authority, {
+              kind: 39000,
+              content: JSON.stringify({ name: "Two" }),
+              tags: [
+                ["d", "two"],
+                ["name", "Two"],
+                ["t", "stream"],
+              ],
+            }),
           ];
         if (filter.kinds?.includes(0)) {
           report.profileReads.push([...(filter.authors ?? [])]);
@@ -124,7 +143,7 @@ let owner = session();
 let snapshot: RelaySnapshot = {
   status: "ready",
   generation: 1,
-  scope: "fixture:viewer",
+  scope: `https://relay.example.test:${viewer.pubkey}`,
   viewer: viewer.pubkey,
   session: owner.session,
 };
@@ -143,6 +162,12 @@ const relay: RelayData = {
 };
 const context = new Context();
 context.provide("relay", relay);
+const navigationHost = createNavigationController(createMemoryHistory());
+context.provide("navigation", navigationHost.navigation);
+context.effect(() => () => navigationHost.dispose());
+const agentControl = createAgentControl(null);
+context.provide("agentControl", agentControl);
+context.effect(() => () => agentControl.dispose());
 const contexts: PanelContext[] = [];
 function ContextProbe({ context }: PanelProps) {
   useLayoutEffect(() => {

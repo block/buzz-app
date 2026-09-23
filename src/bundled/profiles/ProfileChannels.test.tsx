@@ -60,10 +60,23 @@ it("shows only exact verified visible memberships, handles partial lists and ope
     status: "ready",
     coverage: "partial",
     channels: [
-      { id: "exact", name: "Visible", members: [person, viewer] },
+      {
+        id: "exact",
+        name: "Visible",
+        channelType: "stream",
+        members: [person, viewer],
+      },
+      { id: "forum", name: "Forum", channelType: "forum", members: [person] },
       { id: "other", name: "Unrelated", members: [viewer] },
       { id: "unknown", name: "Unknown" },
-      { id: "hidden", name: "Hidden", hidden: true, members: [person] },
+      {
+        id: "hidden",
+        name: "Hidden",
+        channelType: "stream",
+        hidden: true,
+        members: [person],
+      },
+      { id: "untyped-member", name: "Unknown type", members: [person] },
       { id: "dm", name: "Direct", channelType: "dm", members: [person] },
       {
         id: "session",
@@ -75,8 +88,12 @@ it("shows only exact verified visible memberships, handles partial lists and ope
     ],
   });
   expect(screen.getByRole("button", { name: "#Visible" })).toBeTruthy();
+  expect(screen.getByRole("button", { name: "#Forum" })).toBeTruthy();
   expect(
-    screen.queryByText(/Unrelated|Unknown|Hidden|Archived|Direct|Child/),
+    screen.getByText(/Channels without metadata are omitted/),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText(/Unrelated|Unknown type|Hidden|Archived|Direct|Child/),
   ).toBeNull();
   expect(screen.getByText(/More channels may exist/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "#Visible" }));
@@ -105,7 +122,9 @@ it("does not invent a route, and retries failed discovery without claiming a com
   );
   f.update({
     status: "error",
-    channels: [{ id: "known", name: "Known", members: [person] }],
+    channels: [
+      { id: "known", name: "Known", channelType: "stream", members: [person] },
+    ],
   });
   expect(screen.getByRole("alert")).toBeTruthy();
   expect(screen.getByText("Known")).toBeTruthy();
@@ -129,9 +148,51 @@ it("renders a verified row without a destination when navigation is unavailable"
   );
   f.update({
     status: "ready",
-    channels: [{ id: "known", name: "Known", members: [person] }],
+    channels: [
+      { id: "known", name: "Known", channelType: "stream", members: [person] },
+    ],
   });
   expect(screen.getByText("Known")).toBeTruthy();
   expect(screen.queryByRole("button", { name: /Known/ })).toBeNull();
   expect(screen.getByText(/Channel navigation is unavailable/)).toBeTruthy();
+});
+
+it("keeps classified roster rows but omits unclassified conversations after metadata failure", () => {
+  const f = fixture();
+  render(
+    <ProfileChannels
+      session={f.session}
+      pubkey={person}
+      viewer={viewer}
+      communityOrigin="https://relay.example.test"
+      navigation={f.navigation}
+    />,
+  );
+  f.update({
+    status: "error",
+    channels: [
+      { id: "known", name: "Known", channelType: "forum", members: [person] },
+      { id: "untyped", name: "untyped", members: [person] },
+      {
+        id: "hidden",
+        name: "Hidden",
+        channelType: "stream",
+        hidden: true,
+        members: [person],
+      },
+      { id: "dm", name: "Direct", channelType: "dm", members: [person] },
+      {
+        id: "session",
+        name: "Child",
+        channelType: "session",
+        members: [person],
+      },
+    ],
+  });
+  expect(screen.getByRole("alert")).toBeTruthy();
+  expect(screen.getByRole("button", { name: "#Known" })).toBeTruthy();
+  expect(
+    screen.getByText(/Channels without metadata are omitted/),
+  ).toBeTruthy();
+  expect(screen.queryByText(/untyped|Hidden|Direct|Child/)).toBeNull();
 });

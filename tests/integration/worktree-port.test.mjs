@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -8,27 +9,34 @@ import { portForPath, worktreePort } from "../../scripts/worktree-port.mjs";
 
 // Expected values were cross-checked independently of portForPath with
 // Python 3.14.5 and a separate Node one-liner, which agree on both:
-// python3 -c "import hashlib,sys; h=int(hashlib.sha256(sys.argv[1].encode()).hexdigest(),16); print(40000 + h % 25000)" "$PATH_UNDER_TEST"
-// The first vector keeps the value it had under the previous
-// 10000 + digest % 55000 mapping by coincidence (both moduli are multiples of
-// 5000); the second moved from 42704, so it pins the new mapping.
+// python3 -c "import hashlib,sys; h=int(hashlib.sha256(sys.argv[1].encode()).hexdigest(),16); print(10010 + h % 55000)" "$PATH_UNDER_TEST"
+// Each is block/buzz's port for the same path (60252 and 42704) plus ten.
 const KNOWN = [
-  ["/tmp/buzz-worktree-port-fixture", 60252],
-  ["/tmp/wörktree ✓", 57704],
+  ["/tmp/buzz-worktree-port-fixture", 60262],
+  ["/tmp/wörktree ✓", 42714],
 ];
 
-test("portForPath is deterministic and stays in buzz-app's [40000, 64999]", () => {
+test("portForPath is deterministic and stays in [10010, 65009]", () => {
   for (const [candidate, expected] of KNOWN) {
     assert.equal(portForPath(candidate), expected);
     assert.equal(portForPath(candidate), portForPath(candidate));
   }
-  // block/buzz owns [10000, 39999]; anything below 40000 would break the partition.
   for (const candidate of ["", "/", "a".repeat(4096), KNOWN[0][0]]) {
     const port = portForPath(candidate);
     assert.ok(Number.isInteger(port), `${candidate}: ${port}`);
-    assert.ok(port >= 40000 && port <= 64999, `${candidate}: ${port}`);
+    assert.ok(port >= 10010 && port <= 65009, `${candidate}: ${port}`);
   }
   assert.notEqual(portForPath(`${KNOWN[0][0]}/`), KNOWN[0][1]);
+});
+
+test("portForPath is block/buzz's base port plus ten for the same path", () => {
+  // block/buzz's scripts/instance-env.sh one-liner, transcribed:
+  // 10000 + sha256(path) % 55000. HMR is base + 1 and `just web` is base + 100,
+  // so an offset of ten clears all three for a checkout at the same root.
+  const [candidate] = KNOWN[0];
+  const digest = createHash("sha256").update(candidate, "utf8").digest("hex");
+  const buzzBasePort = Number(10000n + (BigInt(`0x${digest}`) % 55000n));
+  assert.equal(portForPath(candidate), buzzBasePort + 10);
 });
 
 test("worktreePort hashes the Git toplevel, or the directory outside Git", (t) => {

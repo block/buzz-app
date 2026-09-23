@@ -127,7 +127,7 @@ test("web preserves the no-argument command", () => {
 
 test("desktop derives a port from the worktree path when none is given", () => {
   const { call, port, stdout } = launched("desktop");
-  assert.ok(port >= 40000 && port <= 64999, String(port));
+  assert.ok(port >= 10010 && port <= 65009, String(port));
   assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
   assert.equal(call.length, 4);
   assert.deepEqual(JSON.parse(call[3]), { build: build(port) });

@@ -134,6 +134,20 @@ test("desktop derives a port from the worktree path when none is given", () => {
   assert.match(stdout, announced(port));
 });
 
+test("stock tauri.conf.json starts Vite on its own devUrl port without the launcher", () => {
+  // vite.config.ts defaults to the worktree-derived port, so a plain
+  // `pnpm tauri dev` only works if the stock config passes its port explicitly.
+  const { build: stock } = JSON.parse(
+    readFileSync(
+      new URL("../../src-tauri/tauri.conf.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const port = Number(new URL(stock.devUrl).port);
+  assert.ok(port >= 1 && port <= 65535, stock.devUrl);
+  assert.deepEqual(stock, { ...stock, ...build(port) });
+});
+
 test("web forwards Vite arguments without reinterpreting or splitting them", () => {
   const args = [
     "--port",

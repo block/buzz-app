@@ -14,7 +14,7 @@ export function portForPath(path) {
 
 // The worktree root reported by Git; outside a checkout, the directory itself.
 // A missing git or a plain directory is an ordinary outcome, not an exception,
-// and this never touches the credential readers the broker tests intercept.
+// so this reads spawnSync's exit status rather than catching a throw.
 export function worktreePort(dir) {
   const git = spawnSync("git", ["rev-parse", "--show-toplevel"], {
     cwd: dir,

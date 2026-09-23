@@ -3,17 +3,26 @@ import type { AddressInfo } from "node:net";
 import { afterEach, assert, expect, it, vi } from "vitest";
 import { generateSecretKey, getPublicKey, nip19 } from "nostr-tools";
 import type { Plugin, UserConfigFnPromise, ViteDevServer } from "vite";
-import { execFileSync } from "node:child_process";
+import type { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import viteConfig from "../../../vite.config";
 import { relayBrokerPlugin } from "../../../dev/relay-broker.mjs";
 
-vi.mock("node:child_process", async (original) => ({
-  ...(await original<typeof import("node:child_process")>()),
-  execFileSync: vi.fn(),
-}));
+// Mock only the OS credential readers; every other execFileSync reaches the
+// real binary, so readCredential's call log is exactly the credential reads.
+const readCredential = vi.hoisted(() => vi.fn<typeof execFileSync>());
+vi.mock("node:child_process", async (original) => {
+  const actual = await original<typeof import("node:child_process")>();
+  return {
+    ...actual,
+    execFileSync: (...call: Parameters<typeof actual.execFileSync>) =>
+      call[0] === "/usr/bin/security" || call[0] === "secret-tool"
+        ? readCredential(...call)
+        : actual.execFileSync(...call),
+  };
+});
 vi.mock("undici", async (original) => ({
   ...(await original<typeof import("undici")>()),
   fetch: vi.fn(),
@@ -35,7 +44,7 @@ async function startup(relayUrl = "", aliases = "") {
   vi.stubEnv("BUZZ_RELAY_URL", relayUrl);
   vi.stubEnv("BUZZ_COMMUNITY_ALIASES", aliases);
   vi.stubEnv("BUZZ_DEV_VIEWER", viewer);
-  vi.mocked(execFileSync).mockReturnValue(
+  readCredential.mockReturnValue(
     Buffer.from(JSON.stringify({ identity: nip19.nsecEncode(key) })),
   );
   const resolved = await config({ command: "serve", mode: "development" });
@@ -131,7 +140,7 @@ it.each([
   "rejects invalid deployment routing before credential access (%#)",
   async (relay, aliases) => {
     await expect(startup(relay, aliases)).rejects.toThrow();
-    expect(execFileSync).not.toHaveBeenCalled();
+    expect(readCredential).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
   },
 );
@@ -181,7 +190,7 @@ it.each([
     await expect(
       config({ command: "build", mode: "production" }),
     ).rejects.toThrow();
-    expect(execFileSync).not.toHaveBeenCalled();
+    expect(readCredential).not.toHaveBeenCalled();
     expect(upstream).not.toHaveBeenCalled();
     // Direct broker users cannot bypass validation by avoiding the Vite entry.
     expect(() => relayBrokerPlugin({ relayUrl, communityAliases })).toThrow();

@@ -146,7 +146,10 @@ for (const target of ["alpha", "profiles"]) {
     // Persistent feedback must not block the header, composer, or narrow navigation.
     for (const width of [390, 800, 1440]) {
       await page.setViewportSize({ width, height: 950 });
-      await page.getByLabel("Conversation options", { exact: true }).click();
+      // At narrow widths the settings panel covers the conversation header.
+      await page
+        .getByRole("button", { name: "Close channel settings", exact: true })
+        .click();
       await page
         .getByRole("textbox", { name: "Message #Alpha", exact: true })
         .fill("Unsent recovery draft");
@@ -155,7 +158,9 @@ for (const target of ["alpha", "profiles"]) {
       await page.screenshot({
         path: testInfo.outputPath(`toast-app-${target}-${width}.png`),
       });
-      await page.getByLabel("Conversation options", { exact: true }).click();
+      await page
+        .getByRole("button", { name: "Channel settings", exact: true })
+        .click();
     }
     const beforeManual = requests().length;
     await page

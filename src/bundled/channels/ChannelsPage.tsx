@@ -198,7 +198,7 @@ function ChannelWorkspace({
       .map((entry) => entry.channelId),
   ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
-  const hiddenDms = useHiddenDms(scope, queries);
+  const hiddenDms = useHiddenDms(scope, queries, list);
   useEffect(() => {
     void queries.emoji.ensure();
   }, [queries]);

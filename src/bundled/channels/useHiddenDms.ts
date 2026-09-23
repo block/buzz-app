@@ -1,32 +1,54 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
+import type { ChannelList } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 
-type HiddenDm = { id: string; latestMessageId?: string };
+type MessageHead = Readonly<{ id: string; createdAt: number }>;
+type HiddenDm = { id: string; baseline?: MessageHead | null };
 const key = "hidden-dms";
 
 function restore(scope: string): HiddenDm[] {
   const saved = readView<unknown>(scope, key, []);
   if (!Array.isArray(saved)) return [];
-  return saved.filter(
-    (entry): entry is HiddenDm =>
-      !!entry &&
-      typeof entry === "object" &&
-      typeof entry.id === "string" &&
-      (entry.latestMessageId === undefined ||
-        typeof entry.latestMessageId === "string"),
-  );
+  return saved.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || typeof entry.id !== "string")
+      return [];
+    const baseline = entry.baseline;
+    return [
+      {
+        id: entry.id,
+        ...(baseline === null ||
+        (baseline &&
+          typeof baseline === "object" &&
+          typeof baseline.id === "string" &&
+          typeof baseline.createdAt === "number" &&
+          Number.isFinite(baseline.createdAt))
+          ? { baseline }
+          : {}),
+      },
+    ];
+  });
 }
 
 /** Local, viewer-scoped sidebar intent; verified message evidence restores a row. */
-export function useHiddenDms(scope: string, session: RelaySession) {
+export function useHiddenDms(
+  scope: string,
+  session: RelaySession,
+  list: ChannelList,
+) {
   const [hidden, setHidden] = useState(() => restore(scope));
   const current = useRef(hidden);
   const update = useCallback(
     (next: HiddenDm[]) => {
       current.current = next;
       setHidden(next);
-      writeView(scope, key, next);
+      // An unresolved baseline is only an optimistic hide; it cannot be
+      // recovered safely after closing before its first verified head read.
+      writeView(
+        scope,
+        key,
+        next.filter((entry) => entry.baseline !== undefined),
+      );
     },
     [scope],
   );
@@ -48,7 +70,7 @@ export function useHiddenDms(scope: string, session: RelaySession) {
         ...current.current.filter((entry) => entry.id !== id),
         {
           id,
-          ...(latest ? { latestMessageId: latest.id } : {}),
+          ...(latest ? { baseline: latest } : {}),
         },
       ]);
     },
@@ -58,14 +80,28 @@ export function useHiddenDms(scope: string, session: RelaySession) {
   useEffect(() => {
     if (!hidden.length) return;
     const check = () => {
-      const resurfaced = current.current.flatMap((entry) => {
+      const next = current.current.flatMap((entry) => {
         const latest = session.unread.snapshot({
           kind: "channel",
           channelId: entry.id,
         }).latestMessage;
-        return latest && latest.id !== entry.latestMessageId ? [entry.id] : [];
+        if (!latest || entry.baseline === undefined) return [entry];
+        if (entry.baseline === null) return [];
+        if (latest.id === entry.baseline.id) return [entry];
+        if (
+          latest.createdAt > entry.baseline.createdAt ||
+          (latest.createdAt === entry.baseline.createdAt &&
+            latest.id < entry.baseline.id)
+        )
+          return [];
+        // A deletion can reveal an older head. Keep hiding from that head.
+        return [{ ...entry, baseline: latest }];
       });
-      if (resurfaced.length) show(resurfaced);
+      if (
+        next.length !== current.current.length ||
+        next.some((entry, index) => entry !== current.current[index])
+      )
+        update(next);
     };
     const stops = hidden.map((entry) =>
       session.unread.subscribe({ kind: "channel", channelId: entry.id }, check),
@@ -89,32 +125,42 @@ export function useHiddenDms(scope: string, session: RelaySession) {
       stopIncoming();
       stopOutgoing?.();
     };
-  }, [hidden, session, show]);
+  }, [hidden, session, show, update]);
 
   useEffect(() => {
-    if (!hidden.length) return;
+    if (!hidden.length || list.status !== "ready") return;
     const controller = new AbortController();
     // The shared unread repair is roster-wide and capped. Check each hidden DM's
     // latest verified message so an offline arrival can restore it on return.
     void (async () => {
-      for (const { id } of hidden) {
+      for (const entry of hidden) {
         if (controller.signal.aborted) return;
-        const channel = session.channels
-          .list()
-          .channels.find((item) => item.id === id);
+        const { id } = entry;
+        const channel = list.channels.find((item) => item.id === id);
         if (channel?.channelType !== "dm") continue;
         try {
           await session.read([{ kinds: [9, 40002], "#h": [id], limit: 1 }], {
             signal: controller.signal,
             priority: "background",
           });
+          if (entry.baseline === undefined && current.current.includes(entry)) {
+            const latest = session.unread.snapshot({
+              kind: "channel",
+              channelId: id,
+            }).latestMessage;
+            update(
+              current.current.map((item) =>
+                item === entry ? { ...item, baseline: latest ?? null } : item,
+              ),
+            );
+          }
         } catch {
           // Live delivery and a later mount can still restore the row.
         }
       }
     })();
     return () => controller.abort();
-  }, [hidden, session]);
+  }, [hidden, session, list, update]);
 
   return { hiddenIds: new Set(hidden.map((entry) => entry.id)), hide };
 }

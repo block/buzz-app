@@ -1,7 +1,11 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
+import { knownAgentPubkeys } from "../agents/known";
+import { useKnownAgentPubkeys } from "../agents/use-known";
+import { rememberAgentsPreference } from "./mention-preferences";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
@@ -28,6 +32,7 @@ import {
 } from "./emoji-size";
 import {
   mentionDraft,
+  followupDraft,
   editMentionDraft,
   replaceMentionDraft,
   type MentionDraft,
@@ -111,13 +116,29 @@ function Composer({
   mediaTimeSeconds,
   clearMediaTime,
   hideMediaTimeIndicator = false,
-  disabled = false,
+  disabled: requestedDisabled = false,
   submission,
   sessionConversation,
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
   const { control } = useMentionAgents(scope);
+  const list = useSyncExternalStore(
+    session.channels?.get || sessionConversation
+      ? session.channels.subscribeList
+      : noChannelSubscription,
+    session.channels?.get || sessionConversation
+      ? session.channels.list
+      : noChannelSnapshot,
+    session.channels?.get || sessionConversation
+      ? session.channels.list
+      : noChannelSnapshot,
+  );
+  const readOnly =
+    !submission &&
+    !!session.channels?.get &&
+    !list.channels.some((channel) => channel.id === channelId);
+  const disabled = requestedDisabled || readOnly;
   const [sending, setSending] = useState(false);
   const sendAttempt = useRef<AbortController | null>(null);
   useLayoutEffect(() => () => sendAttempt.current?.abort(), []);
@@ -142,13 +163,6 @@ function Composer({
       live.current = false;
     };
   }, []);
-  const list = useSyncExternalStore(
-    sessionConversation
-      ? session.channels.subscribeList
-      : noChannelSubscription,
-    sessionConversation ? session.channels.list : noChannelSnapshot,
-    sessionConversation ? session.channels.list : noChannelSnapshot,
-  );
   const parentChannelId = list.channels.find(
     (item) => item.id === channelId,
   )?.parentChannelId;
@@ -184,7 +198,7 @@ function Composer({
       JSON.stringify(next.recipients) ===
         JSON.stringify(valueRef.current.recipients)
     )
-      return;
+      return false;
     if (!compositionSaved.current)
       history.current.past.push({
         draft: valueRef.current,
@@ -197,9 +211,8 @@ function Composer({
     valueRef.current = next;
     updateDraft(next);
     writeView(scope, draftKey, next);
+    return true;
   };
-  const setDraft = (text: string) =>
-    saveDraft(editMentionDraft(valueRef.current, text));
   const [error, setError] = useState<string>();
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
@@ -459,9 +472,23 @@ function Composer({
       onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();
-      setDraft("");
+      const agents = knownAgentPubkeys(
+        session.profiles.snapshot(),
+        session.agentLibrary.snapshot(),
+      );
+      const next = followupDraft(
+        rememberAgentsPreference()
+          ? captured.recipients.filter((item) => agents.has(item.pubkey))
+          : [],
+      );
+      const changed = saveDraft(next);
+      // An unchanged prefill may not render. Do not leave a caret command for
+      // the next keystroke to consume after inserting its first character.
+      caret.current = changed ? next.text.length : undefined;
       history.current = { past: [], future: [] };
       input.current?.focus();
+      if (!changed)
+        input.current?.setSelectionRange(next.text.length, next.text.length);
       setError(undefined);
     } catch (reason) {
       if (live.current && !attempt.signal.aborted)
@@ -487,6 +514,26 @@ function Composer({
       canOpen={(target) => canOpenLink?.(target) ?? false}
       open={(target) => onOpenLink?.(target) ?? false}
     />
+  );
+  const renderLeadingTools = (tools: ReactNode) => (
+    <div className={styles.composerLeadingTools}>
+      {tools}
+      {!!value.recipients.length && (
+        <RecipientAvatars
+          session={session}
+          recipients={value.recipients}
+          disabled={editingDisabled}
+          remove={(pubkey) =>
+            saveDraft({
+              ...value,
+              recipients: value.recipients.filter(
+                (item) => item.pubkey !== pubkey,
+              ),
+            })
+          }
+        />
+      )}
+    </div>
   );
   if (!outbox?.supports(9))
     return (
@@ -651,9 +698,10 @@ function Composer({
           )}
         <div className={styles.composerActions}>
           <div className={styles.composerTools}>
-            {extensions && (
+            {extensions ? (
               <ComposerTools
                 registry={extensions.tools}
+                renderLeading={renderLeadingTools}
                 session={session}
                 scope={scope}
                 channelId={channelId}
@@ -664,6 +712,8 @@ function Composer({
                 insertMention={insertMention}
                 focus={() => input.current?.focus()}
               />
+            ) : (
+              renderLeadingTools(null)
             )}
           </div>
           {trailingTool ??
@@ -677,7 +727,9 @@ function Composer({
               />
             ) : null)}
           <IconButton
+            variant="tint"
             size="toolbar"
+            shape="round"
             type="submit"
             aria-label="Send message"
             title="Send message"
@@ -688,7 +740,7 @@ function Composer({
               submission?.disabled ||
               !draft.trim()
             }
-            icon={<ArrowUpIcon size={20} />}
+            icon={<ArrowUpIcon size={16} />}
           />
         </div>
         {error && <p role="alert">{error}</p>}
@@ -711,5 +763,72 @@ function Composer({
         )}
       </form>
     </>
+  );
+}
+
+/** Presentation stays host-owned even when the optional mention tool is disabled. */
+function RecipientAvatars({
+  session,
+  recipients,
+  disabled,
+  remove,
+}: {
+  session: RelaySession;
+  recipients: readonly MentionRecipient[];
+  disabled: boolean;
+  remove(pubkey: string): void;
+}) {
+  const profiles = useSyncExternalStore(
+    session.profiles.subscribe,
+    session.profiles.snapshot,
+    session.profiles.snapshot,
+  );
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const unique = [
+    ...new Map(recipients.map((item) => [item.pubkey, item])).values(),
+  ];
+  return (
+    <section
+      className={styles.mentionRecipients}
+      aria-label="Explicit mentions"
+    >
+      {unique.map((recipient) => {
+        const profile = profiles.get(recipient.pubkey);
+        return (
+          <IconButton
+            key={recipient.pubkey}
+            type="button"
+            size="toolbar"
+            data-mention-recipient=""
+            title={`Remove explicit mention of ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
+            aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
+            disabled={disabled}
+            onClick={() => remove(recipient.pubkey)}
+            icon={
+              <span
+                className={styles.mentionRecipientArtwork}
+                data-avatar-shape={
+                  agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                }
+                aria-hidden="true"
+              >
+                <Avatar
+                  alt=""
+                  fallback={recipient.name}
+                  src={session.media(profile?.picture ?? "", "small")}
+                  size="small"
+                  shape={
+                    agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                  }
+                />
+                <span className={styles.mentionRecipientRemove}>
+                  <XIcon size={16} />
+                </span>
+              </span>
+            }
+          />
+        );
+      })}
+    </section>
   );
 }

@@ -98,25 +98,28 @@ function LiveSessions({
   };
   return (
     <SessionsWorkspace
-      sessions={sessions.map((item) => ({
-        id: item.id,
-        title: item.name,
-        content: (
-          <UnreadBadge
-            session={session}
-            channelId={item.id}
-            label={item.name}
-          />
-        ),
-        ...(item.parentChannelId
-          ? {
-              parentName:
-                list.channels.find(
-                  (parent) => parent.id === item.parentChannelId,
-                )?.name ?? "Channel session",
-            }
-          : {}),
-      }))}
+      sessions={sessions.map((item) => {
+        const parent = list.channels.find(
+          (candidate) => candidate.id === item.parentChannelId,
+        );
+        return {
+          id: item.id,
+          title: item.name,
+          content: (
+            <UnreadBadge
+              session={session}
+              channelId={item.id}
+              label={item.name}
+            />
+          ),
+          ...(item.parentChannelId
+            ? {
+                parentName: parent?.name ?? "Channel session",
+                ...(parent?.private ? { parentPrivate: true as const } : {}),
+              }
+            : {}),
+        };
+      })}
       selected={selected}
       onSelect={select}
       onNew={() => {

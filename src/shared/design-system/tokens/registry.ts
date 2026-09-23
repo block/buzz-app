@@ -506,6 +506,14 @@ export const ROLE_GROUPS: RoleGroup[] = [
         status: "core",
       },
       {
+        token: "bg-affordance-panel-hover",
+        variable: "--affordance-panel-hover",
+        pointsAt: "neutral 3 light / neutral 4 dark",
+        use: "Quiet hover for navigation items on a panel. Unlike subtle controls, a panel row starts unfilled; keep its hover distinct from persistent selection.",
+        status: "proposed",
+        owner: "Morgan",
+      },
+      {
         token: "bg-affordance-selected",
         variable: "--affordance-selected",
         pointsAt: "neutral-3 light / neutral-5 dark",

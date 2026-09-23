@@ -3,9 +3,9 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import {
   ChatCircleIcon,
-  HashIcon,
   UsersIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { UnreadBadge } from "./UnreadBadge";
@@ -19,8 +19,8 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   channel,
   session,
   working,
+  sessionsEnabled,
   selected,
-  search,
   collapsed,
   onToggle,
   draft,
@@ -33,8 +33,8 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   channel: ChannelSummary;
   session: RelaySession;
   working: boolean;
+  sessionsEnabled: boolean;
   selected: string | undefined;
-  search: string;
   collapsed: boolean;
   onToggle: (key: string, open: boolean) => void;
   draft: boolean;
@@ -49,7 +49,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       ? (channel.participants?.length ?? 0) > 1
         ? UsersIcon
         : ChatCircleIcon
-      : HashIcon;
+      : channelIcon(channel);
   return (
     <ChannelSidebarRow
       channel={channel}
@@ -81,17 +81,12 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
         />
       )}
       selected={selected}
+      sessionsEnabled={sessionsEnabled}
       collapsed={collapsed}
-      onToggle={(open) => {
-        if (!search) onToggle(`session-children:${channel.id}`, open);
-      }}
+      onToggle={(open) => onToggle(`session-children:${channel.id}`, open)}
       draft={draft}
       draftSelected={draftSelected}
-      sessions={sessions.filter(
-        (child) =>
-          channel.name.toLowerCase().includes(search.toLowerCase()) ||
-          child.name.toLowerCase().includes(search.toLowerCase()),
-      )}
+      sessions={sessions}
       childContent={(child) => (
         <UnreadBadge
           session={session}

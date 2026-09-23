@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
@@ -13,6 +14,8 @@ import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import { AttachmentImage } from "./AttachmentImage";
 import { DeliveryNotice } from "./DeliveryNotice";
+import { AudioAttachment } from "./AudioAttachment";
+import { FileAttachment, isProxySource } from "./FileAttachment";
 import { useReferenceDirectory } from "./ReferenceText";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
@@ -78,7 +81,8 @@ export const MessageRow = memo(function MessageRow({
   onOpenMediaReview,
   agentPubkeys,
 }: MessageRowProps) {
-  const directory = useReferenceDirectory(session, row.mentions.length > 0);
+  const resolveName = useIdentityNames(session?.names);
+  const directory = useReferenceDirectory(session);
   const threadUnread = useThreadUnread(
     row.replyCount > 0 && onOpenThread ? unread : undefined,
     row.channelId,
@@ -97,7 +101,10 @@ export const MessageRow = memo(function MessageRow({
         : (threadUnread?.observedCount ?? 0) > 0
           ? `Observed unread replies${threadUnread?.freshness === "stale" ? "; may be out of date" : ""}. Not an exact total.`
           : undefined;
-  const name = profile?.name ?? row.authorId.slice(0, 10);
+  const name = resolveName(
+    row.authorId,
+    profile?.name ?? row.authorId.slice(0, 10),
+  );
   const picture = profile?.picture
     ? media(profile.picture, "small")
     : undefined;
@@ -116,6 +123,8 @@ export const MessageRow = memo(function MessageRow({
     session &&
     scope &&
     session.outbox?.supports(7) &&
+    (!session.channels.get ||
+      channelList.channels.some((channel) => channel.id === row.channelId)) &&
     !channelList.channels.find((channel) => channel.id === row.channelId)
       ?.archived
   );
@@ -136,6 +145,7 @@ export const MessageRow = memo(function MessageRow({
         {clickable ? (
           <IconButton
             size="large"
+            shape="round"
             aria-label={`View ${name} profile`}
             onClick={(event) => {
               event.currentTarget.focus();
@@ -204,7 +214,34 @@ export const MessageRow = memo(function MessageRow({
             const url = safeMessageUrl(attachment.url);
             if (!url) return null;
             const source = media(url);
-            if (!attachment.video && source)
+            if (attachment.kind === "file")
+              return (
+                <FileAttachment
+                  key={url}
+                  attachment={{ ...attachment, url }}
+                  source={source}
+                  onOpenLink={onOpenLink}
+                />
+              );
+            if (attachment.kind === "audio") {
+              if (source && isProxySource(source))
+                return (
+                  <AudioAttachment
+                    key={url}
+                    attachment={{ ...attachment, url }}
+                    source={source}
+                  />
+                );
+              return (
+                <FileAttachment
+                  key={url}
+                  attachment={{ ...attachment, url }}
+                  source={source}
+                  onOpenLink={onOpenLink}
+                />
+              );
+            }
+            if (attachment.kind === "image" && source)
               return (
                 <AttachmentImage
                   key={url}
@@ -226,7 +263,7 @@ export const MessageRow = memo(function MessageRow({
                 attachment={{ ...attachment, url }}
                 media={media}
                 mode={mediaMode}
-                {...(attachment.video && mediaSeekTo !== undefined
+                {...(attachment.kind === "video" && mediaSeekTo !== undefined
                   ? {
                       seekTo: mediaSeekTo,
                       ...(mediaSeekRequest !== undefined
@@ -292,7 +329,10 @@ export const MessageRow = memo(function MessageRow({
                 <span className={styles.threadAvatars} aria-hidden="true">
                   {row.participants.slice(0, 3).map((id) => {
                     const participant = participantProfiles?.get(id);
-                    const name = participant?.name ?? id.slice(0, 10);
+                    const name = resolveName(
+                      id,
+                      participant?.name ?? id.slice(0, 10),
+                    );
                     const picture = participant?.picture
                       ? media(participant.picture, "small")
                       : undefined;

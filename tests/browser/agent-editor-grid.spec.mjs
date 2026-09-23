@@ -91,6 +91,15 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       exact: true,
     });
     await expect(dialog).toBeVisible();
+    // Browser geometry: the editor is a single column aligned with its title.
+    const titleBounds = await dialog
+      .getByRole("heading", { name: "Edit agent", exact: true })
+      .boundingBox();
+    const nameBounds = await dialog
+      .getByLabel("Name", { exact: true })
+      .boundingBox();
+    expect(Math.abs(nameBounds.x - titleBounds.x)).toBeLessThan(1);
+
     await expect(dialog.getByLabel("Workspace", { exact: true })).toBeHidden();
     await expect(
       dialog.getByRole("combobox", { name: "Harness", exact: true }),
@@ -180,6 +189,44 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
     expect(
       await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth),
     ).toBe(true);
+    // Expanded diagnostics share the modal's scroll; long lines wrap at 200%.
+    await page.evaluate(async () => {
+      const fixture = window.agentControlFixture;
+      fixture.agent.diagnostics = ["Synthetic diagnostic line ".repeat(80)];
+      await fixture.control.refresh();
+      document.documentElement.style.setProperty("--buzz-text-scale", "2");
+    });
+    const technical = dialog.getByRole("button", {
+      name: "Technical details",
+      exact: true,
+    });
+    await technical.focus();
+    await technical.press("Enter");
+    await expect(technical).toHaveAttribute("aria-expanded", "true");
+    const diagnostics = dialog.locator("pre");
+    await expect(diagnostics).toContainText("Synthetic diagnostic line");
+    await expect
+      .poll(() =>
+        diagnostics.evaluate(
+          (el) =>
+            el.scrollHeight <= el.clientHeight &&
+            el.scrollWidth <= el.clientWidth,
+        ),
+      )
+      .toBe(true);
+    await expect
+      .poll(() => dialog.evaluate((el) => el.scrollWidth <= el.clientWidth))
+      .toBe(true);
+    await dialog
+      .getByRole("button", { name: "Save changes" })
+      .scrollIntoViewIfNeeded();
+    await expect(
+      dialog.getByRole("button", { name: "Save changes" }),
+    ).toBeInViewport();
+    await technical.click();
+    await page.evaluate(() =>
+      document.documentElement.style.setProperty("--buzz-text-scale", "1"),
+    );
     await page.setViewportSize({ width: 1440, height: 950 });
     const search = dialog.getByRole("combobox", { name: "Model", exact: true });
     await dialog
@@ -244,7 +291,9 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       )
       .toBe("");
     // Dirty write-only values receive the same incidental-dismissal protection.
-    await dialog.getByText("Advanced", { exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Environment", exact: true })
+      .click();
     const environment = dialog.getByLabel("Replacement for EXAMPLE_TOKEN");
     await environment.fill("synthetic-draft-only");
     await environment.press("Escape");
@@ -255,7 +304,9 @@ test("existing grid opens the focused editor, selects a model and saves/reopens"
       .getByRole("button", { name: "Actions for Fixture agent", exact: true })
       .click();
     await page.getByRole("menuitem", { name: "Edit", exact: true }).click();
-    await dialog.getByText("Advanced", { exact: true }).click();
+    await dialog
+      .getByRole("button", { name: "Environment", exact: true })
+      .click();
     await expect(environment).toHaveValue("");
     await dialog
       .getByRole("textbox", { name: "Name", exact: true })

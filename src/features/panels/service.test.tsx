@@ -17,6 +17,7 @@ const plugin = (id: string): PluginInfo => ({
   source: "bundled",
   revision: "one",
   previous: null,
+  reloadable: false,
   error: null,
 });
 it("independently unloads panels without removing the page or shared data", async () => {

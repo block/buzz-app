@@ -73,6 +73,7 @@ function mount(selected = "child") {
         draft={true}
         draftSelected={false}
         selected={selected}
+        sessionsEnabled
         onSelect={onSelect}
         onPrepare={() => {}}
         onNewSession={onNewSession}
@@ -88,6 +89,7 @@ it("opens a compact action menu independently of selecting its channel", async (
   const trigger = screen.getByRole("button", {
     name: "More options for Engineering",
   });
+  expect(trigger).toHaveAttribute("data-icon-shape", "round");
   await user.click(trigger);
   await user.click(
     await screen.findByRole("menuitem", { name: "New session" }),
@@ -114,6 +116,27 @@ it("opens a compact action menu independently of selecting its channel", async (
     ).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
   });
+});
+it("hides session actions when the Sessions plugin is unavailable", () => {
+  const onNewSession = vi.fn();
+  render(
+    <ChannelSidebarRow
+      channel={parent}
+      collapsed={false}
+      onToggle={() => {}}
+      icon={<svg />}
+      sessions={[]}
+      sessionsEnabled={false}
+      draft={false}
+      draftSelected={false}
+      onSelect={() => {}}
+      onPrepare={() => {}}
+      onNewSession={onNewSession}
+    />,
+  );
+  expect(
+    screen.queryByRole("button", { name: "More options for Engineering" }),
+  ).not.toBeInTheDocument();
 });
 it("opens saved child sessions and retained drafts without a channel icon", async () => {
   const user = userEvent.setup();

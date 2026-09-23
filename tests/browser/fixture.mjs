@@ -27,11 +27,13 @@ export const historySize = 640;
 export const test = base.extend({
   productionBroker: [false, { option: true }],
   actionProfile: [false, { option: true }],
+  profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
   threadUnreadMentions: [false, { option: true }],
   exactMessages: [false, { option: true }],
+  openSearch: [false, { option: true }],
   sessionChannels: [[], { option: true }],
   sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
@@ -53,11 +55,13 @@ export const test = base.extend({
       browser,
       productionBroker,
       actionProfile,
+      profilePicture,
       readState,
       threadUnread,
       presenceThreadAuthors,
       threadUnreadMentions,
       exactMessages,
+      openSearch,
       sessionChannels,
       sessionParents,
       sidebarUnread,
@@ -203,6 +207,28 @@ export const test = base.extend({
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
     const targetEvents = [];
+    let searchTarget;
+    if (openSearch) {
+      const root = sign(
+        9,
+        [["h", "open"]],
+        "Public conversation root",
+        userKey,
+        1699999000,
+      );
+      searchTarget = sign(
+        9,
+        [
+          ["h", "open"],
+          ["e", root.id, "", "reply"],
+        ],
+        "crew-search exact public reply",
+        userKey,
+        1699999001,
+      );
+      histories.set("primary/open", [root]);
+      targetEvents.push(searchTarget);
+    }
     let exact;
     if (exactMessages) {
       const root = histories.get("primary/alpha")[2];
@@ -262,6 +288,10 @@ export const test = base.extend({
     const threadReplies = new Map(
       exact ? [[exact.root.id, exact.replies]] : [],
     );
+    if (searchTarget)
+      threadReplies.set(searchTarget.tags.find(([key]) => key === "e")[1], [
+        searchTarget,
+      ]);
     const threadSummaries = [];
     if (threadUnread) {
       const history = histories.get("primary/alpha");
@@ -457,34 +487,39 @@ export const test = base.extend({
           sign(20001, [["p", author]], "online"),
         );
       if (filter.kinds?.includes(39002))
-        return rosterIds.map((id) =>
-          sign(39002, [
-            ["d", id],
-            ["p", viewer],
-            ...participants
-              .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-              .map((pubkey) => ["p", pubkey]),
-          ]),
-        );
+        return rosterIds
+          .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+          .map((id) =>
+            sign(39002, [
+              ["d", id],
+              ["p", viewer],
+              ...participants
+                .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
+                .map((pubkey) => ["p", pubkey]),
+            ]),
+          );
       if (filter.kinds?.includes(39000))
-        return rosterIds.map((id) =>
-          sign(39000, [
-            ["d", id],
-            ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
-            ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
-            ...(sessionChannels.includes(id)
-              ? [
-                  ["t", "stream"],
-                  ["private"],
-                  [
-                    "about",
-                    `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
-                  ],
-                ]
-              : []),
-            ...(hiddenChannels.has(id) ? [["hidden"]] : []),
-          ]),
-        );
+        return [...rosterIds, ...(openSearch ? ["open"] : [])]
+          .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+          .map((id) =>
+            sign(39000, [
+              ["d", id],
+              ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
+              ...(id === "open" ? [["public"], ["t", "stream"]] : []),
+              ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
+              ...(sessionChannels.includes(id)
+                ? [
+                    ["t", "stream"],
+                    ["private"],
+                    [
+                      "about",
+                      `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                    ],
+                  ]
+                : []),
+              ...(hiddenChannels.has(id) ? [["hidden"]] : []),
+            ]),
+          );
       if (filter.kinds?.includes(30078)) {
         const events = [...readEvents.get(community).values()];
         if (readState && filter.read_state_snapshot === 1)
@@ -537,6 +572,17 @@ export const test = base.extend({
               ]
             : []),
         ];
+      if (filter.search !== undefined)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.content.toLowerCase().includes(filter.search.toLowerCase()),
+          )
+          .slice(0, filter.limit);
       if (filter.ids)
         return [...histories.entries()]
           .filter(([key]) => key.startsWith(`${community}/`))
@@ -731,6 +777,7 @@ export const test = base.extend({
     const relay = productionBroker
       ? policyRelay({
           viewer,
+          relayAuthor: getPublicKey(relayKey),
           answer,
           report,
           pending,
@@ -937,7 +984,7 @@ export const test = base.extend({
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
-                  agentLibrary: () => [],
+                  agentLibrary: () => ({ definitions: [], identities: [] }),
                   ...(readState
                     ? {}
                     : {
@@ -992,13 +1039,13 @@ export const test = base.extend({
         }
       });
       await page.addInitScript(
-        ({ viewer }) => {
+        ({ viewer, profilePicture }) => {
           const key = `buzz-client.v1:${viewer}`;
           if (!localStorage.getItem(key))
             localStorage.setItem(
               key,
               JSON.stringify({
-                profile: { name: "Browser Fixture", picture: "" },
+                profile: { name: "Browser Fixture", picture: profilePicture },
                 memberships: [
                   { id: "primary", name: "Primary" },
                   { id: "secondary", name: "Secondary" },
@@ -1007,7 +1054,7 @@ export const test = base.extend({
               }),
             );
         },
-        { viewer },
+        { viewer, profilePicture },
       );
       await use({
         origin,
@@ -1016,6 +1063,7 @@ export const test = base.extend({
         histories,
         presenceThread,
         exact,
+        searchTarget,
         membership(
           type,
           targetIndex,

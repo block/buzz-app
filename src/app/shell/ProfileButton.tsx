@@ -48,7 +48,7 @@ export function ProfileButton({
     };
   }, [open]);
   return (
-    <div ref={container} className="relative">
+    <div ref={container} className="relative flex items-center">
       <IconButton
         type="button"
         ref={trigger}
@@ -61,6 +61,7 @@ export function ProfileButton({
         aria-controls={id}
         title={profile.name || "Your profile"}
         variant="chrome"
+        shape="round"
         icon={
           /* Keep pointer-origin Tab traversal rooted at the button in WebKit. */
           <span className="pointer-events-none flex size-full items-center justify-center rounded-full">

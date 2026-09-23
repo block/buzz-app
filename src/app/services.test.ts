@@ -32,12 +32,13 @@ const viewer = "a".repeat(64);
 const signals: AbortSignal[] = [];
 const streams: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
 let storageReads: ReturnType<typeof vi.fn>;
+let values: Map<string, string>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
   plugin.cleanup.mockReset();
-  const values = new Map<string, string>();
+  values = new Map<string, string>();
   storageReads = vi.fn((key: string) => values.get(key) ?? null);
   vi.stubGlobal("localStorage", {
     getItem: storageReads,
@@ -204,6 +205,27 @@ it("still cancels the host and reports an unexpected manager-disposal failure", 
   });
   await expect(services.dispose()).rejects.toThrow("Manager cleanup failed");
   expectHostStopped();
+});
+
+it("seeds and persists the configured relay through the real app composition", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_OPEN_RELAY", "https://third.example");
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  const membership = { id: "https://third.example", name: "third.example" };
+  expect(services.communities.snapshot()).toMatchObject({
+    status: "ready",
+    memberships: [membership],
+    selected: membership.id,
+  });
+  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain(
+    "/api/relay/https%3A%2F%2Fthird.example/session",
+  );
+  expect(JSON.parse(values.get(`buzz-client.v1:${viewer}`) ?? "null")).toEqual({
+    profile: { name: "", picture: "" },
+    memberships: [membership],
+    selected: membership.id,
+  });
 });
 
 it("joins cleanup already started by disabling a plugin", async () => {

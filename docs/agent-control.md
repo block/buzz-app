@@ -8,7 +8,10 @@ agents. The only product entry point is ordinary desktop startup.
 ## Normal desktop workflow
 
 Run from the feature worktree with `bin/just desktop`, not a management-only
-launcher. This opens **Buzz Foundation** using the ordinary live-development
+launcher. The command prepares the pinned agent runtime before starting Tauri;
+the first build may take several minutes. Later launches verify and reuse matching
+resources, rebuilding missing, stale or corrupt ones. Preparation failure stops
+launch rather than opening a desktop that cannot run agents. This opens **Buzz Foundation** using the ordinary live-development
 configuration and persistent native settings. Coordinate the native rebuild/relaunch;
 quit other Foundation copies first. Saved enabled agents can restore on startup.
 Keep imported agents disabled and old Buzz running until an attended handover.
@@ -27,6 +30,8 @@ During a Create/profile wait, **Close** leaves the native operation running and
 exposes the existing cards' recovery Stop. Closing before creation returns skips
 automatic profile publication; refresh status and retry on the saved card. Late
 completion never closes a subsequently opened dialog.
+Create is blocked with an explanation if this app’s runtime is unavailable;
+existing agents and profile retry remain intact.
 The dev broker and native host must both support this flow. Packaged human
 signing remains unavailable.
 
@@ -118,9 +123,11 @@ resources. Production has no disposable storage override or preview launch mode.
   unavailable capability; no fetch fallback, local storage, signing or runner.
 - `bundled/agents/AgentControlPanel.tsx`: compose with `{ control }` independently
   of selected community or relay connectivity. It owns only observation and UI
-  drafts. Its five-second refresh runs while visible/ready; reads coalesce. On
-  errors it stops polling and exposes explicit Retry. Unmount clears the timer,
-  not enabled intent or processes.
+  drafts. Its five-second refresh runs while visible/ready; reads coalesce. A read
+  rejected specifically because native startup is initializing or its lock is busy
+  stays pending for at most twenty 250ms waits. Genuine errors or exhausted retries
+  stop polling and expose explicit Retry; writes are never automatically retried.
+  Unmount clears the timer, not enabled intent or processes.
 - Native host owns persistent state, credential custody, process groups, lock and
   duplicate ownership checks, source import validation and sanitized diagnostics.
   It must bound IPC operations and reject with deliberately user-facing strings;
@@ -224,7 +231,9 @@ resources. Production has no disposable storage override or preview launch mode.
 
 ## Runtime resources
 
-Build without launching any app or accessing old credentials:
+Ordinary `bin/just desktop` and `bin/pnpm tauri build` prepare these resources
+automatically. Direct Cargo builds do not run that JavaScript preparation step.
+To prepare/build without launching any app or accessing old credentials:
 
 ```sh
 bin/pnpm install --frozen-lockfile

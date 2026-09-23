@@ -75,6 +75,7 @@ function mode(revision: string) {
       source: "bundled",
       revision: "1",
       previous: null,
+      reloadable: false,
       error: null,
     },
     ...(revision === "off"
@@ -86,6 +87,7 @@ function mode(revision: string) {
             source: "bundled",
             revision,
             previous: null,
+            reloadable: false,
             error: null,
           },
         ]),

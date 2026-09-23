@@ -15,7 +15,14 @@ export default defineConfig(async ({ command, mode }) => {
   parseCommunityAliases(aliases);
   // Public routing configuration only; the viewer pin and credentials stay in Node.
   const defaultRelay = env.BUZZ_RELAY_URL?.trim();
-  if (defaultRelay) relayOrigin(defaultRelay);
+  const defaultOrigin = defaultRelay ? relayOrigin(defaultRelay) : "";
+  // Opt-in seed: a viewer with no saved client record on this dev origin starts
+  // in the default relay's community. Only "1" enables it; builds never see it.
+  const openRelay = live && env.BUZZ_DEV_OPEN_RELAY === "1";
+  if (openRelay && !defaultOrigin)
+    throw new Error(
+      "BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL to name the community to open.",
+    );
   const plugins: PluginOption[] = [react()];
   if (live)
     plugins.push(
@@ -33,6 +40,9 @@ export default defineConfig(async ({ command, mode }) => {
         command === "serve" && env.BUZZ_DEV_NOTIFICATIONS === "0" ? "1" : "0",
       ),
       "import.meta.env.VITE_BUZZ_COMMUNITY_ALIASES": JSON.stringify(aliases),
+      "import.meta.env.VITE_BUZZ_OPEN_RELAY": JSON.stringify(
+        openRelay ? defaultOrigin : "",
+      ),
     },
     clearScreen: false,
     server: {

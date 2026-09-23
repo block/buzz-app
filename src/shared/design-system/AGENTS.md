@@ -10,6 +10,9 @@ Components live in ui/, values in styles/, documentation metadata in tokens/ and
 The standalone viewer lives in tests/fixtures/design-system and imports the real shared components.
 Do not import features, plugins, native adapters, or app startup into this system or viewer.
 When wiring it into the app, use the shared components and tokens rather than the viewer's documentation furniture.
+For row lists in dialogs and panels, follow DESIGN.md § Align row content, not state backgrounds: offset the list composition, keep shared row padding, use consistent icon slots, and preserve narrow-screen gutters and keyboard focus outlines.
 Integrate global styles deliberately through the host entry point instead of layering two resets, and keep the host appearance owner.
 The theme helper is viewer-only; app surfaces read appearance through the host.
 Run the root design:typecheck, design:check, design:test, and design:build scripts.
+
+Public-key display text uses `src/shared/identity/public-key.ts`, not hand-written slicing or a new visual component. See DESIGN.md “Public identity text”. Never format secret keys with it.

@@ -1,14 +1,22 @@
 import type { CustomEmoji } from "./emoji";
+import type { ReadOptions } from "./reader";
 import type { Delivery } from "./outbox";
+
+export const MAX_ATTACHMENT_DURATION_SECONDS = 86_400;
+
 /** Folded, read-only channel state. Rows are domain data, not wire events or presentation. */
 export type ChannelSummary = Readonly<{
   id: string;
   name: string;
   preview?: string | undefined;
+  /** Readable public nonmember channel; not part of the joined roster. */
+  readOnly?: true;
   /** Members-only channel omitted from directories (NIP-29 `hidden`), such as a DM. */
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
   channelType?: "stream" | "forum" | "dm" | "session";
+  /** Relay-authored channel visibility; private channels use restricted presentation. */
+  private?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
   parentChannelId?: string | undefined;
   /** Metadata update time used for stable work-history ordering. */
@@ -28,7 +36,13 @@ export type Profile = Readonly<{
 }>;
 export type Attachment = Readonly<{
   url: string;
-  video: boolean;
+  kind: "image" | "video" | "audio" | "file";
+  /** Sender-supplied presentation metadata; `size` is a claim, `name` is display/download only. */
+  mime?: string;
+  size?: number;
+  name?: string;
+  /** Sender/relay-claimed duration in seconds; display hint, corrected by the element. */
+  duration?: number;
   dimensions?: Readonly<{ width: number; height: number }>;
   /** Validated message-carried BlurHash; decoded locally only for presentation. */
   blurhash?: string;
@@ -97,6 +111,9 @@ export type ChannelWindow = Readonly<{
  * Commands are idempotent requests; the store decides whether network work is needed. */
 export interface ChannelQueries {
   list(): ChannelList;
+  /** Bounded discovery lookup; never inserts public previews into list(). */
+  get?(channelId: string): ChannelSummary | undefined;
+  resolve?(channelIds: readonly string[], options?: ReadOptions): Promise<void>;
   subscribeList(listener: () => void): () => void;
   window(channelId: string): ChannelWindow;
   subscribeWindow(channelId: string, listener: () => void): () => void;

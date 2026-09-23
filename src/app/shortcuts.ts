@@ -2,6 +2,19 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { Appearance } from "../shared/theme/service";
 
 /** Host actions use the same binding/dispatch rules as plugins, without fake plugin ownership. */
+// Settings presents the host category in functional sections: navigation,
+// text sizing, search/settings, then development-only actions.
+export const HOST_SHORTCUT_ORDER = {
+  navigationBack: 10,
+  navigationForward: 20,
+  textSizeIncrease: 40,
+  textSizeDecrease: 50,
+  textSizeReset: 60,
+  search: 70,
+  settings: 80,
+  development: 90,
+} as const;
+
 export function registerAppShortcuts(
   shortcuts: ShortcutsService,
   appearance: Appearance,
@@ -13,6 +26,7 @@ export function registerAppShortcuts(
       id: "settings",
       title: "Open Settings",
       binding: { key: ",", mod: true },
+      order: HOST_SHORTCUT_ORDER.settings,
       allowInEditable: true,
       when: () => ready,
       run: openSettings,
@@ -22,6 +36,7 @@ export function registerAppShortcuts(
         [
           "font-increase",
           "Increase text size",
+          HOST_SHORTCUT_ORDER.textSizeIncrease,
           [
             { key: "=", mod: true },
             { key: "=", mod: true, shift: true },
@@ -33,20 +48,23 @@ export function registerAppShortcuts(
         [
           "font-decrease",
           "Decrease text size",
+          HOST_SHORTCUT_ORDER.textSizeDecrease,
           { key: "-", mod: true },
           () => appearance.setFontScale(appearance.snapshot().fontScale - 0.1),
         ],
         [
           "font-reset",
           "Reset text size",
+          HOST_SHORTCUT_ORDER.textSizeReset,
           { key: "0", mod: true },
           () => appearance.setFontScale(1),
         ],
       ] as const
-    ).map(([id, title, binding, run]) =>
+    ).map(([id, title, order, binding, run]) =>
       shortcuts.registerHost({
         id,
         title,
+        order,
         binding,
         run,
         allowInEditable: true,
@@ -55,6 +73,19 @@ export function registerAppShortcuts(
       }),
     ),
   ];
+  if (import.meta.env.DEV) {
+    remove.push(
+      shortcuts.registerHost({
+        id: "development-reload",
+        title: "Reload development app",
+        binding: { key: "r", mod: true },
+        order: HOST_SHORTCUT_ORDER.development,
+        allowInEditable: true,
+        allowInModal: true,
+        run: () => window.location.reload(),
+      }),
+    );
+  }
   return () => {
     for (const dispose of remove) dispose();
   };
@@ -68,6 +99,7 @@ export function registerNavigationShortcuts(
     shortcuts.registerHost({
       id: "navigation-back",
       title: "Go back",
+      order: HOST_SHORTCUT_ORDER.navigationBack,
       binding: { key: "[", mod: true },
       allowInEditable: true,
       when: () => navigation.snapshot().canGoBack,
@@ -76,24 +108,9 @@ export function registerNavigationShortcuts(
     shortcuts.registerHost({
       id: "navigation-forward",
       title: "Go forward",
+      order: HOST_SHORTCUT_ORDER.navigationForward,
       binding: { key: "]", mod: true },
       allowInEditable: true,
-      when: () => navigation.snapshot().canGoForward,
-      run: navigation.forward,
-    }),
-    // Alt arrows are native word-editing chords on macOS. Keep them outside
-    // editable fields; Mod+[ / Mod+] remain explicit history shortcuts.
-    shortcuts.registerHost({
-      id: "navigation-back-arrow",
-      title: "Go back",
-      binding: { key: "ArrowLeft", alt: true },
-      when: () => navigation.snapshot().canGoBack,
-      run: navigation.back,
-    }),
-    shortcuts.registerHost({
-      id: "navigation-forward-arrow",
-      title: "Go forward",
-      binding: { key: "ArrowRight", alt: true },
       when: () => navigation.snapshot().canGoForward,
       run: navigation.forward,
     }),

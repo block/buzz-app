@@ -150,8 +150,10 @@ it("typed names create no recipient tags; unconfirmed or forged membership canno
   );
   await h.members(undefined, 1700000000, namesake);
   expect(() => h.session.messages.send("c", "@Honey", [honey.pubkey])).toThrow(
-    /membership/,
+    "Join the conversation before posting",
   );
+  expect(h.sign).not.toHaveBeenCalled();
+  expect(h.publish).not.toHaveBeenCalled();
   await h.members();
   expect(() => h.session.messages.send("c", "@Honey", ["not-a-key"])).toThrow(
     /valid/,

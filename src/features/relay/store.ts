@@ -160,7 +160,7 @@ export function createChannelStore(
       listeners.delete(callback);
     };
   }
-  function setList(next: ChannelList) {
+  function setList(next: ChannelList, discoveryChanged = false) {
     const previous = new Map(
       list.channels.map((channel) => [channel.id, channel]),
     );
@@ -174,6 +174,7 @@ export function createChannelStore(
         old.name === channel.name &&
         old.preview === preview &&
         old.hidden === channel.hidden &&
+        old.private === channel.private &&
         old.channelType === channel.channelType &&
         old.parentChannelId === channel.parentChannelId &&
         old.updatedAt === channel.updatedAt &&
@@ -193,6 +194,7 @@ export function createChannelStore(
       channels.length === list.channels.length &&
       channels.every((channel, index) => channel === list.channels[index]);
     if (
+      !discoveryChanged &&
       sameChannels &&
       next.status === list.status &&
       next.error === list.error &&
@@ -381,7 +383,7 @@ export function createChannelStore(
       !persistence ||
       // Compatibility queries have no signed bounds to restore from disk.
       isSession(channelId) ||
-      !authorized(channelId) ||
+      !discovery?.authorized(channelId) ||
       disposed ||
       heads.peek(channelId) !== head
     )
@@ -425,12 +427,15 @@ export function createChannelStore(
       // Profiles may be shared by several windows; clearing this bounded private projection
       // is conservative, and prevents denied-channel-only names from surviving visibly.
       directory.clear();
-      setList({
-        ...list,
-        channels: Object.freeze(
-          list.channels.filter((channel) => channel.id !== channelId),
-        ),
-      });
+      setList(
+        {
+          ...list,
+          channels: Object.freeze(
+            list.channels.filter((channel) => channel.id !== channelId),
+          ),
+        },
+        true,
+      );
       void persistence?.remove(channelId).catch(() => {});
     });
   }
@@ -734,7 +739,9 @@ export function createChannelStore(
     if (disposed || !transport || !discovery) return;
     started ??= discovery.rosterVersions();
     const accessRevision = discovery.accessRevision;
-    for (const event of events) discovery.accept(event);
+    let discoveryChanged = false;
+    for (const event of events)
+      discoveryChanged = discovery.accept(event) || discoveryChanged;
     // Only a complete viewer-scoped roster read proves absence; capped reads and live traffic never revoke by omission.
     if (complete) {
       discovery.retain(complete, started);
@@ -760,12 +767,15 @@ export function createChannelStore(
       for (const id of heads.keys()) if (!authorized(id)) heads.delete(id);
       for (const id of tails.keys()) if (!authorized(id)) tails.delete(id);
       if (complete) void persistence?.retain([...nextAllowed]).catch(() => {});
-      setList({
-        status: "ready",
-        channels,
-        ...(coverage ? { coverage } : {}),
-        asOf: now(),
-      });
+      setList(
+        {
+          status: "ready",
+          channels,
+          ...(coverage ? { coverage } : {}),
+          asOf: now(),
+        },
+        discoveryChanged,
+      );
     };
     // Commit the final channel list before any projection subscriber runs.
     // A session-only generic view can retain channels unknown to this store.
@@ -902,6 +912,92 @@ export function createChannelStore(
       }
     }
   }
+  /** Resolve only returned/demanded nonmember channels, through the verified reader. */
+  async function resolve(
+    channelIds: readonly string[],
+    settings?: ReadOptions,
+  ) {
+    if (disposed || !transport || !discovery)
+      throw new Error("Relay is unavailable");
+    const ids = [...new Set(channelIds)].filter(
+      (id) => !discovery.authorized(id),
+    );
+    if (!ids.length) return;
+    if (ids.length > 128) throw new Error("Too many search result channels");
+    const generation = epoch;
+    const started = new Map(
+      ids.map((id) => [id, discovery.metadataVersion(id)]),
+    );
+    const events = await transport.read(
+      [
+        {
+          kinds: [39000],
+          authors: [transport.relayAuthor],
+          "#d": ids,
+          limit: ids.length + 1,
+        },
+        {
+          kinds: [39002],
+          authors: [transport.relayAuthor],
+          "#d": ids,
+          "#p": [transport.viewer],
+          limit: ids.length + 1,
+        },
+      ],
+      { ...settings, fresh: true },
+    );
+    settings?.signal?.throwIfAborted();
+    if (disposed || generation !== epoch)
+      throw new DOMException("Stale channel resolution", "AbortError");
+    if (
+      [39000, 39002].some(
+        (kind) =>
+          events.filter((event) => event.kind === kind).length > ids.length,
+      )
+    )
+      throw new Error("Channel discovery exceeded its read budget");
+    // Successful verified lookup may restore the same public version after CLOSED.
+    // Missing/failed evidence leaves a suspension recoverable rather than granting access.
+    let resumed = false;
+    for (const id of ids) {
+      if (
+        events.some(
+          (event) =>
+            event.pubkey === transport.relayAuthor &&
+            tag(event, "d") === id &&
+            (event.kind === 39000 ||
+              (event.kind === 39002 && hasTag(event, "p", transport.viewer))),
+        )
+      )
+        resumed = discovery.resume(id) || resumed;
+    }
+    // A bounded exact roster fills omissions from capped discovery. Apply grants
+    // before private metadata so a newly resolved member never transiently loses access.
+    applyDiscovery([
+      ...events.filter((event) => event.kind === 39002),
+      ...events.filter((event) => event.kind !== 39002),
+    ]);
+    if (resumed) setList(list, true);
+    // Missing evidence cannot keep an earlier public preview readable.
+    for (const id of ids) {
+      if (
+        !events.some(
+          (event) =>
+            event.kind === 39000 &&
+            event.pubkey === transport.relayAuthor &&
+            tag(event, "d") === id,
+        )
+      ) {
+        if (
+          (discovery.get(id)?.readOnly ||
+            discovery.suspendedChannels().includes(id)) &&
+          started.get(id) === discovery.metadataVersion(id)
+        )
+          denyChannel(id, new Error("Conversation is unavailable"));
+      } else if (!discovery.named(id))
+        throw new Error("Channel metadata capacity unavailable");
+    }
+  }
   async function clearCache() {
     epoch++;
     hydration = undefined;
@@ -963,6 +1059,8 @@ export function createChannelStore(
   }
   const queries: ChannelQueries = Object.freeze({
     list: () => list,
+    get: (id: string) => discovery?.get(id),
+    resolve,
     subscribeList: (listener: Listener) => subscribe(listListeners, listener),
     window: (channelId: string) =>
       windows.get(channelId)?.snapshot ?? idleWindow(channelId),
@@ -1369,8 +1467,16 @@ export function createChannelStore(
         void discover(true);
     },
     canAccess: authorized,
+    canParticipate: (id: string) => discovery?.canParticipate(id) ?? false,
     purgeAccess,
     denyChannel,
+    suspendPreviews(ids: readonly string[]) {
+      let changed = false;
+      for (const id of ids)
+        changed = (discovery?.suspend(id) ?? false) || changed;
+      if (changed) transport?.revokeAccess(() => setList(list, true));
+    },
+    suspendedPreviews: () => discovery?.suspendedChannels() ?? [],
     acceptDiscovery: applyDiscovery,
     accept,
     clearCache,

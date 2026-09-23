@@ -1,6 +1,9 @@
-import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
+import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { Popover } from "../../../../src/shared/design-system/ui/Popover";
+import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
+import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
+import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
 import { Field } from "../../../../src/shared/design-system/ui/Field";
 import { Input } from "../../../../src/shared/design-system/ui/Input";
@@ -15,17 +18,35 @@ import { PanelSwapPlaygrounds } from "./PanelSwapPlaygrounds";
 import { FlexWorkspace } from "../../../../src/shared/design-system/ui/FlexWorkspace";
 import { BentoSpecimen } from "./BentoSpecimen";
 import {
+  BellIcon,
+  CheckIcon,
   DotsThreeIcon,
   HashIcon,
   ChatCircleIcon,
   PlusIcon,
-  GearIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 import { Select } from "../../../../src/shared/design-system/ui/Select";
+import {
+  ContextMenuRoot,
+  ContextMenuTrigger,
+  MenuCheckboxItem,
+  MenuIcon,
+  MenuItem,
+  MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
+  MenuRoot,
+  MenuSeparator,
+  MenuSubmenu,
+  MenuSubmenuPopup,
+  MenuSubmenuTrigger,
+  MenuTrailing,
+  MenuTrigger,
+} from "../../../../src/shared/design-system/ui/Menu";
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
 import { InlineChip } from "../../../../src/shared/design-system/ui/InlineChip";
 import { Button } from "../../../../src/shared/design-system/ui/Button";
@@ -111,180 +132,6 @@ function Specimen({
   );
 }
 
-function ButtonSpecimen() {
-  return (
-    <>
-      <SpecimenGroup label="Emphasis">
-        <div className="flex flex-wrap items-center gap-3">
-          {(
-            ["prominent", "subtle", "ghost", "destructive", "outline"] as const
-          ).map((variant) => (
-            <Button key={variant} variant={variant}>
-              {variant}
-            </Button>
-          ))}
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="Sizes">
-        <div className="flex flex-wrap items-center gap-3">
-          {(["sm", "md", "lg"] as const).map((size) => (
-            <Button key={size} size={size} variant="prominent">
-              Save · {size}
-            </Button>
-          ))}
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="States">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button loading variant="prominent">
-            Save changes
-          </Button>
-          <Button disabled>Unavailable</Button>
-          <Button>Allow notifications for this workspace</Button>
-        </div>
-      </SpecimenGroup>
-    </>
-  );
-}
-
-function IconButtonSpecimen() {
-  const icons = {
-    add: <PlusIcon size={16} aria-hidden="true" />,
-    more: <DotsThreeIcon size={16} aria-hidden="true" />,
-    settings: <GearIcon size={16} aria-hidden="true" />,
-  };
-  return (
-    <div className="component-specimen-stack">
-      {/* `chrome` sits on the app backdrop, because it is a translucent glass
-          fill — on a flat panel it has nothing to be translucent over and reads
-          as a plain grey. */}
-      <SpecimenGroup label="Variants · circular at every size">
-        <div className="component-specimen-row">
-          <Specimen prop='variant="quiet"'>
-            <IconButton
-              aria-label="Quiet add"
-              icon={icons.add}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop='variant="ghost"'>
-            <IconButton
-              aria-label="Ghost more"
-              icon={icons.more}
-              variant="ghost"
-            />
-          </Specimen>
-          <Specimen prop='variant="solid"'>
-            <IconButton
-              aria-label="Solid add"
-              icon={icons.add}
-              variant="solid"
-            />
-          </Specimen>
-          <Specimen prop='variant="tint"'>
-            <IconButton
-              aria-label="Round tinted send"
-              icon={icons.add}
-              variant="tint"
-            />
-          </Specimen>
-        </div>
-      </SpecimenGroup>
-      <section className="component-specimen-group">
-        <h2 className="text-body-sm text-tertiary">
-          Chrome, over the workspace backdrop
-        </h2>
-        <SpecimenFrame backdrop>
-          <div className="component-specimen-row">
-            <Specimen prop='variant="chrome"'>
-              <IconButton
-                aria-label="Chrome settings"
-                icon={icons.settings}
-                variant="chrome"
-              />
-            </Specimen>
-          </div>
-        </SpecimenFrame>
-      </section>
-      {/* Shown on `quiet`, not the default `ghost`: the sizes differ only
-          in hit area, and with no fill they render as three
-          identical 16px glyphs — the page would claim to show a size ramp while
-          showing nothing. A fill makes the box the sample. */}
-      <SpecimenGroup label="Sizes">
-        <div className="component-specimen-row">
-          <Specimen prop='size="compact"'>
-            <IconButton
-              aria-label="Compact settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="compact"
-            />
-          </Specimen>
-          <Specimen prop='size="toolbar"'>
-            <IconButton
-              aria-label="Toolbar settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="toolbar"
-            />
-          </Specimen>
-          <Specimen prop='size="default"'>
-            <IconButton
-              aria-label="Default settings"
-              icon={icons.settings}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop='size="large"'>
-            <IconButton
-              aria-label="Large settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="large"
-            />
-          </Specimen>
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="States">
-        <div className="component-specimen-row">
-          <Specimen>
-            <IconButton
-              aria-label="Enabled add"
-              icon={icons.add}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop="disabled">
-            <IconButton
-              aria-label="Disabled add"
-              icon={icons.add}
-              variant="quiet"
-              disabled
-            />
-          </Specimen>
-          <Specimen prop='variant="ghost" disabled'>
-            <IconButton
-              aria-label="Disabled ghost add"
-              icon={icons.add}
-              variant="ghost"
-              disabled
-            />
-          </Specimen>
-          {(["tint", "solid"] as const).map((variant) => (
-            <Specimen key={variant} prop={`variant="${variant}" disabled`}>
-              <IconButton
-                aria-label={`Disabled round ${variant}`}
-                icon={icons.add}
-                variant={variant}
-                disabled
-              />
-            </Specimen>
-          ))}
-        </div>
-      </SpecimenGroup>
-    </div>
-  );
-}
 function AvatarSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -924,51 +771,144 @@ function SwitchSpecimen() {
   );
 }
 
-function SelectSpecimen() {
-  const [value, setValue] = useState("channel");
+const CHOICE_OPTIONS = [
+  { value: "channel", label: "Channel" },
+  { value: "session", label: "Session" },
+  { value: "dm", label: "Direct message" },
+];
+
+function ActionMenuSpecimen() {
+  const [sort, setSort] = useState("recent");
+  const [notifications, setNotifications] = useState(true);
   return (
-    <Select
-      label="Preview context"
-      value={value}
-      onValueChange={setValue}
-      groups={[
-        {
-          label: "Destination",
-          options: [
-            { value: "channel", label: "Channel" },
-            { value: "session", label: "Session" },
-            { value: "dm", label: "Direct message" },
-          ],
-        },
-      ]}
-    />
+    <MenuRoot>
+      <MenuTrigger
+        render={
+          <IconButton
+            aria-label="More actions"
+            icon={<DotsThreeIcon size={16} aria-hidden="true" />}
+          />
+        }
+      />
+      <MenuPopup>
+        <MenuItem>
+          <MenuIcon>
+            <CheckIcon size={16} />
+          </MenuIcon>
+          Mark all as read
+        </MenuItem>
+        <MenuCheckboxItem
+          checked={notifications}
+          onCheckedChange={setNotifications}
+        >
+          <MenuIcon>
+            <BellIcon size={16} />
+          </MenuIcon>
+          Notifications
+        </MenuCheckboxItem>
+        <MenuSeparator />
+        <MenuSubmenu>
+          <MenuSubmenuTrigger>Sort</MenuSubmenuTrigger>
+          <MenuSubmenuPopup>
+            <MenuRadioGroup value={sort} onValueChange={setSort}>
+              <MenuRadioItem value="recent">Recent</MenuRadioItem>
+              <MenuRadioItem value="alpha">A–Z</MenuRadioItem>
+            </MenuRadioGroup>
+            <MenuSeparator />
+            <MenuItem disabled>
+              Disabled action
+              <MenuTrailing>⌘D</MenuTrailing>
+            </MenuItem>
+          </MenuSubmenuPopup>
+        </MenuSubmenu>
+      </MenuPopup>
+    </MenuRoot>
   );
 }
 
-function DialogSpecimen() {
+function MenuSpecimen() {
   const [open, setOpen] = useState(false);
   return (
-    <SpecimenFrame>
-      <Button onClick={() => setOpen(true)}>Edit workspace</Button>
-      <Dialog
-        open={open}
-        onOpenChange={setOpen}
-        title="Edit workspace"
-        description="Change the name used in this example."
-        actions={
-          <>
-            <Button onClick={() => setOpen(false)}>Cancel</Button>
-            <Button variant="prominent" onClick={() => setOpen(false)}>
-              Save
-            </Button>
-          </>
-        }
-      >
-        <Field label="Workspace name">
-          <Input defaultValue="Project notes" />
-        </Field>
+    <div className="component-specimen-stack">
+      <ActionMenuSpecimen />
+      <ContextMenuRoot>
+        <ContextMenuTrigger render={<Button>Context actions</Button>} />
+        <MenuPopup>
+          <MenuItem>Copy link</MenuItem>
+          <MenuItem disabled>Unavailable action</MenuItem>
+        </MenuPopup>
+      </ContextMenuRoot>
+      <Button onClick={() => setOpen(true)}>Open menu dialog</Button>
+      <Dialog open={open} onOpenChange={setOpen} title="Menu composition">
+        <ActionMenuSpecimen />
       </Dialog>
-    </SpecimenFrame>
+    </div>
+  );
+}
+
+function SelectSpecimen() {
+  const [value, setValue] = useState("channel");
+  const groups = [{ label: "Destination", options: CHOICE_OPTIONS }];
+  return (
+    <div className="component-specimen-stack">
+      <Select
+        label="Preview context"
+        value={value}
+        onValueChange={setValue}
+        groups={groups}
+      />
+      <Select
+        variant="field"
+        label="Destination"
+        value={value}
+        onValueChange={setValue}
+        groups={groups}
+      />
+      <Select
+        variant="field"
+        label="Destination (disabled)"
+        disabled
+        value={value}
+        onValueChange={setValue}
+        groups={groups}
+      />
+    </div>
+  );
+}
+
+function ComboboxSpecimen() {
+  return (
+    <div className="component-specimen-stack">
+      {(["default", "loading", "disabled"] as const).map((state) => (
+        <Combobox.Root
+          key={state}
+          items={state === "loading" ? [] : CHOICE_OPTIONS}
+          disabled={state === "disabled"}
+        >
+          <Combobox.Control
+            label={`Destination (${state})`}
+            triggerLabel={`Browse destinations (${state})`}
+            placeholder="Choose or search…"
+            loading={state === "loading"}
+          />
+          <Combobox.Popup
+            empty={
+              state === "loading"
+                ? "Loading destinations…"
+                : "No matching destinations."
+            }
+          >
+            <Combobox.List>
+              {(item: (typeof CHOICE_OPTIONS)[number]) => (
+                <Combobox.Item key={item.value} value={item}>
+                  {item.label}
+                </Combobox.Item>
+              )}
+            </Combobox.List>
+          </Combobox.Popup>
+        </Combobox.Root>
+      ))}
+    </div>
   );
 }
 
@@ -1089,7 +1029,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     </SpecimenFrame>
   ),
   "alert-dialog": AlertDialogSpecimen,
-  dialog: DialogSpecimen,
+  dialog: DialogSpecimens,
   tooltip: () => (
     <SpecimenFrame>
       <Tooltip content="Create a note">
@@ -1147,32 +1087,63 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "full-page-surface": FullPageSurfaceSpecimen,
   panel: PanelSpecimen,
   tabs: TabsSpecimen,
+  menu: MenuSpecimen,
   select: SelectSpecimen,
+  combobox: ComboboxSpecimen,
   switch: SwitchSpecimen,
   accordion: () => (
-    <Accordion
-      items={[
-        {
-          value: "purpose",
-          title: "When to use an accordion",
-          content: (
-            <p className="text-body">
-              Use a disclosure for supporting content that does not need to be
-              visible all the time.
-            </p>
-          ),
-        },
-        {
-          value: "behavior",
-          title: "Keyboard behavior",
-          content: (
-            <p className="text-body">
-              Focus a heading and press Enter or Space to expand it.
-            </p>
-          ),
-        },
-      ]}
-    />
+    <>
+      <Accordion
+        items={[
+          {
+            value: "purpose",
+            title: "When to use an accordion",
+            content: (
+              <p className="text-body">
+                Use a disclosure for supporting content that does not need to be
+                visible all the time.
+              </p>
+            ),
+          },
+          {
+            value: "behavior",
+            title: "Keyboard behavior",
+            content: (
+              <p className="text-body">
+                Focus a heading and press Enter or Space to expand it.
+              </p>
+            ),
+          },
+        ]}
+      />
+      <h3 className="text-label">
+        Form disclosures · spacing owned by the form
+      </h3>
+      <Accordion
+        variant="form"
+        keepMounted
+        items={[
+          {
+            value: "advanced",
+            title: "Advanced",
+            content: (
+              <Field label="Label">
+                <Input placeholder="Draft stays when collapsed" />
+              </Field>
+            ),
+          },
+          {
+            value: "details",
+            title: "Technical details",
+            content: (
+              <p className="text-body-sm text-subtle">
+                Supporting information shares the same row rhythm.
+              </p>
+            ),
+          },
+        ]}
+      />
+    </>
   ),
   "panel-header": PanelHeaderSpecimen,
   "search-field": SearchFieldSpecimen,

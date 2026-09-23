@@ -19,6 +19,7 @@ export function PanelLaunchers({
         type="button"
         key={`${panel.key}:${panel.revision}`}
         variant="chrome"
+        shape="round"
         aria-label={panel.title}
         title={panel.title}
         aria-expanded={panel === selected}

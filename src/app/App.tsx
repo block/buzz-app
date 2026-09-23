@@ -68,6 +68,7 @@ export function App({ services }: { services: AppServices }) {
           select("buzz.channels/channels");
         }}
         communities={services.communities}
+        searchServices={services}
         launchers={
           <PanelLaunchers
             panels={launcher.available}
@@ -105,6 +106,8 @@ export function App({ services }: { services: AppServices }) {
             plugins={plugins}
             communities={services.communities}
             appearance={services.appearance}
+            shortcuts={services.shortcuts}
+            shortcutBindings={services.shortcutBindings}
             notifications={services.notifications}
             navigation={route.request}
             onSection={(section) =>

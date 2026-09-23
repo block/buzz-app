@@ -21,15 +21,18 @@ import type {
   CompletionResult,
   InlineRenderer,
 } from "../conversation/contracts";
+import type { AgentLibrarySnapshot } from "../agents/library";
 import { AgentMentionContext } from "../agents/mention-context";
 import { createAgentControl, type AgentControl } from "../agents/control";
 import { controlFixture } from "../agents/control-testing";
 import type { OutgoingEvent } from "../relay/outbox";
 import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import type { RelaySession } from "../relay/session";
+import type { Profile } from "../relay/contracts";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
+import { setRememberAgentsPreference } from "./mention-preferences";
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
@@ -114,14 +117,34 @@ function mount(
     reply: vi.fn<RelaySession["messages"]["reply"]>(() => "reply-id"),
   };
   const typing: ReturnType<RelaySession["typing"]["snapshot"]> = [];
-  const profiles = new Map();
+  let profiles: ReadonlyMap<string, Profile> = new Map();
+  const profileListeners = new Set<() => void>();
+  const libraryListeners = new Set<() => void>();
+  let library: AgentLibrarySnapshot = {
+    status: "ready",
+    identities: [],
+    definitions: [],
+  };
   const session = {
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
     profiles: {
       snapshot: () => profiles,
-      subscribe: () => () => {},
+      subscribe(listener: () => void) {
+        profileListeners.add(listener);
+        return () => {
+          profileListeners.delete(listener);
+        };
+      },
       ensure: vi.fn(async () => {}),
+    },
+    agentLibrary: {
+      snapshot: () => library,
+      subscribe(listener: () => void) {
+        libraryListeners.add(listener);
+        return () => libraryListeners.delete(listener);
+      },
+      refresh: vi.fn(async () => {}),
     },
     emoji: {
       snapshot: () => emoji,
@@ -217,6 +240,18 @@ function mount(
       props = { ...props, ...next };
       view.rerender(tree());
     },
+    setProfiles(next: ReadonlyMap<string, Profile>) {
+      act(() => {
+        profiles = next;
+        for (const listener of profileListeners) listener();
+      });
+    },
+    setLibrary(identities: AgentLibrarySnapshot["identities"]) {
+      act(() => {
+        library = { ...library, identities };
+        for (const listener of libraryListeners) listener();
+      });
+    },
     setEmoji(entries: readonly CustomEmoji[]) {
       act(() => {
         emoji = { status: "ready", entries };
@@ -229,12 +264,72 @@ function mount(
       field.value = text;
       field.setSelectionRange(text.length, text.length);
       fireEvent.input(field);
+      // Browsers queue selectionchange after the editor restores its native
+      // selection. Deliver that boundary explicitly in this synchronous fixture.
+      fireEvent(document, new Event("selectionchange"));
     },
     submit() {
       fireEvent.submit(within(view.container).getByRole("form"));
     },
   };
 }
+
+it("keeps unpublished completions invisible but lets Escape revoke pending work", () => {
+  const h = mount();
+  const input = h.input();
+  input.focus();
+  h.fill("!pending");
+  const pending = h.completionRequests.length - 1;
+  expect(pending).toBeGreaterThanOrEqual(0);
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute("aria-controls");
+  expect(input).not.toHaveAttribute("aria-haspopup");
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(h.publish(pending, "late result")).toBe(false);
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(input).toHaveValue("!pending");
+
+  h.fill("!fresh");
+  expect(h.publish(h.completionRequests.length - 1)).not.toBe(false);
+  expect(screen.getByRole("option", { name: "chosen" })).toBeVisible();
+  expect(input).toHaveAttribute("aria-controls");
+});
+
+it("shows provider-owned pending and retry states and hides an empty publication", () => {
+  const h = mount();
+  const input = h.input();
+  input.focus();
+  h.fill("!search");
+  const publish = h.completionRequests.at(-1);
+  if (!publish) throw new Error("No observed completion request");
+  act(() => {
+    publish({ items: [], status: "Searching fixture…" });
+  });
+  expect(screen.getByRole("status")).toHaveTextContent("Searching fixture…");
+  const retry = vi.fn(() =>
+    publish({
+      items: [
+        { id: "recovered", label: "Recovered", edit: { text: "recovered" } },
+      ],
+    }),
+  );
+  act(() => {
+    publish({ items: [], status: "Unavailable", retry });
+  });
+  expect(
+    screen.getByRole("option", { name: "Retry suggestions" }),
+  ).toBeVisible();
+  fireEvent.keyDown(input, { key: "Enter" });
+  expect(retry).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("option", { name: "Recovered" })).toBeVisible();
+  expect(h.messages.send).not.toHaveBeenCalled();
+  act(() => {
+    publish({ items: [] });
+  });
+  expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
+  expect(input).not.toHaveAttribute("aria-controls");
+});
 
 it("revokes stale completion publications across editor and ownership lifecycles and recovers freshly", () => {
   const h = mount();
@@ -453,8 +548,15 @@ it.each([undefined, "root"])(
     h = mount(options);
     expect(h.input()).toHaveValue("Please help @Honey @Honey ");
     expect(
-      screen.queryByRole("region", { name: "Notification recipients" }),
-    ).not.toBeInTheDocument();
+      within(h.input()).getAllByRole("img", {
+        name: /^Person Honey, public key ending/,
+      }),
+    ).toHaveLength(2);
+    expect(
+      within(
+        screen.getByRole("region", { name: "Explicit mentions" }),
+      ).getAllByRole("button"),
+    ).toHaveLength(2);
     h.submit();
     expect(
       (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
@@ -467,6 +569,133 @@ it.each([undefined, "root"])(
     expect(
       (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
     ).toEqual([]);
+  },
+);
+
+it("restores live profile avatars with one removal control per exact recipient", async () => {
+  const h = mount();
+  const media = vi
+    .spyOn(h.session, "media")
+    .mockImplementation((url) =>
+      url ? `https://media.test/${url}` : undefined,
+    );
+  act(() => {
+    h.commands().insertMention(first);
+    h.commands().insertMention(second);
+    h.commands().insertMention(second);
+  });
+  let region = screen.getByRole("region", {
+    name: "Explicit mentions",
+  });
+  const controls = within(region).getAllByRole("button");
+  expect(controls).toHaveLength(2);
+  expect(controls[1]).toHaveTextContent("H");
+  // Profiles can arrive after draft restoration; artwork must update without an edit.
+  h.setProfiles(
+    new Map([
+      [first.pubkey, { name: "Honey", picture: "person.png" }],
+      [second.pubkey, { name: "Honey", picture: "agent.png", isAgent: true }],
+    ]),
+  );
+  expect(controls[0]?.querySelector(".buzz-avatar")).toHaveAttribute(
+    "data-avatar-shape",
+    "circle",
+  );
+  expect(controls[1]?.querySelector(".buzz-avatar")).toHaveAttribute(
+    "data-avatar-shape",
+    "squircle",
+  );
+  expect(controls[1]?.querySelector("img")).toHaveAttribute(
+    "src",
+    "https://media.test/agent.png",
+  );
+  expect(media).toHaveBeenCalledWith("agent.png", "small");
+  // Loaded-library hints update both artwork layers without another keystroke;
+  // clearing them removes only that fallback, not self-declared agent metadata.
+  for (const control of controls)
+    expect(control.querySelectorAll("[data-avatar-shape]")).toHaveLength(2);
+  for (const identities of [[first], []]) {
+    h.setLibrary(identities);
+    for (const [index, control] of controls.entries())
+      for (const artwork of control.querySelectorAll("[data-avatar-shape]"))
+        expect(artwork).toHaveAttribute(
+          "data-avatar-shape",
+          index === 1 || identities.length ? "squircle" : "circle",
+        );
+  }
+  expect(h.session.agentLibrary.refresh).not.toHaveBeenCalled();
+  h.retarget({ disabled: true });
+  for (const control of controls) expect(control).toBeDisabled();
+  h.retarget({ disabled: false, extensions: undefined });
+  // The optional picker does not own saved intent or its removal controls.
+  region = screen.getByRole("region", { name: "Explicit mentions" });
+  await h.user.click(
+    within(region).getByRole("button", {
+      name: `Remove mention Honey ${second.pubkey}`,
+    }),
+  );
+  expect(within(region).getAllByRole("button")).toHaveLength(1);
+  expect(h.input()).toHaveValue("@Honey @Honey @Honey ");
+  expect(h.input().querySelectorAll(".inline-chip")).toHaveLength(1);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    "@Honey @Honey @Honey ",
+    [first.pubkey],
+  );
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+});
+
+// Explicit notification intent must remain visible even where Markdown previews are suppressed.
+it.each([
+  ["inline code", "`", " `"],
+  ["fenced code", "```\n", "\n```"],
+  ["indented code", "    ", ""],
+  ["image", "![", "](https://example.test/image.png)"],
+  [
+    "image reference",
+    "![",
+    "][image]\n\n[image]: https://example.test/image.png",
+  ],
+  ["definition", '[image]: https://example.test/image.png "', '"'],
+  ["HTML", "<!-- ", " -->"],
+  ["link label", "[", "](https://example.test)"],
+  ["deep Markdown", "> ".repeat(101), ""],
+])(
+  "discloses selected namesakes in %s before and after restoring a draft",
+  (_kind, prefix, suffix) => {
+    let h = mount();
+    h.fill(`${prefix}@Honey ${suffix}`);
+    expect(h.input().querySelector(".inline-chip")).toBeNull();
+    h.submit();
+    expect(h.messages.send.mock.calls.at(-1)?.at(-1)).toEqual([]);
+    h.fill(`${prefix}${suffix}`);
+    h.input().setSelectionRange(prefix.length, prefix.length);
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+    });
+    const text = `${prefix}@Honey @Honey ${suffix}`;
+    const labels = [
+      "Person Honey, public key ending c a j",
+      "Person Honey, public key ending 4 h u",
+    ];
+    const check = () => {
+      expect(h.input()).toHaveValue(text);
+      for (const name of labels)
+        expect(within(h.input()).getByRole("img", { name })).toBeVisible();
+    };
+    check();
+    h.unmount();
+    h = mount();
+    check();
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledWith("channel", text, [
+      first.pubkey,
+      second.pubkey,
+    ]);
   },
 );
 
@@ -503,7 +732,9 @@ it.each([undefined, "root"])(
       data: "’",
     });
     expect(input).toHaveValue("@Honey can you see this is’s");
-
+    expect(
+      within(input).getByRole("img", { name: "Person Honey" }),
+    ).toBeVisible();
     h.submit();
     expect(
       (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
@@ -511,15 +742,96 @@ it.each([undefined, "root"])(
   },
 );
 
-it("deleting an inline mention removes notification intent without a chip row", async () => {
+it("qualifies both namesakes retroactively without changing source and removes qualifiers with ambiguity", () => {
+  const h = mount();
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  expect(
+    within(h.input()).getByRole("img", { name: "Person Honey" }),
+  ).toBeVisible();
+  act(() => {
+    h.commands().insertMention(first);
+  });
+  expect(h.input().textContent).not.toContain("npub");
+  act(() => {
+    h.commands().insertMention({ ...second, name: "honey" });
+  });
+  expect(h.input()).toHaveValue("@Honey @Honey @honey ");
+  expect(
+    within(h.input()).getAllByRole("img", {
+      name: "Person Honey, public key ending c a j",
+    }),
+  ).toHaveLength(2);
+  expect(
+    within(h.input()).getByRole("img", {
+      name: "Person honey, public key ending 4 h u",
+    }),
+  ).toHaveTextContent("honey · npub…4hu");
+  h.input().setSelectionRange(14, 20);
+  act(() => {
+    h.commands().insertText("");
+  });
+  expect(h.input()).toHaveValue("@Honey @Honey  ");
+  expect(h.input().textContent).not.toContain("npub");
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "@Honey @Honey  ", [
+    first.pubkey,
+    first.pubkey,
+  ]);
+});
+
+it.each([0, 7])(
+  "does not replay qualifier motion after removing at %i or restoring a destination draft",
+  (start) => {
+    const h = mount();
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    act(() => {
+      h.commands().insertMention(second);
+    });
+    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(1);
+    h.input().setSelectionRange(start, start + 6);
+    act(() => {
+      h.commands().insertText("");
+    });
+    act(() => {
+      h.commands().insertMention(start === 0 ? first : second);
+    });
+    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
+    h.retarget({ channelId: "other" });
+    act(() => {
+      h.commands().insertMention(first);
+    });
+    h.retarget({ channelId: "channel" });
+    expect(h.input().querySelectorAll(".inline-chip-qualifier")).toHaveLength(
+      2,
+    );
+    expect(h.input().querySelectorAll("[data-reveal]")).toHaveLength(0);
+  },
+);
+
+it("replacing an inline mention with ordinary prose removes notification intent", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
   expect(
-    screen.queryByRole("region", { name: "Notification recipients" }),
-  ).not.toBeInTheDocument();
+    screen.getByRole("region", { name: "Explicit mentions" }),
+  ).toBeVisible();
   h.fill("no recipient now");
   h.submit();
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([]);
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(
+    within(h.input()).getByRole("img", { name: "Person Honey" }),
+  ).toBeVisible();
+  h.input().setSelectionRange(0, 6);
+  act(() => {
+    h.commands().insertText("Honey");
+  });
+  expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
+  h.submit();
+  expect(h.messages.send.mock.calls[1]?.at(-1)).toEqual([]);
 });
 
 it("ambiguous namesake replacement cannot notify the wrong remaining identity", async () => {
@@ -898,9 +1210,13 @@ it.each(
   },
 );
 
-it.each([undefined, "root"])(
-  "resolves a sole session agent before calling shared send/reply, root=%s",
-  async (root) => {
+it.each(
+  [undefined, "root"].flatMap((root) =>
+    [false, true].map((removeMention) => ({ root, removeMention })),
+  ),
+)(
+  "resolves a sole session agent before send/reply: root=$root, removed=$removeMention",
+  async ({ root, removeMention }) => {
     const view = mount();
     const channel = {
       id: "channel",
@@ -932,7 +1248,25 @@ it.each([undefined, "root"])(
       sessionConversation: true,
       ...(root ? { threadRootId: root } : {}),
     });
-    view.fill("Keep going");
+    view.fill("Keep going ");
+    if (removeMention) {
+      await view.user.click(
+        screen.getByRole("button", { name: "First Honey" }),
+      );
+      const remove = screen.getByRole("button", {
+        name: `Remove mention Honey ${first.pubkey}`,
+      });
+      await view.user.hover(remove);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Remove explicit mention of Honey (aaaaaaaa)",
+      );
+      await view.user.click(remove);
+      expect(view.input()).toHaveValue("Keep going @Honey ");
+      expect(view.input().querySelector(".inline-chip")).toBeNull();
+      expect(
+        screen.queryByRole("region", { name: "Explicit mentions" }),
+      ).not.toBeInTheDocument();
+    }
     view.submit();
     await waitFor(() =>
       expect(
@@ -943,13 +1277,13 @@ it.each([undefined, "root"])(
       expect(view.messages.reply).toHaveBeenCalledExactlyOnceWith(
         "channel",
         root,
-        "Keep going",
+        removeMention ? "Keep going @Honey " : "Keep going ",
         [first.pubkey],
       );
     else
       expect(view.messages.send).toHaveBeenCalledExactlyOnceWith(
         "channel",
-        "Keep going",
+        removeMention ? "Keep going @Honey " : "Keep going ",
         [first.pubkey],
       );
     expect(session.workSessions.addAgents).not.toHaveBeenCalled();
@@ -1011,6 +1345,24 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       expect.any(String),
       [first.pubkey],
     ),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Send message" })).toBeEnabled(),
+  );
+  // The remembered explicit mention still overrides the picker until removed.
+  expect(view.input()).toHaveValue("@Honey ");
+  await view.user.click(
+    screen.getByRole("button", {
+      name: `Remove mention Honey ${first.pubkey}`,
+    }),
+  );
+  expect(view.input()).toHaveValue("@Honey ");
+  expect(view.input().querySelector(".inline-chip")).toBeNull();
+  view.submit();
+  await waitFor(() =>
+    expect(view.messages.send).toHaveBeenLastCalledWith("channel", "@Honey ", [
+      second.pubkey,
+    ]),
   );
   expect(session.workSessions.addAgents).not.toHaveBeenCalled();
 });
@@ -1087,3 +1439,133 @@ it("keeps retry submission available while a new-session draft is locked", () =>
   });
   expect(h.messages.send).not.toHaveBeenCalled();
 });
+
+it.each([undefined, "root"])(
+  "prefills only exact selected agents after an accepted send in %s",
+  (threadRootId) => {
+    const h = mount(threadRootId ? { threadRootId } : {});
+    vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
+      new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
+    );
+    act(() => {
+      h.commands().insertMention(first);
+      h.commands().insertMention(second);
+      h.commands().insertMention(second);
+      h.commands().insertText("hello");
+    });
+    const send = threadRootId ? h.messages.reply : h.messages.send;
+    send.mockImplementationOnce(() => {
+      throw new Error("outbox full");
+    });
+    h.submit();
+    expect(h.input()).toHaveValue("@Honey @Honey @Honey hello");
+    h.submit();
+    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([
+      first.pubkey,
+      second.pubkey,
+      second.pubkey,
+    ]);
+    expect(h.input()).toHaveValue("@Honey ");
+    const recipients = screen.getByRole("region", {
+      name: "Explicit mentions",
+    });
+    expect(within(recipients).getAllByRole("button")).toHaveLength(1);
+    expect(
+      within(recipients).getByRole("button", {
+        name: `Remove mention Honey ${second.pubkey}`,
+      }),
+    ).toBeVisible();
+    expect(
+      within(h.input()).getAllByRole("img", { name: "Agent Honey" }),
+    ).toHaveLength(1);
+    expect(
+      h.input().querySelector("button, a, [tabindex], [title]"),
+    ).toBeNull();
+    h.retarget({ channelId: "other" });
+    expect(h.input()).toHaveValue("");
+    h.retarget({ channelId: "channel" });
+    expect(h.input()).toHaveValue("@Honey ");
+    h.submit();
+    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([second.pubkey]);
+    h.input().setSelectionRange(0, 6);
+    act(() => {
+      h.commands().insertText("Honey");
+    });
+    expect(h.input()).toHaveValue("Honey ");
+    expect(within(h.input()).queryByRole("img")).not.toBeInTheDocument();
+    h.submit();
+    expect(send.mock.calls.at(-1)?.at(-1)).toEqual([]);
+    expect(h.input()).toHaveValue("");
+  },
+);
+
+it("opt-out changes future prefills, not the current draft, and re-enable revives nothing", () => {
+  const h = mount();
+  vi.spyOn(h.session.profiles, "snapshot").mockReturnValue(
+    new Map([[second.pubkey, { name: "Honey", isAgent: true }]]),
+  );
+  act(() => {
+    h.commands().insertMention(second);
+  });
+  h.submit();
+  expect(h.input()).toHaveValue("@Honey ");
+  setRememberAgentsPreference(false);
+  expect(h.input()).toHaveValue("@Honey ");
+  h.submit();
+  expect(h.messages.send.mock.calls.at(-1)?.at(-1)).toEqual([second.pubkey]);
+  expect(h.input()).toHaveValue("");
+  setRememberAgentsPreference(true);
+  expect(h.input()).toHaveValue("");
+});
+
+it.each([
+  {},
+  { threadRootId: "thread" },
+  { threadRootId: "thread", mediaTimeSeconds: 12 },
+])(
+  "disables nonmember channel/thread/media composers and follows membership changes: %j",
+  (destination) => {
+    const h = mount(destination);
+    const listeners = new Set<() => void>();
+    let list: ReturnType<RelaySession["channels"]["list"]> = {
+      status: "ready",
+      channels: [],
+    };
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          window: () => {
+            throw new Error("Unused fixture window");
+          },
+          subscribeWindow: () => () => {},
+          ensureList() {},
+          ensure() {},
+          loadOlder() {},
+          list: () => list,
+          get: () => ({ id: "channel", name: "Public", readOnly: true }),
+          subscribeList: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+        } as RelaySession["channels"],
+      },
+    });
+    expect(h.input()).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(h.input(), { key: "Enter" });
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(h.messages.reply).not.toHaveBeenCalled();
+    act(() => {
+      list = { status: "ready", channels: [{ id: "channel", name: "Joined" }] };
+      for (const listener of listeners) listener();
+    });
+    expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
+    act(() => {
+      list = { status: "ready", channels: [] };
+      for (const listener of listeners) listener();
+    });
+    expect(h.input()).toHaveAttribute("aria-disabled", "true");
+  },
+);

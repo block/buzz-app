@@ -54,9 +54,10 @@ export function AgentCreateDialog({
     state.data?.createAvailable &&
     control.create
   );
+  const runtimeBlocked = !state.data?.runtimeAvailable && !saved;
   const blocked = busy || state.busy || state.status !== "ready";
   const create = async () => {
-    if (blocked || !available || !control.create) return;
+    if (blocked || runtimeBlocked || !available || !control.create) return;
     setError(undefined);
     setBusy(true);
     try {
@@ -94,19 +95,21 @@ export function AgentCreateDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="agent-dialog-backdrop" />
+        <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
         <Dialog.Popup
           data-buzz-ui=""
-          className="agent-controls agent-dialog text-body"
+          className="buzz-dialog agent-dialog text-body"
         >
-          <Dialog.Title className="text-heading">Create agent</Dialog.Title>
-          <Dialog.Description className="text-body-sm text-secondary">
+          <header className="buzz-dialog-header">
+            <Dialog.Title className="text-heading">Create agent</Dialog.Title>
+          </header>
+          <Dialog.Description className="buzz-dialog-description">
             Create a new identity in {destination || "a connected community"}.
             It stays stopped until you start it or send it a mention. No channel
             is joined automatically.
           </Dialog.Description>
           <form
-            className="space-y-5"
+            className="buzz-dialog-body space-y-section-gap"
             onSubmit={(event) => {
               event.preventDefault();
               void create();
@@ -127,6 +130,13 @@ export function AgentCreateDialog({
               <p role="status">
                 Connect to a community and use a rebuilt desktop app to create
                 an agent.
+              </p>
+            )}
+            {runtimeBlocked && (
+              <p role="alert">
+                This app’s agent runtime is unavailable. Repair or rebuild the
+                desktop app before creating an agent.
+                {state.data?.runtimeMessage && ` ${state.data.runtimeMessage}`}
               </p>
             )}
             {busy && (
@@ -151,14 +161,14 @@ export function AgentCreateDialog({
                 Retry status
               </Button>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="buzz-dialog-actions">
               <Button onClick={onClose}>
                 {busy || saved ? "Close" : "Cancel"}
               </Button>
               <Button
                 type="submit"
                 variant="primary"
-                disabled={blocked || !available}
+                disabled={blocked || runtimeBlocked || !available}
               >
                 {busy ? "Saving…" : saved ? "Retry profile" : "Create agent"}
               </Button>

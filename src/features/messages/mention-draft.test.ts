@@ -2,6 +2,7 @@ import { expect, it } from "vitest";
 import {
   editMentionDraft,
   mentionDraft,
+  followupDraft,
   replaceMentionDraft,
 } from "./mention-draft";
 const first = { pubkey: "a".repeat(64), name: "Honey", start: 0, end: 6 };
@@ -106,4 +107,24 @@ it("captured replacement ranges never transfer identity across a matrix of same-
       }
     }
   }
+});
+
+it("followup drafts deduplicate exact keys, preserve namesakes, and enforce draft bounds", () => {
+  expect(followupDraft([first, second, first])).toEqual({
+    text: "@Honey @Honey ",
+    recipients: [first, second],
+  });
+  const many = Array.from({ length: 33 }, (_, i) => ({
+    pubkey: i.toString(16).padStart(64, "0"),
+    name: `Agent ${i}`,
+  }));
+  expect(followupDraft(many).recipients).toHaveLength(32);
+  expect(
+    followupDraft([{ ...first, name: "x".repeat(15998) }, second]).text,
+  ).toHaveLength(16000);
+  expect(followupDraft([{ ...first, name: "x".repeat(15999) }])).toEqual({
+    text: "",
+    recipients: [],
+  });
+  expect(followupDraft([])).toEqual({ text: "", recipients: [] });
 });

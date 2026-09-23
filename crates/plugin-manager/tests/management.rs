@@ -81,6 +81,184 @@ fn install_enable_update_rollback_and_remove_survive_restart() {
     );
 }
 #[test]
+fn folder_reload_updates_current_revision_and_preserves_disabled_state() {
+    let (_temp, manager, source) = fixture();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap()
+        .revision
+        .clone();
+    fs::write(source.join("plugin.js"), "export const reloaded = true;").unwrap();
+    let catalog = manager.reload("example.page").unwrap();
+    let plugin = catalog
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert!(!plugin.enabled);
+    assert!(plugin.reloadable);
+    assert_ne!(plugin.revision, first);
+    assert_eq!(plugin.previous.as_deref(), Some(first.as_str()));
+    manager.change("enable", "example.page").unwrap();
+    assert!(manager
+        .module("example.page", &plugin.revision)
+        .unwrap()
+        .contains("reloaded"));
+}
+#[test]
+fn reload_rejects_invalid_sources_without_changing_revision() {
+    let (temp, manager, source) = fixture();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap()
+        .revision
+        .clone();
+    assert!(manager.reload("buzz.channels").is_err());
+    assert!(manager.reload("missing.page").is_err());
+    manager.change("enable", "example.page").unwrap();
+    assert!(manager.reload("example.page").is_err());
+    manager.change("disable", "example.page").unwrap();
+    fs::remove_file(source.join("plugin.js")).unwrap();
+    assert!(manager.reload("example.page").is_err());
+    fs::write(source.join("plugin.js"), "export function apply() {}").unwrap();
+    fs::write(
+        source.join("manifest.json"),
+        r#"{"id":"example.other","name":"Other","apiVersion":1}"#,
+    )
+    .unwrap();
+    assert!(manager.reload("example.page").is_err());
+    assert_eq!(
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+            .revision,
+        first
+    );
+    assert!(std::fs::write(
+        temp.path().join("profiles/test/registry.json"),
+        r#"{"version":1,"bundledEnabled":true,"bundledOverrides":{},"installed":{"example.page":{"manifest":{"id":"example.page","name":"Example","apiVersion":1},"current":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","currentSource":{"root":"/tmp","path":"../escape"},"previous":null,"enabled":false}}}"#
+    )
+    .is_ok());
+    assert!(manager.reload("example.page").is_err());
+}
+#[cfg(unix)]
+#[test]
+fn reload_rejects_replaced_source_folder_symlink() {
+    let (temp, manager, source) = fixture();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap()
+        .revision
+        .clone();
+    fs::remove_dir_all(&source).unwrap();
+    let replacement = temp.path().join("replacement");
+    fs::create_dir(&replacement).unwrap();
+    fs::write(
+        replacement.join("manifest.json"),
+        r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+    )
+    .unwrap();
+    fs::write(
+        replacement.join("plugin.js"),
+        "export const escaped = true;",
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&replacement, &source).unwrap();
+    assert!(manager.reload("example.page").is_err());
+    assert_eq!(
+        manager
+            .catalog()
+            .unwrap()
+            .plugins
+            .iter()
+            .find(|p| p.manifest.id == "example.page")
+            .unwrap()
+            .revision,
+        first
+    );
+}
+#[test]
+fn rollback_swaps_reload_sources_and_same_byte_reload_refreshes_source() {
+    let (temp, manager, source) = fixture();
+    let first = manager
+        .install(&source)
+        .unwrap()
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap()
+        .revision
+        .clone();
+    let second_source = temp.path().join("second-build");
+    fs::create_dir(&second_source).unwrap();
+    fs::write(
+        second_source.join("manifest.json"),
+        r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+    )
+    .unwrap();
+    fs::write(
+        second_source.join("plugin.js"),
+        "export const second = true;",
+    )
+    .unwrap();
+    let second = manager
+        .install(&second_source)
+        .unwrap()
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap()
+        .revision
+        .clone();
+    assert_ne!(second, first);
+    manager.change("rollback", "example.page").unwrap();
+    fs::write(source.join("plugin.js"), "export const firstReload = true;").unwrap();
+    let catalog = manager.reload("example.page").unwrap();
+    let plugin = catalog
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_ne!(plugin.revision, first);
+    assert_eq!(plugin.previous.as_deref(), Some(first.as_str()));
+    let third_source = temp.path().join("third-build");
+    fs::create_dir(&third_source).unwrap();
+    fs::write(
+        third_source.join("manifest.json"),
+        r#"{"id":"example.page","name":"Example","apiVersion":1}"#,
+    )
+    .unwrap();
+    fs::write(
+        third_source.join("plugin.js"),
+        "export const firstReload = true;",
+    )
+    .unwrap();
+    let same = manager.install(&third_source).unwrap();
+    let plugin = same
+        .plugins
+        .iter()
+        .find(|p| p.manifest.id == "example.page")
+        .unwrap();
+    assert_eq!(plugin.previous.as_deref(), Some(first.as_str()));
+    assert!(plugin.reloadable);
+}
+#[test]
 fn invalid_install_preserves_working_revision() {
     let (_temp, manager, source) = fixture();
     let before = manager

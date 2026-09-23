@@ -21,6 +21,22 @@
   /* Keep fractional last rows reachable despite integer scroll extents. */
   padding-bottom: var(--space-half);
   scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
+}
+.feed::-webkit-scrollbar,
+.threadHistory::-webkit-scrollbar {
+  width: 8px;
+}
+.feed::-webkit-scrollbar-track,
+.threadHistory::-webkit-scrollbar-track {
+  background: transparent;
+}
+.feed::-webkit-scrollbar-thumb,
+.threadHistory::-webkit-scrollbar-thumb {
+  border: 2px solid transparent;
+  border-radius: var(--radius-pill);
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+  background-clip: padding-box;
 }
 .feed ol {
   list-style: none;
@@ -153,7 +169,11 @@
 .attachmentImage img {
   object-fit: scale-down;
 }
+/* The existing editor owns text; this surface owns only composer layout. */
 .composer {
+  box-sizing: border-box;
+  min-width: 0;
+  align-self: stretch;
   position: relative;
   border: 1px solid var(--border-standard);
   background: var(--surface-panel);
@@ -166,9 +186,9 @@
   flex-direction: column;
   gap: var(--space-4);
   color: var(--text-standard);
-  font-size: var(--text-label-sm);
-  line-height: var(--text-label-sm--line-height);
-  letter-spacing: var(--text-label-sm--letter-spacing);
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
+  letter-spacing: var(--text-body--letter-spacing);
 }
 .empty {
   padding: var(--space-8) var(--space-4);
@@ -187,18 +207,23 @@
 }
 .composerInput {
   position: relative;
+  min-width: 0;
   width: 100%;
   padding-inline: calc(var(--space-5) / 2);
 }
 .composerActions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2);
+  padding-top: var(--space-1);
 }
 .composerTools {
   display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-half);
+  gap: var(--space-1);
   flex: 1;
 }
 .delivery {
@@ -217,17 +242,11 @@
   border-radius: var(--radius-pill);
   padding: var(--space-1h) var(--space-3);
 }
-.composer:focus-within {
-  border-color: var(--border-focus);
-  box-shadow:
-    var(--shadow-xs),
-    0 0 0 1px var(--border-focus);
-}
-.composer:has(
-  .composerTools > :where(fieldset) > button[aria-expanded="true"]
-):focus-within {
-  border-color: var(--border-standard);
-  box-shadow: var(--shadow-xs);
+html[data-keyboard-navigation]
+  .composerInput
+  > [contenteditable]:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
 }
 .threadUnread {
   width: 8px;
@@ -242,6 +261,7 @@
   overflow: auto;
   padding: 0 var(--space-panel-inset);
   scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--text) 20%, transparent) transparent;
 }
 .threadHistory ol {
   list-style: none;
@@ -295,11 +315,152 @@
   letter-spacing: var(--text-caption--letter-spacing);
 }
 
+.composerLeadingTools {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  gap: var(--space-half);
+  border-radius: var(--radius-control);
+}
+.composerLeadingTools:empty {
+  display: none;
+}
+.composerLeadingTools:has(.mentionRecipients) {
+  padding-inline: var(--space-half);
+  background: var(--affordance-accent);
+}
+.mentionRecipients {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  max-width: 100%;
+  gap: var(--space-half);
+}
+.mentionRecipientArtwork {
+  display: grid;
+  position: relative;
+  overflow: hidden;
+}
+.mentionRecipientRemove {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--affordance-prominent);
+  color: var(--text-inverse);
+  opacity: 0;
+}
+.mentionRecipients
+  [data-mention-recipient]:not([data-disabled]):is(:hover, :focus-visible)
+  .mentionRecipientRemove {
+  opacity: 1;
+}
 .mediaAttachments {
   display: grid;
   justify-items: start;
   gap: var(--space-2);
   margin-top: var(--space-2);
+}
+.fileAttachment {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(24rem, 100%);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text);
+  text-decoration: none;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+}
+a.fileAttachment:hover {
+  background: var(--surface-hover);
+}
+html[data-keyboard-navigation] .fileAttachment:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.fileAttachmentBody {
+  min-width: 0;
+  max-width: 100%;
+  display: grid;
+  gap: var(--space-half);
+}
+.fileAttachmentName,
+.fileAttachmentMeta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fileAttachmentName {
+  font-weight: var(--type-weight-medium);
+}
+.fileAttachmentMeta {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.audioAttachment {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  max-width: min(24rem, 100%);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  background: var(--surface-control);
+  color: var(--text);
+}
+.audioAttachment audio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+}
+.audioPlay {
+  display: grid;
+  place-items: center;
+  width: 2.25rem;
+  height: 2.25rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-inverse);
+  background: var(--surface-inverse);
+  flex-shrink: 0;
+}
+.audioPlay:hover {
+  background: var(--affordance-prominent);
+}
+.audioSeek {
+  min-width: 0;
+  flex: 1;
+  accent-color: var(--action);
+}
+.audioSeek:disabled {
+  cursor: not-allowed;
+}
+.audioTime {
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+html[data-keyboard-navigation] .audioPlay:focus-visible,
+html[data-keyboard-navigation] .audioSeek:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
 }
 .mediaPreview {
   position: relative;
@@ -432,6 +593,9 @@ button.mediaPreview {
   }
   .mediaPreview {
     max-height: 18rem;
+  }
+  .audioAttachment {
+    max-width: 100%;
   }
 }
 

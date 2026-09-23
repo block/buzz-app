@@ -13,8 +13,9 @@ import {
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
-function recipe(name, ...args) {
+function recipeWithRuntime(failRuntime, name, ...args) {
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-dev-command-"));
   const callsFile = path.join(directory, "calls.jsonl");
   try {
@@ -31,11 +32,16 @@ function recipe(name, ...args) {
       new URL("../../scripts/worktree-icon.mjs", import.meta.url),
       path.join(directory, "scripts/worktree-icon.mjs"),
     );
-    // Run the real recipes and adapter, recording only the package-manager boundary.
+    runtimeFixture(directory);
+    if (failRuntime) writeFileSync(path.join(directory, "fail-build"), "");
+    // Run the real recipes, adapter and preparation; never open a native app.
     symlinkSync(process.execPath, path.join(directory, "node"));
     writeFileSync(
       path.join(directory, "pnpm"),
-      `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");\n`,
+      `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
+if (process.argv[2] === "tauri" && !process.argv.includes("--help") && !process.argv.includes("-h")) {
+  if (!require("node:fs").existsSync("src-tauri/resources/agent-runtime/manifest.json")) process.exit(19);
+}\n`,
       { mode: 0o755 },
     );
     // Set PATH inside the recipe shell: Hermit proxies restore their own PATH.
@@ -69,11 +75,26 @@ function recipe(name, ...args) {
     const calls = existsSync(callsFile)
       ? readFileSync(callsFile, "utf8").trim().split("\n").map(JSON.parse)
       : [];
-    return { ...result, calls };
+    const built = existsSync(path.join(directory, "build-calls.jsonl"));
+    return { ...result, calls, built };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
 }
+
+function recipe(name, ...args) {
+  return recipeWithRuntime(false, name, ...args);
+}
+
+test("runtime preparation failure prevents desktop launch, while help does not build", () => {
+  const result = recipeWithRuntime(true, "desktop");
+  assert.notEqual(result.status, 0);
+  assert.equal(result.built, true);
+  assert.deepEqual(result.calls, [["install", "--frozen-lockfile"]]);
+  const help = recipeWithRuntime(true, "desktop", "--help");
+  assert.equal(help.status, 0, help.stderr);
+  assert.equal(help.built, false);
+});
 
 function launched(target, ...args) {
   const result = recipe(target, ...args);

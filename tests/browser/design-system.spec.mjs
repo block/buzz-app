@@ -68,7 +68,15 @@ test("shared tokens reach app controls without history or chip overrides", async
       const surface = document.createElement("div");
       surface.id = `probe-${name}`;
       surface.className = selector.match(new RegExp(`\\.(_${name}_[\\w]+)`))[1];
-      probes.append(surface);
+      if (["emojiPopover", "mentionPopover"].includes(name)) {
+        surface.classList.add("buzz-popover");
+        const positioner = document.createElement("div");
+        positioner.className = "buzz-popover-positioner";
+        positioner.append(surface);
+        probes.append(positioner);
+      } else {
+        probes.append(surface);
+      }
     }
     document.body.append(probes);
   });
@@ -86,7 +94,7 @@ test("shared tokens reach app controls without history or chip overrides", async
         --affordance-accent: rgb(11, 22, 33);
         --text-standard: rgb(10, 20, 30);
         --text-label: 19px;
-        --space-control-inset: 29px;
+        --space-6: 29px;
         --surface-popover: rgb(23, 45, 67);
         --border-standard: rgb(45, 67, 89);
         --radius-control: 13px;
@@ -123,7 +131,10 @@ test("shared tokens reach app controls without history or chip overrides", async
           "border-radius",
           ["emojiPopover", "mentionPopover"].includes(name) ? "19px" : "13px",
         );
-        await expect(surface).toHaveCSS("z-index", "1234");
+        const positioned = ["emojiPopover", "mentionPopover"].includes(name)
+          ? surface.locator("..")
+          : surface;
+        await expect(positioned).toHaveCSS("z-index", "1234");
       }
     } finally {
       await override.evaluate((node) => node.remove());

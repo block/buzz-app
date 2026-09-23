@@ -22,6 +22,7 @@ async function nativeImports(page, samples = []) {
         enabled: true,
         revision: "bundled",
         previous: null,
+        reloadable: false,
         error: null,
       }),
     );
@@ -83,8 +84,16 @@ async function nativeImports(page, samples = []) {
               source: "external",
               enabled: false,
               previous: null,
+              reloadable: true,
               error: null,
             });
+          return ready();
+        }
+        if (command === "plugin_reload") {
+          const plugin = plugins.find((p) => p.manifest.id === args.id);
+          plugin.previous = plugin.revision;
+          plugin.revision = `${plugin.revision}-reload`;
+          plugin.reloadable = true;
           return ready();
         }
         if (command === "plugin_change") {
@@ -181,8 +190,8 @@ test("Settings text buttons contain enlarged labels without resizing icon button
       await checkButtons(appearance, scale);
       // Shared IconButton must not inherit the enlarged text button's minimum.
       await expect(
-        page.getByRole("button", { name: "Find a page", exact: true }),
-      ).toHaveAttribute("data-icon-size", "default");
+        page.getByRole("button", { name: "Search Buzz", exact: true }),
+      ).toHaveAttribute("data-icon-size", "md");
       await expect
         .poll(() =>
           page.locator("button[data-icon-size]").evaluateAll((buttons) =>
@@ -191,6 +200,9 @@ test("Settings text buttons contain enlarged labels without resizing icon button
               .map((button) => {
                 const box = button.getBoundingClientRect();
                 const sizes = {
+                  sm: 32,
+                  md: 40,
+                  lg: 52,
                   compact: 32,
                   toolbar: 32,
                   default: 40,
@@ -259,6 +271,7 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
   await button(page, "Install plugin").click();
   const enabled = page.getByRole("switch", { name: "Enable Example two" });
   await expect(enabled).toHaveAttribute("aria-checked", "false");
+  await expect(button(page, "Reload")).toBeVisible();
   expect(
     await page.evaluate(
       () =>
@@ -266,7 +279,14 @@ test("folder/Git preview selects the exact subfolder, installs disabled and warn
           .args,
     ),
   ).toEqual({ token: "preview-one", path: "plugins/two/dist" });
+  await button(page, "Reload").click();
+  expect(
+    await page.evaluate(
+      () => window.importCalls.find((c) => c.command === "plugin_reload").args,
+    ),
+  ).toEqual({ id: "example.two" });
   await enabled.click();
+  await expect(button(page, "Reload")).toHaveCount(0);
   await expect(
     page.getByText(/It stays enabled and may run immediately/),
   ).toBeVisible();

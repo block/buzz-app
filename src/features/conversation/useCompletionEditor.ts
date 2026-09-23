@@ -78,7 +78,13 @@ export function useCompletionEditor(
     );
   }
   useLayoutEffect(() => {
-    if (current.current && !valid(current.current)) observe();
+    // Rich tokens rebuild before their caret is restored. Revoke stale evidence
+    // here; select/selectionchange observes the settled selection. Publishing a
+    // new observation during that rebuild can drive a render/selection loop.
+    if (current.current && !valid(current.current)) {
+      last.current = undefined;
+      invalidate();
+    }
   });
   useLayoutEffect(() => {
     const element = input.current;

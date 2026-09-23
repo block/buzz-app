@@ -64,6 +64,11 @@ export function apply(ctx: Context) {
     channelName: string;
   }) {
     const [renders, rerender] = React.useState(0);
+    React.useEffect(() => {
+      const render = () => rerender((value) => value + 1);
+      globalThis.addEventListener("proof-rerender", render);
+      return () => globalThis.removeEventListener("proof-rerender", render);
+    }, []);
     const session = connection.session;
     const subscribe = React.useCallback(
       (listener: () => void) =>

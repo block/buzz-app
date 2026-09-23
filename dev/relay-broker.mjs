@@ -1,4 +1,4 @@
-import { validSessionCommand } from "./session-commands.mjs";
+import { validChannelCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
@@ -945,35 +945,45 @@ export function relayBrokerPlugin({
             if (!upstream.ok)
               return json(res, upstream.status, { error: "Media read failed" });
             const type = upstream.headers.get("content-type") ?? "";
-            const image = type.startsWith("image/");
-            const video = type.startsWith("video/");
-            if (!image && !video)
-              return json(res, 415, { error: "Media type rejected" });
+            const mediaType = type.split(";", 1)[0].trim().toLowerCase();
+            const trustedType =
+              /^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/.test(
+                mediaType,
+              );
+            const image =
+              trustedType &&
+              mediaType.startsWith("image/") &&
+              mediaType !== "image/svg+xml";
+            const video = trustedType && mediaType.startsWith("video/");
+            const audio = trustedType && mediaType.startsWith("audio/");
+            const streamable = video || audio;
+            const download = !image && !streamable;
             const length = Number(upstream.headers.get("content-length"));
             if (
               Number.isFinite(length) &&
               length > MAX_MEDIA_BYTES &&
-              !(video && upstream.status === 206)
+              !(streamable && upstream.status === 206)
             )
               return json(res, 413, { error: "Media budget exceeded" });
             const headers = {
-              "Content-Type": type,
+              "Content-Type": download ? "application/octet-stream" : mediaType,
               "Cache-Control": "private, max-age=3600",
               "X-Content-Type-Options": "nosniff",
+              ...(download ? { "Content-Disposition": "attachment" } : {}),
               ...(upstream.headers.get("content-length")
                 ? { "Content-Length": upstream.headers.get("content-length") }
                 : {}),
-              ...(upstream.headers.get("content-range")
+              ...(!download && upstream.headers.get("content-range")
                 ? { "Content-Range": upstream.headers.get("content-range") }
                 : {}),
-              ...(video
+              ...(streamable
                 ? {
                     "Accept-Ranges":
                       upstream.headers.get("accept-ranges") ?? "bytes",
                   }
                 : {}),
             };
-            if (video) {
+            if (streamable) {
               res.writeHead(upstream.status, headers);
               if (!upstream.body) return res.end();
               const stream = Readable.fromWeb(upstream.body);
@@ -1161,11 +1171,11 @@ export function relayBrokerPlugin({
               const authority = await getAuthority(relay);
               if (
                 !enrollment &&
-                !(authority.channelCreation && validSessionCommand(filters))
+                !(authority.channelCreation && validChannelCommand(filters))
               )
                 return json(res, 400, {
                   error:
-                    "Agent enrollment or session operation unavailable or invalid",
+                    "Agent enrollment or channel operation unavailable or invalid",
                   sent: false,
                 });
             } else if (![7, 9].includes(filters?.kind)) {

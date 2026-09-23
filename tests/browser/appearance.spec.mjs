@@ -77,8 +77,8 @@ test("Appearance changes and restores both modes, shared keyboard controls, dial
         path: testInfo.outputPath(`appearance-${mode}-${width}.png`),
       });
     }
-    await button(page, "Find a page").click();
-    const dialog = page.getByRole("dialog", { name: "Find a page" });
+    await button(page, "Search Buzz").click();
+    const dialog = page.getByRole("dialog", { name: "Search Buzz" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
@@ -323,9 +323,13 @@ test("shared type and spacing reach Home and the real message timeline", async (
   await expect(
     sidebar.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCSS("font-size", "14px");
-  await expect(sidebar.locator("..")).toHaveCSS("column-gap", "4px");
+  await expect(
+    sidebar.locator("..").getByRole("separator", {
+      name: "Resize channel sidebar",
+    }),
+  ).toHaveCSS("width", "16px");
   const back = button(page, "Go back").locator("svg");
-  await expect(button(page, "Find a page").locator("svg")).toHaveCSS(
+  await expect(button(page, "Search Buzz").locator("svg")).toHaveCSS(
     "width",
     await back.evaluate((element) => getComputedStyle(element).width),
   );

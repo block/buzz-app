@@ -116,7 +116,9 @@ function ResolvedReview({
   );
   const videoUrls = new Set(
     threadRows.flatMap((row) =>
-      row.attachments.filter((item) => item.video).map((item) => item.url),
+      row.attachments
+        .filter((item) => item.kind === "video")
+        .map((item) => item.url),
     ),
   );
   if (!attachmentAvailable)
@@ -182,7 +184,7 @@ function ReviewShell({
     setSelectedImageUrl(attachment.url);
     const seconds = Math.max(0, initialTime);
     const element = video.current;
-    if (!attachment.video || !element) {
+    if (attachment.kind !== "video" || !element) {
       setCurrentTime(seconds);
       return;
     }
@@ -194,7 +196,7 @@ function ReviewShell({
     if (element.readyState >= HTMLMediaElement.HAVE_METADATA) apply();
     else element.addEventListener("loadedmetadata", apply, { once: true });
     return () => element.removeEventListener("loadedmetadata", apply);
-  }, [attachment.url, attachment.video, initialTime, selectionRequest]);
+  }, [attachment.url, attachment.kind, initialTime, selectionRequest]);
   useModalBoundary(backdrop, closeButton, close, restoreFocus);
   const seek = (seconds: number) => {
     if (!video.current) return;
@@ -207,11 +209,13 @@ function ReviewShell({
         className={styles.mediaReviewViewer}
         role="dialog"
         aria-modal="true"
-        aria-label={attachment.video ? "Video review" : "Image viewer"}
+        aria-label={
+          attachment.kind === "video" ? "Video review" : "Image viewer"
+        }
       >
         <header className={styles.mediaReviewHeading} data-tauri-drag-region>
           <span data-tauri-drag-region>
-            {attachment.video ? "Video review" : "Image"}
+            {attachment.kind === "video" ? "Video review" : "Image"}
           </span>
           <IconButton
             size="compact"
@@ -235,7 +239,7 @@ function ReviewShell({
                 </Button>
               )}
             </p>
-          ) : attachment.video ? (
+          ) : attachment.kind === "video" ? (
             // biome-ignore lint/a11y/useMediaCaption: signed attachment metadata has no caption track URL.
             <video
               ref={video}
@@ -269,9 +273,11 @@ function ReviewShell({
                 scope={scope}
                 extensions={extensions}
                 selectAttachment={selectAttachment}
-                {...(attachment.video && timecodesSeekable ? { seek } : {})}
+                {...(attachment.kind === "video" && timecodesSeekable
+                  ? { seek }
+                  : {})}
               />
-              {attachment.video && (
+              {attachment.kind === "video" && (
                 <div className={styles.mediaReviewTimeOption}>
                   <span>{formatMediaTime(currentTime)}</span>
                   <Checkbox
@@ -288,7 +294,7 @@ function ReviewShell({
                 channelId={channelId}
                 channelName={channelName}
                 threadRootId={rootId}
-                {...(attachment.video && includeTime
+                {...(attachment.kind === "video" && includeTime
                   ? { mediaTimeSeconds: currentTime }
                   : {})}
                 hideMediaTimeIndicator
@@ -327,7 +333,8 @@ function ImageReviewGallery({
     return [thread.root, thread.target, ...thread.replies]
       .flatMap((row) => row?.attachments ?? [])
       .filter(
-        (item) => !item.video && !seen.has(item.url) && !!seen.add(item.url),
+        (item) =>
+          item.kind === "image" && !seen.has(item.url) && !!seen.add(item.url),
       );
   }, [thread.root, thread.target, thread.replies]);
   return (

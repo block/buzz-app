@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { runtimeFixture } from "./agent-runtime-fixture.mjs";
 
 // Real Git worktrees and subprocesses; only Swift rendering and pnpm are stubs.
 // The macOS-only launcher wiring also runs on a Mac, without opening an app.
@@ -71,7 +72,7 @@ function fixture(t) {
   );
   env.PATH = `${tools}${path.delimiter}${env.PATH}`;
   for (const cwd of [main, linked]) {
-    mkdirSync(path.join(cwd, "scripts"));
+    runtimeFixture(cwd);
     for (const file of ["desktop-dev.mjs", "worktree-icon.mjs"]) {
       copyFileSync(
         new URL(`../../scripts/${file}`, import.meta.url),
@@ -168,7 +169,9 @@ test("macOS launcher combines icon and port before explicit config and runner ar
   const launch = () =>
     JSON.parse(
       run(linked, ["scripts/desktop-dev.mjs", "--port=1431", ...forwarded])
-        .stdout,
+        .stdout.trim()
+        .split("\n")
+        .at(-1),
     );
   const call = launch();
   assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);

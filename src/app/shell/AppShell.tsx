@@ -6,11 +6,13 @@ import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
 import { CommunitySwitcher } from "../../features/communities/CommunitySwitcher";
 import { ProfileButton } from "./ProfileButton";
-import { PageSearch } from "./PageSearch";
+import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
+import { macTitleBarDragHandlers } from "./title-bar";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
+const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
 export function AppShell({
   pages,
@@ -19,6 +21,7 @@ export function AppShell({
   tone,
   workspace,
   communities,
+  searchServices,
   navigationControls,
   onCommunitySelect,
   launchers,
@@ -31,6 +34,7 @@ export function AppShell({
   tone: string;
   workspace?: boolean;
   communities: Communities;
+  searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
   launchers?: ReactNode;
@@ -56,10 +60,15 @@ export function AppShell({
         Skip to content
       </a>
       <header
-        data-tauri-drag-region
+        data-tauri-drag-region={macDesktop ? undefined : true}
+        {...titleBarDragProps}
         className={`shell-header ${macDesktop ? "shell-header-mac" : ""}`}
       >
-        <div className="shell-communities" data-tauri-drag-region>
+        <div
+          className="shell-communities"
+          data-tauri-drag-region={macDesktop ? undefined : true}
+          {...titleBarDragProps}
+        >
           {navigationControls}
           <CommunitySwitcher
             communities={communities}
@@ -92,9 +101,17 @@ export function AppShell({
             );
           })}
         </nav>
-        <div className="shell-actions" data-tauri-drag-region>
+        <div
+          className="shell-actions"
+          data-tauri-drag-region={macDesktop ? undefined : true}
+          {...titleBarDragProps}
+        >
           {launchers}
-          <PageSearch pages={pages} onSelect={onSelect} />
+          <PageSearch
+            pages={pages}
+            onSelect={onSelect}
+            services={searchServices}
+          />
           <ProfileButton
             communities={communities}
             settingsSelected={selected === "settings"}

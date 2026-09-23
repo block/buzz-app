@@ -1,7 +1,7 @@
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
-import { SearchField } from "../../shared/design-system/ui/SearchField";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useChannelPanels } from "./useChannelPanels";
 import type { PageNavigation } from "../../features/navigation/service";
 import type { Navigation } from "../../features/navigation/controller";
@@ -29,14 +29,17 @@ import {
   useRef,
   useState,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
 } from "react";
 import {
-  HashIcon,
+  CaretRightIcon,
   DotsThreeIcon,
   PlugIcon,
   ChatCircleIcon,
+  PlusIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../../features/channels/channel-icon";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
@@ -45,6 +48,7 @@ import {
   useRelayConnection,
 } from "../../features/relay/react";
 import type { Panels, RegisteredPanel } from "../../features/panels/service";
+import type { PagesReader } from "../../features/pages/service";
 import { PanelCard } from "../../features/panels/PanelCard";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { OutboxStatus } from "./OutboxStatus";
@@ -58,14 +62,25 @@ import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
-import { useSidebarView } from "./useSidebarView";
-import { sidebarSections } from "./sidebar-sections";
+import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
+import { SidebarSectionIcon } from "./SidebarSectionIcon";
+import {
+  CreateChannelDialog,
+  type CreateChannelInput,
+} from "./CreateChannelDialog";
+import {
+  CHANNEL_SIDEBAR_DEFAULT_WIDTH,
+  CHANNEL_SIDEBAR_MAX_WIDTH,
+  CHANNEL_SIDEBAR_MIN_WIDTH,
+  useSidebarView,
+} from "./useSidebarView";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
   extensions,
   relay,
   panels,
+  pages,
   companion,
   navigation,
   navigator,
@@ -75,9 +90,18 @@ export function ChannelsPage({
   navigation?: PageNavigation | undefined;
   navigator?: Navigation | undefined;
   panels: Panels;
+  pages: PagesReader;
   companion?: ReactNode;
 }) {
   const session = useRelayConnection(relay);
+  const registeredPages = useSyncExternalStore(
+    pages.subscribe,
+    pages.snapshot,
+    pages.snapshot,
+  );
+  const sessionsEnabled = registeredPages.some(
+    (page) => page.pluginId === "buzz.sessions",
+  );
   const sessionNavigation = navigation?.forSession(relay, session);
   useEffect(() => {
     if (!navigation || !sessionNavigation) return;
@@ -127,6 +151,7 @@ export function ChannelsPage({
           navigator={navigator}
           viewer={session.viewer}
           panels={panels}
+          sessionsEnabled={sessionsEnabled}
           companion={companion}
         />
       )}
@@ -139,6 +164,7 @@ function ChannelWorkspace({
   queries,
   relay,
   panels,
+  sessionsEnabled,
   scope,
   companion,
   navigation,
@@ -154,6 +180,7 @@ function ChannelWorkspace({
   queries: RelaySession;
   relay: RelayData;
   panels: Panels;
+  sessionsEnabled: boolean;
 }) {
   const list = useChannelList(queries.channels);
   const activity = useSyncExternalStore(
@@ -171,6 +198,9 @@ function ChannelWorkspace({
   ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   useEffect(() => {
+    void queries.emoji.ensure();
+  }, [queries]);
+  useEffect(() => {
     if (list.status === "ready") void queries.unread.ensure();
   }, [queries, list.status]);
   const available = useSyncExternalStore(
@@ -180,6 +210,13 @@ function ChannelWorkspace({
   );
   const [selected, setSelected] = useState<string | undefined>(() =>
     readView(scope, "selected-channel", undefined),
+  );
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const createChannelTrigger = useRef<HTMLButtonElement>(null);
+  const pendingChannelCreation = useSyncExternalStore(
+    queries.channelCreation.subscribe,
+    queries.channelCreation.snapshot,
+    queries.channelCreation.snapshot,
   );
   const [draftParent, setDraftParent] = useState<string>();
   const [draftParents, setDraftParents] = useState<string[]>(() => {
@@ -234,8 +271,11 @@ function ChannelWorkspace({
     scope,
     list.status === "ready" && preferences.status !== "loading",
   );
-  const { search } = sidebar;
-  const channels = useChannelLabels(list.channels, queries.profiles);
+  const channels = useChannelLabels(
+    list.channels,
+    queries.profiles,
+    queries.names,
+  );
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
     for (const item of channels) {
@@ -255,16 +295,60 @@ function ChannelWorkspace({
     navigation?.target.kind === "conversation"
       ? navigation.target.channelId
       : undefined;
+  const [resolved, setResolved] = useState<{
+    request: PageNavigation;
+    available: boolean;
+  }>();
+  const joinedRequest = channels.some(
+    (channel) => channel.id === requestedChannel,
+  );
+  useEffect(() => {
+    // Let initial membership discovery settle before resolving an omitted target.
+    // A premature exact lookup publishes a one-channel list and starts readers
+    // that the completing full roster then invalidates.
+    if (
+      !requestedChannel ||
+      !navigation ||
+      joinedRequest ||
+      list.status === "idle" ||
+      list.status === "loading" ||
+      !queries.channels.resolve
+    )
+      return;
+    const controller = new AbortController();
+    void queries.channels
+      .resolve([requestedChannel], {
+        signal: AbortSignal.any([controller.signal, navigation.signal]),
+        priority: "foreground",
+      })
+      .then(() => {
+        if (!controller.signal.aborted && !navigation.signal.aborted)
+          setResolved({ request: navigation, available: true });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted && !navigation.signal.aborted) {
+          setResolved({ request: navigation, available: false });
+          navigation.complete({ status: "failed", reason: "unavailable" });
+        }
+      });
+    return () => controller.abort();
+  }, [requestedChannel, navigation, joinedRequest, queries, list.status]);
+  const resolving =
+    !!requestedChannel &&
+    !joinedRequest &&
+    !!queries.channels.resolve &&
+    resolved?.request !== navigation;
   const current = requestedChannel
     ? (channels.find((channel) => channel.id === requestedChannel) ??
-      (list.coverage === "partial"
-        ? { id: requestedChannel, name: "Conversation" }
+      (resolved?.request === navigation && resolved?.available
+        ? queries.channels.get?.(requestedChannel)
         : undefined))
     : (channels.find((channel) => channel.id === selected) ??
       channels.find((item) => item.channelType !== "session"));
+  const CurrentChannelIcon = channelIcon(current);
   useEffect(() => {
     if (navigation?.signal.aborted) return;
-    if (requestedChannel && list.status === "ready" && !current)
+    if (requestedChannel && !resolving && list.status === "ready" && !current)
       navigation?.complete({ status: "failed", reason: "unavailable" });
     if (!requestedChannel && !current && list.status === "ready")
       navigation?.complete({ status: "opened" });
@@ -280,7 +364,15 @@ function ChannelWorkspace({
         },
       });
     }
-  }, [requestedChannel, current, list.status, navigation, viewer, scope]);
+  }, [
+    requestedChannel,
+    resolving,
+    current,
+    list.status,
+    navigation,
+    viewer,
+    scope,
+  ]);
   const requestedMessage =
     navigation?.target.kind === "conversation"
       ? navigation.target.messageId
@@ -372,7 +464,11 @@ function ChannelWorkspace({
     priorRoutedThread.current = undefined;
   }
   if (showingThread?.navigation) priorRoutedThread.current = showingThread;
-  else if (!showingThread && (!navigation || (requestedMessage && !exact)))
+  else if (
+    current &&
+    !showingThread &&
+    (!navigation || (requestedMessage && !exact))
+  )
     showingThread = priorRoutedThread.current;
   else priorRoutedThread.current = undefined;
   useEffect(() => {
@@ -416,6 +512,15 @@ function ChannelWorkspace({
       mounted.current = false;
     };
   }, []);
+  const createChannel = useCallback(
+    async (input: CreateChannelInput) => {
+      const id = await queries.channelCreation.create(input);
+      if (!mounted.current) return;
+      select(id);
+      sidebar.toggle("channels", true);
+    },
+    [queries, select, sidebar.toggle],
+  );
   useEffect(() => {
     if (opened && !panel) open(undefined);
   }, [opened, panel, open]);
@@ -652,7 +757,7 @@ function ChannelWorkspace({
       : undefined;
   const drawerContext = useMemo(
     () =>
-      current && viewer
+      current && !current.readOnly && viewer
         ? {
             scope,
             viewer,
@@ -668,91 +773,103 @@ function ChannelWorkspace({
     [scope, viewer, current, showingThread],
   );
   const drawer = useChannelPanels(panels, drawerContext);
-  const visible = useMemo(
-    () =>
-      channels.filter(
-        (channel) =>
-          channel.name.toLowerCase().includes(search.toLowerCase()) ||
-          childrenByParent
-            .get(channel.id)
-            ?.some((child) =>
-              child.name.toLowerCase().includes(search.toLowerCase()),
-            ),
-      ),
-    [channels, search, childrenByParent],
-  );
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
+      style={
+        {
+          "--channel-sidebar-width": `${sidebar.width}px`,
+        } as CSSProperties
+      }
     >
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
-          <div className={styles.search}>
-            <SearchField
-              variant="navigator"
-              label="Search channels"
-              placeholder="Search"
-              value={search}
-              onValueChange={sidebar.setSearch}
-            />
-          </div>
           <SidebarUnread listRef={sidebar.list}>
-            {sidebarSections(visible, preferences.data).map((section) => (
-              <details
-                key={section.key}
-                className={styles.channelSection}
-                open={!!search || !sidebar.collapsed.includes(section.key)}
-              >
-                {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
-                <summary
-                  onClick={(event) => {
-                    event.preventDefault();
-                    // Only user intent changes the saved layout, never search expansion.
-                    if (!search)
+            {sidebarSections(channels, preferences.data).map((section) => {
+              const showsCreateChannel = isChannelSectionKey(section.key);
+              return (
+                <details
+                  key={section.key}
+                  className={styles.channelSection}
+                  open={!sidebar.collapsed.includes(section.key)}
+                >
+                  {/* biome-ignore lint/a11y/noStaticElementInteractions: native summary supports pointer and keyboard activation. */}
+                  <summary
+                    onClick={(event) => {
+                      event.preventDefault();
                       sidebar.toggle(
                         section.key,
                         sidebar.collapsed.includes(section.key),
                       );
-                  }}
-                >
-                  {section.icon && (
-                    <span aria-hidden="true">{section.icon} </span>
-                  )}
-                  {section.title}
-                </summary>
-                {section.rows.map((channel) => {
-                  const sessions = childrenByParent.get(channel.id);
-                  const selected =
-                    current?.id === channel.id ||
-                    sessions?.some((child) => child.id === current?.id)
-                      ? current?.id
-                      : undefined;
-                  return (
-                    <ChannelSidebarItem
-                      key={channel.id}
-                      channel={channel}
-                      session={queries}
-                      working={workingChannels.has(channel.id)}
-                      selected={selected}
-                      search={search}
-                      collapsed={
-                        !search &&
-                        sidebar.collapsed.includes(
-                          `session-children:${channel.id}`,
-                        )
-                      }
-                      onToggle={sidebar.toggle}
-                      draft={draftParents.includes(channel.id)}
-                      draftSelected={drafting && draftParent === channel.id}
-                      sessions={sessions}
-                      onSelect={select}
-                      onNewSession={startSession}
-                      onOpenThread={openActivityThread}
+                    }}
+                  >
+                    <CaretRightIcon
+                      className={styles.sectionChevron}
+                      size={17}
+                      aria-hidden="true"
                     />
-                  );
-                })}
-              </details>
-            ))}
+                    {section.icon && (
+                      <SidebarSectionIcon
+                        icon={section.icon}
+                        session={queries}
+                      />
+                    )}
+                    <span className={styles.sectionTitle}>{section.title}</span>
+                    {showsCreateChannel && (
+                      <span className={styles.sectionAction}>
+                        <IconButton
+                          type="button"
+                          size="compact"
+                          shape="round"
+                          aria-label="Create channel"
+                          title={
+                            queries.channelCreation.available
+                              ? "Create channel"
+                              : "Channel creation unavailable"
+                          }
+                          disabled={!queries.channelCreation.available}
+                          onClick={(event) => {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            createChannelTrigger.current = event.currentTarget;
+                            setCreateChannelOpen(true);
+                          }}
+                          icon={<PlusIcon size={16} aria-hidden="true" />}
+                        />
+                      </span>
+                    )}
+                  </summary>
+                  {section.rows.map((channel) => {
+                    const sessions = childrenByParent.get(channel.id);
+                    const selected =
+                      current?.id === channel.id ||
+                      sessions?.some((child) => child.id === current?.id)
+                        ? current?.id
+                        : undefined;
+                    return (
+                      <ChannelSidebarItem
+                        key={channel.id}
+                        channel={channel}
+                        session={queries}
+                        working={workingChannels.has(channel.id)}
+                        sessionsEnabled={sessionsEnabled}
+                        selected={selected}
+                        collapsed={sidebar.collapsed.includes(
+                          `session-children:${channel.id}`,
+                        )}
+                        onToggle={sidebar.toggle}
+                        draft={draftParents.includes(channel.id)}
+                        draftSelected={drafting && draftParent === channel.id}
+                        sessions={sessions}
+                        onSelect={select}
+                        onNewSession={startSession}
+                        onOpenThread={openActivityThread}
+                      />
+                    );
+                  })}
+                </details>
+              );
+            })}
             {list.status === "loading" && !list.channels.length && (
               <p className={styles.empty}>Loading your channels…</p>
             )}
@@ -761,10 +878,8 @@ function ChannelWorkspace({
                 {list.error}
               </p>
             )}
-            {list.status === "ready" && !visible.length && (
-              <p className={styles.empty}>
-                {search ? "No matching channels." : "No channels yet."}
-              </p>
+            {list.status === "ready" && !channels.length && (
+              <p className={styles.empty}>No channels yet.</p>
             )}
           </SidebarUnread>
           {preferences.status !== "ready" && (
@@ -783,6 +898,17 @@ function ChannelWorkspace({
           )}
         </div>
       </Panel>
+      <CreateChannelDialog
+        open={createChannelOpen}
+        onOpenChange={setCreateChannelOpen}
+        onCreate={createChannel}
+        pending={pendingChannelCreation}
+        finalFocus={createChannelTrigger}
+      />
+      <ChannelSidebarResizeHandle
+        width={sidebar.width}
+        setWidth={sidebar.setWidth}
+      />
       <Panel as="article" aria-label="Conversation">
         <div className={styles.conversation}>
           {drafting && current ? (
@@ -819,7 +945,7 @@ function ChannelWorkspace({
                     current?.channelType === "dm" ? (
                       <ChatCircleIcon size={20} />
                     ) : (
-                      <HashIcon size={20} />
+                      <CurrentChannelIcon size={20} />
                     )
                   }
                   actions={
@@ -944,8 +1070,15 @@ function ChannelWorkspace({
                   />
                 ) : (
                   <div className={styles.empty}>
-                    Select a channel to read it.
+                    {resolving
+                      ? "Checking conversation access…"
+                      : "Select a channel to read it."}
                   </div>
+                )}
+                {current?.readOnly && (
+                  <p className="px-4 py-2 text-body-sm text-subtle">
+                    Read-only preview · You haven’t joined this conversation.
+                  </p>
                 )}
                 {current && (
                   <MessageComposer
@@ -1026,6 +1159,96 @@ function ChannelWorkspace({
         </div>
       )}
     </div>
+  );
+}
+
+function ChannelSidebarResizeHandle({
+  width,
+  setWidth,
+}: {
+  width: number;
+  setWidth(width: number): void;
+}) {
+  const handle = useRef<HTMLHRElement>(null);
+  const [renderedWidth, setRenderedWidth] = useState(width);
+  const drag = useRef<
+    { pointerId: number; startX: number; width: number } | undefined
+  >(undefined);
+  const resize = useRef(setWidth);
+  resize.current = setWidth;
+  const move = useCallback((event: PointerEvent) => {
+    if (drag.current?.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    resize.current(drag.current.width + event.clientX - drag.current.startX);
+  }, []);
+  const finish = useCallback(() => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", finish);
+    window.removeEventListener("pointercancel", finish);
+    drag.current = undefined;
+    delete document.documentElement.dataset.sidebarResizing;
+    document.documentElement.style.removeProperty("cursor");
+    document.body.style.removeProperty("user-select");
+  }, [move]);
+  const measure = useCallback(() => {
+    const sidebar = handle.current?.previousElementSibling;
+    if (!(sidebar instanceof HTMLElement)) return;
+    const next = Math.round(sidebar.getBoundingClientRect().width);
+    setRenderedWidth((current) => (current === next ? current : next));
+  }, []);
+  useLayoutEffect(measure);
+  useEffect(() => {
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, [measure]);
+  useEffect(() => () => finish(), [finish]);
+
+  return (
+    <hr
+      ref={handle}
+      className={styles.sidebarResizeHandle}
+      aria-label="Resize channel sidebar"
+      aria-orientation="vertical"
+      aria-valuemin={CHANNEL_SIDEBAR_MIN_WIDTH}
+      aria-valuemax={CHANNEL_SIDEBAR_MAX_WIDTH}
+      aria-valuenow={Math.round(renderedWidth)}
+      tabIndex={0}
+      data-tooltip="Drag to resize · Double-click to reset"
+      onDoubleClick={() => setWidth(CHANNEL_SIDEBAR_DEFAULT_WIDTH)}
+      onKeyDown={(event) => {
+        const step = event.shiftKey ? 48 : 16;
+        const sidebar = event.currentTarget.previousElementSibling;
+        const currentWidth =
+          sidebar instanceof HTMLElement
+            ? sidebar.getBoundingClientRect().width
+            : renderedWidth;
+        if (event.key === "ArrowLeft") setWidth(currentWidth - step);
+        else if (event.key === "ArrowRight") setWidth(currentWidth + step);
+        else if (event.key === "Home") setWidth(CHANNEL_SIDEBAR_MIN_WIDTH);
+        else if (event.key === "End") setWidth(CHANNEL_SIDEBAR_MAX_WIDTH);
+        else return;
+        event.preventDefault();
+      }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        const sidebar = event.currentTarget.previousElementSibling;
+        drag.current = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          width:
+            sidebar instanceof HTMLElement
+              ? sidebar.getBoundingClientRect().width
+              : renderedWidth,
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", finish, { once: true });
+        window.addEventListener("pointercancel", finish, { once: true });
+        document.documentElement.dataset.sidebarResizing = "true";
+        document.documentElement.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+      }}
+    />
   );
 }
 

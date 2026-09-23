@@ -119,8 +119,12 @@ export function EditableInput({
       },
     });
     ref.current = root;
-    const focus = () =>
-      setEditorSelection(root, last.start, last.end, last.backward);
+    const focus = () => {
+      // Native insertion can return focus before selectionchange updates `last`.
+      // Ordinary Chromium refocus instead resets the DOM caret to zero first.
+      const next = pendingEdit.current ? selection() : last;
+      setEditorSelection(root, next.start, next.end, next.backward);
+    };
     root.addEventListener("focus", focus);
     const select = () => {
       if (!composing.current) normalizeTokenCaret(root);

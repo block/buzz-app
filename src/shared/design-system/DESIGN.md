@@ -22,6 +22,10 @@ an actual use, document it in the registry and measure its intended pairings.
 Legacy utilities and host aliases remain while their callers migrate. Do not
 add new uses. Whole materials such as glass still travel as one shared recipe.
 
+Panel navigation uses `affordance-panel-hover` for its quiet hover and the shared
+`affordance-selected` for persistent selection. In dark mode, the unfilled panel
+row needs a quieter hover than a filled subtle control; these are distinct roles.
+
 ## Foundations
 
 The interface uses shared color, type, spacing and shape roles. Primary actions
@@ -54,6 +58,34 @@ not density or emphasis. The caller supplies identity type from domain data,
 never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
 
+## Public identity text
+
+Public-key recognition labels use the shared pure formatter in
+`src/shared/identity/public-key.ts`: `npub…` followed by the last three canonical
+npub characters by default. This is text, not a component or a new identifier.
+Use `formatPublicKey` for one label; use `publicKeyLabels` for an ambiguous group
+so distinct keys receive a common suffix length that makes them distinguishable.
+Inputs are public identity keys in hex, never credentials. Invalid inputs produce
+no label; do not echo an invalid value as a fallback. Raw hex cannot establish
+whether a caller supplied a secret: callers must use public-identity fields only.
+
+Keep the full key for routing, persistence, identity comparisons, and explicit key
+copy actions. Short labels are recognition aids, not proof of identity. Full-key
+inspection/export surfaces remain explicit exceptions. Existing surfaces are not
+migrated automatically; new abbreviated public-key displays should reuse this rule.
+
+Hosts decide when ambiguity exists. Composer chips compare authored names without
+case or surrounding whitespace and qualify every selected same-name identity,
+including earlier selections. Repeating one identity is not ambiguous. Removing
+the last distinct namesake restores name-only display. Qualifiers never change
+message source, recipient spans, copyable message text, or notifications. Accessible
+names spell out the public-key ending. No hover or picker change is implied.
+
+When an existing composer chip gains a qualifier, reveal only the qualifier with
+shared settle motion; newly inserted chips appear at rest. Ordinary typing must
+not replay the reveal. The suffix stays visible while a long name ellipsizes.
+Removal is immediate and reduced motion disables the reveal animation.
+
 ## Posture
 
 Buzz is a place where people build together and bring their agents into the room. Everyday surfaces stay quiet, crisp, and highly functional; character shows up in identity, guidance, transitions, and ceremony rather than in the chrome of ordinary work. Colour is signal, not decoration. When in doubt, the interface gets out of the way of the conversation.
@@ -65,6 +97,7 @@ Buzz is a place where people build together and bring their agents into the room
 - **Use border-standard for quiet separators, border-prominent for controls and border-focus for keyboard focus.** Error and warning boundaries have their own roles. Measure real surfaces in both themes.
 - **No page-wide gradient behind documentation or dense reading.** The gradient is the product's backdrop for chrome and panels. Behind a column of prose it fights the text and makes contrast position-dependent — such surfaces sit on `bg-panel`.
 - **Shadows stay at the threshold of perception.** If a shadow is obvious, it is too strong. The two elevation values are the whole vocabulary.
+- **Floating controls share one outer material.** Menus, selects, popovers, and preview cards use the opaque `floating-surface`: floating fill, primary boundary, panel radius, and graduated lift. Each component still owns its content padding and interaction behavior; sharing the container does not imply that a preview behaves like a menu.
 - **Elevation is carried by shadow in light mode and by lightness in dark mode.** On a near-black background there is nothing darker for a shadow to cast, so a floating surface becomes a step lighter instead. Never reach for a stronger shadow to make something float in dark mode.
 - **On a translucent surface, elevation reads as less translucency, not as a lighter colour.** A glass container with a fully opaque child looks layered; the same container with a merely brighter child looks unchanged.
 - **Light comes from one direction, and every glass surface agrees on it.** A glass rim is bright along the lit edge and dimmer on the opposite one; that is what makes it read as a material rather than an outline. Two surfaces lit from different directions in the same view look like a mistake.
@@ -77,14 +110,31 @@ Buzz is a place where people build together and bring their agents into the room
 
 ## Controls
 
-Button uses prominent, subtle, ghost, destructive and outline emphasis. Its
+Button and IconButton share prominent, subtle, ghost, inverted, destructive,
+outline and link emphasis. Inverted is for an inverse surface; link keeps its
+background clear and underlines on interaction. Its
 32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
-increase height at larger text settings. All action buttons use `--radius-pill`:
-text buttons are capsules and square icon buttons are circles, at every size and
-in every state. IconButton has no per-caller shape override. Fields
-use the shared control corner; SearchField uses a capsule. Its shared CSS recipe
-also styles Emoji Mart’s native search, preserving the widget’s keyboard model. Legacy Button names map to these variants during
-migration; do not add new primary/quiet or compact/default call sites.
+increase height at larger text settings. Text buttons use pill corners. Fields
+use the shared control corner. Small buttons use 16px side padding and 16px
+icons; medium and large use 24px side padding and 24px icons. Labels use the
+complete text-label-sm / text-label roles, with an 8px icon gap.
+
+IconButton defaults to round and uses the same sm/md/lg sizes. Existing names
+remain compatibility aliases: primary/solid → prominent, quiet → subtle,
+compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
+Buzz's tint and chrome icon variants remain for composer and backdrop actions.
+
+Disabled controls retain their filled, outline, or unfilled treatment and cannot
+activate. Loading retains the label's geometry, accessible name, focus and variant
+colors while blocking activation; never swap in a differently sized loading label.
+Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
+Keep keyboard-only focus and reduced-motion behavior owned by the system.
+
+IconButton defaults to round across all sizes and variants. Use `shape="control"`
+only when a rectangular control shape is explicitly needed.
+
+SearchField uses a capsule. Its shared CSS recipe also styles Emoji Mart’s
+native search, preserving the widget’s keyboard model.
 
 Composer picker surfaces use the 24px `--radius-panel` role. The legacy
 control bridge keeps the 16px `--corner-control` foundation. Compact fields use
@@ -95,6 +145,15 @@ Field groups label, input, help and error using Base UI. Input and Textarea
 carry the shared field appearance. RadioGroup is for one choice, Checkbox for an
 independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
+
+For finite choices, use Select: its inline layout fits compact toolbars and
+`variant="field"` fits labelled forms. Pass `disabled` explicitly when the choice
+is unavailable. For searchable choices, use the shared Combobox parts; keep
+filtering, custom-value commits, and async requests with the feature. Its Control
+owns the label, input and integrated browse caret; Popup and Item own the shared
+menu presentation. Use its loading state while discovering options, and keep
+retry/cancel actions with the feature. Do not style a native select as an Input
+or attach a separate round button to mimic a combobox.
 
 ## Compositions
 
@@ -110,6 +169,23 @@ close button and actions. Pending operations set preventClose so Escape and the
 close button agree. It retains the app's explicit dismissal behavior: outside
 clicks do not discard a form. Provide initialFocus for search dialogs and
 finalFocus when a flow has an external trigger or opens a second dialog.
+Use `text-label` (16px, 500 weight at the default scale) for the shared Dialog
+title. Group the title and optional description with `--space-2` (8px), beside
+the close button so its hit area does not enlarge the text gap. The body owns
+vertical padding matching the dialog's horizontal padding: `--space-6` (24px),
+or `--space-4` (16px) at the compact breakpoint. Do not add an outer flex gap
+on top of that body padding.
+The shared Dialog uses state opacity and settling transform tokens for a centered
+0.98-scale entrance, with fast timing on exit. Base UI owns transition presence;
+keep the controlled component mounted while setting `open={false}` for an exit.
+Reduced motion, keyboard navigation, and Escape dismissal are immediate. Pass
+`motion="none"` for frequently used surfaces such as the search palette.
+
+Use Accordion for collapsible sections. Form sections pass `keepMounted` so
+collapsing them preserves local input state; leave the default for static content.
+Use `variant="form"` when the surrounding form owns spacing. It removes outer
+margins while keeping the shared row and panel padding. Adjacent disclosure rows
+form one stack; avoid inserting form-section gaps between individual rows.
 
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
@@ -120,6 +196,30 @@ Route navigation uses NavigationItem with aria-current instead. NavigationItem
 offers an `option` variant for picker rows with even 8px padding and immediate
 hover feedback. It forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+
+## Align row content, not state backgrounds
+
+When composing NavigationItem lists inside dialogs or padded panels, align the
+leading content column with the heading. With icons, this means the icon slot;
+labels form a second consistent column. Give mixed icons and identity fallbacks
+the same slot (24px in the community chooser and page search), retaining each
+icon's intended size within it.
+
+The hover and selected backgrounds may extend beyond that content edge. Offset
+the list wrapper by the existing `--space-control-inset` rather than removing
+NavigationItem padding, moving the heading, or overriding the row's paint. The
+surrounding composition owns this offset; it is not a global navigation change.
+
+Preserve at least `--space-2` of outer gutter. At the dialog's compact breakpoint
+(480px), its padding is 16px, so reduce the outward offset from 16px to 8px. That
+small content inset is intentional: the row background and keyboard focus must
+stay clear of the dialog edge. Scrollable lists also need space inside their
+scroll container for the focus outline; account for that space in the offset.
+Align empty-state text with the same leading content column.
+
+Check the composition with no highlighted row, hover, selection and keyboard
+focus, in both themes and at narrow widths and enlarged text. Content alignment
+should remain legible without a state background to explain it.
 
 ## State
 

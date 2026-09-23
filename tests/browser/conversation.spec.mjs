@@ -218,7 +218,24 @@ test("independent packed author consumer and native-installed contribution survi
       .getByRole("button", { name: "Insert mixed", exact: true })
       .click();
     await expect(draft).toHaveJSProperty("value", "Hi @Member and @Member ");
-    await expect(draft.locator("[data-mention-kind]")).toHaveCount(2);
+    // Two authored spans preserve one exact notification identity.
+    const member = await page.evaluate(() => window.conversationFixture.member);
+    await expect(draft.locator(".inline-chip")).toHaveCount(2);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(
+            localStorage.getItem('buzz-view.v1:["a","draft:general"]'),
+          ),
+        ),
+      )
+      .toEqual({
+        text: "Hi @Member and @Member ",
+        recipients: [
+          { pubkey: member, name: "Member", start: 3, end: 10 },
+          { pubkey: member, name: "Member", start: 15, end: 22 },
+        ],
+      });
     await page.evaluate(() => window.conversationFixture.saveEdit());
     await page.evaluate(() => window.conversationFixture.removeProbe());
     expect(
@@ -253,12 +270,11 @@ test("independent packed author consumer and native-installed contribution survi
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
-    const member = await page.evaluate(() => window.conversationFixture.member);
     await page
       .getByRole("button", { name: `Member ${member}`, exact: true })
       .click();
-    const mentions = draft.locator("[data-mention-kind]");
-    await expect(mentions).toHaveCount(1);
+    const recipients = draft.locator(".inline-chip");
+    await expect(recipients).toHaveCount(1);
     const withMention = await draft.evaluate((element) => element.value);
     const textarea = await draft.elementHandle();
     await page.evaluate(() =>
@@ -268,10 +284,19 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("button", { name: "Mention a member", exact: true }),
     ).toHaveCount(0);
     await expect(draft).toHaveJSProperty("value", withMention);
-    await expect(mentions).toHaveCount(1);
+    await expect(recipients).toHaveCount(1);
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
-    await draft.fill("Channels draft");
-    await expect(mentions).toHaveCount(0);
+    await draft.focus();
+    await draft.evaluate((element) => {
+      const start = element.value.indexOf("@Member");
+      element.setSelectionRange(start, start + "@Member".length);
+    });
+    await draft.press("Backspace");
+    await expect(recipients).toHaveCount(0);
+    await expect(draft).toHaveJSProperty(
+      "value",
+      withMention.replace("@Member", ""),
+    );
     await page.evaluate(() =>
       window.conversationFixture.change("enable", "buzz.mentions"),
     );
@@ -281,10 +306,10 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.fill("Channels draft");
     await draft.focus();
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
-    // Programmatic click avoids intentionally moving focus away from the editor.
-    await page
-      .getByRole("button", { name: "Rerender consumer 0" })
-      .evaluate((el) => el.click());
+    // A fixture event triggers only a parent render, without focus or outside-click dismissal.
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("proof-rerender")),
+    );
     await expect(
       page.getByRole("button", { name: "Rerender consumer 1" }),
     ).toBeVisible();
@@ -299,9 +324,9 @@ test("independent packed author consumer and native-installed contribution survi
     const search = page.getByRole("searchbox", { name: "Search" });
     await search.fill("party");
     const picker = await page.locator("em-emoji-picker").elementHandle();
-    await page
-      .getByRole("button", { name: "Rerender consumer 1" })
-      .evaluate((el) => el.click());
+    await page.evaluate(() =>
+      window.dispatchEvent(new Event("proof-rerender")),
+    );
     await expect(
       page.getByRole("button", { name: "Rerender consumer 2" }),
     ).toBeVisible();

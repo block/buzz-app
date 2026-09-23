@@ -84,7 +84,7 @@ export function LiveStatus({
   if (!issue) return null;
   return (
     <div role="status" className={styles.liveStatus}>
-      <span>{reason} Retained messages remain readable.</span>
+      <span>{reason} Only currently accessible messages remain readable.</span>
       <Button type="button" onClick={live.retry}>
         Retry live updates
       </Button>

@@ -52,12 +52,16 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     });
   });
   await page.route("**/api/relay/*/gifs", async (route) => {
-    requests.push(route.request().postDataJSON());
+    const request = route.request().postDataJSON();
+    requests.push(request);
     await route.fulfill({
       json: {
         result: true,
         data: {
-          data: [result(1, "Hello", 240), result(2, "Celebrate", 320)],
+          data: [
+            result(1, request.query ? "Hello" : "Trending Hello", 240),
+            result(2, "Celebrate", 320),
+          ],
         },
       },
     });
@@ -188,7 +192,15 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   });
   await expect(draft).toHaveJSProperty("value", "");
   const composer = draft.locator("xpath=ancestor::form");
-  await expect(composer).toHaveCSS("border-top-color", "rgb(232, 232, 232)");
+  const composerBorder = await composer.evaluate((element) => {
+    const probe = document.createElement("div");
+    probe.style.borderColor = "var(--border-standard)";
+    element.append(probe);
+    const color = getComputedStyle(probe).borderColor;
+    probe.remove();
+    return color;
+  });
+  await expect(composer).toHaveCSS("border-top-color", composerBorder);
   await expect(composer).not.toHaveCSS("box-shadow", "none");
   await expect(search).toHaveAttribute("spellcheck", "false");
   await expect(search).toHaveAttribute("autocorrect", "off");
@@ -296,15 +308,22 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   await clear.click();
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();
+  // Clearing starts a debounced request. Old results have the same count, so
+  // wait for the cleared query's rendered result before clicking its replacement.
+  const trending = page.getByRole("button", {
+    name: "Choose Trending Hello",
+    exact: true,
+  });
+  await expect(trending).toBeVisible();
   await expect(
     page.getByTestId("klipy-gif-grid").getByRole("button"),
   ).toHaveCount(2);
   await page.screenshot({ path: testInfo.outputPath("gif-picker.png") });
 
-  await page.getByRole("button", { name: "Choose Hello", exact: true }).click();
+  await trending.click();
   await expect(draft).toHaveJSProperty(
     "value",
-    "![Hello](https://gif.fixture.invalid/1.gif)",
+    "![Trending Hello](https://gif.fixture.invalid/1.gif)",
   );
   await expect(
     page.getByRole("searchbox", { name: "Search GIFs" }),

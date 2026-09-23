@@ -132,9 +132,9 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(first).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   const hover = await first.evaluate((el) => {
     const s = getComputedStyle(el);
-    return { border: s.borderTopColor, radius: s.borderTopLeftRadius };
+    return { border: s.borderTopWidth, radius: s.borderTopLeftRadius };
   });
-  expect(hover.border).toBe("rgba(0, 0, 0, 0)");
+  expect(hover.border).toBe("0px");
   expect(hover.radius).not.toBe("0px");
   await first.screenshot({
     path: testInfo.outputPath("thread-button-hover.png"),
@@ -208,6 +208,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
+  const beforeReload = app.report.queries.length;
   await page.reload();
   await page
     .getByRole("button", { name: "Messages", exact: true })
@@ -215,4 +216,14 @@ test("thread buttons show observed unread independently, clear only after readin
     .click();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(other).toHaveAccessibleName(/Observed unread replies/);
+  // Restoring a joined conversation waits for initial membership discovery;
+  // it must not publish an early one-channel roster through exact resolution.
+  expect(
+    app.report.queries
+      .slice(beforeReload)
+      .filter(
+        ({ filter }) =>
+          filter.kinds?.includes(39002) && filter["#d"]?.includes("alpha"),
+      ),
+  ).toEqual([]);
 });

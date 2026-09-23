@@ -41,6 +41,9 @@
 
   .design-system-nav-sections {
     gap: var(--space-6);
+    /* Real trailing scroll space, not another navigation item. Keep it on
+       the content so the final link can move away from the viewport edge. */
+    padding-block-end: calc(var(--space-6) * 3);
   }
 
   .design-system-nav-section {
@@ -69,9 +72,12 @@
       color var(--duration-state) var(--easing-state);
   }
 
-  .design-system-nav-link:hover,
+  .design-system-nav-link:hover:not(.design-system-nav-link-active) {
+    background: var(--affordance-panel-hover);
+  }
+
   .design-system-nav-link-active {
-    background: var(--neutral-3);
+    background: var(--affordance-selected);
   }
 
   .design-system-content {

@@ -7,6 +7,11 @@ test("editable composer renders links and mentions while preserving source and n
   page,
   browserName,
 }) => {
+  // Keep the empty-after-send contract under test; agent-prefill behavior has
+  // separate coverage in mention-edit.spec.mjs.
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
@@ -29,11 +34,11 @@ test("editable composer renders links and mentions while preserving source and n
       page.getByRole("region", { name: "Draft preview" }),
     ).toHaveCount(0);
     await expect(preview.locator('[data-link-kind="github"]')).toHaveCount(2);
-    await expect(preview.locator('[data-mention-kind="person"]')).toHaveText(
-      "Alex Chen",
-    );
-    await expect(preview.locator('[data-mention-kind="agent"]')).toHaveText(
-      "Build Bot",
+    await expect(
+      preview.locator('.inline-chip[data-kind="person"]'),
+    ).toHaveText("@Alex Chen");
+    await expect(preview.locator('.inline-chip[data-kind="agent"]')).toHaveText(
+      "@Build Bot",
     );
     const delivered = page.locator('[data-message-id="link-row"]');
     const deliveredLink = delivered
@@ -142,8 +147,8 @@ test("editable composer renders links and mentions while preserving source and n
       expected.length,
     );
     await expect(preview.locator("strong")).toHaveText("GitHub");
-    await expect(preview.locator('[data-mention-kind="agent"]')).toHaveText(
-      "Build Bot",
+    await expect(preview.locator('.inline-chip[data-kind="agent"]')).toHaveText(
+      "@Build Bot",
     );
     await input.press("Enter");
     expect(await page.evaluate(() => window.linkComposerFixture.sent)).toEqual([
@@ -182,13 +187,13 @@ test("editable composer renders links and mentions while preserving source and n
 
     const pasted = "@Alex Chen [Drive](https://drive.google.com/file/example)";
     await input.fill(pasted);
-    await expect(preview.locator("[data-mention-kind]")).toHaveCount(0);
+    await expect(preview.locator(".inline-chip")).toHaveCount(0);
     await expect(preview.locator('[data-link-kind="drive"]')).toHaveText(
       "Drive",
     );
     await page.reload();
     await expect(input).toHaveJSProperty("value", pasted);
-    await expect(preview.locator("[data-mention-kind]")).toHaveCount(0);
+    await expect(preview.locator(".inline-chip")).toHaveCount(0);
     // A rendered item at the end must have a real caret box after its label.
     const linkSource = "See https://github.com/block/buzz-app";
     await input.fill(linkSource);
@@ -461,15 +466,23 @@ test("editable composer renders links and mentions while preserving source and n
       .click();
     await input.evaluate((el) => el.setSelectionRange(7, 17));
     await input.press("Backspace");
-    await expect(input.locator('[data-mention-kind="person"]')).toHaveCount(0);
-    await expect(input.locator('[data-mention-kind="agent"]')).toHaveCount(1);
+    await expect(input.locator('.inline-chip[data-kind="person"]')).toHaveCount(
+      0,
+    );
+    await expect(input.locator('.inline-chip[data-kind="agent"]')).toHaveCount(
+      1,
+    );
     await input.press("ControlOrMeta+z");
-    await expect(input.locator('[data-mention-kind="person"]')).toHaveCount(1);
+    await expect(input.locator('.inline-chip[data-kind="person"]')).toHaveCount(
+      1,
+    );
     expect(
       await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
     ).toEqual([7, 17]);
     await input.press("ControlOrMeta+Shift+z");
-    await expect(input.locator('[data-mention-kind="person"]')).toHaveCount(0);
+    await expect(input.locator('.inline-chip[data-kind="person"]')).toHaveCount(
+      0,
+    );
     await input.press("Enter");
     expect(
       (await page.evaluate(() => window.linkComposerFixture.sent)).at(-1),

@@ -1,6 +1,6 @@
 import { Dialog as BaseDialog } from "@base-ui/react/dialog";
 import { XIcon } from "../icons";
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import { IconButton } from "./IconButton";
 
 type PopupProps = ComponentProps<typeof BaseDialog.Popup>;
@@ -12,6 +12,8 @@ export type DialogProps = {
   children: ReactNode;
   actions?: ReactNode;
   closeLabel?: string;
+  /** Keep frequent surfaces such as search palettes immediate. */
+  motion?: "default" | "none";
   /** A pending operation can prevent all user dismissal paths. */
   preventClose?: boolean;
   initialFocus?: PopupProps["initialFocus"];
@@ -28,9 +30,13 @@ export function Dialog({
   actions,
   closeLabel = "Close",
   preventClose = false,
+  motion = "default",
   initialFocus,
   finalFocus,
 }: DialogProps) {
+  const [instantClose, setInstantClose] = useState(false);
+  const transition =
+    motion === "none" || (!open && instantClose) ? "none" : "default";
   return (
     <BaseDialog.Root
       open={open}
@@ -40,22 +46,35 @@ export function Dialog({
           details.cancel();
           return;
         }
+        setInstantClose(details.reason === "escape-key");
         onOpenChange(next);
       }}
     >
       <BaseDialog.Portal>
-        <BaseDialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
+        <BaseDialog.Backdrop
+          data-buzz-ui=""
+          data-motion={transition}
+          className="buzz-dialog-backdrop"
+        />
         <BaseDialog.Popup
           data-buzz-ui=""
-          className="buzz-dialog"
+          className="buzz-dialog gap-0"
+          data-motion={transition}
           aria-modal="true"
           initialFocus={initialFocus}
           finalFocus={finalFocus}
         >
           <header className="buzz-dialog-header">
-            <BaseDialog.Title className="text-heading">
-              {title}
-            </BaseDialog.Title>
+            <div className="buzz-dialog-heading">
+              <BaseDialog.Title className="text-label">
+                {title}
+              </BaseDialog.Title>
+              {description && (
+                <BaseDialog.Description className="buzz-dialog-description">
+                  {description}
+                </BaseDialog.Description>
+              )}
+            </div>
             <BaseDialog.Close
               disabled={preventClose}
               render={
@@ -68,12 +87,7 @@ export function Dialog({
               }
             />
           </header>
-          {description && (
-            <BaseDialog.Description className="buzz-dialog-description">
-              {description}
-            </BaseDialog.Description>
-          )}
-          <div className="buzz-dialog-body">{children}</div>
+          <div className="buzz-dialog-body buzz-dialog-content">{children}</div>
           {actions && (
             <footer className="buzz-dialog-actions">{actions}</footer>
           )}

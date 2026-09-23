@@ -14,7 +14,6 @@
     display: inline-flex;
     max-width: 16rem;
     align-items: center;
-    gap: var(--space-chip-gap);
     border: 0;
     border-radius: var(--radius-chip);
     padding-inline: var(--space-chip-inset);
@@ -67,6 +66,35 @@
     white-space: nowrap;
   }
 
+  .inline-chip-qualifier {
+    display: grid;
+    grid-template-columns: 1fr;
+    flex: 0 0 auto;
+    overflow: hidden;
+    white-space: pre;
+  }
+
+  .inline-chip-qualifier > span {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .inline-chip-qualifier[data-reveal] {
+    animation: inline-chip-qualifier-reveal var(--duration-settle)
+      var(--easing-settle);
+  }
+
+  @keyframes inline-chip-qualifier-reveal {
+    from {
+      grid-template-columns: 0fr;
+      opacity: 0;
+    }
+    to {
+      grid-template-columns: 1fr;
+      opacity: 1;
+    }
+  }
+
   /**
    * Kind icon, for the kinds whose label does not identify itself.
    * A person and an agent carry `@`, a channel carries `#`; a message and a
@@ -76,6 +104,7 @@
    * preference and keyboard zoom rather than freezing at one size.
    */
   .inline-chip-icon {
+    margin-inline-end: var(--space-chip-gap);
     width: 1.1em;
     height: 1.1em;
     flex: 0 0 auto;
@@ -86,6 +115,9 @@
   @media (prefers-reduced-motion: reduce) {
     .inline-chip {
       transition-duration: 0ms;
+    }
+    .inline-chip-qualifier[data-reveal] {
+      animation: none;
     }
   }
 

@@ -4,7 +4,10 @@ import { controlFixture } from "./control-testing";
 import * as communityApi from "../communities/api";
 import { agentDraft, agentEdit } from "../../bundled/agents/agent-edit";
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.useRealTimers();
+});
 function deferred<T>() {
   let resolve!: (value: T) => void;
   const promise = new Promise<T>((done) => {
@@ -742,3 +745,119 @@ it("a no-match mention is a native no-op and cannot erase an existing wake failu
   expect(control.snapshot().mentionError).toBe(error);
   control.dispose();
 });
+
+const transientReads = [
+  "Agent runtime is initializing; retry shortly",
+  "Another native agent operation is in progress",
+];
+for (const error of transientReads) {
+  it(`keeps a coalesced read loading until native recovers from ${error}`, async () => {
+    vi.useFakeTimers();
+    const fixture = controlFixture();
+    const snapshot = vi
+      .spyOn(fixture.host, "snapshot")
+      .mockRejectedValueOnce(error)
+      .mockRejectedValueOnce(error);
+    const control = createAgentControl(fixture.host);
+    const pending = control.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(control.refresh()).toBe(pending);
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(control.snapshot()).toMatchObject({
+      status: "loading",
+      error: null,
+    });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(snapshot).toHaveBeenCalledTimes(2);
+    expect(control.snapshot().status).toBe("loading");
+    await vi.advanceTimersByTimeAsync(250);
+    await pending;
+    expect(snapshot).toHaveBeenCalledTimes(3);
+    expect(control.snapshot().status).toBe("ready");
+    expect(control.snapshot().data).toEqual(fixture.data);
+    expect(fixture.calls).toEqual([{ action: "snapshot" }]);
+    control.dispose();
+  });
+}
+for (const previousSnapshot of [false, true]) {
+  it(`bounds transient reads and retains previous evidence: ${previousSnapshot}`, async () => {
+    vi.useFakeTimers();
+    const fixture = controlFixture();
+    const control = createAgentControl(fixture.host);
+    if (previousSnapshot) await control.refresh();
+    const snapshot = vi
+      .spyOn(fixture.host, "snapshot")
+      .mockRejectedValue(transientReads[0]);
+    const pending = control.refresh();
+    await vi.advanceTimersByTimeAsync(4999);
+    expect(snapshot).toHaveBeenCalledTimes(20);
+    expect(control.snapshot().status).toBe(
+      previousSnapshot ? "ready" : "loading",
+    );
+    await vi.advanceTimersByTimeAsync(1);
+    await pending;
+    expect(snapshot).toHaveBeenCalledTimes(21);
+    expect(control.snapshot().status).toBe("error");
+    expect(control.snapshot().data).toEqual(
+      previousSnapshot ? fixture.data : null,
+    );
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(snapshot).toHaveBeenCalledTimes(21);
+    snapshot.mockResolvedValue(fixture.data);
+    await control.refresh();
+    expect(control.snapshot().status).toBe("ready");
+    control.dispose();
+  });
+}
+it("does not retry a genuine read failure or replay a write with a transient-looking error", async () => {
+  vi.useFakeTimers();
+  const fixture = controlFixture();
+  const control = createAgentControl(fixture.host);
+  const snapshot = vi
+    .spyOn(fixture.host, "snapshot")
+    .mockRejectedValueOnce("Unreadable store");
+  await control.refresh();
+  expect(control.snapshot().status).toBe("error");
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(snapshot).toHaveBeenCalledTimes(1);
+  await control.refresh();
+  const action = vi
+    .spyOn(fixture.host, "action")
+    .mockRejectedValue(transientReads[1]);
+  await expect(control.action(fixture.agent.id, "start")).rejects.toThrow(
+    "Could not confirm",
+  );
+  await vi.advanceTimersByTimeAsync(5000);
+  expect(action).toHaveBeenCalledTimes(1);
+  expect(snapshot).toHaveBeenCalledTimes(2);
+  expect(control.snapshot().status).toBe("error");
+  control.dispose();
+});
+for (const boundary of ["dispose", "newer write"] as const) {
+  it(`retires a waiting status read on ${boundary}`, async () => {
+    vi.useFakeTimers();
+    const fixture = controlFixture();
+    const control = createAgentControl(fixture.host);
+    await control.refresh();
+    const snapshot = vi
+      .spyOn(fixture.host, "snapshot")
+      .mockRejectedValue(transientReads[1]);
+    const pending = control.refresh();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    if (boundary === "dispose") control.dispose();
+    else await control.action(fixture.agent.id, "stop");
+    const before = control.snapshot();
+    await vi.advanceTimersByTimeAsync(5000);
+    await pending;
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(control.snapshot()).toBe(before);
+    if (boundary === "newer write") {
+      expect(control.snapshot().data?.agents[0]?.status).toBe("stopped");
+      expect(
+        fixture.calls.filter((call) => call.action === "stop"),
+      ).toHaveLength(1);
+    }
+    control.dispose();
+  });
+}

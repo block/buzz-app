@@ -1,3 +1,4 @@
+// @vitest-environment jsdom
 import { expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
@@ -333,7 +334,7 @@ it.each([
         row={{
           ...row,
           attachments: [
-            { url: "https://image.test/shot.png", video: false, dimensions },
+            { url: "https://image.test/shot.png", kind: "image", dimensions },
           ],
         }}
         profile={undefined}
@@ -358,7 +359,7 @@ it("does not bypass the session media resolver to paint an inaccessible attachme
         attachments: [
           {
             url: "https://image.test/original.png",
-            video: false,
+            kind: "image",
             blurhash: "LEHV6nWB2yk8pyo0adR*.7kCMdnj",
           },
         ],
@@ -432,7 +433,7 @@ it("requests a small profile image without downsizing message attachments", () =
       row={{
         ...row,
         attachments: [
-          { url: "https://image.test/attachment.png", video: false },
+          { url: "https://image.test/attachment.png", kind: "image" },
         ],
       }}
       profile={{ name: "Author", picture: "https://image.test/avatar.png" }}
@@ -445,4 +446,143 @@ it("requests a small profile image without downsizing message attachments", () =
 
   expect(media).toHaveBeenCalledWith("https://image.test/avatar.png", "small");
   expect(media).toHaveBeenCalledWith("https://image.test/attachment.png");
+});
+
+it("renders generic file attachments as download cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/report.pdf",
+            kind: "file",
+            name: "report.pdf",
+            size: 1536,
+            mime: "application/pdf",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain(
+    'href="/api/relay/media?url=https%3A%2F%2Ffiles.test%2Freport.pdf"',
+  );
+  expect(html).toContain('download="report.pdf"');
+  expect(html).toContain('aria-label="Download report.pdf"');
+  expect(html).toContain("report.pdf");
+  expect(html).toContain("2 KB");
+  expect(html).not.toContain("Open image attachment");
+  expect(html).not.toContain("<img");
+});
+
+it("renders unavailable generic files without a download link", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/missing.pdf",
+            kind: "file",
+            mime: "application/pdf",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain("PDF file");
+  expect(html).toContain("File unavailable");
+  expect(html).toContain('role="status"');
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  expect(container.querySelector("a")).toBeNull();
+  expect(html).not.toContain("Open image attachment");
+});
+
+it("renders proxy audio attachments with an inline player", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            duration: 12,
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => `/api/relay/media?url=${encodeURIComponent(url)}`}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('aria-label="Play audio"');
+  expect(html).toContain('aria-label="Seek audio"');
+  expect(html).toContain("0:00 / 0:12");
+  expect(html).not.toContain("Download file");
+});
+
+it("renders external audio sources as open file cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            name: "audio.mp3",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={(url) => url}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain('aria-label="Open audio.mp3"');
+  expect(html).toContain("Open file");
+  expect(html).not.toContain('aria-label="Play audio"');
+});
+
+it("renders missing audio sources as unavailable file cards", () => {
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={{
+        ...row,
+        attachments: [
+          {
+            url: "https://files.test/audio.mp3",
+            kind: "audio",
+            mime: "audio/mpeg",
+          },
+        ],
+      }}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+    />,
+  );
+  expect(html).toContain("MPEG file");
+  expect(html).toContain("File unavailable");
+  expect(html).toContain('role="status"');
+  expect(html).not.toContain('aria-label="Play audio"');
 });

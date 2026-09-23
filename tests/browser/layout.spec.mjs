@@ -145,7 +145,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   });
   const before = await box(conversation);
   near(sidebar.x, 16);
-  near(before.x - sidebar.x - sidebar.width, 4);
+  near(before.x - sidebar.x - sidebar.width, 8);
   near(before.y, 56);
   near(before.height, 760);
   const background = await page
@@ -173,7 +173,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   const dock = await box(panel(page));
   near(dock.y, main.y);
   near(dock.height, main.height);
-  near(dock.x - main.x - main.width, 4);
+  near(dock.x - main.x - main.width, 8);
   near(dock.x + dock.width, 1264);
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();
@@ -251,10 +251,10 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   near(narrow.width, 374);
   await button(page, "Close channel panel").click();
   await expect(composer).toBeInViewport();
-  await button(page, "Find a page").click();
+  await button(page, "Search Buzz").click();
   await page
-    .getByRole("dialog", { name: "Find a page" })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("dialog", { name: "Search Buzz" })
+    .getByRole("option", { name: "Home", exact: true })
     .click();
   await expect(
     page
@@ -286,6 +286,39 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
       .getByRole("navigation", { name: "Pages", exact: true })
       .getByRole("button", { name: "Messages" }),
   ).toBeVisible();
+});
+
+test("narrow link panels begin after the rendered sidebar", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 832 });
+  await open(page, app);
+  await page
+    .getByRole("separator", { name: "Resize channel sidebar" })
+    .press("End");
+  await page.setViewportSize({ width: 800, height: 600 });
+  await link(page, app, "https://github.com/block/buzz/pull/7");
+
+  const sidebar = await box(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  );
+  const conversation = await box(
+    page.getByRole("article", { name: "Conversation", exact: true }),
+  );
+  const dock = await box(panel(page));
+  near(conversation.x - sidebar.x - sidebar.width, 8);
+  near(dock.x, conversation.x);
+  expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
+  expect(
+    await page
+      .getByRole("separator", { name: "Resize channel sidebar" })
+      .evaluate((element) => Number(getComputedStyle(element).zIndex)),
+  ).toBeLessThan(
+    await panel(page).evaluate((element) =>
+      Number(getComputedStyle(element.parentElement).zIndex),
+    ),
+  );
 });
 
 readingTest(
@@ -357,6 +390,23 @@ readingTest(
     await settle(page);
     await expect(trigger).toBeFocused();
     expect(await page.evaluate(() => window.panelFocusScrollDelta)).toBe(0);
+    await expectAnchor(page, saved);
+    // Reflow can arrive after Virtua's 150ms imperative-scroll scheduler ends.
+    // Keep the selected reading anchor, not the partially clipped row above it.
+    await page.waitForTimeout(250);
+    const preceding = await history.evaluate((element, id) => {
+      const rows = [...element.querySelectorAll("[data-message-id]")];
+      const index = rows.findIndex((row) => row.dataset.messageId === id);
+      return rows[index - 1]?.dataset.messageId;
+    }, saved.id);
+    expect(preceding).toBeTruthy();
+    const delayedReflow = await page.addStyleTag({
+      content: `[data-message-id="${preceding}"] p { padding-bottom: 52px; }`,
+    });
+    await settle(page);
+    await expectAnchor(page, saved);
+    await delayedReflow.evaluate((element) => element.remove());
+    await settle(page);
     await expectAnchor(page, saved);
     await page.setViewportSize({ width: 1200, height: 700 });
     await settle(page);
@@ -726,13 +776,15 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     "Workflows",
     "Make it yours · Settings",
   ]);
-  await button(page, "Find a page").click();
-  const search = page.getByRole("dialog", { name: "Find a page", exact: true });
-  await expect(search.getByRole("button")).toHaveText([
-    "",
+  await button(page, "Search Buzz").click();
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  const pageResults = search.locator("section").filter({
+    has: page.getByRole("heading", { name: "Pages", exact: true }),
+  });
+  await expect(pageResults.getByRole("option")).toHaveText([
     ...titles,
     "Settings",
   ]);
-  await search.getByRole("button", { name: "Projects", exact: true }).click();
+  await search.getByRole("option", { name: "Projects", exact: true }).click();
   await expect(title).toBeVisible();
 });

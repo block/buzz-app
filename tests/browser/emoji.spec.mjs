@@ -985,7 +985,15 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(draft()).toHaveCSS("font-size", "42px");
     await draft().fill("😀 🙏 👏 hello");
     await expect(draft()).not.toHaveAttribute("data-single-emoji", "true");
-    await expect(draft()).toHaveCSS("font-size", "14px");
+    const bodySize = await draft().evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.fontSize = "var(--text-body)";
+      element.parentElement.append(probe);
+      const size = getComputedStyle(probe).fontSize;
+      probe.remove();
+      return size;
+    });
+    await expect(draft()).toHaveCSS("font-size", bodySize);
     const publicationCount = await page.evaluate(
       () => window.emojiFixture.report.publications.length,
     );

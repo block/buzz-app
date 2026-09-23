@@ -48,7 +48,10 @@ need their own validation.
   e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
   (default: 1430) or the next available port, allowing parallel browser development.
 - `just desktop [args...]`: install locked dependencies and forward arguments to
-  Tauri, e.g. `just desktop --port 1431 --no-watch`. The desktop adapter consumes
+  Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
+  builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
+  A preparation failure stops launch; help does not prepare resources.
+  The desktop adapter consumes
   `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
   the existing Tauri configuration is unchanged (port 1430). Desktop requires the
@@ -67,6 +70,10 @@ need their own validation.
   in `.env.local` and restart the server. Only `0` pauses alerts and permission
   requests; removing the setting restores normal behavior. Saved preferences are
   untouched and production builds ignore the variable.
+- To open the default relay's community on a fresh dev port, set
+  `BUZZ_DEV_OPEN_RELAY=1` alongside `BUZZ_RELAY_URL` in `.env.local` and restart
+  the server. Only `1` enables it; a viewer's existing saved choice on that port,
+  including Personal space, wins. Production builds ignore the variable.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe
@@ -157,8 +164,17 @@ While shaping the first version, default to **edit → human tries the running a
   CI suites locally by default. Run `just scan` only when explicitly requested or
   needed to reproduce a broad integration failure, not for every review,
   integration, or handoff. Attribute validation to the checked snapshot; later
-  edits require appropriate revalidation. Fix failures and rerun the affected
-  gate rather than repeating unchanged successful work. **Validated** means the
+  edits require appropriate revalidation. Before delivery, compare the branch's
+  merge base with the fetched target branch: GitHub PR checks run the merged tree,
+  which can include tests absent from the feature branch. Inspect incoming changes
+  that overlap changed UI contracts (including accessible names), integrate them,
+  and run the affected test files rather than assuming branch-only passes cover them.
+  Shared access-gating changes also affect standalone composer/reaction fixtures,
+  broker filter models, and restored-navigation/unread journeys. Repair stale
+  fixtures without loosening authority, then finish those journeys: an early mock
+  failure can mask a later production lifecycle regression.
+  Fix failures and rerun the affected gate rather than repeating unchanged successful
+  work. **Validated** means the
   required checks passed, not merely that the screen looked right; pending CI
   and untested native/browser behavior remain explicit gaps.
 
@@ -240,6 +256,11 @@ configuration/dependencies and hook-runner changes select this job; a missing ba
 runs it conservatively. Its selection is independent of the unit-test skip, so
 CSS-only and viewer-only errors still block a push. Documentation-only and
 native-only pushes skip both jobs. Both selected jobs must pass.
+On a busy machine, set `BUZZ_TEST_WORKERS=2 git push` to limit Vitest worker
+concurrency in the hook. The optional value must be a positive integer; leaving
+it unset preserves Vitest's default. This also applies to direct Vitest runs and
+does not change test selection, timeouts, assertions, or retries.
+
 Neither job fetches, installs dependencies, formats, builds Rust, or starts browsers.
 The design job disables pnpm dependency auto-repair. Install dependencies when
 switching branches, not during a push.

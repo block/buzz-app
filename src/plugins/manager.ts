@@ -25,6 +25,7 @@ export function createPluginManager(
         enabled: true,
         revision: "bundled",
         previous: null,
+        reloadable: false,
         error: null,
       })),
     ),
@@ -107,7 +108,10 @@ export function createPluginManager(
       if (!closed) timer = setTimeout(() => void refresh(), 1000);
     }
   }
-  async function update(operation: () => Promise<StorageResult>) {
+  async function update(
+    operation: () => Promise<StorageResult>,
+    timeoutMs = 10_000,
+  ) {
     if (busy || closed) return false;
     busy = true;
     changes++;
@@ -116,7 +120,8 @@ export function createPluginManager(
     try {
       const next = await withTimeout(
         operation(),
-        "Plugin storage did not respond within 10 seconds",
+        `Plugin storage did not respond within ${timeoutMs / 1000} seconds`,
+        timeoutMs,
       );
       if (!closed) accept(next);
       return !closed;
@@ -148,6 +153,7 @@ export function createPluginManager(
       }),
     change: (action: ManagementAction, id: string) =>
       update(() => storage.changePlugin(action, id)),
+    reload: (id: string) => update(() => storage.reloadPlugin(id), 120_000),
     retry: () => update(storage.getCatalog),
     recover: () => update(storage.recoverSettings),
     dismissError: () => {

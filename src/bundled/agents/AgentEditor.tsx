@@ -1,5 +1,8 @@
+import { XIcon } from "../../shared/design-system/icons";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { useState } from "react";
 import { Dialog } from "@base-ui/react/dialog";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   canStopAgent,
@@ -64,134 +67,63 @@ export function AgentEditor({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="agent-dialog-backdrop" />
+        <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
         <Dialog.Popup
           data-buzz-ui=""
-          className="agent-controls agent-dialog text-body"
+          className="buzz-dialog agent-dialog agent-editor text-body"
         >
-          <div className="flex items-center justify-between gap-4">
+          <header className="buzz-dialog-header">
             <Dialog.Title className="text-heading">Edit agent</Dialog.Title>
-            <Button
+            <IconButton
+              size="compact"
+              icon={<XIcon size={16} aria-hidden="true" />}
               aria-label="Close editor"
               disabled={!canClose}
               onClick={onClose}
-            >
-              ×
-            </Button>
-          </div>
+            />
+          </header>
           <Dialog.Description className="sr-only">
             Edit {agent.name}. Save updates settings without restarting the
             agent.
           </Dialog.Description>
-          <div className="agent-editor-layout">
-            <aside className="min-w-0 space-y-4">
-              <Avatar
-                alt={agent.name}
-                fallback={agent.name}
-                src={avatar ?? null}
-                size="large"
-              />
-              <h3 className="text-heading break-words">{agent.name}</h3>
-              <p className="break-all text-body-sm text-secondary">
+          <div className="flex flex-col items-start gap-3 min-w-0">
+            <Avatar
+              alt=""
+              fallback={agent.name}
+              src={avatar ?? null}
+              shape="squircle"
+              size="large"
+            />
+            <div className="min-w-0 space-y-1">
+              <p className="text-label break-words">{agent.name}</p>
+              <p className="text-body-sm text-subtle break-all">
                 {agent.relayUrl}
               </p>
-              <details className="space-y-3">
-                <summary className="cursor-pointer text-body-sm">
-                  Runtime and identity
-                </summary>
-                <header className="flex flex-wrap items-start justify-between gap-3">
-                  <div className="min-w-0 space-y-1">
-                    <h3 className="text-heading break-words">{agent.name}</h3>
-                    <p className="text-body-sm text-secondary">
-                      {agentProcessLabel(agent)}
-                    </p>
-                    <p className="text-body-sm text-secondary">
-                      {agent.enabled
-                        ? state.data?.runtimeAvailable
-                          ? "Enabled · starts with buzz-app"
-                          : "Enabled intent saved · execution unavailable"
-                        : "Stopped · a later sent mention can start this agent"}
-                    </p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {agent.status !== "running" && (
-                      <Button
-                        disabled={
-                          blocked ||
-                          transitioning ||
-                          dirty ||
-                          !state.data?.runtimeAvailable
-                        }
-                        onClick={() => act("start")}
-                      >
-                        Start
-                      </Button>
-                    )}
-                    <Button
-                      disabled={!canStopAgent(state, agent.id)}
-                      onClick={() => act("stop")}
-                    >
-                      Stop
-                    </Button>
-                    <Button
-                      disabled={
-                        blocked ||
-                        transitioning ||
-                        dirty ||
-                        !state.data?.runtimeAvailable
-                      }
-                      onClick={() => act("restart")}
-                    >
-                      {unapplied ? "Restart to apply" : "Restart"}
-                    </Button>
-                  </div>
-                </header>
-                <details className="space-y-2">
-                  <summary className="cursor-pointer text-body-sm text-secondary">
-                    Exact identity and destination
-                  </summary>
-                  <p className="break-all font-mono text-mono select-all">
-                    {agent.pubkey}
-                  </p>
-                  <p className="break-all font-mono text-mono">
-                    {agent.relayUrl}
-                  </p>
-                </details>
-                <p className="text-body-sm text-secondary">
-                  Saved revision {agent.revision} · Running revision{" "}
-                  {agent.runningRevision ?? "none"}.
-                  {unapplied && " Saved changes are not running yet."} Stop ends
-                  current work; a later sent mention can start it again.
-                </p>
-                {agent.error && (
-                  <p role="alert" className="text-danger">
-                    {agent.error}
-                  </p>
-                )}
-              </details>
-            </aside>
-            <form
-              className="space-y-5"
-              onSubmit={(event) => {
-                event.preventDefault();
-                if (blocked || !dirty || stale) return;
-                let edit: ReturnType<typeof agentEdit>;
-                try {
-                  edit = agentEdit(current);
-                } catch (problem) {
-                  setError((problem as Error).message);
-                  return;
-                }
-                void control
-                  .save(agent.id, current.revision, edit)
-                  .then(() => {
-                    setDraft(null);
-                    setError(null);
-                    setNotice("Saved. Running work was not restarted.");
-                  })
-                  .catch(() => {});
-              }}
-            >
+            </div>
+          </div>
+          <form
+            className="buzz-dialog-body space-y-section-gap"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (blocked || !dirty || stale) return;
+              let edit: ReturnType<typeof agentEdit>;
+              try {
+                edit = agentEdit(current);
+              } catch (problem) {
+                setError((problem as Error).message);
+                return;
+              }
+              void control
+                .save(agent.id, current.revision, edit)
+                .then(() => {
+                  setDraft(null);
+                  setError(null);
+                  setNotice("Saved. Running work was not restarted.");
+                })
+                .catch(() => {});
+            }}
+          >
+            <div className="min-w-0">
               <AgentSettingsFields
                 id={agent.id}
                 savedRevision={agent.revision}
@@ -202,62 +134,157 @@ export function AgentEditor({
                 environmentKeys={agent.harness.environmentKeys}
                 onChange={change}
               />
-              {state.error && (
-                <p role="alert" className="text-danger">
-                  {state.error}
-                </p>
-              )}
-              {state.status === "error" && (
-                <Button onClick={() => void control.refresh()}>
-                  Retry status
-                </Button>
-              )}
-              {stale && (
-                <p role="alert" className="text-danger">
-                  The host has a newer saved revision. Your edits are still
-                  here; copy anything you need, then discard to load the latest
-                  settings.
-                </p>
-              )}
-              {error && (
-                <p role="alert" className="text-danger">
-                  {error}
-                </p>
-              )}
-              <div className="agent-editor-footer">
-                <Button
-                  type="submit"
-                  variant="primary"
-                  disabled={blocked || !dirty || stale}
-                >
-                  Save changes
-                </Button>
-                <Button disabled={!canClose} onClick={onClose}>
-                  Cancel
-                </Button>
-                {stale && (
-                  <Button disabled={state.busy} onClick={discard}>
-                    Discard changes
-                  </Button>
-                )}
+              <div className="-mx-2">
+                <Accordion
+                  variant="form"
+                  items={[
+                    {
+                      value: "runtime",
+                      title: "Runtime",
+                      content: (
+                        <div className="space-y-4">
+                          <div className="space-y-1">
+                            <p className="text-body-sm">
+                              {agentProcessLabel(agent)}
+                            </p>
+                            <p className="text-body-sm text-subtle">
+                              {agent.enabled
+                                ? state.data?.runtimeAvailable
+                                  ? "Enabled · starts with buzz-app"
+                                  : "Enabled intent saved · execution unavailable"
+                                : "Stopped · a later sent mention can start this agent"}
+                            </p>
+                          </div>
+                          <div className="flex flex-wrap gap-2">
+                            {agent.status !== "running" && (
+                              <Button
+                                disabled={
+                                  blocked ||
+                                  transitioning ||
+                                  dirty ||
+                                  !state.data?.runtimeAvailable
+                                }
+                                onClick={() => act("start")}
+                              >
+                                Start
+                              </Button>
+                            )}
+                            <Button
+                              disabled={!canStopAgent(state, agent.id)}
+                              onClick={() => act("stop")}
+                            >
+                              Stop
+                            </Button>
+                            <Button
+                              disabled={
+                                blocked ||
+                                transitioning ||
+                                dirty ||
+                                !state.data?.runtimeAvailable
+                              }
+                              onClick={() => act("restart")}
+                            >
+                              {unapplied ? "Restart to apply" : "Restart"}
+                            </Button>
+                          </div>
+                          <p className="text-body-sm text-subtle">
+                            Saved revision {agent.revision} · Running revision{" "}
+                            {agent.runningRevision ?? "none"}.
+                            {unapplied && " Saved changes are not running yet."}{" "}
+                            Stop ends current work; a later sent mention can
+                            start it again.
+                          </p>
+                        </div>
+                      ),
+                    },
+                    {
+                      value: "technical",
+                      title: "Technical details",
+                      content: (
+                        <div className="space-y-4">
+                          <dl className="space-y-4">
+                            <div className="space-y-1">
+                              <dt className="text-body-sm text-subtle">
+                                Public key
+                              </dt>
+                              <dd className="break-all text-mono select-all">
+                                {agent.pubkey}
+                              </dd>
+                            </div>
+                            <div className="space-y-1">
+                              <dt className="text-body-sm text-subtle">
+                                Relay
+                              </dt>
+                              <dd className="break-all text-mono select-all">
+                                {agent.relayUrl}
+                              </dd>
+                            </div>
+                          </dl>
+                          {!!agent.diagnostics.length && (
+                            <div className="space-y-2">
+                              <h4 className="text-label">Host diagnostics</h4>
+                              <pre className="whitespace-pre-wrap break-words text-mono">
+                                {agent.diagnostics.join("\n")}
+                              </pre>
+                            </div>
+                          )}
+                        </div>
+                      ),
+                    },
+                  ]}
+                />
               </div>
-              {notice && (
-                <p role="status" className="text-secondary">
-                  {notice}
-                </p>
+            </div>
+            {agent.error && (
+              <p role="alert" className="text-danger">
+                {agent.error}
+              </p>
+            )}
+            {state.error && (
+              <p role="alert" className="text-danger">
+                {state.error}
+              </p>
+            )}
+            {state.status === "error" && (
+              <Button onClick={() => void control.refresh()}>
+                Retry status
+              </Button>
+            )}
+            {stale && (
+              <p role="alert" className="text-danger">
+                The host has a newer saved revision. Your edits are still here;
+                copy anything you need, then discard to load the latest
+                settings.
+              </p>
+            )}
+            {error && (
+              <p role="alert" className="text-danger">
+                {error}
+              </p>
+            )}
+            {notice && (
+              <p role="status" className="text-secondary">
+                {notice}
+              </p>
+            )}
+            <div className="buzz-dialog-actions">
+              <Button disabled={!canClose} onClick={onClose}>
+                Cancel
+              </Button>
+              {stale && (
+                <Button disabled={state.busy} onClick={discard}>
+                  Discard changes
+                </Button>
               )}
-            </form>
-          </div>
-          {!!agent.diagnostics.length && (
-            <details className="space-y-2">
-              <summary className="cursor-pointer text-body-sm text-secondary">
-                Host diagnostics
-              </summary>
-              <pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-inset p-3 font-mono text-mono-sm">
-                {agent.diagnostics.join("\n")}
-              </pre>
-            </details>
-          )}
+              <Button
+                type="submit"
+                variant="primary"
+                disabled={blocked || !dirty || stale}
+              >
+                Save changes
+              </Button>
+            </div>
+          </form>
         </Dialog.Popup>
       </Dialog.Portal>
     </Dialog.Root>

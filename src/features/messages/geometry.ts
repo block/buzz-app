@@ -42,6 +42,7 @@ const eventSignatures = new WeakMap<ChannelMessage, string>();
 export const geometrySignature = (
   events: readonly ChannelMessage[],
   profiles: ReadonlyMap<string, Profile>,
+  resolveName?: (id: string, fallback: string) => string,
 ) =>
   events
     .map((event) => {
@@ -50,6 +51,12 @@ export const geometrySignature = (
         signature = JSON.stringify(event);
         eventSignatures.set(event, signature);
       }
-      return `${signature.length}:${signature}:${JSON.stringify(event.membership ? [profiles.get(event.membership.actor), profiles.get(event.membership.target)] : profiles.get(event.authorId))}`;
+      const ids = event.membership
+        ? [event.membership.actor, event.membership.target]
+        : [event.authorId, ...event.mentions];
+      const names = resolveName
+        ? ids.map((id) => resolveName(id, profiles.get(id)?.name ?? id))
+        : [];
+      return `${JSON.stringify(names)}:${signature.length}:${signature}:${JSON.stringify(event.membership ? [profiles.get(event.membership.actor), profiles.get(event.membership.target)] : profiles.get(event.authorId))}`;
     })
     .join("");

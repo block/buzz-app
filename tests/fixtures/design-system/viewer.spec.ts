@@ -33,6 +33,7 @@ test("built viewer loads every specimen and foundation without app connections",
     "Spacing",
     "Radius",
     "Elevation",
+    "Floating surfaces",
     "Glass",
     "Motion",
     "Base UI backing",
@@ -45,6 +46,40 @@ test("built viewer loads every specimen and foundation without app connections",
     await expect(page.locator("main h1")).toBeVisible();
     await page.reload();
     await expect(page.locator("main h1")).toBeVisible();
+    if (name === "Token table") {
+      // Document width alone misses status text colliding with a swatch.
+      for (const mode of ["dark", "light"]) {
+        const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+        if (await toggle.count()) await toggle.click();
+        for (const width of [390, 800, 1280]) {
+          await page.setViewportSize({ width, height: 900 });
+          const row = page
+            .getByRole("row")
+            .filter({ hasText: "bg-affordance-panel-hover" });
+          const status = row
+            .getByText("proposed", { exact: true })
+            .filter({ visible: true });
+          await expect(status).toHaveCount(1);
+          const swatch = row
+            .locator("td")
+            .last()
+            .locator("[aria-hidden]")
+            .first();
+          await expect(swatch).toBeVisible();
+          await expect
+            .poll(async () => {
+              const labelBox = await status.boundingBox();
+              const swatchBox = await swatch.boundingBox();
+              return (
+                !!labelBox &&
+                !!swatchBox &&
+                labelBox.x + labelBox.width <= swatchBox.x
+              );
+            })
+            .toBe(true);
+        }
+      }
+    }
   }
   await expect(
     nav.getByRole("link", { name: /Conversation|Agent work/ }),
@@ -271,7 +306,10 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       ),
     ).toBe(true);
   }
-  const primary = page.getByRole("button", { name: "prominent", exact: true });
+  const primary = page.getByRole("button", {
+    name: "prominent lg",
+    exact: true,
+  });
   await primary.click();
   await expect(page.locator("html")).not.toHaveAttribute(
     "data-keyboard-navigation",
@@ -282,7 +320,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
       : "Tab";
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle", exact: true }),
+    page.getByRole("button", { name: "subtle sm", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -294,7 +332,7 @@ test("narrow, intermediate and wide layouts preserve theme and keyboard interact
   );
   await page.keyboard.press(tab);
   await expect(
-    page.getByRole("button", { name: "subtle", exact: true }),
+    page.getByRole("button", { name: "subtle sm", exact: true }),
   ).toBeFocused();
   await expect(page.locator("html")).toHaveAttribute(
     "data-keyboard-navigation",
@@ -735,4 +773,437 @@ test("radios enabled after mount remain synchronized on native reset", async ({
       Object.fromEntries(new FormData(element as HTMLFormElement)),
     ),
   ).toEqual({ delivery: "all" });
+});
+
+// Real CSS geometry, loading colors, and input modality cannot be proved in jsdom.
+test("buttons and icon buttons share size geometry and preserve loading and disabled treatments", async ({
+  page,
+}) => {
+  for (const kind of ["button", "icon-button"]) {
+    await page.goto(`${viewer}#/design/components/${kind}`);
+    const samples = page.getByRole("region", {
+      name: kind === "button" ? "Button variants" : "Icon button variants",
+      exact: true,
+    });
+    await expect(samples).toBeVisible();
+    await page.evaluate(() => document.fonts.ready);
+    for (const mode of ["light", "dark"]) {
+      const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+      if (await toggle.count()) await toggle.click();
+      for (const [size, height, artwork] of [
+        ["sm", 32, 16],
+        ["md", 40, 24],
+        ["lg", 52, 24],
+      ] as const) {
+        const button = samples.getByRole("button", {
+          name: `prominent ${size}`,
+          exact: true,
+        });
+        await expect(button).toHaveCSS("height", `${height}px`);
+        await expect(button.locator("svg")).toHaveCSS("width", `${artwork}px`);
+        if (kind === "icon-button") {
+          await expect(button).toHaveCSS("width", `${height}px`);
+          await expect
+            .poll(() =>
+              button.evaluate(
+                (el) =>
+                  parseFloat(getComputedStyle(el).borderRadius) >=
+                  el.clientWidth / 2,
+              ),
+            )
+            .toBe(true);
+        } else {
+          await expect(button).toHaveCSS(
+            "padding-left",
+            size === "sm" ? "16px" : "24px",
+          );
+        }
+      }
+      const prominent = samples.getByRole("button", {
+        name: "prominent md",
+        exact: true,
+      });
+      // Theme switching uses real color transitions; resolve their endpoint
+      // before recording the resting colors used by the loading assertion.
+      const expected = await prominent.evaluate((el) => {
+        const probe = document.createElement("span");
+        probe.style.color = "var(--text-inverse)";
+        probe.style.backgroundColor = "var(--affordance-prominent)";
+        el.append(probe);
+        const styles = getComputedStyle(probe);
+        const result = {
+          color: styles.color,
+          background: styles.backgroundColor,
+        };
+        probe.remove();
+        return result;
+      });
+      await expect(prominent).toHaveCSS("color", expected.color);
+      await expect(prominent).toHaveCSS(
+        "background-color",
+        expected.background,
+      );
+      const resting = await prominent.evaluate((el) => ({
+        width: el.getBoundingClientRect().width,
+        height: el.getBoundingClientRect().height,
+        color: getComputedStyle(el).color,
+        background: getComputedStyle(el).backgroundColor,
+      }));
+      await samples.getByRole("button", { name: "Show loading" }).click();
+      await expect(prominent).toHaveAttribute("aria-busy", "true");
+      await expect(prominent).toHaveCSS("color", resting.color);
+      await expect(prominent).toHaveCSS("background-color", resting.background);
+      const loading = await prominent.boundingBox();
+      expect(loading?.width).toBe(resting.width);
+      expect(loading?.height).toBe(resting.height);
+      await samples.getByRole("button", { name: "Show disabled" }).click();
+      await expect(prominent).toBeDisabled();
+      for (const variant of ["ghost", "outline", "link"]) {
+        const button = samples.getByRole("button", {
+          name: `${variant} md`,
+          exact: true,
+        });
+        await expect(button).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+      }
+      await expect(
+        samples.getByRole("button", { name: "outline md", exact: true }),
+      ).not.toHaveCSS("box-shadow", "none");
+      await samples.getByRole("button", { name: "Show enabled" }).click();
+      await expect(prominent).toBeEnabled();
+    }
+  }
+});
+
+test("button loading keeps focus and wrapping fits narrow enlarged layouts", async ({
+  page,
+  browserName,
+}) => {
+  await page.goto(`${viewer}#/design/components/button`);
+  const save = page.getByRole("button", { name: "Save changes", exact: true });
+  await save.focus();
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  await page.keyboard.press(`Shift+${tab}`);
+  await page.keyboard.press(tab);
+  await expect(save).toBeFocused();
+  await page.keyboard.press("Enter");
+  await expect(save).toHaveAttribute("aria-busy", "true");
+  await expect(save).toBeFocused();
+  await expect(save).toHaveCSS("outline-style", "solid");
+  await page.keyboard.press("Enter");
+  await expect(save).toHaveAttribute("aria-busy", "true");
+  await page
+    .getByRole("button", { name: "Complete saving", exact: true })
+    .click();
+  await expect(save).not.toHaveAttribute("aria-busy", "true");
+  await save.click();
+  await expect(save).toHaveCSS("outline-style", "none");
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await expect(save.locator(".buzz-button-spinner")).toHaveCSS(
+    "animation-name",
+    "none",
+  );
+  await page
+    .getByRole("button", { name: "Complete saving", exact: true })
+    .click();
+  const expanded = page.getByRole("button", {
+    name: "Show details",
+    exact: true,
+  });
+  await expanded.click();
+  await expect(expanded).toHaveAttribute("aria-expanded", "true");
+  await page.mouse.move(0, 0);
+  await expect(page.locator("#button-example-details")).toBeVisible();
+  await expect(expanded).toHaveCSS(
+    "background-color",
+    await expanded.evaluate((el) => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = "var(--affordance-subtle-pressed)";
+      el.append(probe);
+      const color = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return color;
+    }),
+  );
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    const long = page.getByRole("button", {
+      name: "Allow notifications for this workspace",
+      exact: true,
+    });
+    await expect
+      .poll(() => long.evaluate((el) => el.scrollWidth <= el.clientWidth))
+      .toBe(true);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () => document.documentElement.scrollWidth <= window.innerWidth,
+        ),
+      )
+      .toBe(true);
+    await page.evaluate(() => {
+      document.documentElement.style.removeProperty("font-size");
+    });
+  }
+});
+
+test("dialog motion retains exit presence and respects immediate interaction paths", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/dialog`);
+  const trigger = page
+    .getByRole("region", { name: "Single field", exact: true })
+    .getByRole("button", { name: "Open dialog", exact: true });
+  const popup = page.locator(".buzz-dialog");
+  // Hold real CSS transitions, so intermediate presence does not depend on speed.
+  await page.evaluate(() => {
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.matches('.buzz-dialog[data-motion="default"]')
+        )
+          return;
+        for (const animation of event.target.getAnimations()) animation.pause();
+      },
+      true,
+    );
+  });
+  const finish = () =>
+    page.evaluate(() => {
+      for (const animation of document.getAnimations()) animation.finish();
+    });
+  try {
+    await trigger.click();
+    await expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el.getAnimations().some((a) => a.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+    await expect(popup).toHaveCSS("transition-duration", "0.15s, 0.22s");
+    await finish();
+    await expect
+      .poll(() => popup.evaluate((el) => el.contains(document.activeElement)))
+      .toBe(true);
+    await page.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(popup).toHaveAttribute("data-ending-style", "");
+    await expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el.getAnimations().some((a) => a.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+    await expect(popup).toHaveCSS("transition-duration", "0.12s");
+    await finish();
+    await expect(popup).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // Escape can interrupt a pointer-opened entrance without waiting for motion.
+    await trigger.click();
+    await expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el.getAnimations().some((a) => a.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(popup).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+
+    // Use real keyboard navigation to activate the host's modality owner.
+    await page.keyboard.press("Tab");
+    await page.keyboard.press("Shift+Tab");
+    await trigger.press("Enter");
+    await expect(popup).toHaveCSS("transition-duration", "0s");
+    await page.keyboard.press("Escape");
+    await expect(popup).toHaveCount(0);
+
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await trigger.click();
+    await expect(popup).toHaveCSS("transition-duration", "0s");
+    await expect(popup).toHaveCSS("opacity", "1");
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(popup).toHaveCount(0);
+  } finally {
+    await finish();
+  }
+});
+
+// Real engines own :focus-visible, input modality and portal focus transfer.
+test("menu items retain keyboard-only focus rings through choices and submenus in both modes", async ({
+  page,
+  browserName,
+}) => {
+  await page.goto(`${viewer}#/design/components/menu`);
+  const trigger = page.getByRole("button", {
+    name: "More actions",
+    exact: true,
+  });
+  const action = page.getByRole("menuitem", {
+    name: "Mark all as read",
+    exact: true,
+  });
+  const checkbox = page.getByRole("menuitemcheckbox", {
+    name: "Notifications",
+  });
+  const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
+  const recent = page.getByRole("menuitemradio", { name: "Recent" });
+  const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
+  const tab =
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab";
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    await trigger.click();
+    await expect(page.getByRole("menu")).toHaveCSS("transform", "none");
+    await page.mouse.move(0, 0);
+    await action.hover();
+    // Programmatic focus following a pointer open must stay quiet too.
+    await action.focus();
+    await expect(action).toBeFocused();
+    await expect(action).toHaveCSS("outline-style", "none");
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press(tab);
+    await page.keyboard.press(`Shift+${tab}`);
+    await expect(trigger).toBeFocused();
+    await page.keyboard.press("ArrowDown");
+    for (const item of [action, checkbox, submenu]) {
+      await expect(item).toBeFocused();
+      await expect(item).toHaveCSS("outline-style", "solid");
+      await expect(item).toHaveCSS("outline-width", "2px");
+      if (item !== submenu) await page.keyboard.press("ArrowDown");
+    }
+    await page.keyboard.press("ArrowRight");
+    await expect(recent).toBeFocused();
+    await expect(recent).toHaveCSS("outline-style", "solid");
+    await expect(recent).toHaveCSS("outline-width", "2px");
+    await page.keyboard.press("ArrowDown");
+    await expect(alpha).toBeFocused();
+    await expect(alpha).toHaveCSS("outline-style", "solid");
+    await page.keyboard.press("Escape");
+    await expect(submenu).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(trigger).toBeFocused();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // Returning to pointer input must remove the ring even after keyboard use.
+    await trigger.click();
+    await submenu.hover();
+    await expect(recent).toBeVisible();
+    await expect(page.getByRole("menu").last()).toHaveCSS("transform", "none");
+    await recent.hover();
+    await recent.focus();
+    await expect(recent).toBeFocused();
+    await expect(recent).toHaveCSS("outline-style", "none");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  }
+});
+
+// Geometry and hit testing cannot be established by a DOM emulator.
+test("shared menus stay reachable near viewport edges and above a dialog", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/menu`);
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 700 });
+    const context = page.getByRole("button", { name: "Context actions" });
+    // Put the real trigger at the collision boundary, without replacing menu behavior.
+    await context.evaluate((element) => {
+      Object.assign(element.style, {
+        position: "fixed",
+        right: "0",
+        bottom: "0",
+        zIndex: "1",
+      });
+    });
+    const contextBounds = await context.boundingBox();
+    if (!contextBounds)
+      throw new Error("Context trigger has no visible bounds");
+    // Stay near the viewport edge, inside the pill rather than its cut-out corner.
+    await context.click({
+      button: "right",
+      position: { x: contextBounds.width - 4, y: contextBounds.height / 2 },
+    });
+    const popup = page.getByRole("menu");
+    await expect(popup).toBeVisible();
+    await expect(popup).toHaveCSS("transform", "none");
+    const box = await popup.boundingBox();
+    if (!box) throw new Error("Context menu has no visible bounds");
+    expect(box.x).toBeGreaterThanOrEqual(0);
+    expect(box.y).toBeGreaterThanOrEqual(0);
+    expect(box.x + box.width).toBeLessThanOrEqual(width);
+    expect(box.y + box.height).toBeLessThanOrEqual(700);
+    await page
+      .getByRole("menuitem", { name: "Copy link", exact: true })
+      .click();
+    await expect(popup).toHaveCount(0);
+    const trigger = page.getByRole("button", {
+      name: "More actions",
+      exact: true,
+    });
+    await trigger.evaluate((element) => {
+      Object.assign(element.style, {
+        position: "fixed",
+        right: "0",
+        top: "0",
+        zIndex: "1",
+      });
+    });
+    await trigger.focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(
+      page.getByRole("menuitem", { name: "Mark all as read", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("End");
+    await expect(
+      page.getByRole("menuitem", { name: "Sort", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("ArrowRight");
+    const nested = page.getByRole("menu", { name: "Sort", exact: true });
+    await expect(nested).toBeVisible();
+    await expect(nested).toHaveCSS("transform", "none");
+    const nestedBox = await nested.boundingBox();
+    if (!nestedBox) throw new Error("Submenu has no visible bounds");
+    expect(nestedBox.x).toBeGreaterThanOrEqual(0);
+    expect(nestedBox.y).toBeGreaterThanOrEqual(0);
+    expect(nestedBox.x + nestedBox.width).toBeLessThanOrEqual(width);
+    expect(nestedBox.y + nestedBox.height).toBeLessThanOrEqual(700);
+    const choice = page.getByRole("menuitemradio", { name: "A–Z" });
+    await choice.click();
+    await expect(choice).toBeChecked();
+    // Base UI choices stay open by default; dismiss each level explicitly.
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("menuitem", { name: "Sort", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+  }
+  await page.getByRole("button", { name: "Open menu dialog" }).click();
+  const dialog = page.getByRole("dialog", { name: "Menu composition" });
+  const trigger = dialog.getByRole("button", { name: "More actions" });
+  await trigger.click();
+  const action = page.getByRole("menuitem", {
+    name: "Mark all as read",
+    exact: true,
+  });
+  await expect(action).toBeVisible();
+  await action.click(); // Playwright hit testing rejects an obscured portal.
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(trigger).toBeFocused();
 });

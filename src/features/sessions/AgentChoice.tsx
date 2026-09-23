@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import {
   RobotIcon,
@@ -51,6 +52,7 @@ export function AgentChoice({
   emptyLabel?: string;
   side?: "top" | "bottom";
 }) {
+  const resolveName = useIdentityNames(session.names);
   const library = session.agentLibrary;
   const agents = useSyncExternalStore(
     library.subscribe,
@@ -60,7 +62,10 @@ export function AgentChoice({
   useEffect(() => {
     if (agents.status === "idle") void library.refresh();
   }, [library, agents.status]);
-  const identities = agents.identities;
+  const identities = agents.identities.map((agent) => ({
+    ...agent,
+    name: resolveName(agent.pubkey, agent.name),
+  }));
   const selected = identities.find((agent) => agent.pubkey === value);
   function picture(avatar?: string) {
     const source = avatarSource(avatar);

@@ -52,6 +52,38 @@ it("loads the broker's Vite config without native-compatibility warnings", () =>
                 JSON.stringify(command === 'serve' ? '1' : '0'),
               );
             }
+            // BUZZ_DEV_OPEN_RELAY exposes the canonical default relay to a live dev
+            // server only when set to exactly "1"; builds and other values see "".
+            process.env.BUZZ_RELAY_URL = 'wss://Relay.example.com/';
+            for (const command of ['serve', 'build']) {
+              for (const setting of [undefined, '', '0', '1', 'true']) {
+                if (setting === undefined) delete process.env.BUZZ_DEV_OPEN_RELAY;
+                else process.env.BUZZ_DEV_OPEN_RELAY = setting;
+                const result = await loadConfigFromFile(
+                  { command, mode: command === 'serve' ? 'development' : 'production' }, configFile,
+                );
+                assert.equal(
+                  result.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'],
+                  JSON.stringify(
+                    command === 'serve' && setting === '1' ? 'https://relay.example.com' : '',
+                  ),
+                );
+              }
+            }
+            // Without a viewer pin nothing consumes the seed, so it is neither exposed nor required.
+            process.env.BUZZ_DEV_OPEN_RELAY = '1';
+            process.env.BUZZ_RELAY_URL = '';
+            process.env.BUZZ_DEV_VIEWER = '';
+            const shell = await loadConfigFromFile(
+              { command: 'serve', mode: 'development' }, configFile,
+            );
+            assert.equal(shell.config.define['import.meta.env.VITE_BUZZ_OPEN_RELAY'], '""');
+            // A live server with the flag but no relay URL fails at configuration time.
+            process.env.BUZZ_DEV_VIEWER = 'a'.repeat(64);
+            await assert.rejects(
+              loadConfigFromFile({ command: 'serve', mode: 'development' }, configFile),
+              /BUZZ_DEV_OPEN_RELAY=1 requires BUZZ_RELAY_URL/,
+            );
           } finally {
             process.chdir(cwd);
             rmSync(directory, { recursive: true, force: true });

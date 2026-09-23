@@ -450,7 +450,7 @@ test("media review completions stay visible and preserve modal keyboard ownershi
       await mention.click();
       await expect(input).toHaveJSProperty("value", "@Fixture Reader ");
       await expect(input).toBeFocused();
-      await expect(input.locator("[data-mention-kind]")).toContainText(
+      await expect(input.locator(".inline-chip")).toContainText(
         "Fixture Reader",
       );
       for (const key of ["Enter", "Tab"]) {

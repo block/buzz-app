@@ -421,10 +421,14 @@ it("filters the completed directory immediately without loading or searching aga
   ).not.toBeInTheDocument();
   fireEvent.change(recipient(), { target: { value: "Nobody" } });
   expect(screen.getByText("No matching people.")).toBeVisible();
-  // Wait beyond the remote-search debounce to prove filtering stays local.
-  await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, 200));
-  });
+  // Drive the remote-search boundary without depending on runner speed.
+  vi.useFakeTimers();
+  fireEvent.change(recipient(), { target: { value: "Still nobody" } });
+  try {
+    await act(() => vi.advanceTimersByTimeAsync(200));
+  } finally {
+    vi.useRealTimers();
+  }
   expect(t.directMessages.people).toHaveBeenCalledTimes(requests);
 });
 
@@ -791,4 +795,50 @@ it("retains an older build's pending pointer as confirmation-only recovery", asy
   expect(
     screen.getByRole("button", { name: "Remove Person 1" }),
   ).toBeDisabled();
+});
+
+it("can retry legacy confirmation after partial saved-view cleanup fails", async () => {
+  const t = setup();
+  const person = people[0];
+  assert.exists(person);
+  const storageKey = (key: string) =>
+    `buzz-view.v1:${JSON.stringify([scope, key])}`;
+  localStorage.setItem(
+    storageKey("direct-message:recipients"),
+    JSON.stringify([person]),
+  );
+  const pointerKey = storageKey("direct-message:pending");
+  localStorage.setItem(
+    pointerKey,
+    JSON.stringify({
+      id: "d".repeat(64),
+      channelId: channel,
+      recipients: person.pubkey,
+      draft: { text: "Confirmed legacy draft", recipients: [] },
+    }),
+  );
+  t.directMessages.delivery.mockReturnValue("accepted");
+  const removeItem = Storage.prototype.removeItem;
+  const remove = vi
+    .spyOn(Storage.prototype, "removeItem")
+    .mockImplementation(function (this: Storage, key) {
+      if (key === pointerKey) throw new Error("Cannot clear pointer");
+      removeItem.call(this, key);
+    });
+  const page = t.mount();
+  try {
+    await t.user.click(
+      await screen.findByRole("button", { name: "Retry send" }),
+    );
+    await screen.findByRole("alert");
+    page.unmount();
+    t.mount();
+    await screen.findByRole("button", { name: "Retry send" });
+  } finally {
+    remove.mockRestore();
+  }
+  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.messages.send).not.toHaveBeenCalled();
+  expect(localStorage.getItem(pointerKey)).toBeNull();
 });

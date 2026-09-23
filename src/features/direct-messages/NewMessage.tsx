@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import {
   sameCommunityAgents,
   useMentionAgents,
@@ -8,7 +14,7 @@ import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
-import { readView, writeView } from "../../shared/view-state";
+import { clearView, readView, writeView } from "../../shared/view-state";
 import { Button } from "../../shared/design-system/ui/Button";
 import { RecipientPicker } from "./RecipientPicker";
 import type { Recipient } from "./usePeople";
@@ -121,6 +127,8 @@ export function NewMessage({
   const { control } = useMentionAgents(scope);
   const [ready, setReady] = useState(false);
   const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
+  const [draftRevision, setDraftRevision] = useState(0);
+  const retiring = useRef<string | undefined>(undefined);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [draftChannel] = useState(() => crypto.randomUUID());
@@ -141,6 +149,22 @@ export function NewMessage({
   const failed =
     pending && session.directMessages.delivery(pending.id) === "failed";
   const locked = !ready || busy || (!!pending && !failed);
+  useLayoutEffect(() => {
+    const confirmed = pending && session.directMessages.delivery(pending.id);
+    if (pending) {
+      retiring.current =
+        confirmed === "accepted" || confirmed === "seen"
+          ? pending.id
+          : undefined;
+    } else if (retiring.current) {
+      // A different mount may have completed acknowledgement while this page
+      // restored its recovery payload. Never leave that payload as a fresh draft.
+      retiring.current = undefined;
+      setRecipients([]);
+      setRestoredDraft(mentionDraft(""));
+      setDraftRevision((revision) => revision + 1);
+    }
+  }, [pending, session.directMessages]);
   useEffect(() => {
     let active = true;
     void (async () => {
@@ -151,8 +175,21 @@ export function NewMessage({
           recovered(outbox?.snapshot() ?? [], session.viewer) ??
           initialLegacy.current;
         if (saved) {
-          setRecipients(saved.people);
-          setRestoredDraft(saved.draft);
+          const editable =
+            session.directMessages.delivery(saved.id) === "failed";
+          setRecipients(
+            editable
+              ? validRecipients(
+                  readView(scope, "direct-message:recipients", saved.people),
+                  session.viewer,
+                )
+              : saved.people,
+          );
+          setRestoredDraft(
+            editable
+              ? mentionDraft(readView(scope, draftKey, saved.draft))
+              : saved.draft,
+          );
         }
         setReady(true);
       } catch (reason) {
@@ -168,7 +205,7 @@ export function NewMessage({
       active = false;
       attempt.current?.abort();
     };
-  }, [outbox, session.viewer]);
+  }, [outbox, session.viewer, session.directMessages, scope]);
   function validateAgents() {
     const state = control?.snapshot();
     const controlled = new Set(
@@ -267,12 +304,17 @@ export function NewMessage({
         controller.signal,
       );
       controller.signal.throwIfAborted();
+      // Clear disposable views before releasing durable recovery. A failed clear
+      // retains the operation for confirmation-only retry, even across unmount.
+      clearView(
+        scope,
+        draftKey,
+        "direct-message:pending",
+        "direct-message:recipients",
+      );
       await outbox?.acknowledge(current.id);
-      controller.signal.throwIfAborted();
-      writeView(scope, "direct-message:pending", null);
+      if (controller.signal.aborted) return;
       setLegacy(undefined);
-      writeView(scope, "direct-message:recipients", []);
-      writeView(scope, draftKey, "");
       onStarted(current.channelId, current.id);
     } catch (reason) {
       if (!controller.signal.aborted)
@@ -327,7 +369,7 @@ export function NewMessage({
         )}
       </div>
       <MessageComposer
-        key={ready ? "ready" : "hydrating"}
+        key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
         session={session}
         scope={scope}
         extensions={extensions}
@@ -338,7 +380,7 @@ export function NewMessage({
         disabled={!recipients.length}
         submission={{
           draftKey,
-          initialDraft: restoredDraft,
+          recoveredDraft: restoredDraft,
           locked,
           disabled:
             !ready ||

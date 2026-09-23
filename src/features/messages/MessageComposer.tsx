@@ -96,6 +96,8 @@ export type MessageComposerProps = {
   submission?: {
     draftKey: string;
     initialDraft?: MentionDraft | string | undefined;
+    /** A durable operation overrides disposable view state during recovery. */
+    recoveredDraft?: MentionDraft | undefined;
     locked: boolean;
     disabled: boolean;
     submit: (draft: MentionDraft) => void;
@@ -185,7 +187,8 @@ function Composer({
   const agentChoices = inviteAgents || !!sessionConversation;
   const [value, updateDraft] = useState(() =>
     mentionDraft(
-      submission?.initialDraft ?? readView<unknown>(scope, draftKey, ""),
+      submission?.recoveredDraft ??
+        readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
     ),
   );
   const draft = value.text;

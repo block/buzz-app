@@ -139,7 +139,12 @@ A failure retains recipients and draft; an uncertain delivery retries its exact
 event ID. The outbox persists recovery metadata with the operation before publication and
 retains it through confirmed delivery until the composer durably acknowledges it.
 Hydration must finish before a fresh send; one recovery key prevents duplicate
-first sends. Local storage is only a convenience for unqueued drafts. Only a
+first sends. Definitively failed operations restore newer editable draft and recipient
+views; uncertain operations keep their durable recovery payload authoritative.
+Before acknowledgement retires recovery, saved views are removed and their absence
+is verified. Cleanup failure retains recovery for confirmation-only retry. A page
+reopened during acknowledgement resets its recovered editor when retirement finishes.
+Local storage is a convenience for editable drafts. Only a
 definitively failed recovery operation can be removed (including through
 Diagnostics), releasing the preserved draft for editing or a changed recipient set. A changed set also invalidates the prepared destination.
 Page exit cancels preparation and its delivery waiter, while the outbox retains

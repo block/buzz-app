@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRelaySession } from "../relay/session";
 import { keypair, profile, roster, signed } from "../relay/testing";
@@ -17,6 +17,7 @@ import { createRelayProfiler } from "../relay/profiling";
 
 const viewer = keypair(),
   other = keypair(),
+  another = keypair(),
   relay = keypair();
 const channel = "11111111-1111-4111-8111-111111111111";
 const scope = `https://relay.example:${viewer.pubkey}`;
@@ -42,6 +43,7 @@ function setup() {
   >(async () => {});
   const events = [
     profile(other, { name: "Avery" }),
+    profile(another, { name: "Zoe" }),
     signed(relay, {
       kind: 39000,
       tags: [
@@ -75,7 +77,13 @@ function setup() {
         relayAuthor: relay.pubkey,
         media: () => undefined,
         query,
-        openDirectMessage: async () => channel,
+        openDirectMessage: async (pubkeys) => {
+          events[events.length - 1] = roster(relay, channel, [
+            viewer.pubkey,
+            ...pubkeys,
+          ]);
+          return channel;
+        },
         writer: {
           kinds: [9],
           sign: async (event) => signed(viewer, event),
@@ -133,7 +141,7 @@ it("recovers an uncertain first send after localStorage failure and session rest
   page.unmount();
   first.dispose();
   const second = t.create();
-  t.mount(second);
+  const resumed = t.mount(second);
   await waitFor(() => expect(send()).toBeEnabled());
   expect(screen.getByRole("textbox")).toHaveTextContent(
     "Durable first message",
@@ -144,6 +152,19 @@ it("recovers an uncertain first send after localStorage failure and session rest
   expect(t.publish).toHaveBeenCalledTimes(2);
   expect(t.publish.mock.calls[1]?.[0]).toEqual(original);
   expect(t.records().some((item) => item.recovery)).toBe(false);
+  resumed.unmount();
+  second.dispose();
+  const restored = t.create();
+  t.mount(restored);
+  await act(async () => {
+    await restored.session.outbox?.ready();
+  });
+  await waitFor(() => expect(screen.getByRole("combobox")).toBeEnabled());
+  expect(screen.getByRole("textbox")).toHaveProperty("value", "");
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery" }),
+  ).not.toBeInTheDocument();
+  expect(send()).toBeDisabled();
 });
 
 it("removing a failed operation in Diagnostics unlocks the preserved draft on reopening", async () => {
@@ -193,4 +214,135 @@ it("never publishes if the durable recovery write fails", async () => {
   expect(screen.getByRole("textbox")).toHaveTextContent(
     "Durable first message",
   );
+});
+
+it.each([false, true])(
+  "preserves post-failure edits across restart, empty=%s",
+  async (empty) => {
+    const t = setup();
+    t.publish.mockRejectedValueOnce(new PublishRejected("Not sent"));
+    const owner = t.create();
+    const page = t.mount(owner);
+    await t.compose();
+    await t.user.click(send());
+    await screen.findByRole("alert");
+    await t.user.clear(screen.getByRole("textbox"));
+    if (!empty)
+      await t.user.type(screen.getByRole("textbox"), "Corrected message");
+    await t.user.click(screen.getByRole("button", { name: "Remove Avery" }));
+    if (!empty)
+      await t.user.click(await screen.findByRole("option", { name: "Zoe" }));
+    page.unmount();
+    owner.dispose();
+    const restored = t.create();
+    t.mount(restored);
+    await act(async () => {
+      await restored.session.outbox?.ready();
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("textbox")).toHaveProperty(
+        "value",
+        empty ? "" : "Corrected message",
+      ),
+    );
+    expect(
+      screen.queryByRole("button", { name: "Remove Avery" }),
+    ).not.toBeInTheDocument();
+    if (empty) expect(send()).toBeDisabled();
+    else {
+      expect(screen.getByRole("button", { name: "Remove Zoe" })).toBeVisible();
+      await t.user.click(send());
+      await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+      expect(t.publish.mock.calls[1]?.[0].content).toBe("Corrected message");
+    }
+  },
+);
+
+it("retains recovery if saved-view cleanup fails, then retires without republishing", async () => {
+  const t = setup();
+  const owner = t.create();
+  const page = t.mount(owner);
+  await t.compose();
+  const remove = vi
+    .spyOn(Storage.prototype, "removeItem")
+    .mockImplementation(() => {
+      throw new Error("Storage unavailable");
+    });
+  await t.user.click(send());
+  await screen.findByRole("alert");
+  expect(t.records().some((item) => item.recovery)).toBe(true);
+  page.unmount();
+  const resumed = t.mount(owner);
+  await screen.findByRole("button", { name: "Retry send" });
+  remove.mockRestore();
+  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.publish).toHaveBeenCalledOnce();
+  resumed.unmount();
+  t.mount(owner);
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveProperty("value", ""),
+  );
+  expect(send()).toBeDisabled();
+});
+
+it("reconciles a remount while acknowledgement is held without reviving the delivered draft", async () => {
+  const t = setup();
+  const save = t.storage.save;
+  let release: () => void = () => {};
+  let held = false;
+  t.storage.save = async (records) => {
+    if (
+      !held &&
+      records.some((item) => item.delivery === "accepted" && !item.recovery)
+    ) {
+      held = true;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    }
+    await save(records);
+  };
+  const owner = t.create();
+  const page = t.mount(owner);
+  await t.compose();
+  await t.user.click(send());
+  await waitFor(() => expect(held).toBe(true));
+  page.unmount();
+  const resumed = t.mount(owner);
+  try {
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Remove Avery" }),
+      ).toBeDisabled(),
+    );
+    expect(screen.getByRole("textbox")).toHaveTextContent(
+      "Durable first message",
+    );
+  } finally {
+    release();
+  }
+  await waitFor(() =>
+    expect(t.records().some((item) => item.recovery)).toBe(false),
+  );
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveProperty("value", ""),
+  );
+  expect(
+    screen.queryByRole("button", { name: "Remove Avery" }),
+  ).not.toBeInTheDocument();
+  expect(send()).toBeDisabled();
+  expect(t.onStarted).not.toHaveBeenCalled();
+  expect(t.publish).toHaveBeenCalledOnce();
+  resumed.unmount();
+  owner.dispose();
+  const restored = t.create();
+  t.mount(restored);
+  await act(async () => {
+    await restored.session.outbox?.ready();
+  });
+  await waitFor(() =>
+    expect(screen.getByRole("textbox")).toHaveProperty("value", ""),
+  );
+  expect(send()).toBeDisabled();
 });

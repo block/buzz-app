@@ -87,10 +87,16 @@ identity. See [community/profile ownership](communities.md).
 `PageSearch.tsx` uses a native modal dialog for focus containment, Escape dismissal,
 and searching available page destinations. Projects is a bundled, enabled-by-default
 page scaffold with only a centered title; Apps waits for a functional destination.
-`CommunitySwitcher.tsx` replaces the full-height rail:
-its top-left button opens a native dialog for Personal space, existing communities,
-and Add a community. The trigger is focused before opening so Escape restores
-keyboard focus in WebKit as well as Chromium.
+`CommunityRail.tsx` shows Personal space, saved communities and Add persistently
+beside page content; it only delegates selection to the existing membership owner.
+The rail's Add control opens the existing join dialog and returns focus to its
+trigger. The former header picker is not mounted; the rail is the sole selector.
+The rail reads each saved community's icon from its relay's NIP-11 info via the
+same-origin broker, including inactive communities without opening a session.
+Unavailable or unsupported images fall back to a saved icon or name initial.
+The rail does not acquire inactive sessions or claim an unread total: the unread
+capability provides bounded observed evidence, not exact community totals
+([unread ownership](unread.md)).
 
 Visible copy uses Buzz, never “workspace.” The legacy `workspace` layout identifier
 and CSS variable are implementation details retained for plugin compatibility.

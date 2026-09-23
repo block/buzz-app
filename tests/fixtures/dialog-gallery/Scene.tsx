@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { PageSearch } from "../../../src/app/shell/PageSearch";
-import { CommunitySwitcher } from "../../../src/features/communities/CommunitySwitcher";
 import { CommunityDialog } from "../../../src/features/communities/CommunityDialog";
 import { AgentCreateDialog } from "../../../src/bundled/agents/AgentCreateDialog";
 import { AgentEditor } from "../../../src/bundled/agents/AgentEditor";
@@ -86,7 +85,7 @@ export function Scene({ id }: { id: DialogId }) {
   const variant = params.get("variant") ?? "default";
   const close = () => setOpen(false);
   useEffect(() => {
-    if (!["search", "communities", "attachment"].includes(id)) return;
+    if (!["search", "attachment"].includes(id)) return;
     host.current?.querySelector<HTMLButtonElement>("button")?.click();
   }, [id]);
   const confirmation =
@@ -110,13 +109,10 @@ export function Scene({ id }: { id: DialogId }) {
       </div>
       <div className="scene-content" ref={host}>
         {id === "search" && <PageSearch pages={pages} onSelect={() => {}} />}
-        {id === "communities" && (
-          <CommunitySwitcher communities={communities} />
-        )}
         {id === "attachment" && (
           <MediaAttachment attachment={attachment} media={() => sampleImage} />
         )}
-        {!["search", "communities", "attachment"].includes(id) && (
+        {!["search", "attachment"].includes(id) && (
           <Button onClick={() => setOpen(true)}>Reopen dialog</Button>
         )}
       </div>

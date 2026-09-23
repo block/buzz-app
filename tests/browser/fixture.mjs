@@ -842,7 +842,10 @@ export const test = base.extend({
           throw new Error(`Unexpected community: ${request.url}`);
         if (route === "gif-info" && request.method === "GET")
           return send(response, {});
-        if (route === "info" && request.method === "GET")
+        if (
+          (route === "info" || route === "icon-info") &&
+          request.method === "GET"
+        )
           return send(response, { policy: null });
         if (route === "session") {
           report.sessions.push(community);

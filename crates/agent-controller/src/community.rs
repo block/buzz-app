@@ -41,11 +41,11 @@ impl CommunityResolution {
     }
 }
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use secp256k1::{Keypair, SecretKey};
     const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
-    fn resolution(relay: &str) -> CommunityResolution {
+    pub(crate) fn resolution(relay: &str) -> CommunityResolution {
         let secp = Secp256k1::new();
         let mut bytes = [0; 32];
         bytes[31] = 2;

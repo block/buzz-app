@@ -1,10 +1,11 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   canStopAgent,
   type AgentControl,
   type AgentControlState,
   type AgentView,
 } from "../../features/agents/control";
+import { LocalInventoryAction } from "./LocalInventoryAction";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentProcessLabel } from "./agent-edit";
 
@@ -13,12 +14,17 @@ export function ManagedAgentActions({
   state,
   control,
   imported,
+  destination = "",
+  owner = "",
 }: {
   agent: AgentView;
   state: AgentControlState;
   control: AgentControl;
   imported: boolean;
+  destination?: string;
+  owner?: string;
 }) {
+  const [settingUp, setSettingUp] = useState(false);
   const details = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (imported) {
@@ -29,16 +35,18 @@ export function ManagedAgentActions({
   const transitioning =
     agent.status === "starting" || agent.status === "stopping";
   const startBlock =
-    state.status !== "ready"
-      ? "Refresh status before starting."
-      : state.busy
-        ? "Waiting for the current operation."
-        : !state.data?.runtimeAvailable
-          ? state.data?.runtimeMessage ||
-            "The bundled agent runtime is unavailable."
-          : transitioning
-            ? "Waiting for the process transition."
-            : null;
+    agent.configured === false
+      ? "Choose Use here before starting this imported identity."
+      : state.status !== "ready"
+        ? "Refresh status before starting."
+        : state.busy
+          ? "Waiting for the current operation."
+          : !state.data?.runtimeAvailable
+            ? state.data?.runtimeMessage ||
+              "The bundled agent runtime is unavailable."
+            : transitioning
+              ? "Waiting for the process transition."
+              : null;
   const act = (action: "start" | "stop") => {
     void control.action(agent.id, action).catch(() => {});
   };
@@ -55,9 +63,28 @@ export function ManagedAgentActions({
       </div>
       {imported && !agent.enabled && (
         <p role="status">
-          Imported, not started. Mention this agent in a channel to start it.
+          Imported, not started.{" "}
+          {agent.configured === false
+            ? "Choose Use here to set up this identity in a community."
+            : "Start it when you are ready."}
         </p>
       )}
+      {agent.configured === false &&
+        (state.data?.localInventoryActions && control.configureHere ? (
+          <LocalInventoryAction
+            control={control}
+            agent={agent}
+            action="use"
+            destination={destination}
+            owner={owner}
+            disabled={state.busy || state.status !== "ready"}
+            onPending={setSettingUp}
+            onUsed={() => {}}
+            onClone={() => {}}
+          />
+        ) : (
+          <p>Update the desktop app to set up this imported identity.</p>
+        ))}
       {agent.enabled && (
         <p className="text-body-sm text-secondary">Starts with this app.</p>
       )}
@@ -88,7 +115,7 @@ export function ManagedAgentActions({
           <Button
             variant="primary"
             size="compact"
-            disabled={!!startBlock}
+            disabled={!!startBlock || settingUp}
             onClick={() => act("start")}
           >
             Start

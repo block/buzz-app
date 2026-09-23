@@ -33,8 +33,19 @@ export interface AgentView {
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
+  /** Absent on older hosts means an existing configured setup. */
+  configured?: boolean;
+}
+export interface ParkedIdentity {
+  pubkey: string;
+  name: string;
+  /** Historical metadata sources, not a credential availability assertion. */
+  sources: ImportSource[];
 }
 export interface ControlSnapshot {
+  localInventoryActions?: boolean;
+  parked?: ParkedIdentity[];
+  inventoryWarnings?: string[];
   agents: AgentView[];
   runtimeAvailable: boolean;
   /** Native-owned editing suggestions, not installation or execution evidence.
@@ -65,8 +76,19 @@ export interface AgentImportPreview {
   candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
   warnings: string[];
 }
+export type CommunityResolution = {
+  pubkey: string;
+  relayUrl: string;
+  owner: string;
+  signature: string;
+};
 export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
 export interface AgentControlHost {
+  configureHere?(
+    id: string,
+    resolution: CommunityResolution,
+  ): Promise<ControlSnapshot>;
+  localCloneSettings?(id: string): Promise<CloneSettings>;
   cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   models?: ModelHost;
   prepareCreate?(
@@ -109,6 +131,8 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  configureHere?: AgentControlHost["configureHere"];
+  localCloneSettings?: AgentControlHost["localCloneSettings"];
   cloneSettings?: AgentControlHost["cloneSettings"];
   models?: AgentModels;
   create?(
@@ -385,6 +409,7 @@ export function createAgentControl(
         const agents =
           state.data?.agents.filter(
             (agent) =>
+              agent.configured !== false &&
               pubkeys.includes(agent.pubkey) &&
               relayOrigin(agent.relayUrl) === relayOrigin(relayUrl),
           ) ?? [];
@@ -418,6 +443,38 @@ export function createAgentControl(
           update({ mentionError: `Message sent, but ${failures.join(" ")}` });
       };
     },
+    ...(host?.configureHere
+      ? {
+          configureHere: (id: string, resolution: CommunityResolution) =>
+            run(
+              (native) => {
+                if (!native.configureHere)
+                  throw new Error("Use here is unavailable.");
+                return native.configureHere(id, resolution);
+              },
+              (data) => update({ data }),
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
+    ...(host?.localCloneSettings
+      ? {
+          localCloneSettings: (id: string) =>
+            run(
+              (native) => {
+                if (!native.localCloneSettings)
+                  throw new Error("Local clone is unavailable.");
+                return native.localCloneSettings(id);
+              },
+              () => {},
+              false,
+              undefined,
+              true,
+            ),
+        }
+      : {}),
     ...(host?.cloneSettings
       ? {
           cloneSettings: (source: ImportSource, pubkey: string) =>

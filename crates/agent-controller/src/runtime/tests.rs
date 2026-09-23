@@ -673,3 +673,123 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
 }
+
+#[test]
+fn retained_import_cannot_enable_or_open_credentials_until_explicit_setup() {
+    let root = tempfile::tempdir().unwrap();
+    let mut imported = agent(root.path());
+    imported.extra.insert("configured".into(), json!(false));
+    let id = imported.id.clone();
+    let mut store = Store::open(root.path().into()).unwrap();
+    store.insert(vec![imported]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Err("No runtime".into()),
+        root.path().join("locks"),
+    );
+    assert!(controller.action(&id, Action::Start).unwrap().agents[0]
+        .error
+        .as_ref()
+        .unwrap()
+        .contains("Use here"));
+    assert!(controller.credential_request(&id).is_err());
+    assert!(controller.enabled_ids().unwrap().is_empty());
+    assert!(!controller.restore().unwrap().agents[0].enabled);
+    let resolution = crate::community::tests::resolution("wss://relay.example");
+    let snapshot = controller.use_here(&id, resolution).unwrap();
+    assert!(snapshot.agents[0].configured);
+    assert!(!snapshot.agents[0].enabled);
+    assert_eq!(snapshot.agents[0].pubkey, PUB);
+}
+#[test]
+fn use_here_rejects_configured_other_community_without_writes() {
+    let root = tempfile::tempdir().unwrap();
+    let mut original = agent(root.path());
+    original.enabled = true;
+    let id = original.id.clone();
+    let mut store = Store::open(root.path().into()).unwrap();
+    store.insert(vec![original]).unwrap();
+    let path = root.path().join("agents.json");
+    let before = fs::read(&path).unwrap();
+    let error = store
+        .use_here(
+            &id,
+            crate::community::tests::resolution("wss://other.example"),
+        )
+        .unwrap_err();
+    assert!(error.contains("Clone"));
+    assert_eq!(fs::read(&path).unwrap(), before);
+    assert_eq!(
+        store.local_clone_settings(&id).unwrap().system_prompt,
+        "test prompt"
+    );
+}
+
+#[test]
+fn use_here_recovers_incomplete_import_but_cannot_add_a_third_community() {
+    let root = tempfile::tempdir().unwrap();
+    let mut imported = agent(root.path());
+    imported.extra.insert("configured".into(), json!(false));
+    let id = imported.id.clone();
+    let mut store = Store::open(root.path().into()).unwrap();
+    store.insert(vec![imported]).unwrap();
+    let path = root.path().join("agents.json");
+    let before = fs::read(&path).unwrap();
+    let mut forged = crate::community::tests::resolution("wss://other.example");
+    forged.relay_url = "wss://attacker.example".into();
+    assert!(store.use_here(&id, forged).is_err());
+    assert_eq!(fs::read(&path).unwrap(), before);
+    store
+        .use_here(
+            &id,
+            crate::community::tests::resolution("wss://other.example"),
+        )
+        .unwrap();
+    let agents = store.agents().unwrap();
+    assert!(!agents[0].configured());
+    assert!(agents[1].configured());
+    assert!(!agents[1].enabled);
+    assert_eq!(agents[1].pubkey, agents[0].pubkey);
+    assert_eq!(agents[1].credential_id, agents[0].credential_id);
+    let after = fs::read(&path).unwrap();
+    // A delayed retry of the completed recovery is harmless.
+    store
+        .use_here(
+            &id,
+            crate::community::tests::resolution("wss://other.example"),
+        )
+        .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), after);
+    assert!(store
+        .use_here(
+            &id,
+            crate::community::tests::resolution("wss://third.example")
+        )
+        .is_err());
+    assert_eq!(fs::read(&path).unwrap(), after);
+}
+
+#[test]
+fn use_here_exhausted_revision_preserves_the_saved_import() {
+    let root = tempfile::tempdir().unwrap();
+    let mut imported = agent(root.path());
+    imported.revision = 9_007_199_254_740_991;
+    imported.extra.insert("configured".into(), json!(false));
+    let id = imported.id.clone();
+    let mut store = Store::open(root.path().into()).unwrap();
+    store.insert(vec![imported]).unwrap();
+    let path = root.path().join("agents.json");
+    let before = fs::read(&path).unwrap();
+    assert_eq!(
+        store
+            .use_here(
+                &id,
+                crate::community::tests::resolution("wss://relay.example")
+            )
+            .unwrap_err(),
+        "Agent revision exhausted"
+    );
+    assert_eq!(fs::read(path).unwrap(), before);
+    assert!(!store.snapshot().unwrap().agents[0].configured);
+}

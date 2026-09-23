@@ -42,15 +42,19 @@ Clone generates a new native identity; it does not copy identity keys, environme
 values, command arguments, paths, history or membership. Saving leaves the new
 agent stopped. The source is read-only and no legacy credential access occurs.
 
-**Not imported from old Buzz** is a separate collapsible section. Expanding it
-loads installed identities even without a community connection or destination.
-Choose Installed or Development Buzz under Import options to browse either local
-library. Browsing reads no keys and creates no import token. Import stays disabled
-until a destination is selected and a new preview is loaded; already-managed exact
-identities at that destination are excluded. Each remaining row says **Not imported** and has its own
-**Import** action. Source/destination overrides and source warnings stay under
-Import options. Import focuses the imported card and says **Imported, not started**.
-It does not start a listener, invite an agent or change the old library.
+**Import** preserves the selected old-installation identity and private key. It
+requires an explicit destination and a fresh source/destination-bound preview.
+Successful import saves a configured, stopped setup. It does not start a listener,
+invite an agent, or modify the source installation. An identity already held
+locally cannot be imported again into another community; use **Clone** instead.
+The native prepare and commit boundaries both enforce that exact-key rule.
+
+**Use here** is recovery for older incomplete local imports, not a normal next
+step after Import. It retains the identity/key, requires owner-authorized community
+confirmation, and leaves the recovered setup stopped. Native code refuses a new
+community when that identity already has a configured setup elsewhere. A retry
+for the already recovered destination is harmless. Existing historical setups
+remain visible and controllable; this rule does not move or delete them.
 
 To use an agent, open a channel and select it from **@ mentions**. The chooser
 includes this app's managed agents in that same community. A nonmember is labeled
@@ -360,4 +364,5 @@ For explicit setup in a community, the broker can sign the selected owner's
 intent for an identity/community pair. Native code verifies that signature against
 the retained source-owner authorization. This does not establish channel membership,
 key availability or exclusive community membership. It does not reserve a community
-before import, and the same owner can confirm another pair later.
+before import. Setup recovery cannot add another community to an identity that
+already has a configured setup elsewhere; copying that agent requires Clone.

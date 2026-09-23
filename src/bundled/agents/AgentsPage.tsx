@@ -77,6 +77,7 @@ export function AgentsPage({
                       importedId={importedId}
                       control={control}
                       connection={connection}
+                      destination={importDestination}
                     />
                   )
                 }
@@ -102,12 +103,14 @@ function ManagedAgents({
   importedId,
   control,
   connection,
+  destination,
 }: {
   state: AgentControlState;
   edit(agent: AgentView, avatar?: string): void;
   importedId: string | null;
   control: AgentControl;
   connection: RelaySnapshot;
+  destination: string;
 }) {
   const resolveName = useIdentityNames(connection.session.names);
   const library = connection.session.agentLibrary;
@@ -120,8 +123,9 @@ function ManagedAgents({
     <section aria-label="My agents" className="flex flex-col gap-4">
       <h2 className="sr-only">My agents</h2>
       <p className="m-0 text-body-sm text-secondary">
-        Mention an agent in a channel to add it and start it. Stop old Buzz and
-        its listeners before using an imported identity here.
+        Set up an imported agent with Use here, then start it separately. Before
+        starting the same identity here, stop the old agent and disable its
+        automatic startup in the old app.
       </p>
       {state.data?.agents.length === 0 && (
         <p>No agents yet. Create an agent or import one from old Buzz below.</p>
@@ -159,6 +163,10 @@ function ManagedAgents({
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
+                destination={destination}
+                owner={
+                  connection.status === "ready" ? (connection.viewer ?? "") : ""
+                }
               />
             </AgentCard>
           );

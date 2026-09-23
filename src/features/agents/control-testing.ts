@@ -24,6 +24,7 @@ export function controlFixture() {
     diagnostics: ["Listener process started; readiness is unverified."],
   };
   const data: ControlSnapshot = {
+    localInventoryActions: true,
     runtimeAvailable: true,
     agents: [agent],
     // Simulates the native snapshot; never imported by production UI.
@@ -39,6 +40,19 @@ export function controlFixture() {
   let failSave = false;
   let importDestination = "";
   const host: AgentControlHost = {
+    async configureHere(id, resolution) {
+      calls.push({ action: "configure", payload: { id, resolution } });
+      const target = data.agents.find((a) => a.id === id);
+      if (!target) throw Error("Missing identity");
+      target.configured = true;
+      return structuredClone(data);
+    },
+    async localCloneSettings(id) {
+      calls.push({ action: "localClone", payload: { id } });
+      const target = data.agents.find((a) => a.id === id);
+      if (!target) throw Error("Missing identity");
+      return { name: target.name, systemPrompt: target.systemPrompt };
+    },
     async snapshot() {
       calls.push({ action: "snapshot" });
       return structuredClone(data);
@@ -90,6 +104,7 @@ export function controlFixture() {
       calls.push({ action: "import", payload: { token, ids } });
       data.agents.push({
         ...structuredClone(agent),
+        configured: true,
         id: "second-fixture",
         pubkey: "cd".repeat(32),
         relayUrl: importDestination,

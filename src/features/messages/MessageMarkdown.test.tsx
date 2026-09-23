@@ -1042,7 +1042,7 @@ it("keeps one channel Larry plain despite global namesakes and follows membershi
     { snapshot: () => [provider], subscribe: () => () => {} },
   );
   const open = vi.fn(() => true);
-  const mounted = mount(
+  const mounted = renderDom(
     <MessageMarkdown
       {...props("@Larry", {
         session: { ...session, names },

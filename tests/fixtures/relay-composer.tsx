@@ -2,6 +2,7 @@
 import { createRoot } from "react-dom/client";
 import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
+import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import { PanelsService } from "../../src/features/panels/service";
 import { PagesService } from "../../src/features/pages/service";
@@ -133,6 +134,7 @@ createRoot(container).render(
   <ToastProvider>
     <div style={{ height: "100vh" }}>
       <ChannelsPage
+        providers={new TemplateProvidersService(root)}
         relay={data}
         panels={new PanelsService(root)}
         pages={new PagesService(root)}

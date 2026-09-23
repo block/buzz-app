@@ -135,7 +135,13 @@ function AttachmentItem({
         <span className={styles.name} title={item.file.name}>
           {item.file.name}
         </span>
-        <span className={styles.hint}>
+        <span
+          className={styles.hint}
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        >
+          <span className="sr-only">{item.file.name}: </span>
           {size} · {status}
         </span>
         {failed && <span className={styles.hint}>Preview unavailable</span>}

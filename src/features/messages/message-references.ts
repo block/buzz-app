@@ -7,6 +7,7 @@ export type MessageReference = {
   label: string;
   kind: "channel" | "person" | "agent";
   id: string;
+  private?: true;
 };
 
 /** Names are display evidence only. People must also have an explicit signed mention. */
@@ -24,6 +25,7 @@ export function messageReferences(
         label: `#${channel.name}`,
         kind: "channel" as const,
         id: channel.id,
+        ...(channel.private ? { private: true as const } : {}),
       })),
     ...mentions.flatMap((id) => {
       const agent = agents.find((entry) => entry.pubkey === id);

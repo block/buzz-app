@@ -110,11 +110,25 @@ Buzz is a place where people build together and bring their agents into the room
 
 ## Controls
 
-Button uses prominent, subtle, ghost, destructive and outline emphasis. Its
+Button and IconButton share prominent, subtle, ghost, inverted, destructive,
+outline and link emphasis. Inverted is for an inverse surface; link keeps its
+background clear and underlines on interaction. Its
 32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
 increase height at larger text settings. Text buttons use pill corners. Fields
-use the shared control corner. Legacy Button names map to these variants during
-migration; do not add new primary/quiet or compact/default call sites.
+use the shared control corner. Small buttons use 16px side padding and 16px
+icons; medium and large use 24px side padding and 24px icons. Labels use the
+complete text-label-sm / text-label roles, with an 8px icon gap.
+
+IconButton defaults to round and uses the same sm/md/lg sizes. Existing names
+remain compatibility aliases: primary/solid → prominent, quiet → subtle,
+compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
+Buzz's tint and chrome icon variants remain for composer and backdrop actions.
+
+Disabled controls retain their filled, outline, or unfilled treatment and cannot
+activate. Loading retains the label's geometry, accessible name, focus and variant
+colors while blocking activation; never swap in a differently sized loading label.
+Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
+Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
 IconButton defaults to round across all sizes and variants. Use `shape="control"`
 only when a rectangular control shape is explicitly needed.

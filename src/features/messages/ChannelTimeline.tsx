@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
@@ -114,12 +115,13 @@ function Timeline({
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<string | undefined>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const resolveName = useIdentityNames(queries.names);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
   const signature = useMemo(
-    () => geometrySignature(window.rows, profiles),
-    [window.rows, profiles],
+    () => geometrySignature(window.rows, profiles, resolveName),
+    [window.rows, profiles, resolveName],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const focusedIndex = rows.findIndex((row) => row.id === focusedMessageId);
@@ -485,6 +487,7 @@ function Timeline({
                 new Date(row.createdAt * 1000).toDateString();
             return row.membership ? (
               <MembershipRow
+                names={queries.names}
                 key={row.id}
                 row={row}
                 profiles={profiles}

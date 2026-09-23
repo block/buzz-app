@@ -18,11 +18,13 @@ import {
   ChatCircleIcon,
   ChatsCircleIcon,
   HashIcon,
+  LockIcon,
 } from "../../shared/design-system/icons/index";
 import { useContext, type ComponentProps } from "react";
 import {
   LinkLabelContext,
   LinkContentContext,
+  LinkChannelPrivateContext,
 } from "../../features/conversation/LinkLabelContext";
 import { buzzLinkKind } from "../../features/navigation/buzz-links";
 import styles from "../../shared/InlineReference.module.css";
@@ -126,6 +128,7 @@ export function LinkLabel({
 }) {
   const contextualLabel = useContext(LinkLabelContext);
   const content = useContext(LinkContentContext);
+  const privateChannel = useContext(LinkChannelPrivateContext);
   const kind = linkKind(href);
   if (!kind) return <>{label}</>;
   if (label === href && contextualLabel) label = contextualLabel;
@@ -141,7 +144,7 @@ export function LinkLabel({
   const rawDestination =
     label === href ||
     (linkKind(label) !== null && new URL(label).href === new URL(href).href);
-  const Icon = icons[kind];
+  const Icon = kind === "channel" && privateChannel ? LockIcon : icons[kind];
   if (content !== undefined && !rawDestination)
     return (
       <span data-link-kind={kind}>

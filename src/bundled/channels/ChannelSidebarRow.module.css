@@ -27,7 +27,6 @@
   opacity: 0;
   pointer-events: none;
   flex-shrink: 0;
-  margin-right: var(--space-chip-inset);
 }
 .row:is(:hover, :has(:focus-visible)) .more,
 .row .more:has([data-popup-open]) {
@@ -92,4 +91,8 @@
 .childLabel > [data-channel-unread-title="true"] {
   color: var(--text-standard);
   font-weight: var(--type-weight-medium);
+}
+
+.sessions.sessions [data-buzz-ui][data-variant="row"] {
+  border-radius: var(--radius-pill);
 }

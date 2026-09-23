@@ -120,6 +120,7 @@ export function ChannelSidebarRow({
                 render={
                   <IconButton
                     size="compact"
+                    shape="round"
                     aria-label={`More options for ${channel.name}`}
                     icon={<DotsThreeVerticalIcon size={15} />}
                   />
@@ -162,7 +163,7 @@ export function ChannelSidebarRow({
           </Menu.Root>
         )}
       </div>
-      <div id={childrenId} hidden={collapsed}>
+      <div className={styles.sessions} id={childrenId} hidden={collapsed}>
         {draft && (
           <NavigationItem
             icon={<span className={styles.iconSpace} aria-hidden="true" />}

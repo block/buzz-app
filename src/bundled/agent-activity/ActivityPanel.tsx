@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import {
   useEffect,
   useMemo,
@@ -63,6 +64,7 @@ export function ActivityDetails({
     () => [...new Set([...agents, ...(selected ? [selected] : [])])],
     [agents, selected],
   );
+  const resolveName = useIdentityNames(session.names);
   const profiles = useMemo(
     () => selectProfiles(session.profiles, agentChoices),
     [session.profiles, agentChoices],
@@ -155,7 +157,7 @@ export function ActivityDetails({
                     label: "Observed agents",
                     options: agentChoices.map((key) => ({
                       value: key,
-                      label: `${identities.get(key)?.name ?? "Agent"} · ${key.slice(0, 12)}…`,
+                      label: `${resolveName(key, identities.get(key)?.name ?? "Agent")} · ${key.slice(0, 12)}…`,
                     })),
                   },
                 ]}

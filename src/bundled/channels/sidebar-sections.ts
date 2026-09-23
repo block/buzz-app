@@ -1,6 +1,10 @@
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 
+export function isChannelSectionKey(key: string) {
+  return key === "channels" || key.startsWith("group:");
+}
+
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
 export function sidebarSections(
   channels: readonly ChannelSummary[],
@@ -57,5 +61,5 @@ export function sidebarSections(
       icon: undefined,
       rows: active.filter((channel) => channel.channelType === "dm"),
     },
-  ].filter((section) => section.rows.length);
+  ].filter((section) => section.key === "channels" || section.rows.length);
 }

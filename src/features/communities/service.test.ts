@@ -40,7 +40,7 @@ function setup(saved?: unknown, savedViewer = viewer, openRelay = "") {
   );
   const ctx = new Context();
   roots.push(ctx);
-  return createCommunities(ctx, true, openRelay);
+  return createCommunities(ctx, true, undefined, openRelay);
 }
 afterEach(async () => {
   for (const root of roots.splice(0)) await root.fiber.dispose();

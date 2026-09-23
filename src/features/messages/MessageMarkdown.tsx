@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../identity-names/react";
 import {
   Children,
   createContext,
@@ -12,6 +13,7 @@ import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts, normalizeWrappedLinks } from "./message-link-parts";
 import {
   ReferenceText,
+  channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
 } from "./ReferenceText";
@@ -281,6 +283,7 @@ export function MessageMarkdown({
   largeEmoji?: boolean | undefined;
   interactive?: boolean;
 }) {
+  const resolveName = useIdentityNames(session?.names);
   if (row.content.length > MAX_MARKDOWN_LENGTH)
     return <div className={styles.plainText}>{row.content}</div>;
   let scan = scanMarkdown(row.content);
@@ -304,19 +307,23 @@ export function MessageMarkdown({
     row = { ...row, content: normalized };
     scan = scanMarkdown(normalized);
   }
-  const renderLink = (url: string, label?: string, children?: ReactNode) => (
-    <MessageLink
-      url={url}
-      label={label ?? channelLinkLabel(url, scope, directory.channels)}
-      registry={extensions?.links}
-      onOpenLink={onOpenLink}
-      session={session}
-      scope={scope}
-      interactive={interactive}
-    >
-      {children}
-    </MessageLink>
-  );
+  const renderLink = (url: string, label?: string, children?: ReactNode) => {
+    const channel = channelForLink(url, scope, directory.channels);
+    return (
+      <MessageLink
+        url={url}
+        label={label ?? channelLinkLabel(url, scope, directory.channels)}
+        registry={extensions?.links}
+        onOpenLink={onOpenLink}
+        session={session}
+        scope={scope}
+        interactive={interactive}
+        channelPrivate={!!channel?.private}
+      >
+        {children}
+      </MessageLink>
+    );
+  };
   const renderInline = (text: string) =>
     extensions ? (
       <InlineText
@@ -395,6 +402,7 @@ export function MessageMarkdown({
         typeof target === "string" &&
         (!interactive || clickable || agent)
       ) {
+        const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
         const Icon = agent ? RobotIcon : AtIcon;
         const Mention = clickable ? "button" : "span";
         return (
@@ -402,7 +410,7 @@ export function MessageMarkdown({
             type={clickable ? "button" : undefined}
             className={referenceStyles.link}
             data-mention-kind={agent ? "agent" : "person"}
-            aria-label={clickable ? `View ${text.slice(1)} profile` : undefined}
+            aria-label={clickable ? `View ${label} profile` : undefined}
             onClick={
               clickable
                 ? (event) => {
@@ -413,7 +421,7 @@ export function MessageMarkdown({
             }
           >
             <Icon aria-hidden="true" className={referenceStyles.icon} />
-            {text.slice(1)}
+            {label}
           </Mention>
         );
       }

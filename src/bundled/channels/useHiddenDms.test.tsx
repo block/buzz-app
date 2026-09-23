@@ -31,6 +31,7 @@ function fixture() {
   >[0];
   const outgoing = new Set<ObserveSend>();
   let onRead = () => {};
+  let nextRead: Promise<void> | undefined;
   let historyIds = ["before"];
   let failures = 0;
   const read = vi.fn(async (filters: readonly { limit: number }[]) => {
@@ -39,6 +40,9 @@ function fixture() {
       throw new Error("Temporary relay failure");
     }
     onRead();
+    const held = nextRead;
+    nextRead = undefined;
+    if (held) await held;
     return historyIds.slice(0, filters[0]?.limit).map((id) => ({ id }));
   });
   const session = {
@@ -72,6 +76,13 @@ function fixture() {
     read,
     onNextRead(callback: () => void) {
       onRead = callback;
+    },
+    holdNextRead() {
+      let release = () => {};
+      nextRead = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return () => release();
     },
     history(ids: string[]) {
       historyIds = ids;
@@ -380,13 +391,50 @@ it("restores a hidden DM after an outgoing message is delivered", () => {
   expect(view.result.current.hiddenIds.has("dm")).toBe(false);
 });
 
-it("does not restore a DM hidden again after an older send began", () => {
+it("restores an outgoing send after history enrichment without head advancement", async () => {
   const h = fixture();
+  const release = h.holdNextRead();
+  const view = renderHook(() =>
+    useHiddenDms("community:alice", h.session, h.list),
+  );
+  act(() => view.result.current.hide("dm"));
+  expect(h.read).toHaveBeenCalledTimes(1);
+  const finish = h.pendingDelivery("dm");
+
+  await act(async () => {
+    release();
+    await Promise.resolve();
+  });
+  expect(readView("community:alice", "hidden-dms", [])).toEqual([
+    {
+      id: "dm",
+      baseline: { id: "before", createdAt: 90 },
+      knownIds: ["before"],
+    },
+  ]);
+  expect(view.result.current.hiddenIds.has("dm")).toBe(true);
+
+  act(() => finish?.([]));
+  expect(
+    h.session.unread.snapshot({ kind: "channel", channelId: "dm" })
+      .latestMessage,
+  ).toEqual({ id: "before", createdAt: 90 });
+  expect(view.result.current.hiddenIds.has("dm")).toBe(false);
+});
+
+it("does not restore a DM hidden again after an older send began", async () => {
+  const h = fixture();
+  const release = h.holdNextRead();
   const view = renderHook(() =>
     useHiddenDms("community:alice", h.session, h.list),
   );
   act(() => view.result.current.hide("dm"));
   const finish = h.pendingDelivery("dm");
+  expect(finish).toBeTypeOf("function");
+  await act(async () => {
+    release();
+    await Promise.resolve();
+  });
   act(() => view.result.current.hide("dm"));
   act(() => finish?.([]));
   expect(view.result.current.hiddenIds.has("dm")).toBe(true);

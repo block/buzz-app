@@ -6,6 +6,8 @@ import { readView, writeView } from "../../shared/view-state";
 type MessageHead = Readonly<{ id: string; createdAt: number }>;
 type HiddenDm = {
   id: string;
+  // Keeps one hide identifiable through enrichment; JSON persistence omits it.
+  hideGeneration: symbol;
   baseline?: MessageHead | null;
   knownIds?: readonly string[];
 };
@@ -35,6 +37,7 @@ function restore(scope: string): HiddenDm[] {
     return [
       {
         id: entry.id,
+        hideGeneration: Symbol(),
         ...(baseline === null ||
         (baseline &&
           typeof baseline === "object" &&
@@ -95,6 +98,7 @@ export function useHiddenDms(
         ...current.current.filter((entry) => entry.id !== id),
         {
           id,
+          hideGeneration: Symbol(),
           ...(latest ? { baseline: latest } : {}),
         },
       ]);
@@ -142,7 +146,9 @@ export function useHiddenDms(
       const hiddenAtSend = current.current.find((entry) => entry.id === id);
       if (!id || !hiddenAtSend) return;
       return () => {
-        if (current.current.includes(hiddenAtSend)) show([id]);
+        const hiddenNow = current.current.find((entry) => entry.id === id);
+        if (hiddenNow?.hideGeneration === hiddenAtSend.hideGeneration)
+          show([id]);
       };
     });
     check();

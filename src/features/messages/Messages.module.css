@@ -405,18 +405,71 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   border-radius: 50%;
   color: var(--text-inverse);
   background: var(--surface-inverse);
+  cursor: pointer;
   flex-shrink: 0;
 }
-.audioPlay:hover {
+.audioPlay:hover:not(:disabled),
+.audioPlay[data-state="playing"] {
   background: var(--affordance-prominent);
 }
 .audioSeek {
-  min-width: 0;
+  --audio-progress: 0%;
+  min-width: 6rem;
   flex: 1;
-  accent-color: var(--action);
+  height: 1rem;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
 }
 .audioSeek:disabled {
   cursor: not-allowed;
+}
+.audioSeek::-webkit-slider-runnable-track {
+  height: 1rem;
+  border-radius: var(--radius-pill);
+  background:
+    linear-gradient(
+      to right,
+      var(--action) 0 var(--audio-progress),
+      var(--border) var(--audio-progress) 100%
+    )
+    center / 100% 0.375rem no-repeat;
+}
+.audioSeek::-webkit-slider-thumb {
+  appearance: none;
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--surface-control);
+  border-radius: 50%;
+  background: var(--action);
+  box-shadow: var(--elevation-surface);
+}
+.audioSeek::-moz-range-track {
+  height: 0.375rem;
+  border-radius: var(--radius-pill);
+  background: var(--border);
+}
+.audioSeek::-moz-range-progress {
+  height: 0.375rem;
+  border-radius: var(--radius-pill);
+  background: var(--action);
+}
+.audioSeek::-moz-range-thumb {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--surface-control);
+  border-radius: 50%;
+  background: var(--action);
+  box-shadow: var(--elevation-surface);
+}
+.audioSeek:disabled::-webkit-slider-runnable-track {
+  background: var(--border);
+}
+.audioSeek:disabled::-webkit-slider-thumb {
+  background: var(--text-unavailable);
+}
+.audioSeek:disabled::-moz-range-thumb {
+  background: var(--text-unavailable);
 }
 .audioTime {
   color: var(--text-muted);
@@ -425,6 +478,11 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   letter-spacing: var(--text-caption--letter-spacing);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+}
+.audioUnavailable {
+  border-color: var(--border-warning);
+  background: var(--affordance-warning);
+  color: var(--text-warning);
 }
 html[data-keyboard-navigation] .audioPlay:focus-visible,
 html[data-keyboard-navigation] .audioSeek:focus-visible {
@@ -565,6 +623,9 @@ button.mediaPreview {
   }
   .audioAttachment {
     max-width: 100%;
+  }
+  .audioSeek {
+    min-width: 4rem;
   }
 }
 

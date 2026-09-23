@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useRef, useState, type CSSProperties } from "react";
 import { PauseIcon, PlayIcon } from "../../shared/design-system/icons/index";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
@@ -48,6 +48,9 @@ export function AudioAttachment({
     duration !== undefined
       ? `${formatMediaTime(currentTime)} of ${formatMediaTime(duration)}`
       : formatMediaTime(currentTime);
+  const seekValue =
+    duration === undefined ? 0 : Math.min(currentTime, duration);
+  const seekProgress = duration ? (seekValue / duration) * 100 : 0;
 
   const setAudio = useCallback((element: HTMLAudioElement | null) => {
     // Callback refs are required because React detaches refs before passive effect cleanup, so cleanup cannot clear the module playback singleton.
@@ -58,11 +61,17 @@ export function AudioAttachment({
   if (previousSource.current !== source) {
     previousSource.current = source;
     endedDuration.current = undefined;
+    setCurrentTime(0);
+    setDuration(finiteDuration(attachment.duration));
+    setIsPlaying(false);
   }
 
   if (failed)
     return (
-      <span className={styles.attachmentUnavailable} role="status">
+      <span
+        className={`${styles.attachmentUnavailable} ${styles.audioUnavailable}`}
+        role="status"
+      >
         Audio unavailable
       </span>
     );
@@ -136,6 +145,7 @@ export function AudioAttachment({
         type="button"
         className={styles.audioPlay}
         aria-label={isPlaying ? pauseLabel : playLabel}
+        data-state={isPlaying ? "playing" : undefined}
         onClick={() => {
           const element = audio.current;
           if (!element) return;
@@ -151,12 +161,13 @@ export function AudioAttachment({
       </button>
       <input
         className={styles.audioSeek}
+        style={{ "--audio-progress": `${seekProgress}%` } as CSSProperties}
         type="range"
         aria-label={seekLabel}
         min={0}
         max={duration ?? 0}
         step="any"
-        value={duration === undefined ? 0 : Math.min(currentTime, duration)}
+        value={seekValue}
         disabled={duration === undefined}
         aria-valuetext={valueText}
         onChange={(event) => {

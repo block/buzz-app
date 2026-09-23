@@ -50,7 +50,7 @@ it("shows only exact verified visible memberships, handles partial lists and ope
       session={f.session}
       pubkey={person}
       viewer={viewer}
-      scope={`https://relay.example.test:${viewer}`}
+      communityOrigin="https://relay.example.test"
       navigation={f.navigation}
     />,
   );
@@ -64,11 +64,20 @@ it("shows only exact verified visible memberships, handles partial lists and ope
       { id: "other", name: "Unrelated", members: [viewer] },
       { id: "unknown", name: "Unknown" },
       { id: "hidden", name: "Hidden", hidden: true, members: [person] },
+      { id: "dm", name: "Direct", channelType: "dm", members: [person] },
+      {
+        id: "session",
+        name: "Child",
+        channelType: "session",
+        members: [person],
+      },
       { id: "archived", name: "Archived", archived: true, members: [person] },
     ],
   });
   expect(screen.getByRole("button", { name: "#Visible" })).toBeTruthy();
-  expect(screen.queryByText(/Unrelated|Unknown|Hidden|Archived/)).toBeNull();
+  expect(
+    screen.queryByText(/Unrelated|Unknown|Hidden|Archived|Direct|Child/),
+  ).toBeNull();
   expect(screen.getByText(/More channels may exist/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "#Visible" }));
   expect(f.open).toHaveBeenCalledWith({
@@ -90,7 +99,7 @@ it("does not invent a route, and retries failed discovery without claiming a com
       session={f.session}
       pubkey={person}
       viewer={viewer}
-      scope="invalid"
+      communityOrigin={undefined}
       navigation={f.navigation}
     />,
   );
@@ -99,9 +108,9 @@ it("does not invent a route, and retries failed discovery without claiming a com
     channels: [{ id: "known", name: "Known", members: [person] }],
   });
   expect(screen.getByRole("alert")).toBeTruthy();
-  expect(screen.queryByText("Known")).toBeNull();
+  expect(screen.getByText("Known")).toBeTruthy();
   expect(screen.queryByRole("button", { name: /Known/ })).toBeNull();
-  expect(screen.queryByText(/Channel navigation is unavailable/)).toBeNull();
+  expect(screen.getByText(/Channel navigation is unavailable/)).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Retry channels" }));
   expect(f.refreshList).toHaveBeenCalledOnce();
   expect(f.open).not.toHaveBeenCalled();
@@ -114,8 +123,8 @@ it("renders a verified row without a destination when navigation is unavailable"
       session={f.session}
       pubkey={person}
       viewer={viewer}
-      scope="invalid"
-      navigation={f.navigation}
+      communityOrigin="https://relay.example.test"
+      navigation={undefined}
     />,
   );
   f.update({

@@ -60,6 +60,8 @@ it("uses native exact identity and community, never library display links", () =
       pubkey={person}
       viewer={viewer}
       scope={`https://relay.example.test:${viewer}`}
+      communityOrigin="https://relay.example.test"
+      knownAgent={true}
     />,
   );
   expect(f.refresh).toHaveBeenCalledOnce();
@@ -105,6 +107,8 @@ it("omits instances without a valid community", () => {
       pubkey={person}
       viewer={viewer}
       scope="unknown"
+      communityOrigin={undefined}
+      knownAgent={true}
     />,
   );
   expect(
@@ -124,10 +128,53 @@ it("retries failed native discovery in a valid community without presenting stal
       pubkey={person}
       viewer={viewer}
       scope={`https://relay.example.test:${viewer}`}
+      communityOrigin="https://relay.example.test"
+      knownAgent={true}
     />,
   );
   expect(screen.getByRole("alert")).toBeTruthy();
   fireEvent.click(screen.getByRole("button", { name: "Retry agents" }));
   expect(f.refresh).toHaveBeenCalledOnce();
   expect(f.open).not.toHaveBeenCalled();
+});
+
+it("does not refresh or display instances for a human without a native match", () => {
+  const f = fixture();
+  const { rerender } = render(
+    <ProfileInstances
+      control={f.control}
+      navigation={f.navigation}
+      pubkey={person}
+      viewer={viewer}
+      scope={`https://relay.example.test:${viewer}`}
+      communityOrigin="https://relay.example.test"
+      knownAgent={false}
+    />,
+  );
+  expect(f.refresh).not.toHaveBeenCalled();
+  f.update({
+    status: "ready",
+    data: {
+      agents: [
+        instance("someone-else", viewer, "wss://relay.example.test"),
+      ] as NonNullable<AgentControlState["data"]>["agents"],
+      runtimeAvailable: true,
+    },
+    busy: false,
+    error: null,
+  });
+  rerender(
+    <ProfileInstances
+      control={f.control}
+      navigation={f.navigation}
+      pubkey={person}
+      viewer={viewer}
+      scope={`https://relay.example.test:${viewer}`}
+      communityOrigin="https://relay.example.test"
+      knownAgent={false}
+    />,
+  );
+  expect(
+    screen.queryByRole("region", { name: "Linked agent instances" }),
+  ).toBeNull();
 });

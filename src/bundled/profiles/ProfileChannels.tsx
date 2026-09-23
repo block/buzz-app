@@ -1,5 +1,4 @@
 import type { Navigation } from "../../features/navigation/controller";
-import { relayOrigin } from "../../features/communities/destination";
 import { useChannelList } from "../../features/relay/react";
 import type { RelaySession } from "../../features/relay/session";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -8,30 +7,25 @@ import { Button } from "../../shared/design-system/ui/Button";
 export function ProfileChannels({
   session,
   pubkey,
-  scope,
+  communityOrigin,
   viewer,
   navigation,
 }: {
   session: RelaySession;
   pubkey: string;
-  scope: string | undefined;
+  communityOrigin: string | undefined;
   viewer: string | undefined;
   navigation: Navigation | undefined;
 }) {
   const list = useChannelList(session.channels);
-  // A non-URL fixture/legacy scope is not a safe navigation destination.
-  let communityOrigin: string | undefined;
-  if (scope && viewer && scope.endsWith(`:${viewer}`)) {
-    try {
-      communityOrigin = relayOrigin(scope.slice(0, -(viewer.length + 1)));
-    } catch {
-      // Keep the rows visible; do not invent a destination.
-    }
-  }
-  const channels = (list.status === "ready" ? list.channels : []).filter(
+  const channels = (
+    list.status === "ready" || list.status === "error" ? list.channels : []
+  ).filter(
     (channel) =>
       !channel.archived &&
-      (!channel.hidden || channel.channelType === "dm") &&
+      !channel.hidden &&
+      channel.channelType !== "dm" &&
+      channel.channelType !== "session" &&
       channel.members?.includes(pubkey),
   );
   return (
@@ -81,8 +75,7 @@ export function ProfileChannels({
                     })
                   }
                 >
-                  {channel.channelType === "dm" ? "" : "#"}
-                  {channel.name}
+                  #{channel.name}
                 </Button>
               ) : (
                 <span>{channel.name}</span>

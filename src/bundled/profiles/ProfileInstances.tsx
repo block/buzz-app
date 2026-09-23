@@ -1,5 +1,5 @@
 import { useEffect, useSyncExternalStore } from "react";
-import { relayOrigin } from "../../features/communities/destination";
+import { sameCommunityAgents } from "../../features/agents/choices";
 import type { AgentControl } from "../../features/agents/control";
 import type { Navigation } from "../../features/navigation/controller";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -10,43 +10,35 @@ export function ProfileInstances({
   navigation,
   pubkey,
   scope,
+  communityOrigin,
   viewer,
+  knownAgent,
 }: {
   control: AgentControl;
   navigation: Navigation | undefined;
   pubkey: string;
   scope: string | undefined;
+  communityOrigin: string | undefined;
   viewer: string | undefined;
+  knownAgent: boolean;
 }) {
   const state = useSyncExternalStore(
     control.subscribe,
     control.snapshot,
     control.snapshot,
   );
-  let origin: string | undefined;
-  if (scope && viewer && scope.endsWith(`:${viewer}`)) {
-    try {
-      origin = relayOrigin(scope.slice(0, -(viewer.length + 1)));
-    } catch {
-      // An invalid fixture scope must not identify an agent's community.
-    }
-  }
   useEffect(() => {
-    if (origin && state.status === "idle") void control.refresh();
-  }, [control, origin, state.status]);
-  if (!origin || state.status === "unavailable") return null;
+    if (communityOrigin && knownAgent && state.status === "idle")
+      void control.refresh();
+  }, [control, communityOrigin, knownAgent, state.status]);
+  if (!communityOrigin || state.status === "unavailable") return null;
   const instances =
-    state.status === "ready"
-      ? (state.data?.agents ?? []).filter((agent) => {
-          try {
-            return (
-              agent.pubkey === pubkey && relayOrigin(agent.relayUrl) === origin
-            );
-          } catch {
-            return false;
-          }
-        })
+    scope && state.status === "ready"
+      ? sameCommunityAgents(state.data?.agents ?? [], scope).filter(
+          (agent) => agent.pubkey === pubkey,
+        )
       : [];
+  if (!knownAgent && !instances.length) return null;
   return (
     <section
       aria-label="Linked agent instances"
@@ -73,7 +65,7 @@ export function ProfileInstances({
           ))}
         </ul>
       )}
-      {!!instances.length && navigation && origin && viewer && (
+      {!!instances.length && navigation && viewer && (
         <Button
           size="compact"
           variant="ghost"
@@ -83,7 +75,7 @@ export function ProfileInstances({
               kind: "page",
               pluginId: "buzz.agents",
               pageId: "agents",
-              scope: { viewer, communityOrigin: origin },
+              scope: { viewer, communityOrigin },
             })
           }
         >

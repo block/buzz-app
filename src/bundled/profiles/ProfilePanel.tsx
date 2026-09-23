@@ -1,3 +1,4 @@
+import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
 import type { Navigation } from "../../features/navigation/controller";
@@ -107,6 +108,14 @@ function ProfileDetails({
     };
   }, [session, pubkey, attempt]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  let communityOrigin: string | undefined;
+  if (scope && viewer && scope.endsWith(`:${viewer}`)) {
+    try {
+      communityOrigin = relayOrigin(scope.slice(0, -(viewer.length + 1)));
+    } catch {
+      // This session has no usable navigation scope.
+    }
+  }
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
   const identityName = useIdentityNames(session.names);
   const name = identityName(pubkey, profile?.name ?? "Unknown profile");
@@ -152,7 +161,7 @@ function ProfileDetails({
         session={session}
         pubkey={pubkey}
         navigation={navigation}
-        scope={scope}
+        communityOrigin={communityOrigin}
         viewer={viewer}
       />
       {control && (
@@ -161,7 +170,9 @@ function ProfileDetails({
           pubkey={pubkey}
           navigation={navigation}
           scope={scope}
+          communityOrigin={communityOrigin}
           viewer={viewer}
+          knownAgent={agentPubkeys.has(pubkey)}
         />
       )}
       <div className={styles.publicKey}>

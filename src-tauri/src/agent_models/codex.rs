@@ -6,6 +6,13 @@ use serde_json::{json, Value};
 use std::{process::Stdio, time::Duration};
 
 pub(super) async fn execute(context: Context, selected: String) -> Result<Catalog, ModelError> {
+    discover(context, Some(selected)).await
+}
+
+pub(super) async fn discover(
+    context: Context,
+    selected: Option<String>,
+) -> Result<Catalog, ModelError> {
     #[cfg(unix)]
     {
         unix::execute(context, selected).await
@@ -57,25 +64,60 @@ fn option<'a>(response: &'a Value, category: &str) -> Option<&'a Value> {
         .iter()
         .find(|v| v["category"] == category)
 }
-fn models(response: &Value) -> Result<Vec<Model>, ModelError> {
-    let model = option(response, "model").ok_or_else(|| {
-        ModelError::new(
-            "unavailable",
-            "Codex did not advertise model configuration. Update codex-acp and refresh.",
-        )
-    })?;
-    choices(model)?
-        .into_iter()
-        .map(|(id, name)| {
-            Ok(Model {
-                id,
-                name,
-                effort: EffortOptions::Unknown,
-                error: None,
-            })
-        })
-        .collect()
+fn current_value(response: &Value, category: &str) -> Option<String> {
+    option(response, category)?["currentValue"]
+        .as_str()
+        .filter(|value| !value.is_empty() && value.len() <= 512)
+        .map(str::to_owned)
 }
+fn models(response: &Value) -> Result<Vec<Model>, ModelError> {
+    // Match Buzz's normalize_agent_models: stable entries first, then legacy
+    // availableModels, preserving order and the first occurrence of each ID.
+    let mut result = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut add = |value: &Value, id_key: &str, name_key: &str| {
+        if let Some(id) = value[id_key].as_str() {
+            if seen.insert(id.to_owned()) {
+                result.push(Model {
+                    id: id.to_owned(),
+                    name: value[name_key]
+                        .as_str()
+                        .filter(|name| !name.trim().is_empty())
+                        .unwrap_or(id)
+                        .trim()
+                        .to_owned(),
+                    effort: EffortOptions::Unknown,
+                    error: None,
+                });
+            }
+        }
+    };
+    for option in response["configOptions"].as_array().into_iter().flatten() {
+        if option["category"] == "model" {
+            for value in option["options"].as_array().into_iter().flatten() {
+                add(value, "value", "displayName");
+            }
+        }
+    }
+    for value in response["models"]["availableModels"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        add(value, "modelId", "name");
+    }
+    Ok(result)
+}
+
+fn model_option<'a>(response: &'a Value, selected: &str) -> Option<&'a Value> {
+    response["configOptions"].as_array()?.iter().find(|option| {
+        option["category"] == "model"
+            && option["options"]
+                .as_array()
+                .is_some_and(|values| values.iter().any(|value| value["value"] == selected))
+    })
+}
+
 fn apply_effort(models: &mut [Model], response: &Value, selected: &str) -> Result<(), ModelError> {
     let model = models.iter_mut().find(|m| m.id == selected).ok_or_else(|| ModelError::new("model", "The selected model ID is not advertised by Codex. Refresh and choose a listed model."))?;
     model.effort = match option(response, "thought_level") {
@@ -212,7 +254,10 @@ mod unix {
             ))
         }
     }
-    pub(super) async fn execute(context: Context, selected: String) -> Result<Catalog, ModelError> {
+    pub(super) async fn execute(
+        context: Context,
+        selected: Option<String>,
+    ) -> Result<Catalog, ModelError> {
         let mut command = context.command(&context.cli)?;
         command
             .args(["login", "status"])
@@ -257,29 +302,75 @@ mod unix {
                 )
                 .await
             }).await.map_err(|_| ModelError::new("timeout", "Codex session discovery timed out."))??;
+            let defaults = super::super::ResolvedDefaults {
+                model: current_value(&initial, "model"),
+                effort: current_value(&initial, "thought_level"),
+            };
             let mut available = models(&initial)?;
-            if !selected.is_empty() && available.iter().any(|m| m.id == selected) {
-                let config_id = option(&initial, "model")
-                    .and_then(|o| o["id"].as_str())
-                    .ok_or_else(|| {
-                        ModelError::new(
-                            "unavailable",
-                            "Codex did not return a model configuration ID.",
-                        )
-                    })?;
+            if selected.is_none() {
+                // Effort is a separate control. Suppress legacy aliases when
+                // the adapter also advertises their configurable base model.
+                available.retain(|model| {
+                    !model.id.strip_suffix(']').and_then(|id| id.rsplit_once('['))
+                        .is_some_and(|(base, _)| model_option(&initial, base).is_some())
+                });
+            }
+            // Browsing collects every model in one session. Creation can still
+            // validate just its submitted selection without repeating the catalog.
+            let selections: Vec<String> = match selected {
+                Some(selected) => available.iter().filter(|model| model.id == selected).map(|model| model.id.clone()).collect(),
+                None => available.iter().map(|model| model.id.clone()).collect(),
+            };
+            if selections.len() > 512 {
+                return Err(ModelError::new("unavailable", "Codex advertised too many models to inspect. Update the adapter and retry."));
+            }
+            let mut base_options = std::collections::HashMap::<String, Value>::new();
+            for selected in selections {
                 let session_id = initial["sessionId"].as_str().ok_or_else(|| {
                     ModelError::new("unavailable", "Codex did not return a session ID.")
                 })?;
-                let selection = tokio::time::timeout(Duration::from_secs(15), session.rpc(
-                    "session/set_config_option",
-                    json!({"sessionId":session_id,"configId":config_id,"value":selected}),
-                    "model",
-                )).await.map_err(|_| ModelError::new("model", "Codex model selection timed out.")).and_then(|result| result).and_then(|updated| {
-                    if option(&updated, "model").and_then(|o| o["currentValue"].as_str()) != Some(selected.as_str()) {
-                        return Err(ModelError::new("model", "Codex did not confirm the selected model."));
+                let selection = tokio::time::timeout(Duration::from_secs(15), async {
+                    // Buzz's legacy catalog includes model[effort] IDs. Discover
+                    // the base model's options before accepting the encoded effort.
+                    let legacy = model_option(&initial, &selected).is_none();
+                    let (base, encoded_effort) = if legacy {
+                        selected.strip_suffix(']').and_then(|value| value.rsplit_once('['))
+                            .map(|(model, effort)| (model, Some(effort)))
+                            .unwrap_or((&selected, None))
+                    } else { (selected.as_str(), None) };
+                    let config = model_option(&initial, base).ok_or_else(|| {
+                        ModelError::new("model", "Codex did not advertise configurable effort for this model.")
+                    })?;
+                    let config_id = config.get("configId").or_else(|| config.get("id"))
+                        .and_then(Value::as_str).ok_or_else(|| {
+                            ModelError::new("model", "Codex did not return a model configuration ID.")
+                        })?;
+                    let updated = if let Some(updated) = base_options.get(base) {
+                        updated.clone()
+                    } else {
+                        let updated = session.rpc(
+                            "session/set_config_option",
+                            json!({"sessionId":session_id,"configId":config_id,"value":base}),
+                            "model",
+                        ).await?;
+                        if model_option(&updated, base).and_then(|o| o["currentValue"].as_str()) != Some(base) {
+                            return Err(ModelError::new("model", "Codex did not confirm the selected model."));
+                        }
+                        base_options.insert(base.to_owned(), updated.clone());
+                        updated
+                    };
+                    if legacy {
+                        if let Some(effort) = encoded_effort {
+                            let advertised = option(&updated, "thought_level")
+                                .map(choices).transpose()?.unwrap_or_default();
+                            if !advertised.iter().any(|(value, _)| value == effort) {
+                                return Err(ModelError::new("effort", "Codex did not advertise this model's encoded effort."));
+                            }
+                        }
+                        session.rpc("session/set_model", json!({"sessionId":session_id,"modelId":selected}), "model").await?;
                     }
                     apply_effort(&mut available, &updated, &selected)
-                });
+                }).await.map_err(|_| ModelError::new("model", "Codex model selection timed out.")).and_then(|result| result);
                 if selection.is_err() {
                     if let Some(model) = available.iter_mut().find(|m| m.id == selected) {
                         model.effort = EffortOptions::Unknown;
@@ -290,6 +381,7 @@ mod unix {
             }
             Ok(Catalog {
                 integration: CatalogIntegration::Codex,
+                defaults: Some(defaults),
                 models: available,
                 discovery: Some(Discovery {
                     source: "codexAcp",
@@ -334,9 +426,10 @@ assert 'BUZZ_PRIVATE_KEY' not in os.environ
 for line in sys.stdin:
     request = json.loads(line)
     method = request['method']
-    model = {'id':'model', 'category':'model', 'currentValue':'first', 'options':[{'value':'first','name':'First'},{'value':'second','name':'Second'}]}
+    with open('calls', 'a') as calls: calls.write(method + '\n')
+    model = {'configId':'model', 'category':'model', 'currentValue':'first', 'options':[{'value':'first','name':'First'},{'value':'second','name':'Second'}]}
     if method == 'initialize': result = {'protocolVersion':1}
-    elif method == 'session/new': result = {'sessionId':'fixture', 'configOptions':[model]}
+    elif method == 'session/new': result = {'sessionId':'fixture', 'models': {'availableModels': [{'modelId':'second[high]', 'name':'Second (high)'}] if os.path.exists('legacy-model') else []}, 'configOptions':[model, {'id':'effort','category':'thought_level','currentValue':'low','options':[{'value':'low','name':'Low'}]}]}
     elif method == 'session/set_config_option':
         if os.path.exists('hold-selection'): time.sleep(120)
         if os.path.exists('reject-model'):
@@ -346,6 +439,9 @@ for line in sys.stdin:
         model['currentValue'] = request['params']['value']
         effort = 'low' if model['currentValue'] == 'first' else 'high'
         result = {'configOptions':[model, {'id':'effort','category':'thought_level','currentValue':effort,'options':[{'value':effort,'name':effort.title()}]}]}
+    elif method == 'session/set_model':
+        assert request['params']['modelId'] == 'second[high]'
+        result = {}
     else: raise AssertionError('Unexpected operation: ' + method)
     print(json.dumps({'jsonrpc':'2.0','id':request['id'],'result':result}), flush=True)
 "#).unwrap();
@@ -369,11 +465,136 @@ for line in sys.stdin:
         let context = Context::new(&harness, &environment, dir.path().to_str().unwrap()).unwrap();
         (dir, context)
     }
+    #[test]
+    fn catalog_matches_buzz_stable_then_legacy_order_and_first_id_wins() {
+        let response = json!({
+            "configOptions": [
+                {"category":"thought_level", "options":[{"value":"not-a-model"}]},
+                {"category":"model", "options":[
+                    {"value":"first", "displayName":"First stable", "name":"Other name"},
+                    {"value":"raw", "name":"Ignored like original Buzz"},
+                    {"value":"first", "displayName":"Duplicate"}]},
+                {"category":"model", "options":[{"value":"second", "displayName":"Second stable"}]}
+            ],
+            "models":{"availableModels":[
+                {"modelId":"first", "name":"Legacy duplicate"},
+                {"modelId":"second[high]", "name":"Second (high)"},
+                {"modelId":"second[high]", "name":"Duplicate"}
+            ]}
+        });
+        let catalog = models(&response).unwrap();
+        let pairs: Vec<_> = catalog
+            .iter()
+            .map(|m| (m.id.as_str(), m.name.as_str()))
+            .collect();
+        assert_eq!(
+            pairs,
+            [
+                ("first", "First stable"),
+                ("raw", "raw"),
+                ("second", "Second stable"),
+                ("second[high]", "Second (high)")
+            ]
+        );
+        assert_eq!(
+            models(&json!({"models":{"availableModels":[{"modelId":"legacy", "name":"Legacy"}]}}))
+                .unwrap()[0]
+                .id,
+            "legacy"
+        );
+        assert!(models(&json!({})).unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn complete_catalog_uses_one_session_and_one_probe_per_base_model() {
+        let (dir, context) = fixture(true);
+        std::fs::write(dir.path().join("legacy-model"), "").unwrap();
+        let catalog = discover(context, None).await.unwrap();
+        assert_eq!(
+            catalog
+                .models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
+        for (model, effort) in [("first", "low"), ("second", "high")] {
+            assert!(catalog
+                .validate_selection(
+                    model,
+                    &EffortSelection::Value {
+                        value: effort.into()
+                    }
+                )
+                .is_ok());
+        }
+        let calls = std::fs::read_to_string(dir.path().join("calls")).unwrap();
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|method| *method == "initialize")
+                .count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|method| *method == "session/new")
+                .count(),
+            1
+        );
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|method| *method == "session/set_config_option")
+                .count(),
+            2
+        );
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|method| *method == "session/set_model")
+                .count(),
+            0
+        );
+        let defaults = catalog.defaults.unwrap();
+        assert_eq!(defaults.model.as_deref(), Some("first"));
+        assert_eq!(defaults.effort.as_deref(), Some("low"));
+    }
+
+    #[tokio::test]
+    async fn legacy_effort_variant_is_selected_and_validated_through_real_transport() {
+        let (dir, context) = fixture(true);
+        std::fs::write(dir.path().join("legacy-model"), "").unwrap();
+        let catalog = execute(context, "second[high]".into()).await.unwrap();
+        assert_eq!(catalog.models.len(), 3);
+        assert_eq!(catalog.models[2].name, "Second (high)");
+        assert!(catalog
+            .validate_selection(
+                "second[high]",
+                &EffortSelection::Value {
+                    value: "high".into()
+                }
+            )
+            .is_ok());
+        assert!(catalog
+            .validate_selection(
+                "second[high]",
+                &EffortSelection::Value {
+                    value: "low".into()
+                }
+            )
+            .is_err());
+    }
+
     #[tokio::test]
     async fn real_transport_uses_login_and_selected_models_own_effort() {
         let (_dir, context) = fixture(true);
         let catalog = execute(context, "second".into()).await.unwrap();
         assert_eq!(catalog.models.len(), 2);
+        let defaults = catalog.defaults.as_ref().unwrap();
+        assert_eq!(defaults.model.as_deref(), Some("first"));
+        assert_eq!(defaults.effort.as_deref(), Some("low"));
         assert!(catalog
             .validate_selection(
                 "second",

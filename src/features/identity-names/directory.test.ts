@@ -1,14 +1,8 @@
 import { expect, it, vi } from "vitest";
-import type {
-  AgentControlState,
-  AgentView,
-} from "../../features/agents/control";
-import {
-  bindNames,
-  type NameSource,
-} from "../../features/identity-names/service";
+import type { AgentControlState, AgentView } from "../agents/control";
+import { bindNames, type NameSource } from "./service";
 import { npubEncode } from "nostr-tools/nip19";
-import { agentDirectory, createAgentDirectory } from "./directory";
+import { agentDirectory, createAgentDirectory } from "./testing";
 
 it("scopes native names to the session community and follows edits and disposal", () => {
   const key = "a".repeat(64);

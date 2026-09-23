@@ -13,10 +13,15 @@ export function resolveIdentityNames(
   viewer?: string,
   candidates?: readonly string[],
 ) {
+  viewer = viewer?.toLowerCase();
   const unique = new Map(
-    identities.map((row) => [row.pubkey.toLowerCase(), row]),
+    identities.map((row) => [
+      row.pubkey.toLowerCase(),
+      { ...row, ownerPubkey: row.ownerPubkey?.toLowerCase() },
+    ]),
   );
-  const selected = candidates && new Set(candidates);
+  const selected =
+    candidates && new Set(candidates.map((key) => key.toLowerCase()));
   const rows = [...unique]
     .filter(([key]) => !selected || selected.has(key))
     .map(([key, identity]) => {

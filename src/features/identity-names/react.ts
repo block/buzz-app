@@ -1,3 +1,4 @@
+import type { NamingIdentity } from "./policy";
 import { useSyncExternalStore, useCallback } from "react";
 import type { RelaySession } from "../relay/session";
 import type { IdentityNameView } from "./service";
@@ -15,10 +16,13 @@ export function useIdentityNames(names: IdentityNameView | undefined) {
       pubkey: string,
       fallback: string,
       candidates?: readonly string[],
+      displayFacts?: readonly NamingIdentity[],
     ): string => {
       // Invalidate memoized labels and completion choices on name changes.
       void revision;
-      return names?.resolve(pubkey, fallback, candidates) ?? fallback;
+      return (
+        names?.resolve(pubkey, fallback, candidates, displayFacts) ?? fallback
+      );
     },
     [names, revision],
   );

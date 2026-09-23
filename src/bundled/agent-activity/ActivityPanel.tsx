@@ -157,7 +157,11 @@ export function ActivityDetails({
                     label: "Observed agents",
                     options: agentChoices.map((key) => ({
                       value: key,
-                      label: `${resolveName(key, identities.get(key)?.name ?? "Agent")} · ${key.slice(0, 12)}…`,
+                      label: resolveName(
+                        key,
+                        identities.get(key)?.name ?? "Agent",
+                        agentChoices,
+                      ),
                     })),
                   },
                 ]}

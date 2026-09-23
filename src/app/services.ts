@@ -39,7 +39,7 @@ export function createServices() {
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const channelTemplates = new TemplateProvidersService(ctx);
-  const identityNames = new IdentityNamesService(ctx);
+  const identityNames = new IdentityNamesService(ctx, agentControl);
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",

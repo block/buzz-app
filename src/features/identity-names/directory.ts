@@ -1,7 +1,8 @@
-import { resolveIdentityNames } from "../../features/identity-names/policy";
-import type { NameProvider } from "../../features/identity-names/service";
-import type { AgentControl } from "../../features/agents/control";
-import { relayOrigin } from "../../features/communities/destination";
+import type { NamingIdentity } from "./policy";
+import type { NamingPolicy } from "./service";
+import type { NameProvider } from "./service";
+import type { AgentControl } from "../agents/control";
+import { relayOrigin } from "../communities/destination";
 
 function sameCommunity(left: string, right: string) {
   try {
@@ -12,7 +13,8 @@ function sameCommunity(left: string, right: string) {
 }
 
 /** Native configuration wins only in its community. Names never grant control. */
-export function createAgentDirectory(
+export function createNameProvider(
+  policy: NamingPolicy,
   control?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ): NameProvider {
   let cached:
@@ -23,20 +25,24 @@ export function createAgentDirectory(
       }
     | undefined;
   return {
-    id: "agents",
+    id: policy.id,
     ...(control ? { subscribe: control.subscribe } : {}),
     activate(source) {
       void control?.refresh();
       return source.agentLibrary.retain();
     },
-    resolve(source, pubkey, candidates) {
+    resolve(source, pubkey, candidates, displayFacts) {
       const key = pubkey.toLowerCase();
       const native = control?.snapshot();
       const relayUrl = source.relayUrl;
       const library = source.agentLibrary.snapshot();
       const profiles = source.profiles.snapshot();
       // Include the requested identity even for historical non-member references.
-      const selection = candidates && [...new Set([...candidates, key])].sort();
+      const selection =
+        candidates &&
+        [
+          ...new Set([...candidates, key].map((key) => key.toLowerCase())),
+        ].sort();
       const inputs = [
         library,
         native,
@@ -44,6 +50,7 @@ export function createAgentDirectory(
         relayUrl,
         source.viewer,
         selection?.join(":"),
+        displayFacts,
       ];
       if (
         !cached ||
@@ -71,7 +78,7 @@ export function createAgentDirectory(
             if (name) names.set(key, name);
           }
         }
-        const identities = new Map(
+        const identities = new Map<string, NamingIdentity>(
           [...profiles].map(([pubkey, profile]) => [
             pubkey,
             { pubkey, ...profile },
@@ -85,7 +92,13 @@ export function createAgentDirectory(
             isAgent: true,
           });
         }
-        const resolved = resolveIdentityNames(
+        // View-local labels (authored draft text or cross-community management rows)
+        // supplement display facts only; they never select recipients or grant control.
+        for (const fact of displayFacts ?? []) {
+          const key = fact.pubkey.toLowerCase();
+          identities.set(key, { ...identities.get(key), ...fact, pubkey: key });
+        }
+        const resolved = policy.resolve(
           [...identities.values()],
           source.viewer,
           selection,
@@ -99,11 +112,9 @@ export function createAgentDirectory(
       }
       return cached.names.get(key);
     },
-    qualifier(source, pubkey, candidates) {
-      this.resolve(source, pubkey, candidates);
+    qualifier(source, pubkey, candidates, displayFacts) {
+      this.resolve(source, pubkey, candidates, displayFacts);
       return cached?.suffixes.get(pubkey.toLowerCase());
     },
   };
 }
-
-export const agentDirectory = createAgentDirectory();

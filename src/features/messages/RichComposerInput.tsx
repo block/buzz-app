@@ -1,5 +1,7 @@
-import { useLayoutEffect, useMemo, useRef } from "react";
-import { publicKeyLabels } from "../../shared/identity/public-key";
+import { availableMentionAgents } from "../agents/mention-choices";
+import { useAgentChoices } from "../agents/use-choices";
+import { useLayoutEffect, useRef } from "react";
+import { useIdentityNames } from "../identity-names/react";
 import { InlineChip } from "../../shared/design-system/ui/InlineChip";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { CustomEmoji } from "../relay/emoji";
@@ -24,6 +26,7 @@ export function RichComposerInput({
   channelId,
   extensions,
   emoji,
+  inviteAgents = false,
   ...input
 }: EditableInputProps & {
   draft: MentionDraft;
@@ -32,6 +35,7 @@ export function RichComposerInput({
   channelId: string;
   extensions: ConversationExtensions | undefined;
   emoji: readonly CustomEmoji[];
+  inviteAgents?: boolean;
 }) {
   const directory = useReferenceDirectory(session);
   const profiles = new Map(directory.profiles);
@@ -40,57 +44,53 @@ export function RichComposerInput({
       ...profiles.get(recipient.pubkey),
       name: recipient.name,
     });
-  const qualifiers = useMemo(() => {
-    // Presentation groups authored names, never resolves notification identity.
-    const nameKeys = new Map<string, Set<string>>();
-    for (const recipient of draft.recipients) {
-      const name = draft.text
-        .slice(recipient.start + 1, recipient.end)
-        .trim()
-        .toLowerCase();
-      const keys = nameKeys.get(name) ?? new Set<string>();
-      keys.add(recipient.pubkey);
-      nameKeys.set(name, keys);
-    }
-    const result = new Map<string, ReadonlyMap<string, string>>();
-    for (const [name, keys] of nameKeys)
-      if (keys.size > 1) result.set(name, publicKeyLabels(keys));
-    return result;
-  }, [draft]);
-  const previous = useRef({ draft, qualifiers });
-  // Composer is keyed by draft destination. Restored qualifiers start at rest.
-  const revealed = useRef(
-    new Set(
-      [...qualifiers].flatMap(([name, keys]) =>
-        [...keys.keys()].map((key) => `${name}:${key}`),
-      ),
-    ),
+  const resolveName = useIdentityNames(session.names);
+  const agents = useAgentChoices(session, inviteAgents);
+  const channel = directory.channels.find(
+    (channel) => channel.id === channelId,
   );
-  const reveal = useMemo(() => {
-    const reveal = new Set<string>();
-    if (previous.current.draft !== draft) {
-      for (const recipient of previous.current.draft.recipients) {
-        const name = previous.current.draft.text
-          .slice(recipient.start + 1, recipient.end)
-          .trim()
-          .toLowerCase();
-        const identity = `${name}:${recipient.pubkey}`;
-        if (
-          !previous.current.qualifiers.has(name) &&
-          qualifiers.has(name) &&
-          !revealed.current.has(identity)
-        )
-          reveal.add(identity);
-      }
-    }
-    return reveal;
-  }, [draft, qualifiers]);
+  const available = availableMentionAgents(
+    channel,
+    agents.identities,
+    inviteAgents,
+    session.outbox?.supports(9000),
+  );
+  const candidates = [
+    ...new Set([
+      ...(channel?.members ?? []),
+      ...available.map((agent) => agent.pubkey),
+      ...(inviteAgents ? agents.identities.map((agent) => agent.pubkey) : []),
+      ...draft.recipients.map((recipient) => recipient.pubkey),
+    ]),
+  ];
+  const displayFacts = draft.recipients
+    .filter((recipient) => !session.names?.lookup(recipient.pubkey, candidates))
+    .map((recipient) => ({
+      pubkey: recipient.pubkey,
+      name: recipient.name,
+    }));
+  const qualifiers = new Map(
+    draft.recipients.map((recipient) => [
+      recipient.pubkey,
+      session.names?.lookup(recipient.pubkey, candidates, displayFacts)
+        ?.qualifier,
+    ]),
+  );
+  const labels = new Map(
+    draft.recipients.map((recipient) => [
+      recipient.pubkey,
+      resolveName(recipient.pubkey, recipient.name, candidates, displayFacts),
+    ]),
+  );
+  const previous = useRef(labels);
+  const revealed = useRef(
+    new Set([...qualifiers].filter(([, suffix]) => suffix).map(([key]) => key)),
+  );
   useLayoutEffect(() => {
-    previous.current = { draft, qualifiers };
+    previous.current = labels;
     if (!draft.text) revealed.current.clear();
-    // A qualifier shown at rest is already revealed too; either namesake may be removed.
-    for (const [name, keys] of qualifiers)
-      for (const key of keys.keys()) revealed.current.add(`${name}:${key}`);
+    for (const [key, suffix] of qualifiers)
+      if (suffix) revealed.current.add(key);
   });
   function decorationsFor(draft: MentionDraft) {
     const doc = readComposerSnapshot(draft.document);
@@ -171,9 +171,11 @@ export function RichComposerInput({
       .sort((a, b) => a.start - b.start)
       .map(({ start, end, mention, editAsText }) => {
         const label = draft.text.slice(start + 1, end);
-        const qualifier = mention
-          ? qualifiers.get(label.trim().toLowerCase())?.get(mention)
-          : undefined;
+      const resolved = mention ? (labels.get(mention) ?? label) : label;
+      const qualifier = mention ? qualifiers.get(mention) : undefined;
+      const faceLabel = qualifier
+        ? resolved.slice(0, -(qualifier.length + 3))
+        : resolved;
         return {
           start,
           end,
@@ -189,7 +191,7 @@ export function RichComposerInput({
                 id: mention,
               }}
               face={{
-                label,
+                label: faceLabel,
                 loading: false,
                 resolved: true,
               }}
@@ -197,10 +199,11 @@ export function RichComposerInput({
                 qualifier
                   ? {
                       text: `· ${qualifier}`,
-                      reveal: reveal.has(
-                        `${label.trim().toLowerCase()}:${mention}`,
-                      ),
-                      accessibleLabel: `public key ending ${qualifier.slice("npub…".length).split("").join(" ")}`,
+                      reveal:
+                        previous.current.has(mention) &&
+                        previous.current.get(mention) !== resolved &&
+                        !revealed.current.has(mention),
+                      accessibleLabel: `public key ending ${qualifier.split("").join(" ")}`,
                     }
                   : undefined
               }

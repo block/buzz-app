@@ -1,4 +1,7 @@
-import { useIdentityNames } from "../identity-names/react";
+import {
+  useChannelIdentityNames,
+  useIdentityNames,
+} from "../identity-names/react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
@@ -48,7 +51,6 @@ function PreviewContent({
   session: RelaySession;
   messageId: string;
 }) {
-  const resolveName = useIdentityNames(session.names);
   const snapshot = useSyncExternalStore(
     view.subscribe,
     view.snapshot,
@@ -59,6 +61,8 @@ function PreviewContent({
   const message =
     target ??
     [snapshot.root, ...snapshot.replies].find((row) => row?.id === messageId);
+  const resolveName = useChannelIdentityNames(session, message?.channelId);
+  const identityName = useIdentityNames(session.names);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -108,7 +112,11 @@ function PreviewContent({
     channel?.channelType === "dm" && channel.participants
       ? channel.participants
           .map((id) =>
-            resolveName(id, profiles.get(id)?.name ?? id.slice(0, 10)),
+            identityName(
+              id,
+              profiles.get(id)?.name ?? id.slice(0, 10),
+              channel.participants,
+            ),
           )
           .join(", ") || "Notes to self"
       : (channel?.name ?? "Channel unavailable");

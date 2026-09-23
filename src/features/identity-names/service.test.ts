@@ -5,7 +5,7 @@ import { Context } from "@deepseek-ai/cordis";
 import { PluginRuntime } from "../../plugins/runtime";
 import { createRelaySession } from "../relay/session";
 import { createAgentLibrary } from "../agents/library";
-import { agentDirectory } from "../../bundled/agents/directory";
+import { agentDirectory, defaultNamingPolicy } from "./testing";
 import { IdentityNamesService, bindNames, type NameSource } from "./service";
 
 const key = "ab".repeat(32);
@@ -78,8 +78,8 @@ it("rebinds a live name view on plugin replacement and disable", async () => {
     inject: ["identityNames"],
     apply: (scope) =>
       scope.identityNames.register({
-        ...agentDirectory,
-        resolve: () => plugin.revision,
+        ...defaultNamingPolicy,
+        resolve: () => new Map([[key, { name: plugin.revision }]]),
       }),
   }));
   const names = new IdentityNamesService(ctx);
@@ -162,7 +162,7 @@ it("uses each real session's viewer for human and owned-agent collisions", async
   const ctx = new Context();
   const runtime = new PluginRuntime(ctx, async () => ({
     inject: ["identityNames"],
-    apply: (scope) => scope.identityNames.register(agentDirectory),
+    apply: (scope) => scope.identityNames.register(defaultNamingPolicy),
   }));
   const names = new IdentityNamesService(ctx);
   runtime.reconcile([
@@ -214,6 +214,53 @@ it("uses each real session's viewer for human and owned-agent collisions", async
     expect(first.resolve(mine.pubkey)).toBe("Honey");
   } finally {
     for (const owner of sessions) owner.dispose();
+    await runtime.dispose();
+    await ctx.fiber.dispose();
+  }
+});
+
+it("rejects a second policy until the current plugin is explicitly disabled", async () => {
+  const ctx = new Context();
+  const runtime = new PluginRuntime(ctx, async (plugin) => ({
+    inject: ["identityNames"],
+    apply(scope) {
+      scope.identityNames.register({
+        id: plugin.manifest.id,
+        resolve: () => new Map([[key, { name: plugin.manifest.id }]]),
+      });
+    },
+  }));
+  const service = new IdentityNamesService(ctx);
+  const owner = createRelaySession(null, { identityNames: service });
+  const plugin = (id: string) => ({
+    manifest: { id, name: id, apiVersion: 1 as const },
+    source: "bundled" as const,
+    enabled: true,
+    reloadable: false,
+    revision: "one",
+    previous: null,
+    error: null,
+  });
+  try {
+    runtime.reconcile([plugin("test.first")]);
+    await vi.waitFor(() =>
+      expect(owner.session.names.resolve(key)).toBe("test.first"),
+    );
+    runtime.reconcile([plugin("test.first"), plugin("test.second")]);
+    await vi.waitFor(() =>
+      expect(runtime.snapshot()["test.second"]?.status).toBe("failed"),
+    );
+    expect(owner.session.names.resolve(key)).toBe("test.first");
+    runtime.reconcile([]);
+    await vi.waitFor(() =>
+      expect(owner.session.names.resolve(key)).toBeUndefined(),
+    );
+    runtime.reconcile([plugin("test.second")]);
+    await vi.waitFor(() =>
+      expect(owner.session.names.resolve(key)).toBe("test.second"),
+    );
+  } finally {
+    owner.dispose();
     await runtime.dispose();
     await ctx.fiber.dispose();
   }

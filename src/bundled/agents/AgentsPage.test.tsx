@@ -1,3 +1,5 @@
+import { bindNames } from "../../features/identity-names/service";
+import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
@@ -96,6 +98,12 @@ function setup(
   };
   const control = createAgentControl(mode === "browser" ? null : f.host);
   disposals.push(() => control.dispose());
+  const names = bindNames(session, {
+    snapshot: () => [createAgentDirectory(control)],
+    subscribe: () => () => {},
+  });
+  snapshot = { ...snapshot, session: { ...session, names } };
+  disposals.push(() => names.dispose());
   render(<AgentsPage relay={relay} control={control} />);
   return {
     f,
@@ -764,4 +772,39 @@ it("shows Retry after persistent or genuine read failure without hiding the erro
   });
   expect(f.host.snapshot).toHaveBeenCalledTimes(22);
   expect(screen.getByRole("button", { name: "Retry status" })).toBeVisible();
+});
+
+it("qualifies management identities while keeping configured names and edit targets exact", async () => {
+  const { f } = setup("ready", (fixture) => {
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "namesake",
+      pubkey: "bb".repeat(32),
+    });
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("article", { name: /^Agent Fixture agent · / }),
+    ).toHaveLength(3),
+  );
+  const cards = screen.getAllByRole("article", {
+    name: /^Agent Fixture agent · /,
+  });
+  expect(cards).toHaveLength(3);
+  // The complete public key remains in technical details, not the display heading.
+  expect(
+    new Set(cards.map((entry) => entry.getAttribute("aria-label"))).size,
+  ).toBe(2);
+  const user = userEvent.setup();
+  const firstCard = cards[0];
+  if (!firstCard) throw Error("Missing managed card");
+  await user.click(
+    within(firstCard).getByRole("button", {
+      name: /^Actions for Fixture agent · /,
+    }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText(/^Fixture agent · /)).toBeVisible();
+  expect(within(dialog).getByLabelText("Name")).toHaveValue(f.agent.name);
 });

@@ -122,3 +122,26 @@ it("does not treat missing viewer and missing owner as a match", () => {
   expect(resolved.get(a)?.name).toBe("Honey");
   expect(resolved.get(b)?.name).toBe("Wes’s Honey");
 });
+
+it("normalizes viewer, owner, candidates and repeated keys at the API boundary", () => {
+  const viewer = "d".repeat(64);
+  const identities = [
+    person(viewer, "Logan"),
+    agent(a, viewer.toUpperCase()),
+    agent(b, wes),
+    person(wes, "Wes"),
+  ];
+  const names = resolveIdentityNames(identities, viewer.toUpperCase(), [
+    a.toUpperCase(),
+    b.toUpperCase(),
+  ]);
+  expect(names.get(a)?.name).toBe("Honey");
+  expect(names.get(b)?.name).toBe("Wes’s Honey");
+  expect(names.size).toBe(2);
+  expect(
+    resolveIdentityNames(
+      [person(viewer, "Alex"), person(a, "Alex")],
+      viewer.toUpperCase(),
+    ).get(viewer)?.name,
+  ).toBe("Alex");
+});

@@ -94,7 +94,7 @@ test("typing after an unchanged agent prefill does not consume a stale caret com
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
-    .getByRole("button", { name: `Honey ${agent}`, exact: true })
+    .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
     .click();
   await expect(input).toHaveJSProperty("value", "@Honey ");
   await expect(input).toBeFocused();
@@ -140,7 +140,7 @@ test("focus during the first edit after send preserves the advanced native caret
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
   await page
-    .getByRole("button", { name: `Honey ${agent}`, exact: true })
+    .getByRole("button", { name: `Honey (agent) ${agent}`, exact: true })
     .click();
   await expect(input).toHaveJSProperty("value", "@Honey ");
   await page.keyboard.type("hello");

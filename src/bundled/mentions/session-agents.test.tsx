@@ -13,7 +13,7 @@ import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
 import { bindNames } from "../../features/identity-names/service";
-import { createAgentDirectory } from "../agents/directory";
+import { createAgentDirectory } from "../../features/identity-names/testing";
 import type {
   AgentControlState,
   AgentView,

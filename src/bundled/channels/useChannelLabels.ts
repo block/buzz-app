@@ -57,7 +57,11 @@ export function useChannelLabels(
         const name = channel.participants.length
           ? channel.participants
               .map((id) =>
-                resolveName(id, profiles.get(id)?.name ?? id.slice(0, 10)),
+                resolveName(
+                  id,
+                  profiles.get(id)?.name ?? id.slice(0, 10),
+                  channel.participants,
+                ),
               )
               .join(", ")
           : "Notes to self";

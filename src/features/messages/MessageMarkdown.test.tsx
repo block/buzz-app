@@ -24,7 +24,7 @@ import styles from "./Messages.module.css";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 import { MessageMarkdown } from "./MessageMarkdown";
 import { createRelaySession } from "../relay/session";
-import { createAgentDirectory } from "../../bundled/agents/directory";
+import { createAgentDirectory } from "../identity-names/testing";
 import { bindNames } from "../identity-names/service";
 import * as messageContent from "../relay/message-content";
 import { MAX_MARKDOWN_LENGTH, safeMessageUrl } from "../relay/message-content";

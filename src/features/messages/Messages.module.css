@@ -73,6 +73,7 @@
   flex: 1;
 }
 .message {
+  position: relative;
   display: flex;
   gap: var(--space-4);
   padding: var(--space-2) 0 var(--space-section-gap);
@@ -1073,4 +1074,37 @@ button.mediaPreview {
 }
 .mediaReviewUnavailable {
   color: var(--text-inverse);
+}
+
+.messageActions {
+  @apply popover-surface;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  max-width: 100%;
+  width: fit-content;
+  gap: var(--space-half);
+  padding: var(--space-half);
+  margin-inline-start: auto;
+}
+.messageActionNotice {
+  margin: var(--space-1) 0;
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  color: var(--text-subtle);
+}
+@media (hover: hover) and (pointer: fine) and (min-width: 640px) {
+  .messageActions {
+    position: absolute;
+    inset-inline-end: 0;
+    top: 0;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .message:hover .messageActions,
+  .message:focus-within .messageActions,
+  .messageActions[data-open] {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }

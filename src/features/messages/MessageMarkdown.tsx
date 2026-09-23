@@ -230,7 +230,7 @@ function remarkInlineContent(protectedContent: ProtectedContent) {
 }
 
 const transformUrl: UrlTransform = (value) =>
-  parseBuzzLink(value) ? value : safeMessageUrl(value);
+  parseBuzzLink(value) || profileKey(value) ? value : safeMessageUrl(value);
 const labelText = (children: ReactNode): string =>
   Children.toArray(children)
     .map((child) =>
@@ -408,6 +408,46 @@ function PreparedMessageMarkdown({
       ),
     [prepared.content, prepared.literalRanges, protectionKey],
   );
+  // Explicit profile links are identity locators, not signed notification intent.
+  // Reuse the same control and availability gate as bound prose mentions.
+  const renderProfile = (text: unknown, target: unknown) => {
+    const key = typeof target === "string" ? profileKey(target) : undefined;
+    const agent =
+      !!key &&
+      (directory.agents.some((agent) => agent.pubkey === key) ||
+        (participantProfiles ?? directory.profiles).get(key)?.isAgent);
+    const clickable =
+      interactive && typeof target === "string" && !!canOpenLink?.(target);
+    if (
+      typeof text === "string" &&
+      typeof target === "string" &&
+      (!interactive || clickable || agent)
+    ) {
+      const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
+      const Icon = agent ? RobotIcon : AtIcon;
+      const Mention = clickable ? "button" : "span";
+      return (
+        <Mention
+          type={clickable ? "button" : undefined}
+          className={referenceStyles.link}
+          data-mention-kind={agent ? "agent" : "person"}
+          aria-label={clickable ? `View ${label} profile` : undefined}
+          onClick={
+            clickable
+              ? (event) => {
+                  event.currentTarget.focus();
+                  onOpenLink(target);
+                }
+              : undefined
+          }
+        >
+          <Icon aria-hidden="true" className={referenceStyles.icon} />
+          {label}
+        </Mention>
+      );
+    }
+    return undefined;
+  };
   const components: MessageComponents = {
     p: ({ node: _node, ...props }) => (
       <p
@@ -416,8 +456,18 @@ function PreparedMessageMarkdown({
         data-single-emoji={largeEmoji || undefined}
       />
     ),
-    a: ({ href, children }) =>
-      href ? (
+    a: ({ href, children }) => {
+      if (href && profileKey(href)) {
+        const label = labelText(children);
+        if (!interactive || !canOpenLink?.(href))
+          return (
+            <span>
+              {children} ({href})
+            </span>
+          );
+        return renderProfile(label.startsWith("@") ? label : `@${label}`, href);
+      }
+      return href ? (
         renderLink(
           href,
           labelText(children) === href ? undefined : labelText(children),
@@ -425,7 +475,8 @@ function PreparedMessageMarkdown({
         )
       ) : (
         <span>{children}</span>
-      ),
+      );
+    },
     img: ({ node: _node, alt }) =>
       alt ? <span className={styles.imageAlt}>{alt}</span> : null,
     span: ({ node: _node, children, ...props }) => {
@@ -434,41 +485,8 @@ function PreparedMessageMarkdown({
           "data-inline-text"?: unknown;
           "data-profile-target"?: unknown;
         };
-      const key = typeof target === "string" ? profileKey(target) : undefined;
-      const agent =
-        !!key &&
-        (directory.agents.some((agent) => agent.pubkey === key) ||
-          (participantProfiles ?? directory.profiles).get(key)?.isAgent);
-      const clickable =
-        interactive && typeof target === "string" && !!canOpenLink?.(target);
-      if (
-        typeof text === "string" &&
-        typeof target === "string" &&
-        (!interactive || clickable || agent)
-      ) {
-        const label = key ? resolveName(key, text.slice(1)) : text.slice(1);
-        const Icon = agent ? RobotIcon : AtIcon;
-        const Mention = clickable ? "button" : "span";
-        return (
-          <Mention
-            type={clickable ? "button" : undefined}
-            className={referenceStyles.link}
-            data-mention-kind={agent ? "agent" : "person"}
-            aria-label={clickable ? `View ${label} profile` : undefined}
-            onClick={
-              clickable
-                ? (event) => {
-                    event.currentTarget.focus();
-                    onOpenLink(target);
-                  }
-                : undefined
-            }
-          >
-            <Icon aria-hidden="true" className={referenceStyles.icon} />
-            {label}
-          </Mention>
-        );
-      }
+      const profile = renderProfile(text, target);
+      if (profile) return profile;
       return typeof text === "string" ? (
         renderText(text)
       ) : (

@@ -395,14 +395,14 @@ it("creates an ordinary stream with explicit visibility and optional description
       ["ttl", "604800"],
     ],
   });
-  expect(() =>
-    test.service.createChannel(
-      id,
-      "Not a session",
-      "private",
-      SESSION_CHANNEL_DESCRIPTION,
-    ),
-  ).toThrow(/different channel description/);
+  for (const description of [
+    SESSION_CHANNEL_DESCRIPTION,
+    "Buzz session (notes)",
+  ]) {
+    expect(() =>
+      test.service.createChannel(id, "Not a session", "private", description),
+    ).toThrow(/different channel description/);
+  }
   expect(test.outbox.send).toHaveBeenCalledTimes(3);
   expect(() => test.service.createChannel(id, " ", "open")).toThrow(/name/);
   expect(() =>

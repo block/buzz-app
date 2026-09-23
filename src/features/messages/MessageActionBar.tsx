@@ -82,7 +82,7 @@ export function MessageActionBar({
         )}
         <IconButton
           aria-label="Copy link"
-          title={link ? "Copy link" : "Message link unavailable until delivery"}
+          title={link ? "Copy link" : "Message link unavailable"}
           size="sm"
           disabled={!link || copying}
           icon={<LinkIcon />}

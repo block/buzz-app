@@ -78,7 +78,7 @@ it("copies a scoped channel or DM message link with its thread hint but no viewe
   expect(link).not.toContain(person);
 });
 it("does not create links for pending, failed, unavailable or malformed targets", () => {
-  for (const delivery of ["queued", "failed", "sending"] as const)
+  for (const delivery of ["unknown", "failed", "sending"] as const)
     expect(
       messageCopyLink({ ...row, delivery }, `https://relay.test:${person}`),
     ).toBeUndefined();

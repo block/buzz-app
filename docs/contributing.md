@@ -47,6 +47,14 @@ need their own validation.
 - `just web [args...]`: install locked dependencies and forward arguments to Vite,
   e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
   (default: 1430) or the next available port, allowing parallel browser development.
+  Use `just web profile` for opt-in Chromium and broker CPU profiles. Profiling
+  binds only `127.0.0.1`; wildcard, hostname, and IPv6 `--host` values are rejected
+  so the captured page and development broker have one unambiguous owner. Use
+  `just web profile --network` to additionally record sanitized browser network
+  metadata in `network.json`; payloads, cookies, authorization headers, query strings,
+  fragments, and WebSocket frame data are omitted. Press Ctrl+C to finalize the
+  capture; the command prints the `.profiles/...-web` output directory. Load
+  `.cpuprofile` files in Chromium DevTools (**Performance** > **Load profile**).
 - `just desktop [args...]`: install locked dependencies and forward arguments to
   Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
   builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
@@ -61,6 +69,13 @@ need their own validation.
   implicit runner arguments. Explicit `--config` arguments merge afterward and can
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
+  On macOS, `just desktop profile` uses Instruments' Time Profiler to launch and
+  record only the Buzz native parent process, not every process on the desktop.
+  WebKit subprocesses and the Vite broker are outside this native trace; use web
+  profiling when renderer/broker CPU coverage is required. Native file watching is
+  disabled during capture. Press Ctrl+C to finalize and validate the trace; the
+  path, which opens in Instruments. Use `just profile-clean` to remove all generated
+  web and desktop captures.
 - `just design [args...]`: install locked dependencies, start the standalone
   design-system viewer, and open it in your browser. Arguments pass through to
   Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port

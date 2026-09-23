@@ -1,3 +1,4 @@
+import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
@@ -9,7 +10,13 @@ import { rememberAgentsPreference } from "./mention-preferences";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
 import { TypingIndicator } from "./TypingIndicator";
-import { ArrowUpIcon, XIcon } from "../../shared/design-system/icons/index";
+import {
+  ArrowUpIcon,
+  PaperclipIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
+import { ComposerAttachments } from "./ComposerAttachments";
+import { useAttachmentDraft } from "./attachment-draft";
 import {
   useEffect,
   useId,
@@ -214,6 +221,41 @@ function Composer({
     return true;
   };
   const [error, setError] = useState<string>();
+  const attachments = useAttachmentDraft(
+    session,
+    `${scope}:${draftKey}`,
+    channelId,
+  );
+  const picker = useRef<HTMLInputElement>(null);
+  const form = useRef<HTMLFormElement>(null);
+  const canAttach = !submission && !!session.attachments;
+  useEffect(() => {
+    if (disabled) attachments.store.cancel();
+  }, [disabled, attachments.store]);
+  const dragging = useFileDrop(
+    form,
+    canAttach && !editingDisabled,
+    attachFiles,
+  );
+  function attachFiles(files: readonly File[]) {
+    if (editingDisabled || !files.length) return;
+    if (!canAttach) {
+      setError(
+        submission
+          ? "Create this conversation before attaching files."
+          : "Uploads are unavailable on this connection.",
+      );
+      return;
+    }
+    try {
+      attachments.store.add(files);
+      setError(undefined);
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Could not attach files.",
+      );
+    }
+  }
   const outbox = session.outbox;
   const emojiCatalog = useSyncExternalStore(
     session.emoji.subscribe,
@@ -421,7 +463,8 @@ function Composer({
       admission.current ||
       submission?.disabled ||
       (!submission && (input.current?.readOnly || input.current?.disabled)) ||
-      !draft.trim() ||
+      (!draft.trim() && !attachments.items.length) ||
+      attachments.blocked ||
       sendAttempt.current ||
       !outbox
     )
@@ -429,6 +472,7 @@ function Composer({
     const attempt = new AbortController();
     sendAttempt.current = attempt;
     const captured = valueRef.current;
+    const capturedAttachments = attachments.store.snapshot();
     try {
       if (submission) {
         submission.submit(captured);
@@ -461,14 +505,28 @@ function Composer({
         }
       }
       attempt.signal.throwIfAborted();
-      if (valueRef.current !== captured) return;
+      if (
+        valueRef.current !== captured ||
+        attachments.store.snapshot() !== capturedAttachments
+      )
+        return;
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, captured.text)
           : captured.text;
+      const uploaded = capturedAttachments.flatMap((item) =>
+        item.uploaded ? [item.uploaded] : [],
+      );
       const id = threadRootId
-        ? session.messages.reply(channelId, threadRootId, content, recipients)
-        : session.messages.send(channelId, content, recipients);
+        ? session.messages.reply(
+            channelId,
+            threadRootId,
+            content,
+            recipients,
+            uploaded,
+          )
+        : session.messages.send(channelId, content, recipients, uploaded);
+      attachments.store.clear();
       onSend?.(id);
       completion.invalidate();
       clearMediaTime?.();
@@ -553,7 +611,19 @@ function Composer({
     <>
       {accessories}
       <form
+        ref={form}
         className={styles.composer}
+        data-file-drag={dragging || undefined}
+        onPasteCapture={(event) => {
+          const files = Array.from(event.clipboardData.items)
+            .filter((item) => item.kind === "file")
+            .map((item) => item.getAsFile())
+            .filter((file): file is File => file !== null);
+          if (!files.length) return;
+          event.preventDefault();
+          event.stopPropagation();
+          attachFiles(files);
+        }}
         aria-label={
           threadRootId ? "Reply to thread" : `Send a message to ${channelName}`
         }
@@ -586,6 +656,14 @@ function Composer({
           />
         )}
         {sending && <p role="status">Adding agent to this channel…</p>}
+        {dragging && <p role="status">Drop files to attach</p>}
+        <ComposerAttachments
+          media={session.media}
+          items={attachments.items}
+          disabled={editingDisabled}
+          remove={attachments.store.remove}
+          retry={attachments.store.retry}
+        />
         <div className={styles.composerInput}>
           <RichComposerInput
             ref={input}
@@ -698,6 +776,30 @@ function Composer({
           )}
         <div className={styles.composerActions}>
           <div className={styles.composerTools}>
+            {canAttach && (
+              <>
+                <input
+                  ref={picker}
+                  type="file"
+                  multiple
+                  hidden
+                  aria-label="Choose attachments"
+                  onChange={(event) => {
+                    attachFiles(Array.from(event.currentTarget.files ?? []));
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <IconButton
+                  size="sm"
+                  type="button"
+                  aria-label="Attach files"
+                  title="Attach files"
+                  disabled={editingDisabled}
+                  onClick={() => picker.current?.click()}
+                  icon={<PaperclipIcon size={16} />}
+                />
+              </>
+            )}
             {extensions ? (
               <ComposerTools
                 registry={extensions.tools}
@@ -742,7 +844,8 @@ function Composer({
               admitting ||
               sending ||
               submission?.disabled ||
-              !draft.trim()
+              attachments.blocked ||
+              (!draft.trim() && !attachments.items.length)
             }
             icon={<ArrowUpIcon size={16} />}
           />

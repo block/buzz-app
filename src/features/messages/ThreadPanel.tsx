@@ -20,6 +20,7 @@ import { useRowProfiles } from "../relay/react";
 import { MessageRow } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
+import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { useReading } from "./use-reading";
 import { useMessageReveal } from "./use-message-reveal";
 import type { PageNavigation } from "../navigation/service";
@@ -52,6 +53,9 @@ export function ThreadPanel(props: ThreadPanelProps) {
   return (
     <aside
       className={styles.thread}
+      data-attachment-drop-zone=""
+      onDragOver={rejectUnhandledFileDrop}
+      onDrop={rejectUnhandledFileDrop}
       aria-label="Thread"
       onKeyDown={(event) => {
         if (event.key === "Escape") {

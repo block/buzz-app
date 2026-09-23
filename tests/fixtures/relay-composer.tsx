@@ -1,5 +1,6 @@
 // Local-only browser fixture. Every event is signed with ephemeral test keys; no network relay.
 import { createRoot } from "react-dom/client";
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import { Context } from "@deepseek-ai/cordis";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import { PanelsService } from "../../src/features/panels/service";
@@ -25,6 +26,8 @@ const viewer = keypair(),
 const confirmed: RelayEvent[] = [];
 const rejected = new Set<string>();
 let saved: readonly OutgoingEvent[] = [];
+const attachmentSources = new Map<string, string>();
+const attachmentOrigin = "https://attachments.invalid";
 const root = new Context();
 root.provide("pluginStatus", {
   isActive: () => true,
@@ -34,7 +37,36 @@ const owner = createRelaySession(
   {
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
-    media: () => undefined,
+    scope: attachmentOrigin,
+    media: (url) => attachmentSources.get(url),
+    ...(new URLSearchParams(location.search).has("attachments")
+      ? {
+          async uploadAttachment(file: File, signal: AbortSignal) {
+            const digest = await crypto.subtle.digest(
+              "SHA-256",
+              await file.arrayBuffer(),
+            );
+            signal.throwIfAborted();
+            const sha256 = Array.from(new Uint8Array(digest), (byte) =>
+              byte.toString(16).padStart(2, "0"),
+            ).join("");
+            const url = `${attachmentOrigin}/media/${sha256}`;
+            attachmentSources.set(
+              url,
+              /^(image|video)\//.test(file.type)
+                ? URL.createObjectURL(file)
+                : `/api/relay/media?url=${encodeURIComponent(url)}`,
+            );
+            return {
+              name: file.name,
+              url,
+              size: file.size,
+              type: file.type || "application/octet-stream",
+              sha256,
+            };
+          },
+        }
+      : {}),
     async query(filters) {
       const filter = filters[0];
       if (!filter) throw new Error("Missing fixture query filter");
@@ -98,11 +130,13 @@ const data = {
 const container = document.getElementById("root");
 if (!container) throw new Error("Missing fixture root");
 createRoot(container).render(
-  <div style={{ height: "100vh" }}>
-    <ChannelsPage
-      relay={data}
-      panels={new PanelsService(root)}
-      pages={new PagesService(root)}
-    />
-  </div>,
+  <ToastProvider>
+    <div style={{ height: "100vh" }}>
+      <ChannelsPage
+        relay={data}
+        panels={new PanelsService(root)}
+        pages={new PagesService(root)}
+      />
+    </div>
+  </ToastProvider>,
 );

@@ -32,8 +32,13 @@ async function harness(respond) {
     identity: () => key.slice(),
     authority: async () => ({ relayAuthor: getPublicKey(key) }),
     upstreamFetch: async (url, init) => {
-      calls.push({ url: String(url), init });
-      return respond(String(url), init);
+      // Consume the real streaming request before the fake relay returns a descriptor.
+      const received = init.body
+        ? Buffer.concat(await Array.fromAsync(init.body))
+        : undefined;
+      const observed = { ...init, body: received };
+      calls.push({ url: String(url), init: observed });
+      return respond(String(url), observed);
     },
   });
   await plugin.configureServer({
@@ -85,7 +90,7 @@ test("binary upload signs exact bytes for the captured community; existing proxy
       expect(init.headers["X-SHA-256"]).toBe(descriptor(bytes).sha256);
       expect(auth.tags).toContainEqual([
         "expiration",
-        String(auth.created_at + 300),
+        String(auth.created_at + Math.ceil(UPLOAD_TIMEOUT_MS / 1000) + 60),
       ]);
       return Response.json(descriptor(bytes, other));
     }
@@ -331,10 +336,14 @@ test("two in-flight uploads bound admission; disconnect cancels upstream and fre
 test("declared and streamed request budgets reject before signing or forwarding", async () => {
   const forward = vi.fn();
   for (const declared of [true, false]) {
-    const req = Readable.from([
-      Buffer.alloc(UPLOAD_MAX_BYTES),
-      Buffer.from("x"),
-    ]);
+    const req = Readable.from(
+      (function* () {
+        const chunk = Buffer.alloc(1024 * 1024);
+        for (let size = 0; size < UPLOAD_MAX_BYTES; size += chunk.length)
+          yield chunk;
+        yield Buffer.from("x");
+      })(),
+    );
     req.headers = declared
       ? { "content-length": String(UPLOAD_MAX_BYTES + 1) }
       : {};
@@ -373,3 +382,41 @@ test("the whole-operation timeout aborts a stalled body without forwarding", asy
     req.destroy();
   }
 });
+
+test.each(["application/pdf", "text/html"])(
+  "keeps range headers on inert %s downloads",
+  async (type) => {
+    const bytes = Buffer.from("partial");
+    const h = await harness((url, init) => {
+      expect(url).toBe(`${relay}/media/document.bin`);
+      expect(init.headers.Range).toBe("bytes=3-9");
+      return new Response(bytes, {
+        status: 206,
+        headers: {
+          "Content-Type": type,
+          "Content-Range": "bytes 3-9/20",
+          "Content-Length": String(bytes.length),
+          "Accept-Ranges": "bytes",
+        },
+      });
+    });
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${relay}/media/document.bin`)}`,
+        { headers: { Range: "bytes=3-9" } },
+      );
+      expect(response.status).toBe(206);
+      expect(response.headers.get("content-range")).toBe("bytes 3-9/20");
+      expect(response.headers.get("accept-ranges")).toBe("bytes");
+      expect(response.headers.get("content-length")).toBe(String(bytes.length));
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(response.headers.get("content-disposition")).toBe("attachment");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await h.close();
+    }
+  },
+);

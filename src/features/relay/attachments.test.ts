@@ -67,7 +67,7 @@ it.each([0, UPLOAD_MAX_BYTES + 1])(
     vi.stubGlobal("fetch", fetcher);
     await expect(
       brokerUpload("/api/relay", origin)(
-        new File([new Uint8Array(size)], "file"),
+        Object.defineProperty(new File(["x"], "file"), "size", { value: size }),
         new AbortController().signal,
       ),
     ).rejects.toMatchObject({ code: "size" });
@@ -238,9 +238,11 @@ it("bounds a stalled request and rejects its late result after the upload deadli
     .mockReturnValue(deadline.signal);
   let release!: (response: Response) => void;
   let signal!: AbortSignal;
+  const started = Promise.withResolvers<void>();
   vi.stubGlobal("fetch", (_url: RequestInfo | URL, init?: RequestInit) => {
     assert.exists(init?.signal);
     signal = init.signal;
+    started.resolve();
     return new Promise((resolve) => {
       release = resolve;
     });
@@ -253,7 +255,8 @@ it("bounds a stalled request and rejects its late result after the upload deadli
     const rejected = expect(pending).rejects.toMatchObject({
       name: "TimeoutError",
     });
-    expect(timeout).toHaveBeenCalledWith(120_000);
+    await started.promise;
+    expect(timeout).toHaveBeenCalledWith(600_000);
     deadline.abort(new DOMException("Upload deadline", "TimeoutError"));
     expect(signal.aborted).toBe(true);
     release(Response.json(descriptor));
@@ -295,3 +298,92 @@ it("removes deceptive bidi controls from both metadata and the sent Markdown lab
     expect(result.tags.flat().join(" ")).not.toContain(char);
   }
 });
+
+it("uploads prepared video bytes rather than the original, preserving the preparation boundary", async () => {
+  const source = new File(
+    [new Uint8Array([0x46, 0x4c, 0x56, 1]), "source metadata"],
+    "clip.flv",
+    { type: "video/x-flv" },
+  );
+  const converted = new Uint8Array([
+    0, 0, 0, 24, 102, 116, 121, 112, 105, 115, 111, 109,
+  ]);
+  const calls: string[] = [];
+  vi.stubGlobal("fetch", async (url: string, init: RequestInit) => {
+    calls.push(url);
+    if (url.endsWith("/prepare-media")) {
+      expect(init.body).toBe(source);
+      return new Response(converted, {
+        headers: {
+          "Content-Type": "video/mp4",
+          "Content-Length": String(converted.length),
+        },
+      });
+    }
+    const sent = init.body as File;
+    expect(new Uint8Array(await sent.arrayBuffer())).toEqual(converted);
+    expect(sent.name).toBe("clip.mp4");
+    return Response.json({
+      ...descriptor,
+      type: "video/mp4",
+      size: converted.length,
+    });
+  });
+  const result = await brokerUpload("/api/relay", origin)(
+    source,
+    new AbortController().signal,
+  );
+  expect(result.size).toBe(converted.length);
+  expect(calls).toEqual(["/api/relay/prepare-media", "/api/relay/upload"]);
+});
+
+it("cancellation during preparation cannot start a later upload", async () => {
+  const started = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<Response>();
+  const cancel = new AbortController();
+  const fetch = vi.fn((_url: string, init: RequestInit) => {
+    expect(init.signal).toBeDefined();
+    started.resolve();
+    return release.promise;
+  });
+  vi.stubGlobal("fetch", fetch);
+  const pending = brokerUpload("/api/relay", origin)(
+    new File(["FLV\x01source"], "clip.flv"),
+    cancel.signal,
+  );
+  const rejected = expect(pending).rejects.toThrow();
+  await started.promise;
+  cancel.abort();
+  release.resolve(
+    new Response("prepared", {
+      headers: { "Content-Type": "video/mp4", "Content-Length": "8" },
+    }),
+  );
+  await rejected;
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it.each(["M4A ", "zzzz"])(
+  "leaves non-video BMFF %s to relay rejection, without conversion",
+  async (brand) => {
+    const data = Uint8Array.from(
+      `\0\0\0\x14ftyp${brand}\0\0\0\0${brand}`,
+      (char) => char.charCodeAt(0),
+    );
+    const source = new File([data], "ordinary.bin", {
+      type: "application/octet-stream",
+    });
+    const fetcher = vi.fn(async () =>
+      Response.json({ code: "rejected" }, { status: 400 }),
+    );
+    vi.stubGlobal("fetch", fetcher);
+    await expect(
+      brokerUpload("/api/relay", origin)(source, new AbortController().signal),
+    ).rejects.toMatchObject({ code: "rejected" });
+    expect(fetcher).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/relay/upload",
+      expect.objectContaining({ body: source }),
+    );
+  },
+);

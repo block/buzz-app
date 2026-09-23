@@ -1,3 +1,4 @@
+import { prepareMedia } from "./media-preparation.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
@@ -55,7 +56,13 @@ import {
 } from "../src/features/relay/http-admission.ts";
 import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
+import { createReadStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
+import {
+  mediaByteLimit,
+  UPLOAD_TIMEOUT_MS,
+} from "../src/features/relay/attachment-limits.ts";
 import dc from "node:diagnostics_channel";
 import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
@@ -64,7 +71,6 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
-  MAX_MEDIA_BYTES = 20 * 1024 * 1024,
   UPSTREAM_TIMEOUT_MS = 20000,
   KEEPALIVE_MS = 60000;
 
@@ -907,11 +913,31 @@ export function relayBrokerPlugin({
           }
           if (route === "/api/relay/stats" && req.method === "GET")
             return json(res, 200, { ...stats, connects: upstream.connects() });
-          if (route === "/api/relay/upload" && req.method === "POST") {
+          if (
+            ["/api/relay/upload", "/api/relay/prepare-media"].includes(route) &&
+            req.method === "POST"
+          ) {
             if (attachmentUploads >= 2)
               return json(res, 429, { code: "capacity" });
             attachmentUploads++;
             try {
+              if (route === "/api/relay/prepare-media") {
+                await prepareMedia(
+                  req,
+                  cancel.signal,
+                  async (path, type, size, signal) => {
+                    signal.throwIfAborted();
+                    res.writeHead(200, {
+                      "Content-Type": type,
+                      "Content-Length": size,
+                      "Cache-Control": "no-store",
+                      "X-Content-Type-Options": "nosniff",
+                    });
+                    await pipeline(createReadStream(path), res, { signal });
+                  },
+                );
+                return;
+              }
               const result = await uploadAttachment(
                 req,
                 relay,
@@ -949,7 +975,10 @@ export function relayBrokerPlugin({
                 content: "Get buzz-media",
                 tags: [
                   ["t", "get"],
-                  ["expiration", String(now + 120)],
+                  [
+                    "expiration",
+                    String(now + Math.ceil(UPLOAD_TIMEOUT_MS / 1000) + 60),
+                  ],
                   ["server", new URL(relay).host],
                 ],
               },
@@ -969,11 +998,16 @@ export function relayBrokerPlugin({
                 ...(range ? { Range: range } : {}),
               },
               redirect: "error",
-              signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+              signal: AbortSignal.any([
+                cancel.signal,
+                AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+              ]),
             });
             stats.media++;
-            if (!upstream.ok)
+            if (!upstream.ok) {
+              await upstream.body?.cancel();
               return json(res, upstream.status, { error: "Media read failed" });
+            }
             const type = upstream.headers.get("content-type") ?? "";
             const mediaType = type.split(";", 1)[0].trim().toLowerCase();
             const trustedType =
@@ -989,12 +1023,11 @@ export function relayBrokerPlugin({
             const streamable = video || audio;
             const download = !image && !streamable;
             const length = Number(upstream.headers.get("content-length"));
-            if (
-              Number.isFinite(length) &&
-              length > MAX_MEDIA_BYTES &&
-              !(streamable && upstream.status === 206)
-            )
+            const limit = mediaByteLimit(mediaType);
+            if (Number.isFinite(length) && length > limit) {
+              await upstream.body?.cancel();
               return json(res, 413, { error: "Media budget exceeded" });
+            }
             const headers = {
               "Content-Type": download ? "application/octet-stream" : mediaType,
               "Cache-Control": "private, max-age=3600",
@@ -1003,34 +1036,37 @@ export function relayBrokerPlugin({
               ...(upstream.headers.get("content-length")
                 ? { "Content-Length": upstream.headers.get("content-length") }
                 : {}),
-              ...(!download && upstream.headers.get("content-range")
+              ...(upstream.headers.get("content-range")
                 ? { "Content-Range": upstream.headers.get("content-range") }
                 : {}),
-              ...(streamable
+              ...(upstream.headers.get("accept-ranges") || streamable
                 ? {
                     "Accept-Ranges":
                       upstream.headers.get("accept-ranges") ?? "bytes",
                   }
                 : {}),
             };
-            if (streamable) {
-              res.writeHead(upstream.status, headers);
-              if (!upstream.body) return res.end();
-              const stream = Readable.fromWeb(upstream.body);
-              // A range request may time out or be cancelled after headers. A
-              // piped Readable has no automatic error consumer; without this,
-              // Node treats the upstream abort as an uncaught process error and
-              // kills the live broker along with unrelated message traffic.
-              stream.once("error", () => res.destroy());
-              res.once("close", () => stream.destroy());
-              stream.pipe(res);
-              return;
+            res.writeHead(upstream.status, headers);
+            if (!upstream.body) return res.end();
+            let received = 0;
+            const meter = new Transform({
+              transform(chunk, _encoding, callback) {
+                received += chunk.length;
+                callback(
+                  received > limit ? new Error("Media budget exceeded") : null,
+                  chunk,
+                );
+              },
+            });
+            // All media/downloads use backpressure; failed streams cannot emit JSON after headers.
+            try {
+              await pipeline(Readable.fromWeb(upstream.body), meter, res, {
+                signal: cancel.signal,
+              });
+            } catch {
+              res.destroy();
             }
-            const bytes = Buffer.from(await upstream.arrayBuffer());
-            if (bytes.length > MAX_MEDIA_BYTES)
-              return json(res, 413, { error: "Media budget exceeded" });
-            res.writeHead(200, headers);
-            return res.end(bytes);
+            return;
           }
           if (
             ![

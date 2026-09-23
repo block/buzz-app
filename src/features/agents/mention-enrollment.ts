@@ -1,5 +1,3 @@
-import type { AgentControl } from "./control";
-import { sameCommunityAgents } from "./mention-context";
 import type { RelaySession } from "../relay/session";
 import type { Outbox } from "../relay/outbox";
 
@@ -9,7 +7,6 @@ export async function enrollMentionedAgents(
   scope: string,
   channelId: string,
   pubkeys: readonly string[],
-  control: AgentControl | undefined,
   signal: AbortSignal,
 ) {
   const channel = () =>
@@ -23,12 +20,11 @@ export async function enrollMentionedAgents(
   const check = () => {
     signal.throwIfAborted();
     const current = channel();
-    const state = control?.snapshot();
-    const agents = sameCommunityAgents(
-      state?.status === "ready" ? (state.data?.agents ?? []) : [],
-      scope,
-    );
+    const agents = session.agentChoices
+      .snapshot()
+      .identities.filter((agent) => agent.managed);
     if (
+      session.scope !== scope ||
       !outbox?.supports(9000) ||
       !outbox.supports(9) ||
       !current?.members?.includes(viewer) ||
@@ -40,6 +36,7 @@ export async function enrollMentionedAgents(
         "Could not add the selected agent. Check its community and channel membership; your message has not been sent.",
       );
   };
+  await session.agentChoices.refresh();
   check();
   await session.read([{ kinds: [39002], "#d": [channelId], limit: 1 }], {
     fresh: true,

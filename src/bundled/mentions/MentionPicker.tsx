@@ -4,8 +4,7 @@ import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { useMentionAgents } from "../../features/agents/mention-context";
-import { useAgentChoices } from "./use-agent-choices";
+import { useAgentChoices } from "../../features/agents/use-choices";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { AtIcon } from "../../shared/design-system/icons/index";
@@ -25,7 +24,6 @@ import type { ComposerToolProps } from "../../features/conversation/contracts";
 /** Select identities from the shared relay roster, never from display-name matching. */
 export function MentionPicker({
   session,
-  scope,
   channelId,
   disabled,
   inviteAgents,
@@ -54,10 +52,9 @@ export function MentionPicker({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const agents = useAgentChoices(session, inviteAgents && open);
+  const agents = useAgentChoices(session, open);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
-  const { agents: localAgents } = useMentionAgents(scope);
   const available = useMemo(
     () =>
       !inviteAgents &&
@@ -65,11 +62,12 @@ export function MentionPicker({
       !channel.archived &&
       (channel.channelType === "stream" || channel.channelType === "forum") &&
       session.outbox?.supports(9000)
-        ? localAgents
+        ? agents.identities
+            .filter((agent) => agent.managed)
             .filter((agent) => !channel.members?.includes(agent.pubkey))
             .map(({ pubkey, name }) => ({ pubkey, name }))
         : [],
-    [channel, localAgents, session.outbox, inviteAgents],
+    [channel, agents, session.outbox, inviteAgents],
   );
   const parentAdmission =
     !!channel &&
@@ -91,7 +89,7 @@ export function MentionPicker({
     };
   }, [session, open, memberKey]);
   const candidates = mentionChoices(
-    [...agents.identities, ...available],
+    [...(inviteAgents ? agents.identities : []), ...available],
     channel?.members ?? [],
     profiles,
     resolveName,
@@ -156,10 +154,10 @@ export function MentionPicker({
               : "Your agents are added to this channel when you send."}
           </p>
           {agents.status === "loading" && <p role="status">Loading agents…</p>}
-          {agents.status === "error" && (
+          {(agents.status === "error" || !!agents.error) && (
             <Button
               type="button"
-              onClick={() => void session.agentLibrary.refresh()}
+              onClick={() => void session.agentChoices.refresh()}
             >
               Retry agent list
             </Button>

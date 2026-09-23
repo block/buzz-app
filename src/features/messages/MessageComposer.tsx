@@ -1,7 +1,6 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -122,7 +121,6 @@ function Composer({
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
-  const { control } = useMentionAgents(scope);
   const list = useSyncExternalStore(
     session.channels?.get || sessionConversation
       ? session.channels.subscribeList
@@ -390,14 +388,14 @@ function Composer({
       ...sessionRecipients(
         channel,
         session.profiles.snapshot(),
-        session.agentLibrary.snapshot(),
+        session.agentChoices.snapshot(),
         session.viewer,
         explicit,
       ),
     ];
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
-      await session.agentLibrary.refresh();
+      await session.agentChoices.refresh();
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
       await session.workSessions.addAgents(
@@ -443,7 +441,7 @@ function Composer({
         admission.current = true;
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
-      } else if (control && recipients.length) {
+      } else if (recipients.length) {
         const members = session.channels
           .list()
           .channels.find((item) => item.id === channelId)?.members;
@@ -455,7 +453,6 @@ function Composer({
             scope,
             channelId,
             recipients,
-            control,
             attempt.signal,
           );
         }
@@ -474,7 +471,7 @@ function Composer({
       clearMediaTime?.();
       const agents = knownAgentPubkeys(
         session.profiles.snapshot(),
-        session.agentLibrary.snapshot(),
+        session.agentChoices.snapshot(),
       );
       const next = followupDraft(
         rememberAgentsPreference()

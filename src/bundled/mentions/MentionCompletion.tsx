@@ -1,7 +1,6 @@
 import { mentionChoices } from "./mention-choices";
 import { useIdentityNames } from "../../features/identity-names/react";
-import { useMentionAgents } from "../../features/agents/mention-context";
-import { useAgentChoices } from "./use-agent-choices";
+import { useAgentChoices } from "../../features/agents/use-choices";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -14,7 +13,6 @@ import { matchesMentionQuery } from "./mention-query";
 const demands = new WeakMap<RelaySession, Set<string>>();
 export function MentionCompletion({
   session,
-  scope,
   channelId,
   inviteAgents,
   query,
@@ -31,10 +29,9 @@ export function MentionCompletion({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const agents = useAgentChoices(session, inviteAgents);
+  const agents = useAgentChoices(session);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
-  const { agents: localAgents } = useMentionAgents(scope);
   const available = useMemo(
     () =>
       !inviteAgents &&
@@ -42,11 +39,12 @@ export function MentionCompletion({
       !channel.archived &&
       (channel.channelType === "stream" || channel.channelType === "forum") &&
       session.outbox?.supports(9000)
-        ? localAgents
+        ? agents.identities
+            .filter((agent) => agent.managed)
             .filter((agent) => !channel.members?.includes(agent.pubkey))
             .map(({ pubkey, name }) => ({ pubkey, name }))
         : [],
-    [channel, localAgents, session.outbox, inviteAgents],
+    [channel, agents, session.outbox, inviteAgents],
   );
   const parentAdmission =
     !!channel &&
@@ -76,7 +74,7 @@ export function MentionCompletion({
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
     const candidates = mentionChoices(
-      [...agents.identities, ...available],
+      [...(inviteAgents ? agents.identities : []), ...available],
       members,
       profiles,
       resolveName,
@@ -131,7 +129,7 @@ export function MentionCompletion({
         ),
         edit: { mention: recipient },
       })),
-      ...(agents.status === "error"
+      ...(agents.status === "error" || agents.error
         ? { status: "Could not load agents. Retry to refresh." }
         : admitted && membershipMissing
           ? { status: "Channel membership unavailable." }
@@ -146,13 +144,14 @@ export function MentionCompletion({
                 ? { status: "Narrow your search to see more members." }
                 : {}),
       ...(agents.status === "error" ||
+      agents.error ||
       membershipMissing ||
       list.error ||
       error ||
       missing
         ? {
             retry: () => {
-              if (inviteAgents) void session.agentLibrary.refresh();
+              void session.agentChoices.refresh();
               setError(false);
               retry((value) => value + 1);
               if (membershipMissing || list.error)
@@ -179,9 +178,7 @@ export function MentionCompletion({
       if (session.profiles.snapshot() !== profiles) revoke();
     });
     const namesChanged = session.names.subscribe(revoke);
-    const agentsChanged = inviteAgents
-      ? session.agentLibrary.subscribe(revoke)
-      : () => {};
+    const agentsChanged = session.agentChoices.subscribe(revoke);
     return () => {
       namesChanged();
       agentsChanged();

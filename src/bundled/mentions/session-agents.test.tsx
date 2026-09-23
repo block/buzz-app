@@ -6,6 +6,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import { MentionPicker } from "./MentionPicker";
 import { MentionCompletion } from "./MentionCompletion";
+import { createAgentChoices } from "../../features/agents/choices";
 import { createAgentLibrary } from "../../features/agents/library";
 import type { CompletionResult } from "../../features/conversation/contracts";
 import { bindNames } from "../../features/identity-names/service";
@@ -61,6 +62,11 @@ function setup(parent: boolean | null = true) {
       resolve: (_key: string, fallback: string) => fallback,
     },
     agentLibrary: library.queries,
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
     media: () => undefined,
   } as unknown as RelaySession;
   return { session, library, key };
@@ -181,6 +187,11 @@ it.each(["picker", "completion"] as const)(
     const session = {
       ...test.session,
       agentLibrary: library.queries,
+      agentChoices: createAgentChoices({
+        scope: "test",
+        library: library.queries,
+        signal: new AbortController().signal,
+      }),
       profiles: { ...test.session.profiles, snapshot: () => profiles },
     };
     const names = bindNames(

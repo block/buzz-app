@@ -17,6 +17,7 @@ type Opening = {
 export function useChannelPanels(
   panels: Panels,
   context?: ChannelPanelContext,
+  onOpen?: () => void,
 ) {
   const available = useSyncExternalStore(
     panels.subscribe,
@@ -55,6 +56,7 @@ export function useChannelPanels(
     if (opening.trigger?.isConnected) opening.trigger.focus();
   };
   return {
+    close: () => setOpened(undefined),
     launchers: context && (
       <div className={styles.channelLaunchers}>
         {available
@@ -78,7 +80,8 @@ export function useChannelPanels(
                   )
                     return;
                   if (selected?.panel === panel) hide(selected);
-                  else
+                  else {
+                    onOpen?.();
                     setOpened({
                       panel,
                       context,
@@ -88,6 +91,7 @@ export function useChannelPanels(
                           ? document.activeElement
                           : null,
                     });
+                  }
                 }}
               />
             );

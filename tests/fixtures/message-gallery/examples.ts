@@ -209,7 +209,7 @@ export const groups: Group[] = [
     id: "attachments",
     title: "Attachments",
     description:
-      "The current attachment contract supports images, video, and files. Audio is not implemented on this branch.",
+      "This first gallery pass covers images, video, and files. Audio and voice-note specimens are a follow-up.",
     examples: [
       single(
         "image",

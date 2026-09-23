@@ -216,6 +216,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await quick.click();
     const firstRetry = emptyRow.getByRole("button", { name: "Retry reaction" });
     await expect(firstRetry).toBeVisible();
+    await expect(emptyRow.getByRole("status")).toHaveCSS("overflow", "visible");
     await firstRetry.click();
     const sole = emptyRow.getByRole("button", {
       name: `${chosen}: 1 person, including you`,

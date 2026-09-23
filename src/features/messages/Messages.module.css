@@ -130,7 +130,7 @@
 .reactions:empty {
   margin-top: 0;
 }
-.reactions > span {
+.reactions > span:not([role]) {
   background: var(--affordance-subtle);
   border-radius: var(--radius-chip);
   padding: var(--space-half) var(--space-1h);

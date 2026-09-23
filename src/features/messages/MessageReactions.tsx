@@ -1,4 +1,5 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
 import { ReactionDelivery, ReactionTool } from "../conversation/ReactionTool";
 import { InlineText } from "../conversation/InlineText";
@@ -126,7 +127,7 @@ export function MessageReactionControls(props: Props) {
             reaction.events.some((event) => event.authorId === session.viewer),
         );
         return (
-          <Button
+          <IconButton
             key={content}
             size="sm"
             variant="ghost"
@@ -134,14 +135,15 @@ export function MessageReactionControls(props: Props) {
             aria-label={`${mine ? "Remove" : "React with"} ${content}`}
             aria-pressed={mine}
             onClick={() => select(content)}
-          >
-            <ReactionLabel
-              row={row}
-              inline={inline}
-              session={session}
-              reaction={{ content, ...(emoji ? { emoji } : {}), events: [] }}
-            />
-          </Button>
+            icon={
+              <ReactionLabel
+                row={row}
+                inline={inline}
+                session={session}
+                reaction={{ content, ...(emoji ? { emoji } : {}), events: [] }}
+              />
+            }
+          />
         );
       })}
       <ReactionTool
@@ -159,7 +161,9 @@ export function MessageReactionControls(props: Props) {
 }
 
 /** Always mounted under the message so failed add/remove operations stay recoverable. */
-export function MessageReactions(props: Props) {
+export function MessageReactions(
+  props: Props & { onFocusedRemoval?: () => void },
+) {
   const { row, session, inline } = props;
   const action = useReactionAction(props);
   return (
@@ -175,7 +179,14 @@ export function MessageReactions(props: Props) {
             disabled={action.disabled}
             aria-pressed={mine}
             aria-label={`${reaction.content}: ${authors.size} ${authors.size === 1 ? "person" : "people"}${mine ? ", including you" : ""}`}
-            onClick={() => action.toggle(reaction.content, reaction.emoji)}
+            onClick={(event) => {
+              const losesFocus =
+                mine &&
+                authors.size === 1 &&
+                event.currentTarget === document.activeElement;
+              if (action.toggle(reaction.content, reaction.emoji) && losesFocus)
+                props.onFocusedRemoval?.();
+            }}
           >
             <ReactionLabel
               reaction={reaction}
@@ -188,9 +199,7 @@ export function MessageReactions(props: Props) {
         );
       })}
       {action.error && <span role="alert">{action.error}</span>}
-      <div>
-        <ReactionDelivery session={session} messageId={row.id} />
-      </div>
+      <ReactionDelivery session={session} messageId={row.id} />
     </>
   );
 }

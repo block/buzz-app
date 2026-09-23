@@ -39,6 +39,18 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       page.getByRole("button", { name: "Add reaction", exact: true }),
     ).toHaveCount(6);
     await root.hover();
+    const shortcut = root.getByRole("button", {
+      name: "React with 👍",
+      exact: true,
+    });
+    const neighbor = root.getByRole("button", {
+      name: "Copy link",
+      exact: true,
+    });
+    const shortcutBox = await shortcut.boundingBox();
+    const neighborBox = await neighbor.boundingBox();
+    expect(shortcutBox.width).toBeCloseTo(neighborBox.width, 1);
+    expect(shortcutBox.height).toBeCloseTo(neighborBox.height, 1);
     await plus.click();
     const search = page.locator('em-emoji-picker input[type="search"]');
     await expect(search).toBeVisible();
@@ -185,6 +197,54 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
       expect(box.x).toBeGreaterThanOrEqual(0);
       expect(box.x + box.width).toBeLessThanOrEqual(width);
     }
+    // Empty reaction rows must not change ordinary message spacing; failed first
+    // reactions must still expose recovery in the same mounted row.
+    const emptyRow = page
+      .locator("[data-message-id]")
+      .filter({ hasText: "Broken" });
+    const reactionRow = emptyRow.locator('[class*="_reactions_"]');
+    await expect(reactionRow).toHaveCSS("margin-top", "0px");
+    await emptyRow.hover();
+    const quick = emptyRow
+      .getByRole("button", { name: /^React with / })
+      .first();
+    const chosen = (await quick.getAttribute("aria-label")).replace(
+      "React with ",
+      "",
+    );
+    await page.evaluate(() => window.emojiFixture.rejectReaction());
+    await quick.click();
+    const firstRetry = emptyRow.getByRole("button", { name: "Retry reaction" });
+    await expect(firstRetry).toBeVisible();
+    await firstRetry.click();
+    const sole = emptyRow.getByRole("button", {
+      name: `${chosen}: 1 person, including you`,
+      exact: true,
+    });
+    await expect(sole).toBeEnabled();
+    await sole.focus();
+    await page.evaluate(() => window.emojiFixture.rejectReaction());
+    await sole.press("Enter");
+    const stableAction = emptyRow.getByRole("button", {
+      name: "More message actions",
+    });
+    await expect(stableAction).toBeFocused();
+    await expect(firstRetry).toBeVisible();
+    await expect(sole).toBeVisible();
+    await expect(stableAction).toBeFocused();
+    await firstRetry.click();
+    await expect(sole).toHaveCount(0);
+    await expect(reactionRow).toHaveCSS("margin-top", "0px");
+    // Repeat the keyboard path on successful removal as well as rollback.
+    await emptyRow.hover();
+    await emptyRow
+      .getByRole("button", { name: `React with ${chosen}`, exact: true })
+      .click();
+    await expect(sole).toBeEnabled();
+    await sole.focus();
+    await sole.press("Enter");
+    await expect(sole).toHaveCount(0);
+    await expect(stableAction).toBeFocused();
     expect(errors).toEqual([]);
   } finally {
     await server.close();

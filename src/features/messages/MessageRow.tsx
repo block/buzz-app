@@ -2,7 +2,13 @@ import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { memo, useCallback, useSyncExternalStore, type ReactNode } from "react";
+import {
+  memo,
+  useRef,
+  useCallback,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { PresenceIndicator } from "../presence/react";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
@@ -140,6 +146,7 @@ export const MessageRow = memo(function MessageRow({
     !channelList.channels.find((channel) => channel.id === row.channelId)
       ?.readOnly
   );
+  const menuTrigger = useRef<HTMLButtonElement>(null);
   return (
     <div data-message-id={row.id}>
       {day && (
@@ -185,6 +192,7 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.messageBody}>
           {!row.membership && (
             <MessageActionBar
+              menuTriggerRef={menuTrigger}
               messageId={row.id}
               onReply={
                 onReply ??
@@ -346,6 +354,7 @@ export const MessageRow = memo(function MessageRow({
           {session && scope && extensions ? (
             <div className={styles.reactions}>
               <MessageReactions
+                onFocusedRemoval={() => menuTrigger.current?.focus()}
                 row={row}
                 session={session}
                 scope={scope}

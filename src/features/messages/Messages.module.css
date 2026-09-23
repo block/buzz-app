@@ -127,6 +127,9 @@
   gap: var(--space-1);
   margin-top: var(--space-1h);
 }
+.reactions:empty {
+  margin-top: 0;
+}
 .reactions > span {
   background: var(--affordance-subtle);
   border-radius: var(--radius-chip);

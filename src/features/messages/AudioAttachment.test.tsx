@@ -58,9 +58,11 @@ it("toggles the accessible play control name", () => {
   );
   const audio = container.querySelector("audio");
   if (!audio) throw new Error("Missing audio element");
-  expect(
-    screen.getByRole("button", { name: "Play audio" }),
-  ).toBeInTheDocument();
+  const playButton = screen.getByRole("button", { name: "Play audio" });
+  expect(playButton).toBeInTheDocument();
+  expect(playButton).toHaveAttribute("data-icon-variant", "solid");
+  expect(playButton).toHaveAttribute("data-icon-size", "compact");
+  expect(playButton).toHaveAttribute("data-icon-shape", "round");
   fireEvent.play(audio);
   expect(
     screen.getByRole("button", { name: "Pause audio" }),

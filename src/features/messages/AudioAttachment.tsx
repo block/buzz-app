@@ -1,5 +1,6 @@
 import { useCallback, useRef, useState, type CSSProperties } from "react";
 import { PauseIcon, PlayIcon } from "../../shared/design-system/icons/index";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   MAX_ATTACHMENT_DURATION_SECONDS,
   type Attachment,
@@ -141,24 +142,20 @@ export function AudioAttachment({
           setFailedSource(source);
         }}
       />
-      <button
+      <IconButton
+        size="compact"
+        variant="solid"
+        shape="round"
         type="button"
-        className={styles.audioPlay}
         aria-label={isPlaying ? pauseLabel : playLabel}
-        data-state={isPlaying ? "playing" : undefined}
         onClick={() => {
           const element = audio.current;
           if (!element) return;
           if (element.paused) void element.play();
           else element.pause();
         }}
-      >
-        {isPlaying ? (
-          <PauseIcon size={18} aria-hidden="true" />
-        ) : (
-          <PlayIcon size={18} aria-hidden="true" />
-        )}
-      </button>
+        icon={isPlaying ? <PauseIcon size={18} /> : <PlayIcon size={18} />}
+      />
       <input
         className={styles.audioSeek}
         style={{ "--audio-progress": `${seekProgress}%` } as CSSProperties}

@@ -4,6 +4,7 @@ import {
   CaretDownIcon,
   CaretRightIcon,
   DotsThreeVerticalIcon,
+  XIcon,
 } from "../../shared/design-system/icons/index";
 import { useId, useRef, type ReactElement, type ReactNode } from "react";
 import { Menu } from "@base-ui/react/menu";
@@ -27,6 +28,7 @@ export function ChannelSidebarRow({
   onSelect,
   onPrepare,
   onNewSession,
+  onHideDm,
 }: {
   channel: ChannelSummary;
   icon: ReactNode;
@@ -43,6 +45,7 @@ export function ChannelSidebarRow({
   onSelect: (id: string) => void;
   onPrepare: (id: string) => void;
   onNewSession: (id: string) => void;
+  onHideDm?: (id: string) => void;
 }) {
   const starting = useRef(false);
   const childrenId = useId();
@@ -161,6 +164,18 @@ export function ChannelSidebarRow({
               </Menu.Positioner>
             </Menu.Portal>
           </Menu.Root>
+        )}
+        {channel.channelType === "dm" && onHideDm && (
+          <span className={`${styles.more} ${styles.remove}`}>
+            <IconButton
+              type="button"
+              size="compact"
+              shape="round"
+              aria-label={`Remove ${channel.name} from DMs`}
+              onClick={() => onHideDm(channel.id)}
+              icon={<XIcon size={15} aria-hidden="true" />}
+            />
+          </span>
         )}
       </div>
       <div className={styles.sessions} id={childrenId} hidden={collapsed}>

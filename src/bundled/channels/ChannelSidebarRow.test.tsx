@@ -138,6 +138,33 @@ it("hides session actions when the Sessions plugin is unavailable", () => {
     screen.queryByRole("button", { name: "More options for Engineering" }),
   ).not.toBeInTheDocument();
 });
+it("offers a separate hide action only for DM rows", async () => {
+  const onHideDm = vi.fn();
+  const onSelect = vi.fn();
+  render(
+    <ChannelSidebarRow
+      channel={{ id: "dm", name: "Alice", channelType: "dm" }}
+      collapsed={false}
+      onToggle={() => {}}
+      icon={<svg />}
+      sessions={[]}
+      sessionsEnabled={false}
+      draft={false}
+      draftSelected={false}
+      onSelect={onSelect}
+      onPrepare={() => {}}
+      onNewSession={() => {}}
+      onHideDm={onHideDm}
+    />,
+  );
+  const remove = screen.getByRole("button", {
+    name: "Remove Alice from DMs",
+  });
+  expect(remove).not.toHaveAttribute("title");
+  await userEvent.setup().click(remove);
+  expect(onHideDm).toHaveBeenCalledWith("dm");
+  expect(onSelect).not.toHaveBeenCalled();
+});
 it("opens saved child sessions and retained drafts without a channel icon", async () => {
   const user = userEvent.setup();
   const callbacks = mount();

@@ -63,6 +63,7 @@ import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
+import { useHiddenDms } from "./useHiddenDms";
 import { SidebarSectionIcon } from "./SidebarSectionIcon";
 import {
   CreateChannelDialog,
@@ -197,6 +198,7 @@ function ChannelWorkspace({
       .map((entry) => entry.channelId),
   ]);
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
+  const hiddenDms = useHiddenDms(scope, queries);
   useEffect(() => {
     void queries.emoji.ensure();
   }, [queries]);
@@ -773,6 +775,11 @@ function ChannelWorkspace({
     [scope, viewer, current, showingThread],
   );
   const drawer = useChannelPanels(panels, drawerContext);
+  const sections = sidebarSections(
+    channels,
+    preferences.data,
+    hiddenDms.hiddenIds,
+  );
   return (
     <div
       className={`${styles.board} ${panel || showingThread || companion ? styles.withPanel : ""}`}
@@ -785,7 +792,7 @@ function ChannelWorkspace({
       <Panel as="aside" aria-label="Channel sidebar">
         <div className={styles.sidebar}>
           <SidebarUnread listRef={sidebar.list}>
-            {sidebarSections(channels, preferences.data).map((section) => {
+            {sections.map((section) => {
               const showsCreateChannel = isChannelSectionKey(section.key);
               return (
                 <details
@@ -864,6 +871,7 @@ function ChannelWorkspace({
                         onSelect={select}
                         onNewSession={startSession}
                         onOpenThread={openActivityThread}
+                        onHideDm={hiddenDms.hide}
                       />
                     );
                   })}

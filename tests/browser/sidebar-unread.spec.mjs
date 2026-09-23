@@ -48,6 +48,61 @@ const heads = (app) =>
     ({ filter }) => filter.kinds?.includes(9) && filter["#h"]?.length === 1,
   );
 
+test("DM hide control removes a row and a new message restores it", async ({
+  page,
+  app,
+}, info) => {
+  await open(page, app);
+  const dm = row(page, "dm-030");
+  await expect(dm).toBeVisible();
+  const badge = dm.locator("[data-channel-unread]");
+  await expect(badge).toBeVisible();
+  const badgePosition = () =>
+    dm.evaluate((button) => {
+      const badge = button.querySelector("[data-channel-unread]");
+      if (!badge) throw new Error("DM unread indicator is missing");
+      const row = button.getBoundingClientRect();
+      const marker = badge.getBoundingClientRect();
+      return { x: marker.x - row.x, y: marker.y - row.y };
+    });
+  const before = await badgePosition();
+  const container = dm.locator("..").locator("..");
+  await container.screenshot({ path: info.outputPath("dm-row-default.png") });
+  await dm.hover();
+  const hide = dm
+    .locator("..")
+    .locator("..")
+    .getByRole("button", {
+      name: /Remove .* from DMs/,
+    });
+  await expect(hide).toBeVisible();
+  await expect
+    .poll(() =>
+      hide.evaluate((button) => getComputedStyle(button.parentElement).opacity),
+    )
+    .toBe("1");
+  await container.screenshot({ path: info.outputPath("dm-row-hover.png") });
+  const after = await badgePosition();
+  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+  const primary = await dm.evaluate((button) => getComputedStyle(button).color);
+  const secondary = await hide.evaluate(
+    (button) => getComputedStyle(button).color,
+  );
+  expect(secondary).not.toBe(primary);
+  await hide.hover();
+  await expect
+    .poll(() => hide.evaluate((button) => getComputedStyle(button).color))
+    .toBe(primary);
+  await hide.click();
+  await expect(dm).toHaveCount(0);
+  await page.reload();
+  await expect(dm).toHaveCount(0);
+
+  app.append("primary", "dm-030", "A new DM", false, false);
+  await expect(dm).toBeVisible();
+});
+
 test("channel establishment preserves an in-flight unread batch and its sidebar badges", async ({
   page,
   app,

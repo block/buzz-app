@@ -182,11 +182,12 @@ export function ChannelSidebarRow({
                 const index = rows.findIndex(
                   (row) => row.dataset.channelId === channel.id,
                 );
-                (
-                  rows[index + 1] ??
-                  rows[index - 1] ??
-                  section?.querySelector<HTMLElement>("summary")
-                )?.focus();
+                const otherSection = [
+                  ...(section?.parentElement?.querySelectorAll<HTMLElement>(
+                    "details > summary",
+                  ) ?? []),
+                ].find((summary) => summary.parentElement !== section);
+                (rows[index + 1] ?? rows[index - 1] ?? otherSection)?.focus();
                 onHideDm(channel.id);
               }}
               icon={<XIcon size={15} aria-hidden="true" />}

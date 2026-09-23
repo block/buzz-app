@@ -165,6 +165,43 @@ it("offers a separate hide action only for DM rows", async () => {
   expect(onHideDm).toHaveBeenCalledWith("dm");
   expect(onSelect).not.toHaveBeenCalled();
 });
+it("keeps focus in the sidebar when removing its last visible DM", async () => {
+  function OnlyDm() {
+    const [visible, setVisible] = useState(true);
+    return (
+      <div>
+        <details open>
+          <summary>Channels</summary>
+        </details>
+        {visible && (
+          <details open>
+            <summary>DMs</summary>
+            <ChannelSidebarRow
+              channel={{ id: "dm", name: "Alice", channelType: "dm" }}
+              collapsed={false}
+              onToggle={() => {}}
+              icon={<svg />}
+              sessions={[]}
+              sessionsEnabled={false}
+              draft={false}
+              draftSelected={false}
+              onSelect={() => {}}
+              onPrepare={() => {}}
+              onNewSession={() => {}}
+              onHideDm={() => setVisible(false)}
+            />
+          </details>
+        )}
+      </div>
+    );
+  }
+  render(<OnlyDm />);
+  const remove = screen.getByRole("button", { name: "Remove Alice from DMs" });
+  remove.focus();
+  await userEvent.setup().keyboard("{Enter}");
+  expect(screen.queryByText("DMs")).not.toBeInTheDocument();
+  expect(screen.getByText("Channels")).toHaveFocus();
+});
 it("opens saved child sessions and retained drafts without a channel icon", async () => {
   const user = userEvent.setup();
   const callbacks = mount();

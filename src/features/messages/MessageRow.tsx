@@ -21,7 +21,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
-import { ReactionTool } from "../conversation/ReactionTool";
+import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import { MessageActionBar } from "./MessageActionBar";
 import { messageCopyLink, messageCopyText } from "./message-copy";
@@ -132,10 +132,13 @@ export const MessageRow = memo(function MessageRow({
     session &&
     scope &&
     session.outbox?.supports(7) &&
+    session.outbox.supports(5) &&
     (!session.channels.get ||
       channelList.channels.some((channel) => channel.id === row.channelId)) &&
     !channelList.channels.find((channel) => channel.id === row.channelId)
-      ?.archived
+      ?.archived &&
+    !channelList.channels.find((channel) => channel.id === row.channelId)
+      ?.readOnly
   );
   return (
     <div data-message-id={row.id}>
@@ -211,7 +214,22 @@ export const MessageRow = memo(function MessageRow({
               copyText={() =>
                 messageCopyText(row, directory.profiles, directory.agents)
               }
-              quickControls={quickControls}
+              quickControls={
+                quickControls ??
+                (canReact && session && scope && extensions ? (
+                  <MessageReactionControls
+                    row={row}
+                    session={session}
+                    scope={scope}
+                    tools={extensions.tools}
+                    inline={extensions.inline}
+                    disabled={
+                      !!row.delivery &&
+                      !["accepted", "seen"].includes(row.delivery)
+                    }
+                  />
+                ) : undefined)
+              }
               overflowItems={overflowItems}
             />
           )}
@@ -325,38 +343,52 @@ export const MessageRow = memo(function MessageRow({
               />
             );
           })}
-          {row.reactions.length > 0 && (
+          {session && scope && extensions ? (
             <div className={styles.reactions}>
-              {row.reactions.map((reaction) => (
-                <span key={JSON.stringify(reaction)}>
-                  {extensions ? (
-                    <InlineText
-                      registry={extensions.inline}
-                      content={{
-                        text: reaction.content,
-                        message: row,
-                        reaction,
-                      }}
-                      media={media}
-                    />
-                  ) : (
-                    reaction.content
-                  )}
-                </span>
-              ))}
-              {canReact && extensions && session && scope && (
-                <ReactionTool
-                  registry={extensions.tools}
-                  session={session}
-                  scope={scope}
-                  messageId={row.id}
-                  disabled={
-                    !!row.delivery &&
-                    !["accepted", "seen"].includes(row.delivery)
-                  }
-                />
-              )}
+              <MessageReactions
+                row={row}
+                session={session}
+                scope={scope}
+                tools={extensions.tools}
+                inline={extensions.inline}
+                disabled={
+                  !canReact ||
+                  (!!row.delivery &&
+                    !["accepted", "seen"].includes(row.delivery))
+                }
+              />
             </div>
+          ) : (
+            row.reactions.length > 0 && (
+              <div className={styles.reactions}>
+                {row.reactions.map((reaction) => (
+                  <span
+                    key={JSON.stringify([
+                      reaction.content,
+                      reaction.emoji?.url,
+                    ])}
+                  >
+                    {extensions ? (
+                      <InlineText
+                        registry={extensions.inline}
+                        content={{
+                          text: reaction.content,
+                          message: row,
+                          reaction,
+                        }}
+                        media={media}
+                      />
+                    ) : (
+                      reaction.content
+                    )}{" "}
+                    {
+                      new Set(reaction.events.map((event) => event.authorId))
+                        .size
+                    }
+                  </span>
+                ))}
+              </div>
+            )
           )}
           {row.replyCount > 0 && onOpenThread && (
             <Button

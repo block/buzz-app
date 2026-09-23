@@ -27,12 +27,19 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html?reactions`,
     );
-    const plus = page.getByRole("button", {
+    const root = page
+      .locator("[data-message-id]")
+      .filter({ hasText: "Historic" });
+    const plus = root.getByRole("button", {
       name: "Add reaction",
       exact: true,
     });
-    // Only one fixture message has reactions; the others must have no action.
-    await expect(plus).toHaveCount(1);
+    // Every message exposes first-reaction controls, not just previously reacted rows.
+    await expect(
+      page.getByRole("button", { name: "Add reaction", exact: true }),
+    ).toHaveCount(6);
+    await root.hover();
+    await root.hover();
     await plus.click();
     const search = page.locator('em-emoji-picker input[type="search"]');
     await expect(search).toBeVisible();
@@ -57,6 +64,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await search.press("Escape");
     await expect(search).toHaveCount(0);
     await expect(plus).toBeFocused();
+    await root.hover();
     await plus.click();
     await search.fill("party");
     const custom = page
@@ -86,6 +94,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     ]);
     expect(event.tags.filter(([name]) => name === "e")).toHaveLength(1);
     for (const length of [62, 63, 64]) {
+      await root.hover();
       await plus.click();
       const boundarySearch = page.locator(
         'em-emoji-picker input[type="search"]',
@@ -105,6 +114,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     await expect(plus).toHaveCount(0);
     await page.evaluate(() => window.emojiFixture.archive(false));
     await expect(plus).toHaveCount(1);
+    await root.hover();
     const boundaryEvents = await page.evaluate(() =>
       window.emojiFixture.report.publications
         .slice(1)
@@ -115,6 +125,7 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
     );
     expect(boundaryEvents.every(({ kind }) => kind === 7)).toBe(true);
     await page.evaluate(() => window.emojiFixture.rejectReaction());
+    await root.hover();
     await plus.click();
     await page
       .locator("em-emoji-picker button")
@@ -132,6 +143,44 @@ test("reaction plus opens a visible emoji-only picker, restores focus and publis
         page.evaluate(() => window.emojiFixture.report.publications.length),
       )
       .toBe(5);
+    const removal = await page.evaluate(
+      () => window.emojiFixture.report.publications[4].event,
+    );
+    expect(removal.kind).toBe(5);
+    expect(removal.tags).toContainEqual(["e", event.id]);
+    await expect(
+      root.getByRole("button", {
+        name: ":party:: 1 person, including you",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    // Joining an old custom-emoji group retains its event-local URL, not the new palette URL.
+    await root
+      .getByRole("button", { name: ":party:: 1 person", exact: true })
+      .click();
+    await expect(
+      root.getByRole("button", {
+        name: ":party:: 2 people, including you",
+        exact: true,
+      }),
+    ).toBeVisible();
+    const joined = await page.evaluate(
+      () => window.emojiFixture.report.publications.at(-1).event,
+    );
+    expect(joined.tags).toContainEqual([
+      "emoji",
+      "party",
+      "https://a.test/media/reaction.png",
+    ]);
+    for (const width of [360, 768, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await root.hover();
+      const box = await root
+        .getByRole("group", { name: "Message actions" })
+        .boundingBox();
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+    }
     expect(errors).toEqual([]);
   } finally {
     await server.close();

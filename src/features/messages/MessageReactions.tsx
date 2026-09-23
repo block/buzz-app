@@ -188,7 +188,9 @@ export function MessageReactions(props: Props) {
         );
       })}
       {action.error && <span role="alert">{action.error}</span>}
-      <ReactionDelivery session={session} messageId={row.id} />
+      <div>
+        <ReactionDelivery session={session} messageId={row.id} />
+      </div>
     </>
   );
 }

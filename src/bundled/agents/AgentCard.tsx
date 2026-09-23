@@ -1,5 +1,12 @@
 import { useRef, type ReactNode } from "react";
-import { Menu } from "@base-ui/react/menu";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+  MenuNote,
+} from "../../shared/design-system/ui/Menu";
+import { ChoiceRow } from "../../shared/design-system/ui/ChoiceRow";
 import {
   DotsThreeIcon,
   UsersIcon,
@@ -43,8 +50,8 @@ export function AgentCard({
     >
       {onEdit && (
         <div className="absolute right-2 top-2">
-          <Menu.Root>
-            <Menu.Trigger
+          <MenuRoot>
+            <MenuTrigger
               ref={trigger}
               render={
                 <IconButton
@@ -54,28 +61,24 @@ export function AgentCard({
                 />
               }
             />
-            <Menu.Portal>
-              <Menu.Positioner align="end" sideOffset={4}>
-                <Menu.Popup
-                  data-buzz-ui=""
-                  className="min-w-36 max-w-[min(28rem,calc(100vw-2rem))] rounded-xl border border-primary bg-float p-1 text-body text-primary shadow-lg"
-                >
-                  {editable.length ? (
-                    editable.map((agent) => (
-                      <Menu.Item
-                        key={agent.id}
-                        className="cursor-pointer rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-hover"
-                        onClick={() => {
-                          // The menu item unmounts; return from the dialog to the card.
-                          trigger.current?.focus();
-                          onEdit(agent, picture);
-                        }}
-                      >
-                        {editable.length === 1 ? (
-                          "Edit"
-                        ) : (
+            <MenuPopup align="end" size="wide">
+              {editable.length ? (
+                editable.map((agent) => (
+                  <MenuItem
+                    key={agent.id}
+                    onClick={() => {
+                      // The menu item unmounts; return from the dialog to the card.
+                      trigger.current?.focus();
+                      onEdit(agent, picture);
+                    }}
+                  >
+                    {editable.length === 1 ? (
+                      "Edit"
+                    ) : (
+                      <ChoiceRow
+                        label={`Edit ${agent.name}`}
+                        description={
                           <>
-                            Edit {agent.name}
                             <span className="block break-all text-body-sm text-secondary">
                               {agent.relayUrl}
                             </span>
@@ -83,28 +86,23 @@ export function AgentCard({
                               {agent.pubkey}
                             </span>
                           </>
-                        )}
-                      </Menu.Item>
-                    ))
-                  ) : (
-                    <>
-                      <Menu.Item
-                        disabled
-                        className="rounded-lg px-3 py-2 text-disabled"
-                      >
-                        Edit
-                      </Menu.Item>
-                      <p className="m-0 max-w-64 px-3 py-2 text-body-sm text-secondary">
-                        {identities.length
-                          ? "Import this identity to edit in Foundation."
-                          : "No linked identity to edit."}
-                      </p>
-                    </>
-                  )}
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
+                        }
+                      />
+                    )}
+                  </MenuItem>
+                ))
+              ) : (
+                <>
+                  <MenuItem disabled>Edit</MenuItem>
+                  <MenuNote>
+                    {identities.length
+                      ? "Import this identity to edit in Foundation."
+                      : "No linked identity to edit."}
+                  </MenuNote>
+                </>
+              )}
+            </MenuPopup>
+          </MenuRoot>
         </div>
       )}
       <div

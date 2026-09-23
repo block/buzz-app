@@ -13,21 +13,14 @@
   margin: 0;
   min-width: 0;
 }
-.emojiPopover {
-  @apply popover-surface;
+.emojiContent {
   --picker-container-radius: var(--radius-card);
-  border-radius: var(--picker-container-radius);
   --picker-inner-radius: calc(var(--picker-container-radius) - var(--space-2));
   --picker-scrollbar-space: var(--space-4);
   --picker-tab-foreground: var(--text-standard);
   --picker-tab-muted: var(--text-subtle);
   --picker-tab-selected: var(--affordance-selected);
   --picker-scrollbar-thumb: var(--border-prominent);
-  position: absolute;
-  bottom: 42px;
-  left: 0;
-  max-width: 100%;
-  overflow: hidden;
 }
 .sharedSearchIcon {
   position: absolute;
@@ -36,21 +29,6 @@
   z-index: 4;
   color: var(--text-subtle);
   pointer-events: none;
-}
-.reactionPositioner {
-  z-index: var(--layer-popover);
-}
-.reactionPopover {
-  position: relative;
-  bottom: auto;
-  left: auto;
-  max-width: calc(100vw - 32px);
-}
-@media (max-width: 900px) {
-  .emojiPopover {
-    --picker-container-radius: var(--radius-card-compact);
-    border-radius: var(--radius-card-compact);
-  }
 }
 .emojiMart {
   position: relative;

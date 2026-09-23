@@ -34,7 +34,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await page
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
-      const picker = page.getByRole("region", {
+      const picker = page.getByRole("dialog", {
         name: "Mention a member or agent",
       });
       await expect(
@@ -409,7 +409,7 @@ test("selected mentions inside code remain visible through draft restore and cha
           .getByRole("button", { name: "Mention a member", exact: true })
           .click();
         await page
-          .getByRole("region", { name: "Mention a member or agent" })
+          .getByRole("dialog", { name: "Mention a member or agent" })
           .getByRole("button", { name: `Honey ${key}`, exact: true })
           .click();
       }
@@ -497,7 +497,7 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
         .getByRole("button", { name: "Mention a member", exact: true })
         .tap();
       await page
-        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("dialog", { name: "Mention a member or agent" })
         .getByRole("button", { name: new RegExp(key) })
         .tap();
     };

@@ -98,6 +98,7 @@ Buzz is a place where people build together and bring their agents into the room
 - **No page-wide gradient behind documentation or dense reading.** The gradient is the product's backdrop for chrome and panels. Behind a column of prose it fights the text and makes contrast position-dependent — such surfaces sit on `bg-panel`.
 - **Shadows stay at the threshold of perception.** If a shadow is obvious, it is too strong. The two elevation values are the whole vocabulary.
 - **Floating controls share one outer material.** Menus, selects, popovers, and preview cards use the opaque `floating-surface`: floating fill, primary boundary, panel radius, and graduated lift. Each component still owns its content padding and interaction behavior; sharing the container does not imply that a preview behaves like a menu.
+- **Floating rows need their own hover contrast.** Menu, select, and popover activity rows use `affordance-floating-hover` (neutral 3 in light mode, neutral 7 in dark). Supporting text becomes standard text on highlight so it stays readable. Selection marks remain independent of hover. Menus, popovers, dialogs, and alert dialogs all use the same 24px `radius-panel` outer corners; interior controls keep their smaller row/control radii.
 - **Elevation is carried by shadow in light mode and by lightness in dark mode.** On a near-black background there is nothing darker for a shadow to cast, so a floating surface becomes a step lighter instead. Never reach for a stronger shadow to make something float in dark mode.
 - **On a translucent surface, elevation reads as less translucency, not as a lighter colour.** A glass container with a fully opaque child looks layered; the same container with a merely brighter child looks unchanged.
 - **Light comes from one direction, and every glass surface agrees on it.** A glass rim is bright along the lit edge and dimmer on the opposite one; that is what makes it read as a material rather than an outline. Two surfaces lit from different directions in the same view look like a mistake.
@@ -206,6 +207,38 @@ trigger with easing-settle, reversing the direction above the trigger. The
 designer-requested blur from 4px to zero is a narrow exception to the general
 no-blur-animation rule. Base UI owns transition presence and dismissal; keyboard
 navigation and reduced motion remove the transition, movement, and blur.
+
+### Menus, popovers, and choice rows
+
+Use Menu for actions and lightweight choices, Popover for supporting content or
+short forms, and Select/Combobox for form values. Both anchored surfaces reuse
+`floating-surface`, viewport collision handling, and the shared popover layer.
+Features own their data, callbacks and save/cancel behavior; Base UI owns focus,
+keyboard navigation, positioning and dismissal.
+
+Menu group labels belong inside MenuGroup. Selection checks sit at the trailing
+edge; the pointer/keyboard highlight is independent of that persistent selection.
+Keep the parent row highlighted while its submenu is open. Use `tone="danger"`
+for destructive actions and MenuNote for explanatory or status copy outside the
+keyboard item list. Long lists scroll inside the popup.
+
+ChoiceRow arranges a label, wrapping description, optional artwork and trailing
+metadata. It adds no second click target or tab stop. Keep its slots non-interactive
+and let the containing item own state and padding. Use the small shared avatar
+for identity choices, retaining human/agent shapes.
+
+PopoverPopup uses 16px content padding, or `padding="list"` when its rows own their
+spacing. Name it with PopoverTitle or aria-label; PopoverDescription connects
+supporting copy. Hover opening is optional and remains configured by its feature.
+Use `padding="none"` for an embedded picker that owns its internal spacing, such as emoji/GIF content.
+Menus and popovers use a quicker version of the form dropdown motion: 75ms entry
+and 60ms exit (half the state/fast duration tokens), a 2px offset and blur-to-sharp
+opacity fade. Movement uses
+easing-settle; opacity and filter use easing-state. The offset follows the actual
+placement side toward the trigger, including collision flips and nested menus.
+This extends the designer-requested blur exception to these anchored surfaces.
+Keyboard navigation and reduced motion remove transitions, movement, and blur. The Just Design Menu, Popover and ChoiceRow pages
+show these contracts and their compositions.
 
 ## Compositions
 

@@ -7,9 +7,13 @@ import {
   XIcon,
 } from "../../shared/design-system/icons/index";
 import { useId, useRef, type ReactElement, type ReactNode } from "react";
-import { Menu } from "@base-ui/react/menu";
+import {
+  MenuRoot,
+  MenuTrigger,
+  MenuPopup,
+  MenuItem,
+} from "../../shared/design-system/ui/Menu";
 import type { ChannelSummary } from "../../features/relay/contracts";
-import completion from "../../features/conversation/Completions.module.css";
 import styles from "./ChannelSidebarRow.module.css";
 
 export function ChannelSidebarRow({
@@ -113,13 +117,13 @@ export function ChannelSidebarRow({
           {wrapSelect ? wrapSelect(selectButton) : selectButton}
         </div>
         {canParent && (
-          <Menu.Root
+          <MenuRoot
             onOpenChange={(open) => {
               if (open) starting.current = false;
             }}
           >
             <span className={styles.more}>
-              <Menu.Trigger
+              <MenuTrigger
                 render={
                   <IconButton
                     size="compact"
@@ -131,39 +135,27 @@ export function ChannelSidebarRow({
                 aria-label={`More options for ${channel.name}`}
               />
             </span>
-            <Menu.Portal>
-              <Menu.Positioner
-                side="bottom"
-                align="end"
-                sideOffset={4}
-                className={styles.positioner}
+            <MenuPopup
+              align="end"
+              finalFocus={() =>
+                starting.current
+                  ? (document
+                      .getElementById("new-session-prompt")
+                      ?.querySelector<HTMLElement>('[role="textbox"]') ?? false)
+                  : true
+              }
+              aria-label={`${channel.name} options`}
+            >
+              <MenuItem
+                onClick={() => {
+                  starting.current = true;
+                  onNewSession(channel.id);
+                }}
               >
-                <Menu.Popup
-                  className={`${completion.popup} ${styles.menu}`}
-                  data-compact=""
-                  finalFocus={() =>
-                    starting.current
-                      ? (document
-                          .getElementById("new-session-prompt")
-                          ?.querySelector<HTMLElement>('[role="textbox"]') ??
-                        false)
-                      : true
-                  }
-                  aria-label={`${channel.name} options`}
-                >
-                  <Menu.Item
-                    className={`${completion.option} ${styles.menuItem}`}
-                    onClick={() => {
-                      starting.current = true;
-                      onNewSession(channel.id);
-                    }}
-                  >
-                    New session
-                  </Menu.Item>
-                </Menu.Popup>
-              </Menu.Positioner>
-            </Menu.Portal>
-          </Menu.Root>
+                New session
+              </MenuItem>
+            </MenuPopup>
+          </MenuRoot>
         )}
         {channel.channelType === "dm" && onHideDm && (
           <span className={`${styles.more} ${styles.remove}`}>

@@ -530,6 +530,34 @@ export const COMPONENTS: readonly ComponentDefinition[] = [
     composes: ["field", "icon-button"],
   },
   {
+    slug: "popover",
+    name: "Popover",
+    purpose:
+      "An anchored surface for supporting details, short forms, and interactive content.",
+    behavior:
+      "Base UI owns positioning, focus restoration and dismissal; feature code owns content and state",
+    variants: ["content", "list", "none", "wide"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/Popover.tsx",
+    baseUi: [BASE_UI_PARTS.popover],
+    composes: [],
+  },
+  {
+    slug: "choice-row",
+    name: "ChoiceRow",
+    purpose:
+      "A label, optional description, leading artwork and trailing detail inside a choice.",
+    behavior:
+      "Presentational content; the containing control owns selection, interaction and semantics",
+    variants: ["label", "description", "icon", "avatar", "trailing detail"],
+    status: "proposed",
+    collection: "components",
+    source: "shared/design-system/ui/ChoiceRow.tsx",
+    baseUi: [],
+    composes: [],
+  },
+  {
     slug: "menu",
     name: "Menu",
     purpose: "Present contextual actions and choices from a compact trigger.",

@@ -86,14 +86,18 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
     name: "Insert emoji",
     exact: true,
   });
+  await draft.fill("unfinished draft");
   await emojiTrigger.click();
   await expect.poll(() => infoRequests).toBeGreaterThan(0);
-  const picker = page.getByRole("region", { name: "Emoji picker" });
+  const picker = page.getByRole("dialog", { name: "Emoji picker" });
   await expect(emojiTrigger).toHaveAttribute("aria-busy", "true");
   await expect(picker).toBeVisible();
   await expect(page.getByRole("tab", { name: "GIF", exact: true })).toHaveCount(
     0,
   );
+  await expect(
+    page.getByRole("searchbox", { name: "Search emoji", exact: true }),
+  ).toBeFocused();
   releaseInfo();
   await expect(emojiTrigger).not.toHaveAttribute("aria-busy", "true");
   await expect(
@@ -135,11 +139,14 @@ test("relay-backed GIF tab searches KLIPY and inserts URL-only media", async ({
   const search = page.getByRole("searchbox", { name: "Search GIFs" });
   await expect(search).toBeFocused();
   await expect(search).toHaveValue("hello");
-  await draft.fill("unfinished draft");
   // Observe the real key's browser-default boundary, not a guessed network delay.
-  await search.evaluate((input) => {
+  await draft.evaluate((input) => {
     window.gifEnter = { prevented: false, submits: 0 };
-    input.form.addEventListener("submit", () => window.gifEnter.submits++);
+    input
+      .closest("form")
+      .addEventListener("submit", () => window.gifEnter.submits++);
+  });
+  await search.evaluate((input) => {
     window.addEventListener("keydown", (event) => {
       if (event.target === input && event.key === "Enter")
         window.gifEnter.prevented = event.defaultPrevented;

@@ -391,7 +391,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await expect(search).toHaveCSS("font-size", "14px");
     await expect(search).toHaveCSS("border-top-color", "rgb(128, 128, 128)");
     const surface = page.locator("em-emoji-picker #root");
-    const region = page.getByRole("region", { name: "Emoji picker" });
+    const region = page.getByRole("dialog", { name: "Emoji picker" });
     await expect(surface).toHaveAttribute("data-theme", "light");
     await expect(region).toHaveCSS("background-color", "rgb(255, 255, 255)");
     await expect(region).toHaveCSS("border-radius", "24px");
@@ -531,7 +531,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     expect(narrowRegion.y + 1).toBe(narrowSurface.y);
     const pane = await page.locator("main").boundingBox();
     const popover = await page
-      .getByRole("region", { name: "Emoji picker" })
+      .getByRole("dialog", { name: "Emoji picker" })
       .boundingBox();
     expect(popover.x).toBeGreaterThanOrEqual(pane.x);
     expect(popover.x + popover.width).toBeLessThanOrEqual(pane.x + pane.width);
@@ -890,6 +890,9 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     await search.fill("grinning");
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(draft()).toHaveJSProperty("value", "😀A draft");
+    // The shared popup retains its contents through its exit transition.
+    // Finish that lifecycle before inspecting the separate composer error.
+    await expect(region).toHaveCount(0);
     await draft().fill(":party:");
     await draft().press("Enter");
     await expect(draft()).toHaveJSProperty("value", ":party:");

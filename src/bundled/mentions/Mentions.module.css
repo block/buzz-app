@@ -1,20 +1,14 @@
 @reference "../../shared/styles/globals.css";
 
-.mentionPopover {
-  @apply popover-surface;
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 0;
-  width: min(380px, 75vw);
-  max-height: 360px;
-  overflow: auto;
-  padding: var(--space-3);
+.mentionContent {
+  display: grid;
+  gap: var(--space-2);
 }
-.mentionPopover label {
+.mentionContent label {
   display: grid;
   gap: var(--space-1h);
 }
-.mentionPopover p {
+.mentionContent p {
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
   letter-spacing: var(--text-caption--letter-spacing);
@@ -29,7 +23,7 @@
   letter-spacing: var(--text-caption--letter-spacing);
   overflow-wrap: anywhere;
 }
-.mentionPopover p {
+.mentionContent p {
   color: var(--text-subtle);
 }
 .pickerControls {

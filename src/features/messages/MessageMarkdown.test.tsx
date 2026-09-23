@@ -452,6 +452,9 @@ describe("Markdown profile mentions", () => {
         {...props("**@Mic Smith** then @Mic", {
           canOpenLink,
           onOpenLink: (target) => {
+            expect(document.activeElement).toBe(
+              target === profileTarget(smith) ? buttons[0] : buttons[1],
+            );
             calls.push(target);
             return true;
           },
@@ -461,7 +464,11 @@ describe("Markdown profile mentions", () => {
     const buttons = screen.getAllByRole("button");
     expect(buttons).toHaveLength(2);
     for (const button of buttons) {
-      button.focus = () => calls.push("focus");
+      const focus = button.focus.bind(button);
+      vi.spyOn(button, "focus").mockImplementation(() => {
+        calls.push("focus");
+        focus();
+      });
       fireEvent.click(button);
     }
     expect(calls).toEqual([

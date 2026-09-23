@@ -220,6 +220,13 @@ export function FormsPage() {
           the app, review agent import, agent configuration, and workflow
           editing; this page uses generic shared components, not live app data.
         </p>
+        <p className="text-body">
+          Agent import inherits shared field styling. Emoji search mirrors these
+          tokens inside its existing picker. Variable-name, URL, and workflow
+          field errors use Field; YAML help returns when validation clears.
+          Request failures and problems affecting the whole workflow remain
+          separate notices.
+        </p>
         <p className="text-body-sm text-subtle">
           Auto-growing textareas, multi-select chips, and search inside a popup
           are deferred. Block UI’s form references are currently marked

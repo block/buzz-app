@@ -598,16 +598,17 @@ test("invalid timeout text stays in the draft and blocks saves in both editor mo
     await timeout.fill(input);
     await expect(timeout).toHaveValue(input);
     await expect(button("Save workflow")).toBeDisabled();
-    await expect(
-      page.getByRole("status").filter({ hasText: /timeout/ }),
-    ).toContainText("positive whole number");
+    await expect(timeout).toHaveAttribute("aria-invalid", "true");
+    await expect(timeout).toHaveAccessibleDescription(/positive whole number/);
     await page.getByRole("tab", { name: "YAML", exact: true }).click();
     expect(parseYaml(await yaml.inputValue()).steps[0].timeout_secs).toBe(
       input,
     );
     await expect(button("Save workflow")).toBeDisabled();
+    await expect(yaml).toHaveAttribute("aria-invalid", "true");
+    await expect(yaml).toHaveAccessibleDescription(/positive whole number/);
     await page.getByRole("tab", { name: "Form", exact: true }).click();
-    await page.getByText("Step options", { exact: true }).click();
+    await expect(timeout).toBeVisible();
     await expect(timeout).toHaveValue(input);
   }
   await button("Close editor").click();

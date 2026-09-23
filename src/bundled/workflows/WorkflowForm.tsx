@@ -5,7 +5,7 @@ import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Switch } from "../../shared/design-system/ui/Switch";
-import { formWithStep } from "./editor-model";
+import { formWithStep, type WorkflowDraftIssue } from "./editor-model";
 import {
   ACTION_LABELS,
   nextStepId,
@@ -16,12 +16,21 @@ export function WorkflowForm({
   state,
   onChange,
   disabled,
+  issue,
 }: {
   state: WorkflowFormState;
   onChange: (next: WorkflowFormState) => void;
   disabled: boolean;
+  issue?: WorkflowDraftIssue | null;
 }) {
   const id = useId();
+  const stepError = (index: number, field: "text" | "duration" | "timeout") =>
+    issue &&
+    "stepIndex" in issue &&
+    issue.stepIndex === index &&
+    issue.field === field
+      ? issue.message
+      : undefined;
   return (
     <fieldset className="workflow-form" disabled={disabled}>
       <Field label="Description">
@@ -103,7 +112,7 @@ export function WorkflowForm({
             </div>
             {step.action === "send_message" ? (
               <>
-                <Field label="Message text">
+                <Field label="Message text" error={stepError(index, "text")}>
                   <Textarea
                     id={`${id}-text-${step.id}`}
                     value={step.text ?? ""}
@@ -128,7 +137,10 @@ export function WorkflowForm({
                 />
               </>
             ) : (
-              <Field label="Delay duration">
+              <Field
+                label="Delay duration"
+                error={stepError(index, "duration")}
+              >
                 <Input
                   id={`${id}-6${step.id}`}
                   value={step.duration ?? ""}
@@ -139,7 +151,7 @@ export function WorkflowForm({
                 />
               </Field>
             )}
-            <details>
+            <details open={stepError(index, "timeout") ? true : undefined}>
               <summary>Step options</summary>
               <div className="workflow-options">
                 <p className="text-mono-sm text-secondary">{step.id}</p>
@@ -166,7 +178,10 @@ export function WorkflowForm({
                     />
                   </Field>
                 )}
-                <Field label="Step timeout (optional)">
+                <Field
+                  label="Step timeout (optional)"
+                  error={stepError(index, "timeout")}
+                >
                   <Input
                     id={`${id}-7${step.id}`}
                     value={step.timeoutSecs ?? ""}

@@ -7,7 +7,7 @@ import { Switch } from "../../shared/design-system/ui/Switch";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
 import { ConfirmAction } from "./ConfirmAction";
 import { WorkflowForm } from "./WorkflowForm";
-import { draftError, hasWebhookTrigger } from "./editor-model";
+import { draftIssue, hasWebhookTrigger } from "./editor-model";
 import { getWorkflowActivationWarning } from "./workflowActivationWarning";
 import {
   formStateToYaml,
@@ -57,7 +57,9 @@ export function WorkflowEditor({
       : parsed.ok
         ? parsed.state
         : null;
-  const error = draftError(yaml);
+  const issue = draftIssue(yaml);
+  const error = issue?.message;
+  const showingForm = mode === "form" && !!form;
   const secretGate = hasWebhookTrigger(yaml)
     ? "Webhook-trigger saves are unavailable until secure one-time-secret display is supported."
     : undefined;
@@ -92,7 +94,10 @@ export function WorkflowEditor({
     <section aria-label="Workflow editor" className="workflow-editor">
       <div className="workflow-toolbar">
         <div className="workflow-name">
-          <Field label="Workflow name">
+          <Field
+            label="Workflow name"
+            error={showingForm && issue?.field === "name" ? error : undefined}
+          >
             <Input
               id={`${id}-1`}
               value={fields.name ?? ""}
@@ -130,7 +135,7 @@ export function WorkflowEditor({
           setMode(next);
         }}
       />
-      {modeError && (
+      {modeError && !error && (
         <p role="alert" className="text-danger">
           {modeError}
         </p>
@@ -138,12 +143,14 @@ export function WorkflowEditor({
       {mode === "form" && form ? (
         <WorkflowForm
           state={form}
+          issue={issue}
           onChange={mutateForm}
           disabled={readOnly || busy || locked}
         />
       ) : (
         <Field
           label="Workflow YAML"
+          error={error}
           description="Original text is kept until you edit. Form changes may reformat YAML. Schedules use UTC."
         >
           <Textarea
@@ -156,12 +163,13 @@ export function WorkflowEditor({
             value={yaml}
             onChange={(event) => {
               setFormDraft(null);
+              setModeError(null);
               onChange(event.currentTarget.value);
             }}
           />
         </Field>
       )}
-      {error && (
+      {showingForm && error && !issue?.field && (
         <p role="status" className="text-danger">
           {error}
         </p>

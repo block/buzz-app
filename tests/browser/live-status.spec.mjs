@@ -146,7 +146,6 @@ for (const target of ["alpha", "profiles"]) {
     // Persistent feedback must not block the header, composer, or narrow navigation.
     for (const width of [390, 800, 1440]) {
       await page.setViewportSize({ width, height: 950 });
-      // At narrow widths the settings panel covers the conversation header.
       await page
         .getByRole("button", { name: "Close channel settings", exact: true })
         .click();
@@ -164,7 +163,7 @@ for (const target of ["alpha", "profiles"]) {
     }
     const beforeManual = requests().length;
     await page
-      .getByRole("button", { name: "Channel settings", exact: true })
+      .getByRole("button", { name: "Close channel settings", exact: true })
       .click();
     await page
       .getByRole("button", { name: "Retry live updates", exact: true })

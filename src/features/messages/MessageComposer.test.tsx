@@ -1,5 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { bindNames } from "../identity-names/service";
+import { createAgentDirectory } from "../../bundled/agents/directory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -1153,6 +1155,7 @@ it.each(
         snapshot: () => library,
         subscribe: () => () => {},
         refresh: async () => {},
+        retain: () => () => {},
       },
       workSessions: {
         addAgents,
@@ -1314,6 +1317,7 @@ it("routes to the avatar choice and lets an explicit mention override it", async
       snapshot: () => library,
       subscribe: () => () => {},
       refresh: async () => {},
+      retain: () => () => {},
     },
   } as unknown as RelaySession;
   view.retarget({ session, sessionConversation: true });
@@ -1565,3 +1569,55 @@ it.each([
     expect(h.input()).toHaveAttribute("aria-disabled", "true");
   },
 );
+
+it("keeps inline recipient identity and source stable through directory collision changes", async () => {
+  const h = mount();
+  const listeners = new Set<() => void>();
+  let identities = [first, second];
+  const provider = createAgentDirectory();
+  const names = bindNames(
+    {
+      profiles: h.session.profiles,
+      agentLibrary: {
+        snapshot: () => ({ status: "ready", definitions: [], identities }),
+        subscribe: (listener) => {
+          listeners.add(listener);
+          return () => {
+            listeners.delete(listener);
+          };
+        },
+        refresh: async () => {},
+        retain: () => () => {},
+      },
+    },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  h.retarget({ session: { ...h.session, names } });
+  await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
+  const chips = () => within(h.input()).getAllByRole("img");
+  const labels = () => chips().map((chip) => chip.textContent);
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  const source = h.input().value;
+  act(() => {
+    identities = [first, { ...second, name: "Renamed Honey" }];
+    for (const notify of listeners) notify();
+  });
+  // Selected chips disclose authored recipients, independently of live directory labels.
+  expect(names.resolve(second.pubkey)).toBe("Renamed Honey");
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  expect(h.input()).toHaveValue(source);
+  act(() => {
+    identities = [first, second];
+    for (const notify of listeners) notify();
+  });
+  expect(names.lookup(first.pubkey)?.qualifier).toBeTruthy();
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  h.input().setSelectionRange(7, 13);
+  act(() => h.commands().insertText(""));
+  expect(labels()).toEqual(["@Honey"]);
+  h.submit();
+  expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
+  h.unmount();
+  names.dispose();
+});

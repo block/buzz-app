@@ -145,3 +145,18 @@ it("normalizes viewer, owner, candidates and repeated keys at the API boundary",
     ).get(viewer)?.name,
   ).toBe("Alex");
 });
+
+it("trims names but keeps differently cased names distinct", () => {
+  const distinct = resolveIdentityNames([
+    person(a, " Honey "),
+    person(b, "honey"),
+  ]);
+  expect(distinct.get(a)).toEqual({ name: "Honey", qualifier: undefined });
+  expect(distinct.get(b)).toEqual({ name: "honey", qualifier: undefined });
+  const collision = resolveIdentityNames([
+    person(a, " Honey "),
+    person(b, "Honey"),
+  ]);
+  expect(collision.get(a)?.qualifier).toBeTruthy();
+  expect(collision.get(b)?.qualifier).toBeTruthy();
+});

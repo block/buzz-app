@@ -59,6 +59,10 @@ const SECTIONS: NavSection[] = [
     ],
   },
   {
+    heading: "Product patterns",
+    items: [["Messages", "/design/messages"]],
+  },
+  {
     heading: "Layout playgrounds",
     items: componentNavItems("product-ui"),
   },

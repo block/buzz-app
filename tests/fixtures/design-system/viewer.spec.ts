@@ -972,3 +972,106 @@ test("shared menus stay reachable near viewport edges and above a dialog", async
   await expect(dialog).toBeVisible();
   await expect(trigger).toBeFocused();
 });
+
+// Real iframe sizing, theme propagation, media decoding and built asset paths
+// require a browser; the specimen interactions only mutate local sample state.
+test("built Messages gallery renders isolated product states and follows viewer theme and width", async ({
+  page,
+}) => {
+  const failures: string[] = [];
+  const sockets: string[] = [];
+  page.on("pageerror", (error) => failures.push(error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400)
+      failures.push(`${response.status()} ${response.url()}`);
+  });
+  page.on("websocket", (socket) => sockets.push(socket.url()));
+  await page.goto(`${viewer}#/design/messages`);
+  const gallery = page.frameLocator('iframe[title="Message types and states"]');
+  await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
+  await expect(
+    gallery.getByRole("heading", { name: "Member removed", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.locator("iframe").evaluate((el) => el.clientHeight))
+    .toBeGreaterThan(3000);
+  await gallery
+    .getByRole("button", { name: "Delivery states", exact: true })
+    .click();
+  const failed = gallery.getByRole("region", { name: "Failed", exact: true });
+  await expect(failed.getByRole("status")).toHaveText(
+    "Couldn’t send this message.",
+  );
+  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(failed.getByRole("status")).toHaveCount(0);
+  await gallery.getByRole("button", { name: "Reset examples" }).click();
+  await expect(failed.getByRole("status")).toHaveText(
+    "Couldn’t send this message.",
+  );
+  await gallery
+    .getByRole("button", { name: "Conversation context", exact: true })
+    .click();
+  await gallery.getByRole("button", { name: "View thread: 4 replies" }).click();
+  await expect(
+    gallery.getByRole("region", { name: "Sample thread replies" }),
+  ).toBeVisible();
+  await gallery.getByRole("button", { name: "Close replies" }).click();
+  await expect(
+    gallery.getByRole("region", { name: "Sample thread replies" }),
+  ).toHaveCount(0);
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    await expect(gallery.locator("html")).toHaveAttribute(
+      "data-color-mode",
+      mode,
+    );
+    await gallery
+      .getByRole("button", { name: "Attachments", exact: true })
+      .click();
+    const video = gallery
+      .getByRole("region", { name: "Video attachment", exact: true })
+      .locator("video");
+    await expect
+      .poll(() => video.evaluate((el) => (el as HTMLVideoElement).readyState))
+      .toBeGreaterThanOrEqual(2);
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect
+        .poll(() =>
+          gallery
+            .locator("body")
+            .evaluate((el) => el.scrollWidth <= window.innerWidth),
+        )
+        .toBe(true);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+    }
+  }
+  await gallery
+    .getByRole("button", { name: "Content and identity", exact: true })
+    .click();
+  await gallery.getByRole("button", { name: "Narrow preview" }).click();
+  await expect
+    .poll(() =>
+      gallery
+        .locator(".message-gallery-examples")
+        .evaluate((el) => el.clientWidth),
+    )
+    .toBeLessThanOrEqual(390);
+  await expect(
+    gallery.getByRole("button", { name: "View Sam Rivera profile" }),
+  ).toBeVisible();
+  await expect(
+    gallery.getByRole("img", { name: ":landscape:", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
+  expect(failures).toEqual([]);
+  expect(sockets).toEqual([]);
+});

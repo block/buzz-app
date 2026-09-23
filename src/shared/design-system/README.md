@@ -41,9 +41,14 @@ native configuration or source maps. No publishing configuration is included.
 
 ## What is intentionally absent
 
-No session shell, navigation controller, agent setup/activity, composer,
-conversation feature, relay client, native adapter, local lab or identity data.
+The core viewer bundle has no session shell, navigation controller, agent
+setup/activity, composer, conversation feature, relay client, native adapter,
+local lab or identity data.
 Blank layout playgrounds and generic inline reference presentations are retained.
+
+The Messages product-pattern page embeds a separately built local fixture using
+production message renderers and sample data. It does not import product code into
+the core viewer or start live services. See [message specimens](../../../docs/design-system.md#message-specimens).
 
 ## Compatibility boundary
 

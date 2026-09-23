@@ -189,3 +189,19 @@ The browser adoption regression changes semantic fill, type and spacing values
 and checks the actual Settings button, inline chips and production CSS inside
 message-history containers and anchored popups. It exists because DOM emulation
 cannot establish CSS layer ownership.
+
+## Message specimens
+
+`just design` includes **Product patterns → Messages**, a catalogue of current
+message content, attachments, delivery feedback, thread summaries, and membership
+activity. Examples render the production message components against local sample
+data; filters, narrow preview, and reset help compare states without a relay.
+
+Product specimens live in `tests/fixtures/message-gallery` and run in a separate
+iframe with the host stylesheet. `design:build` builds that document alongside the
+core viewer via `vite.message-gallery.config.ts`; the viewer's core-only bundle
+boundary remains intact. The iframe inherits the viewer's theme and reports its
+height, so the page has one scroll area. Theme changes reload sample state.
+
+This is a visual inventory, not live delivery or plugin validation. Composer,
+presence, unread tracking, and timeline pagination remain outside this first pass.

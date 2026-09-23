@@ -30,6 +30,7 @@ import { GlassPage } from "./ui/GlassPage";
 import { MotionPage } from "./ui/MotionPage";
 import { BaseUiPage } from "./ui/BaseUiPage";
 import { SystemDocumentPage } from "./ui/SystemDocumentPage";
+import { MessagesPage } from "./ui/MessagesPage";
 import { MissingPage } from "./ui/MissingPage";
 import { FoundationAlignmentPage } from "./ui/FoundationAlignmentPage";
 
@@ -59,6 +60,11 @@ const pages = [
     component: ComponentsPage,
   }),
   detail,
+  createRoute({
+    getParentRoute: () => design,
+    path: "messages",
+    component: MessagesPage,
+  }),
   createRoute({
     getParentRoute: () => design,
     path: "components/base-ui",

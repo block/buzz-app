@@ -139,7 +139,7 @@ export const MessageRow = memo(function MessageRow({
       <div className={styles.message}>
         {clickable ? (
           <IconButton
-            size="large"
+            size="default"
             shape="round"
             aria-label={`View ${name} profile`}
             onClick={(event) => {
@@ -313,6 +313,7 @@ export const MessageRow = memo(function MessageRow({
             <Button
               variant="ghost"
               size="sm"
+              style={{ paddingInlineStart: "var(--space-1)" }}
               type="button"
               aria-label={`View thread: ${row.replyCount} ${row.replyCount === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
               onClick={(event) => {

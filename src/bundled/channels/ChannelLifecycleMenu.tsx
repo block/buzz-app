@@ -62,27 +62,25 @@ export function ChannelLifecycleMenu({
     <>
       {state.canHide ? (
         <MenuItem disabled={disabled} onClick={() => choose("hide")}>
-          Hide conversation…
+          Hide conversation
         </MenuItem>
       ) : (
         <>
           {state.canArchive && (
             <MenuItem disabled={disabled} onClick={() => choose("archive")}>
-              Archive channel…
+              Archive channel
             </MenuItem>
           )}
           {state.canDelete && (
             <MenuItem disabled={disabled} onClick={() => choose("delete")}>
-              Delete channel…
+              Delete channel
             </MenuItem>
           )}
-          <MenuItem
-            disabled={disabled || !state.canLeave}
-            onClick={() => choose("leave")}
-          >
-            Leave channel…
-          </MenuItem>
-          {state.leaveReason && <p>{state.leaveReason}</p>}
+          {state.canLeave && (
+            <MenuItem disabled={disabled} onClick={() => choose("leave")}>
+              Leave channel
+            </MenuItem>
+          )}
         </>
       )}
     </>

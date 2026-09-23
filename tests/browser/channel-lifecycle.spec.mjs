@@ -48,13 +48,18 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
     name: "Actions for Lifecycle channel",
   });
   await expect(
-    menu.getByRole("menuitem", { name: "Archive channel…" }),
+    menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
   ).toBeVisible();
   await expect(
-    menu.getByRole("menuitem", { name: "Leave channel…" }),
-  ).toHaveAttribute("aria-disabled", "true");
+    menu.getByRole("menuitem", { name: /^Leave channel/ }),
+  ).toHaveCount(0);
+  await expect(
+    menu.getByText("Transfer ownership before leaving the channel."),
+  ).toHaveCount(0);
   await menu.screenshot({ path: testInfo.outputPath("lifecycle-menu.png") });
-  await menu.getByRole("menuitem", { name: "Archive channel…" }).click();
+  await menu
+    .getByRole("menuitem", { name: "Archive channel", exact: true })
+    .click();
   const dialog = page.getByRole("dialog", {
     name: "Archive channel: Lifecycle channel",
   });
@@ -68,7 +73,9 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
   await row.click({ button: "right" });
-  await menu.getByRole("menuitem", { name: "Archive channel…" }).click();
+  await menu
+    .getByRole("menuitem", { name: "Archive channel", exact: true })
+    .click();
   await dialog
     .getByRole("button", { name: "Archive channel", exact: true })
     .click();
@@ -102,15 +109,17 @@ test("DM hide is per-viewer visibility, survives reload and never sends Leave or
   await row.click({ button: "right" });
   const menu = page.getByRole("menu");
   await expect(
-    menu.getByRole("menuitem", { name: "Hide conversation…" }),
+    menu.getByRole("menuitem", { name: "Hide conversation", exact: true }),
   ).toBeVisible();
   await expect(
-    menu.getByRole("menuitem", { name: "Delete channel…" }),
+    menu.getByRole("menuitem", { name: "Delete channel", exact: true }),
   ).toHaveCount(0);
   await expect(
-    menu.getByRole("menuitem", { name: "Leave channel…" }),
+    menu.getByRole("menuitem", { name: "Leave channel", exact: true }),
   ).toHaveCount(0);
-  await menu.getByRole("menuitem", { name: "Hide conversation…" }).click();
+  await menu
+    .getByRole("menuitem", { name: "Hide conversation", exact: true })
+    .click();
   await page
     .getByRole("dialog")
     .getByRole("button", { name: "Hide conversation", exact: true })
@@ -163,7 +172,9 @@ test("typed delete confirmation purges the selected channel and survives reload"
     }),
   ).toBeVisible();
   await row.click({ button: "right" });
-  await page.getByRole("menuitem", { name: "Delete channel…" }).click();
+  await page
+    .getByRole("menuitem", { name: "Delete channel", exact: true })
+    .click();
   const dialog = page.getByRole("dialog", {
     name: "Delete channel: Lifecycle channel",
   });

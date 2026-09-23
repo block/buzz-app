@@ -63,13 +63,58 @@ it("shows fresh loading and the last-owner boundary", async () => {
   expect(
     await screen.findByText("Checking channel permissions…"),
   ).toBeDefined();
-  expect(screen.queryByText("Delete channel…")).toBeNull();
+  expect(screen.queryByText("Delete channel")).toBeNull();
   gate.resolve(settings);
-  const leave = await screen.findByRole("menuitem", { name: "Leave channel…" });
-  expect(leave.getAttribute("aria-disabled")).toBe("true");
-  await user.click(screen.getByRole("menuitem", { name: "Delete channel…" }));
+  const remove = await screen.findByRole("menuitem", {
+    name: "Delete channel",
+  });
+  expect(screen.queryByRole("menuitem", { name: /^Leave channel/ })).toBeNull();
+  expect(
+    screen.queryByText("Transfer ownership before leaving the channel."),
+  ).toBeNull();
+  expect(
+    screen.getAllByRole("menuitem").map((item) => item.textContent),
+  ).toEqual(["Archive channel", "Delete channel"]);
+  await user.click(remove);
   expect(choose).toHaveBeenCalledWith("delete");
 });
+it.each([
+  { action: "leave", label: "Leave channel", channelType: "stream" },
+  { action: "hide", label: "Hide conversation", channelType: "dm" },
+] as const)(
+  "offers $label without an ellipsis when permitted",
+  async ({ action, label, channelType }) => {
+    const user = userEvent.setup();
+    const lifecycle = capability();
+    lifecycle.load.mockResolvedValue({
+      channelId: "id",
+      channelType,
+      canArchive: false,
+      canDelete: false,
+      canLeave: action === "leave",
+      canHide: action === "hide",
+    });
+    const choose = vi.fn();
+    render(
+      <ContextMenuRoot open>
+        <MenuPopup>
+          <ChannelLifecycleMenu
+            channelId="id"
+            lifecycle={lifecycle}
+            choose={choose}
+            disabled={false}
+          />
+        </MenuPopup>
+      </ContextMenuRoot>,
+    );
+    const item = await screen.findByRole("menuitem", {
+      name: label,
+    });
+    expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    await user.click(item);
+    expect(choose).toHaveBeenCalledWith(action);
+  },
+);
 it("failed permission reads offer retry rather than stale destructive actions", async () => {
   const user = userEvent.setup();
   const lifecycle = capability();
@@ -92,13 +137,15 @@ it("failed permission reads offer retry rather than stale destructive actions", 
     "Channel actions unavailable",
   );
   expect(
-    screen.queryByRole("menuitem", { name: "Archive channel…" }),
+    screen.queryByRole("menuitem", { name: "Archive channel" }),
   ).toBeNull();
   await user.click(
     screen.getByRole("menuitem", { name: "Retry channel permissions" }),
   );
   expect(
-    await screen.findByRole("menuitem", { name: "Archive channel…" }),
+    await screen.findByRole("menuitem", {
+      name: "Archive channel",
+    }),
   ).toBeDefined();
 });
 it("confirmation, pending lockout and failed-write recovery stay in the actual dialog", async () => {

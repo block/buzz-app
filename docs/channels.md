@@ -230,7 +230,9 @@ and modeled upstream I/O; it does not send messages to a live community.
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering
 Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
-Delete requires a direct owner role; the last owner cannot Leave. DMs offer Hide
+Delete requires a direct owner role; the last owner cannot Leave. The menu omits
+Leave when it is forbidden, without an ownership-transfer explanation. Action
+labels have no trailing ellipsis; confirmation dialogs are unchanged. DMs offer Hide
 only. Delegated owner-agent authority and community-admin overrides are not
 inferred or supported by this slice; the relay remains the final authority.
 Membership accepts NIP-29 `p` tags with optional relay and role fields

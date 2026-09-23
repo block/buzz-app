@@ -28,12 +28,14 @@ const request: ModelRequest = {
     },
     environment: {},
   },
-  host: "https://example.com",
-  filter: "",
+  integration: {
+    kind: "databricks" as const,
+    settings: { host: "https://example.com", filter: "" },
+  },
   action: "connect",
 };
 const data: ModelCatalog = {
-  host: "https://example.com",
+  integration: { kind: "databricks" as const, host: "https://example.com" },
   models: [{ id: "exact.id", name: "Exact label" }],
   modelOverridden: false,
   disconnected: false,

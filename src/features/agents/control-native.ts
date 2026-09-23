@@ -9,8 +9,13 @@ export function nativeAgentControlHost(): AgentControlHost | null {
       run: (ticket, request) => invoke("agent_models_run", { ticket, request }),
       cancel: (ticket) => invoke("agent_models_cancel", { ticket }),
     },
-    prepareCreate: (requestId, destination, owner) =>
-      invoke("agent_control_create_prepare", { requestId, destination, owner }),
+    prepareCreate: (requestId, destination, owner, edit) =>
+      invoke("agent_control_create_prepare", {
+        requestId,
+        destination,
+        owner,
+        edit,
+      }),
     commitCreate: (requestId, edit, auth) =>
       invoke("agent_control_create_commit", { requestId, edit, auth }),
     publishProfile: (id) => invoke("agent_control_creation_profile", { id }),

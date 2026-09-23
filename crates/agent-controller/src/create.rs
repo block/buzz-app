@@ -43,6 +43,7 @@ impl NewAgent {
             system_prompt: String::new(),
             workspace: String::new(),
             harness: HarnessEdit {
+                configuration: None,
                 command: String::new(),
                 args: vec![],
                 model: String::new(),

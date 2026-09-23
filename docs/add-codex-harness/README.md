@@ -8,6 +8,84 @@ account entitlement. Live account, rendered desktop and inference acceptance
 remain outstanding; steps 0 and 3–7 are not declared fully accepted.
 Written 2026-09-23 for branch `pazar/add-codex-agent-harness`.
 
+## Follow-up fixes — September 23
+
+- [x] Hide the Provider input when Codex is selected, including an absolute
+  `codex-acp` executable path.
+- [x] Cache Codex discovery in the app control service (up to 16 contexts,
+  memory only) and refresh headlessly when the selected Codex editor/context
+  opens without a cached catalog. Cached model/effort choices can satisfy the UI
+  gate; native creation always revalidates the submitted selection. Explicit
+  refresh replaces cached evidence. Requests abort on context change/unmount;
+  no login opens.
+- [x] Remove the empty Codex Advanced → Model disclosure. Explicit model and
+  model-specific effort remain under Configuration → Advanced; Environment
+  stays available.
+- [x] Display the initial ACP session's model and effort in Default mode, before
+  any explicit model selection. Missing metadata is shown as not reported;
+  cached values are labeled. Defaults are never copied into saved overrides.
+
+Validation on this working tree: TypeScript passed; 50 tests passed across
+`models.test.ts`, `AgentHarnessEditor.test.tsx`, `AgentModelPicker.test.tsx`,
+`AgentCreateDialog.test.tsx`, and `AgentsPage.test.tsx`. All eight native
+`agent_models::codex::tests` passed, including initial defaults before explicit
+selection. Rust formatting and `cargo clippy -p buzz-foundation --lib -- -D warnings`
+passed. Regression coverage includes StrictMode, cached reopening, stale context
+responses, failed-refresh validation, and bounded cache disposal.
+
+Rendered native desktop, browser layout, real-account default/inference acceptance,
+and other-platform checks remain outstanding; these fixes are not completion of
+the broader integration ledger below. Restart the native development app to load
+the new defaults response before trying the Default display.
+
+## Model catalog parity with original Buzz
+
+- [x] Prefer the original Buzz managed `node-tools/bin/codex-acp` and its
+  pinned Node runtime before system installations; preserve explicit adapter paths.
+  Both discovery and launch use this resolver.
+- [x] Match original `normalize_agent_models`: read every model-category
+  `configOptions` entry, append `models.availableModels`, retain order, and
+  deduplicate IDs with the stable entry winning. Stable labels use `displayName`;
+  legacy labels use `name`, with model IDs as the fallback.
+- [x] Validate legacy `model[effort]` choices against the base model's advertised
+  effort options and the adapter's `session/set_model` response. Missing effort
+  evidence remains unknown and cannot enable Advanced creation.
+
+Local installation evidence: original Buzz resolves managed
+`@agentclientprotocol/codex-acp` 1.3.0; the previous buzz-app search resolved
+Homebrew `@zed-industries/codex-acp` 0.16.0. No installed packages were modified.
+Catalog parity depends on using the same adapter and account/configuration context;
+custom executable or environment overrides can intentionally change the catalog.
+Validation: all 10 `agent_models::codex::tests` and both controller tests selected
+by `cargo test -p buzz-agent-controller codex --lib` passed. Workspace Rust
+formatting and Clippy for the controller and native app passed. Tests bind the
+production parser, resolver and ACP transport. Live desktop comparison remains
+deferred; restart the native app and refresh models to use the managed adapter.
+
+## Complete model/effort cache and separate controls
+
+This follow-up supersedes literal legacy-variant picker parity above.
+
+- [x] Load all base-model effort choices in one bounded ACP session, once per
+  execution context. Each base model is selected at most once during discovery.
+- [x] Cache the complete catalog in memory, independently of the selected model
+  or configuration mode. Reopening and model changes reuse it; explicit Refresh
+  reloads it. Context/revision changes use separate cache entries.
+- [x] Display each configurable base model once. Omit `model[effort]` aliases
+  when that base is advertised; effort belongs in the separate Effort field.
+- [x] Preserve older saved aliases for native validation, display their base
+  model, and normalize to separate fields on an explicit model/effort edit.
+- [x] Keep native Create validation fresh and selection-specific. A cached UI
+  choice never bypasses the native authentication/model/effort checks. Refresh
+  failure invalidates cache reuse and retains an explicit retry affordance.
+
+Validation: 49 tests across the model service, picker, creation dialog and Agents
+page passed; 11 native Codex tests passed. Native call-count assertions verify
+one session and one effort probe per base model; UI tests verify model/mode
+changes and reopening use the cached catalog, and stale effort cannot validate
+another model. TypeScript, Rust formatting and native Clippy passed. Live desktop timing/layout remains unverified; restart the
+native app to use the updated discovery response.
+
 ## Outcome and boundaries
 
 Users can select Codex when creating or editing an agent, reuse their existing
@@ -28,9 +106,10 @@ Out of scope: additional harness integrations, remote execution, a harness plugi
 marketplace, a universal form-schema language, per-agent account management,
 automatic edits to the user's Codex config, and live mid-conversation model/effort
 switching. Installation recovery is in scope; a general multi-harness installer
-framework is not. Other advanced settings are included only when the adapter
-contract and application path are verified; arbitrary raw options are not a
-substitute for functioning controls.
+framework and a general provider registry are not. Provider-aware harness metadata
+and the Open AI setup flow described below are in scope. Other advanced settings
+are included only when the adapter contract and application path are verified;
+arbitrary raw options are not a substitute for functioning controls.
 
 Follow [AGENTS.md](../../AGENTS.md), [contributing](../contributing.md), and the
 existing [agent control contract](../agent-control.md). Before implementation,
@@ -73,6 +152,13 @@ markers; those edits require explicit human guidance under the repository rules.
    probe every account, or start authentication. Selecting/setup of a harness can
    trigger bounded headless checks; browser opening and credential writes require
    the corresponding explicit user action. Refresh is headless.
+9. **Make provider requirements explicit.** Harness catalog entries that require a
+   provider, including Buzz Agent, carry a Provider tag/capability in their native
+   metadata. Selecting one of those harnesses displays a Provider field; selecting
+   **Open AI** displays a masked Open AI API Key field. After the user submits the
+   key, use it through the native secret boundary to list that account's available
+   models and model metadata. Do not hardcode the model list, expose the key to the
+   browser after submission, or infer provider requirements from harness labels.
 
 ### Step 1 decisions — Default and Advanced
 
@@ -229,6 +315,9 @@ operator's explicit authentication interaction. A handshake is not inference.
 - [x] Give native catalog entries stable harness identity and capabilities,
   distinct from resolved executable paths. Preserve custom absolute commands and
   existing records; do not classify arbitrary executables by display label.
+- [ ] Add an explicit Provider tag/capability to catalog entries that require
+  provider configuration. Buzz Agent must opt into this capability; harnesses
+  without it must not render provider controls.
 - [x] Separate shared operation/status envelopes from Databricks-specific
   host/filter inputs. Use typed variants for runtime-specific settings.
 - [x] Define optional model/effort overrides, discovery metadata, and safe errors.
@@ -374,6 +463,9 @@ model/effort before claiming live acceptance; model self-description is not proo
 ### Step 7 — Enable shared Codex setup/create/edit controls
 
 - [ ] Expose Codex only when the complete native integration is wired.
+- [ ] For Buzz Agent and any other provider-tagged harness, render Provider with
+  an **Open AI** option. Selecting it reveals a masked Open AI API Key input;
+  submitting the key loads the user's models and model metadata for selection.
 - [ ] Render installed/login state, setup recovery, browser/API-key fallback,
   model picker, Default/Advanced modes, and supported effort controls.
 - [ ] Block Advanced creation until current-context authentication, model and

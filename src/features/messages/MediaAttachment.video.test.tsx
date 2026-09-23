@@ -44,11 +44,15 @@ it("tracks received video play, pause, time updates, and review handoff", () => 
   if (!video) throw new Error("Missing video element");
   const playback = mockPlayback(video);
 
+  const preview = video.closest("div");
+  expect(preview).not.toHaveAttribute("data-playing");
+
   fireEvent.click(screen.getByRole("button", { name: "Play video" }));
   expect(playback.play).toHaveBeenCalledTimes(1);
   expect(
     screen.getByRole("button", { name: "Pause video" }),
   ).toBeInTheDocument();
+  expect(preview).toHaveAttribute("data-playing", "true");
 
   Object.defineProperty(video, "currentTime", {
     configurable: true,
@@ -71,6 +75,7 @@ it("tracks received video play, pause, time updates, and review handoff", () => 
   expect(
     screen.getByRole("button", { name: "Play video" }),
   ).toBeInTheDocument();
+  expect(preview).not.toHaveAttribute("data-playing");
 });
 
 it("replays an explicit seek request for a received video", () => {

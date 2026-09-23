@@ -308,7 +308,6 @@ export function createRelaySession(
       );
       profiles.clear();
       emoji.clear();
-      agentLibrary.clear();
       activity.clear();
       presence.clear();
       archives.clear();

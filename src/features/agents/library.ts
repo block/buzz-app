@@ -98,7 +98,9 @@ export function createAgentLibrary(
     }),
     clear,
     reconnect() {
-      if (demands.size) void refresh();
+      // Initial establishment can follow a completed activation read. A real
+      // disconnect clears this snapshot; only then is fresh inventory needed.
+      if (demands.size && snapshot.status !== "ready") void refresh();
     },
     dispose() {
       closed = true;

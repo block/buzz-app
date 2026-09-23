@@ -80,7 +80,7 @@ function attachmentMarkdown(name: string, result: UploadedAttachment) {
     char.charCodeAt(0) < 32 ? " " : char,
   )
     .join("")
-    .replace(/[\\`*_{}[\]()!<>]/g, "\\$&");
+    .replace(/[\\`*_{}[\]()!<>&]/g, "\\$&");
   const image = /^(image\/(png|jpeg|gif|webp)|video\/mp4)$/.test(result.type);
   return `${image ? "!" : ""}[${label}](<${result.url}>)`;
 }

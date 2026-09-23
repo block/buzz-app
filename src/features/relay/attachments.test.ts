@@ -5,7 +5,7 @@ import {
   UPLOAD_MAX_BYTES,
   validateUploadResult,
 } from "./attachments";
-import { parseAttachments } from "./fold";
+import { foldMessages, parseAttachments } from "./fold";
 
 const origin = "https://relay.test";
 const hash = "a".repeat(64);
@@ -165,6 +165,37 @@ it("builds escaped message links and metadata understood by the existing receive
     attachmentMessage("", [uploaded], "https://different.test"),
   ).toThrow();
 });
+
+it.each(["report &copy;.pdf", "report &#65;.pdf", "report &#x41;.pdf"])(
+  "preserves the literal filename %s through message projection",
+  (name) => {
+    const message = attachmentMessage(
+      "hello",
+      [{ ...descriptor, name }],
+      origin,
+    );
+    const [received] = foldMessages("c", "d".repeat(64), [
+      {
+        id: "b".repeat(64),
+        pubkey: "c".repeat(64),
+        created_at: 1,
+        kind: 9,
+        content: message.content,
+        tags: [["h", "c"], ...message.tags],
+      },
+    ]);
+    expect(received?.content).toBe("hello");
+    expect(received?.attachments).toEqual([
+      {
+        url: descriptor.url,
+        kind: "file",
+        mime: descriptor.type,
+        size: 3,
+        name,
+      },
+    ]);
+  },
+);
 
 it("keeps ordinary text unchanged and marks prepared image/video links as media", () => {
   expect(attachmentMessage(" hello ", [])).toEqual({

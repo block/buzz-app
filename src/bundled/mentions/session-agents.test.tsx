@@ -3,6 +3,9 @@ import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import { StrictMode } from "react";
+import { createAgentControl } from "../../features/agents/control";
+import { controlFixture } from "../../features/agents/control-testing";
 import type { RelaySession } from "../../features/relay/session";
 import { MentionPicker } from "./MentionPicker";
 import { MentionCompletion } from "./MentionCompletion";
@@ -335,3 +338,103 @@ it.each(["picker", "completion"] as const)(
     }
   },
 );
+
+// Component lifecycle demand, not browser geometry: real source capabilities and
+// remounts reproduce completion producers being replaced as the query changes.
+it.each([false, true])(
+  "completion remounts preserve warm evidence (invite=%s)",
+  async (inviteAgents) => {
+    const test = setup();
+    const f = controlFixture();
+    const native = createAgentControl(f.host);
+    const read = vi.fn(async () => ({
+      definitions: [],
+      identities: [{ pubkey: test.key, name: "Outside agent" }],
+    }));
+    const library = createAgentLibrary(read);
+    const lifetime = new AbortController();
+    const session = {
+      ...test.session,
+      agentChoices: createAgentChoices({
+        scope: `https://relay.example.test:${"aa".repeat(32)}`,
+        library: library.queries,
+        native,
+        signal: lifetime.signal,
+      }),
+    };
+    let result: CompletionResult | undefined;
+    const props = {
+      session,
+      scope: "test",
+      channelId: "parent",
+      inviteAgents,
+      observation: { revision: 1, text: "@Outside", start: 8, end: 8 },
+      query: { start: 0, end: 8, query: "Outside" },
+      publish: (next: CompletionResult) => {
+        result = next;
+        return () => {};
+      },
+    };
+    const tree = (key: number) => (
+      <StrictMode>
+        <MentionCompletion key={key} {...props} />
+      </StrictMode>
+    );
+    const view = render(tree(0));
+    try {
+      await waitFor(() => expect(native.snapshot().status).toBe("ready"));
+      if (inviteAgents)
+        await waitFor(() => expect(result?.items).toHaveLength(1));
+      expect(read).toHaveBeenCalledTimes(inviteAgents ? 1 : 0);
+      const warm = session.agentChoices.snapshot();
+      for (let key = 1; key <= 3; key++) {
+        view.rerender(tree(key));
+        await act(async () => {});
+        expect(session.agentChoices.snapshot()).toBe(warm);
+        expect(read).toHaveBeenCalledTimes(inviteAgents ? 1 : 0);
+        expect(
+          f.calls.filter((call) => call.action === "snapshot"),
+        ).toHaveLength(1);
+      }
+      // An explicit library change still reaches an ordinary open completion.
+      await act(async () => {
+        await library.queries.refresh();
+      });
+      expect(session.agentChoices.snapshot().identities).toContainEqual(
+        expect.objectContaining({ pubkey: test.key }),
+      );
+      expect(read).toHaveBeenCalledTimes(inviteAgents ? 2 : 1);
+    } finally {
+      view.unmount();
+      lifetime.abort();
+      library.dispose();
+      test.library.dispose();
+      native.dispose();
+    }
+  },
+);
+
+it("opening and reopening an ordinary picker does not load the legacy library", async () => {
+  const test = setup();
+  const user = userEvent.setup();
+  const view = render(
+    <MentionPicker
+      scope="test"
+      session={test.session}
+      channelId="parent"
+      disabled={false}
+      select={() => true}
+    />,
+  );
+  try {
+    for (let i = 0; i < 3; i++) {
+      await user.click(
+        screen.getByRole("button", { name: "Mention a member" }),
+      );
+      expect(test.library.queries.snapshot().status).toBe("idle");
+    }
+  } finally {
+    view.unmount();
+    test.library.dispose();
+  }
+});

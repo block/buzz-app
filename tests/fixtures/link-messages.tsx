@@ -6,6 +6,8 @@ import { ConversationService } from "../../src/features/conversation/service";
 import type { PluginModule } from "../../src/plugins/api";
 import type { ChannelMessage } from "../../src/features/relay/contracts";
 import type { RelaySession } from "../../src/features/relay/session";
+import { createAgentLibrary } from "../../src/features/agents/library";
+import { createAgentChoices } from "../../src/features/agents/choices";
 import * as links from "../../src/bundled/links";
 import channelStyles from "../../src/bundled/channels/Channels.module.css";
 import { readView, writeView } from "../../src/shared/view-state";
@@ -113,15 +115,21 @@ const profiles = new Map([
 const directory = {
   status: "ready",
   channels: [
-    { id: "design", name: "design" },
+    { id: "design", name: "design", members: [...profiles.keys()] },
     { id: "planning", name: "planning", hidden: true },
   ],
 };
-const library = {
-  status: "ready",
+const library = createAgentLibrary(async () => ({
   definitions: [],
   identities: [{ pubkey: "b".repeat(64), name: "Build Bot" }],
-};
+}));
+await library.queries.refresh();
+const choicesLifetime = new AbortController();
+const agentChoices = createAgentChoices({
+  scope: "link-composer-preview-v1",
+  library: library.queries,
+  signal: choicesLifetime.signal,
+});
 const emoji = { status: "ready", entries: [] };
 const typing: readonly never[] = [];
 const sent: Array<{ text: string; mentions: readonly string[] }> = [];
@@ -157,7 +165,8 @@ const previewSession = {
     subscribe: () => () => {},
     ensure: async () => {},
   },
-  agentLibrary: { snapshot: () => library, subscribe: () => () => {} },
+  agentLibrary: library.queries,
+  agentChoices,
   media: () => undefined,
   thread: (channelId: string) => {
     const snapshot = {
@@ -267,6 +276,8 @@ const mount = document.getElementById("root");
 if (!mount) throw new Error("Missing root");
 createRoot(mount).render(<Preview />);
 import.meta.hot?.dispose(() => {
+  choicesLifetime.abort();
+  library.dispose();
   void runtime.dispose();
   void root.fiber.dispose();
 });

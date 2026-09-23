@@ -123,19 +123,24 @@ export function createAgentChoices({
       signal.addEventListener("abort", retired, { once: true });
       return stop;
     },
-    ensure() {
+    ensure(includeLegacy = true) {
       if (signal.aborted) return;
-      if (library.snapshot().status === "idle") void library.refresh();
+      if (includeLegacy && library.snapshot().status === "idle")
+        void library.refresh();
       if (native?.snapshot().status === "idle") void native.refresh();
     },
-    async refresh() {
+    async refresh(includeLegacy = true) {
       if (signal.aborted) return;
-      await Promise.all([library.refresh(), native?.refresh()]);
+      await Promise.all([
+        includeLegacy ? library.refresh() : undefined,
+        native?.refresh(),
+      ]);
     },
     retain() {
       if (signal.aborted) return () => {};
-      void native?.refresh();
-      return library.retain();
+      // Demand survives reconnect; ensure/explicit Refresh owns reads. A fresh
+      // completion mount must not replace ready evidence with loading state.
+      return library.retain({ refresh: false });
     },
   });
 }

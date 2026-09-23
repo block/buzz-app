@@ -29,7 +29,7 @@ export function MentionCompletion({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const agents = useAgentChoices(session);
+  const agents = useAgentChoices(session, !!inviteAgents);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
   const available = useMemo(

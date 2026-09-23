@@ -84,7 +84,11 @@ status is not selection eligibility; stopped/native-only agents remain selectabl
 and the shared display-name resolver keep their own distinct presentation contracts.
 
 Do not build another agent inventory in a plugin. Retain the shared projection only
-while needed; explicit Refresh retries source failures. The existing app controller
+while needed; explicit Refresh retries source failures. Retaining choices preserves
+ready evidence across menu remounts. Ordinary mentions subscribe to cached legacy
+hints without loading that library; session/template selectors ensure it on demand.
+Both use the app-owned native controller's idle-only ensure, not refresh-on-keystroke.
+The existing app controller
 owns native reads/processes, while the session projection adds no runner, polling,
 directory scan or signing authority. Session retirement revokes its candidates.
 A failed source contributes no stale candidates; another ready source can remain

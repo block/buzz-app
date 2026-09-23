@@ -52,7 +52,7 @@ export function MentionPicker({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
-  const agents = useAgentChoices(session, open);
+  const agents = useAgentChoices(session, !!inviteAgents && open);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
   const available = useMemo(

@@ -19,6 +19,9 @@ impl RuntimeBundle {
         }
         let worker = if agent.harness.command == "buzz-agent" {
             self.executable("buzz-agent")?
+        } else if crate::codex::is_codex(&agent.harness.command) {
+            crate::codex::Context::new(&agent.harness, &agent.environment, &agent.workspace)?
+                .adapter
         } else {
             let path = PathBuf::from(&agent.harness.command);
             if !path.is_absolute() {
@@ -84,6 +87,20 @@ impl RuntimeBundle {
         .map_err(|_| "Invalid runtime tools path")?;
         command.envs(&agent.environment);
         command.env("PATH", path);
+        if crate::codex::is_codex(&agent.harness.command) {
+            crate::codex::Context::new(&agent.harness, &agent.environment, &agent.workspace)?
+                .apply_environment(&mut command)?;
+            let codex_path = command
+                .get_envs()
+                .find(|(key, _)| *key == "PATH")
+                .and_then(|(_, value)| value)
+                .ok_or("Missing Codex executable path")?;
+            let path = std::env::join_paths(
+                std::iter::once(self.directory.clone()).chain(std::env::split_paths(codex_path)),
+            )
+            .map_err(|_| "Invalid Codex runtime path")?;
+            command.env("PATH", path);
+        }
         let key_hex = key.hex();
         command
             .env("BUZZ_PRIVATE_KEY", &*key_hex)
@@ -171,6 +188,27 @@ impl RuntimeBundle {
         if let Some(effort) = record["effort_level"].as_str() {
             command.env("BUZZ_ACP_EFFORT_LEVEL", effort);
         }
+        if let Some(configuration) = &agent.harness.configuration {
+            agent.harness.validate_configuration()?;
+            // Explicit modes supersede legacy imported and environment selectors.
+            // Retain their stored values for compatibility, but never resurrect
+            // them when the user selects Default or unsupported effort.
+            for key in ["BUZZ_ACP_MODEL", "BUZZ_ACP_EFFORT_LEVEL"] {
+                command.env_remove(key);
+            }
+            if let Some((model_key, _)) = mapping {
+                command.env_remove(model_key);
+            }
+            if let crate::AiConfiguration::Advanced { effort } = configuration {
+                command.env("BUZZ_ACP_MODEL", &agent.harness.model);
+                if let Some((model_key, _)) = mapping {
+                    command.env(model_key, &agent.harness.model);
+                }
+                if let crate::EffortSelection::Value { value } = effort {
+                    command.env("BUZZ_ACP_EFFORT_LEVEL", value);
+                }
+            }
+        }
         Ok(command)
     }
 }
@@ -254,6 +292,8 @@ impl Drop for Running {
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
 pub struct ModelContext {
+    /// Native-only Codex execution context, including saved write-only values.
+    pub codex: Option<crate::codex::Context>,
     pub host: Option<String>,
     pub filter: Option<String>,
     pub model_overridden: bool,
@@ -315,7 +355,12 @@ impl Controller {
     /// Native-only catalog configuration. Never serialize environment values or
     /// lend runtime credentials to model discovery. Resolve an unsaved edit on a
     /// clone using the same validation and precedence as Save/runtime.
-    pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
+    pub fn model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        mut edit: AgentEdit,
+    ) -> Result<ModelContext> {
         let mut agent = self
             .store
             .agents()?
@@ -327,8 +372,11 @@ impl Controller {
                 "Saved settings changed; discard or reconcile the draft before connecting".into(),
             );
         }
+        // Discovery fills incomplete choices; only Save/Create require them complete.
+        let configuration = edit.harness.configuration.take();
         agent.apply(edit)?;
-        model_context(&agent.harness, &agent.environment)
+        agent.harness.configuration = configuration;
+        model_context(&agent.harness, &agent.environment, &agent.workspace)
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = edit
@@ -336,7 +384,7 @@ impl Controller {
             .into_iter()
             .filter_map(|(key, value)| value.map(|value| (key, value)))
             .collect();
-        model_context(&edit.harness, &environment)
+        model_context(&edit.harness, &environment, &edit.workspace)
     }
     pub fn requires_legacy_handover(&self, id: &str) -> Result<bool> {
         let agent = self
@@ -581,7 +629,19 @@ mod tests;
 fn model_context(
     harness: &crate::HarnessEdit,
     environment: &BTreeMap<String, String>,
+    workspace: &str,
 ) -> Result<ModelContext> {
+    if crate::codex::is_codex(&harness.command) {
+        return Ok(ModelContext {
+            codex: Some(crate::codex::Context::new(harness, environment, workspace)?),
+            host: None,
+            filter: None,
+            model_overridden: false,
+        });
+    }
+    if !harness.args.is_empty() {
+        return Err("Buzz Agent model discovery requires empty ACP arguments".into());
+    }
     if Path::new(&harness.command)
         .file_name()
         .and_then(|s| s.to_str())
@@ -602,6 +662,7 @@ fn model_context(
         return Err("A saved or draft token override conflicts with this app-isolated OAuth connection. Remove it explicitly or keep manual model entry".into());
     }
     Ok(ModelContext {
+        codex: None,
         host: environment.get("DATABRICKS_HOST").cloned().or_else(|| {
             harness
                 .databricks
@@ -613,6 +674,7 @@ fn model_context(
             .get("DATABRICKS_MODEL_FILTER")
             .cloned()
             .or_else(|| harness.databricks.as_ref().map(|s| s.filter.clone())),
-        model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
+        model_overridden: harness.configuration.is_none()
+            && environment.contains_key("BUZZ_AGENT_MODEL"),
     })
 }

@@ -40,6 +40,8 @@ pub struct HarnessView {
     pub command: String,
     pub args: Vec<String>,
     pub model: String,
+    /// Explicit policy; absent for legacy configurations.
+    pub configuration: Option<AiConfiguration>,
     pub provider: String,
     pub environment_keys: Vec<String>,
     pub databricks: Option<crate::connection::DatabricksSettings>,
@@ -53,7 +55,7 @@ pub enum ProcessStatus {
     Stopping,
     Failed,
 }
-#[derive(Clone, Deserialize)]
+#[derive(Clone, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AgentEdit {
     pub name: String,
@@ -63,15 +65,59 @@ pub struct AgentEdit {
     /// Absence preserves; null deletes; a value replaces. Never a read API.
     pub environment: BTreeMap<String, Option<String>>,
 }
-#[derive(Clone, Deserialize, Serialize)]
+#[derive(Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct HarnessEdit {
     pub command: String,
     pub args: Vec<String>,
     pub model: String,
+    /// Absent only for legacy agents whose environment/import precedence is retained.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub configuration: Option<AiConfiguration>,
     pub provider: String,
     #[serde(default)]
     pub databricks: Option<crate::connection::DatabricksSettings>,
+}
+/// Explicit model/effort policy. The model ID remains in `HarnessEdit::model`.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "mode", rename_all = "camelCase", deny_unknown_fields)]
+pub enum AiConfiguration {
+    /// Delegate model and effort to the harness without Buzz overrides.
+    Default,
+    /// Both fields must be resolved using discovery before creating an agent.
+    Advanced { effort: EffortSelection },
+}
+/// An explicit choice, including a confirmed lack of an exposed effort control.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum EffortSelection {
+    /// Stable adapter value, never its display label.
+    Value { value: String },
+    /// Valid only when the selected integration confirms no effort control.
+    Unsupported,
+}
+impl HarnessEdit {
+    /// Validate structure only; authentication and available choices require live discovery.
+    pub fn validate_configuration(&self) -> Result<()> {
+        match &self.configuration {
+            Some(AiConfiguration::Default) if !self.model.is_empty() => {
+                return Err("Default configuration must not contain a model override".into());
+            }
+            Some(AiConfiguration::Advanced { effort }) => {
+                if self.model.trim().is_empty() {
+                    return Err("Choose a model for Advanced configuration".into());
+                }
+                if let EffortSelection::Value { value } = effort {
+                    if value.trim().is_empty() || value.chars().any(char::is_control) {
+                        return Err("Choose a valid effort value".into());
+                    }
+                    text(value, 128, "Effort")?;
+                }
+            }
+            _ => {}
+        }
+        Ok(())
+    }
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -107,6 +153,7 @@ impl Agent {
                 command: self.harness.command.clone(),
                 args: self.harness.args.clone(),
                 model: self.harness.model.clone(),
+                configuration: self.harness.configuration.clone(),
                 provider: self.harness.provider.clone(),
                 environment_keys: self.environment.keys().cloned().collect(),
                 databricks: self.harness.databricks.clone(),
@@ -175,6 +222,7 @@ impl Agent {
             }
         }
         text(&self.harness.model, 512, "Model")?;
+        self.harness.validate_configuration()?;
         text(&self.harness.provider, 128, "Provider")?;
         if let Some(settings) = &self.harness.databricks {
             settings.validate()?;

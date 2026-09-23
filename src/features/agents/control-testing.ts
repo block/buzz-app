@@ -25,10 +25,13 @@ export function controlFixture() {
   };
   const data: ControlSnapshot = {
     runtimeAvailable: true,
+    configurationAvailable: true,
     agents: [agent],
     // Simulates the native snapshot; never imported by production UI.
     harnessOptions: [
       {
+        id: "buzz-agent",
+        capabilities: { modelDiscovery: "databricks" },
         command: "buzz-agent",
         label: "Buzz Agent",
         providers: [{ value: "databricks_v2", label: "Databricks v2" }],

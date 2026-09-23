@@ -332,6 +332,7 @@ fn resolve(data: &Source, record: &Value, workspace: &Path, destination: &str) -
         system_prompt: string(definition, "system_prompt").into(),
         workspace: workspace.display().to_string(),
         harness: HarnessEdit {
+            configuration: None,
             databricks: None,
             command,
             args,

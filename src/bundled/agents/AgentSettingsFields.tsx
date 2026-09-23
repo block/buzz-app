@@ -1,3 +1,4 @@
+import { Select } from "../../shared/design-system/ui/Select";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -21,6 +22,8 @@ export function AgentSettingsFields({
   disabled,
   environmentKeys = [],
   onChange,
+  onValidated,
+  validationVersion,
 }: {
   id?: string | undefined;
   savedRevision?: number | undefined;
@@ -30,6 +33,8 @@ export function AgentSettingsFields({
   disabled: boolean;
   environmentKeys?: string[];
   onChange(patch: Partial<AgentDraft>): void;
+  onValidated?: ((draft: AgentDraft | null) => void) | undefined;
+  validationVersion?: number | undefined;
 }) {
   return (
     <div className="min-w-0">
@@ -61,12 +66,62 @@ export function AgentSettingsFields({
             options={state.data?.harnessOptions ?? []}
             onChange={onChange}
           />
+          {state.data?.configurationAvailable && (
+            <Select
+              label="Configuration"
+              variant="field"
+              disabled={disabled}
+              value={draft.configuration?.mode ?? "legacy"}
+              groups={[
+                {
+                  label: "",
+                  options: [
+                    ...(!draft.configuration
+                      ? [{ value: "legacy", label: "Existing configuration" }]
+                      : []),
+                    { value: "default", label: "Harness defaults" },
+                    { value: "advanced", label: "Advanced" },
+                  ],
+                },
+              ]}
+              onValueChange={(mode) => {
+                if (mode === "default")
+                  onChange({ configuration: { mode }, model: "" });
+                if (mode === "advanced")
+                  onChange({
+                    configuration: { mode, effort: { kind: "unsupported" } },
+                  });
+              }}
+            />
+          )}
+          {draft.configuration?.mode === "default" && (
+            <p className="text-body-sm text-secondary">
+              The harness chooses its model and effort from its own
+              configuration.
+            </p>
+          )}
           <AgentModelPicker
+            onValidated={onValidated}
+            validationVersion={validationVersion}
             disabled={disabled}
             id={id}
             savedRevision={savedRevision}
             control={control}
             defaults={state.data?.databricksDefaults}
+            recoveryAvailable={
+              state.data?.harnessOptions?.some(
+                (option) =>
+                  option.capabilities?.modelDiscovery === "databricks",
+              ) ?? false
+            }
+            capabilities={
+              state.data?.harnessOptions?.find(
+                (option) =>
+                  option.command === draft.command ||
+                  ((option.id === "buzz-agent" || option.id === "codex") &&
+                    draft.command.endsWith(`/${option.command}`)),
+              )?.capabilities
+            }
             draft={draft}
             onChange={onChange}
           />
@@ -109,9 +164,9 @@ export function AgentSettingsFields({
                     onChange={(environment) => onChange({ environment })}
                   />
                   <p className="text-body-sm text-secondary">
-                    Environment overrides take precedence over provider and
-                    model selections. Arguments are passed literally, not
-                    through a shell.
+                    Provider environment overrides take precedence. Explicit AI
+                    configuration controls Buzz’s model and effort overrides.
+                    Arguments are passed literally, not through a shell.
                   </p>
                 </div>
               ),

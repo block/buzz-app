@@ -30,7 +30,26 @@ export function AgentHarnessEditor({
           value: command,
           label,
         }))}
-        onChange={(command) => onChange({ command })}
+        onChange={(command) =>
+          onChange(
+            command === "codex-acp"
+              ? {
+                  command,
+                  provider: "",
+                  args: "[]",
+                  model: "",
+                  ...(draft.configuration?.mode === "advanced"
+                    ? {
+                        configuration: {
+                          mode: "advanced",
+                          effort: { kind: "unsupported" },
+                        },
+                      }
+                    : {}),
+                }
+              : { command },
+          )
+        }
       />
       <ConfigChoice
         disabled={disabled}

@@ -1,18 +1,74 @@
 import type { AgentEdit } from "./control";
 
+/** Missing configuration preserves legacy precedence; Default emits no overrides. */
+export type AiConfiguration =
+  | { mode: "default" }
+  | { mode: "advanced"; effort: EffortSelection };
+export type EffortSelection =
+  | { kind: "value"; value: string }
+  | { kind: "unsupported" };
+/** Live discovery evidence, never a static harness setup capability. */
+export type EffortOptions =
+  | { status: "unknown" }
+  | { status: "unsupported" }
+  | { status: "supported"; options: { value: string; name: string }[] };
+export type ModelErrorCode =
+  | "authentication"
+  | "model"
+  | "effort"
+  | "configuration"
+  | "unavailable"
+  | "timeout"
+  | "cancelled";
+export class ModelError extends Error {
+  constructor(
+    public readonly code: ModelErrorCode,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export interface ModelRequest {
   id?: string | undefined;
   expectedRevision?: number | undefined;
   edit?: AgentEdit | undefined;
-  host: string;
-  filter: string;
+  integration:
+    | { kind: "databricks"; settings: { host: string; filter: string } }
+    | { kind: "codex" };
   action: "connect" | "refresh" | "disconnect";
 }
 export interface ModelCatalog {
-  host: string;
-  models: { id: string; name: string }[];
+  integration: { kind: "databricks"; host: string } | { kind: "codex" };
+  models: {
+    id: string;
+    name: string;
+    effort?: EffortOptions;
+    error?: string;
+  }[];
+  /** Absent means unknown, including when connected to an older native host. */
+  discovery?: {
+    source: "databricksCatalog" | "codexAcp";
+    authentication: "authenticated" | "unknown";
+    /** Omission from an older host is unverified, not proof of a remote fetch. */
+    catalog?: "adapter" | "remote" | "cached" | "fallback" | "unknown";
+  } | null;
   modelOverridden: boolean;
   disconnected: boolean;
+}
+
+/** Trust the integration’s declared discovery source after its authentication check. */
+export function isVerifiedCatalog(catalog: ModelCatalog | null): boolean {
+  return (
+    !!catalog &&
+    !catalog.disconnected &&
+    catalog.discovery?.authentication === "authenticated" &&
+    (catalog.integration.kind === "codex"
+      ? catalog.discovery.source === "codexAcp" &&
+        catalog.discovery.catalog === "adapter"
+      : catalog.discovery.source === "databricksCatalog" &&
+        catalog.discovery.catalog === "remote")
+  );
 }
 export interface ModelHost {
   begin(): Promise<number>;
@@ -71,7 +127,10 @@ export function createAgentModels(
       } catch (error) {
         // Native supplies deliberately safe strings. Never surface arbitrary
         // Error contents from the transport or third-party dependencies.
-        throw new Error(
+        if (!local.signal.aborted && isModelFailure(error))
+          throw new ModelError(error.code, error.message);
+        throw new ModelError(
+          local.signal.aborted ? "cancelled" : "unavailable",
           local.signal.aborted
             ? "Connection cancelled."
             : typeof error === "string"
@@ -94,4 +153,24 @@ export function createAgentModels(
       active.clear();
     },
   };
+}
+
+export function isModelFailure(
+  value: unknown,
+): value is { code: ModelErrorCode; message: string } {
+  if (!value || typeof value !== "object") return false;
+  const error = value as Record<string, unknown>;
+  return (
+    typeof error.message === "string" &&
+    typeof error.code === "string" &&
+    [
+      "authentication",
+      "model",
+      "effort",
+      "configuration",
+      "unavailable",
+      "timeout",
+      "cancelled",
+    ].includes(error.code)
+  );
 }

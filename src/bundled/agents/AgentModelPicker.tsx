@@ -1,3 +1,4 @@
+import { DatabricksModelSettings } from "./DatabricksModelSettings";
 import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
@@ -7,7 +8,12 @@ import type {
   AgentControl,
   ControlSnapshot,
 } from "../../features/agents/control";
-import type { ModelCatalog } from "../../features/agents/models";
+import {
+  isVerifiedCatalog,
+  ModelError,
+  type ModelCatalog,
+} from "../../features/agents/models";
+import { Select } from "../../shared/design-system/ui/Select";
 import { Button } from "../../shared/design-system/ui/Button";
 import { agentEdit, type AgentDraft } from "./agent-edit";
 
@@ -17,16 +23,26 @@ export function AgentModelPicker({
   savedRevision,
   control,
   defaults,
+  capabilities,
+  recoveryAvailable = false,
   onChange,
+  onValidated,
+  validationVersion,
   disabled = false,
 }: {
   disabled?: boolean;
+  recoveryAvailable?: boolean;
   id?: string | undefined;
   savedRevision?: number | undefined;
   draft: AgentDraft;
   control: AgentControl;
   defaults: ControlSnapshot["databricksDefaults"];
+  capabilities?: NonNullable<
+    ControlSnapshot["harnessOptions"]
+  >[number]["capabilities"];
   onChange(patch: Partial<AgentDraft>): void;
+  onValidated?: ((draft: AgentDraft | null) => void) | undefined;
+  validationVersion?: number | undefined;
 }) {
   const host = draft.databricks?.host ?? defaults?.host ?? "";
   const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
@@ -35,24 +51,36 @@ export function AgentModelPicker({
     data: ModelCatalog;
   } | null>(null);
   const [status, setStatus] = useState("");
+  const [authenticationRequired, setAuthenticationRequired] = useState(false);
+  const advanced = draft.configuration?.mode === "advanced";
+  const defaultsMode = draft.configuration?.mode === "default";
   const [query, setQuery] = useState<string | null>(null);
   const [open, setOpen] = useState(false);
   const attempted = useRef<string | null>(null);
   // Native resolves absolute executables and write-only provider overrides.
-  const supported = !!control.models;
+  const codex = capabilities?.modelDiscovery === "codex";
+  const supported =
+    !!control.models &&
+    (codex || capabilities?.modelDiscovery === "databricks");
   const highlighted = useRef<ModelCatalog["models"][number] | null>(null);
   const [busy, setBusy] = useState(false);
   const pending = useRef<AbortController | null>(null);
   // All draft context participates: native resolves write-only overrides against
   // the saved revision. Discovery never persists draft values.
   const key = JSON.stringify([
+    codex ? draft.model : null,
+    validationVersion,
     id,
     savedRevision,
     draft.revision,
     draft.command,
     draft.provider,
     draft.args,
+    draft.workspace,
+    draft.configuration?.mode,
     draft.environment,
+    supported,
+    recoveryAvailable,
     host,
     filter,
   ]);
@@ -63,7 +91,9 @@ export function AgentModelPicker({
     pending.current?.abort();
     pending.current = null;
     setBusy(false);
+    setCatalog(null);
     setStatus("");
+    setAuthenticationRequired(false);
     setQuery(null);
     setOpen(false);
     attempted.current = null;
@@ -74,7 +104,8 @@ export function AgentModelPicker({
   }, [key]);
   const run = async (action: "connect" | "refresh" | "disconnect") => {
     if (!control.models || pending.current) return;
-    if (!host.trim()) {
+    if (action !== "disconnect" && !supported) return;
+    if (!codex && !host.trim()) {
       setStatus(
         "Set your Databricks workspace under Advanced → Model to browse models.",
       );
@@ -85,6 +116,7 @@ export function AgentModelPicker({
     pending.current = abort;
     setBusy(true);
     setCatalog(null);
+    setAuthenticationRequired(false);
     setStatus(
       action === "connect"
         ? "Loading models… sign in through your browser if asked."
@@ -98,8 +130,9 @@ export function AgentModelPicker({
           id,
           expectedRevision: id ? draft.revision : undefined,
           edit: action === "disconnect" ? undefined : agentEdit(draft, true),
-          host,
-          filter,
+          integration: codex
+            ? { kind: "codex" }
+            : { kind: "databricks", settings: { host, filter } },
           action,
         },
         abort.signal,
@@ -111,11 +144,17 @@ export function AgentModelPicker({
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
+            : advanced
+              ? "No available models found. Check your account, workspace and filter, then refresh."
+              : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
-      if (!abort.signal.aborted && currentKey.current === key)
+      if (!abort.signal.aborted && currentKey.current === key) {
         setStatus((error as Error).message);
+        setAuthenticationRequired(
+          error instanceof ModelError && error.code === "authentication",
+        );
+      }
     } finally {
       if (pending.current === abort) {
         pending.current = null;
@@ -124,122 +163,258 @@ export function AgentModelPicker({
     }
   };
   const fresh = catalog?.key === key ? catalog.data : null;
-  const entries = fresh?.models ?? [];
+  const verified = isVerifiedCatalog(fresh);
+  const discoveredModel = fresh?.models.find(
+    (model) => model.id === draft.model,
+  );
+  const effort =
+    draft.configuration?.mode === "advanced"
+      ? draft.configuration.effort
+      : undefined;
+  const effortOptions = discoveredModel?.effort;
+  const effortValid =
+    effortOptions?.status === "unsupported"
+      ? effort?.kind === "unsupported"
+      : effortOptions?.status === "supported" &&
+        effort?.kind === "value" &&
+        effortOptions.options.some((option) => option.value === effort.value);
+  const valid =
+    !busy && query === null && verified && !!discoveredModel && effortValid;
+  useEffect(() => {
+    onValidated?.(valid ? draft : null);
+  }, [draft, valid, onValidated]);
+  const entries = !advanced || verified ? (fresh?.models ?? []) : [];
   const selected =
     entries.find((model) => model.id === draft.model) ??
     (draft.model ? { id: draft.model, name: draft.model } : null);
   const items = [...entries];
-  if (selected && !entries.some((model) => model.id === selected.id))
+  if (
+    !advanced &&
+    selected &&
+    !entries.some((model) => model.id === selected.id)
+  )
     items.unshift(selected);
   const custom = query?.trim();
   if (
+    !advanced &&
     custom &&
     !items.some((model) => model.id === custom || model.name === custom)
   )
     items.push({ id: custom, name: custom });
+  const chooseModel = (model: string) => {
+    onChange({
+      model,
+      ...(advanced && model !== draft.model
+        ? {
+            configuration: {
+              mode: "advanced" as const,
+              effort: { kind: "unsupported" as const },
+            },
+          }
+        : {}),
+    });
+  };
   const commitQuery = () => {
     if (query === null) return;
-    const match = entries.find(
+    const matches = entries.filter(
       (item) => item.id === query || item.name === query,
     );
-    onChange({ model: match?.id ?? query });
+    const match =
+      entries.find((item) => item.id === query) ??
+      (matches.length === 1 ? matches[0] : undefined);
+    if (match || !advanced) chooseModel(match?.id ?? query);
     setQuery(null);
   };
   return (
     <section data-buzz-ui="" className="text-body" aria-label="Model settings">
       <div className="space-y-3">
-        <div>
-          <Combobox.Root<ModelCatalog["models"][number]>
-            disabled={disabled}
-            items={items}
-            filteredItems={
-              query === null
-                ? items
-                : items.filter((item) =>
-                    `${item.name} ${item.id}`
-                      .toLowerCase()
-                      .includes(query.toLowerCase()),
-                  )
-            }
-            value={selected}
-            inputValue={query ?? selected?.name ?? ""}
-            open={open}
-            onInputValueChange={(value, details) => {
-              if (
-                details.reason === "input-change" ||
-                details.reason === "input-clear"
-              ) {
-                setQuery(value);
-                // Pending text is an unsaved edit too: enable Save and protect the
-                // dialog while blur/Enter commits it or Escape abandons the query.
-                onChange({});
+        {codex && (
+          <p className="text-body-sm text-secondary">
+            Uses your existing Codex account and configuration. To sign in, run{" "}
+            <code>codex login</code> with the same CODEX_HOME/environment, then
+            refresh. Choices are reported by Codex and may be cached; they do
+            not guarantee inference access or quota.
+          </p>
+        )}
+        {!codex &&
+          (defaultsMode || authenticationRequired) &&
+          supported &&
+          !busy && (
+            <Button disabled={disabled} onClick={() => void run("connect")}>
+              Connect account
+            </Button>
+          )}
+        {!defaultsMode && (
+          <div>
+            <Combobox.Root<ModelCatalog["models"][number]>
+              disabled={disabled}
+              items={items}
+              filteredItems={
+                query === null
+                  ? items
+                  : items.filter((item) =>
+                      `${item.name} ${item.id}`
+                        .toLowerCase()
+                        .includes(query.toLowerCase()),
+                    )
               }
-            }}
-            onOpenChange={(next, details) => {
-              // Browse opens the list, even if typing already opened it. Base UI
-              // may deliver its mousedown toggle after the button's click handler.
-              if (!next && details.reason === "trigger-press") {
-                details.cancel();
-                return;
-              }
-              setOpen(next);
-              if (!next && details.reason === "escape-key") setQuery(null);
-            }}
-            modal={false}
-            onItemHighlighted={(item) => {
-              highlighted.current = item ?? null;
-            }}
-            itemToStringLabel={(model) => model.name}
-            isItemEqualToValue={(a, b) => a.id === b.id}
-            onValueChange={(model) => {
-              if (model) onChange({ model: model.id });
-              setQuery(null);
-            }}
-          >
-            <Combobox.Control
-              label="Model"
-              triggerLabel="Browse models"
-              loading={busy}
-              onBrowse={() => {
-                if (supported && !fresh && attempted.current !== key)
-                  void run("connect");
-              }}
-              placeholder="Choose or enter a model"
-              onBlur={commitQuery}
-              onKeyDown={(event) => {
-                if (event.key === "Escape") setQuery(null);
+              value={selected}
+              inputValue={query ?? selected?.name ?? ""}
+              open={open}
+              onInputValueChange={(value, details) => {
                 if (
-                  event.key === "Enter" &&
-                  !highlighted.current &&
-                  !event.nativeEvent.isComposing
+                  details.reason === "input-change" ||
+                  details.reason === "input-clear"
                 ) {
-                  event.preventDefault();
-                  commitQuery();
-                  setOpen(false);
+                  setQuery(value);
+                  // Pending text is an unsaved edit too: enable Save and protect the
+                  // dialog while blur/Enter commits it or Escape abandons the query.
+                  onChange({});
                 }
               }}
-            />
-            <Combobox.Popup
-              empty={
-                busy
-                  ? "Loading models…"
-                  : "Type a model ID to use a custom model."
-              }
+              onOpenChange={(next, details) => {
+                // Browse opens the list, even if typing already opened it. Base UI
+                // may deliver its mousedown toggle after the button's click handler.
+                if (!next && details.reason === "trigger-press") {
+                  details.cancel();
+                  return;
+                }
+                setOpen(next);
+                if (!next && details.reason === "escape-key") setQuery(null);
+              }}
+              modal={false}
+              onItemHighlighted={(item) => {
+                highlighted.current = item ?? null;
+              }}
+              itemToStringLabel={(model) => model.name}
+              isItemEqualToValue={(a, b) => a.id === b.id}
+              onValueChange={(model) => {
+                if (
+                  model &&
+                  (!advanced || entries.some((entry) => entry.id === model.id))
+                )
+                  chooseModel(model.id);
+                setQuery(null);
+              }}
             >
-              <Combobox.List>
-                {(model: ModelCatalog["models"][number]) => (
-                  <Combobox.Item
-                    key={model.id}
-                    value={model}
-                    description={`${model.id}${!entries.some((entry) => entry.id === model.id) ? " · Custom ID" : ""}`}
-                  >
-                    {model.name}
-                  </Combobox.Item>
-                )}
-              </Combobox.List>
-            </Combobox.Popup>
-          </Combobox.Root>
-        </div>
+              <Combobox.Control
+                label="Model"
+                triggerLabel="Browse models"
+                loading={busy}
+                onBrowse={() => {
+                  if (supported && !fresh && attempted.current !== key)
+                    void run(advanced || codex ? "refresh" : "connect");
+                }}
+                placeholder={
+                  advanced
+                    ? "Choose an available model"
+                    : "Choose or enter a model"
+                }
+                onBlur={commitQuery}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") setQuery(null);
+                  if (
+                    event.key === "Enter" &&
+                    !highlighted.current &&
+                    !event.nativeEvent.isComposing
+                  ) {
+                    event.preventDefault();
+                    commitQuery();
+                    setOpen(false);
+                  }
+                }}
+              />
+              <Combobox.Popup
+                empty={
+                  busy
+                    ? "Loading models…"
+                    : advanced
+                      ? "No matching available models. Refresh the model list."
+                      : "Type a model ID to use a custom model."
+                }
+              >
+                <Combobox.List>
+                  {(model: ModelCatalog["models"][number]) => (
+                    <Combobox.Item
+                      key={model.id}
+                      value={model}
+                      description={`${model.id}${!entries.some((entry) => entry.id === model.id) ? " · Custom ID" : ""}`}
+                    >
+                      {model.name}
+                    </Combobox.Item>
+                  )}
+                </Combobox.List>
+              </Combobox.Popup>
+            </Combobox.Root>
+          </div>
+        )}
+        {advanced && (
+          <p role="status" className="text-body-sm text-secondary">
+            {!fresh
+              ? codex
+                ? "Refresh models after choosing a model to load its advertised effort choices."
+                : "Browse models to verify your account and choices before creating this agent."
+              : !verified
+                ? "Model discovery is unverified. Refresh models to load choices from this harness."
+                : !discoveredModel
+                  ? draft.model
+                    ? "The selected model is no longer available. Choose an available model; your previous selection is retained."
+                    : "Select an available model ID from this account’s catalog."
+                  : discoveredModel.error
+                    ? discoveredModel.error
+                    : effortOptions?.status === "unsupported" && effortValid
+                      ? "Effort: Not supported by this integration."
+                      : effortValid
+                        ? "Model and effort are advertised in the refreshed catalog."
+                        : "Choose an available effort for this model. If choices are missing, refresh models."}
+          </p>
+        )}
+        {advanced && verified && effortOptions?.status === "supported" && (
+          <>
+            <Select
+              label="Effort"
+              variant="field"
+              disabled={disabled || busy}
+              value={
+                effortValid && effort?.kind === "value" ? effort.value : ""
+              }
+              groups={[
+                {
+                  label: "",
+                  options: effortOptions.options.map((option) => ({
+                    value: option.value,
+                    label: option.name,
+                  })),
+                },
+              ]}
+              onValueChange={(value) => {
+                if (
+                  effortOptions.options.some((option) => option.value === value)
+                )
+                  onChange({
+                    configuration: {
+                      mode: "advanced",
+                      effort: { kind: "value", value },
+                    },
+                  });
+              }}
+            />
+            {!effortValid && effort?.kind === "value" && (
+              <p className="text-body-sm text-secondary">
+                Previous effort: {effort.value}. It is unavailable for this
+                model.
+              </p>
+            )}
+          </>
+        )}
+        {!supported && !defaultsMode && (
+          <p className="text-body-sm text-secondary">
+            Model browsing is unavailable for this harness or desktop version.
+            {advanced
+              ? "Advanced creation requires verified model discovery."
+              : "You can still enter a custom model ID."}
+          </p>
+        )}
         {status && (
           <p role="status" className="text-body-sm text-secondary">
             {status}
@@ -255,15 +430,29 @@ export function AgentModelPicker({
               setStatus("Cancelled. Retry when ready.");
             }}
           >
-            Cancel sign-in
+            Cancel model request
           </Button>
         ) : (
           status &&
-          supported && (
-            <Button disabled={disabled} onClick={() => void run("connect")}>
+          supported &&
+          !authenticationRequired && (
+            <Button
+              disabled={disabled}
+              onClick={() =>
+                void run(advanced || codex ? "refresh" : "connect")
+              }
+            >
               Retry models
             </Button>
           )
+        )}
+        {supported && (
+          <Button
+            disabled={disabled || busy}
+            onClick={() => void run("refresh")}
+          >
+            Refresh models
+          </Button>
         )}
         {fresh?.modelOverridden && (
           <p className="text-body-sm text-warning">
@@ -283,64 +472,27 @@ export function AgentModelPicker({
               title: "Model",
               content: (
                 <div className="space-y-3">
-                  <Field label="Model ID (custom or blank)">
-                    <Input
+                  {!defaultsMode && !advanced && (
+                    <Field label="Model ID (custom or blank)">
+                      <Input
+                        disabled={disabled}
+                        value={draft.model}
+                        spellCheck={false}
+                        onChange={(event) =>
+                          onChange({ model: event.target.value })
+                        }
+                      />
+                    </Field>
+                  )}
+                  {!codex && (supported || recoveryAvailable) && (
+                    <DatabricksModelSettings
+                      host={host}
+                      filter={filter}
                       disabled={disabled}
-                      value={draft.model}
-                      spellCheck={false}
-                      onChange={(event) =>
-                        onChange({ model: event.target.value })
-                      }
+                      busy={busy}
+                      onChange={onChange}
+                      run={run}
                     />
-                  </Field>
-                  {supported && (
-                    <>
-                      <Field label="Databricks workspace (HTTPS origin)">
-                        <Input
-                          disabled={disabled}
-                          value={host}
-                          placeholder="https://workspace.example.com"
-                          spellCheck={false}
-                          onChange={(event) =>
-                            onChange({
-                              databricks: { host: event.target.value, filter },
-                            })
-                          }
-                        />
-                      </Field>
-                      <Field label="Model filter (optional)">
-                        <Input
-                          disabled={disabled}
-                          value={filter}
-                          spellCheck={false}
-                          onChange={(event) =>
-                            onChange({
-                              databricks: { host, filter: event.target.value },
-                            })
-                          }
-                        />
-                      </Field>
-                      <div className="flex flex-wrap gap-2">
-                        <Button
-                          disabled={disabled || busy}
-                          onClick={() => void run("refresh")}
-                        >
-                          Refresh models
-                        </Button>
-                        <Button
-                          disabled={disabled || busy}
-                          onClick={() => void run("disconnect")}
-                        >
-                          Disconnect
-                        </Button>
-                      </div>
-                      <p className="text-body-sm text-secondary">
-                        Credentials are shared within Foundation for this
-                        workspace, not with old Buzz. Disconnect removes this
-                        app’s cache, not your browser session. Save does not
-                        restart an agent.
-                      </p>
-                    </>
                   )}
                 </div>
               ),

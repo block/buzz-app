@@ -16,6 +16,7 @@ pub(crate) struct Snapshot {
     data: ControlSnapshot,
     import_available: bool,
     create_available: bool,
+    configuration_available: bool,
     default_workspace: String,
     harness_options: &'static [HarnessOption],
     databricks_defaults: crate::agent_models::Defaults,
@@ -26,6 +27,7 @@ impl Snapshot {
             data,
             import_available,
             create_available: import_available,
+            configuration_available: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: HARNESS_OPTIONS,
             databricks_defaults: crate::agent_models::defaults(),
@@ -35,7 +37,10 @@ impl Snapshot {
 // Editing suggestions only. No discovery, auth, installation claim or default rewrite.
 // IDs/labels verified against buzz's catalog and buzz-agent's provider parser.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct HarnessOption {
+    id: &'static str,
+    capabilities: HarnessCapabilities,
     command: &'static str,
     label: &'static str,
     providers: &'static [ProviderOption],
@@ -45,14 +50,34 @@ struct ProviderOption {
     value: &'static str,
     label: &'static str,
 }
-const HARNESS_OPTIONS: &[HarnessOption] = &[HarnessOption {
-    command: "buzz-agent",
-    label: "Buzz Agent",
-    providers: &[ProviderOption {
-        value: "databricks_v2",
-        label: "Databricks v2",
-    }],
-}];
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HarnessCapabilities {
+    model_discovery: &'static str,
+}
+const HARNESS_OPTIONS: &[HarnessOption] = &[
+    HarnessOption {
+        id: "buzz-agent",
+        capabilities: HarnessCapabilities {
+            model_discovery: "databricks",
+        },
+        command: "buzz-agent",
+        label: "Buzz Agent",
+        providers: &[ProviderOption {
+            value: "databricks_v2",
+            label: "Databricks v2",
+        }],
+    },
+    HarnessOption {
+        id: "codex",
+        capabilities: HarnessCapabilities {
+            model_discovery: "codex",
+        },
+        command: "codex-acp",
+        label: "Codex",
+        providers: &[],
+    },
+];
 
 struct Host {
     controller: Controller,
@@ -63,7 +88,7 @@ struct Host {
     credentials: Arc<dyn Credentials>,
     starts: BTreeMap<String, (u64, Option<String>)>,
     next_start: u64,
-    creating: Option<(String, Arc<NewAgent>)>,
+    creating: Option<(String, Arc<NewAgent>, AgentEdit)>,
     legacy_check: fn() -> Result<(), String>,
 }
 impl Host {
@@ -360,27 +385,34 @@ pub(crate) async fn agent_control_import_commit(
 #[tauri::command]
 pub(crate) async fn agent_control_create_prepare(
     state: tauri::State<'_, AgentHost>,
+    models: tauri::State<'_, crate::agent_models::ModelHost>,
+    edit: AgentEdit,
     request_id: String,
     destination: String,
     owner: String,
-) -> Result<serde_json::Value, String> {
+) -> Result<serde_json::Value, crate::agent_models::ModelError> {
+    state.ensure_open()?;
+    models.validate_creation(&edit).await?;
     run(state.inner().clone(), move |host| {
         if uuid::Uuid::parse_str(&request_id).is_err() {
             return Err("Invalid create request".into());
         }
-        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
+        if host.creating.as_ref().map(|(id, _, _)| id) != Some(&request_id) {
             host.creating = Some((
                 request_id,
                 Arc::new(NewAgent::prepare(&destination, &owner)?),
+                edit.clone(),
             ));
         }
-        let agent = &host.creating.as_ref().ok_or("Create request expired")?.1;
+        let (_, agent, validated_edit) = host.creating.as_mut().ok_or("Create request expired")?;
         if !agent.matches(&destination, &owner)? {
             return Err("Create destination or owner changed".into());
         }
+        *validated_edit = edit;
         Ok(serde_json::json!({"id": agent.id, "pubkey": agent.key.pubkey()}))
     })
     .await
+    .map_err(Into::into)
 }
 #[tauri::command]
 pub(crate) async fn agent_control_create_commit(
@@ -391,11 +423,14 @@ pub(crate) async fn agent_control_create_commit(
 ) -> Result<Snapshot, String> {
     let owner = state.inner().clone();
     let (prepared, credentials) = owner.with(|host| {
-        let (_, prepared) = host
+        let (_, prepared, validated_edit) = host
             .creating
             .as_ref()
-            .filter(|(id, _)| id == &request_id)
+            .filter(|(id, _, _)| id == &request_id)
             .ok_or("Create request expired; reopen Add agent")?;
+        if validated_edit != &edit {
+            return Err("Agent settings changed after validation; retry creation".into());
+        }
         prepared.validate(edit.clone(), &auth)?;
         Ok((prepared.clone(), host.credentials.clone()))
     })?;
@@ -404,8 +439,15 @@ pub(crate) async fn agent_control_create_commit(
         .await
         .map_err(|_| "Native credential operation failed")??;
     owner.with(|host| {
-        if host.creating.as_ref().map(|(id, _)| id) != Some(&request_id) {
+        if host.creating.as_ref().map(|(id, _, _)| id) != Some(&request_id) {
             return Err("Create request was replaced".into());
+        }
+        if host
+            .creating
+            .as_ref()
+            .map_or(true, |(_, _, validated)| validated != &edit)
+        {
+            return Err("Agent settings changed while saving; retry creation".into());
         }
         host.controller.create(&prepared, edit, &auth)?;
         host.snapshot()

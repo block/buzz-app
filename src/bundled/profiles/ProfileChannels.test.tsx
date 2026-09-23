@@ -77,6 +77,7 @@ it("shows only exact verified visible memberships, handles partial lists and ope
         members: [person],
       },
       { id: "untyped-member", name: "Unknown type", members: [person] },
+      { id: "untyped-unrelated", name: "Unrelated type", members: [viewer] },
       { id: "dm", name: "Direct", channelType: "dm", members: [person] },
       {
         id: "session",
@@ -90,7 +91,7 @@ it("shows only exact verified visible memberships, handles partial lists and ope
   expect(screen.getByRole("button", { name: "#Visible" })).toBeTruthy();
   expect(screen.getByRole("button", { name: "#Forum" })).toBeTruthy();
   expect(
-    screen.getByText(/Channels without metadata are omitted/),
+    screen.getByText(/Some memberships for this identity are unclassified/),
   ).toBeTruthy();
   expect(
     screen.queryByText(/Unrelated|Unknown type|Hidden|Archived|Direct|Child/),
@@ -192,7 +193,63 @@ it("keeps classified roster rows but omits unclassified conversations after meta
   expect(screen.getByRole("alert")).toBeTruthy();
   expect(screen.getByRole("button", { name: "#Known" })).toBeTruthy();
   expect(
-    screen.getByText(/Channels without metadata are omitted/),
+    screen.getByText(/Some memberships for this identity are unclassified/),
   ).toBeTruthy();
   expect(screen.queryByText(/untyped|Hidden|Direct|Child/)).toBeNull();
+});
+
+it("qualifies ready empty results when only matching unclassified memberships exist", () => {
+  const f = fixture();
+  render(
+    <ProfileChannels
+      session={f.session}
+      pubkey={person}
+      viewer={viewer}
+      communityOrigin="https://relay.example.test"
+      navigation={f.navigation}
+    />,
+  );
+  f.update({
+    status: "ready",
+    channels: [{ id: "unknown", name: "Unknown", members: [person] }],
+  });
+  expect(screen.queryByRole("button", { name: /Unknown/ })).toBeNull();
+  expect(
+    screen.getByText(/No matching channels with a known visible type/),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText(/No visible channels with verified membership/),
+  ).toBeNull();
+  f.update({
+    status: "ready",
+    coverage: "partial",
+    channels: [{ id: "unknown", name: "Unknown", members: [person] }],
+  });
+  expect(
+    screen.getByText(/More channels may exist outside the loaded list/),
+  ).toBeTruthy();
+  expect(
+    screen.queryByText(/No visible channels with verified membership/),
+  ).toBeNull();
+});
+
+it("does not show a metadata caveat for another identity's unclassified roster", () => {
+  const f = fixture();
+  render(
+    <ProfileChannels
+      session={f.session}
+      pubkey={person}
+      viewer={viewer}
+      communityOrigin="https://relay.example.test"
+      navigation={f.navigation}
+    />,
+  );
+  f.update({
+    status: "ready",
+    channels: [{ id: "unknown", name: "Unknown", members: [viewer] }],
+  });
+  expect(screen.queryByText(/unclassified and omitted/)).toBeNull();
+  expect(
+    screen.getByText(/No visible channels with verified membership/),
+  ).toBeTruthy();
 });

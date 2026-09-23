@@ -27,6 +27,15 @@ export function ProfileChannels({
       (channel.channelType === "stream" || channel.channelType === "forum") &&
       channel.members?.includes(pubkey),
   );
+  const unclassifiedMembership =
+    (list.status === "ready" || list.status === "error") &&
+    list.channels.some(
+      (channel) =>
+        !channel.archived &&
+        !channel.hidden &&
+        !channel.channelType &&
+        channel.members?.includes(pubkey),
+    );
   return (
     <section aria-label="Visible channels" className="flex flex-col gap-2">
       <h3 className="m-0 text-heading">Visible channels</h3>
@@ -50,17 +59,18 @@ export function ProfileChannels({
           </Button>
         </div>
       )}
-      {(list.status === "ready" || list.status === "error") &&
-        list.channels.some((channel) => !channel.channelType) && (
-          <p className="m-0 text-body-sm text-secondary">
-            Channels without metadata are omitted until their type is known.
-          </p>
-        )}
+      {unclassifiedMembership && (
+        <p className="m-0 text-body-sm text-secondary">
+          Some memberships for this identity are unclassified and omitted.
+        </p>
+      )}
       {list.status === "ready" && !channels.length && (
         <p>
-          {list.coverage === "partial"
-            ? "No matching channels in the loaded list; more channels may exist."
-            : "No visible channels with verified membership for this identity."}
+          {unclassifiedMembership
+            ? `No matching channels with a known visible type; other memberships could not be classified.${list.coverage === "partial" ? " More channels may exist outside the loaded list." : ""}`
+            : list.coverage === "partial"
+              ? "No matching channels in the loaded list; more channels may exist."
+              : "No visible channels with verified membership for this identity."}
         </p>
       )}
       {!!channels.length && (

@@ -57,11 +57,12 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
     ["dms", ["dm", "group-dm"]],
   ]);
   expect(sidebarSections(roster, preferences)[1]?.icon).toBe(":party:");
+  // Hiding every DM removes its rows but keeps the New message entry point.
   expect(
-    sidebarSections(roster, preferences, new Set(["dm", "group-dm"])).some(
+    sidebarSections(roster, preferences, new Set(["dm", "group-dm"])).find(
       (section) => section.key === "dms",
     ),
-  ).toBe(false);
+  ).toEqual({ key: "dms", title: "DMs", icon: undefined, rows: [] });
   expect(
     project(roster.filter((channel) => channel.id !== "star")),
   ).not.toContainEqual(["starred", ["star"]]);

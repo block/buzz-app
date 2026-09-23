@@ -445,7 +445,16 @@ function Composer({
         const members = session.channels
           .list()
           .channels.find((item) => item.id === channelId)?.members;
-        if (recipients.some((key) => !members?.includes(key))) {
+        const missing = recipients.filter((key) => !members?.includes(key));
+        // Removed people/legacy members go straight to session validation,
+        // without entering the asynchronous enrollment lock or making writes.
+        const managed = session.agentChoices.snapshot().identities;
+        if (
+          missing.length &&
+          missing.every((key) =>
+            managed.some((agent) => agent.managed && agent.pubkey === key),
+          )
+        ) {
           setSending(true);
           setError(undefined);
           await enrollMentionedAgents(

@@ -14,13 +14,6 @@ export async function enrollMentionedAgents(
   const missing = () =>
     [...new Set(pubkeys)].filter((key) => !channel()?.members?.includes(key));
   if (!missing().length) return;
-  // A removed person/legacy member is not an enrollment request. Let the
-  // session's ordinary recipient check reject the whole send before any writes.
-  const managed = session.agentChoices
-    .snapshot()
-    .identities.filter((agent) => agent.managed);
-  if (missing().some((key) => !managed.some((agent) => agent.pubkey === key)))
-    return;
   const outbox = session.outbox;
   if (!outbox) throw new Error("This connection cannot add agents.");
   const viewer = scope.slice(-64);

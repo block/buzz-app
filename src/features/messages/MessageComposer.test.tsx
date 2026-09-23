@@ -1707,7 +1707,10 @@ it.each([false, true])(
       members = [viewer.pubkey];
       time++;
       await act(refresh);
-      await act(async () => h.submit());
+      // An ordinary removed recipient must reject synchronously. Awaiting an
+      // async act here would hide a transient enrollment lock on the composer.
+      h.submit();
+      expect(h.input()).not.toHaveAttribute("aria-disabled", "true");
       expect(screen.getByRole("alert")).toHaveTextContent(
         "no longer a channel member",
       );

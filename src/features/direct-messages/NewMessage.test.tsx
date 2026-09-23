@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
   cleanup,
@@ -10,6 +10,8 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { OutgoingEvent } from "../relay/outbox";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import type { RelaySession } from "../relay/session";
 import { NewMessage } from "./NewMessage";
 import { AgentMentionContext } from "../agents/mention-context";
@@ -60,12 +62,50 @@ function setup() {
     delivered: vi.fn(async () => {}),
     delivery: vi.fn<RelaySession["directMessages"]["delivery"]>(() => "failed"),
   };
-  const messages = { send: vi.fn(() => "d".repeat(64)) };
+  let operations: readonly OutgoingEvent[] = [];
+  const outboxListeners = new Set<() => void>();
+  const notifyOutbox = () => {
+    for (const listener of outboxListeners) listener();
+  };
+  const messages = {
+    send: vi.fn<RelaySession["messages"]["send"]>(
+      (channelId, content, _mentions, recovery) => {
+        const id = "d".repeat(64);
+        operations = [
+          {
+            event: {
+              id,
+              pubkey: "f".repeat(64),
+              kind: 9,
+              content,
+              created_at: 1,
+              tags: [["h", channelId]],
+            },
+            delivery: "failed",
+            recovery,
+          },
+        ];
+        notifyOutbox();
+        return id;
+      },
+    ),
+  };
   const outbox = {
-    snapshot: () => empty,
-    subscribe: () => () => {},
+    ready: async () => {},
+    snapshot: () => operations,
+    subscribe: (listener: () => void) => {
+      outboxListeners.add(listener);
+      return () => outboxListeners.delete(listener);
+    },
     supports: () => true,
-    dismiss: vi.fn(async () => {}),
+    dismiss: vi.fn(async () => {
+      operations = [];
+      notifyOutbox();
+    }),
+    acknowledge: vi.fn(async () => {
+      operations = [];
+      notifyOutbox();
+    }),
   };
   const session = {
     viewer: "f".repeat(64),
@@ -363,6 +403,7 @@ it("preserves recipients and draft after opening fails and across remount", asyn
   t.mount();
   expect(screen.getByRole("button", { name: "Remove Person 1" })).toBeVisible();
   expect(screen.getByRole("textbox")).toHaveTextContent("Try later");
+  await waitFor(() => expect(send()).toBeEnabled());
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
 });
@@ -574,6 +615,7 @@ it("resumes an uncertain first send after reopening without creating a new messa
   view.unmount();
   t.mount();
   expect(screen.getByRole("textbox")).toHaveTextContent("Recover exactly once");
+  await waitFor(() => expect(send()).toBeEnabled());
   await t.user.click(send());
   await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
   expect(t.messages.send).toHaveBeenCalledOnce();
@@ -600,4 +642,153 @@ it("cancels opening on page exit and does not send after a late response", async
   t.mount();
   expect(screen.getByRole("textbox")).toHaveTextContent("Keep for later");
   expect(t.onStarted).not.toHaveBeenCalled();
+});
+
+it.each(["removed", "loading", "error"] as const)(
+  "revalidates selected and restored agents before a fresh send: %s",
+  async (state) => {
+    const t = setup();
+    const mounted = t.mount();
+    await t.user.click(
+      await screen.findByRole("option", { name: "Person 2, Agent" }),
+    );
+    await t.user.type(screen.getByRole("textbox"), "Private draft");
+    const current = t.control.snapshot();
+    t.updateControl({
+      ...current,
+      status: state === "removed" ? "ready" : state,
+      data: { agents: [], runtimeAvailable: true },
+    });
+    await t.user.click(send());
+    await screen.findByRole("alert");
+    expect(t.directMessages.open).not.toHaveBeenCalled();
+    expect(t.messages.send).not.toHaveBeenCalled();
+    mounted.unmount();
+    t.mount();
+    await waitFor(() => expect(send()).toBeEnabled());
+    await t.user.click(send());
+    await screen.findByRole("alert");
+    expect(t.directMessages.open).not.toHaveBeenCalled();
+    expect(screen.getByRole("textbox")).toHaveTextContent("Private draft");
+  },
+);
+
+it("checks agent control again after opening and leaves queued retries alone", async () => {
+  const t = setup();
+  let opened: (id: string) => void = () => {};
+  t.directMessages.open.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        opened = resolve;
+      }),
+  );
+  t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  await t.user.click(send());
+  const previous = t.control.snapshot();
+  t.updateControl({ ...previous, status: "loading" });
+  opened(channel);
+  await screen.findByRole("alert");
+  expect(t.messages.send).not.toHaveBeenCalled();
+  t.updateControl(previous);
+  t.directMessages.delivery.mockReturnValue("unknown");
+  t.directMessages.delivered.mockRejectedValueOnce(new Error("Uncertain"));
+  await t.user.click(send());
+  await screen.findByRole("button", { name: "Retry send" });
+  t.updateControl({ ...previous, status: "error" });
+  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
+  await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+  expect(t.messages.send).toHaveBeenCalledOnce();
+});
+
+it("distinguishes namesake options and chips without pictures", async () => {
+  const t = setup();
+  const same = people
+    .slice(2, 4)
+    .map((person) => ({ ...person, name: "Chris" }));
+  const labels = publicKeyLabels(same.map((person) => person.pubkey));
+  t.directMessages.people.mockResolvedValue({ people: same, hasMore: false });
+  t.mount();
+  for (const person of same) {
+    const discriminator = labels.get(person.pubkey);
+    assert.exists(discriminator);
+    const label = `Chris ${discriminator}`;
+    const option = await screen.findByRole("option", { name: label });
+    expect(option).toHaveTextContent(discriminator);
+    await t.user.click(option);
+    expect(
+      screen.getByRole("button", { name: `Remove ${label}` }).parentElement,
+    ).toHaveTextContent(discriminator);
+  }
+  await t.user.type(recipient(), "Nobody");
+  for (const person of same)
+    expect(
+      screen.getByRole("button", {
+        name: `Remove Chris ${labels.get(person.pubkey)}`,
+      }),
+    ).toBeVisible();
+});
+
+it("restarts an epoch-stale directory read without displaying a load error", async () => {
+  const t = setup();
+  t.directMessages.people.mockRejectedValueOnce(
+    new DOMException("Stale directory read", "AbortError"),
+  );
+  t.mount();
+  await screen.findByRole("option", { name: "Person 1" });
+  expect(t.directMessages.people).toHaveBeenCalledTimes(2);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("status", { name: "Loading people" }),
+  ).not.toBeInTheDocument();
+});
+
+it("revalidates an unchanged definitively failed agent send before retry", async () => {
+  const t = setup();
+  t.mount();
+  await t.user.click(
+    await screen.findByRole("option", { name: "Person 2, Agent" }),
+  );
+  await t.user.type(screen.getByRole("textbox"), "Private draft");
+  t.directMessages.delivered.mockRejectedValueOnce(new Error("Not sent"));
+  await t.user.click(send());
+  await screen.findByRole("alert");
+  t.updateControl({ ...t.control.snapshot(), status: "error" });
+  await t.user.click(send());
+  expect(t.directMessages.delivered).toHaveBeenCalledOnce();
+  expect(screen.getByRole("alert")).toHaveTextContent("no longer available");
+});
+
+it("retains an older build's pending pointer as confirmation-only recovery", async () => {
+  const t = setup();
+  const person = people[0];
+  assert.exists(person);
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([scope, "direct-message:recipients"])}`,
+    JSON.stringify([people[0]]),
+  );
+  localStorage.setItem(
+    `buzz-view.v1:${JSON.stringify([scope, "direct-message:pending"])}`,
+    JSON.stringify({
+      id: "d".repeat(64),
+      channelId: channel,
+      recipients: person.pubkey,
+      draft: { text: "Old uncertain message", recipients: [] },
+    }),
+  );
+  t.directMessages.delivery.mockReturnValue(undefined);
+  t.directMessages.delivered.mockRejectedValue(
+    new Error("Could not confirm earlier delivery"),
+  );
+  t.mount();
+  await waitFor(() => expect(send()).toBeEnabled());
+  await t.user.click(screen.getByRole("button", { name: "Retry send" }));
+  await screen.findByRole("alert");
+  expect(t.messages.send).not.toHaveBeenCalled();
+  expect(
+    screen.getByRole("button", { name: "Remove Person 1" }),
+  ).toBeDisabled();
 });

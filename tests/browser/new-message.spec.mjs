@@ -117,7 +117,7 @@ const test = base.extend({
             await directoryReady;
           if (
             body.some(
-              (filter) => filter.kinds?.includes(0) && filter.limit === 100,
+              (filter) => filter.kinds?.includes(0) && filter.limit === 30,
             )
           )
             await backgroundReady;
@@ -307,7 +307,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect
     .poll(() =>
       app.reads.some(
-        (filter) => filter.kinds?.includes(0) && filter.limit === 100,
+        (filter) => filter.kinds?.includes(0) && filter.limit === 30,
       ),
     )
     .toBe(true);
@@ -512,6 +512,10 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     page.getByRole("textbox", { name: "Message #Avery Chen" }),
   ).toBeVisible();
   await page.screenshot({ path: info.outputPath("new-message-delivered.png") });
+  // A full reload exercises IndexedDB acknowledgement: the recovery association
+  // must be gone before another New message starts.
+  await page.reload();
+  await expect(message).toBeVisible();
   // Resolving an existing DM keeps its row visible while the next send is held.
   await page.getByText("DMs", { exact: true }).hover();
   await page.getByRole("button", { name: "New message", exact: true }).click();

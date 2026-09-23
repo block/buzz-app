@@ -326,8 +326,8 @@ function ChannelWorkspace({
     queries.names,
   );
   const childSessions = useRef(new Map<string, typeof channels>());
-  // Signed discovery is needed for send admission; reveal a newly opened DM
-  // in the sidebar only after its first message is confirmed.
+  // While composing, suppress a newly opened DM until the first send confirms.
+  // Leaving this route resumes the normal signed-discovery sidebar.
   const sidebarChannels = channels.filter(
     (channel) =>
       !composingMessage ||

@@ -21,11 +21,10 @@ export function createDirectMessages(
       const active = AbortSignal.any([lifetime, signal]);
       if (query.length > 100 || !Number.isSafeInteger(page) || page < 1)
         throw new Error("Invalid people search.");
-      // Browse batches overlap the preview; identity deduplication keeps it stable.
-      // Search profiles can carry large metadata, so keep every search page small
-      // enough for the reader's response budget instead of expanding to 100.
+      // Both browse and search profiles can carry large metadata. Keep pages
+      // small; the second browse page overlaps the preview and is deduplicated.
       const browsing = !query.trim();
-      const limit = browsing ? (page === 1 ? 15 : 100) : 30;
+      const limit = browsing && page === 1 ? 15 : 30;
       const relayPage = browsing && page > 1 ? page - 1 : page;
       const events = await directoryReader.read(
         [

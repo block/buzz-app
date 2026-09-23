@@ -2,6 +2,7 @@ import { Popover } from "@base-ui/react/popover";
 import { useEffect, useId, useRef, useState } from "react";
 import { useMentionAgents } from "../agents/mention-context";
 import type { RelaySession } from "../relay/session";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
@@ -45,6 +46,25 @@ export function RecipientPicker({
       (!person.isAgent || controlled.has(person.pubkey)) &&
       !selected.some((item) => item.pubkey === person.pubkey),
   );
+  // Remember eligible namesakes while search text and selection change.
+  const known = useRef(new Map<string, Recipient>());
+  for (const person of [...candidates, ...selected])
+    known.current.set(person.pubkey, person);
+  const groups = new Map<string, string[]>();
+  for (const person of known.current.values()) {
+    const keys = groups.get(person.name) ?? [];
+    keys.push(person.pubkey);
+    groups.set(person.name, keys);
+  }
+  const identities = new Map<string, string>();
+  for (const keys of groups.values()) {
+    if (keys.length > 1)
+      for (const [key, value] of publicKeyLabels(keys))
+        identities.set(key, value);
+  }
+  const discriminator = (person: Recipient) => identities.get(person.pubkey);
+  const label = (person: Recipient) =>
+    [person.name, discriminator(person)].filter(Boolean).join(" ");
   const active =
     candidates.find((person) => person.pubkey === highlight.pubkey) ??
     candidates[0];
@@ -158,7 +178,7 @@ export function RecipientPicker({
               <button
                 type="button"
                 className={styles.remove}
-                aria-label={`Remove ${person.name}`}
+                aria-label={`Remove ${label(person)}`}
                 disabled={disabled}
                 ref={(element) => {
                   if (element) controls.current.set(person.pubkey, element);
@@ -183,6 +203,9 @@ export function RecipientPicker({
                 </span>
               </button>
               <span className={styles.chipName}>{person.name}</span>
+              {discriminator(person) && (
+                <span className={styles.agent}>{discriminator(person)}</span>
+              )}
               {person.isAgent && <span className={styles.agent}>Agent</span>}
             </span>
           ))}
@@ -315,7 +338,7 @@ export function RecipientPicker({
                       key={person.pubkey}
                       id={`${id}-${person.pubkey}`}
                       role="option"
-                      aria-label={`${person.name}${person.isAgent ? ", Agent" : ""}`}
+                      aria-label={`${label(person)}${person.isAgent ? ", Agent" : ""}`}
                       tabIndex={-1}
                       selected={person === active}
                       aria-selected={person === active}
@@ -323,8 +346,15 @@ export function RecipientPicker({
                       icon={avatar(person)}
                       label={person.name}
                       trailing={
-                        person.isAgent ? (
-                          <span className={styles.agent}>Agent</span>
+                        discriminator(person) || person.isAgent ? (
+                          <span className={styles.agent}>
+                            {[
+                              discriminator(person),
+                              person.isAgent ? "Agent" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" · ")}
+                          </span>
                         ) : undefined
                       }
                       onPointerMove={() =>

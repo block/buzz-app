@@ -166,42 +166,42 @@ it("reads paginated verified profiles, excludes the viewer, and cancels with the
   }
 });
 
-it("keeps large-profile search pages within the read budget without skipping matches", async () => {
-  const t = setup();
-  try {
-    // Production C results carry roughly 200 KB each: 100 exceed the 8 MB reader budget.
-    const content = "x".repeat(200_000);
-    const directory = Array.from({ length: 65 }, (_, index) =>
-      profile(keypair(), { name: `C person ${index}`, about: content }),
-    );
-    t.query.mockImplementation(async (filters) => {
-      const filter = filters[0];
-      const start = ((filter?.page ?? 1) - 1) * (filter?.limit ?? 100);
-      return directory.slice(start, start + (filter?.limit ?? 100));
-    });
-    const seen = new Set<string>();
-    const signal = new AbortController().signal;
-    for (let page = 1; page <= 3; page++) {
-      const result = await t.dm.people("C", page, signal);
-      for (const person of result.people) seen.add(person.pubkey);
-      expect(result.hasMore).toBe(page < 3);
+it.each(["", "C"])(
+  "keeps large-profile pages within the read budget without skipping matches: %s",
+  async (query) => {
+    const t = setup();
+    try {
+      // Production C results carry roughly 200 KB each: 100 exceed the 8 MB reader budget.
+      const content = "x".repeat(200_000);
+      const directory = Array.from({ length: 65 }, (_, index) =>
+        profile(keypair(), { name: `C person ${index}`, about: content }),
+      );
+      t.query.mockImplementation(async (filters) => {
+        const filter = filters[0];
+        const start = ((filter?.page ?? 1) - 1) * (filter?.limit ?? 100);
+        return directory.slice(start, start + (filter?.limit ?? 100));
+      });
+      const seen = new Set<string>();
+      const signal = new AbortController().signal;
+      const lastPage = query ? 3 : 4;
+      for (let page = 1; page <= lastPage; page++) {
+        const result = await t.dm.people(query, page, signal);
+        for (const person of result.people) seen.add(person.pubkey);
+        expect(result.hasMore).toBe(page < lastPage);
+      }
+      expect(seen.size).toBe(65);
+      expect(
+        t.query.mock.calls
+          .flatMap(([filters]) => filters)
+          .map((filter) => filter.limit),
+      ).toEqual(query ? [30, 30, 30] : [15, 30, 30, 30]);
+    } finally {
+      t.owner.dispose();
     }
-    expect(seen.size).toBe(65);
-    expect(t.query.mock.calls.flatMap(([filters]) => filters)).toEqual(
-      [1, 2, 3].map((page) => ({
-        kinds: [0],
-        limit: 30,
-        page,
-        search: "C",
-        search_mode: "prefix",
-      })),
-    );
-  } finally {
-    t.owner.dispose();
-  }
-});
+  },
+);
 
-it("loads a small directory preview followed by larger overlapping batches without skipping profiles", async () => {
+it("loads a small directory preview followed by bounded overlapping batches without skipping profiles", async () => {
   const t = setup();
   try {
     const signal = new AbortController().signal;
@@ -213,8 +213,8 @@ it("loads a small directory preview followed by larger overlapping batches witho
       .filter((filter) => filter.kinds?.includes(0) && filter.page);
     expect(pages).toEqual([
       { kinds: [0], limit: 15, page: 1 },
-      { kinds: [0], limit: 100, page: 1 },
-      { kinds: [0], limit: 100, page: 2 },
+      { kinds: [0], limit: 30, page: 1 },
+      { kinds: [0], limit: 30, page: 2 },
     ]);
   } finally {
     t.owner.dispose();
@@ -239,7 +239,7 @@ it("browses beyond the shared profile budget without evicting or republishing co
     });
     const signal = new AbortController().signal;
     const seen = new Set<string>();
-    for (let page = 1; page <= 12; page++) {
+    for (let page = 1; page <= 36; page++) {
       const result = await t.dm.people("", page, signal);
       for (const person of result.people) seen.add(person.pubkey);
       expect(t.owner.session.profiles.snapshot()).toBe(before);

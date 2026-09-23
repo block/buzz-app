@@ -88,10 +88,13 @@ field owns a paginated people picker and up to eight recipient chips, excluding
 this viewer. Agent profiles are offered only when their exact public key appears
 in the ready native control snapshot for this community. Public profile hints and
 the compatibility library do not establish control; this filter also applies to
-searches and cached results. Human profiles remain available while controls load
+searches and cached results. Selected agent chips are revalidated against the
+current ready control snapshot before a fresh open and again before enqueueing.
+Already queued messages retain exact-event recovery. Namesake identities show
+unambiguous shared public-key labels in their options and selected chips. Human profiles remain available while controls load
 or fail. The shared popover hugs shorter result lists up to ten rows (or available
 viewport space), then scrolls. Search placeholders retain the previous result count
-within that cap. An initial 15-profile preview paints first; larger background batches
+within that cap. An initial 15-profile preview paints first; bounded background batches
 continue without scrolling, including for searches. Pages containing only excluded
 agents keep loading; an empty result is shown only after all matching pages finish.
 Directory reads use the verified scheduler without
@@ -118,7 +121,7 @@ notice in `public/recipient-removal/LICENSE.txt`.
 
 The relay session exposes `directMessages` over its existing verified reader and
 outbox. People are kind-0 pages: a 15-profile browse preview (30 for search), followed by
-100-profile browse batches. Searches retain 30-profile pages because profile metadata
+30-profile browse batches. Searches retain 30-profile pages because profile metadata
 can be large enough to exceed the read budget in larger batches. Remote name
 searches are debounced by 150 ms.
 Opening uses the development broker's purpose-bound `/direct-message` endpoint:
@@ -133,8 +136,12 @@ Before sending, the session requires signed DM metadata and an exact signed rost
 containing the viewer and selected people. The first kind-9 message then uses the
 normal durable outbox. Navigation waits for an accepted receipt or verified echo.
 A failure retains recipients and draft; an uncertain delivery retries its exact
-event ID. Only a definitively failed event can be dismissed for an edited draft or
-changed recipient set. A changed set also invalidates the prepared destination.
+event ID. The outbox persists recovery metadata with the operation before publication and
+retains it through confirmed delivery until the composer durably acknowledges it.
+Hydration must finish before a fresh send; one recovery key prevents duplicate
+first sends. Local storage is only a convenience for unqueued drafts. Only a
+definitively failed recovery operation can be removed (including through
+Diagnostics), releasing the preserved draft for editing or a changed recipient set. A changed set also invalidates the prepared destination.
 Page exit cancels preparation and its delivery waiter, while the outbox retains
 ownership of already queued messages. Reopening recovers the pending event rather
 than enqueueing a duplicate.

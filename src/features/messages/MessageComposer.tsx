@@ -185,7 +185,7 @@ function Composer({
   const agentChoices = inviteAgents || !!sessionConversation;
   const [value, updateDraft] = useState(() =>
     mentionDraft(
-      readView<unknown>(scope, draftKey, submission?.initialDraft ?? ""),
+      submission?.initialDraft ?? readView<unknown>(scope, draftKey, ""),
     ),
   );
   const draft = value.text;

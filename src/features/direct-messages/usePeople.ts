@@ -60,7 +60,12 @@ export function usePeople(session: RelaySession, query: string) {
   }, [cache, session, query]);
   const [state, setState] = useState(initial);
   const request = useRef<
-    | { controller: AbortController; loading: boolean; people: Recipient[] }
+    | {
+        controller: AbortController;
+        loading: boolean;
+        people: Recipient[];
+        retry?: ReturnType<typeof setTimeout>;
+      }
     | undefined
   >(undefined);
   const load = useCallback(
@@ -104,6 +109,14 @@ export function usePeople(session: RelaySession, query: string) {
         setState(next);
       } catch (reason) {
         if (!owned.controller.signal.aborted) {
+          if (
+            (reason instanceof Error || reason instanceof DOMException) &&
+            reason.name === "AbortError" &&
+            reason.message === "Stale directory read"
+          ) {
+            owned.retry = setTimeout(() => void load(page, owned), 100);
+            return;
+          }
           if (import.meta.env.DEV)
             console.warn("[people] Directory read failed", {
               page,
@@ -126,7 +139,7 @@ export function usePeople(session: RelaySession, query: string) {
     [session, query, cache],
   );
   useEffect(() => {
-    const owned = {
+    const owned: NonNullable<typeof request.current> = {
       controller: new AbortController(),
       loading: false,
       people: initial.people,
@@ -140,6 +153,7 @@ export function usePeople(session: RelaySession, query: string) {
         : setTimeout(() => void load(1, owned), query ? 150 : 0);
     return () => {
       clearTimeout(timer);
+      clearTimeout(owned.retry);
       owned.controller.abort();
     };
   }, [load, query, initial]);

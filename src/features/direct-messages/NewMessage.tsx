@@ -1,4 +1,9 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  sameCommunityAgents,
+  useMentionAgents,
+} from "../agents/mention-context";
+import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
 import { MessageComposer } from "../messages/MessageComposer";
@@ -10,6 +15,8 @@ import type { Recipient } from "./usePeople";
 import styles from "./NewMessage.module.css";
 
 const draftKey = "direct-message:new-draft";
+const recoveryKey = "direct-message:new";
+
 type Pending = {
   id: string;
   channelId: string;
@@ -22,7 +29,12 @@ const keyFor = (people: readonly Recipient[]) =>
     .sort()
     .join(":");
 function savedRecipients(scope: string, viewer?: string) {
-  const saved = readView<unknown>(scope, "direct-message:recipients", []);
+  return validRecipients(
+    readView<unknown>(scope, "direct-message:recipients", []),
+    viewer,
+  );
+}
+function validRecipients(saved: unknown, viewer?: string) {
   if (!Array.isArray(saved)) return [];
   return [
     ...new Map(
@@ -40,7 +52,9 @@ function savedRecipients(scope: string, viewer?: string) {
     ).values(),
   ].slice(0, 8);
 }
-function savedPending(scope: string): Pending | undefined {
+// Earlier development builds wrote a separate pointer. Keep it confirmation-only;
+// its absence from the journal must never authorize a replacement message.
+function savedLegacy(scope: string, viewer?: string) {
   const value = readView<Partial<Pending> | null>(
     scope,
     "direct-message:pending",
@@ -61,7 +75,25 @@ function savedPending(scope: string): Pending | undefined {
       channelId: value.channelId,
       recipients: value.recipients,
       draft: mentionDraft(value.draft),
+      people: savedRecipients(scope, viewer),
     };
+}
+
+function recovered(operations: readonly OutgoingEvent[], viewer?: string) {
+  const item = operations.find((item) => item.recovery?.key === recoveryKey);
+  if (!item?.recovery) return undefined;
+  const value = JSON.parse(item.recovery.value);
+  const people = validRecipients(value.people, viewer);
+  const channelId = item.event.tags.find(([name]) => name === "h")?.[1];
+  if (item.event.kind !== 9 || !channelId || !people.length)
+    throw new Error("The saved new message could not be restored.");
+  return {
+    id: item.event.id,
+    channelId,
+    recipients: keyFor(people),
+    draft: mentionDraft(value.draft),
+    people,
+  };
 }
 
 /** Empty conversation until its first message is confirmed by the regular outbox. */
@@ -82,22 +114,81 @@ export function NewMessage({
     savedRecipients(scope, session.viewer),
   );
   const recipientNames = recipients.map((person) => person.name).join(", ");
-  const [pending, setPending] = useState(() => savedPending(scope));
+  const [legacy, setLegacy] = useState(() =>
+    savedLegacy(scope, session.viewer),
+  );
+  const initialLegacy = useRef(legacy);
+  const { control } = useMentionAgents(scope);
+  const [ready, setReady] = useState(false);
+  const [restoredDraft, setRestoredDraft] = useState<MentionDraft>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [draftChannel] = useState(() => crypto.randomUUID());
   const attempt = useRef<AbortController | null>(null);
   const prepared = useRef<{ key: string; id: string } | undefined>(undefined);
   const outbox = session.outbox;
-  useSyncExternalStore(
+  const operations = useSyncExternalStore(
     outbox?.subscribe ?? noSubscribe,
     outbox?.snapshot ?? emptySnapshot,
     emptySnapshot,
   );
+  let pending: (Pending & { people: Recipient[] }) | undefined;
+  try {
+    pending = recovered(operations, session.viewer) ?? legacy;
+  } catch {
+    /* Readiness presents invalid recovery. */
+  }
   const failed =
     pending && session.directMessages.delivery(pending.id) === "failed";
-  const locked = busy || (!!pending && !failed);
-  useEffect(() => () => attempt.current?.abort(), []);
+  const locked = !ready || busy || (!!pending && !failed);
+  useEffect(() => {
+    let active = true;
+    void (async () => {
+      try {
+        await outbox?.ready();
+        if (!active) return;
+        const saved =
+          recovered(outbox?.snapshot() ?? [], session.viewer) ??
+          initialLegacy.current;
+        if (saved) {
+          setRecipients(saved.people);
+          setRestoredDraft(saved.draft);
+        }
+        setReady(true);
+      } catch (reason) {
+        if (active)
+          setError(
+            reason instanceof Error
+              ? reason.message
+              : "Could not restore the message.",
+          );
+      }
+    })();
+    return () => {
+      active = false;
+      attempt.current?.abort();
+    };
+  }, [outbox, session.viewer]);
+  function validateAgents() {
+    const state = control?.snapshot();
+    const controlled = new Set(
+      sameCommunityAgents(
+        state?.status === "ready" ? (state.data?.agents ?? []) : [],
+        scope,
+      ).map((agent) => agent.pubkey),
+    );
+    if (
+      recipients.some(
+        (person) =>
+          (person.isAgent ||
+            session.profiles.snapshot().get(person.pubkey)?.isAgent) &&
+          !controlled.has(person.pubkey),
+      )
+    )
+      throw new Error(
+        "A selected agent is no longer available. Remove it or wait for agent controls to reconnect.",
+      );
+  }
   function change(people: Recipient[]) {
     if (locked || attempt.current) return;
     prepared.current = undefined;
@@ -108,6 +199,7 @@ export function NewMessage({
   async function send(draft: MentionDraft) {
     if (
       attempt.current ||
+      !ready ||
       !recipients.length ||
       !draft.text.trim() ||
       !session.directMessages.available
@@ -118,8 +210,10 @@ export function NewMessage({
     setBusy(true);
     setError("");
     const key = keyFor(recipients);
-    let current = pending;
+    let current: Pending | undefined = pending;
     try {
+      if (current && session.directMessages.delivery(current.id) === "failed")
+        validateAgents();
       if (
         current &&
         (current.recipients !== key ||
@@ -129,13 +223,15 @@ export function NewMessage({
           throw new Error(
             "Retry the earlier message to confirm its delivery before editing.",
           );
+        validateAgents();
         await outbox?.dismiss(current.id);
         controller.signal.throwIfAborted();
         current = undefined;
-        setPending(undefined);
+        setLegacy(undefined);
         writeView(scope, "direct-message:pending", null);
       }
       if (!current) {
+        validateAgents();
         onPreparing?.(recipients.map((person) => person.pubkey));
         const id =
           prepared.current?.key === key
@@ -146,14 +242,24 @@ export function NewMessage({
               );
         controller.signal.throwIfAborted();
         prepared.current = { key, id };
+        validateAgents();
         const messageId = session.messages.send(
           id,
           draft.text,
           draft.recipients.map((person) => person.pubkey),
+          {
+            key: recoveryKey,
+            value: JSON.stringify({
+              people: recipients.map(({ pubkey, name, isAgent }) => ({
+                pubkey,
+                name,
+                isAgent,
+              })),
+              draft,
+            }),
+          },
         );
         current = { id: messageId, channelId: id, recipients: key, draft };
-        setPending(current);
-        writeView(scope, "direct-message:pending", current);
       }
       await session.directMessages.delivered(
         current.id,
@@ -161,7 +267,10 @@ export function NewMessage({
         controller.signal,
       );
       controller.signal.throwIfAborted();
+      await outbox?.acknowledge(current.id);
+      controller.signal.throwIfAborted();
       writeView(scope, "direct-message:pending", null);
+      setLegacy(undefined);
       writeView(scope, "direct-message:recipients", []);
       writeView(scope, draftKey, "");
       onStarted(current.channelId, current.id);
@@ -183,7 +292,7 @@ export function NewMessage({
         session={session}
         scope={scope}
         selected={recipients}
-        disabled={locked}
+        disabled={busy || (!!pending && !failed)}
         onChange={change}
       />
       <div className={styles.blank} data-new-message-body="" />
@@ -194,6 +303,14 @@ export function NewMessage({
             Starting direct messages is unavailable on this connection.
           </p>
         )}
+        {pending && !failed && !busy && !error && (
+          <Button
+            type="button"
+            onClick={() => pending && void send(pending.draft)}
+          >
+            Retry send
+          </Button>
+        )}
         {error && (
           <div role="alert">
             <p>{error}</p>
@@ -201,7 +318,7 @@ export function NewMessage({
               <Button
                 type="button"
                 disabled={busy}
-                onClick={() => void send(pending.draft)}
+                onClick={() => pending && void send(pending.draft)}
               >
                 Retry send
               </Button>
@@ -210,6 +327,7 @@ export function NewMessage({
         )}
       </div>
       <MessageComposer
+        key={ready ? "ready" : "hydrating"}
         session={session}
         scope={scope}
         extensions={extensions}
@@ -220,10 +338,13 @@ export function NewMessage({
         disabled={!recipients.length}
         submission={{
           draftKey,
-          initialDraft: pending?.draft,
+          initialDraft: restoredDraft,
           locked,
           disabled:
-            busy || !recipients.length || !session.directMessages.available,
+            !ready ||
+            busy ||
+            !recipients.length ||
+            !session.directMessages.available,
           submit: (draft) => void send(draft),
         }}
       />

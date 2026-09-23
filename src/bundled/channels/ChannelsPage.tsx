@@ -199,10 +199,17 @@ function ChannelWorkspace({
   sessionsEnabled: boolean;
 }) {
   const [localNewMessage, setLocalNewMessage] = useState(false);
+  const [preparingDm, setPreparingDm] = useState<{
+    existing: Set<string>;
+    members: Set<string | undefined>;
+  }>();
   const composingMessage = navigator
     ? navigation?.target.kind === "page" &&
       navigation.target.route?.params === "new-message"
     : localNewMessage;
+  useEffect(() => {
+    if (!composingMessage) setPreparingDm(undefined);
+  }, [composingMessage]);
   const list = useChannelList(queries.channels);
   const workingIds = useSyncExternalStore(
     queries.agentActivity.subscribeWorking,
@@ -319,6 +326,17 @@ function ChannelWorkspace({
     queries.names,
   );
   const childSessions = useRef(new Map<string, typeof channels>());
+  // Signed discovery is needed for send admission; reveal a newly opened DM
+  // in the sidebar only after its first message is confirmed.
+  const sidebarChannels = channels.filter(
+    (channel) =>
+      !composingMessage ||
+      !preparingDm ||
+      preparingDm.existing.has(channel.id) ||
+      channel.channelType !== "dm" ||
+      channel.members?.length !== preparingDm.members.size ||
+      !channel.members.every((member) => preparingDm.members.has(member)),
+  );
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
     for (const item of channels) {
@@ -889,7 +907,7 @@ function ChannelWorkspace({
     setSettings(undefined),
   );
   const sections = sidebarSections(
-    channels,
+    sidebarChannels,
     personal
       ? {
           sections: personal.groups.map((g, order) => ({
@@ -1166,7 +1184,20 @@ function ChannelWorkspace({
               session={queries}
               scope={scope}
               extensions={extensions}
+              onPreparing={(pubkeys) =>
+                setPreparingDm((previous) => ({
+                  existing:
+                    previous?.existing ??
+                    new Set(
+                      queries.channels
+                        .list()
+                        .channels.map((channel) => channel.id),
+                    ),
+                  members: new Set([viewer, ...pubkeys]),
+                }))
+              }
               onStarted={(channelId, id) => {
+                setPreparingDm(undefined);
                 setSent({ channelId, id });
                 select(channelId);
               }}

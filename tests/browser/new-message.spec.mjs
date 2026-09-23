@@ -492,7 +492,12 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(
     page.getByRole("region", { name: "New message", exact: true }),
   ).toBeVisible();
+  const sidebarDm = page
+    .getByRole("complementary", { name: "Channel sidebar" })
+    .getByRole("button", { name: "Avery Chen", exact: true });
+  await expect(sidebarDm).toHaveCount(0);
   app.confirm();
+  await expect(sidebarDm).toBeVisible();
   await expect(
     page.getByRole("region", { name: "New message", exact: true }),
   ).toHaveCount(0);
@@ -507,5 +512,22 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     page.getByRole("textbox", { name: "Message #Avery Chen" }),
   ).toBeVisible();
   await page.screenshot({ path: info.outputPath("new-message-delivered.png") });
+  // Resolving an existing DM keeps its row visible while the next send is held.
+  await page.getByText("DMs", { exact: true }).hover();
+  await page.getByRole("button", { name: "New message", exact: true }).click();
+  await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  await page
+    .getByRole("textbox", { name: "Message Avery Chen", exact: true })
+    .fill("Another message");
+  app.holdDelivery();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await expect
+    .poll(() => app.publications.filter((event) => event.kind === 9).length)
+    .toBe(2);
+  await expect(sidebarDm).toBeVisible();
+  app.confirm();
+  await expect(
+    page.locator("[data-message-id]", { hasText: "Another message" }),
+  ).toBeVisible();
   expect(app.errors).toEqual([]);
 });

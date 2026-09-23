@@ -69,11 +69,13 @@ export function NewMessage({
   session,
   scope,
   extensions,
+  onPreparing,
   onStarted,
 }: {
   session: RelaySession;
   scope: string;
   extensions?: ConversationExtensions | undefined;
+  onPreparing?(pubkeys: readonly string[]): void;
   onStarted(channelId: string, messageId: string): void;
 }) {
   const [recipients, setRecipients] = useState(() =>
@@ -134,6 +136,7 @@ export function NewMessage({
         writeView(scope, "direct-message:pending", null);
       }
       if (!current) {
+        onPreparing?.(recipients.map((person) => person.pubkey));
         const id =
           prepared.current?.key === key
             ? prepared.current.id

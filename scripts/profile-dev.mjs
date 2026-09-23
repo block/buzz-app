@@ -461,17 +461,23 @@ export function networkRecorder(session, directory) {
   });
 
   return {
-    async start(page) {
-      await session.send("Network.enable", { maxPostDataSize: 0 });
-      await session.send("Performance.enable");
-      const { metrics } = await session.send("Performance.getMetrics");
+    async start(page, duringStartup) {
+      await duringStartup(() =>
+        session.send("Network.enable", { maxPostDataSize: 0 }),
+      );
+      await duringStartup(() => session.send("Performance.enable"));
+      const { metrics } = await duringStartup(() =>
+        session.send("Performance.getMetrics"),
+      );
       calibration = {
         cdpMonotonicSeconds: metrics.find(({ name }) => name === "Timestamp")
           ?.value,
-        renderer: await page.evaluate(() => ({
-          epochMilliseconds: performance.timeOrigin + performance.now(),
-          monotonicMilliseconds: performance.now(),
-        })),
+        renderer: await duringStartup(() =>
+          page.evaluate(() => ({
+            epochMilliseconds: performance.timeOrigin + performance.now(),
+            monotonicMilliseconds: performance.now(),
+          })),
+        ),
       };
     },
     async write(clocks) {
@@ -495,7 +501,7 @@ export function networkRecorder(session, directory) {
   };
 }
 
-async function profileWeb({ directory, profileArgs, args, network }) {
+export async function profileWeb({ directory, profileArgs, args, network }) {
   const vite = normalizeWebViteArgs(args);
   await recordManifest(directory, "web", profileArgs, {
     coverage: [
@@ -507,6 +513,14 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   });
 
   const control = stopController();
+  // Browser operations do not accept AbortSignal. Stop waiting immediately and
+  // let finally close the owning browser; late results must not resume startup.
+  const duringStartup = async (operation) => {
+    control.abort.signal.throwIfAborted();
+    const result = await Promise.race([operation(), control.requested]);
+    control.abort.signal.throwIfAborted();
+    return result;
+  };
   const readyToken = randomUUID();
   const nodeOptions = [process.env.NODE_OPTIONS, "--inspect=127.0.0.1:0"]
     .filter(Boolean)
@@ -553,7 +567,7 @@ async function profileWeb({ directory, profileArgs, args, network }) {
     brokerStarted = true;
     control.abort.signal.throwIfAborted();
 
-    const { chromium } = await import("@playwright/test");
+    const { chromium } = await duringStartup(() => import("@playwright/test"));
     const browserLaunch = chromium.launch({
       channel: "chrome",
       headless: false,
@@ -572,17 +586,19 @@ async function profileWeb({ directory, profileArgs, args, network }) {
     if (!browser)
       throw new DOMException("Profiling startup cancelled.", "AbortError");
     control.abort.signal.throwIfAborted();
-    const page = await browser.newPage();
-    session = await page.context().newCDPSession(page);
+    const page = await duringStartup(() => browser.newPage());
+    session = await duringStartup(() => page.context().newCDPSession(page));
     if (network) {
       networkCapture = networkRecorder(session, directory);
-      await networkCapture.start(page);
+      await networkCapture.start(page, duringStartup);
     }
-    await session.send("Profiler.enable");
-    await session.send("Profiler.setSamplingInterval", { interval: 1000 });
-    await session.send("Profiler.start");
+    await duringStartup(() => session.send("Profiler.enable"));
+    await duringStartup(() =>
+      session.send("Profiler.setSamplingInterval", { interval: 1000 }),
+    );
+    await duringStartup(() => session.send("Profiler.start"));
     rendererStarted = true;
-    await page.goto(url);
+    await duringStartup(() => page.goto(url));
     control.abort.signal.throwIfAborted();
     captureStarted = true;
     console.log(

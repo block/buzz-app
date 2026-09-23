@@ -299,7 +299,7 @@ it("focuses the imported managed identity without starting it", async () => {
   const { f } = setup();
   await screen.findAllByRole("article", { name: "Agent Fixture agent" });
   fireEvent.click(
-    screen.getByRole("button", { name: "Not imported from old Buzz" }),
+    screen.getByRole("button", { name: "Import from another installation" }),
   );
   fireEvent.change(screen.getByLabelText("Destination community"), {
     target: { value: "wss://third.example" },
@@ -429,7 +429,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     const [first, other] = cards;
     if (!first || !other) throw Error("Missing managed cards");
     fireEvent.click(
-      screen.getByRole("button", { name: "Not imported from old Buzz" }),
+      screen.getByRole("button", { name: "Import from another installation" }),
     );
     fireEvent.change(screen.getByLabelText("Destination community"), {
       target: { value: "wss://third.example" },
@@ -766,7 +766,9 @@ it("shows Retry after persistent or genuine read failure without hiding the erro
 it("browses both local libraries without a community and requires a destination preview to import", async () => {
   const { f, read } = setup("disconnected");
   fireEvent.click(
-    await screen.findByRole("button", { name: "Not imported from old Buzz" }),
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
   );
   const section = screen.getByRole("region", { name: "Import from old Buzz" });
   expect(
@@ -848,7 +850,9 @@ it("clones reviewed text through fresh identity creation without importing sourc
     );
   });
   fireEvent.click(
-    await screen.findByRole("button", { name: "Not imported from old Buzz" }),
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
   );
   fireEvent.click(
     await screen.findByRole("button", { name: "Clone Fixture agent" }),
@@ -954,7 +958,9 @@ it("uses snapshot capabilities rather than JS wrappers and retains older-host im
     };
   });
   fireEvent.click(
-    await screen.findByRole("button", { name: "Not imported from old Buzz" }),
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
   );
   fireEvent.click(
     await screen.findByRole("button", { name: "Import Fixture agent" }),
@@ -967,4 +973,79 @@ it("uses snapshot capabilities rather than JS wrappers and retains older-host im
   expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled();
   expect(within(card).queryByRole("button", { name: "Use here" })).toBeNull();
   expect(f.calls.filter((call) => call.action === "import")).toHaveLength(1);
+});
+
+it("keeps the chosen source authoritative when an earlier preview finishes late", async () => {
+  let finishInstalled!: () => void;
+  const held = new Promise<void>((resolve) => {
+    finishInstalled = resolve;
+  });
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({
+    identities: [],
+  });
+  const previewStarted = vi.fn();
+  const { f } = setup("connected", (fixture) => {
+    const preview = fixture.host.previewImport;
+    fixture.host.previewImport = vi.fn(async (source, destination) => {
+      await preview(source, destination);
+      previewStarted(source);
+      if (source === "installed") await held;
+      return {
+        token: `preview-${source}`,
+        sourcePath: `/fixture/${source}`,
+        warnings: [],
+        candidates: [
+          {
+            id: "second-fixture",
+            pubkey: "cd".repeat(32),
+            name: `${source} settings`,
+            relayUrl: destination,
+          },
+        ],
+      };
+    });
+  });
+  fireEvent.click(
+    await screen.findByRole("button", {
+      name: "Import from another installation",
+    }),
+  );
+  const form = await screen.findByRole("region", {
+    name: "Import from old Buzz",
+  });
+  try {
+    await waitFor(() =>
+      expect(previewStarted).toHaveBeenCalledWith("installed"),
+    );
+    fireEvent.change(within(form).getByLabelText("Source library"), {
+      target: { value: "development" },
+    });
+    expect(
+      within(form).queryByRole("button", { name: /Import .* settings/ }),
+    ).toBeNull();
+  } finally {
+    await act(async () => {
+      finishInstalled();
+      await held;
+    });
+  }
+  expect(
+    within(form).queryByRole("button", { name: "Import installed settings" }),
+  ).toBeNull();
+  // Native preview calls are serialized. Changing the selection invalidates the
+  // old result; Load agents starts the chosen preview once the first read finishes.
+  fireEvent.click(within(form).getByRole("button", { name: "Load agents" }));
+  fireEvent.click(
+    await within(form).findByRole("button", {
+      name: "Import development settings",
+    }),
+  );
+  await waitFor(() =>
+    expect(f.calls.filter((call) => call.action === "import")).toEqual([
+      {
+        action: "import",
+        payload: { token: "preview-development", ids: ["second-fixture"] },
+      },
+    ]),
+  );
 });

@@ -167,15 +167,21 @@ before attempting again. Neither list is a cross-community/global directory.
 It matches the exact public key and canonical active-community scope to one native
 ID; namesakes, other-community identities, ambiguous matches and browser-only
 profiles get no runtime actions. It adds no controller, relay scan or agent editor.
-While mounted it refreshes host evidence every five seconds when visible/ready,
-matching Agents; errors stop polling and expose explicit Retry status. Unmount
+Profiles and Agents share `useAgentControl` for observation. While mounted it
+refreshes host evidence every five seconds when visible/ready; errors stop polling and expose explicit Retry status. Unmount
 releases observation, never native execution.
 
 Start/Restart require ready host evidence, an available runtime and no pending
 operation or process transition. Stop uses the controller's existing recovery
 policy, including stale evidence and pending launch/credential waits; it is the
 intentional exception to disabling pending actions. A pending Stop cannot repeat.
-Host failures remain visible with snapshot uncertainty, and retired relay
+Host failures remain visible with snapshot uncertainty for the matched agent.
+Known unmatched profiles suppress unrelated controller errors; an initial read
+failure still offers Retry while ownership is unknown. Start stays focusable but
+inactive while pending, and moves focus to Stop if success removes the focused
+Start button. It does not steal focus moved elsewhere during the wait.
+`agentLaunchBlock` centralizes the launch gates used by Profiles and Agents.
+Retired relay
 presentations cannot dispatch commands. The separate runtime child owns badges
 and runtime detail; actions do not infer relay readiness.
 

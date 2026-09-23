@@ -131,6 +131,22 @@ export interface AgentControl {
   dismissMentionError(): void;
 }
 
+/** Shared launch availability; Stop intentionally has its own recovery policy. */
+export function agentLaunchBlock(
+  state: AgentControlState,
+  agent: AgentView,
+): string | null {
+  if (state.status !== "ready") return "Refresh status before starting.";
+  if (state.busy) return "Waiting for the current operation.";
+  if (!state.data?.runtimeAvailable)
+    return (
+      state.data?.runtimeMessage || "The bundled agent runtime is unavailable."
+    );
+  if (agent.status === "starting" || agent.status === "stopping")
+    return "Waiting for the process transition.";
+  return null;
+}
+
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
 export function canStopAgent(state: AgentControlState, id: string): boolean {
   if (

@@ -1,3 +1,4 @@
+import { controlFixture } from "../../src/features/agents/control-testing";
 // Real ChannelsPage, thread reader, shared directory, panel registry and plugin lifecycle.
 // Only the transport is synthetic. No dev broker, saved identity or live relay.
 import { StrictMode, useLayoutEffect, useState } from "react";
@@ -39,6 +40,7 @@ const viewer = keypair(),
   mic = keypair(),
   pinky = keypair(),
   missing = keypair();
+const actionsProbe = new URLSearchParams(location.search).has("agent-actions");
 const root = message(viewer, "one", "Hello @Mic", 10, [["p", mic.pubkey]]);
 const unknown = message(missing, "one", "Unknown author", 11);
 const reply = message(viewer, "one", "Thread @Pinky", 12, [
@@ -171,7 +173,20 @@ context.provide("relay", relay);
 const navigationHost = createNavigationController(createMemoryHistory());
 context.provide("navigation", navigationHost.navigation);
 context.effect(() => () => navigationHost.dispose());
-const agentControl = createAgentControl(null);
+const native = controlFixture();
+native.agent.pubkey = mic.pubkey;
+native.agent.status = "stopped";
+native.agent.enabled = false;
+let releaseStart: (() => void) | undefined;
+const action = native.host.action;
+native.host.action = async (id, command) => {
+  if (command === "start")
+    await new Promise<void>((resolve) => {
+      releaseStart = resolve;
+    });
+  return action(id, command);
+};
+const agentControl = createAgentControl(actionsProbe ? native.host : null);
 context.provide("agentControl", agentControl);
 context.effect(() => () => agentControl.dispose());
 const contexts: PanelContext[] = [];
@@ -212,6 +227,11 @@ const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
+    startPending: () => !!releaseStart,
+    finishStart: () => {
+      releaseStart?.();
+      releaseStart = undefined;
+    },
     contexts,
     targets: {
       viewer: profileTarget(viewer.pubkey),

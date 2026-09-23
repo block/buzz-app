@@ -1,6 +1,8 @@
-import { useEffect, useSyncExternalStore } from "react";
+import { useCallback, useLayoutEffect, useRef } from "react";
+import { useAgentControl } from "../../features/agents/control-react";
 import {
   canStopAgent,
+  agentLaunchBlock,
   type AgentAction,
   type AgentControl,
 } from "../../features/agents/control";
@@ -20,22 +22,21 @@ export function ProfileAgentActions({
   pubkey: string;
 }) {
   const connection = useRelayConnection(relay);
-  const state = useSyncExternalStore(
-    control.subscribe,
-    control.snapshot,
-    control.snapshot,
-  );
-  useEffect(() => {
-    void control.refresh();
-    const timer = setInterval(() => {
-      if (
-        document.visibilityState !== "hidden" &&
-        control.snapshot().status === "ready"
-      )
-        void control.refresh();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [control]);
+  const state = useAgentControl(control);
+  const stopButton = useRef<HTMLButtonElement>(null);
+  const restoreStartFocus = useRef(false);
+  const startRef = useCallback((node: HTMLButtonElement | null) => {
+    if (!node) return;
+    // Capture focus before React removes Start, not after it falls back to body.
+    return () => {
+      restoreStartFocus.current = document.activeElement === node;
+    };
+  }, []);
+  useLayoutEffect(() => {
+    if (restoreStartFocus.current && document.activeElement === document.body)
+      stopButton.current?.focus();
+    restoreStartFocus.current = false;
+  });
   if (connection.status !== "ready" || !connection.scope) return null;
   const matches = sameCommunityAgents(
     state.data?.agents ?? [],
@@ -43,20 +44,8 @@ export function ProfileAgentActions({
   ).filter((agent) => agent.pubkey === pubkey);
   // A native ID is actionable only when the identity/destination is unambiguous.
   const agent = matches.length === 1 ? matches[0] : undefined;
-  if (!agent && state.status !== "error") return null;
-  const transitioning =
-    agent?.status === "starting" || agent?.status === "stopping";
-  const startBlock =
-    state.status !== "ready"
-      ? "Refresh status before starting."
-      : state.busy
-        ? "Waiting for the current operation."
-        : !state.data?.runtimeAvailable
-          ? state.data?.runtimeMessage ||
-            "The bundled agent runtime is unavailable."
-          : transitioning
-            ? "Waiting for the process transition."
-            : null;
+  if (!agent && (state.status !== "error" || state.data)) return null;
+  const startBlock = agent ? agentLaunchBlock(state, agent) : null;
   const act = (action: AgentAction) => {
     // A retired presentation cannot dispatch into a newly selected community.
     if (!agent || relay.snapshot() !== connection) return;
@@ -73,6 +62,8 @@ export function ProfileAgentActions({
             {agent.status !== "running" && (
               <Button
                 size="compact"
+                ref={startRef}
+                focusableWhenDisabled
                 disabled={!!startBlock}
                 onClick={() => act("start")}
               >
@@ -80,6 +71,7 @@ export function ProfileAgentActions({
               </Button>
             )}
             <Button
+              ref={stopButton}
               size="compact"
               disabled={!canStopAgent(state, agent.id)}
               onClick={() => act("stop")}

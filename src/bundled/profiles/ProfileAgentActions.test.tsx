@@ -135,7 +135,10 @@ it("blocks runtime-unavailable and transitioning launches but preserves recovery
   h.data.runtimeAvailable = true;
   h.agent.status = "starting";
   await act(() => h.control.refresh());
-  expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Start" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
   expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
   expect(
     screen.getByText("Waiting for the process transition."),
@@ -197,7 +200,10 @@ it("allows recovery Stop during a pending Start and ignores its late failure", a
   render(h.panel());
   await user.click(await screen.findByRole("button", { name: "Start" }));
   try {
-    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Start" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
     expect(screen.getByRole("button", { name: "Restart" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Stop" })).toBeEnabled();
     await user.click(screen.getByRole("button", { name: "Stop" }));
@@ -211,7 +217,10 @@ it("allows recovery Stop during a pending Start and ignores its late failure", a
       screen.getByRole("region", { name: "Local agent actions" }),
     ).queryByRole("alert"),
   ).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "Start" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Start" })).not.toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
 });
 
 it("recovers an initial read failure without inferring ownership and stops polling errors", async () => {
@@ -319,3 +328,56 @@ it("polls only while visible and ready, and releases the timer on unmount", asyn
     visibility.mockRestore();
   }
 });
+
+it("keeps unrelated command failures off a known non-owned profile", async () => {
+  const h = setup();
+  const view = render(h.panel("ef".repeat(32)));
+  await act(() => h.control.refresh());
+  vi.spyOn(h.host, "action").mockRejectedValueOnce("Unrelated launch failed.");
+  await act(async () => {
+    await h.control.action(h.agent.id, "start").catch(() => {});
+  });
+  expect(h.control.snapshot().status).toBe("error");
+  expect(
+    screen.queryByRole("region", { name: "Local agent actions" }),
+  ).not.toBeInTheDocument();
+  view.rerender(h.panel());
+  expect(screen.getByText(/Unrelated launch failed/)).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Retry status" })).toBeEnabled();
+});
+
+it.each([false, true])(
+  "preserves Start focus on success without stealing moved focus (moved=%s)",
+  async (moveFocus) => {
+    const h = setup();
+    h.agent.status = "stopped";
+    h.agent.enabled = false;
+    const pending = deferred<ControlSnapshot>();
+    vi.spyOn(h.host, "action").mockImplementationOnce(() => pending.promise);
+    const user = userEvent.setup();
+    render(h.panel());
+    const start = await screen.findByRole("button", { name: "Start" });
+    start.focus();
+    await user.keyboard("{Enter}");
+    try {
+      expect(h.control.snapshot().busy).toBe(true);
+      expect(start).toHaveFocus();
+      await user.keyboard("{Enter}");
+      expect(h.host.action).toHaveBeenCalledTimes(1);
+      if (moveFocus) screen.getByRole("button", { name: "Copy npub" }).focus();
+    } finally {
+      await act(async () =>
+        pending.resolve({
+          ...h.data,
+          agents: [{ ...h.agent, status: "running", enabled: true }],
+        }),
+      );
+    }
+    expect(
+      screen.queryByRole("button", { name: "Start" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: moveFocus ? "Copy npub" : "Stop" }),
+    ).toHaveFocus();
+  },
+);

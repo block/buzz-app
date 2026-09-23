@@ -7,6 +7,14 @@ import {
 } from "./attachments";
 import { foldMessages, parseAttachments } from "./fold";
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 const origin = "https://relay.test";
 const hash = "a".repeat(64);
 const descriptor = {
@@ -238,7 +246,7 @@ it("bounds a stalled request and rejects its late result after the upload deadli
     .mockReturnValue(deadline.signal);
   let release!: (response: Response) => void;
   let signal!: AbortSignal;
-  const started = Promise.withResolvers<void>();
+  const started = deferred<void>();
   vi.stubGlobal("fetch", (_url: RequestInfo | URL, init?: RequestInit) => {
     assert.exists(init?.signal);
     signal = init.signal;
@@ -338,8 +346,8 @@ it("uploads prepared video bytes rather than the original, preserving the prepar
 });
 
 it("cancellation during preparation cannot start a later upload", async () => {
-  const started = Promise.withResolvers<void>();
-  const release = Promise.withResolvers<Response>();
+  const started = deferred<void>();
+  const release = deferred<Response>();
   const cancel = new AbortController();
   const fetch = vi.fn((_url: string, init: RequestInit) => {
     expect(init.signal).toBeDefined();

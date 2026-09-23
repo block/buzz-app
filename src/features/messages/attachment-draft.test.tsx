@@ -6,7 +6,13 @@ import type { RelaySession } from "../relay/session";
 import type { UploadedAttachment } from "../relay/attachments";
 import { useAttachmentDraft } from "./attachment-draft";
 
-const deferred = <T,>() => Promise.withResolvers<T>();
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 const file = (name = "notes.txt", size = 5) =>
   Object.defineProperty(new File(["notes"], name), "size", {
     value: size,

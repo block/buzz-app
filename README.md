@@ -25,12 +25,7 @@ and the pinned pnpm package's Intel Mac limitation.
 Both commands forward arguments to their development tool (Vite or Tauri).
 The default port is derived from the worktree's path, so every checkout gets its
 own stable port automatically and parallel worktrees need no coordination;
-`just desktop` prints the URL it chose. Derived ports lie in 10010 to 65009:
-block/buzz's formula with the base moved up by ten, so a buzz and a buzz-app
-checkout at the same path never share a port, and the buzz-app port also clears
-buzz's HMR and `just web` ports for that path. Checkouts at different paths hash
-independently, so a buzz and a buzz-app worktree avoid each other with the same
-odds as any two worktrees of one repository. Override it with `just web --port 1431`
+`just desktop` prints the URL it chose. Override it with `just web --port 1431`
 or `just desktop --port 1432`. Browser servers prefer the requested port and
 use the next open port automatically; desktop requires the exact port to be free and keeps
 Vite and the native window on the same URL. Only a second copy of the same

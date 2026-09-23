@@ -24,8 +24,7 @@ bin/pnpm design:dev
 
 Open http://localhost:1442/tests/fixtures/design-system.html.
 The same fixture path works under the normal web dev server, at the
-worktree-derived port `just web` prints (10010 to 65009, block/buzz's formula
-plus ten, so a buzz checkout at the same path never shares it).
+worktree-derived port `just web` prints.
 
 ```sh
 bin/pnpm design:typecheck

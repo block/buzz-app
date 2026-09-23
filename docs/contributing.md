@@ -55,13 +55,9 @@ need their own validation.
   The desktop adapter consumes
   `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
-  the adapter derives a stable port in 10010 to 65009 from the worktree path (the
-  same derivation `just web` uses, so each worktree gets its own port) and prints
-  the chosen URL. The formula is block/buzz's with the base offset by ten, so a
-  buzz checkout at the same path never shares this port, and its HMR and
-  `just web` ports stay clear of it too. Worktrees at different paths hash
-  independently and collide no more often than two worktrees of one
-  repository. Desktop requires the
+  the adapter derives a stable port from the worktree path (the same derivation
+  `just web` uses, so each worktree gets its own port) and prints the chosen URL.
+  Desktop requires the
   exact port to be free; an occupied port fails rather than opening another copy's
   server. Other arguments, including runner/application arguments after `--`, pass
   through unchanged. Port configuration is prepended so Tauri parses it even with

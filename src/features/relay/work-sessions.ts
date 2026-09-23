@@ -158,6 +158,7 @@ export function createWorkSessions(
       unsubscribe = channels.subscribeList(inspect);
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) abort();
+      else inspect();
     });
     channels.refreshList?.();
     await wait;

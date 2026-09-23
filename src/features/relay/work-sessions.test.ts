@@ -326,7 +326,13 @@ it.each([true, false])(
 type RelaySessionRead = ReturnType<
   typeof createRelaySession
 >["session"]["read"];
-function setup(channelCreation = true) {
+function setup(
+  channelCreation = true,
+  channelList: ReturnType<ChannelQueries["list"]> = {
+    status: "ready",
+    channels: [],
+  },
+) {
   let items: readonly OutgoingEvent[] = [{ event, delivery: "accepted" }];
   const listeners = new Set<() => void>();
   const receipts = {
@@ -351,7 +357,9 @@ function setup(channelCreation = true) {
     dismiss: vi.fn(async () => {}),
   };
   const channels = {
-    list: () => ({ status: "ready", channels: [] }),
+    list: () => channelList,
+    subscribeList: () => () => {},
+    refreshList: vi.fn(),
   } as unknown as ChannelQueries;
   const reader = { read: vi.fn(async () => [event]) };
   const controller = new AbortController();
@@ -364,6 +372,7 @@ function setup(channelCreation = true) {
       receipts,
     ),
     outbox,
+    channels,
     reader,
     listeners,
     controller,
@@ -377,6 +386,18 @@ it("confirms completed journal receipts after they leave the pending outbox", as
   await test.service.delivered(event.id);
   expect(test.reader.read).not.toHaveBeenCalled();
   expect(test.listeners.size).toBe(0);
+});
+it("accepts already-applied creator membership without a refresh notification", async () => {
+  const id = "11111111-1111-4111-8111-111111111111";
+  const member = "a".repeat(64);
+  const test = setup(true, {
+    status: "ready",
+    channels: [{ id, name: "Release notes", members: [member] }],
+  });
+  await expect(
+    test.service.refresh(id, { member }, false),
+  ).resolves.toBeUndefined();
+  expect(test.channels.refreshList).toHaveBeenCalledOnce();
 });
 it("retries the same unknown event and confirms restored receipts through verified reads", async () => {
   const test = setup();

@@ -13,6 +13,7 @@ pub(crate) fn fixture() -> Agent {
         system_prompt: "Take over the test world".into(),
         workspace: "/tmp".into(),
         harness: HarnessEdit {
+            configuration: None,
             databricks: None,
             command: "buzz-agent".into(),
             args: vec![],
@@ -36,6 +37,40 @@ fn edit() -> AgentEdit {
         harness: fixture().harness,
         environment: BTreeMap::new(),
     }
+}
+#[test]
+fn explicit_modes_round_trip_and_invalid_selection_never_persists() {
+    use crate::{AiConfiguration, EffortSelection};
+    let dir = tempfile::tempdir().unwrap();
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    let a = fixture();
+    store.insert(vec![a.clone()]).unwrap();
+    assert!(store.agents().unwrap()[0].harness.configuration.is_none());
+    let mut update = edit();
+    update.harness.configuration = Some(AiConfiguration::Default);
+    update.harness.model.clear();
+    store.save(&a.id, 1, update.clone()).unwrap();
+    drop(store);
+    let mut store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        store.agents().unwrap()[0].harness.configuration,
+        Some(AiConfiguration::Default)
+    );
+    update.harness.configuration = Some(AiConfiguration::Advanced {
+        effort: EffortSelection::Unsupported,
+    });
+    let before = fs::read(store.path()).unwrap();
+    assert!(store.save(&a.id, 2, update.clone()).is_err());
+    assert_eq!(fs::read(store.path()).unwrap(), before);
+    update.harness.model = "chosen".into();
+    store.save(&a.id, 2, update.clone()).unwrap();
+    drop(store);
+    let store = Store::open(dir.path().to_owned()).unwrap();
+    assert_eq!(
+        store.agents().unwrap()[0].harness.configuration,
+        update.harness.configuration
+    );
+    assert_eq!(store.agents().unwrap()[0].imported, a.imported);
 }
 #[test]
 fn real_store_save_cas_unknown_fields_secret_projection_and_reopen() {

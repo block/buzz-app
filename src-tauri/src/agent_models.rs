@@ -1,10 +1,6 @@
 //! Native connection owner. No work on snapshot/render; only an explicit ticket
 //! admits auth/catalog work. This lock is independent of agent Save/Stop.
-use buzz_agent::{
-    auth::{BrowserOpener, PkceOAuthConfig, PkceOAuthTokenSource},
-    config::{Config, DatabricksModelFilter, Provider},
-    AgentError,
-};
+use buzz_agent::auth::BrowserOpener;
 use buzz_agent_controller::connection::{oauth_root, origin};
 use buzz_agent_controller::AgentEdit;
 use serde::{Deserialize, Serialize};
@@ -15,21 +11,24 @@ use std::{
 };
 use tauri_plugin_opener::OpenerExt;
 
-mod defaults {
-    include!(concat!(env!("OUT_DIR"), "/agent_defaults.rs"));
-}
+mod codex;
+mod contracts;
+mod databricks;
+pub(crate) use contracts::ModelError;
+use contracts::{Discovery, EffortOptions};
+pub(crate) use databricks::{defaults, Defaults};
+use databricks::{execute, resolve, Factory, RuntimeFactory};
 const CANCELLED: &str = "Connection request cancelled or expired";
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct Defaults {
-    host: String,
-    filter: String,
-}
-pub(crate) fn defaults() -> Defaults {
-    Defaults {
-        host: defaults::HOST.into(),
-        filter: defaults::FILTER.into(),
-    }
+#[derive(Deserialize)]
+#[serde(
+    tag = "kind",
+    content = "settings",
+    rename_all = "lowercase",
+    deny_unknown_fields
+)]
+enum Integration {
+    Databricks(databricks::Settings),
+    Codex,
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -37,8 +36,7 @@ pub(crate) struct Request {
     id: Option<String>,
     expected_revision: Option<u64>,
     edit: Option<AgentEdit>,
-    host: String,
-    filter: String,
+    integration: Integration,
     action: Operation,
 }
 #[derive(Clone, Copy, Deserialize, PartialEq)]
@@ -51,15 +49,31 @@ enum Operation {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Catalog {
-    host: String,
+    integration: CatalogIntegration,
     models: Vec<Model>,
+    defaults: Option<ResolvedDefaults>,
+    discovery: Option<Discovery>,
     model_overridden: bool,
     disconnected: bool,
+}
+#[derive(Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum CatalogIntegration {
+    Databricks { host: String },
+    Codex,
+}
+#[derive(Serialize)]
+struct ResolvedDefaults {
+    model: Option<String>,
+    effort: Option<String>,
 }
 #[derive(Serialize)]
 struct Model {
     id: String,
     name: String,
+    effort: EffortOptions,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
 }
 struct Ticket {
     id: u64,
@@ -78,6 +92,118 @@ pub(crate) struct ModelHost {
     state: Arc<Mutex<State>>,
     factory: Arc<dyn Factory>,
 }
+impl ModelHost {
+    /// Headless preflight, before identity generation. Never opens a browser.
+    pub(crate) async fn validate_creation(&self, edit: &AgentEdit) -> Result<(), ModelError> {
+        use buzz_agent_controller::{AiConfiguration, Controller};
+        if edit.harness.configuration.is_none() {
+            return Err(ModelError::new(
+                "configuration",
+                "Choose Harness defaults or Advanced before creating an agent.",
+            ));
+        }
+        edit.harness.validate_configuration().map_err(|message| {
+            let code = match &edit.harness.configuration {
+                Some(AiConfiguration::Advanced { .. }) if edit.harness.model.trim().is_empty() => {
+                    "model"
+                }
+                Some(AiConfiguration::Advanced { .. }) => "effort",
+                _ => "configuration",
+            };
+            ModelError::new(code, message)
+        })?;
+        if buzz_agent_controller::codex::is_codex(&edit.harness.command) {
+            let context = Controller::draft_model_context(edit.clone())?
+                .codex
+                .ok_or("Missing Codex context")?;
+            let ticket = self.begin()?;
+            let catalog = self
+                .run(ticket, codex::execute(context, edit.harness.model.clone()))
+                .await?;
+            if let Some(AiConfiguration::Advanced { effort }) = &edit.harness.configuration {
+                catalog.validate_selection(&edit.harness.model, effort)?;
+            }
+            return Ok(());
+        }
+        let Some(AiConfiguration::Advanced { effort }) = &edit.harness.configuration else {
+            return Ok(());
+        };
+        let context = Controller::draft_model_context(edit.clone())?;
+        let settings = edit.harness.databricks.as_ref();
+        let defaults = defaults();
+        let settings = databricks::Settings {
+            host: settings.map(|s| s.host.clone()).unwrap_or(defaults.host),
+            filter: settings
+                .map(|s| s.filter.clone())
+                .unwrap_or(defaults.filter),
+        };
+        let (workspace, filter) = resolve(&settings, &context)?;
+        let cache = self.cache(&workspace)?;
+        let factory = self.factory.clone();
+        let ticket = self.begin()?;
+        let catalog = self
+            .run(
+                ticket,
+                execute(
+                    Operation::Refresh,
+                    workspace,
+                    filter,
+                    cache,
+                    false,
+                    factory,
+                    Arc::new(Headless),
+                ),
+            )
+            .await?;
+        catalog.validate_selection(&edit.harness.model, effort)
+    }
+}
+
+impl Catalog {
+    fn validate_selection(
+        &self,
+        model: &str,
+        effort: &buzz_agent_controller::EffortSelection,
+    ) -> Result<(), ModelError> {
+        use buzz_agent_controller::EffortSelection;
+        if self.disconnected
+            || !self.discovery.as_ref().is_some_and(|d| {
+                d.authentication == "authenticated"
+                    && match self.integration {
+                        CatalogIntegration::Databricks { .. } => {
+                            d.source == "databricksCatalog" && d.catalog == "remote"
+                        }
+                        CatalogIntegration::Codex => {
+                            d.source == "codexAcp" && d.catalog == "adapter"
+                        }
+                    }
+            })
+        {
+            return Err(ModelError::new("unavailable", "Account model availability could not be verified. Refresh models before creating the agent."));
+        }
+        let selected = self.models.iter().find(|m| m.id == model).ok_or_else(|| {
+            ModelError::new(
+                "model",
+                "The selected model ID is unavailable. Refresh models and select a listed model.",
+            )
+        })?;
+        if let Some(error) = &selected.error {
+            return Err(ModelError::new("model", error.clone()));
+        }
+        let valid = match (&selected.effort, effort) {
+            (EffortOptions::Unsupported, EffortSelection::Unsupported) => true,
+            (EffortOptions::Supported { options }, EffortSelection::Value { value }) => {
+                options.iter().any(|o| o.value == *value)
+            }
+            _ => false,
+        };
+        if !valid {
+            return Err(ModelError::new("effort", "Choose an effort advertised for the selected model, or Not supported when explicitly reported."));
+        }
+        Ok(())
+    }
+}
+
 impl ModelHost {
     pub(crate) fn new(root: Result<PathBuf, String>) -> Self {
         Self {
@@ -146,10 +272,13 @@ impl ModelHost {
     async fn run(
         &self,
         ticket: u64,
-        work: impl std::future::Future<Output = Result<Catalog, String>> + Send + 'static,
-    ) -> Result<Catalog, String> {
+        work: impl std::future::Future<Output = Result<Catalog, ModelError>> + Send + 'static,
+    ) -> Result<Catalog, ModelError> {
         let task = {
-            let mut state = self.state.lock().map_err(|_| CANCELLED)?;
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| ModelError::new("cancelled", CANCELLED))?;
             let pending = state
                 .pending
                 .as_mut()
@@ -159,11 +288,13 @@ impl ModelHost {
                         && !p.cancelled
                         && p.created.elapsed() < Duration::from_secs(15)
                 })
-                .ok_or(CANCELLED)?;
+                .ok_or_else(|| ModelError::new("cancelled", CANCELLED))?;
             let task = tokio::spawn(async move {
                 tokio::time::timeout(Duration::from_secs(180), work)
                     .await
-                    .map_err(|_| "Connection timed out; retry explicitly".to_owned())?
+                    .map_err(|_| {
+                        ModelError::new("timeout", "Connection timed out; retry explicitly")
+                    })?
             });
             pending.abort = Some(task.abort_handle());
             task
@@ -173,27 +304,41 @@ impl ModelHost {
         let owner = self.clone();
         let (send, receive) = tokio::sync::oneshot::channel();
         tokio::spawn(async move {
-            let result = task.await.map_err(|_| CANCELLED.to_owned()).and_then(|r| r);
+            let result = task
+                .await
+                .map_err(|_| ModelError::new("cancelled", CANCELLED))
+                .and_then(|r| r);
             let result = (|| {
-                let mut state = owner.state.lock().map_err(|_| CANCELLED)?;
+                let mut state = owner
+                    .state
+                    .lock()
+                    .map_err(|_| ModelError::new("cancelled", CANCELLED))?;
                 if !state.pending.as_ref().is_some_and(|p| p.id == ticket) {
-                    return Err(CANCELLED.into());
+                    return Err(ModelError::new("cancelled", CANCELLED));
                 }
                 let cancelled = state.pending.as_ref().is_some_and(|p| p.cancelled) || state.closed;
                 state.pending = None;
                 if cancelled {
-                    Err(CANCELLED.into())
+                    Err(ModelError::new("cancelled", CANCELLED))
                 } else {
                     result
                 }
             })();
             let _ = send.send(result);
         });
-        receive.await.map_err(|_| CANCELLED.to_owned())?
+        receive
+            .await
+            .map_err(|_| ModelError::new("cancelled", CANCELLED))?
     }
     fn cache(&self, _host: &str) -> Result<PathBuf, String> {
         let state = self.state.lock().map_err(|_| CANCELLED)?;
         oauth_root(&state.root.clone()?)
+    }
+}
+struct Headless;
+impl BrowserOpener for Headless {
+    fn open(&self, _: &str) -> Result<(), String> {
+        Err("Sign in using Browse models before creating the agent".into())
     }
 }
 struct Opener<R: tauri::Runtime>(tauri::AppHandle<R>);
@@ -204,28 +349,6 @@ impl<R: tauri::Runtime> BrowserOpener for Opener<R> {
             .open_url(url, None::<&str>)
             .map_err(|_| "Could not open the sign-in browser".into())
     }
-}
-fn resolve(
-    request: &Request,
-    context: &buzz_agent_controller::ModelContext,
-) -> Result<(String, Option<DatabricksModelFilter>), String> {
-    if request.host.len() > 4096 || request.filter.len() > 4096 {
-        return Err("Connection settings are too long".into());
-    }
-    let host = origin(context.host.as_deref().unwrap_or(&request.host))?;
-    if context.host.is_some() && origin(&request.host)? != host {
-        return Err("Workspace conflicts with the saved/draft DATABRICKS_HOST override; use that workspace or edit the override".into());
-    }
-    if context
-        .filter
-        .as_ref()
-        .is_some_and(|v| v != &request.filter)
-    {
-        return Err("Filter conflicts with the saved/draft DATABRICKS_MODEL_FILTER override; edit the override or match it explicitly".into());
-    }
-    let filter = DatabricksModelFilter::parse(Some(&request.filter))
-        .map_err(|_| "Invalid model filter".to_owned())?;
-    Ok((host, filter))
 }
 #[tauri::command]
 pub(crate) fn agent_models_begin(state: tauri::State<'_, ModelHost>) -> Result<u64, String> {
@@ -245,7 +368,33 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     agents: tauri::State<'_, crate::agents::AgentHost>,
     ticket: u64,
     request: Request,
-) -> Result<Catalog, String> {
+) -> Result<Catalog, ModelError> {
+    if matches!(request.integration, Integration::Codex) {
+        let host = state.inner().clone();
+        let prepared = request
+            .edit
+            .clone()
+            .ok_or_else(|| "Agent draft is required for model lookup".to_owned())
+            .and_then(|edit| {
+                let selected = edit.harness.model.clone();
+                agents
+                    .model_context(request.id.as_deref(), request.expected_revision, edit)
+                    .and_then(|context| {
+                        context
+                            .codex
+                            .ok_or("Choose the Codex harness for Codex discovery".into())
+                    })
+                    .map(|context| (context, selected))
+            });
+        return host.run(ticket, async move {
+            if request.action != Operation::Refresh { return Err(ModelError::new("configuration", "Use codex login in your terminal, then Refresh models. Buzz does not log out or replace your shared Codex account.")); }
+            let (context, _) = prepared?;
+            codex::discover(context, None).await
+        }).await;
+    }
+    let Integration::Databricks(settings) = &request.integration else {
+        return Err("Unsupported integration".into());
+    };
     let host = state.inner().clone();
     let controller = agents.inner().clone();
     // Disconnect is recovery: changing provider or breaking saved settings must
@@ -253,7 +402,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     let prepared = if request.action == Operation::Disconnect {
         controller
             .ensure_open()
-            .and_then(|_| origin(&request.host))
+            .and_then(|_| origin(&settings.host))
             .and_then(|workspace| {
                 host.cache(&workspace)
                     .map(|cache| (false, workspace, None, cache))
@@ -268,7 +417,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
                 controller.model_context(request.id.as_deref(), request.expected_revision, edit)
             })
             .and_then(|context| {
-                resolve(&request, &context)
+                resolve(settings, &context)
                     .map(|(workspace, filter)| (context.model_overridden, workspace, filter))
             })
             .and_then(|(overridden, workspace, filter)| {
@@ -282,8 +431,10 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         if request.action == Operation::Disconnect {
             controller.disconnect(&workspace)?;
             return Ok(Catalog {
-                host: workspace,
+                defaults: None,
+                integration: CatalogIntegration::Databricks { host: workspace },
                 models: vec![],
+                discovery: None,
                 model_overridden,
                 disconnected: true,
             });
@@ -302,162 +453,10 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
     .await
 }
 
-// Production reuses the immutable engine with its existing auth policy. Tests replace only the
-// network/auth transport behind the same command admission and operation logic.
-trait Connection: Send + Sync {
-    fn connect(
-        &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>>;
-    fn models(
-        &self,
-        filter: Option<DatabricksModelFilter>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Vec<buzz_agent::catalog::ModelEntry>, AgentError>,
-                > + Send
-                + '_,
-        >,
-    >;
-}
-trait Factory: Send + Sync {
-    fn open(
-        &self,
-        workspace: &str,
-        cache: &std::path::Path,
-        opener: Arc<dyn BrowserOpener>,
-    ) -> Result<Box<dyn Connection>, String>;
-}
-struct RuntimeFactory;
-struct RuntimeConnection {
-    workspace: String,
-    cache: PathBuf,
-    auth: Arc<PkceOAuthTokenSource>,
-}
-impl Factory for RuntimeFactory {
-    fn open(
-        &self,
-        workspace: &str,
-        cache: &std::path::Path,
-        opener: Arc<dyn BrowserOpener>,
-    ) -> Result<Box<dyn Connection>, String> {
-        let workspace = origin(workspace)?;
-        Ok(Box::new(RuntimeConnection::new(workspace, cache, opener)?))
-    }
-}
-impl RuntimeConnection {
-    fn new(
-        workspace: String,
-        cache: &std::path::Path,
-        opener: Arc<dyn BrowserOpener>,
-    ) -> Result<Self, String> {
-        // Match the pinned runtime's discovery/client/scopes/namespace exactly.
-        // Do not call the convenience wrapper: its default opener logs the URL.
-        let auth = PkceOAuthTokenSource::new_with(
-            PkceOAuthConfig {
-                discovery_url: format!("{workspace}/oidc/.well-known/oauth-authorization-server"),
-                client_id: "databricks-cli".into(),
-                scopes: vec!["all-apis".into(), "offline_access".into()],
-                cache_namespace: "databricks".into(),
-                cache_dir_override: Some(cache.to_path_buf()),
-            },
-            opener,
-        )
-        .map_err(|_| "Could not open the app-isolated Databricks connection")?;
-        Ok(Self {
-            workspace,
-            cache: cache.into(),
-            auth,
-        })
-    }
-}
-impl Connection for RuntimeConnection {
-    fn connect(
-        &self,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + '_>> {
-        Box::pin(async {
-            self.auth
-                .interactive_login()
-                .await
-                .map_err(|_| "Sign-in was not completed. Choose Retry models when ready".into())
-        })
-    }
-    fn models(
-        &self,
-        filter: Option<DatabricksModelFilter>,
-    ) -> std::pin::Pin<
-        Box<
-            dyn std::future::Future<
-                    Output = Result<Vec<buzz_agent::catalog::ModelEntry>, AgentError>,
-                > + Send
-                + '_,
-        >,
-    > {
-        Box::pin(async {
-            let config = Config::for_discovery(
-                Provider::DatabricksV2,
-                String::new(),
-                self.workspace.clone(),
-                filter,
-            );
-            buzz_agent::discover_databricks_models_with_cache_dir(&config, Some(&self.cache)).await
-        })
-    }
-}
-async fn execute(
-    action: Operation,
-    workspace: String,
-    filter: Option<DatabricksModelFilter>,
-    cache: PathBuf,
-    model_overridden: bool,
-    factory: Arc<dyn Factory>,
-    opener: Arc<dyn BrowserOpener>,
-) -> Result<Catalog, String> {
-    let connection = factory.open(&workspace, &cache, opener.clone())?;
-    // The picker is user intent to discover models, not a mandatory login ceremony.
-    // Reuse/refresh cached credentials first; unrelated failures must never open SSO.
-    let entries = match connection.models(filter.clone()).await {
-        Err(AgentError::LlmAuth(_)) if action == Operation::Connect => {
-            // Discovery may have invalidated a rejected token on disk. Reopen after
-            // that verdict rather than retaining a pre-discovery in-memory token.
-            let connection = factory.open(&workspace, &cache, opener)?;
-            connection.connect().await?;
-            connection.models(filter).await
-        }
-        result => result,
-    }
-    .map_err(|error| match error {
-        AgentError::LlmAuth(_) => "Sign-in required. Choose Retry models to sign in".to_owned(),
-        _ => "Models unavailable. Check the workspace, filter or network and retry".to_owned(),
-    })?;
-    if entries.len() > 10_000
-        || entries.iter().any(|m| {
-            m.id.len() > 512
-                || m.name.len() > 1024
-                || m.id.chars().any(char::is_control)
-                || m.name.chars().any(char::is_control)
-        })
-    {
-        return Err("Model catalog exceeds the app's safe display limits; use a narrower filter or custom ID".into());
-    }
-    // Upstream's explicitly labelled authenticated-empty defaults are NOT
-    // discovered IDs. Keep custom entry, show empty instead of guessing models.
-    let models = entries
-        .into_iter()
-        .filter(|m| !m.name.ends_with(" (default catalog)"))
-        .map(|m| Model {
-            id: m.id,
-            name: m.name,
-        })
-        .collect();
-    Ok(Catalog {
-        host: workspace,
-        models,
-        model_overridden,
-        disconnected: false,
-    })
-}
-
+#[cfg(test)]
+use buzz_agent::{config::DatabricksModelFilter, AgentError};
+#[cfg(test)]
+use databricks::{Connection, RuntimeConnection};
 #[cfg(test)]
 mod tests;
 

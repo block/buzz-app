@@ -6,6 +6,10 @@ use tauri::test::{get_ipc_response, mock_builder, mock_context, noop_assets, Moc
 const RUNTIME_GATE: &str = "Synthetic runtime unavailable.";
 const IMPORT_GATE: &str = "Synthetic credential refusal.";
 
+pub(crate) fn has_prepared_identity(host: &AgentHost) -> bool {
+    host.with(|host| Ok(host.creating.is_some())).unwrap()
+}
+
 // Test-only custody. Synthetic fixtures cannot reach PlatformCredentials.
 struct RejectingCredentials;
 impl Credentials for RejectingCredentials {
@@ -114,9 +118,10 @@ fn real_ipc_snapshot_save_cas_stop_and_launch_gate() {
     assert_eq!(
         before["harnessOptions"],
         json!([{
+            "id":"buzz-agent", "capabilities":{"modelDiscovery":"databricks"},
             "command":"buzz-agent", "label":"Buzz Agent",
             "providers":[{"value":"databricks_v2", "label":"Databricks v2"}]
-        }])
+        }, {"id":"codex", "capabilities":{"modelDiscovery":"codex"}, "command":"codex-acp", "label":"Codex", "providers":[]}])
     );
     assert_eq!(before["agents"][0]["name"], "Sample");
     assert_eq!(before["agents"][0]["enabled"], true);

@@ -86,8 +86,110 @@ impl Connection for Arc<Fake> {
     }
 }
 fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
-    json!({"id":id,"expectedRevision":1,"host":"https://workspace.example.com","filter":"", "action":action,
+    json!({"id":id,"expectedRevision":1,"integration":{"kind":"databricks","settings":{"host":"https://workspace.example.com","filter":""}}, "action":action,
     "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2"},"environment":{}}})
+}
+#[test]
+fn advanced_creation_validates_before_identity_and_binds_the_submitted_draft() {
+    let fake = Arc::new(Fake::default());
+    let (dir, host, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let mut edit = request(dir.path(), "unused", "refresh")["edit"].clone();
+    edit["harness"]["configuration"] = json!({"mode":"advanced","effort":{"kind":"unsupported"}});
+    edit["harness"]["model"] = json!("endpoint-two");
+    edit["harness"]["databricks"] = json!({"host":"https://workspace.example.com","filter":""});
+    let request_id = uuid::Uuid::new_v4().to_string();
+    let prepare = |edit: Value| {
+        invoke(
+            &view,
+            "agent_control_create_prepare",
+            json!({
+                "requestId":request_id, "destination":"wss://relay.example", "owner":"ab".repeat(32), "edit":edit
+            }),
+        )
+    };
+    let mut missing_mode = edit.clone();
+    missing_mode["harness"]
+        .as_object_mut()
+        .unwrap()
+        .remove("configuration");
+    assert_eq!(prepare(missing_mode).unwrap_err()["code"], "configuration");
+    assert!(!crate::agents::tests::has_prepared_identity(&host));
+    for (failure, model, effort, code) in [
+        (
+            1,
+            "endpoint-two",
+            json!({"kind":"unsupported"}),
+            "authentication",
+        ),
+        (
+            2,
+            "endpoint-two",
+            json!({"kind":"unsupported"}),
+            "unavailable",
+        ),
+        (0, "Endpoint Two", json!({"kind":"unsupported"}), "model"),
+        (
+            0,
+            "endpoint-two",
+            json!({"kind":"value","value":"high"}),
+            "effort",
+        ),
+    ] {
+        fake.failure.store(failure, Ordering::SeqCst);
+        let mut invalid = edit.clone();
+        invalid["harness"]["model"] = json!(model);
+        invalid["harness"]["configuration"]["effort"] = effort;
+        assert_eq!(prepare(invalid).unwrap_err()["code"], code);
+        assert!(!crate::agents::tests::has_prepared_identity(&host));
+    }
+    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
+    let first = prepare(edit.clone()).unwrap();
+    assert!(crate::agents::tests::has_prepared_identity(&host));
+    assert_eq!(prepare(edit.clone()).unwrap(), first); // retry keeps identity
+    edit["harness"]["model"] = json!("changed-after-validation");
+    let error = invoke(
+        &view,
+        "agent_control_create_commit",
+        json!({"requestId":request_id,"edit":edit,"auth":"unused"}),
+    )
+    .unwrap_err();
+    assert!(error.as_str().unwrap().contains("settings changed"));
+    assert_eq!(
+        invoke(&view, "agent_control_snapshot", json!({})).unwrap()["agents"],
+        json!([])
+    );
+}
+
+#[test]
+fn existing_agent_can_discover_before_completing_advanced_selection() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    let mut req = request(dir.path(), &id, "refresh");
+    req["edit"]["harness"]["model"] = json!("");
+    req["edit"]["harness"]["configuration"] =
+        json!({"mode":"advanced","effort":{"kind":"unsupported"}});
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let catalog = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":req}),
+    )
+    .unwrap();
+    assert_eq!(catalog["discovery"]["authentication"], "authenticated");
+    assert_eq!(catalog["models"][0]["effort"]["status"], "unsupported");
 }
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
@@ -119,11 +221,11 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     assert_eq!(result["models"][0]["name"], "Model Service");
     assert!(!result.to_string().contains("DO_NOT_PROJECT"));
     let mut filtered = req.clone();
-    filtered["filter"] = json!("endpoint-*");
+    filtered["integration"]["settings"]["filter"] = json!("endpoint-*");
     let filtered_result = call(filtered).unwrap();
     assert_eq!(
         filtered_result["models"],
-        json!([{"id":"endpoint-two","name":"Endpoint Two"}])
+        json!([{"id":"endpoint-two","name":"Endpoint Two","effort":{"status":"unsupported"}}])
     );
     let first_cache = fake.opened.lock().unwrap()[0].1.clone();
     assert_eq!(first_cache, dir.path().join("store/buzz-agent/oauth"));
@@ -151,7 +253,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     }
     fake.failure.store(0, Ordering::SeqCst);
     let mut other = req.clone();
-    other["host"] = json!("https://other.example.com");
+    other["integration"]["settings"]["host"] = json!("https://other.example.com");
     call(other).unwrap();
     assert_eq!(fake.opened.lock().unwrap().last().unwrap().1, first_cache);
     let count = fake.opened.lock().unwrap().len();
@@ -398,6 +500,7 @@ fn private_build_allowlist_excludes_secrets_and_does_not_rewrite_model() {
     ] {
         assert!(!build_config::parse(raw)
             .unwrap_err()
+            .to_string()
             .contains("NEVER_PRINT"));
     }
 }
@@ -468,4 +571,72 @@ async fn unstarted_ticket_expires_and_old_run_cannot_claim_its_replacement() {
         .is_err());
     host.cancel(next).unwrap();
     assert!(host.begin().is_ok());
+}
+
+#[test]
+fn invalid_integration_variants_never_reach_auth_and_ticket_can_be_cancelled() {
+    let fake = Arc::new(Fake::default());
+    let (dir, _, _app, view) = crate::agents::tests::fixture_with_models(|dir| {
+        let host = ModelHost::new(Ok(dir.join("store")));
+        ModelHost {
+            state: host.state,
+            factory: Arc::new(fake.clone()),
+        }
+    });
+    let id = seed(dir.path());
+    for integration in [
+        json!({"kind":"codex","settings":{}}),
+        json!({"kind":"databricks","settings":{"host":"https://workspace.example.com","filter":"","apiKey":"SYNTHETIC"}}),
+        json!({"kind":"databricks","settings":{"host":false,"filter":""}}),
+    ] {
+        let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+        let mut req = request(dir.path(), &id, "connect");
+        req["integration"] = integration;
+        assert!(invoke(
+            &view,
+            "agent_models_run",
+            json!({"ticket":ticket,"request":req})
+        )
+        .is_err());
+        invoke(&view, "agent_models_cancel", json!({"ticket":ticket})).unwrap();
+    }
+    assert!(fake.opened.lock().unwrap().is_empty());
+    assert_eq!(fake.connects.load(Ordering::SeqCst), 0);
+}
+
+#[test]
+fn advanced_selection_requires_remote_authenticated_catalog_evidence() {
+    let mut catalog = Catalog {
+        defaults: None,
+        integration: CatalogIntegration::Databricks {
+            host: "https://workspace.example.com".into(),
+        },
+        models: vec![Model {
+            id: "chosen".into(),
+            name: "Chosen".into(),
+            effort: EffortOptions::Unsupported,
+            error: None,
+        }],
+        discovery: None,
+        model_overridden: false,
+        disconnected: false,
+    };
+    let effort = buzz_agent_controller::EffortSelection::Unsupported;
+    assert!(catalog.validate_selection("chosen", &effort).is_err());
+    for evidence in ["cached", "fallback", "unknown", "remote"] {
+        catalog.discovery = Some(Discovery {
+            source: "databricksCatalog",
+            authentication: "authenticated",
+            catalog: evidence,
+        });
+        assert_eq!(
+            catalog.validate_selection("chosen", &effort).is_ok(),
+            evidence == "remote"
+        );
+    }
+    catalog.disconnected = true;
+    assert!(catalog.validate_selection("chosen", &effort).is_err());
+    catalog.disconnected = false;
+    catalog.discovery.as_mut().unwrap().authentication = "unknown";
+    assert!(catalog.validate_selection("chosen", &effort).is_err());
 }

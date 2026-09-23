@@ -138,7 +138,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
       editor.getByRole("button", { name: "Stop", exact: true }),
     ).toBeEnabled();
     await editor.getByRole("button", { name: "Stop", exact: true }).click();
-    await editor.getByRole("button", { name: "Cancel sign-in" }).click();
+    await editor.getByRole("button", { name: "Cancel model request" }).click();
     await expect(editor.getByRole("status")).toContainText("Cancelled");
     const cancelled = await page.evaluate(
       () => window.agentModelsFixture.calls.length,
@@ -186,7 +186,7 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     await page.evaluate(() => window.agentModelsFixture.mode("wait"));
     await editor.getByRole("button", { name: "Refresh models" }).click();
     await expect(
-      editor.getByRole("button", { name: "Cancel sign-in" }),
+      editor.getByRole("button", { name: "Cancel model request" }),
     ).toBeEnabled();
     const before = await page.evaluate(
       () =>

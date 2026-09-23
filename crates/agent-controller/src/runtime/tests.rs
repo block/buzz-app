@@ -6,6 +6,67 @@ use std::fs;
 use std::time::{Duration, Instant};
 const KEY: &str = "0000000000000000000000000000000000000000000000000000000000000001";
 const PUB: &str = "79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798";
+#[test]
+#[cfg(unix)]
+fn explicit_configuration_controls_actual_launch_environment() {
+    use crate::{AiConfiguration, EffortSelection};
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    let mut a = agent(dir.path());
+    a.environment
+        .insert("BUZZ_AGENT_MODEL".into(), "legacy-override".into());
+    for (configuration, model, expected_model, expected_effort) in [
+        (AiConfiguration::Default, "", None, None),
+        (
+            AiConfiguration::Advanced {
+                effort: EffortSelection::Unsupported,
+            },
+            "chosen",
+            Some("chosen"),
+            None,
+        ),
+        (
+            AiConfiguration::Advanced {
+                effort: EffortSelection::Value {
+                    value: "adapter-effort".into(),
+                },
+            },
+            "chosen",
+            Some("chosen"),
+            Some("adapter-effort"),
+        ),
+    ] {
+        a.harness.configuration = Some(configuration);
+        a.harness.model = model.into();
+        let command = runtime
+            .command(&a, &Secret::parse(KEY, PUB).unwrap())
+            .unwrap();
+        let env: BTreeMap<_, _> = command
+            .get_envs()
+            .filter_map(|(k, v)| {
+                v.map(|v| {
+                    (
+                        k.to_string_lossy().into_owned(),
+                        v.to_string_lossy().into_owned(),
+                    )
+                })
+            })
+            .collect();
+        assert_eq!(
+            env.get("BUZZ_ACP_MODEL").map(String::as_str),
+            expected_model
+        );
+        assert_eq!(
+            env.get("BUZZ_AGENT_MODEL").map(String::as_str),
+            expected_model
+        );
+        assert_eq!(
+            env.get("BUZZ_ACP_EFFORT_LEVEL").map(String::as_str),
+            expected_effort
+        );
+    }
+}
 struct Memory;
 impl Credentials for Memory {
     fn read_legacy(&self, _: crate::LegacySource, _: &str) -> Result<Secret> {
@@ -28,6 +89,7 @@ fn agent(workspace: &Path) -> Agent {
         system_prompt: "test prompt".into(),
         workspace: workspace.display().to_string(),
         harness: HarnessEdit {
+            configuration: None,
             databricks: None,
             command: "buzz-agent".into(),
             args: vec![],
@@ -488,6 +550,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
         system_prompt: a.system_prompt.clone(),
         workspace: a.workspace.clone(),
         harness: HarnessEdit {
+            configuration: None,
             databricks: Some(DatabricksSettings {
                 host: "https://other.example.com".into(),
                 filter: "".into(),
@@ -654,4 +717,79 @@ fn mention_start_forwards_replay_floor_without_persisting_or_restoring_it() {
     });
     assert_eq!(output.lines().nth(18), Some(""));
     controller.action(&a.id, Action::Stop).unwrap();
+}
+
+#[test]
+#[cfg(unix)]
+fn codex_launch_and_discovery_share_paths_home_and_explicit_overrides() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let runtime = bundle(tools.path());
+    for name in ["codex", "codex-acp"] {
+        let path = dir.path().join(name);
+        fs::write(&path, "#!/bin/sh\nexit 0\n").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    let mut a = agent(dir.path());
+    a.harness.command = dir.path().join("codex-acp").to_string_lossy().into_owned();
+    a.harness.provider.clear();
+    a.environment.insert(
+        "CODEX_HOME".into(),
+        dir.path()
+            .join("custom-home")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    let context = crate::codex::Context::new(&a.harness, &a.environment, &a.workspace).unwrap();
+    let probe = context.command(&context.adapter).unwrap();
+    for advanced in [false, true] {
+        a.harness.model = if advanced { "advertised" } else { "" }.into();
+        a.harness.configuration = Some(if advanced {
+            crate::AiConfiguration::Advanced {
+                effort: crate::EffortSelection::Value {
+                    value: "medium".into(),
+                },
+            }
+        } else {
+            crate::AiConfiguration::Default
+        });
+        let command = runtime
+            .command(&a, &Secret::parse(KEY, PUB).unwrap())
+            .unwrap();
+        let env: BTreeMap<_, _> = command
+            .get_envs()
+            .filter_map(|(k, v)| v.map(|v| (k.to_owned(), v.to_owned())))
+            .collect();
+        let probe_env: BTreeMap<_, _> = probe
+            .get_envs()
+            .filter_map(|(k, v)| v.map(|v| (k.to_owned(), v.to_owned())))
+            .collect();
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("CODEX_HOME")),
+            probe_env.get(std::ffi::OsStr::new("CODEX_HOME"))
+        );
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("BUZZ_ACP_AGENT_COMMAND")),
+            Some(&context.adapter.clone().into_os_string())
+        );
+        assert_eq!(command.get_current_dir(), probe.get_current_dir());
+        let path = env.get(std::ffi::OsStr::new("PATH")).unwrap();
+        assert_eq!(
+            std::env::split_paths(path).next(),
+            Some(runtime.directory.clone())
+        );
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("BUZZ_ACP_MODEL"))
+                .map(|v| v.to_string_lossy()),
+            advanced.then(|| "advertised".into())
+        );
+        assert_eq!(
+            env.get(std::ffi::OsStr::new("BUZZ_ACP_EFFORT_LEVEL"))
+                .map(|v| v.to_string_lossy()),
+            advanced.then(|| "medium".into())
+        );
+    }
+    a.harness.command = "../tools/codex-acp".into();
+    assert!(crate::codex::Context::new(&a.harness, &a.environment, &a.workspace).is_err());
 }

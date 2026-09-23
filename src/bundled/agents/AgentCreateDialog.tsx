@@ -8,6 +8,7 @@ import type {
 import { Button } from "../../shared/design-system/ui/Button";
 import { AgentSettingsFields } from "./AgentSettingsFields";
 import { agentEdit, type AgentDraft } from "./agent-edit";
+import { ModelError } from "../../features/agents/models";
 
 export function AgentCreateDialog({
   control,
@@ -31,14 +32,21 @@ export function AgentCreateDialog({
     command: "buzz-agent",
     args: "[]",
     model: "",
+    configuration: { mode: "default" },
     provider: "databricks_v2",
     environment: {},
     ...(state.data?.databricksDefaults
       ? { databricks: { ...state.data.databricksDefaults } }
       : {}),
   }));
+  const [validatedDraft, setValidatedDraft] = useState<AgentDraft | null>(null);
+  const [validationVersion, setValidationVersion] = useState(0);
   const [dirty, setDirty] = useState(false);
   const [saved, setSaved] = useState<AgentView | null>(null);
+  const modelBlocked =
+    draft.configuration?.mode === "advanced" &&
+    validatedDraft !== draft &&
+    !saved;
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const mounted = useRef(true);
@@ -52,12 +60,20 @@ export function AgentCreateDialog({
     destination &&
     owner &&
     state.data?.createAvailable &&
+    state.data?.configurationAvailable &&
     control.create
   );
   const runtimeBlocked = !state.data?.runtimeAvailable && !saved;
   const blocked = busy || state.busy || state.status !== "ready";
   const create = async () => {
-    if (blocked || runtimeBlocked || !available || !control.create) return;
+    if (
+      blocked ||
+      modelBlocked ||
+      runtimeBlocked ||
+      !available ||
+      !control.create
+    )
+      return;
     setError(undefined);
     setBusy(true);
     try {
@@ -77,6 +93,10 @@ export function AgentCreateDialog({
       await control.publishProfile(agent.id);
       if (mounted.current) onClose();
     } catch (problem) {
+      if (mounted.current && problem instanceof ModelError) {
+        setValidatedDraft(null);
+        setValidationVersion((version) => version + 1);
+      }
       if (mounted.current)
         setError(
           problem instanceof Error
@@ -117,6 +137,8 @@ export function AgentCreateDialog({
           >
             <AgentSettingsFields
               draft={draft}
+              onValidated={setValidatedDraft}
+              validationVersion={validationVersion}
               control={control}
               state={state}
               disabled={blocked || !!saved}
@@ -168,7 +190,9 @@ export function AgentCreateDialog({
               <Button
                 type="submit"
                 variant="primary"
-                disabled={blocked || runtimeBlocked || !available}
+                disabled={
+                  blocked || modelBlocked || runtimeBlocked || !available
+                }
               >
                 {busy ? "Saving…" : saved ? "Retry profile" : "Create agent"}
               </Button>

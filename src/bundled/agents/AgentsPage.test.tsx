@@ -177,7 +177,10 @@ it("remounts records for equal-generation community switches and session replace
 for (const mode of ["absolute", "saved-override", "draft-override"]) {
   it(`leaves ${mode} model discovery to native validation`, async () => {
     const run = vi.fn(async () => ({
-      host: "https://workspace.example.com",
+      integration: {
+        kind: "databricks" as const,
+        host: "https://workspace.example.com",
+      },
       models: [],
       modelOverridden: false,
       disconnected: false,
@@ -346,8 +349,14 @@ function expectAIFieldOrder(dialog: HTMLElement) {
 
 it("shows Harness, Provider and Model in that order when adding an agent", async () => {
   const { f } = setup();
+  const user = userEvent.setup();
   fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
   const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  expect(within(dialog).queryByRole("combobox", { name: "Model" })).toBeNull();
+  await user.click(
+    within(dialog).getByRole("combobox", { name: "Configuration" }),
+  );
+  await user.click(await screen.findByRole("option", { name: "Advanced" }));
   expectAIFieldOrder(dialog);
   expect(
     within(dialog).getByRole("group", { name: "AI configuration" }),

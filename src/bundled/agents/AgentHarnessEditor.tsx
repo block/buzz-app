@@ -18,6 +18,8 @@ export function AgentHarnessEditor({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const harness = options.find((option) => option.command === draft.command);
+  const codex =
+    draft.command === "codex-acp" || draft.command.endsWith("/codex-acp");
   return (
     <div className="space-y-4">
       <ConfigChoice
@@ -30,20 +32,41 @@ export function AgentHarnessEditor({
           value: command,
           label,
         }))}
-        onChange={(command) => onChange({ command })}
+        onChange={(command) =>
+          onChange(
+            command === "codex-acp" || command.endsWith("/codex-acp")
+              ? {
+                  command,
+                  provider: "",
+                  args: "[]",
+                  model: "",
+                  ...(draft.configuration?.mode === "advanced"
+                    ? {
+                        configuration: {
+                          mode: "advanced",
+                          effort: { kind: "unsupported" },
+                        },
+                      }
+                    : {}),
+                }
+              : { command },
+          )
+        }
       />
-      <ConfigChoice
-        disabled={disabled}
-        label="Provider"
-        customLabel="Custom provider / current value"
-        inputLabel="Custom provider"
-        value={draft.provider}
-        options={[
-          { value: "", label: "Not set" },
-          ...(harness?.providers ?? []),
-        ]}
-        onChange={(provider) => onChange({ provider })}
-      />
+      {!codex && (
+        <ConfigChoice
+          disabled={disabled}
+          label="Provider"
+          customLabel="Custom provider / current value"
+          inputLabel="Custom provider"
+          value={draft.provider}
+          options={[
+            { value: "", label: "Not set" },
+            ...(harness?.providers ?? []),
+          ]}
+          onChange={(provider) => onChange({ provider })}
+        />
+      )}
     </div>
   );
 }

@@ -197,6 +197,13 @@ resources. Production has no disposable storage override or preview launch mode.
 
 ## Databricks connection and models
 
+- The native catalog supplies stable harness IDs and static model-discovery
+  capabilities. Missing metadata retains manual model entry without issuing
+  incompatible model IPC. Databricks Disconnect remains recovery even after
+  changing the draft harness. Typed model requests and catalog metadata identify
+  the integration separately from its executable. Codex is also offered through its installed `codex-acp` adapter.
+- `agent_models/databricks.rs` owns Databricks auth/catalog details;
+  `DatabricksModelSettings` owns workspace/filter and app-cache recovery controls.
 - Native `agent_models.rs` owns one ticketed, 180-second operation lane, separate
   from the controller lock. Only the user-intent Connect IPC action (Browse/Retry) can open a browser; it tries headless discovery first. Refresh is always headless.
   Cancel, context change, page unmount and root disposal retire the ticket. Native
@@ -317,3 +324,64 @@ import can leave create-only app custody for retry but no enabled/configured age
 No remote/team/mesh runtime or conditional attestation is added. Synthetic checks
 do not establish actual Keychain ACLs, production TLS/inference, live replies,
 forced native quit, signed packaging or other-platform behavior.
+
+### Explicit AI configuration
+
+New agents start with **Harness defaults**: Buzz sends neither a model nor an
+effort override. Explicit mode supersedes saved model environment overrides and
+imported effort; it never rewrites the harness's configuration file. Existing
+records without a mode retain their previous precedence until edited into a mode.
+
+**Advanced** requires current authenticated discovery and an available model ID
+before Create is enabled. Databricks exposes no effort control, shown as **Not
+supported**; missing metadata is unresolved, not unsupported. Native creation
+independently performs headless discovery before generating the identity and binds
+commit to that exact draft. Authentication, model, effort, configuration, catalog
+availability, timeout and cancellation errors have sanitized codes/messages.
+Changing discovery context retires old UI evidence. New creation requires native
+`configurationAvailable`; older hosts keep existing-agent editing.
+
+These controls currently use Databricks. The contracts persist an adapter-provided
+effort value. Codex discovery now obtains model-dependent effort choices from ACP.
+Saving an existing agent retains the existing no-restart behavior and is not live
+validation of inference access or of the settings applied by a running session.
+
+
+### Codex discovery trust boundary
+
+Codex uses a separate `codex login status` probe and the model choices advertised
+by `codex-acp`. This is not an assertion of fresh remote discovery or account
+entitlement; the adapter can use its own cache. Databricks retains its existing
+remote-catalog policy. No hardcoded model or effort list is introduced. Catalog normalization matches
+original Buzz: stable model config options first, legacy availableModels second,
+first ID wins. The picker omits legacy model[effort] aliases when the base model
+is advertised, keeping effort in its own field. Older saved aliases still receive
+native validation.
+
+Choose Codex, an existing workspace, and Harness defaults or Advanced. Defaults
+leaves model and effort to Codex configuration. Selecting Codex loads all models and their effort choices in one bounded session
+and caches them in memory for the execution context. Reopening or switching models
+uses that complete cache immediately. Refresh explicitly reloads it. In Advanced,
+select a base model and choose one of its cached, advertised effort choices. Choose effort explicitly. Creation repeats headless validation before
+identity generation. A rejected model retains the catalog so another model can
+be selected; missing effort metadata cannot authorize creation.
+
+Discovery and launch share the resolved adapter, workspace, arguments, isolated
+environment and CODEX_HOME. Ambient CODEX_HOME is preserved, with saved per-agent
+overrides taking precedence. Automatic lookup covers the explicit adapter's directory first, then the original
+Buzz managed `node-tools/bin` and pinned Node runtime under the OS application-data
+`Buzz` directory, followed by ~/.local/bin, /opt/homebrew/bin, /usr/local/bin and
+system directories. This keeps the managed adapter consistent with original Buzz. Other
+installations can use an absolute codex-acp path; codex and any interpreter must
+be available through those directories. No installer or shell startup is run.
+
+Login recovery is explicit terminal guidance: run `codex login` in the matching
+configuration/environment, then refresh. Buzz does not log out, rewrite Codex
+configuration, or read account credentials into the frontend. A nonzero login
+probe is reported as an unsuccessful check, not definitive logged-out evidence.
+Default creation also requires the login/session check to succeed.
+
+The current transport uses Unix process containment; Windows Codex discovery is
+not supported yet. Checks send ACP initialization/configuration requests only,
+never an inference prompt. Save does not restart, and accepted configuration does
+not certify the model applied in a later running conversation.

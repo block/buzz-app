@@ -501,3 +501,55 @@ it("opening and reopening an ordinary picker does not load the legacy library", 
     test.library.dispose();
   }
 });
+
+it("selects the exact recipient behind a context-aware owner label", async () => {
+  const test = setup();
+  const viewer = "1".repeat(64),
+    owner = "2".repeat(64),
+    mine = "c".repeat(64);
+  const profiles = new Map([
+    [viewer, { name: "Logan" }],
+    [owner, { name: "Wes" }],
+    [mine, { name: "Honey", isAgent: true as const, ownerPubkey: viewer }],
+    [test.key, { name: "Honey", isAgent: true as const, ownerPubkey: owner }],
+  ]);
+  const list = {
+    status: "ready" as const,
+    channels: [{ id: "parent", name: "Parent", members: [mine, test.key] }],
+  };
+  const session = {
+    ...test.session,
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+      ensure: async () => {},
+    },
+    channels: { ...test.session.channels, list: () => list },
+  };
+  const provider = createAgentDirectory();
+  const library = createAgentLibrary(undefined);
+  const names = bindNames(
+    { viewer, profiles: session.profiles, agentLibrary: library.queries },
+    { snapshot: () => [provider], subscribe: () => () => {} },
+  );
+  const select = vi.fn(() => true);
+  const view = render(
+    <MentionPicker
+      scope="scope"
+      session={{ ...session, names }}
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  const user = userEvent.setup();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.click(
+    await screen.findByRole("button", { name: `Wes’s Honey ${test.key}` }),
+  );
+  expect(select).toHaveBeenCalledWith({ pubkey: test.key, name: "Honey" });
+  view.unmount();
+  names.dispose();
+  library.dispose();
+  test.library.dispose();
+});

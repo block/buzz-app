@@ -8,11 +8,7 @@ import {
   type NameSource,
 } from "../../features/identity-names/service";
 import { npubEncode } from "nostr-tools/nip19";
-import {
-  agentDirectory,
-  identitySuffixes,
-  createAgentDirectory,
-} from "./directory";
+import { agentDirectory, createAgentDirectory } from "./directory";
 
 it("scopes native names to the session community and follows edits and disposal", () => {
   const key = "a".repeat(64);
@@ -89,38 +85,6 @@ it("scopes native names to the session community and follows edits and disposal"
   expect(listeners.size).toBe(0);
 });
 
-it("extends whole collision groups deterministically, including case-normalized keys", () => {
-  // These two different keys share the last six npub characters.
-  const keys = [
-    "3ee51d04715939ef0e492f7b87bf1dcaf2c0b4a16b753f19d7a92e96ba01b8db",
-    "55e2be15c0fb4ba8231701c4ba65d545715b7c79761952fd8a7cc75cf6afb602",
-    "4".repeat(64),
-  ] as const;
-  const rows = keys.map((pubkey) => ({
-    pubkey,
-    name: "Larry",
-    definitionId: "shared",
-  }));
-  const labels = identitySuffixes(rows);
-  expect([...labels.values()].map((value) => value.length)).toEqual([7, 7, 4]);
-  expect(new Set(labels.values()).size).toBe(keys.length);
-  for (const key of keys) {
-    const suffix = labels.get(key);
-    expect(suffix).toBeTruthy();
-    expect(npubEncode(key).endsWith(suffix ?? "missing")).toBe(true);
-  }
-  expect(identitySuffixes([...rows].reverse())).toEqual(labels);
-  expect(
-    identitySuffixes([
-      ...rows,
-      {
-        name: "Larry",
-        pubkey: keys[0].toUpperCase(),
-        definitionId: "shared",
-      },
-    ]),
-  ).toEqual(labels);
-});
 it("suffixes equal names across profiles, without merging keys or suffixing unique names", () => {
   const a = "a".repeat(64),
     b = "b".repeat(64),
@@ -298,4 +262,55 @@ it("includes native-only identities but ignores other-community and unready nati
   native = { ...native, status: "error" };
   expect(provider.resolve(source, a)).toBe("Larry");
   expect(provider.resolve(source, b)).toBeUndefined();
+});
+
+it("applies viewer and owner metadata through the shared view and follows owner edits", () => {
+  const me = "1".repeat(64),
+    other = "2".repeat(64),
+    a = "a".repeat(64),
+    b = "b".repeat(64);
+  const listeners = new Set<() => void>();
+  let profiles = new Map([
+    [me, { name: "Logan" }],
+    [other, { name: "Wes" }],
+    [a, { name: "Honey", isAgent: true as const, ownerPubkey: me }],
+    [b, { name: "Honey", isAgent: true as const, ownerPubkey: other }],
+  ]);
+  const source: NameSource = {
+    viewer: me,
+    profiles: {
+      snapshot: () => profiles,
+      ensure: async () => {},
+      subscribe: (listener) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+    agentLibrary: {
+      snapshot: () => ({ status: "ready", definitions: [], identities: [] }),
+      subscribe: () => () => {},
+      refresh: async () => {},
+      retain: () => () => {},
+    },
+  };
+  const provider = createAgentDirectory();
+  const names = bindNames(source, {
+    snapshot: () => [provider],
+    subscribe: () => () => {},
+  });
+  expect(names.resolve(a)).toBe("Honey");
+  expect(names.resolve(b)).toBe("Wes’s Honey");
+  expect(provider.resolve({ ...source, viewer: other }, a)).toBe(
+    "Logan’s Honey",
+  );
+  expect(names.resolve(a)).toBe("Honey");
+  const changed = vi.fn();
+  names.subscribe(changed);
+  profiles = new Map([...profiles, [other, { name: "Wesley" }]]);
+  for (const listener of listeners) listener();
+  expect(changed).toHaveBeenCalledOnce();
+  expect(names.resolve(b)).toBe("Wesley’s Honey");
+  names.dispose();
 });

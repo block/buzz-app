@@ -4,6 +4,7 @@ import type { AgentLibrary } from "../agents/library";
 import { createContributions } from "../../plugins/contributions";
 
 export type NameSource = {
+  viewer?: string | undefined;
   relayUrl?: string | undefined;
   profiles: ProfileQueries;
   agentLibrary: {

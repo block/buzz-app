@@ -1,5 +1,4 @@
-import { npubEncode } from "nostr-tools/nip19";
-import type { AgentLibrary } from "../../features/agents/library";
+import { resolveIdentityNames } from "../../features/identity-names/policy";
 import type { NameProvider } from "../../features/identity-names/service";
 import type { AgentControl } from "../../features/agents/control";
 import { relayOrigin } from "../../features/communities/destination";
@@ -10,45 +9,6 @@ function sameCommunity(left: string, right: string) {
   } catch {
     return false;
   }
-}
-
-/** Equal display names in the full snapshot, including hidden rows, need suffixes. */
-export function identitySuffixes(identities: AgentLibrary["identities"]) {
-  const names = new Map<string, Set<string>>();
-  for (const row of identities) {
-    const name = row.name.trim();
-    const keys = names.get(name) ?? new Set<string>();
-    keys.add(row.pubkey.toLowerCase());
-    names.set(name, keys);
-  }
-  const keys = [
-    ...new Set(
-      [...names.values()]
-        .filter((group) => group.size > 1)
-        .flatMap((group) => [...group]),
-    ),
-  ];
-  const result = new Map<string, string>();
-  const groups = new Map<string, { key: string; npub: string }[]>();
-  for (const key of keys) {
-    const npub = npubEncode(key);
-    const suffix = npub.slice(-4);
-    const group = groups.get(suffix) ?? [];
-    group.push({ key, npub });
-    groups.set(suffix, group);
-  }
-  for (const group of groups.values()) {
-    let length = 4;
-    while (
-      length < 63 &&
-      new Set(group.map(({ npub }) => npub.slice(-length))).size < group.length
-    )
-      length++;
-    for (const { key, npub } of group) {
-      result.set(key, npub.slice(-length));
-    }
-  }
-  return result;
 }
 
 /** Native configuration wins only in its community. Names never grant control. */
@@ -75,7 +35,7 @@ export function createAgentDirectory(
       const relayUrl = source.relayUrl;
       const library = source.agentLibrary.snapshot();
       const profiles = source.profiles.snapshot();
-      const inputs = [library, native, profiles, relayUrl];
+      const inputs = [library, native, profiles, relayUrl, source.viewer];
       if (
         !cached ||
         inputs.some((input, index) => input !== cached?.inputs[index])
@@ -102,11 +62,28 @@ export function createAgentDirectory(
             if (name) names.set(key, name);
           }
         }
-        const suffixes = identitySuffixes(
-          [...names].map(([pubkey, name]) => ({ pubkey, name })),
+        const identities = new Map(
+          [...profiles].map(([pubkey, profile]) => [
+            pubkey,
+            { pubkey, ...profile },
+          ]),
         );
-        for (const [key, suffix] of suffixes) {
-          names.set(key, `${names.get(key)} · ${suffix}`);
+        for (const [pubkey, name] of names) {
+          identities.set(pubkey, {
+            ...profiles.get(pubkey),
+            pubkey,
+            name,
+            isAgent: true,
+          });
+        }
+        const resolved = resolveIdentityNames(
+          [...identities.values()],
+          source.viewer,
+        );
+        const suffixes = new Map<string, string>();
+        for (const [key, label] of resolved) {
+          names.set(key, label.name);
+          if (label.qualifier) suffixes.set(key, label.qualifier);
         }
         cached = { inputs, names, suffixes };
       }

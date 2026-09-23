@@ -70,6 +70,10 @@ need their own validation.
   in `.env.local` and restart the server. Only `0` pauses alerts and permission
   requests; removing the setting restores normal behavior. Saved preferences are
   untouched and production builds ignore the variable.
+- To open the default relay's community on a fresh dev port, set
+  `BUZZ_DEV_OPEN_RELAY=1` alongside `BUZZ_RELAY_URL` in `.env.local` and restart
+  the server. Only `1` enables it; a viewer's existing saved choice on that port,
+  including Personal space, wins. Production builds ignore the variable.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe

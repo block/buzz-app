@@ -22,7 +22,7 @@ const empty = (): Saved => ({
   memberships: [],
   selected: null,
 });
-export function createCommunities(ctx: Context, live: boolean) {
+export function createCommunities(ctx: Context, live: boolean, openRelay = "") {
   let state: ClientSnapshot = {
     ...empty(),
     status: live ? "loading" : "unavailable",
@@ -109,6 +109,7 @@ export function createCommunities(ctx: Context, live: boolean) {
           throw new Error("Invalid local identity");
         if (disposed) return;
         let saved = empty();
+        let seeded = false;
         try {
           const raw = JSON.parse(
             localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null",
@@ -166,6 +167,13 @@ export function createCommunities(ctx: Context, live: boolean) {
                 : [],
               selected: null,
             };
+          else if (openRelay) {
+            // Development opt-in for a viewer with no saved record on this origin.
+            // Any saved record, including Personal space, wins over the seed.
+            const { id, name } = communityDestination(openRelay);
+            saved = { ...saved, memberships: [{ id, name }], selected: id };
+            seeded = true;
+          }
           if (typeof raw?.selected === "string") {
             try {
               saved.selected = communityDestination(raw.selected).id;
@@ -180,7 +188,8 @@ export function createCommunities(ctx: Context, live: boolean) {
         if (!saved.memberships.some((m) => m.id === saved.selected))
           saved.selected = null;
         if (saved.selected) acquire(saved.selected);
-        update({ ...saved, viewer, status: "ready" }, false);
+        // A seeded record is saved once so later configuration changes cannot revoke it.
+        update({ ...saved, viewer, status: "ready" }, seeded);
       })
       .catch((error) => {
         if (!disposed)

@@ -9,7 +9,7 @@ import { readView, writeView } from "../../shared/view-state";
 const viewer = "a".repeat(64);
 const roots: Context[] = [];
 const requests: string[] = [];
-function setup(saved?: unknown, savedViewer = viewer) {
+function setup(saved?: unknown, savedViewer = viewer, openRelay = "") {
   const storage = new Map<string, string>();
   if (saved)
     storage.set(`buzz-client.v1:${savedViewer}`, JSON.stringify(saved));
@@ -36,7 +36,7 @@ function setup(saved?: unknown, savedViewer = viewer) {
   );
   const ctx = new Context();
   roots.push(ctx);
-  return createCommunities(ctx, true);
+  return createCommunities(ctx, true, openRelay);
 }
 afterEach(async () => {
   for (const root of roots.splice(0)) await root.fiber.dispose();
@@ -423,4 +423,50 @@ it("keeps only valid unique unresolved aliases and never carries them to another
     JSON.parse(localStorage.getItem(`buzz-client.v1:${viewer}`) ?? "null")
       .memberships,
   ).toEqual([]);
+});
+
+it("opens the configured relay for an identity without a saved record and remembers it", async () => {
+  const client = setup(undefined, viewer, "https://third.example");
+  await flush();
+  await flush();
+  const membership = { id: "https://third.example", name: "third.example" };
+  expect(client.snapshot()).toMatchObject({
+    status: "ready",
+    profile: { name: "", picture: "" },
+    memberships: [membership],
+    selected: membership.id,
+  });
+  expect(requests.filter((url) => url.endsWith("/session"))).toEqual([
+    "/api/relay/https%3A%2F%2Fthird.example/session",
+  ]);
+  const persisted = localStorage.getItem(`buzz-client.v1:${viewer}`);
+  assert.exists(persisted);
+  expect(JSON.parse(persisted)).toEqual({
+    profile: { name: "", picture: "" },
+    memberships: [membership],
+    selected: membership.id,
+  });
+  // A configured alias for the relay origin is honored like any other join.
+  const aliased = setup(undefined, "c".repeat(64), "wss://primary.example");
+  await flush();
+  expect(aliased.snapshot().memberships).toEqual([
+    { id: "primary", name: "primary.example" },
+  ]);
+  expect(aliased.snapshot().selected).toBe("primary");
+});
+
+it("keeps a saved record, including Personal space, instead of the configured relay", async () => {
+  const saved = {
+    profile: { name: "Local", picture: "" },
+    memberships: [{ id: "primary", name: "Primary" }],
+    selected: null,
+  };
+  const client = setup(saved, viewer, "https://third.example");
+  await flush();
+  await flush();
+  expect(client.snapshot()).toMatchObject({ ...saved, status: "ready" });
+  expect(requests).toEqual(["/api/relay/identity"]);
+  expect(localStorage.getItem(`buzz-client.v1:${viewer}`)).toBe(
+    JSON.stringify(saved),
+  );
 });

@@ -69,6 +69,8 @@ in the non-live shell/fixture state.
    BUZZ_DEV_VIEWER=npub1YOUR_PUBLIC_KEY
    # Optional default for unscoped development-broker requests:
    BUZZ_RELAY_URL=wss://relay.example.com
+   # Optional: on a fresh dev port, save and select BUZZ_RELAY_URL as a community.
+   BUZZ_DEV_OPEN_RELAY=1
    # Optional compatibility map for memberships saved with short aliases:
    BUZZ_COMMUNITY_ALIASES='{"example":"wss://relay.example.com"}'
    ```
@@ -76,7 +78,9 @@ in the non-live shell/fixture state.
    the account to use; it does not import or change a key. Relay URLs and aliases
    are public configuration, not secrets. With both relay settings unset, there is
    no default relay or alias map; Personal space and communities saved by canonical
-   URL remain usable. Configuration does not automatically join a community.
+   URL remain usable. Configuration does not automatically join a community:
+   `BUZZ_DEV_OPEN_RELAY=1` only saves and selects the default relay locally on a
+   dev port whose saved choice is absent, without publishing anything.
 3. Start a development target:
    ```sh
    just web

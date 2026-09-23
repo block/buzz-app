@@ -167,3 +167,61 @@ it.each([
     }
   },
 );
+
+it("retains a labelled DM across roster and profile recomputations until its source or name changes", async () => {
+  const dm: ChannelSummary = {
+    id: "dm",
+    channelType: "dm",
+    name: "dm",
+    participants: ["alice"],
+  };
+  const other: ChannelSummary = {
+    id: "other",
+    channelType: "stream",
+    name: "Other",
+  };
+  let roster = [dm, other];
+  let resolvedName = "Alice";
+  let revision = 0;
+  const subscribers = new Set<() => void>();
+  const queries = {
+    snapshot: () => new Map(),
+    subscribe: () => () => {},
+    ensure: () => Promise.resolve(),
+  } as unknown as import("../../features/relay/profile-directory").ProfileQueries;
+  const names = {
+    resolve: (_id: string, _fallback: string) => resolvedName,
+    subscribe: (listener: () => void) => {
+      subscribers.add(listener);
+      return () => subscribers.delete(listener);
+    },
+    snapshot: () => revision,
+  } as unknown as import("../../features/identity-names/service").IdentityNameView;
+  let labels: readonly ChannelSummary[] = [];
+  function Probe() {
+    labels = useChannelLabels(roster, queries, names);
+    return null;
+  }
+  const root = createRoot(container());
+  try {
+    await act(async () => root.render(createElement(Probe)));
+    const first = labels[0];
+    roster = [dm, { ...other, name: "Changed" }];
+    await act(async () => root.render(createElement(Probe)));
+    expect(labels[0]).toBe(first);
+    resolvedName = "Alicia";
+    await act(async () => {
+      revision++;
+      for (const listener of subscribers) listener();
+    });
+    expect(labels[0]).not.toBe(first);
+    expect(labels[0]?.name).toBe("Alicia");
+    const renamed = labels[0];
+    roster = [{ ...dm, updatedAt: 1 }, other];
+    await act(async () => root.render(createElement(Probe)));
+    expect(labels[0]).not.toBe(renamed);
+    expect(labels[0]?.updatedAt).toBe(1);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});

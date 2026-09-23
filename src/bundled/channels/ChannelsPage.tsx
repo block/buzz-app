@@ -63,6 +63,7 @@ import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
+import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
 import { useHiddenDms } from "./useHiddenDms";
@@ -186,19 +187,15 @@ function ChannelWorkspace({
   sessionsEnabled: boolean;
 }) {
   const list = useChannelList(queries.channels);
-  const activity = useSyncExternalStore(
-    queries.agentActivity.subscribe,
-    queries.agentActivity.snapshot,
-    queries.agentActivity.snapshot,
+  const workingIds = useSyncExternalStore(
+    queries.agentActivity.subscribeWorking,
+    queries.agentActivity.workingSnapshot,
+    queries.agentActivity.workingSnapshot,
   );
-  const workingChannels = new Set([
-    ...activity.turns
-      .filter((turn) => turn.state === "working")
-      .map((turn) => turn.channelId),
-    ...activity.typing
-      .filter((entry) => !entry.threadRootId)
-      .map((entry) => entry.channelId),
-  ]);
+  const workingChannels = useMemo(
+    () => new Set<string>(JSON.parse(workingIds)),
+    [workingIds],
+  );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const hiddenDms = useHiddenDms(scope, queries, list);
   useEffect(() => {
@@ -280,6 +277,7 @@ function ChannelWorkspace({
     queries.profiles,
     queries.names,
   );
+  const childSessions = useRef(new Map<string, typeof channels>());
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
     for (const item of channels) {
@@ -288,11 +286,19 @@ function ChannelWorkspace({
       siblings.push(item);
       children.set(item.parentChannelId, siblings);
     }
-    for (const siblings of children.values())
+    for (const [parent, siblings] of children) {
       siblings.sort(
         (a, b) =>
           (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id),
       );
+      const previous = childSessions.current.get(parent);
+      if (
+        previous?.length === siblings.length &&
+        siblings.every((child, index) => child === previous[index])
+      )
+        children.set(parent, previous);
+    }
+    childSessions.current = children;
     return children;
   }, [channels]);
   const requestedChannel =
@@ -413,6 +419,12 @@ function ChannelWorkspace({
       navigation.complete({ status: "opened" });
   }, [drafting, navigation]);
   const flatSession = current?.channelType === "session";
+  const onComposerSend = useComposerSent(
+    currentId,
+    flatSession && !!requestedMessage,
+    setSent,
+    select,
+  );
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -1085,10 +1097,7 @@ function ChannelWorkspace({
                         ? "Message this session"
                         : undefined
                     }
-                    onSend={(id) => {
-                      setSent({ channelId: current.id, id });
-                      if (flatSession && requestedMessage) select(current.id);
-                    }}
+                    onSend={onComposerSend}
                   />
                 )}
               </SessionColumn>

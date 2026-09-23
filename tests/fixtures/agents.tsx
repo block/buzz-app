@@ -64,6 +64,7 @@ function owner(scope: string) {
         reads++;
         if (hold) await new Promise<void>((resolve) => held.push(resolve));
         if (fail) throw new Error("fixture failure");
+        if (filters[0]?.kinds?.includes(30177)) return [];
         if (filters[0]?.kinds?.[0] !== 13535)
           throw new Error("Unexpected fixture read");
         return archiveMissing

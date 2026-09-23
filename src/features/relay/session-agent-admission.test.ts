@@ -57,6 +57,11 @@ function setup() {
         publish,
       },
       query: async (filters) => {
+        if (
+          libraryFailure &&
+          filters.some((filter) => filter.kinds?.includes(30177))
+        )
+          throw new Error("Fixture inventory unavailable");
         if (foreignRoster && filters.some((filter) => filter["#d"]))
           return [
             roster(agent, child, [viewer.pubkey, agent.pubkey], clock + 1),

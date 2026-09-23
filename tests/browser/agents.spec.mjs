@@ -53,9 +53,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       await button.click();
     for (const key of keys)
       await expect(agents.getByText(key, { exact: true })).toBeVisible();
-    await expect(
-      page.getByText(/current Buzz library, read-only/),
-    ).toBeVisible();
+    await expect(page.getByText(/This inventory is read-only/)).toBeVisible();
     const surface = page.getByRole("region", { name: "Agents", exact: true });
     for (const mode of ["light", "dark"]) {
       await page.evaluate((mode) => {
@@ -105,7 +103,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
           0,
         );
         await expect(
-          surface.getByText(/current Buzz library, read-only/),
+          surface.getByText(/This inventory is read-only/),
         ).toBeInViewport();
         expect(await surface.evaluate((el) => el.scrollTop)).toBe(0);
         expect(
@@ -211,7 +209,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .click();
     await expect(agents.getByRole("article")).toHaveCount(2);
     expect(await page.evaluate(() => window.agentFixture.reads())).toBe(
-      reads + 2,
+      reads + 3,
     );
     await page
       .getByRole("button", { name: "Toggle hold", exact: true })
@@ -220,7 +218,7 @@ test("Old Buzz library reads the existing library with exact linked keys and ses
       .getByRole("button", { name: "Refresh agents", exact: true })
       .click();
     await expect(page.getByRole("status")).toHaveText(
-      "Reading your Buzz library…",
+      "Reading agent inventory…",
     );
     await page
       .getByRole("button", { name: "Community B", exact: true })

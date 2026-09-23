@@ -107,7 +107,7 @@ function setup(
     },
   };
 }
-it("shows one managed card per exact destination and keeps unimported templates out of My agents", async () => {
+it("shows native controls per exact destination and separate read-only discovered identities", async () => {
   const { f } = setup();
   const cards = await screen.findAllByRole("article", {
     name: "Agent Fixture agent",
@@ -119,10 +119,10 @@ it("shows one managed card per exact destination and keeps unimported templates 
   );
   if (!card) throw Error("Second destination missing");
   expect(
-    within(screen.getByRole("region", { name: "My agents" })).queryByText(
-      "Not imported",
-    ),
-  ).toBeNull();
+    within(
+      screen.getByRole("region", { name: "Library identities" }),
+    ).getByRole("article", { name: "Agent Not imported" }),
+  ).toBeTruthy();
   fireEvent.click(
     within(card).getByRole("button", { name: "Actions for Fixture agent" }),
   );
@@ -142,8 +142,8 @@ it("shows one managed card per exact destination and keeps unimported templates 
   );
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(
-    screen.queryByRole("article", { name: "Agent Not imported" }),
-  ).toBeNull();
+    screen.getByRole("article", { name: "Agent Not imported" }),
+  ).toBeTruthy();
   expect(screen.queryByText("Old Buzz library", { exact: true })).toBeNull();
   expect(screen.getByText("Add agent", { exact: true })).toBeVisible();
   expect(f.calls.some((call) => call.action === "import")).toBe(false);

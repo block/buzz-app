@@ -1,4 +1,4 @@
-/** A display-only projection of the existing local Buzz library, not proof of
+/** A display-only projection of the local and owner-authored relay inventory, not proof of
  * ownership, membership, custody or running state. No prompts/configuration. */
 export type AgentLibrary = Readonly<{
   definitions: readonly Readonly<{
@@ -59,7 +59,7 @@ export function createAgentLibrary(
             ...snapshot,
             status: "error",
             error:
-              "Could not read the current Buzz agent library. Open Buzz and retry; its saved library is left unchanged.",
+              "Could not read agent inventory. Check the community connection and local library, then retry; saved data is unchanged.",
           });
       })
       .finally(() => {

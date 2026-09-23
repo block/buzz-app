@@ -410,3 +410,17 @@ public-profile names. These labels never change identity keys, membership,
 credentials, or runtime admission. Profile panels, messages, mention choices,
 activity, conversation labels and new notifications consume this view. Mention
 parsing still uses signed identity evidence before resolving its visible label.
+
+### Additive community inventory
+
+The active session reads the owner's kind-30175 profiles and kind-30177 identities
+from its accessible relay. It also retains the local library reader. The inventory
+joins exact public keys, not equal names; explicit profile references use the
+publisher's slug mapping only when local definitions do not collide. Local names
+and artwork win for matching keys. Native configuration still wins within its
+matching community. A failed source leaves the other source visible with a warning.
+
+Discovery is not global coverage, verified membership, credentials, or execution
+status. Native cards keep their controls. Other known identities appear in a
+read-only section, while the existing old-desktop import flow stays available.
+No keys, config, memory, membership, or runtime state are changed by discovery.

@@ -48,12 +48,16 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(warning).toHaveCount(0);
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await page.getByText("Diagnostics", { exact: true }).click();
   await expect(
     page.getByText("Live updates: connecting", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   expect(app.relay.rejected).toHaveLength(0);
   expect(app.report.wireFrames.filter((f) => f[0] === "CLOSED")).toHaveLength(
     0,
@@ -105,7 +109,9 @@ for (const target of ["alpha", "profiles"]) {
         hasText: "Only currently accessible messages remain readable.",
       });
     await expect(warning).toHaveCount(0);
-    await page.getByLabel("Conversation options", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
     await page.getByText("Diagnostics", { exact: true }).click();
     const recovery = page.getByText(
       "Live updates: recovering automatically after rate limiting; awaiting confirmation",
@@ -152,12 +158,16 @@ for (const target of ["alpha", "profiles"]) {
       await page.getByLabel("Conversation options", { exact: true }).click();
     }
     const beforeManual = requests().length;
-    await page.getByLabel("Conversation options", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
     await page
       .getByRole("button", { name: "Retry live updates", exact: true })
       .click();
-    await page.getByLabel("Conversation options", { exact: true }).click();
-    // The inner Diagnostics details retains its open state when its parent closes.
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
+    await page.getByText("Diagnostics", { exact: true }).click();
     await expect(recovery).toBeVisible();
     await expect(warning).toHaveCount(0);
     await expect.poll(() => requests().length).toBeGreaterThan(beforeManual);

@@ -126,7 +126,7 @@ companion-only view without a selected channel or relay. Home/Settings and legac
 pages use the host fallback frame; opening from those pages does not navigate away.
 Disabling Bestie removes its snake and open card without evicting a local link card.
 The shell supplies the outer page gutter. Channel previews, roster labels, and routine refresh
-and freshness indicators are omitted. Conversation options → Diagnostics keeps
+and freshness indicators are omitted. Channel Settings → Diagnostics keeps
 manual refresh, outbox inspection, and timing capture available on demand.
 
 The composer preserves the session's text sending and keyboard behavior. Its

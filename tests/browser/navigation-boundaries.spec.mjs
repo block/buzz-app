@@ -87,7 +87,7 @@ test("Messages default resolution returns opened to cold and warm callers withou
   }
 });
 
-test("Alt arrows preserve composer editing while deliberate history shortcuts still navigate", async ({
+test("native Alt arrows preserve composer editing; deliberate history shortcuts navigate", async ({
   page,
   app,
 }) => {

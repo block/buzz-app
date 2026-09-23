@@ -99,6 +99,8 @@ import { HashIcon as PhosphorHashIcon } from "@phosphor-icons/react/dist/csr/Has
 export const HashIcon = defineIcon("phosphor", PhosphorHashIcon);
 import { HouseIcon as PhosphorHouseIcon } from "@phosphor-icons/react/dist/csr/House";
 export const HouseIcon = defineIcon("phosphor", PhosphorHouseIcon);
+import { KeyboardIcon as PhosphorKeyboardIcon } from "@phosphor-icons/react/dist/csr/Keyboard";
+export const KeyboardIcon = defineIcon("phosphor", PhosphorKeyboardIcon);
 import { LinkIcon as PhosphorLinkIcon } from "@phosphor-icons/react/dist/csr/Link";
 export const LinkIcon = defineIcon("phosphor", PhosphorLinkIcon);
 import { LockIcon as PhosphorLockIcon } from "@phosphor-icons/react/dist/csr/Lock";

@@ -336,7 +336,7 @@ for (const mode of ["light", "dark"]) {
 test("profile activity opens the exact agent and originating channel before its first frame", async ({
   page,
   app,
-}) => {
+}, testInfo) => {
   await open(page, app);
   await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
   const agentKey = generateSecretKey();
@@ -421,6 +421,32 @@ test("profile activity opens the exact agent and originating channel before its 
   await expect(
     profile.getByRole("region", { name: "Activity preview" }),
   ).toContainText("1 working · 0 unknown · 0 ended");
+  const preview = profile.getByRole("region", { name: "Activity preview" });
+  // Exercise painted theme/layout, not the separate appearance persistence contract.
+  for (const mode of ["light", "dark"]) {
+    await page.locator("html").evaluate((element, mode) => {
+      element.setAttribute("data-color-mode", mode);
+    }, mode);
+    for (const width of [1280, 390]) {
+      await page.setViewportSize({ width, height: 844 });
+      await expect(preview).toBeVisible();
+      await expect(
+        preview.getByRole("button", { name: "View activity" }),
+      ).toBeVisible();
+      const bounds = await preview.boundingBox();
+      expect(bounds.x).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+      expect(
+        await preview.evaluate(
+          (element) => element.scrollWidth <= element.clientWidth,
+        ),
+      ).toBe(true);
+      await page.screenshot({
+        path: testInfo.outputPath(`profile-preview-${mode}-${width}.png`),
+      });
+    }
+  }
+  await page.setViewportSize({ width: 1440, height: 950 });
   await profile
     .getByRole("button", { name: "View activity", exact: true })
     .click();

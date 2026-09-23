@@ -1023,7 +1023,11 @@ export function relayBrokerPlugin({
             const streamable = video || audio;
             const download = !image && !streamable;
             const length = Number(upstream.headers.get("content-length"));
-            const limit = mediaByteLimit(mediaType);
+            // Audio is read-compatible, not part of attachment upload parity.
+            const limit =
+              audio && upstream.status !== 206
+                ? 20 * 1024 * 1024
+                : mediaByteLimit(mediaType);
             if (Number.isFinite(length) && length > limit) {
               await upstream.body?.cancel();
               return json(res, 413, { error: "Media budget exceeded" });

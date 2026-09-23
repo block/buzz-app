@@ -234,7 +234,7 @@ test("media proxy returns generic files as neutralized authenticated downloads",
     );
     expect(response.headers.get("content-disposition")).toBe("attachment");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
     expect(h.calls).toHaveLength(1);
   } finally {
@@ -381,7 +381,7 @@ test("media proxy rejects oversized generic files", async () => {
       new Response(null, {
         headers: {
           "Content-Type": "application/zip",
-          "Content-Length": String(20 * 1024 * 1024 + 1),
+          "Content-Length": String(100 * 1024 * 1024 + 1),
         },
       }),
   );

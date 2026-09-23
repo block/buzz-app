@@ -10,11 +10,16 @@ import {
 } from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
-import type { ChannelMessage, Profile } from "../relay/contracts";
-import type { ProfileQueries } from "../relay/profile-directory";
+import type { ChannelMessage } from "../relay/contracts";
 import { createRelaySession } from "../relay/session";
 import type { LiveCallbacks } from "../relay/live";
-import { keypair, message, scriptedTransport, signed } from "../relay/testing";
+import {
+  keypair,
+  message,
+  profile,
+  scriptedTransport,
+  signed,
+} from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 
 const bodyRender = vi.fn();
@@ -46,26 +51,6 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-function mutableProfiles(initial: ReadonlyMap<string, Profile>) {
-  let snapshot = initial;
-  const listeners = new Set<() => void>();
-  const queries: ProfileQueries = {
-    snapshot: () => snapshot,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    async ensure() {},
-  };
-  return {
-    queries,
-    publish(next: ReadonlyMap<string, Profile>) {
-      snapshot = next;
-      for (const listener of listeners) listener();
-    },
-  };
-}
-
 it("retains mounted rows through a deferred real-session page and profile noise", async () => {
   const relay = keypair();
   const viewer = keypair();
@@ -87,17 +72,13 @@ it("retains mounted rows through a deferred real-session page and profile noise"
     ["e", root.id, "", "root"],
     ["e", root.id, "", "reply"],
   ]);
-  traffic.receive([root, reply]);
-
-  const alice: Profile = Object.freeze({ name: "Alice" });
-  const bob: Profile = Object.freeze({ name: "Bob" });
-  const profiles = mutableProfiles(
-    new Map([
-      [aliceKey.pubkey, alice],
-      [bobKey.pubkey, bob],
-    ]),
-  );
-  const session = { ...owner.session, profiles: profiles.queries };
+  traffic.receive([
+    root,
+    reply,
+    profile(aliceKey, { name: "Alice" }),
+    profile(bobKey, { name: "Bob" }),
+  ]);
+  const session = owner.session;
 
   render(
     <StrictMode>
@@ -135,16 +116,18 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   if (!page) throw new Error("Deferred thread page was not requested");
   bodyRender.mockClear();
 
+  // An unrelated signed profile preserves the selected map, but the shared
+  // name service still invalidates every mounted row. Do not claim zero renders.
   await act(async () => {
-    profiles.publish(
-      new Map([
-        [aliceKey.pubkey, alice],
-        [bobKey.pubkey, bob],
-        [keypair().pubkey, { name: "Other" }],
-      ]),
-    );
+    traffic.receive([profile(keypair(), { name: "Other" })]);
   });
-  expect(bodyRender).not.toHaveBeenCalled();
+  expect(bodyRender.mock.calls).toEqual([
+    ["Root body"],
+    ["Root body"],
+    ["Reply body"],
+    ["Reply body"],
+  ]);
+  bodyRender.mockClear();
 
   const appended = message(bobKey, "a", "Appended reply body", 3, [
     ["e", root.id, "", "root"],
@@ -174,12 +157,7 @@ it("retains mounted rows through a deferred real-session page and profile noise"
   bodyRender.mockClear();
 
   await act(async () => {
-    profiles.publish(
-      new Map([
-        [aliceKey.pubkey, alice],
-        [bobKey.pubkey, { name: "Robert" }],
-      ]),
-    );
+    traffic.receive([profile(bobKey, { name: "Robert" }, 1_700_000_001)]);
   });
   expect(await screen.findAllByText("Robert")).toHaveLength(2);
   expect(bodyRender).toHaveBeenCalled();

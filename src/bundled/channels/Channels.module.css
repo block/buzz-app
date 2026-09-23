@@ -389,20 +389,6 @@ html[data-keyboard-navigation]
   cursor: pointer;
   padding: var(--space-1) 0;
 }
-.liveStatus {
-  display: flex;
-  flex-shrink: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  font-size: var(--text-caption);
-  line-height: var(--text-caption--line-height);
-  letter-spacing: var(--text-caption--letter-spacing);
-  background: var(--affordance-warning);
-  color: var(--text-warning);
-  border-bottom: 1px solid var(--border-standard);
-}
 
 .unreadState {
   position: absolute;

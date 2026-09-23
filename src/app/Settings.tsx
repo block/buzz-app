@@ -1,3 +1,4 @@
+import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { Panel } from "../shared/design-system/ui/Panel";
 import { NavigationItem } from "../shared/design-system/ui/NavigationItem";
 import { Button } from "../shared/design-system/ui/Button";
@@ -121,10 +122,16 @@ export function Settings({
           </aside>
           <div className={styles.detail}>
             <div hidden={selected !== "notifications"}>
-              <NotificationSettings notifications={notifications} />
+              <NotificationSettings
+                notifications={notifications}
+                active={selected === "notifications"}
+              />
             </div>
             <div hidden={selected !== "appearance"}>
-              <AppearanceSettings appearance={appearance} />
+              <AppearanceSettings
+                appearance={appearance}
+                active={selected === "appearance"}
+              />
             </div>
             <div hidden={selected !== "shortcuts"}>
               <ShortcutSettings
@@ -134,7 +141,7 @@ export function Settings({
               />
             </div>
             <div hidden={selected !== "messages"}>
-              <MessageSettings />
+              <MessageSettings active={selected === "messages"} />
             </div>
             <div hidden={selected !== "profile"}>
               <ProfileSettings communities={communities} />
@@ -166,32 +173,25 @@ export function Settings({
                 <div className="overflow-hidden">
                   <div>
                     {externalPluginsPaused && (
-                      <p role="status" className="notice">
+                      <p role="status" className="text-body-sm text-subtle">
                         External plugins are paused for this launch. Your saved
                         enabled settings are unchanged; you can still manage
                         plugins here.
                       </p>
                     )}
-                    {refreshError && (
-                      <div role="alert" className="notice">
-                        <p>
-                          Couldn’t refresh plugin settings. Showing the last
-                          available configuration; retrying automatically.
-                        </p>
-                        <p>{refreshError}</p>
-                      </div>
+                    {selected === "plugins" && refreshError && (
+                      <ToastNotice
+                        title="Plugin settings couldn’t refresh"
+                        description={`Showing the last available configuration; retrying automatically. ${refreshError}`}
+                      />
                     )}
-                    {error && (
-                      <div role="alert" className="notice">
-                        <p>
-                          That change could not be confirmed. Check the current
-                          settings before trying again.
-                        </p>
-                        <p>{error}</p>
-                        <Button type="button" onClick={plugins.dismissError}>
-                          Dismiss
-                        </Button>
-                      </div>
+                    {selected === "plugins" && error && (
+                      <ToastNotice
+                        title="Plugin change wasn’t confirmed"
+                        description={`Check the current settings before trying again. ${error}`}
+                        onDismiss={plugins.dismissError}
+                        closeLabel="Dismiss"
+                      />
                     )}
                   </div>
                   <div className="divide-y divide-line">

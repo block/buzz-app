@@ -1,6 +1,6 @@
 import { useIdentityNames } from "../../features/identity-names/react";
 import type { IdentityNameView } from "../../features/identity-names/service";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -46,6 +46,9 @@ export function useChannelLabels(
     if (membership && missing)
       void queries.ensure(missing.split(":"), "background").catch(() => {});
   }, [queries, missing, membership]);
+  const labelled = useRef(
+    new WeakMap<ChannelSummary, { name: string; channel: ChannelSummary }>(),
+  );
   return useMemo(
     () =>
       channels.map((channel) => {
@@ -58,7 +61,11 @@ export function useChannelLabels(
               )
               .join(", ")
           : "Notes to self";
-        return { ...channel, name };
+        const previous = labelled.current.get(channel);
+        if (previous?.name === name) return previous.channel;
+        const result = { ...channel, name };
+        labelled.current.set(channel, { name, channel: result });
+        return result;
       }),
     [channels, profiles, resolveName],
   );

@@ -2,7 +2,7 @@ import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { memo, useCallback, useSyncExternalStore } from "react";
+import { memo, useCallback, useSyncExternalStore, type ReactNode } from "react";
 import { PresenceIndicator } from "../presence/react";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
@@ -22,6 +22,9 @@ import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
 import { ReactionTool } from "../conversation/ReactionTool";
+
+import { MessageActionBar } from "./MessageActionBar";
+import { messageCopyLink, messageCopyText } from "./message-copy";
 
 const emptySubscribe = () => () => {};
 const EMPTY_CHANNEL_LIST = Object.freeze({
@@ -45,8 +48,11 @@ export type MessageRowProps = {
   day: boolean;
   retry: ((id: string) => void) | undefined;
   onOpenThread?:
-    | ((messageId: string, threadRootId: string) => void)
+    | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
+  onReply?: (() => void) | undefined;
+  quickControls?: ReactNode;
+  overflowItems?: ReactNode;
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -72,6 +78,9 @@ export const MessageRow = memo(function MessageRow({
   day,
   retry,
   onOpenThread,
+  onReply,
+  quickControls,
+  overflowItems,
   participantProfiles,
   mediaMode = "inline",
   mediaSeekTo,
@@ -171,6 +180,41 @@ export const MessageRow = memo(function MessageRow({
           />
         )}
         <div className={styles.messageBody}>
+          {!row.membership && (
+            <MessageActionBar
+              messageId={row.id}
+              onReply={
+                onReply ??
+                (onOpenThread
+                  ? () =>
+                      onOpenThread(
+                        row.threadRootId ?? row.id,
+                        row.threadRootId ?? row.id,
+                        "reply",
+                      )
+                  : undefined)
+              }
+              replyDisabled={
+                !!(
+                  row.delivery && !["accepted", "seen"].includes(row.delivery)
+                ) ||
+                !!channelList.channels.find(
+                  (channel) => channel.id === row.channelId,
+                )?.archived ||
+                (!!session?.channels.get &&
+                  !channelList.channels.some(
+                    (channel) =>
+                      channel.id === row.channelId && !channel.readOnly,
+                  ))
+              }
+              link={messageCopyLink(row, scope)}
+              copyText={() =>
+                messageCopyText(row, directory.profiles, directory.agents)
+              }
+              quickControls={quickControls}
+              overflowItems={overflowItems}
+            />
+          )}
           <div className={styles.byline}>
             <strong>{name}</strong>
             {session && (

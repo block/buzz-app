@@ -69,6 +69,7 @@ import { MediaReviewViewer } from "../../features/messages/MediaReviewViewer";
 import type { Attachment } from "../../features/relay/contracts";
 import { readView, writeView } from "../../shared/view-state";
 import { useChannelLabels } from "./useChannelLabels";
+import { useComposerSent } from "./useComposerSent";
 import { useSidebarPreferences } from "./useSidebarPreferences";
 import { isChannelSectionKey, sidebarSections } from "./sidebar-sections";
 import { useHiddenDms } from "./useHiddenDms";
@@ -197,19 +198,15 @@ function ChannelWorkspace({
   sessionsEnabled: boolean;
 }) {
   const list = useChannelList(queries.channels);
-  const activity = useSyncExternalStore(
-    queries.agentActivity.subscribe,
-    queries.agentActivity.snapshot,
-    queries.agentActivity.snapshot,
+  const workingIds = useSyncExternalStore(
+    queries.agentActivity.subscribeWorking,
+    queries.agentActivity.workingSnapshot,
+    queries.agentActivity.workingSnapshot,
   );
-  const workingChannels = new Set([
-    ...activity.turns
-      .filter((turn) => turn.state === "working")
-      .map((turn) => turn.channelId),
-    ...activity.typing
-      .filter((entry) => !entry.threadRootId)
-      .map((entry) => entry.channelId),
-  ]);
+  const workingChannels = useMemo(
+    () => new Set<string>(JSON.parse(workingIds)),
+    [workingIds],
+  );
   const preferences = useSidebarPreferences(queries.sidebarPreferences);
   const kitState = useSyncExternalStore(
     queries.channelKit.subscribe,
@@ -312,6 +309,7 @@ function ChannelWorkspace({
     queries.profiles,
     queries.names,
   );
+  const childSessions = useRef(new Map<string, typeof channels>());
   const childrenByParent = useMemo(() => {
     const children = new Map<string, typeof channels>();
     for (const item of channels) {
@@ -320,11 +318,19 @@ function ChannelWorkspace({
       siblings.push(item);
       children.set(item.parentChannelId, siblings);
     }
-    for (const siblings of children.values())
+    for (const [parent, siblings] of children) {
       siblings.sort(
         (a, b) =>
           (b.updatedAt ?? 0) - (a.updatedAt ?? 0) || a.id.localeCompare(b.id),
       );
+      const previous = childSessions.current.get(parent);
+      if (
+        previous?.length === siblings.length &&
+        siblings.every((child, index) => child === previous[index])
+      )
+        children.set(parent, previous);
+    }
+    childSessions.current = children;
     return children;
   }, [channels]);
   const requestedChannel =
@@ -445,6 +451,12 @@ function ChannelWorkspace({
       navigation.complete({ status: "opened" });
   }, [drafting, navigation]);
   const flatSession = current?.channelType === "session";
+  const onComposerSend = useComposerSent(
+    currentId,
+    flatSession && !!requestedMessage,
+    setSent,
+    select,
+  );
   const [exactOpening, setExactOpening] = useState<{
     request: PageNavigation;
     inTimeline: boolean;
@@ -577,9 +589,35 @@ function ChannelWorkspace({
   useEffect(() => {
     if (opened && !panel) open(undefined);
   }, [opened, panel, open]);
+  const [replyRequest, setReplyRequest] = useState<{
+    channelId: string;
+    messageId: string;
+    entryId: string | undefined;
+    sequence: number;
+  }>();
+  const activeEntryId = navigator?.snapshot().entry.id;
+  useEffect(() => {
+    if (
+      replyRequest &&
+      (replyRequest.channelId !== currentId ||
+        replyRequest.entryId !== activeEntryId)
+    )
+      setReplyRequest(undefined);
+  }, [currentId, activeEntryId, replyRequest]);
   const openThread = useCallback(
-    (messageId: string, threadRootId: string) => {
+    (messageId: string, threadRootId: string, intent?: "reply") => {
       if (!currentId) return;
+      const requestReply = () =>
+        setReplyRequest((previous) =>
+          intent === "reply"
+            ? {
+                channelId: currentId,
+                messageId,
+                entryId: navigator?.snapshot().entry.id,
+                sequence: (previous?.sequence ?? 0) + 1,
+              }
+            : undefined,
+        );
       setSettings(undefined);
       const target = navigator?.snapshot().entry.target;
       if (
@@ -587,8 +625,10 @@ function ChannelWorkspace({
         target.channelId === currentId &&
         target.messageId === messageId &&
         target.threadRootId === threadRootId
-      )
+      ) {
+        requestReply();
         return;
+      }
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -607,6 +647,7 @@ function ChannelWorkspace({
           },
         });
       } else setThread({ channelId: currentId, messageId });
+      requestReply();
       open(undefined);
     },
     [currentId, navigator, viewer, scope, open],
@@ -688,6 +729,7 @@ function ChannelWorkspace({
     [navigate, navigator, viewer, scope, sidebar.list, open],
   );
   const closeThread = () => {
+    setReplyRequest(undefined);
     if (showingThread?.navigation && current) select(current.id);
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
@@ -1202,10 +1244,7 @@ function ChannelWorkspace({
                         ? "Message this session"
                         : undefined
                     }
-                    onSend={(id) => {
-                      setSent({ channelId: current.id, id });
-                      if (flatSession && requestedMessage) select(current.id);
-                    }}
+                    onSend={onComposerSend}
                   />
                 )}
               </SessionColumn>
@@ -1358,6 +1397,13 @@ function ChannelWorkspace({
                   channelId={showingThread.channelId}
                   messageId={showingThread.messageId}
                   navigation={showingThread.navigation}
+                  replyRequest={
+                    replyRequest?.channelId === showingThread.channelId &&
+                    replyRequest.messageId === showingThread.messageId &&
+                    replyRequest.entryId === showingThread.navigation?.entryId
+                      ? replyRequest.sequence
+                      : undefined
+                  }
                   close={closeThread}
                   onOpenLink={openLink}
                   onOpenMediaReview={openMediaReview}
@@ -1516,7 +1562,7 @@ const ChannelBody = memo(function ChannelBody({
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread?:
-    | ((messageId: string, threadRootId: string) => void)
+    | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onOpenMediaReview(
     messageId: string,

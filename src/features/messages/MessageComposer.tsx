@@ -82,6 +82,7 @@ export type MessageComposerProps = {
   threadRootId?: string;
   mediaTimeSeconds?: number;
   clearMediaTime?(): void;
+  focusRequest?: number;
   hideMediaTimeIndicator?: boolean;
   disabled?: boolean;
   /** A new conversation owns persistence and delivery before a channel exists. */
@@ -121,6 +122,7 @@ function Composer({
   threadRootId,
   mediaTimeSeconds,
   clearMediaTime,
+  focusRequest,
   hideMediaTimeIndicator = false,
   disabled: requestedDisabled = false,
   submission,
@@ -186,6 +188,9 @@ function Composer({
   const valueRef = useRef(value);
   const caret = useRef<number | undefined>(undefined);
   const input = useRef<ComposerInputElement>(null);
+  useEffect(() => {
+    if (focusRequest) input.current?.focus();
+  }, [focusRequest]);
   const restoreSelection = useRef<{ start: number; end: number } | undefined>(
     undefined,
   );

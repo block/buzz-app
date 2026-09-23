@@ -6,9 +6,7 @@ import type { Appearance } from "../shared/theme/service";
 // text sizing, search/settings, then development-only actions.
 const HOST_SHORTCUT_ORDER = {
   navigationBack: 10,
-  navigationBackArrow: 11,
   navigationForward: 20,
-  navigationForwardArrow: 21,
   textSizeIncrease: 40,
   textSizeDecrease: 50,
   textSizeReset: 60,
@@ -113,24 +111,6 @@ export function registerNavigationShortcuts(
       order: HOST_SHORTCUT_ORDER.navigationForward,
       binding: { key: "]", mod: true },
       allowInEditable: true,
-      when: () => navigation.snapshot().canGoForward,
-      run: navigation.forward,
-    }),
-    // Alt arrows are native word-editing chords on macOS. Keep them outside
-    // editable fields; Mod+[ / Mod+] remain explicit history shortcuts.
-    shortcuts.registerHost({
-      id: "navigation-back-arrow",
-      title: "Go back",
-      order: HOST_SHORTCUT_ORDER.navigationBackArrow,
-      binding: { key: "ArrowLeft", alt: true },
-      when: () => navigation.snapshot().canGoBack,
-      run: navigation.back,
-    }),
-    shortcuts.registerHost({
-      id: "navigation-forward-arrow",
-      title: "Go forward",
-      order: HOST_SHORTCUT_ORDER.navigationForwardArrow,
-      binding: { key: "ArrowRight", alt: true },
       when: () => navigation.snapshot().canGoForward,
       run: navigation.forward,
     }),

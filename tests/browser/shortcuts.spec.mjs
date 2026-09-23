@@ -264,6 +264,12 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   await expect(
     region.getByRole("heading", { name: "Shortcut counter", exact: true }),
   ).toBeVisible();
+  await expect(
+    region.getByRole("article", { name: "Go back", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    region.getByRole("article", { name: "Go forward", exact: true }),
+  ).toHaveCount(1);
   const row = region.getByRole("article", { name: title });
   await expect(row.getByText(/Shift (Command|Control) K/)).toBeAttached();
   await button(row, `Change shortcut for ${title}`).click();

@@ -130,6 +130,7 @@ export function createOutbox(
     [...attempts.values()].filter((attempt) => attempt.controller).length;
   let closed = false;
   let confirmedInvalidated = false;
+  let confirmedKeep: ((event: EventData) => boolean) | undefined;
   let storageError: string | undefined;
   let durable = Promise.resolve();
   const notify = () => {
@@ -227,7 +228,11 @@ export function createOutbox(
     if (pending.length > MAX_PENDING)
       throw new Error("Saved pending outbox exceeds its budget");
     for (const item of restored)
-      if (item.delivery === "seen" && !confirmedInvalidated)
+      if (
+        item.delivery === "seen" &&
+        (!confirmedInvalidated ||
+          (item.event.kind === 9007 && confirmedKeep?.(item.event)))
+      )
         completed.set(item.event.id, item);
     snapshot = Object.freeze([...pending, ...snapshot]);
     notify();
@@ -517,17 +522,21 @@ export function createOutbox(
       if (closed || attempts.has(id)) return;
       deliveryWork.delete(id);
       const retained = completed.peek(id);
-      const previous =
-        find(id) ??
-        (retained && awaitsReceipt(retained.event) ? retained : undefined);
-      if (previous && awaitsReceipt(previous.event)) completed.delete(id);
+      const pending = find(id);
+      if (retained) completed.delete(id);
       snapshot = Object.freeze(snapshot.filter((item) => item.event.id !== id));
       notify();
       try {
         await persist(id);
       } catch (error) {
-        if (!closed && previous && !find(id)) {
-          snapshot = Object.freeze([...snapshot, previous]);
+        if (
+          !closed &&
+          !find(id) &&
+          !completed.peek(id) &&
+          (pending || retained)
+        ) {
+          if (pending) snapshot = Object.freeze([...snapshot, pending]);
+          if (retained) completed.set(id, retained);
           notify();
           void persist(id).catch(() => {});
         }
@@ -546,6 +555,7 @@ export function createOutbox(
      * during async hydration fences that old confirmed cache, not its writes. */
     purgeConfirmed(keep: (event: EventData) => boolean) {
       confirmedInvalidated = true;
+      confirmedKeep = keep;
       const removed = completed
         .entries()
         .filter(([, item]) => !keep(item.event))

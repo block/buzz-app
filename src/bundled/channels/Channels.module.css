@@ -148,10 +148,28 @@ html[data-keyboard-navigation] .channelSection > summary:focus-visible {
   height: 17px;
   object-fit: contain;
 }
-.channelSection > summary > span:last-child {
+.sectionTitle {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.sectionAction {
+  display: inline-flex;
+  flex-shrink: 0;
+  margin-block: calc(-1 * var(--space-1));
+  margin-inline-end: calc(-1 * var(--space-control-inset));
+  opacity: 0;
+  pointer-events: none;
+}
+.channelSection > summary:hover .sectionAction,
+html[data-keyboard-navigation]
+  .channelSection
+  > summary:focus-within
+  .sectionAction {
+  opacity: 1;
+  pointer-events: auto;
 }
 .preferenceNotice {
   padding: var(--space-2);

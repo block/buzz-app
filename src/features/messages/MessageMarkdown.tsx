@@ -13,6 +13,7 @@ import { parseBuzzLink } from "../navigation/buzz-links";
 import { messageLinkParts, normalizeWrappedLinks } from "./message-link-parts";
 import {
   ReferenceText,
+  channelForLink,
   channelLinkLabel,
   emptyReferenceDirectory,
 } from "./ReferenceText";
@@ -306,19 +307,23 @@ export function MessageMarkdown({
     row = { ...row, content: normalized };
     scan = scanMarkdown(normalized);
   }
-  const renderLink = (url: string, label?: string, children?: ReactNode) => (
-    <MessageLink
-      url={url}
-      label={label ?? channelLinkLabel(url, scope, directory.channels)}
-      registry={extensions?.links}
-      onOpenLink={onOpenLink}
-      session={session}
-      scope={scope}
-      interactive={interactive}
-    >
-      {children}
-    </MessageLink>
-  );
+  const renderLink = (url: string, label?: string, children?: ReactNode) => {
+    const channel = channelForLink(url, scope, directory.channels);
+    return (
+      <MessageLink
+        url={url}
+        label={label ?? channelLinkLabel(url, scope, directory.channels)}
+        registry={extensions?.links}
+        onOpenLink={onOpenLink}
+        session={session}
+        scope={scope}
+        interactive={interactive}
+        channelPrivate={!!channel?.private}
+      >
+        {children}
+      </MessageLink>
+    );
+  };
   const renderInline = (text: string) =>
     extensions ? (
       <InlineText

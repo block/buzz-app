@@ -89,6 +89,7 @@ it("opens a compact action menu independently of selecting its channel", async (
   const trigger = screen.getByRole("button", {
     name: "More options for Engineering",
   });
+  expect(trigger).toHaveAttribute("data-icon-shape", "round");
   await user.click(trigger);
   await user.click(
     await screen.findByRole("menuitem", { name: "New session" }),

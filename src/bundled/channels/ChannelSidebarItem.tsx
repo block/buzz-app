@@ -3,9 +3,9 @@ import type { ChannelSummary } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import {
   ChatCircleIcon,
-  HashIcon,
   UsersIcon,
 } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../../features/channels/channel-icon";
 import { ChannelActivityPopover } from "./ChannelActivityPopover";
 import { ChannelSidebarRow } from "./ChannelSidebarRow";
 import { UnreadBadge } from "./UnreadBadge";
@@ -49,7 +49,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       ? (channel.participants?.length ?? 0) > 1
         ? UsersIcon
         : ChatCircleIcon
-      : HashIcon;
+      : channelIcon(channel);
   return (
     <ChannelSidebarRow
       channel={channel}

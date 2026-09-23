@@ -1,10 +1,15 @@
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { SidebarPreferences } from "../../features/relay/sidebar-preferences";
 
+export function isChannelSectionKey(key: string) {
+  return key === "channels" || key.startsWith("group:");
+}
+
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
 export function sidebarSections(
   channels: readonly ChannelSummary[],
   preferences?: SidebarPreferences,
+  hiddenDms: ReadonlySet<string> = new Set(),
 ) {
   const active = channels.filter(
     (channel) =>
@@ -55,7 +60,9 @@ export function sidebarSections(
       key: "dms",
       title: "DMs",
       icon: undefined,
-      rows: active.filter((channel) => channel.channelType === "dm"),
+      rows: active.filter(
+        (channel) => channel.channelType === "dm" && !hiddenDms.has(channel.id),
+      ),
     },
-  ].filter((section) => section.rows.length);
+  ].filter((section) => section.key === "channels" || section.rows.length);
 }

@@ -1,5 +1,7 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
+import type { ChannelMessage } from "./contracts";
+import { shareMessageRows } from "./row-identity";
 import { threadReference } from "./threads";
 import type { LiveCallbacks } from "./live";
 import {
@@ -34,6 +36,51 @@ function setup() {
   return { ...wire, ...owner, traffic };
 }
 const root = message(alice, "a", "Root", 1);
+const replacementId = "f".repeat(64);
+const membership = {
+  type: "member_joined",
+  actor: alice.pubkey,
+  target: viewer.pubkey,
+} satisfies NonNullable<ChannelMessage["membership"]>;
+const attachment = {
+  url: "https://example.com/original",
+  kind: "video",
+  mime: "video/mp4",
+  size: 100,
+  name: "original.mp4",
+  duration: 5,
+  dimensions: { width: 640, height: 360 },
+  blurhash: "blur",
+  previewUrl: "https://example.com/preview",
+} satisfies ChannelMessage["attachments"][number];
+const customEmoji = {
+  shortcode: "wave",
+  url: "https://example.com/wave",
+} satisfies NonNullable<ChannelMessage["emoji"]>[number];
+const reaction = {
+  content: ":wave:",
+  emoji: customEmoji,
+} satisfies ChannelMessage["reactions"][number];
+const rowValue = (): ChannelMessage => ({
+  id: root.id,
+  channelId: "a",
+  delivery: "sending",
+  deliveryError: "pending",
+  authorId: alice.pubkey,
+  createdAt: 1,
+  content: "Root",
+  agentEnvelope: true,
+  membership,
+  edited: true,
+  attachmentContentRemoved: true,
+  mentions: [viewer.pubkey],
+  attachments: [attachment],
+  emoji: [customEmoji],
+  reactions: [reaction],
+  threadRootId: root.id,
+  replyCount: 1,
+  participants: [alice.pubkey],
+});
 const reply = (text: string, time: number, parent = root.id) =>
   message(alice, "a", text, time, [
     ["e", root.id, "", "root"],
@@ -44,6 +91,200 @@ function seeded() {
   h.traffic.receive([root]);
   return { ...h, view: h.session.thread("a", root.id) };
 }
+
+it("drops shared row identity when any compared field changes", () => {
+  const previous = rowValue();
+  const changes: ReadonlyArray<
+    readonly [string, (row: ChannelMessage) => ChannelMessage]
+  > = [
+    ["id", (row) => ({ ...row, id: replacementId })],
+    ["channelId", (row) => ({ ...row, channelId: "b" })],
+    ["delivery", (row) => ({ ...row, delivery: "failed" })],
+    ["deliveryError", (row) => ({ ...row, deliveryError: "failed" })],
+    ["authorId", (row) => ({ ...row, authorId: replacementId })],
+    ["createdAt", (row) => ({ ...row, createdAt: 2 })],
+    ["content", (row) => ({ ...row, content: "Edited" })],
+    [
+      "agentEnvelope",
+      (row) => {
+        const { agentEnvelope: _agentEnvelope, ...changed } = row;
+        return changed;
+      },
+    ],
+    [
+      "membership.type",
+      (row) => ({
+        ...row,
+        membership: { ...membership, type: "member_left" },
+      }),
+    ],
+    [
+      "membership.actor",
+      (row) => ({
+        ...row,
+        membership: { ...membership, actor: replacementId },
+      }),
+    ],
+    [
+      "membership.target",
+      (row) => ({
+        ...row,
+        membership: { ...membership, target: replacementId },
+      }),
+    ],
+    [
+      "edited",
+      (row) => {
+        const { edited: _edited, ...changed } = row;
+        return changed;
+      },
+    ],
+    [
+      "attachmentContentRemoved",
+      (row) => {
+        const { attachmentContentRemoved: _removed, ...changed } = row;
+        return changed;
+      },
+    ],
+    ["mentions", (row) => ({ ...row, mentions: [replacementId] })],
+    [
+      "attachments.url",
+      (row) => ({
+        ...row,
+        attachments: [{ ...attachment, url: "https://example.com/new" }],
+      }),
+    ],
+    [
+      "attachments.kind",
+      (row) => ({
+        ...row,
+        attachments: [{ ...attachment, kind: "audio" }],
+      }),
+    ],
+    [
+      "attachments.mime",
+      (row) => {
+        const { mime: _mime, ...changed } = attachment;
+        return { ...row, attachments: [changed] };
+      },
+    ],
+    [
+      "attachments.size",
+      (row) => {
+        const { size: _size, ...changed } = attachment;
+        return { ...row, attachments: [changed] };
+      },
+    ],
+    [
+      "attachments.name",
+      (row) => {
+        const { name: _name, ...changed } = attachment;
+        return { ...row, attachments: [changed] };
+      },
+    ],
+    [
+      "attachments.duration",
+      (row) => {
+        const { duration: _duration, ...changed } = attachment;
+        return { ...row, attachments: [changed] };
+      },
+    ],
+    [
+      "attachments.dimensions.width",
+      (row) => ({
+        ...row,
+        attachments: [
+          {
+            ...attachment,
+            dimensions: { ...attachment.dimensions, width: 800 },
+          },
+        ],
+      }),
+    ],
+    [
+      "attachments.dimensions.height",
+      (row) => ({
+        ...row,
+        attachments: [
+          {
+            ...attachment,
+            dimensions: { ...attachment.dimensions, height: 600 },
+          },
+        ],
+      }),
+    ],
+    [
+      "attachments.blurhash",
+      (row) => {
+        const { blurhash: _blurhash, ...changed } = attachment;
+        return { ...row, attachments: [changed] };
+      },
+    ],
+    [
+      "attachments.previewUrl",
+      (row) => {
+        const { previewUrl: _previewUrl, ...changed } = attachment;
+        return { ...row, attachments: [changed] };
+      },
+    ],
+    [
+      "emoji.shortcode",
+      (row) => ({
+        ...row,
+        emoji: [{ ...customEmoji, shortcode: "new" }],
+      }),
+    ],
+    [
+      "emoji.url",
+      (row) => ({
+        ...row,
+        emoji: [{ ...customEmoji, url: "https://example.com/new" }],
+      }),
+    ],
+    [
+      "reactions.content",
+      (row) => ({
+        ...row,
+        reactions: [{ ...reaction, content: ":new:" }],
+      }),
+    ],
+    [
+      "reactions.emoji.shortcode",
+      (row) => ({
+        ...row,
+        reactions: [
+          {
+            ...reaction,
+            emoji: { ...customEmoji, shortcode: "new" },
+          },
+        ],
+      }),
+    ],
+    [
+      "reactions.emoji.url",
+      (row) => ({
+        ...row,
+        reactions: [
+          {
+            ...reaction,
+            emoji: { ...customEmoji, url: "https://example.com/new" },
+          },
+        ],
+      }),
+    ],
+    ["threadRootId", (row) => ({ ...row, threadRootId: replacementId })],
+    ["replyCount", (row) => ({ ...row, replyCount: 2 })],
+    ["participants", (row) => ({ ...row, participants: [replacementId] })],
+  ];
+
+  expect(shareMessageRows([previous], [rowValue()])[0]).toBe(previous);
+  for (const [field, change] of changes) {
+    expect(
+      shareMessageRows([previous], [change(rowValue())])[0],
+      field,
+    ).not.toBe(previous);
+  }
+});
 
 it("seeds a thread root and observed replies synchronously from retained session data", async () => {
   const h = setup();
@@ -192,6 +433,74 @@ it("resolves a selected broadcast reply to its actual root", async () => {
   page.respond([root, selected]);
   await loading;
   expect(view.snapshot().root?.id).toBe(root.id);
+});
+
+it("preserves folded identities across status changes and extends them across pages", async () => {
+  const h = seeded();
+  const first = reply("first", 10);
+  const initial = h.view.refresh();
+  const request = h.next();
+  const loading = h.view.snapshot();
+  request.respond([root, first]);
+  await initial;
+
+  const ready = h.view.snapshot();
+  expect(ready.root).toBe(loading.root);
+  const retainedRoot = ready.root;
+  const retainedReply = ready.replies[0];
+  const retainedReplies = ready.replies;
+
+  const more = h.view.loadMore();
+  expect(h.view.snapshot()).toMatchObject({ status: "loading" });
+  expect(h.view.snapshot().root).toBe(retainedRoot);
+  expect(h.view.snapshot().replies).toBe(retainedReplies);
+  const second = reply("second", 20);
+  h.next().respond([root, second]);
+  await more;
+
+  expect(h.view.snapshot().root).toBe(retainedRoot);
+  expect(h.view.snapshot().replies[0]).toBe(retainedReply);
+  expect(h.view.snapshot().replies.map((row) => row.content)).toEqual([
+    "first",
+    "second",
+  ]);
+});
+
+it("preserves folded identities when a page fails", async () => {
+  const h = seeded();
+  const first = reply("first", 10);
+  const initial = h.view.refresh();
+  h.next().respond([root, first]);
+  await initial;
+  const ready = h.view.snapshot();
+
+  const more = h.view.loadMore();
+  expect(h.view.snapshot().root).toBe(ready.root);
+  expect(h.view.snapshot().replies).toBe(ready.replies);
+  h.next().fail(new Error("offline"));
+  await more;
+
+  expect(h.view.snapshot()).toMatchObject({ status: "error" });
+  expect(h.view.snapshot().root).toBe(ready.root);
+  expect(h.view.snapshot().replies).toBe(ready.replies);
+});
+
+it("does not invalidate folded content for duplicate or unrelated live traffic", async () => {
+  const h = seeded();
+  const first = reply("first", 10);
+  const loading = h.view.refresh();
+  h.next().respond([root, first]);
+  await loading;
+  const before = h.view.snapshot();
+
+  h.traffic.receive([
+    first,
+    message(alice, "b", "another channel", 11),
+    message(alice, "a", "not a reply", 12),
+  ]);
+
+  expect(h.view.snapshot().root).toBe(before.root);
+  expect(h.view.snapshot().replies).toBe(before.replies);
 });
 
 it("updates nested replies and reply-targeted overlays without a new socket or arbitrary e-tag matches", async () => {

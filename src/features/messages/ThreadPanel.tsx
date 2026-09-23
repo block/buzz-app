@@ -268,6 +268,12 @@ function ThreadMessages({
     seconds: number;
     request: number;
   }>();
+  const handleMediaTime = useCallback((seconds: number) => {
+    setMediaSeek((current) => ({
+      seconds,
+      request: (current?.request ?? 0) + 1,
+    }));
+  }, []);
   const rootId = snapshot.root?.id;
   const openRootMedia = useCallback(
     (
@@ -438,15 +444,7 @@ function ThreadMessages({
                 canOpenLink={canOpenLink}
                 day={false}
                 retry={session.messages.retry}
-                {...(videoAttachment
-                  ? {
-                      onMediaTime: (seconds: number) =>
-                        setMediaSeek((current) => ({
-                          seconds,
-                          request: (current?.request ?? 0) + 1,
-                        })),
-                    }
-                  : {})}
+                {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
                 {...(onOpenMediaReview && rootId
                   ? { onOpenMediaReview: openRootMedia }
                   : {})}

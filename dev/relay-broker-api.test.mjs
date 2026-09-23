@@ -1007,6 +1007,24 @@ test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
             ?.delivery,
         ).toBe("accepted"),
       );
+      const temporaryCreationId = owner.outbox.send({
+        kind: 9007,
+        content: "",
+        tags: [
+          ["h", "33333333-3333-4333-8333-333333333333"],
+          ["name", "Standup"],
+          ["visibility", "open"],
+          ["channel_type", "stream"],
+          ["ttl", "604800"],
+        ],
+      });
+      await vi.waitFor(() =>
+        expect(
+          owner.local
+            .snapshot()
+            .find((row) => row.event.id === temporaryCreationId)?.delivery,
+        ).toBe("accepted"),
+      );
       const invitationId = owner.outbox.send({
         kind: 9000,
         content: "",
@@ -1036,7 +1054,7 @@ test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
         ).toBe("accepted"),
       );
       expect(h.publications.map((event) => event.kind)).toEqual([
-        9007, 9000, 9,
+        9007, 9007, 9000, 9,
       ]);
       const denied = await h.post("sign", {
         kind: 9050,
@@ -1048,6 +1066,32 @@ test.each([undefined, "22222222-2222-4222-8222-222222222222"])(
     } finally {
       owner?.dispose();
       traffic?.dispose();
+      await h.close();
+    }
+  },
+);
+
+test.each(["sign", "publish"])(
+  "%s rejects truncated channel creation tags as a client error",
+  async (route) => {
+    const h = await harness(success, { channelCreation: true });
+    try {
+      const required = [
+        ["h", "11111111-1111-4111-8111-111111111111"],
+        ["name", "Work"],
+        ["visibility", "open"],
+        ["channel_type", "stream"],
+      ];
+      for (let length = 0; length < required.length; length++) {
+        const response = await h.post(route, {
+          kind: 9007,
+          created_at: 1700000000,
+          content: "",
+          tags: required.slice(0, length),
+        });
+        expect(response.status).toBe(400);
+      }
+    } finally {
       await h.close();
     }
   },

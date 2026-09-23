@@ -23,10 +23,15 @@ const profilesSnapshot = () => emptyProfiles;
 const channelsSnapshot = () => undefined;
 const agentsSnapshot = () => undefined;
 
-export function useReferenceDirectory(session: RelaySession | undefined) {
+export function useReferenceDirectory(
+  session: RelaySession | undefined,
+  selectedProfiles?: ReadonlyMap<string, Profile>,
+) {
   const profiles = useSyncExternalStore(
-    session?.profiles?.subscribe ?? noop,
-    session?.profiles?.snapshot ?? profilesSnapshot,
+    selectedProfiles ? noop : (session?.profiles?.subscribe ?? noop),
+    selectedProfiles
+      ? () => selectedProfiles
+      : (session?.profiles?.snapshot ?? profilesSnapshot),
     profilesSnapshot,
   );
   const channels = useSyncExternalStore(
@@ -46,7 +51,7 @@ export function useReferenceDirectory(session: RelaySession | undefined) {
   };
 }
 
-export function channelLinkLabel(
+export function channelForLink(
   url: string,
   scope: string | undefined,
   channels: readonly ChannelSummary[],
@@ -59,10 +64,24 @@ export function channelLinkLabel(
           parsed.target.scope.communityOrigin === scope?.slice(0, -65)
         ? parsed.target
         : undefined;
-  const channel =
-    target && channels.find((item) => item.id === target.channelId);
+  return target && channels.find((item) => item.id === target.channelId);
+}
+
+export function channelLinkLabel(
+  url: string,
+  scope: string | undefined,
+  channels: readonly ChannelSummary[],
+) {
+  const channel = channelForLink(url, scope, channels);
+  const parsed = parseBuzzLink(url);
+  const target =
+    parsed?.format === "legacy"
+      ? parsed
+      : parsed?.target.kind === "conversation"
+        ? parsed.target
+        : undefined;
   return channel
-    ? `${channel.channelType === "dm" || target.messageId ? "" : "#"}${channel.name}`
+    ? `${channel.channelType === "dm" || target?.messageId ? "" : "#"}${channel.name}`
     : undefined;
 }
 
@@ -120,6 +139,7 @@ export function ReferenceText({
           session={session}
           scope={scope}
           interactive={interactive}
+          channelPrivate={!!reference.private}
         />
       ) : (
         <span

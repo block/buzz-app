@@ -192,7 +192,12 @@ it("presence starts alongside held ordinary work but retains its own flight, pac
   expect(lane.tryPresence()).toBeUndefined();
   release?.();
   expect(lane.tryPresence()).toBeUndefined();
-  await vi.advanceTimersByTimeAsync(5000);
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(lane.tryPresence()).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  const next = lane.tryPresence();
+  expect(next).toBeTypeOf("function");
+  next?.();
   lane.pause(6000);
   expect(lane.tryPresence()).toBeUndefined();
   await vi.advanceTimersByTimeAsync(5999);

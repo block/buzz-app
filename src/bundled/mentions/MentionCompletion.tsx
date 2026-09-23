@@ -82,9 +82,10 @@ export function MentionCompletion({
       resolveName,
     );
     const needle = query.query.toLowerCase();
+    // Source names close completed mentions; display labels still admit multi-word searches.
     const admitted = matchesMentionQuery(
       query.query,
-      candidates.map((item) => item.label),
+      candidates.flatMap(({ recipient, label }) => [recipient.name, label]),
     );
     const matching =
       admitted && !channel?.archived

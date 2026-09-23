@@ -245,3 +245,205 @@ test("a shadow-root modal blocks Settings and plugin bindings but allows text zo
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(page.getByRole("status")).toHaveText("Shortcut count: 1");
 });
+
+test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflicts, persists and resets", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const modifier = await mod(page);
+  const spokenModifiers =
+    modifier === "Meta" ? "Shift Command" : "Control Shift";
+  const title = "Increment shortcut counter";
+  await button(page, "Shortcut counter").first().click();
+  const count = page.getByRole("status");
+  await expect(count).toHaveText("Shortcut count: 0");
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await expect(count).toHaveText("Shortcut count: 1");
+  await page.keyboard.press(`${modifier}+,`);
+  await button(page, "Shortcuts").click();
+  const region = page.getByRole("region", { name: "Shortcuts", exact: true });
+  await expect(
+    region.getByRole("heading", { name: "Shortcut counter", exact: true }),
+  ).toBeVisible();
+  await expect(
+    region.getByRole("article", { name: "Go back", exact: true }),
+  ).toHaveCount(1);
+  await expect(
+    region.getByRole("article", { name: "Go forward", exact: true }),
+  ).toHaveCount(1);
+  const row = region.getByRole("article", { name: title });
+  await expect(
+    row.getByText(`${spokenModifiers} K`, { exact: true }),
+  ).toBeAttached();
+  await button(row, `Change shortcut for ${title}`).click();
+  const listening = page.getByRole("textbox", {
+    name: `New shortcut for ${title}`,
+  });
+  await expect(listening).toBeFocused();
+  // The chord being listened for goes to the capture control, not the dispatcher.
+  await page.keyboard.press(`${modifier}+k`);
+  await expect(row.getByRole("alert")).toContainText("Search Buzz");
+  await expect(
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
+  ).toHaveCount(0);
+  await expect(listening).toBeFocused();
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await expect(listening).toHaveCount(0);
+  await expect(row.getByText("Modified")).toBeVisible();
+  await expect(
+    row.getByText(`${spokenModifiers} U`, { exact: true }),
+  ).toBeAttached();
+  await expect(button(row, `Reset shortcut for ${title}`)).toBeVisible();
+  await expect(button(row, `Change shortcut for ${title}`)).toBeFocused();
+  await button(page, "Shortcut counter").first().click();
+  await expect(count).toHaveText("Shortcut count: 1");
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await expect(count).toHaveText("Shortcut count: 2");
+  await page.reload();
+  await button(page, "Shortcut counter").first().click();
+  await expect(count).toHaveText("Shortcut count: 0");
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await expect(count).toHaveText("Shortcut count: 1");
+  await page.keyboard.press(`${modifier}+,`);
+  await button(page, "Shortcuts").click();
+  await button(row, `Reset shortcut for ${title}`).click();
+  await expect(row.getByText("Modified")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Reset all shortcuts", exact: true }),
+  ).toBeDisabled();
+  await button(page, "Shortcut counter").first().click();
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await expect(count).toHaveText("Shortcut count: 2");
+});
+
+// Browser-only: actual Settings gutters, flex wrapping and keyboard focus paint
+// cannot be established by jsdom. Reuse one app for the layout/theme samples.
+test("shortcut capture keeps its title and keyboard focus visible, with neutral notices and a Tab exit", async ({
+  page,
+  app,
+}, testInfo) => {
+  await page.goto(app.origin);
+  const modifier = await mod(page);
+  await button(page, "Search Buzz").waitFor();
+  await page.keyboard.press(`${modifier}+,`);
+  await button(page, "Shortcuts").click();
+  const row = page.getByRole("article", { name: "Open Settings", exact: true });
+  const change = button(row, "Change shortcut for Open Settings");
+  const input = row.getByRole("textbox", {
+    name: "New shortcut for Open Settings",
+  });
+  const title = row.getByRole("heading", {
+    name: "Open Settings",
+    exact: true,
+  });
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 950 });
+      for (const scale of [1, 2]) {
+        await page.evaluate(
+          (scale) =>
+            document.documentElement.style.setProperty(
+              "--buzz-text-scale",
+              String(scale),
+            ),
+          scale,
+        );
+        // Enter capture through real keyboard navigation, not a pointer click.
+        await change.focus();
+        await page.keyboard.press("Shift+Tab");
+        await page.keyboard.press("Tab");
+        await expect(change).toBeFocused();
+        await page.keyboard.press("Enter");
+        await expect(input).toBeFocused();
+        await expect(input).toHaveCSS("outline-style", "solid");
+        await expect(input).toHaveCSS("outline-width", "2px");
+        await expect(input).toHaveAccessibleDescription(
+          /Press Escape to cancel/,
+        );
+        const focusColor = await input.evaluate((element) => {
+          const probe = document.createElement("span");
+          probe.style.color = "var(--border-focus)";
+          element.parentElement.append(probe);
+          const color = getComputedStyle(probe).color;
+          probe.remove();
+          return color;
+        });
+        await expect(input).toHaveCSS("outline-color", focusColor);
+        await page.evaluate(() => document.fonts.ready);
+        const headingBox = await title.boundingBox();
+        const inputBox = await input.boundingBox();
+        const rowBox = await row.boundingBox();
+        const textBoxes = await title.evaluate((element) => {
+          const range = document.createRange();
+          range.selectNodeContents(element);
+          return [...range.getClientRects()].map(({ x, y, width, height }) => ({
+            x,
+            y,
+            width,
+            height,
+          }));
+        });
+        for (const box of textBoxes) {
+          expect(box.x + box.width).toBeLessThanOrEqual(
+            headingBox.x + headingBox.width + 1,
+          );
+          expect(
+            box.y + box.height <= inputBox.y || box.x + box.width <= inputBox.x,
+          ).toBe(true);
+        }
+        expect(
+          headingBox.y + headingBox.height <= inputBox.y ||
+            headingBox.x + headingBox.width <= inputBox.x,
+        ).toBe(true);
+        for (const box of [
+          inputBox,
+          await button(row, "Cancel changing Open Settings").boundingBox(),
+        ]) {
+          expect(box.x).toBeGreaterThanOrEqual(rowBox.x);
+          expect(box.x + box.width).toBeLessThanOrEqual(
+            rowBox.x + rowBox.width,
+          );
+        }
+        // A rejected chord stays in capture, announces why, and stays neutral.
+        await page.keyboard.press(`${modifier}+k`);
+        const alert = row.getByRole("alert");
+        await expect(alert).toContainText("already used by Search Buzz");
+        await expect(input).toHaveAccessibleDescription(
+          /already used by Search Buzz/,
+        );
+        await expect(alert).toHaveCSS(
+          "color",
+          await title.evaluate((el) => getComputedStyle(el).color),
+        );
+        if (scale === 1)
+          await page.screenshot({
+            path: testInfo.outputPath(`capture-${mode}-${width}.png`),
+          });
+        await page.keyboard.press("Tab");
+        await expect(input).toHaveCount(0);
+        await expect(change).toBeFocused();
+        await page.keyboard.press("Enter");
+        await expect(input).toBeFocused();
+        await page.keyboard.press("Escape");
+        await expect(change).toBeFocused();
+      }
+    }
+    await page.keyboard.press("Enter");
+    await expect(input).toBeFocused();
+    await page.keyboard.press(`${modifier}+z`);
+    await expect(row.getByRole("alert")).toContainText(
+      "message editor handles",
+    );
+    await expect(row.getByRole("alert")).toHaveCSS(
+      "color",
+      await title.evaluate((el) => getComputedStyle(el).color),
+    );
+    await button(row, "Reset shortcut for Open Settings").click();
+  }
+});

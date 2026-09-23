@@ -1,3 +1,4 @@
+import { attachmentMessage, type UploadedAttachment } from "./attachments";
 import { validReactionContent } from "./emoji";
 import type { EventData } from "./events";
 import type { Outbox } from "./outbox";
@@ -10,6 +11,7 @@ export function createMessages(
   emojiTags: (content: string) => string[][],
   validateMentions: (channelId: string, pubkeys: readonly string[]) => void,
   canParticipate: (channelId: string) => boolean = () => true,
+  relayOrigin?: string,
 ) {
   const writer = (kind: number, channelId: string) => {
     if (!canParticipate(channelId))
@@ -34,15 +36,22 @@ export function createMessages(
     return unique.map((key) => ["p", key]);
   };
   return Object.freeze({
-    send(channelId: string, content: string, mentions: readonly string[] = []) {
+    send(
+      channelId: string,
+      content: string,
+      mentions: readonly string[] = [],
+      attachments: readonly UploadedAttachment[] = [],
+    ) {
       if (!channelId) throw new Error("A channel is required");
+      const message = attachmentMessage(content, attachments, relayOrigin);
       return writer(9, channelId).send({
         kind: 9,
-        content: text(content),
+        content: text(message.content),
         tags: [
           ["h", channelId],
           ...mentionTags(channelId, mentions),
           ...emojiTags(content),
+          ...message.tags,
         ],
       });
     },
@@ -51,18 +60,21 @@ export function createMessages(
       rootId: string,
       content: string,
       mentions: readonly string[] = [],
+      attachments: readonly UploadedAttachment[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
         throw new Error("A valid thread root is required");
+      const message = attachmentMessage(content, attachments, relayOrigin);
       return writer(9, channelId).send({
         kind: 9,
-        content: text(content),
+        content: text(message.content),
         tags: [
           ["h", channelId],
           ["e", rootId, "", "reply"],
           ...mentionTags(channelId, mentions),
           ...emojiTags(content),
+          ...message.tags,
         ],
       });
     },

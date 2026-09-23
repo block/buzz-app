@@ -67,12 +67,41 @@ inset or imitation window controls. Other
 platforms retain their native decorations. Drag regions are limited to the
 header background; controls remain clickable. On macOS, double-clicking that
 background follows the current system title-bar preference (Fill/Zoom, Minimize,
-or no action); changing the preference does not require restarting Buzz. Other
-platforms retain Tauri's native drag-region behavior. The main-window capability
-grants only titlebar dragging and the internal maximize action used by that
-handler, plus scoped HTTP(S) opening for
+or no action) in every Buzz window; changing the preference does not require
+restarting Buzz. Other platforms retain Tauri's native drag-region behavior. The
+window capability (`main` and detached `tabs-*` windows) grants only titlebar
+dragging, the internal maximize action used by that handler, layout event
+listening, closing a window, plus scoped HTTP(S) opening for
 [external links](channels.md#run-the-integration). See
 [Tauri window customization](https://v2.tauri.app/learn/window-customization/).
+
+### Detached tab windows (desktop)
+
+The bundled **Windows** plugin (`buzz.windows`, Settings → Plugins)
+switches this on; off, tabs stay in main and any detached windows return their
+tabs and close. See [desktop tab windows](plugin-architecture.md#desktop-tab-windows)
+for the `ctx.windows` capability. Drag a page tab or a launcher (Bestie, Agent
+Activity) out of the strip to open
+it in a new window at the drop point, or onto another Buzz window to merge it
+there; releasing back in the strip cancels. While dragging, a native
+always-on-top pill (`drag-ghost`, `public/drag-ghost.html`, transparent via
+`macOSPrivateApi`) follows the pointer across the whole screen; it ignores the
+cursor and never takes focus. The destination window is focused and the moved
+tab becomes its selected tab. Right-click for **Move to new
+window**, **Move to main window** or **Move to Window N**. Launcher panels
+(`panel:<key>`) live in the launcher row on the right of whichever window holds
+them and open as the companion card there; a detached window without pages shows
+its panel full-size, and that view's close returns the panel to main. A page
+lives in exactly one window at a time; Home and Settings stay in `main`, so
+detached windows carry only the navigation arrows, the tab strip and their
+launchers, and follow the community selected in `main`. Rust owns the layout
+(`src-tauri/src/windows.rs`, persisted per profile in `windows.json`) and creates,
+restores and closes the windows; each webview runs the full app and shows the
+pages assigned to its label (`src/features/windows/`). Closing a detached window
+returns its tabs to `main`; closing `main` quits. Only `main` raises desktop
+notifications. See the
+[plan](plans/2026-09-14-001-feat-detachable-plugin-windows-plan.md) for the
+deferred checks and later phases (drag-out, window bounds).
 
 The top-right group contains enabled plugin launchers (Bestie supplies the snake),
 a page finder, and the local avatar. `ProfileButton.tsx` subscribes to the community

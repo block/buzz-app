@@ -1,12 +1,14 @@
+import { type ReactNode, useSyncExternalStore } from "react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import type { ReactNode } from "react";
 import { HouseIcon } from "../../shared/design-system/icons/index";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
+import type { WindowHost } from "../../features/windows/service";
 import { CommunitySwitcher } from "../../features/communities/CommunitySwitcher";
 import { ProfileButton } from "./ProfileButton";
 import { PageSearch, type SearchServices } from "./PageSearch";
+import { PageTab } from "./PageTab";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
 import { macTitleBarDragHandlers } from "./title-bar";
@@ -16,11 +18,13 @@ const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
 export function AppShell({
   pages,
+  panelCount = 0,
   selected,
   onSelect,
   tone,
   workspace,
   communities,
+  windows,
   searchServices,
   navigationControls,
   onCommunitySelect,
@@ -29,11 +33,14 @@ export function AppShell({
   children,
 }: {
   pages: readonly RegisteredPage[];
+  /** Launcher panels living in this window; they count as tabs for move targets. */
+  panelCount?: number;
   selected: string;
   onSelect: (key: string) => void;
   tone: string;
   workspace?: boolean;
   communities: Communities;
+  windows: WindowHost;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
@@ -41,7 +48,16 @@ export function AppShell({
   companion?: ReactNode;
   children: ReactNode;
 }) {
+  const layout = useSyncExternalStore(windows.subscribe, windows.snapshot);
+  // Detached windows carry only the tab strip; community, Settings and profile stay in main.
+  const main = windows.isMain;
+  const ordered = orderPages(pages);
+  const tabsHere = ordered.length + panelCount;
   const fillsWorkspace = workspace || selected === "settings";
+  // A hovering tab highlights where it would land: launcher panels join the
+  // launcher row; pages join the tab strip.
+  const hovering = layout.dropTarget?.tab;
+  const landsInLaunchers = !!hovering && hovering.startsWith("panel:");
   return (
     <div
       data-shell-tone={tone}
@@ -70,33 +86,43 @@ export function AppShell({
           {...titleBarDragProps}
         >
           {navigationControls}
-          <CommunitySwitcher
-            communities={communities}
-            onSelect={onCommunitySelect}
-          />
+          {main && (
+            <CommunitySwitcher
+              communities={communities}
+              onSelect={onCommunitySelect}
+            />
+          )}
         </div>
-        <nav aria-label="Pages" className="shell-pages">
-          <NavigationItem
-            type="button"
-            variant="pill"
-            aria-current={selected === "home" ? "page" : undefined}
-            onClick={() => onSelect("home")}
-            selected={selected === "home"}
-            label="Home"
-            icon={<HouseIcon aria-hidden="true" size={15} />}
-          />
-          {orderPages(pages).map((page) => {
+        <nav
+          aria-label="Pages"
+          className="shell-pages"
+          data-drop-target={(!!hovering && !landsInLaunchers) || undefined}
+        >
+          {main && (
+            <NavigationItem
+              type="button"
+              variant="pill"
+              aria-current={selected === "home" ? "page" : undefined}
+              onClick={() => onSelect("home")}
+              selected={selected === "home"}
+              label="Home"
+              icon={<HouseIcon aria-hidden="true" size={15} />}
+            />
+          )}
+          {ordered.map((page) => {
             const { label, icon: Icon } = pagePresentation(page);
             return (
-              <NavigationItem
-                type="button"
+              <PageTab
                 key={page.key}
-                variant="pill"
-                aria-current={selected === page.key ? "page" : undefined}
-                onClick={() => onSelect(page.key)}
-                selected={selected === page.key}
-                label={label}
+                tabKey={page.key}
+                name={label}
                 icon={<Icon aria-hidden="true" size={15} />}
+                selected={selected === page.key}
+                onSelect={() => onSelect(page.key)}
+                windows={windows}
+                layout={layout.layout}
+                tabsHere={tabsHere}
+                detachable={layout.enabled}
               />
             );
           })}
@@ -106,17 +132,28 @@ export function AppShell({
           data-tauri-drag-region={macDesktop ? undefined : true}
           {...titleBarDragProps}
         >
-          {launchers}
-          <PageSearch
-            pages={pages}
-            onSelect={onSelect}
-            services={searchServices}
-          />
-          <ProfileButton
-            communities={communities}
-            settingsSelected={selected === "settings"}
-            onSettings={() => onSelect("settings")}
-          />
+          <div
+            className="shell-actions-group"
+            data-drop-target={landsInLaunchers || undefined}
+            data-tauri-drag-region={macDesktop ? undefined : true}
+            {...titleBarDragProps}
+          >
+            {launchers}
+            {main && (
+              <PageSearch
+                pages={pages}
+                onSelect={onSelect}
+                services={searchServices}
+              />
+            )}
+            {main && (
+              <ProfileButton
+                communities={communities}
+                settingsSelected={selected === "settings"}
+                onSettings={() => onSelect("settings")}
+              />
+            )}
+          </div>
         </div>
       </header>
       <div className="flex min-h-0 flex-1">

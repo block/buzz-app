@@ -14,7 +14,8 @@ url = "2"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = [] }
+# macos-private-api: transparent webview for the tab drag ghost (bundling is off).
+tauri = { version = "2", features = ["macos-private-api"] }
 buzzodz-plugins = { path = "../crates/plugin-manager" }
 buzz-agent-controller = { path = "../crates/agent-controller" }
 serde = { version = "1", features = ["derive"] }

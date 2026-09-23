@@ -75,6 +75,8 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
             .expect("sessions manifest"),
+        serde_json::from_str(include_str!("../../../src/bundled/windows/manifest.json"))
+            .expect("windows manifest"),
     ]
 }
 fn is_bundled(id: &str) -> bool {
@@ -193,6 +195,10 @@ impl Manager {
             &std::env::var("BUZZODZ_PROFILE").unwrap_or_else(|_| "default".into()),
             std::env::var("BUZZODZ_SAFE_MODE").as_deref() == Ok("1"),
         )
+    }
+    /// The profile directory; other profile-scoped desktop state lives beside the registry.
+    pub fn root(&self) -> &Path {
+        &self.root
     }
     fn lock(&self) -> Result<File> {
         fs::create_dir_all(&self.root).map_err(err)?;

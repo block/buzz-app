@@ -3,6 +3,7 @@ mod agents;
 mod dock;
 mod notifications;
 mod terminal;
+mod windows;
 use agent_models::{agent_models_begin, agent_models_cancel, agent_models_run, ModelHost};
 use agents::{
     agent_control_action, agent_control_create_commit, agent_control_create_prepare,
@@ -23,6 +24,10 @@ use tauri_plugin_dialog::DialogExt;
 use terminal::{
     terminal_close, terminal_close_owner, terminal_create_owner, terminal_read, terminal_resize,
     terminal_spawn, terminal_write, Terminals,
+};
+use windows::{
+    windows_drag_begin, windows_drag_end, windows_drag_move, windows_drop_tab, windows_layout,
+    windows_move_tab, windows_reset, Windows,
 };
 
 #[derive(Clone, Default)]
@@ -353,11 +358,19 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         terminal_write,
         terminal_resize,
         terminal_close,
-        terminal_close_owner
+        terminal_close_owner,
+        windows_layout,
+        windows_move_tab,
+        windows_drop_tab,
+        windows_drag_begin,
+        windows_drag_move,
+        windows_drag_end,
+        windows_reset
     ]
 }
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let manager = Manager::from_env();
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
@@ -393,6 +406,7 @@ pub fn run() {
                 .map(|root| root.join("agent-runtime"))
                 .map_err(|_| "Could not resolve app runtime resources".to_owned());
             app.manage(AgentHost::initialize(paths, resources));
+            windows::restore(app.handle());
             Ok(())
         });
     #[cfg(target_os = "macos")]
@@ -401,7 +415,17 @@ pub fn run() {
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(Notifications::default())
-        .manage(PluginManager(Manager::from_env()))
+        .manage(Windows::open(
+            manager.as_ref().ok().map(Manager::root),
+            windows::plugin_enabled(manager.as_ref().ok()),
+        ))
+        .manage(PluginManager(manager))
+        .on_window_event(|window, event| {
+            // Only user/explicit closes change the layout; app exit keeps it for restore.
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                windows::window_closing(window.app_handle(), window.label());
+            }
+        })
         .invoke_handler(commands())
         .build(tauri::generate_context!())
         .expect("failed to build Buzz Foundation")

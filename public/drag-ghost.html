@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Dragging tab</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: transparent;
+        user-select: none;
+        -webkit-user-select: none;
+        cursor: default;
+      }
+      /* Same pad as GHOST_PAD in src-tauri/src/windows.rs: room for the shadow. */
+      body {
+        padding: 16px;
+        box-sizing: border-box;
+      }
+      /* Everything else (size, colours, font, spacing) comes from the lifted tab. */
+      #tab {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-sizing: border-box;
+        line-height: 1;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      #tab > :is(svg, img) {
+        flex: none;
+      }
+      #tab > img {
+        object-fit: contain;
+      }
+      #title {
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #title:empty {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="tab"><span id="title"></span></div>
+  </body>
+  <script src="/drag-ghost.js"></script>
+</html>

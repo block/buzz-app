@@ -68,6 +68,11 @@ export type {
   NotificationInput,
   NotificationCategoryDescriptor,
 } from "../features/notifications/service";
+export type {
+  Windows,
+  WindowLayout,
+  WindowSnapshot,
+} from "../features/windows/service";
 
 export type {
   AgentControl,

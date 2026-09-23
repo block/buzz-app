@@ -19,9 +19,11 @@ import { PagesService } from "../features/pages/service";
 import { bundledPlugins } from "../bundled";
 import { createPluginManager } from "../plugins/manager";
 import { withTimeout } from "../plugins/timeout";
+import { createWindowHost, WindowsService } from "../features/windows/service";
 
 export function createServices() {
   const appearance = createAppearance();
+  const windows = createWindowHost();
   const ctx = new Context();
   const plugins = createPluginManager(ctx, {
     bundled: bundledPlugins,
@@ -30,6 +32,8 @@ export function createServices() {
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
   const shortcuts = new ShortcutsService(ctx);
+  // Detaching is a host capability the bundled `buzz.windows` plugin switches on.
+  new WindowsService(ctx, windows);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const conversation = new ConversationService(ctx);
@@ -48,14 +52,19 @@ export function createServices() {
     undefined,
     (target) => notificationAuthorized(communities, target),
   );
-  ctx.effect(() => bindMessageNotifications(notifications, communities));
-  if (notifications.indicator.available)
-    ctx.effect(() =>
-      bindUnreadIndicator(communities, notifications.indicator.setUnread),
-    );
+  // Every window runs a full session; only main may raise desktop notifications
+  // and own the Dock unread badge.
+  if (windows.isMain) {
+    ctx.effect(() => bindMessageNotifications(notifications, communities));
+    if (notifications.indicator.available)
+      ctx.effect(() =>
+        bindUnreadIndicator(communities, notifications.indicator.setUnread),
+      );
+  }
   let disposal: Promise<void> | undefined;
   return {
     agentControl,
+    windows,
     notifications,
     navigation,
     navigationHost,
@@ -69,6 +78,7 @@ export function createServices() {
     appearance,
     dispose() {
       appearance.dispose();
+      windows.dispose();
       // Start root cancellation without waiting for plugin-owned cleanup. Cordis
       // starts sibling effects independently; the runtime still owns replacement
       // barriers. A timeout reports incomplete cleanup, never successful disposal.

@@ -689,7 +689,9 @@ it("finishes automatic pages before initial positioning and preserves a readerâ€
   expect(h.view.loadMore).toHaveBeenCalledTimes(1);
   expect(h.element.scrollTop).toBe(0);
   const section = h.render();
-  (section.props.onWheel as () => void)();
+  (section.props.onWheel as (event: { deltaY: number }) => void)({
+    deltaY: -1,
+  });
   h.scroll(500);
   h.snapshot.status = "loading";
   h.render();

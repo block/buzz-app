@@ -66,3 +66,25 @@ it("keeps custom mode separate from saved values and supports an unset provider"
     '{"command":"/custom/agent","provider":""}',
   );
 });
+
+it("hides Provider for Codex, including absolute executables, and restores it for other harnesses", async () => {
+  const f = controlFixture();
+  const draft = { ...agentDraft(f.agent), command: "codex-acp", provider: "" };
+  const props = { options: [], onChange: () => {} };
+  const view = render(<AgentHarnessEditor {...props} draft={draft} />);
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+  view.rerender(
+    <AgentHarnessEditor
+      {...props}
+      draft={{ ...draft, command: "/bin/codex-acp" }}
+    />,
+  );
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+  view.rerender(
+    <AgentHarnessEditor
+      {...props}
+      draft={{ ...draft, command: "buzz-agent" }}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Provider" })).toBeVisible();
+});

@@ -638,7 +638,7 @@ test("native-supplied harness choices preserve current values and save only expl
       fullPage: true,
     });
     await expect(
-      editor.getByText(/Environment overrides take precedence/),
+      editor.getByText(/Provider environment overrides take precedence/),
     ).toBeVisible();
   } finally {
     await server.close();

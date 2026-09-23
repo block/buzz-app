@@ -352,19 +352,26 @@ validation of inference access or of the settings applied by a running session.
 Codex uses a separate `codex login status` probe and the model choices advertised
 by `codex-acp`. This is not an assertion of fresh remote discovery or account
 entitlement; the adapter can use its own cache. Databricks retains its existing
-remote-catalog policy. No hardcoded model or effort list is introduced.
+remote-catalog policy. No hardcoded model or effort list is introduced. Catalog normalization matches
+original Buzz: stable model config options first, legacy availableModels second,
+first ID wins. The picker omits legacy model[effort] aliases when the base model
+is advertised, keeping effort in its own field. Older saved aliases still receive
+native validation.
 
 Choose Codex, an existing workspace, and Harness defaults or Advanced. Defaults
-leaves model and effort to Codex configuration. In Advanced, Refresh models,
-select an advertised model, then Refresh models again to load that model's effort
-choices. Choose effort explicitly. Creation repeats headless validation before
+leaves model and effort to Codex configuration. Selecting Codex loads all models and their effort choices in one bounded session
+and caches them in memory for the execution context. Reopening or switching models
+uses that complete cache immediately. Refresh explicitly reloads it. In Advanced,
+select a base model and choose one of its cached, advertised effort choices. Choose effort explicitly. Creation repeats headless validation before
 identity generation. A rejected model retains the catalog so another model can
 be selected; missing effort metadata cannot authorize creation.
 
 Discovery and launch share the resolved adapter, workspace, arguments, isolated
 environment and CODEX_HOME. Ambient CODEX_HOME is preserved, with saved per-agent
-overrides taking precedence. Automatic lookup covers the adapter's directory,
-~/.local/bin, /opt/homebrew/bin and /usr/local/bin plus system directories. Other
+overrides taking precedence. Automatic lookup covers the explicit adapter's directory first, then the original
+Buzz managed `node-tools/bin` and pinned Node runtime under the OS application-data
+`Buzz` directory, followed by ~/.local/bin, /opt/homebrew/bin, /usr/local/bin and
+system directories. This keeps the managed adapter consistent with original Buzz. Other
 installations can use an absolute codex-acp path; codex and any interpreter must
 be available through those directories. No installer or shell startup is run.
 

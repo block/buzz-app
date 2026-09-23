@@ -51,6 +51,7 @@ enum Operation {
 pub(crate) struct Catalog {
     integration: CatalogIntegration,
     models: Vec<Model>,
+    defaults: Option<ResolvedDefaults>,
     discovery: Option<Discovery>,
     model_overridden: bool,
     disconnected: bool,
@@ -60,6 +61,11 @@ pub(crate) struct Catalog {
 enum CatalogIntegration {
     Databricks { host: String },
     Codex,
+}
+#[derive(Serialize)]
+struct ResolvedDefaults {
+    model: Option<String>,
+    effort: Option<String>,
 }
 #[derive(Serialize)]
 struct Model {
@@ -382,8 +388,8 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             });
         return host.run(ticket, async move {
             if request.action != Operation::Refresh { return Err(ModelError::new("configuration", "Use codex login in your terminal, then Refresh models. Buzz does not log out or replace your shared Codex account.")); }
-            let (context, selected) = prepared?;
-            codex::execute(context, selected).await
+            let (context, _) = prepared?;
+            codex::discover(context, None).await
         }).await;
     }
     let Integration::Databricks(settings) = &request.integration else {
@@ -425,6 +431,7 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
         if request.action == Operation::Disconnect {
             controller.disconnect(&workspace)?;
             return Ok(Catalog {
+                defaults: None,
                 integration: CatalogIntegration::Databricks { host: workspace },
                 models: vec![],
                 discovery: None,

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { afterEach, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -159,7 +159,7 @@ it("context change cancels a pending catalog and rejects its late result", async
       });
       await pending;
     });
-    await user.click(screen.getByRole("combobox", { name: "Model" }));
+    await user.click(await screen.findByRole("combobox", { name: "Model" }));
     await user.keyboard("{ArrowDown}");
     expect(screen.queryByText("Stale result")).not.toBeInTheDocument();
     expect(
@@ -446,7 +446,6 @@ it("Codex trusts adapter choices, exposes only model-specific effort, and sends 
   }
   const view = render(<Editor />);
   try {
-    await user.click(screen.getByRole("button", { name: "Refresh models" }));
     const effort = await screen.findByRole("combobox", { name: "Effort" });
     expect(onValidated).toHaveBeenLastCalledWith(null);
     await user.click(effort);
@@ -475,6 +474,210 @@ it("Codex trusts adapter choices, exposes only model-specific effort, and sends 
       screen.queryByRole("button", { name: "Disconnect" }),
     ).not.toBeInTheDocument();
     expect(screen.getByText(/may be cached/)).toBeVisible();
+    run.mockRejectedValueOnce("Discovery temporarily unavailable");
+    await user.click(screen.getByRole("button", { name: "Refresh models" }));
+    await screen.findByText("Discovery temporarily unavailable");
+    expect(onValidated).toHaveBeenLastCalledWith(null);
+    expect(screen.getByRole("button", { name: "Retry models" })).toBeEnabled();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("loads Codex defaults in the background, reuses cached settings on remount, and fences a changed context", async () => {
+  const f = controlFixture();
+  const data = {
+    integration: { kind: "codex" as const },
+    discovery: {
+      source: "codexAcp" as const,
+      authentication: "authenticated" as const,
+      catalog: "adapter" as const,
+    },
+    defaults: { model: "fixture-default", effort: "medium" },
+    models: [{ id: "fixture-default", name: "Fixture model" }],
+    modelOverridden: false,
+    disconnected: false,
+  };
+  let release!: (value: typeof data) => void;
+  const run = vi
+    .fn()
+    .mockResolvedValueOnce(data)
+    .mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "codex-acp",
+    provider: "",
+    model: "",
+    configuration: { mode: "default" as const },
+  };
+  const onChange = vi.fn();
+  const props = {
+    control,
+    defaults: undefined,
+    capabilities: { modelDiscovery: "codex" as const },
+    onChange,
+  };
+  const view = render(
+    <StrictMode>
+      <AgentModelPicker {...props} draft={draft} />
+    </StrictMode>,
+  );
+  try {
+    await screen.findByText(/Default model: fixture-default · Effort: medium/);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("button", { name: /^Model$/ })).toBeNull();
+    expect(onChange).not.toHaveBeenCalled(); // defaults remain delegated, not saved overrides
+    view.unmount();
+    const reopened = render(
+      <StrictMode>
+        <AgentModelPicker {...props} draft={draft} />
+      </StrictMode>,
+    );
+    await screen.findByText(/Default model: fixture-default.*cached/);
+    expect(run).toHaveBeenCalledTimes(1);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Refresh models" }));
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(2));
+    const oldRelease = release;
+    reopened.rerender(
+      <StrictMode>
+        <AgentModelPicker
+          {...props}
+          draft={{ ...draft, workspace: "/other" }}
+        />
+      </StrictMode>,
+    );
+    await waitFor(() => expect(run).toHaveBeenCalledTimes(3));
+    await act(async () => oldRelease(data));
+    expect(screen.queryByText(/Default model: fixture-default/)).toBeNull();
+    await act(async () =>
+      release({ ...data, defaults: { model: "other-default", effort: "low" } }),
+    );
+    expect(
+      screen.getByText(/Default model: other-default · Effort: low/),
+    ).toBeVisible();
+    reopened.unmount();
+  } finally {
+    control.dispose();
+  }
+});
+
+it("uses the complete Codex cache for model and mode changes without another probe", async () => {
+  const f = controlFixture();
+  const data = {
+    integration: { kind: "codex" as const },
+    discovery: {
+      source: "codexAcp" as const,
+      authentication: "authenticated" as const,
+      catalog: "adapter" as const,
+    },
+    models: [
+      {
+        id: "first",
+        name: "First",
+        effort: {
+          status: "supported" as const,
+          options: [{ value: "low", name: "Low" }],
+        },
+      },
+      {
+        id: "second",
+        name: "Second",
+        effort: {
+          status: "supported" as const,
+          options: [{ value: "high", name: "High" }],
+        },
+      },
+    ],
+    modelOverridden: false,
+    disconnected: false,
+  };
+  const run = vi.fn(async () => data);
+  f.host.models = { begin: async () => 1, run, cancel: vi.fn(async () => {}) };
+  const control = createAgentControl(f.host);
+  const onValidated = vi.fn();
+  const props = {
+    control,
+    defaults: undefined,
+    capabilities: { modelDiscovery: "codex" as const },
+    onValidated,
+    onChange: vi.fn(),
+  };
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "codex-acp",
+    provider: "",
+    model: "first",
+    configuration: {
+      mode: "advanced" as const,
+      effort: { kind: "value" as const, value: "low" },
+    },
+  };
+  const view = render(<AgentModelPicker {...props} draft={draft} />);
+  try {
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(draft));
+    const second = { ...draft, model: "second" };
+    view.rerender(<AgentModelPicker {...props} draft={second} />);
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(null));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("combobox", { name: "Effort" }));
+    expect(await screen.findByRole("option", { name: "High" })).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Low" })).toBeNull();
+    await user.keyboard("{Escape}");
+    const selected = {
+      ...second,
+      configuration: {
+        mode: "advanced" as const,
+        effort: { kind: "value" as const, value: "high" },
+      },
+    };
+    view.rerender(<AgentModelPicker {...props} draft={selected} />);
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(selected));
+    view.rerender(
+      <AgentModelPicker
+        {...props}
+        draft={{ ...draft, model: "", configuration: { mode: "default" } }}
+      />,
+    );
+    await screen.findByText(/Default model:/);
+    view.rerender(<AgentModelPicker {...props} draft={selected} />);
+    await waitFor(() => expect(onValidated).toHaveBeenLastCalledWith(selected));
+    view.rerender(
+      <AgentModelPicker
+        {...props}
+        draft={{ ...selected, model: "second[high]" }}
+      />,
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "Second",
+    );
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    expect(
+      await screen.findByRole("option", { name: /^Second/ }),
+    ).toBeVisible();
+    expect(screen.getAllByRole("option")).toHaveLength(2);
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("combobox", { name: "Effort" }));
+    await user.click(await screen.findByRole("option", { name: "High" }));
+    expect(props.onChange).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        model: "second",
+        configuration: {
+          mode: "advanced",
+          effort: { kind: "value", value: "high" },
+        },
+      }),
+    );
+    expect(run).toHaveBeenCalledTimes(1);
   } finally {
     view.unmount();
     control.dispose();

@@ -127,3 +127,43 @@ it("hung transport settles on cancellation; a late native ticket is still retire
   await vi.waitFor(() => expect(host.cancel).toHaveBeenCalledWith(93));
   expect(host.run).not.toHaveBeenCalled();
 });
+
+it("bounds Codex cached contexts, labels cached evidence, and clears them on disposal", async () => {
+  const result: ModelCatalog = {
+    ...data,
+    integration: { kind: "codex" },
+    discovery: {
+      source: "codexAcp",
+      authentication: "authenticated",
+      catalog: "adapter",
+    },
+  };
+  const service = createAgentModels({
+    begin: async () => 1,
+    run: async () => result,
+    cancel: async () => {},
+  });
+  const codexRequest: ModelRequest = {
+    ...request,
+    integration: { kind: "codex" },
+    action: "refresh",
+  };
+  for (let expectedRevision = 0; expectedRevision < 17; expectedRevision++) {
+    await service.request(
+      { ...codexRequest, expectedRevision },
+      new AbortController().signal,
+    );
+  }
+  expect(
+    service.cached?.({ ...codexRequest, expectedRevision: 0 }),
+  ).toBeUndefined();
+  expect(
+    service.cached?.({ ...codexRequest, expectedRevision: 16 })?.discovery
+      ?.catalog,
+  ).toBe("cached");
+  expect(result.discovery?.catalog).toBe("adapter");
+  service.dispose();
+  expect(
+    service.cached?.({ ...codexRequest, expectedRevision: 16 }),
+  ).toBeUndefined();
+});

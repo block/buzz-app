@@ -49,6 +49,9 @@ impl Context {
                 directories.push(parent.to_path_buf());
             }
         }
+        // Reuse the original Buzz installation before system-wide adapters.
+        // An explicit adapter path above still wins for isolated/custom contexts.
+        directories.extend(buzz_managed_directories());
         if let Some(home) = std::env::var_os("HOME") {
             directories.push(PathBuf::from(home).join(".local/bin"));
         }
@@ -63,20 +66,9 @@ impl Context {
             ]
             .map(PathBuf::from),
         );
-        let resolve = |name: &str| -> Result<PathBuf> {
-            let candidates = if Path::new(name).is_absolute() {
-                vec![PathBuf::from(name)]
-            } else {
-                directories.iter().map(|d| d.join(name)).collect()
-            };
-            candidates.into_iter().find(|p| {
-                #[cfg(unix)] { use std::os::unix::fs::PermissionsExt; p.metadata().is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0) }
-                #[cfg(not(unix))] { p.is_file() }
-            }).ok_or_else(|| format!("Install {name}, or choose the installed codex-acp executable's absolute path."))
-        };
         Ok(Self {
-            adapter: resolve(&harness.command)?,
-            cli: resolve("codex")?,
+            adapter: resolve_executable(&harness.command, &directories)?,
+            cli: resolve_executable("codex", &directories)?,
             args: harness.args.clone(),
             workspace: PathBuf::from(workspace),
             environment: environment.clone(),
@@ -109,5 +101,96 @@ impl Context {
         command.env_clear().current_dir(&self.workspace);
         self.apply_environment(&mut command)?;
         Ok(command)
+    }
+}
+
+fn buzz_managed_directories() -> Vec<PathBuf> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Vec::new();
+    };
+    #[cfg(target_os = "macos")]
+    let data = home.join("Library/Application Support");
+    #[cfg(not(target_os = "macos"))]
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .unwrap_or_else(|| home.join(".local/share"));
+    managed_directories(&data)
+}
+
+fn managed_directories(data: &Path) -> Vec<PathBuf> {
+    let root = data.join("Buzz");
+    let mut paths = vec![root.join("node-tools/bin")];
+    let platform = match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("macos", "aarch64") => Some("darwin-arm64"),
+        ("macos", "x86_64") => Some("darwin-x64"),
+        ("linux", "aarch64") => Some("linux-arm64"),
+        ("linux", "x86_64") => Some("linux-x64"),
+        _ => None,
+    };
+    if let Some(platform) = platform {
+        // Same pinned managed Node layout as Buzz's managed_node_paths.rs.
+        paths.push(
+            root.join("runtimes/node/v24.18.0")
+                .join(platform)
+                .join("bin"),
+        );
+    }
+    paths
+}
+
+fn resolve_executable(name: &str, directories: &[PathBuf]) -> Result<PathBuf> {
+    let candidates = if Path::new(name).is_absolute() {
+        vec![PathBuf::from(name)]
+    } else {
+        directories.iter().map(|d| d.join(name)).collect()
+    };
+    candidates
+        .into_iter()
+        .find(|p| {
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                p.metadata()
+                    .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+            }
+            #[cfg(not(unix))]
+            {
+                p.is_file()
+            }
+        })
+        .ok_or_else(|| {
+            format!("Install {name}, or choose the installed codex-acp executable's absolute path.")
+        })
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn managed_adapter_wins_and_absolute_override_is_preserved() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut paths = managed_directories(dir.path());
+        let system = dir.path().join("system");
+        paths.push(system.clone());
+        for path in [&paths[0], &system] {
+            std::fs::create_dir_all(path).unwrap();
+            let executable = path.join("codex-acp");
+            std::fs::write(&executable, "#!/bin/sh\nexit 0\n").unwrap();
+            std::fs::set_permissions(executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        }
+        assert_eq!(
+            resolve_executable("codex-acp", &paths).unwrap(),
+            paths[0].join("codex-acp")
+        );
+        let explicit = system.join("codex-acp");
+        assert_eq!(
+            resolve_executable(explicit.to_str().unwrap(), &paths).unwrap(),
+            explicit
+        );
+        std::fs::remove_file(paths[0].join("codex-acp")).unwrap();
+        assert_eq!(resolve_executable("codex-acp", &paths).unwrap(), explicit);
     }
 }

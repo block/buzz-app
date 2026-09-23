@@ -12,6 +12,7 @@ import {
   isVerifiedCatalog,
   ModelError,
   type ModelCatalog,
+  type ModelRequest,
 } from "../../features/agents/models";
 import { Select } from "../../shared/design-system/ui/Select";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -68,7 +69,6 @@ export function AgentModelPicker({
   // All draft context participates: native resolves write-only overrides against
   // the saved revision. Discovery never persists draft values.
   const key = JSON.stringify([
-    codex ? draft.model : null,
     validationVersion,
     id,
     savedRevision,
@@ -77,7 +77,7 @@ export function AgentModelPicker({
     draft.provider,
     draft.args,
     draft.workspace,
-    draft.configuration?.mode,
+    codex ? null : draft.configuration?.mode,
     draft.environment,
     supported,
     recoveryAvailable,
@@ -102,7 +102,10 @@ export function AgentModelPicker({
       pending.current = null;
     };
   }, [key]);
-  const run = async (action: "connect" | "refresh" | "disconnect") => {
+  const run = async (
+    action: "connect" | "refresh" | "disconnect",
+    useCache = false,
+  ) => {
     if (!control.models || pending.current) return;
     if (action !== "disconnect" && !supported) return;
     if (!codex && !host.trim()) {
@@ -112,10 +115,48 @@ export function AgentModelPicker({
       return;
     }
     attempted.current = key;
+    let request: ModelRequest;
+    try {
+      request = {
+        id,
+        expectedRevision: id ? draft.revision : undefined,
+        edit: action === "disconnect" ? undefined : agentEdit(draft, true),
+        integration: codex
+          ? { kind: "codex" }
+          : { kind: "databricks", settings: { host, filter } },
+        action,
+      };
+    } catch (error) {
+      setStatus((error as Error).message);
+      return;
+    }
+    if (codex && useCache) {
+      const cached = control.models.cached?.(request);
+      if (cached) {
+        setCatalog({ key, data: cached });
+        setStatus("");
+        return;
+      }
+    }
     const abort = new AbortController();
     pending.current = abort;
     setBusy(true);
-    setCatalog(null);
+    setCatalog((previous) =>
+      codex && previous
+        ? {
+            ...previous,
+            data: {
+              ...previous.data,
+              discovery: previous.data.discovery
+                ? {
+                    ...previous.data.discovery,
+                    catalog: "cached",
+                  }
+                : null,
+            },
+          }
+        : null,
+    );
     setAuthenticationRequired(false);
     setStatus(
       action === "connect"
@@ -125,18 +166,11 @@ export function AgentModelPicker({
           : "Removing this app’s credentials for this workspace…",
     );
     try {
-      const data = await control.models.request(
-        {
-          id,
-          expectedRevision: id ? draft.revision : undefined,
-          edit: action === "disconnect" ? undefined : agentEdit(draft, true),
-          integration: codex
-            ? { kind: "codex" }
-            : { kind: "databricks", settings: { host, filter } },
-          action,
-        },
-        abort.signal,
-      );
+      if (codex) {
+        const cached = control.models.cached?.(request);
+        if (cached) setCatalog({ key, data: cached });
+      }
+      const data = await control.models.request(request, abort.signal);
       if (abort.signal.aborted || currentKey.current !== key) return;
       setCatalog({ key, data });
       setStatus(
@@ -162,10 +196,30 @@ export function AgentModelPicker({
       }
     }
   };
+  // Selecting Codex starts a headless refresh; defer one microtask so StrictMode's
+  // retired effect cannot start a second native probe. Context cleanup aborts it.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: key captures the discovery context; draft labels/effort must not restart discovery.
+  useEffect(() => {
+    let retired = false;
+    if (codex && supported)
+      void Promise.resolve().then(() => {
+        if (!retired) void run("refresh", !validationVersion);
+      });
+    return () => {
+      retired = true;
+    };
+  }, [key, control.models]);
   const fresh = catalog?.key === key ? catalog.data : null;
   const verified = isVerifiedCatalog(fresh);
+  // Older saved drafts may contain model[effort]. Show their advertised base
+  // model without silently rewriting the saved configuration on discovery.
+  const baseId = draft.model.replace(/\[[^\]]+\]$/, "");
+  const selectedId =
+    codex && fresh?.models.some((model) => model.id === baseId)
+      ? baseId
+      : draft.model;
   const discoveredModel = fresh?.models.find(
-    (model) => model.id === draft.model,
+    (model) => model.id === selectedId,
   );
   const effort =
     draft.configuration?.mode === "advanced"
@@ -179,13 +233,19 @@ export function AgentModelPicker({
         effort?.kind === "value" &&
         effortOptions.options.some((option) => option.value === effort.value);
   const valid =
-    !busy && query === null && verified && !!discoveredModel && effortValid;
+    !busy &&
+    !status &&
+    query === null &&
+    verified &&
+    !!discoveredModel &&
+    !discoveredModel.error &&
+    effortValid;
   useEffect(() => {
     onValidated?.(valid ? draft : null);
   }, [draft, valid, onValidated]);
-  const entries = !advanced || verified ? (fresh?.models ?? []) : [];
+  const entries = codex || !advanced || verified ? (fresh?.models ?? []) : [];
   const selected =
-    entries.find((model) => model.id === draft.model) ??
+    entries.find((model) => model.id === selectedId) ??
     (draft.model ? { id: draft.model, name: draft.model } : null);
   const items = [...entries];
   if (
@@ -228,6 +288,18 @@ export function AgentModelPicker({
   return (
     <section data-buzz-ui="" className="text-body" aria-label="Model settings">
       <div className="space-y-3">
+        {codex && defaultsMode && (
+          <p role="status" className="text-body-sm text-secondary">
+            Default model:{" "}
+            {fresh?.defaults?.model ??
+              (busy ? "Loading…" : "Not reported by Codex")}
+            {" · "}Effort:{" "}
+            {fresh?.defaults?.effort ??
+              (busy ? "Loading…" : "Not reported by Codex")}
+            {fresh?.discovery?.catalog === "cached" &&
+              (busy ? " (cached; refreshing)" : " (cached)")}
+          </p>
+        )}
         {codex && (
           <p className="text-body-sm text-secondary">
             Uses your existing Codex account and configuration. To sign in, run{" "}
@@ -352,7 +424,7 @@ export function AgentModelPicker({
           <p role="status" className="text-body-sm text-secondary">
             {!fresh
               ? codex
-                ? "Refresh models after choosing a model to load its advertised effort choices."
+                ? "Loading model and effort choices. Refresh models if discovery fails."
                 : "Browse models to verify your account and choices before creating this agent."
               : !verified
                 ? "Model discovery is unverified. Refresh models to load choices from this harness."
@@ -392,6 +464,7 @@ export function AgentModelPicker({
                   effortOptions.options.some((option) => option.value === value)
                 )
                   onChange({
+                    ...(codex ? { model: selectedId } : {}),
                     configuration: {
                       mode: "advanced",
                       effort: { kind: "value", value },
@@ -461,45 +534,49 @@ export function AgentModelPicker({
           </p>
         )}
       </div>
-      <h3 className="mt-section-gap mb-2 text-label">Advanced</h3>
-      <div className="-mx-2">
-        <Accordion
-          variant="form"
-          keepMounted
-          items={[
-            {
-              value: "advanced",
-              title: "Model",
-              content: (
-                <div className="space-y-3">
-                  {!defaultsMode && !advanced && (
-                    <Field label="Model ID (custom or blank)">
-                      <Input
-                        disabled={disabled}
-                        value={draft.model}
-                        spellCheck={false}
-                        onChange={(event) =>
-                          onChange({ model: event.target.value })
-                        }
-                      />
-                    </Field>
-                  )}
-                  {!codex && (supported || recoveryAvailable) && (
-                    <DatabricksModelSettings
-                      host={host}
-                      filter={filter}
-                      disabled={disabled}
-                      busy={busy}
-                      onChange={onChange}
-                      run={run}
-                    />
-                  )}
-                </div>
-              ),
-            },
-          ]}
-        />
-      </div>
+      {!codex && (
+        <>
+          <h3 className="mt-section-gap mb-2 text-label">Advanced</h3>
+          <div className="-mx-2">
+            <Accordion
+              variant="form"
+              keepMounted
+              items={[
+                {
+                  value: "advanced",
+                  title: "Model",
+                  content: (
+                    <div className="space-y-3">
+                      {!defaultsMode && !advanced && (
+                        <Field label="Model ID (custom or blank)">
+                          <Input
+                            disabled={disabled}
+                            value={draft.model}
+                            spellCheck={false}
+                            onChange={(event) =>
+                              onChange({ model: event.target.value })
+                            }
+                          />
+                        </Field>
+                      )}
+                      {(supported || recoveryAvailable) && (
+                        <DatabricksModelSettings
+                          host={host}
+                          filter={filter}
+                          disabled={disabled}
+                          busy={busy}
+                          onChange={onChange}
+                          run={run}
+                        />
+                      )}
+                    </div>
+                  ),
+                },
+              ]}
+            />
+          </div>
+        </>
+      )}
     </section>
   );
 }

@@ -607,6 +607,7 @@ fn invalid_integration_variants_never_reach_auth_and_ticket_can_be_cancelled() {
 #[test]
 fn advanced_selection_requires_remote_authenticated_catalog_evidence() {
     let mut catalog = Catalog {
+        defaults: None,
         integration: CatalogIntegration::Databricks {
             host: "https://workspace.example.com".into(),
         },

@@ -215,6 +215,7 @@ pub(super) async fn execute(
         })
         .collect();
     Ok(Catalog {
+        defaults: None,
         integration: CatalogIntegration::Databricks { host: workspace },
         models,
         discovery: Some(Discovery {

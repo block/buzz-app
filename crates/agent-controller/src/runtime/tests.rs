@@ -14,9 +14,8 @@ fn explicit_configuration_controls_actual_launch_environment() {
     let tools = tempfile::tempdir().unwrap();
     let runtime = bundle(tools.path());
     let mut a = agent(dir.path());
-    for key in ["BUZZ_AGENT_MODEL"] {
-        a.environment.insert(key.into(), "legacy-override".into());
-    }
+    a.environment
+        .insert("BUZZ_AGENT_MODEL".into(), "legacy-override".into());
     for (configuration, model, expected_model, expected_effort) in [
         (AiConfiguration::Default, "", None, None),
         (

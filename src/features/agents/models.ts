@@ -53,11 +53,13 @@ export interface ModelCatalog {
     /** Omission from an older host is unverified, not proof of a remote fetch. */
     catalog?: "adapter" | "remote" | "cached" | "fallback" | "unknown";
   } | null;
+  /** Effective initial ACP session settings, before any model selection. */
+  defaults?: { model: string | null; effort: string | null } | null;
   modelOverridden: boolean;
   disconnected: boolean;
 }
 
-/** Trust the integration’s declared discovery source after its authentication check. */
+/** App-session Codex cache can drive the UI; native creation always revalidates. */
 export function isVerifiedCatalog(catalog: ModelCatalog | null): boolean {
   return (
     !!catalog &&
@@ -65,7 +67,8 @@ export function isVerifiedCatalog(catalog: ModelCatalog | null): boolean {
     catalog.discovery?.authentication === "authenticated" &&
     (catalog.integration.kind === "codex"
       ? catalog.discovery.source === "codexAcp" &&
-        catalog.discovery.catalog === "adapter"
+        (catalog.discovery.catalog === "adapter" ||
+          catalog.discovery.catalog === "cached")
       : catalog.discovery.source === "databricksCatalog" &&
         catalog.discovery.catalog === "remote")
   );
@@ -76,6 +79,7 @@ export interface ModelHost {
   cancel(ticket: number): Promise<void>;
 }
 export interface AgentModels {
+  cached?(request: ModelRequest): ModelCatalog | undefined;
   request(request: ModelRequest, signal: AbortSignal): Promise<ModelCatalog>;
 }
 
@@ -84,13 +88,39 @@ export interface AgentModels {
 export function createAgentModels(
   host: ModelHost | undefined,
 ): AgentModels & { dispose(): void } {
+  // Owned by the app's control service; never persisted with environment secrets.
+  const cache = new Map<string, ModelCatalog>();
+  const cacheKey = (request: ModelRequest) =>
+    JSON.stringify([
+      request.id,
+      request.expectedRevision,
+      request.integration,
+      request.edit?.workspace,
+      request.edit?.harness.command,
+      request.edit?.harness.args,
+      request.edit?.harness.provider,
+
+      request.edit?.environment,
+    ]);
   const active = new Set<AbortController>();
   let disposed = false;
   return {
+    cached(request) {
+      const data = cache.get(cacheKey(request));
+      return data
+        ? {
+            ...data,
+            discovery: data.discovery
+              ? { ...data.discovery, catalog: "cached" }
+              : null,
+          }
+        : undefined;
+    },
     async request(request, signal) {
       if (!host || disposed)
         throw new Error("Model connections require a rebuilt desktop app.");
       if (signal.aborted) throw new Error("Connection cancelled.");
+      if (request.integration.kind === "codex") cache.delete(cacheKey(request));
       const local = new AbortController();
       active.add(local);
       let ticket: number | undefined;
@@ -123,6 +153,13 @@ export function createAgentModels(
         ]);
         if (local.signal.aborted || disposed)
           throw new Error("Connection cancelled.");
+        if (request.integration.kind === "codex") {
+          const key = cacheKey(request);
+          cache.delete(key);
+          if (cache.size >= 16)
+            cache.delete(cache.keys().next().value as string);
+          cache.set(key, result);
+        }
         return result;
       } catch (error) {
         // Native supplies deliberately safe strings. Never surface arbitrary
@@ -151,6 +188,7 @@ export function createAgentModels(
       disposed = true;
       for (const request of active) request.abort();
       active.clear();
+      cache.clear();
     },
   };
 }

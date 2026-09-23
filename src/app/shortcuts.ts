@@ -4,7 +4,7 @@ import type { Appearance } from "../shared/theme/service";
 /** Host actions use the same binding/dispatch rules as plugins, without fake plugin ownership. */
 // Settings presents the host category in functional sections: navigation,
 // text sizing, search/settings, then development-only actions.
-const HOST_SHORTCUT_ORDER = {
+export const HOST_SHORTCUT_ORDER = {
   navigationBack: 10,
   navigationForward: 20,
   textSizeIncrease: 40,

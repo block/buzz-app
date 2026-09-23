@@ -233,8 +233,9 @@ export function ShortcutSettings({
       target.defaults.every((current) => sameBinding(current, binding));
     bindings.set(target.key, isDefault ? null : binding);
     setEditing(null);
+    // EditableInput handles Enter locally regardless of the held modifiers.
     setNotice(
-      includes(EDITOR_CHORDS, binding)
+      binding.key === "Enter" || includes(EDITOR_CHORDS, binding)
         ? {
             key: target.key,
             tone: "warning",

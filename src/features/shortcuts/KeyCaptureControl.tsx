@@ -73,6 +73,8 @@ export function KeyCaptureControl({
           onCancel();
           return;
         }
+        // AltGr can report Control+Alt, but the dispatcher always ignores it.
+        if (event.getModifierState("AltGraph")) return;
         const mod = apple ? event.metaKey : event.ctrlKey;
         onCapture({
           binding: {

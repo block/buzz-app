@@ -19,6 +19,7 @@ import {
 } from "../../features/shortcuts/format";
 import type { ShortcutBindingsSnapshot } from "../../features/shortcuts/preferences";
 import type { AppServices } from "../services";
+import { HOST_SHORTCUT_ORDER } from "../shortcuts";
 import {
   orderPages,
   pagePresentation,
@@ -69,8 +70,7 @@ export function PageSearch({
         id: SEARCH_ID,
         title: "Search Buzz",
         binding: SEARCH_BINDING,
-        // Host Settings order: navigation, text sizing, search, settings.
-        order: 30,
+        order: HOST_SHORTCUT_ORDER.search,
         allowInEditable: true,
         run: begin,
       }),

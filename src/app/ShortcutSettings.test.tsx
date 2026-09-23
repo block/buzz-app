@@ -20,6 +20,11 @@ import {
 import { ShortcutsService } from "../features/shortcuts/service";
 import type { PluginManager } from "../plugins/manager";
 import type { PluginInfo } from "../plugins/types";
+import { createAppearance } from "../shared/theme/service";
+import { createNavigationController } from "../features/navigation/controller";
+import { createMemoryHistory } from "../features/navigation/history";
+import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
+import { PageSearch, type SearchServices } from "./shell/PageSearch";
 
 afterEach(() => {
   cleanup();
@@ -228,6 +233,70 @@ it("lists live host and plugin shortcuts without search or intro text and follow
     expect(row("Toggle channel terminal")).toBeInTheDocument();
   } finally {
     await h.dispose();
+  }
+});
+
+it("presents actual host registrations in navigation, text sizing, search/settings, then development order", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const appearance = createAppearance(window);
+  const navigation = createNavigationController(createMemoryHistory());
+  const removeApp = registerAppShortcuts(shortcuts, appearance, vi.fn(), true);
+  const removeNavigation = registerNavigationShortcuts(
+    shortcuts,
+    navigation.navigation,
+  );
+  try {
+    render(
+      <>
+        <PageSearch
+          pages={[]}
+          onSelect={vi.fn()}
+          // Only shortcuts and bindings are read while Search is closed.
+          services={
+            {
+              shortcuts,
+              shortcutBindings: bindings,
+            } as unknown as SearchServices
+          }
+        />
+        <ShortcutSettings
+          shortcuts={shortcuts}
+          bindings={bindings}
+          plugins={catalog([])}
+        />
+      </>,
+    );
+    expect(
+      screen
+        .getAllByRole("article")
+        .map(
+          (article) =>
+            within(article).getByRole("heading", { level: 3 }).textContent,
+        ),
+    ).toEqual([
+      "Go back",
+      "Go forward",
+      "Increase text size",
+      "Decrease text size",
+      "Reset text size",
+      "Search Buzz",
+      "Open Settings",
+      ...(import.meta.env.DEV ? ["Reload development app"] : []),
+    ]);
+  } finally {
+    cleanup();
+    removeNavigation();
+    removeApp();
+    navigation.dispose();
+    appearance.dispose();
+    bindings.dispose();
+    await root.fiber.dispose();
   }
 });
 
@@ -478,6 +547,123 @@ it("captures a chord, refuses conflicts and bare keys, applies overrides to the 
     h.press("+", { shiftKey: true });
     expect(h.runs.grow).toHaveBeenCalledTimes(2);
     h.press(",");
+    expect(h.runs.settings).toHaveBeenCalledTimes(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it.each([true, false])(
+  "warns for every accepted Enter modifier combination but still dispatches outside the editor (Apple=%s)",
+  async (apple) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(
+      apple ? "MacIntel" : "Win32",
+    );
+    const user = userEvent.setup();
+    const h = await harness();
+    try {
+      render(
+        <ShortcutSettings
+          shortcuts={h.shortcuts}
+          bindings={h.bindings}
+          plugins={h.plugins}
+          apple={apple}
+        />,
+      );
+      const title = "Open Settings";
+      await user.click(change(title));
+      for (const shiftKey of [false, true]) {
+        fireEvent.keyDown(capture(title), { key: "Enter", shiftKey });
+        expect(screen.getByRole("alert")).toHaveTextContent("Include");
+        expect(h.bindings.resolve("settings")).toBeUndefined();
+      }
+      let dispatched = 0;
+      for (const modifiers of [
+        { mod: true },
+        { mod: true, shift: true },
+        { alt: true },
+        { alt: true, shift: true },
+        { mod: true, alt: true },
+        { mod: true, alt: true, shift: true },
+      ]) {
+        if (dispatched) await user.click(change(title));
+        const event = {
+          key: "Enter",
+          ctrlKey: !apple && !!modifiers.mod,
+          metaKey: apple && !!modifiers.mod,
+          altKey: !!modifiers.alt,
+          shiftKey: !!modifiers.shift,
+        };
+        fireEvent.keyDown(capture(title), event);
+        expect(within(row(title)).getByRole("alert")).toHaveTextContent(
+          "Saved. The message editor handles",
+        );
+        expect(within(row(title)).getByRole("alert")).toHaveClass(
+          "text-warning",
+        );
+        expect(h.bindings.resolve("settings")).toEqual([
+          { key: "Enter", ...modifiers },
+        ]);
+        expect(change(title)).toHaveFocus();
+        expect(h.runs.settings).toHaveBeenCalledTimes(dispatched);
+        expect(fireEvent.keyDown(document.body, event)).toBe(false);
+        expect(h.runs.settings).toHaveBeenCalledTimes(++dispatched);
+      }
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it("ignores AltGraph capture without changing a saved override, then captures and dispatches a non-AltGraph chord", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    h.bindings.set("settings", { key: "u", mod: true });
+    const saved = localStorage.getItem(SHORTCUT_BINDINGS_KEY);
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    const title = "Open Settings";
+    await user.click(change(title));
+    const input = capture(title);
+    // Windows German AltGr+Q reports @ with Control and Alt held.
+    const chord = { key: "@", ctrlKey: true, altKey: true };
+    const altGraph = () =>
+      new KeyboardEvent("keydown", {
+        ...chord,
+        modifierAltGraph: true,
+        bubbles: true,
+        cancelable: true,
+      });
+    const event = altGraph();
+    expect(event.getModifierState("AltGraph")).toBe(true);
+    fireEvent(input, event);
+    expect(capture(title)).toBe(input);
+    expect(input).toHaveFocus();
+    expect(h.bindings.resolve("settings")).toEqual([{ key: "u", mod: true }]);
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe(saved);
+    expect(h.runs.settings).not.toHaveBeenCalled();
+
+    // Control+Alt is still usable when the event is not AltGraph.
+    fireEvent.keyDown(input, chord);
+    expect(change(title)).toHaveFocus();
+    expect(h.bindings.resolve("settings")).toEqual([
+      { key: "@", mod: true, alt: true },
+    ]);
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe(
+      JSON.stringify({ settings: { key: "@", mod: true, alt: true } }),
+    );
+    // The original dispatcher safety guard must still ignore AltGraph even
+    // when its key and modifier flags match a valid saved override exactly.
+    expect(fireEvent(document.body, altGraph())).toBe(true);
+    expect(h.press("u")).toBe(true);
+    expect(h.runs.settings).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(document.body, chord)).toBe(false);
     expect(h.runs.settings).toHaveBeenCalledTimes(1);
   } finally {
     await h.dispose();

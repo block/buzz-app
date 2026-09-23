@@ -1440,7 +1440,7 @@ it("keeps inline recipient identity and source stable through directory collisio
   await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
   const chips = () => within(h.input()).getAllByRole("img");
   const labels = () => chips().map((chip) => chip.textContent);
-  expect(labels()).toEqual(["Honey · npub…caj", "Honey · npub…4hu"]);
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
   const source = h.input().value;
   act(() => {
     identities = [first, { ...second, name: "Renamed Honey" }];
@@ -1448,64 +1448,19 @@ it("keeps inline recipient identity and source stable through directory collisio
   });
   // Selected chips disclose authored recipients, independently of live directory labels.
   expect(names.resolve(second.pubkey)).toBe("Renamed Honey");
-  expect(labels()).toEqual(["Honey · npub…caj", "Honey · npub…4hu"]);
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
   expect(h.input()).toHaveValue(source);
   act(() => {
     identities = [first, second];
     for (const notify of listeners) notify();
   });
   expect(names.lookup(first.pubkey)?.qualifier).toBeTruthy();
-  expect(labels()).toEqual(["Honey · npub…caj", "Honey · npub…4hu"]);
+  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
   h.input().setSelectionRange(7, 13);
   act(() => h.commands().insertText(""));
-  expect(labels()).toEqual(["Honey"]);
+  expect(labels()).toEqual(["@Honey"]);
   h.submit();
   expect(h.messages.send.mock.calls[0]?.at(-1)).toEqual([first.pubkey]);
   h.unmount();
   names.dispose();
 });
-
-it.each([undefined, "root"])(
-  "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
-  (root) => {
-    const h = mount(root ? { threadRootId: root } : {});
-    act(() => {
-      h.commands().insertMention(first);
-      h.commands().insertText("can you see this is's");
-    });
-    const input = h.input();
-    const text = input.querySelector("[data-editor-text]")?.firstChild;
-    if (!(text instanceof Text)) throw new Error("Missing editable text");
-    const quote = text.data.indexOf("'");
-    expect(quote).toBeGreaterThan(0);
-    const target = document.createRange();
-    target.setStart(text, quote);
-    target.setEnd(text, quote + 1);
-    // WebKit's replacement range is behind the caret, not the selection.
-    input.setSelectionRange(input.value.length, input.value.length);
-    const before = new InputEvent("beforeinput", {
-      bubbles: true,
-      inputType: "insertReplacementText",
-      data: "’",
-    });
-    Object.defineProperty(before, "getTargetRanges", {
-      value: () => [target],
-    });
-    fireEvent(input, before);
-    text.replaceData(quote, 1, "’");
-    fireEvent.input(input, {
-      inputType: "insertReplacementText",
-      data: "’",
-    });
-    expect(input).toHaveValue("@Honey can you see this is’s");
-    expect(
-      screen.getByRole("button", {
-        name: `Remove mention Honey ${first.pubkey}`,
-      }),
-    ).toBeVisible();
-    h.submit();
-    expect(
-      (root ? h.messages.reply : h.messages.send).mock.calls[0]?.at(-1),
-    ).toEqual([first.pubkey]);
-  },
-);

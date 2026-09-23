@@ -432,18 +432,24 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     await choose(keys[1]);
     const input = page.getByRole("textbox");
     const chips = input.locator(".inline-chip");
-    const labels = keys.map((key) => `@Honey · npub…${npubEncode(key).slice(-3)}`);
+    const labels = keys.map(
+      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
+    );
     await expect(chips).toHaveText(labels);
     await page.evaluate(() => window.mentionFixture.collide(true));
     await expect(chips).toHaveText(labels);
     for (const chip of await chips.all()) {
       await expect(chip).toBeVisible();
-      expect(await chip.evaluate((el) => {
-        const rect = el.getBoundingClientRect();
-        return rect.left >= 0 && rect.right <= innerWidth;
-      })).toBe(true);
+      expect(
+        await chip.evaluate((el) => {
+          const rect = el.getBoundingClientRect();
+          return rect.left >= 0 && rect.right <= innerWidth;
+        }),
+      ).toBe(true);
     }
-    await page.screenshot({ path: test.info().outputPath("recipient-qualifiers-touch.png") });
+    await page.screenshot({
+      path: test.info().outputPath("recipient-qualifiers-touch.png"),
+    });
     await input.evaluate((el) => el.setSelectionRange(7, 13));
     await input.press("Backspace");
     await expect(chips).toHaveText(["@Honey"]);

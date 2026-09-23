@@ -85,10 +85,9 @@ profiles only on demand, and keeps selected identity spans in scoped drafts.
 Typing a name alone does not notify anyone. Editing a selected span removes its
 notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
-than guess. Even a same-text replacement drops the edited identity. Explicit recipient
-avatars beside the @ tool show who will be notified. Hover or keyboard focus shows
-an × removal cue; removing a recipient leaves the prose intact. Repeated mentions
-of one identity share one avatar. These controls remain available without Mentions.
+than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
+selected together receive visible key qualifiers; editing a selected span removes
+its notification intent. Chips remain available without the Mentions chooser.
 
 After an accepted send, the next draft starts with the exact selected agent-name
 mentions, deduplicated by key. Agent classification uses already-cached profile hints
@@ -357,9 +356,10 @@ broker remains unsupported.
 
 Distinct agent keys with the same displayed name receive a short npub suffix,
 regardless of their profile links. Names are compared after trimming outer
-whitespace, with case preserved. Qualifiers use a middle-dot separator (`Honey · 2abc`) and stay visible beside
-selected recipient avatars, including after a live name change. Unique displayed
-names have no suffix. Collision
+whitespace, with case preserved. Directory qualifiers use a middle-dot separator
+(`Honey · 2abc`). Unique displayed names have no suffix. These display labels are
+not serialized into mentions. The composer retains its existing inline-chip
+qualifiers for selected namesakes, independently of live directory labels. Collision
 checks include hidden library identities and ready native identities in the
 current community, using the same native/inventory/public-profile precedence.
 Name edits update the suffixes; they never merge identities or profile groups.

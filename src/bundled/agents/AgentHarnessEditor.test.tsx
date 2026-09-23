@@ -55,7 +55,7 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   await user.clear(screen.getByRole("textbox", { name: "Executable" }));
   await user.type(
     screen.getByRole("textbox", { name: "Executable" }),
-    "/custom/buzz-agent",
+    "/custom/agent",
   );
   expect(screen.getByRole("textbox", { name: "Custom provider" })).toHaveValue(
     "provider",
@@ -63,7 +63,7 @@ it("keeps custom mode separate from saved values and supports an unset provider"
   await user.click(screen.getByRole("combobox", { name: "Provider" }));
   await user.click(await screen.findByRole("option", { name: "Not set" }));
   expect(screen.getByRole("status")).toHaveTextContent(
-    '{"command":"/custom/buzz-agent","provider":""}',
+    '{"command":"/custom/agent","provider":""}',
   );
 });
 
@@ -219,6 +219,167 @@ it("switching Pi, Goose and Buzz resets incompatible selections and uses each ha
     provider: "databricks_v2",
     model: "",
   });
+});
+
+/* Older pre-install-flow Pi test variant retained only while replaying history.
+it.each(["/opt/homebrew/bin/goose", "C:\\tools\\goose"])(
+  "preserves Goose settings while editing custom executable %s",
+  async (path) => {
+    const f = controlFixture();
+    const user = userEvent.setup();
+    function Example() {
+      const [draft, setDraft] = useState({
+        ...agentDraft(f.agent),
+        command: "/usr/local/bin/goose",
+        args: '["acp"]',
+        provider: "openrouter",
+        model: "m",
+      });
+      return (
+        <>
+          <AgentHarnessEditor
+            draft={draft}
+            options={[
+              {
+                command: "buzz-agent",
+                label: "Buzz Agent",
+                defaultArgs: [],
+                providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+              },
+              {
+                command: "/usr/local/bin/goose",
+                label: "Goose",
+                defaultArgs: ["acp"],
+                providers: [{ value: "openrouter", label: "OpenRouter" }],
+              },
+            ]}
+            onChange={(patch) =>
+              setDraft((current) => ({ ...current, ...patch }))
+            }
+          />
+          <output>{JSON.stringify(draft)}</output>
+        </>
+      );
+    }
+    render(<Example />);
+    await user.click(screen.getByRole("combobox", { name: "Harness" }));
+    await user.click(
+      await screen.findByRole("option", {
+        name: "Custom executable / current value",
+      }),
+    );
+    const executable = screen.getByRole("textbox", { name: "Executable" });
+    await user.clear(executable);
+    await user.type(executable, path);
+    expect(
+      JSON.parse(screen.getByRole("status").textContent ?? ""),
+    ).toMatchObject({
+      command: path,
+      args: '["acp"]',
+      provider: "openrouter",
+      model: "m",
+    });
+    await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+    await user.click(await screen.findByRole("option", { name: "Not set" }));
+    expect(
+      JSON.parse(screen.getByRole("status").textContent ?? ""),
+    ).toMatchObject({
+      provider: "",
+      model: "",
+    });
+  },
+);
+
+it("switching Pi, Goose and Buzz resets incompatible selections and uses each harness arguments", async () => {
+  let current = {
+    ...agentDraft(controlFixture().agent),
+    command: "buzz-agent",
+    provider: "databricks_v2",
+    model: "old",
+    args: "[]",
+  };
+  function Editor() {
+    const [draft, setDraft] = useState(current);
+    current = draft;
+    return (
+      <AgentHarnessEditor
+        draft={draft}
+        options={[
+          {
+            command: "buzz-agent",
+            label: "Buzz Agent",
+            providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+            defaultArgs: [],
+          },
+          {
+            command: "/local/goose",
+            label: "Goose",
+            providers: [],
+            defaultArgs: ["acp"],
+          },
+          {
+            command: "/local/buzz-pi-acp",
+            label: "Pi",
+            providers: [{ value: "anthropic", label: "Anthropic" }],
+            defaultArgs: [],
+          },
+        ]}
+        piProviders={["extension"]}
+        onChange={(patch) => setDraft((d) => ({ ...d, ...patch }))}
+      />
+    );
+  }
+  const user = userEvent.setup();
+  render(<Editor />);
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Pi" }));
+  expect(current).toMatchObject({
+    command: "/local/buzz-pi-acp",
+    args: "[]",
+    provider: "",
+    model: "",
+  });
+  await user.click(screen.getByRole("combobox", { name: "LLM Provider" }));
+  await user.click(await screen.findByRole("option", { name: "extension" }));
+  expect(current.provider).toBe("extension");
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Goose" }));
+  expect(current).toMatchObject({
+    command: "/local/goose",
+    args: '["acp"]',
+    provider: "",
+    model: "",
+  });
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(await screen.findByRole("option", { name: "Buzz Agent" }));
+  expect(current).toMatchObject({
+    command: "buzz-agent",
+    args: "[]",
+    provider: "databricks_v2",
+    model: "",
+  });
+*/
+
+it("hides Provider for Codex, including absolute executables, and restores it for other harnesses", async () => {
+  const f = controlFixture();
+  const draft = { ...agentDraft(f.agent), command: "codex-acp", provider: "" };
+  const props = { options: [], onChange: () => {} };
+  const view = render(<AgentHarnessEditor {...props} draft={draft} />);
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+  view.rerender(
+    <AgentHarnessEditor
+      {...props}
+      draft={{ ...draft, command: "/bin/codex-acp" }}
+    />,
+  );
+  expect(screen.queryByRole("combobox", { name: "Provider" })).toBeNull();
+  view.rerender(
+    <AgentHarnessEditor
+      {...props}
+      draft={{ ...draft, command: "buzz-agent" }}
+    />,
+  );
+  expect(screen.getByRole("combobox", { name: "Provider" })).toBeVisible();
 });
 
 it("disables Pi's provider list while signed-in providers load and keeps the current choice", () => {

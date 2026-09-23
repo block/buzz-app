@@ -33,6 +33,7 @@ import { createSidebarPreferencesStore } from "./sidebar-preferences-store";
 import { createEmojiDirectory } from "./emoji-directory";
 import { createProfileDirectory } from "./profile-directory";
 import { createChannelStore, type ChannelStoreOptions } from "./store";
+import { UploadError } from "./attachments";
 import type { ReadTransport } from "./transport";
 import type { LiveSnapshot, LiveSubscription } from "./live";
 import {
@@ -166,6 +167,11 @@ export function createRelaySession(
 ) {
   let closed = false;
   const lifetime = new AbortController();
+  let uploadLifetime = new AbortController();
+  function cancelUploads() {
+    uploadLifetime.abort();
+    uploadLifetime = new AbortController();
+  }
   const profiling =
     options.profiling ?? transport?.profiling ?? createRelayProfiler();
   const requests = createRelayReader(transport, { profiling });
@@ -201,6 +207,7 @@ export function createRelaySession(
   const views = new Map<() => void, (clear?: boolean) => void>();
   const threads = new Set<ReturnType<typeof createThreadView>>();
   const writer = transport?.writer;
+  const uploadAttachment = transport?.uploadAttachment;
   const writes =
     transport && writer
       ? createOutbox(
@@ -286,6 +293,7 @@ export function createRelaySession(
     revoking++;
     try {
       accessEpoch++;
+      cancelUploads();
       typing.clear();
       // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
       // authoritative access loss cancels them all, not merely explicit #h reads.
@@ -904,6 +912,26 @@ export function createRelaySession(
     sidebarPreferences: sidebarPreferences.queries,
     live,
     profiling,
+    attachments:
+      uploadAttachment && writes?.outbox.supports(9)
+        ? Object.freeze({
+            async upload(file: File, channelId: string, signal: AbortSignal) {
+              const combined = AbortSignal.any([
+                signal,
+                lifetime.signal,
+                uploadLifetime.signal,
+              ]);
+              combined.throwIfAborted();
+              if (!channelId || closed || !channels.canParticipate(channelId))
+                throw new UploadError("denied");
+              const result = await uploadAttachment(file, combined);
+              combined.throwIfAborted();
+              if (!channels.canParticipate(channelId))
+                throw new UploadError("denied");
+              return result;
+            },
+          })
+        : undefined,
     messages: createMessages(
       writes?.outbox,
       transport?.viewer,
@@ -913,7 +941,8 @@ export function createRelaySession(
         retainedEvent(id),
       emoji.tags,
       validateMentions,
-      (id) => channels.canParticipate(id),
+      (id) => !closed && channels.canParticipate(id),
+      transport?.scope,
     ),
     /** An owned bounded thread reader. Dispose on close; the session retains access/lifetime authority. */
     thread(
@@ -1470,6 +1499,7 @@ export function createRelaySession(
     session,
     async clearCache() {
       accessEpoch++;
+      cancelUploads();
       cacheClearEpoch++;
       activity.clear();
       presence.clear();

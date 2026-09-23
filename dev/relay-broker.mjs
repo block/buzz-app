@@ -625,6 +625,7 @@ export function relayBrokerPlugin({
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               workflowReads: true,
+              attachmentUploads: true,
               sidebarPreferences: true,
               readState: true,
               agentLibrary: true,

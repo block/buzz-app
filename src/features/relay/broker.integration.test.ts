@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   brokerSocket,
   openBrokerSocket,
@@ -26,6 +27,9 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
   });
   const events = new Map<string, unknown>();
   let published = 0;
+  let uploaded = 0;
+  const attachmentBytes = new Uint8Array([0, 128, 255]);
+  const hash = createHash("sha256").update(attachmentBytes).digest("hex");
   const socket = brokerSocket(async (event: { id: string }) => {
     published++;
     if (published === 1) await delayed;
@@ -33,6 +37,17 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
     return "";
   });
   const upstream: typeof fetch = async (_input, init) => {
+    if (String(_input).endsWith("/upload")) {
+      uploaded++;
+      expect(new Uint8Array(init?.body as Buffer)).toEqual(attachmentBytes);
+      expect(init?.method).toBe("PUT");
+      return Response.json({
+        url: `${fixtureRelayUrl}/media/${hash}.pdf`,
+        type: "application/pdf",
+        size: 3,
+        sha256: hash,
+      });
+    }
     const body = JSON.parse(init?.body as string);
     return Response.json(
       (body[0]?.ids ?? []).flatMap((id: string) => events.get(id) ?? []),
@@ -75,12 +90,20 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
   try {
     const outbox = owner.session.outbox;
     assert.exists(outbox);
-    const first = owner.session.messages.send("c", "first");
+    assert.exists(owner.session.attachments);
+    const attachment = await owner.session.attachments.upload(
+      new File([attachmentBytes], "report.pdf", { type: "application/pdf" }),
+      "c",
+      new AbortController().signal,
+    );
+    expect(attachment.name).toBe("report.pdf");
+    const first = owner.session.messages.send("c", "first", [], [attachment]);
     await vi.waitFor(() => expect(published).toBe(1), { timeout: 3000 });
     const pending = owner.session.profiling
       .snapshot()
       .find((sample) => sample.stage === "send.publish" && sample.id === first);
     expect(pending).toMatchObject({ outcome: "pending" });
+    expect(uploaded).toBe(1);
     release();
     await vi.waitFor(() => expect(outbox.snapshot()).toHaveLength(0), {
       timeout: 3000,
@@ -101,6 +124,19 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
     assert.exists(secondUpstream);
     expect(firstUpstream.duration).toBeGreaterThan(0);
     expect(secondUpstream.duration).toBeLessThan(firstUpstream.duration);
+    expect(events.get(first)).toMatchObject({
+      content: `first\n\n[report.pdf](<${fixtureRelayUrl}/media/${hash}.pdf>)`,
+      tags: expect.arrayContaining([
+        [
+          "imeta",
+          `url ${fixtureRelayUrl}/media/${hash}.pdf`,
+          "m application/pdf",
+          "size 3",
+          `x ${hash}`,
+          "filename report.pdf",
+        ],
+      ]),
+    });
     expect(
       timings.some(
         (sample) => sample.id === first && sample.stage === "send.sign",

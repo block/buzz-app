@@ -78,9 +78,14 @@ export function useAppNavigation(services: AppServices) {
   if (
     target.kind === "settings" &&
     target.section &&
-    !["profile", "plugins", "appearance", "messages", "notifications"].includes(
-      target.section,
-    ) &&
+    ![
+      "profile",
+      "plugins",
+      "appearance",
+      "shortcuts",
+      "messages",
+      "notifications",
+    ].includes(target.section) &&
     !(developerMode && target.section === "developer")
   )
     failure = "unavailable";

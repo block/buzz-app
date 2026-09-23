@@ -3,7 +3,7 @@ import { expect, it, vi } from "vitest";
 import { ShortcutsService } from "./service";
 import { PluginRuntime } from "../../plugins/runtime";
 import type { PluginInfo } from "../../plugins/types";
-import type { Shortcut } from "./bindings";
+import type { KeyBinding, Shortcut } from "./bindings";
 
 function browser(apple = true) {
   const listeners = new Set<(event: KeyboardEvent) => void>();
@@ -289,4 +289,96 @@ it("accepts the logical Space key but not an empty binding", async () => {
   } finally {
     await root.fiber.dispose();
   }
+});
+
+it("resolves user overrides at match time for plugin and host bindings", async () => {
+  const b = browser(),
+    root = new Context(),
+    calls: string[] = [];
+  const overrides = new Map<string, KeyBinding>();
+  const runtime = new PluginRuntime(root, async (info) => ({
+    inject: ["shortcuts"],
+    apply(ctx) {
+      ctx.shortcuts.register(
+        shortcut(() => {
+          calls.push(`${info.manifest.id}:${info.revision}`);
+        }),
+      );
+    },
+  }));
+  const service = new ShortcutsService(root, b.host, {
+    resolve: (key) => overrides.get(key),
+  });
+  try {
+    runtime.reconcile([plugin("a")]);
+    await vi.waitFor(() => expect(service.snapshot()).toHaveLength(1));
+    // No override: the registered default applies.
+    b.key();
+    expect(calls).toEqual(["a:one"]);
+    overrides.set("a/action", { key: "p", mod: true, shift: true });
+    expect(b.key().defaultPrevented).toBe(false);
+    expect(b.key("p", { shiftKey: true }).defaultPrevented).toBe(true);
+    expect(calls).toEqual(["a:one", "a:one"]);
+    // The plugin never re-registers; the override follows the stable key
+    // across disable, re-enable and replacement.
+    runtime.reconcile([]);
+    await vi.waitFor(() => expect(service.snapshot()).toHaveLength(0));
+    expect(b.key("p", { shiftKey: true }).defaultPrevented).toBe(false);
+    runtime.reconcile([plugin("a", "two")]);
+    await vi.waitFor(() => expect(service.snapshot()).toHaveLength(1));
+    b.key("p", { shiftKey: true });
+    expect(calls.at(-1)).toBe("a:two");
+    expect(service.snapshot()[0]?.binding).toEqual([{ key: "k", mod: true }]);
+    // A host binding's overridden chord is the reserved one.
+    const hostRun = vi.fn();
+    const remove = service.registerHost({
+      ...shortcut(hostRun),
+      id: "host-action",
+      binding: { key: "h", mod: true },
+    });
+    overrides.set("host-action", { key: "p", mod: true, shift: true });
+    b.key("p", { shiftKey: true });
+    expect(hostRun).toHaveBeenCalledTimes(1);
+    expect(calls).toHaveLength(3);
+    expect(b.key("h").defaultPrevented).toBe(false);
+    overrides.delete("host-action");
+    b.key("h");
+    expect(hostRun).toHaveBeenCalledTimes(2);
+    b.key("p", { shiftKey: true });
+    expect(calls).toHaveLength(4);
+    remove();
+  } finally {
+    await runtime.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("exposes host bindings to the host with change notifications", async () => {
+  const b = browser(),
+    ctx = new Context();
+  ctx.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const service = new ShortcutsService(ctx, b.host);
+  const listener = vi.fn();
+  const stop = service.hostSubscribe(listener);
+  expect(service.hostSnapshot()).toEqual([]);
+  const remove = service.registerHost(shortcut());
+  expect(listener).toHaveBeenCalledTimes(1);
+  const registered = service.hostSnapshot();
+  expect(registered.map((entry) => entry.id)).toEqual(["action"]);
+  expect(registered[0]?.binding).toEqual([{ key: "k", mod: true }]);
+  expect(service.snapshot()).toEqual([]);
+  remove();
+  remove();
+  expect(listener).toHaveBeenCalledTimes(2);
+  expect(service.hostSnapshot()).toEqual([]);
+  expect(service.hostSnapshot()).not.toBe(registered);
+  stop();
+  service.registerHost(shortcut());
+  expect(listener).toHaveBeenCalledTimes(2);
+  expect(service.hostSnapshot()).toHaveLength(1);
+  await ctx.fiber.dispose();
+  expect(service.hostSnapshot()).toEqual([]);
 });

@@ -515,5 +515,23 @@ self-contained external plugin using the real service without a DOM listener.
 The generated type-only `@buzz/author` exports `Shortcuts`, `Shortcut`, `KeyBinding`
 and `RegisteredShortcut`. This is a host-matched preview: older hosts without the
 `shortcuts` capability cannot activate such a plugin. `apiVersion: 1` alone is not
-runtime feature negotiation. Chords, user rebinding, conflict UI and command palettes
-are outside this initial contract.
+runtime feature negotiation. Multi-key chord sequences and command palettes are
+outside this initial contract.
+
+Users can rebind any registered shortcut in Settings → Shortcuts without plugin
+changes. The page lists host bindings and every active plugin contribution from the
+dispatcher's own `hostSnapshot`/`snapshot` registries, grouped by owner, so it
+cannot drift from what fires. Overrides live in the host-owned device-local
+`buzz-shortcut-bindings.v1` preference, keyed by the registry identity the
+dispatcher already uses: the bare id for host bindings and `pluginId/id` for plugin
+contributions. The dispatcher resolves the effective binding at match time, so a
+plugin keeps registering its default and never sees, stores or re-registers for
+an override; the override follows the plugin across disable, re-enable and
+replacement, and an override whose owner is no longer installed is ignored rather
+than deleted. Rebinding replaces an alias set with the single chosen chord; reset
+restores every alias. Host chords stay reserved: the page refuses to assign a chord
+that another listed shortcut already uses, host or plugin, and warns when a chord
+is one the message editor handles locally. `formatBinding` in
+`features/shortcuts/format.ts` renders any `KeyBinding` for the current platform;
+plugins that print their own hint (the bundled terminal does) show their registered
+default because overrides are host state.

@@ -245,3 +245,64 @@ test("a shadow-root modal blocks Settings and plugin bindings but allows text zo
   await page.keyboard.press(`${modifier}+Shift+k`);
   await expect(page.getByRole("status")).toHaveText("Shortcut count: 1");
 });
+
+test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflicts, persists and resets", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  const modifier = await mod(page);
+  const title = "Increment shortcut counter";
+  await button(page, "Shortcut counter").first().click();
+  const count = page.getByRole("status");
+  await expect(count).toHaveText("Shortcut count: 0");
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await expect(count).toHaveText("Shortcut count: 1");
+  await page.keyboard.press(`${modifier}+,`);
+  await button(page, "Shortcuts").click();
+  const region = page.getByRole("region", { name: "Shortcuts", exact: true });
+  await expect(
+    region.getByRole("heading", { name: "Shortcut counter", exact: true }),
+  ).toBeVisible();
+  const row = region.getByRole("article", { name: title });
+  await expect(row.getByText(/Shift (Command|Control) K/)).toBeAttached();
+  await button(row, `Change shortcut for ${title}`).click();
+  const listening = page.getByRole("textbox", {
+    name: `New shortcut for ${title}`,
+  });
+  await expect(listening).toBeFocused();
+  // The chord being listened for goes to the capture control, not the dispatcher.
+  await page.keyboard.press(`${modifier}+k`);
+  await expect(row.getByRole("alert")).toContainText("Search Buzz");
+  await expect(
+    page.getByRole("dialog", { name: "Search Buzz", includeHidden: true }),
+  ).toHaveCount(0);
+  await expect(listening).toBeFocused();
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await expect(listening).toHaveCount(0);
+  await expect(row.getByText("Modified")).toBeVisible();
+  await expect(row.getByText(/Shift (Command|Control) U/)).toBeAttached();
+  await expect(button(row, `Reset shortcut for ${title}`)).toBeVisible();
+  await expect(button(row, `Change shortcut for ${title}`)).toBeFocused();
+  await button(page, "Shortcut counter").first().click();
+  await expect(count).toHaveText("Shortcut count: 1");
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await expect(count).toHaveText("Shortcut count: 2");
+  await page.reload();
+  await button(page, "Shortcut counter").first().click();
+  await expect(count).toHaveText("Shortcut count: 0");
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await expect(count).toHaveText("Shortcut count: 1");
+  await page.keyboard.press(`${modifier}+,`);
+  await button(page, "Shortcuts").click();
+  await button(row, `Reset shortcut for ${title}`).click();
+  await expect(row.getByText("Modified")).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "Reset all shortcuts", exact: true }),
+  ).toBeDisabled();
+  await button(page, "Shortcut counter").first().click();
+  await page.keyboard.press(`${modifier}+Shift+u`);
+  await page.keyboard.press(`${modifier}+Shift+k`);
+  await expect(count).toHaveText("Shortcut count: 2");
+});

@@ -36,18 +36,7 @@ export function normalizeShortcut(shortcut: Shortcut): Shortcut {
   const bindings = Array.isArray(shortcut.binding)
     ? shortcut.binding
     : [shortcut.binding];
-  if (
-    !bindings.length ||
-    bindings.some(
-      (binding) =>
-        !binding ||
-        typeof binding.key !== "string" ||
-        binding.key.length === 0 ||
-        [binding.mod, binding.shift, binding.alt].some(
-          (value) => value !== undefined && typeof value !== "boolean",
-        ),
-    )
-  )
+  if (!bindings.length || !bindings.every(isKeyBinding))
     throw new Error("Invalid shortcut binding");
   return Object.freeze({
     ...shortcut,
@@ -57,14 +46,35 @@ export function normalizeShortcut(shortcut: Shortcut): Shortcut {
   });
 }
 
+/** Shape check shared by registration and stored user overrides. */
+export function isKeyBinding(value: unknown): value is KeyBinding {
+  if (!value || typeof value !== "object") return false;
+  const binding = value as Record<string, unknown>;
+  return (
+    typeof binding.key === "string" &&
+    binding.key.length > 0 &&
+    [binding.mod, binding.shift, binding.alt].every(
+      (flag) => flag === undefined || typeof flag === "boolean",
+    )
+  );
+}
+
+/** Same chord under the dispatcher's rules: case-insensitive key, exact modifiers. */
+export function sameBinding(a: KeyBinding, b: KeyBinding) {
+  return (
+    a.key.toLowerCase() === b.key.toLowerCase() &&
+    !!a.mod === !!b.mod &&
+    !!a.shift === !!b.shift &&
+    !!a.alt === !!b.alt
+  );
+}
+
 export function matches(
-  shortcut: Shortcut,
+  candidates: KeyBinding | readonly KeyBinding[],
   event: KeyboardEvent,
   apple: boolean,
 ) {
-  const bindings = Array.isArray(shortcut.binding)
-    ? shortcut.binding
-    : [shortcut.binding];
+  const bindings = Array.isArray(candidates) ? candidates : [candidates];
   return bindings.some(
     (binding) =>
       binding.key.toLowerCase() === event.key.toLowerCase() &&

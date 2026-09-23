@@ -117,9 +117,24 @@ font size by the scale again. Use unitless or scaled line-height so enlarged tex
 does not overlap. Independent plugins that hard-code sizes and third-party shadow
 widgets need their own adapter; this is not a forced CSS rewrite of arbitrary code.
 
+Settings → Shortcuts lists every host and active plugin shortcut from the live
+dispatcher, grouped by owner, with search, per-row Change/Reset and Reset all. It
+is built from existing components (`SearchField`, `Button`, `NavigationSection`,
+the Plugins-list row pattern) and `formatBinding`, which renders chords as glyphs
+in Control, Option, Shift, Command order on Apple platforms (⇧⌘K) and as words
+elsewhere (Ctrl+Shift+K), with a plain-words accessible label. Two pieces are
+provisional and await a design pass: the key-combo `<kbd>` chip
+(`src/features/shortcuts/KeyCombo.tsx`) and the inline key-capture control
+(`src/features/shortcuts/KeyCaptureControl.tsx`). Both are deliberately
+black-and-white on standard text, surface, border and radius tokens, live outside
+`src/shared/design-system/ui/`, and are marked with a `DESIGN PASS PENDING` file
+comment and `data-design-pass="pending"` on their root so they are greppable.
+
 `tests/browser/shortcuts.spec.mjs` covers real key dispatch to Settings and actual
 message/composer text, draft/node preservation, reset/limits/reload, modal/editor/
-Shadow DOM guards, and the independent example's disable/re-enable path. These
+Shadow DOM guards, the independent example's disable/re-enable path, and rebinding
+that example's shortcut from Settings → Shortcuts (host conflict refused, new chord
+fires, old chord does not, persists across reload, reset restores). These
 Chromium/WebKit checks use a fixture broker, not native menu accelerators. An
 attended desktop shortcut try remains necessary for native acceptance.
 

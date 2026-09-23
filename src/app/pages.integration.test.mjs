@@ -249,4 +249,4 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       Object.defineProperty(globalThis, "localStorage", originalStorage);
     else delete globalThis.localStorage;
   }
-}, 15_000);
+});

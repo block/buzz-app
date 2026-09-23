@@ -252,6 +252,8 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
 }) => {
   await page.goto(app.origin);
   const modifier = await mod(page);
+  const spokenModifiers =
+    modifier === "Meta" ? "Shift Command" : "Control Shift";
   const title = "Increment shortcut counter";
   await button(page, "Shortcut counter").first().click();
   const count = page.getByRole("status");
@@ -271,7 +273,9 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
     region.getByRole("article", { name: "Go forward", exact: true }),
   ).toHaveCount(1);
   const row = region.getByRole("article", { name: title });
-  await expect(row.getByText(/Shift (Command|Control) K/)).toBeAttached();
+  await expect(
+    row.getByText(`${spokenModifiers} K`, { exact: true }),
+  ).toBeAttached();
   await button(row, `Change shortcut for ${title}`).click();
   const listening = page.getByRole("textbox", {
     name: `New shortcut for ${title}`,
@@ -287,7 +291,9 @@ test("Settings → Shortcuts rebinds a plugin shortcut live, blocks host conflic
   await page.keyboard.press(`${modifier}+Shift+u`);
   await expect(listening).toHaveCount(0);
   await expect(row.getByText("Modified")).toBeVisible();
-  await expect(row.getByText(/Shift (Command|Control) U/)).toBeAttached();
+  await expect(
+    row.getByText(`${spokenModifiers} U`, { exact: true }),
+  ).toBeAttached();
   await expect(button(row, `Reset shortcut for ${title}`)).toBeVisible();
   await expect(button(row, `Change shortcut for ${title}`)).toBeFocused();
   await button(page, "Shortcut counter").first().click();

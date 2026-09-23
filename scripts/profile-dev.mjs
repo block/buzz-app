@@ -130,10 +130,7 @@ function signal(child, name) {
   if (!child.pid || child.exitCode !== null || child.signalCode !== null)
     return;
   try {
-    const desktopLauncher = child.spawnargs?.includes(
-      "scripts/desktop-dev.mjs",
-    );
-    process.kill(desktopLauncher ? child.pid : -child.pid, name);
+    process.kill(-child.pid, name);
   } catch (error) {
     if (error.code !== "ESRCH") throw error;
   }
@@ -186,10 +183,7 @@ function waitForExit(child, timeoutMs) {
 
 async function stopChildren() {
   for (const child of children) signal(child, "SIGINT");
-  await Promise.race([
-    Promise.all([...children].map((child) => waitForExit(child, 30_000))),
-    new Promise((resolve) => setTimeout(resolve, 30_000)),
-  ]);
+  await Promise.all([...children].map((child) => waitForExit(child, 30_000)));
   for (const child of children) signal(child, "SIGTERM");
 }
 
@@ -214,34 +208,86 @@ function stopController() {
   return { abort, requested };
 }
 
-function vitePort(values) {
+export function normalizeWebViteArgs(values) {
+  const normalized = [];
+  let port = 1430;
+  let sawPort = false;
   for (let index = 0; index < values.length; index++) {
-    if (values[index] === "--port") return Number(values[index + 1]);
-    if (values[index].startsWith("--port="))
-      return Number(values[index].slice(7));
-  }
-  return 1430;
-}
-
-async function waitForServer(url, child, signal) {
-  const deadline = Date.now() + 30_000;
-  while (Date.now() < deadline) {
-    signal.throwIfAborted();
-    if (child.exitCode !== null)
-      throw new Error(`Vite exited before ${url} became ready.`);
-    try {
-      const response = await fetch(url, { signal });
-      if (response.ok) return;
-    } catch (error) {
-      if (signal.aborted) throw error;
+    const value = values[index];
+    if (value === "--")
+      throw new Error("Web profiling does not accept Vite arguments after --.");
+    if (value === "--port") {
+      if (sawPort)
+        throw new Error("Web profiling accepts only one --port option.");
+      sawPort = true;
+      port = Number(values[++index]);
+      continue;
     }
-    await new Promise((resolve) => setTimeout(resolve, 150));
+    if (value.startsWith("--port=")) {
+      if (sawPort)
+        throw new Error("Web profiling accepts only one --port option.");
+      sawPort = true;
+      port = Number(value.slice(7));
+      continue;
+    }
+    if (
+      value === "--strictPort" ||
+      value === "--no-strictPort" ||
+      value.startsWith("--strictPort=")
+    ) {
+      if (value !== "--strictPort")
+        throw new Error("Web profiling requires --strictPort.");
+      continue;
+    }
+    normalized.push(value);
   }
-  throw new Error(`Timed out waiting for ${url}.`);
+  if (!Number.isInteger(port) || port < 1 || port > 65535)
+    throw new Error("--port must be an integer between 1 and 65535.");
+  return {
+    port,
+    args: [...normalized, "--port", String(port), "--strictPort"],
+  };
 }
 
-function safeUrl(value) {
+async function waitForViteReady(url, child, signal) {
+  await new Promise((resolve, reject) => {
+    let output = "";
+    const onData = (chunk) => {
+      output = `${output}${chunk}`;
+      if (output.includes(`Local:   ${url}/`)) finish(resolve);
+      else if (/Port \d+ is (?:already )?in use/.test(output))
+        finish(() => reject(new Error(`Vite could not bind ${url}.`)));
+      if (output.length > 16_384) output = output.slice(-8_192);
+    };
+    const onExit = () =>
+      finish(() =>
+        reject(new Error(`Vite exited before ${url} became ready.`)),
+      );
+    const onAbort = () =>
+      finish(() =>
+        reject(new DOMException("Profiling startup cancelled.", "AbortError")),
+      );
+    const finish = (settle) => {
+      child.stdout.off("data", onData);
+      child.stderr.off("data", onData);
+      child.off("exit", onExit);
+      signal.removeEventListener("abort", onAbort);
+      settle();
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.once("exit", onExit);
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+  const response = await fetch(url, { signal });
+  if (!response.ok)
+    throw new Error(`Vite at ${url} returned ${response.status}.`);
+}
+
+export function safeUrl(value) {
   const url = new URL(value);
+  if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol))
+    return `${url.protocol}<redacted>`;
   return `${url.origin}${url.pathname}`;
 }
 
@@ -378,15 +424,9 @@ export function networkRecorder(session, directory) {
   };
 }
 
-export function webViteArgs(values) {
-  return values.includes("--strictPort") ? values : [...values, "--strictPort"];
-}
-
 async function profileWeb({ directory, profileArgs, args, network }) {
-  const port = vitePort(args);
-  if (!Number.isInteger(port) || port < 1 || port > 65535)
-    throw new Error("--port must be an integer between 1 and 65535.");
-  const url = `http://localhost:${port}`;
+  const vite = normalizeWebViteArgs(args);
+  const url = `http://localhost:${vite.port}`;
   await recordManifest(directory, "web", profileArgs, {
     coverage: [
       "chromium-renderer",
@@ -397,27 +437,25 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   });
 
   const control = stopController();
-  const cancelled = control.requested.then(() => {
-    throw new DOMException("Profiling startup cancelled.", "AbortError");
-  });
   const nodeOptions = [process.env.NODE_OPTIONS, "--inspect=127.0.0.1:0"]
     .filter(Boolean)
     .join(" ");
-  const vite = run(
+  const viteProcess = run(
     process.execPath,
-    ["node_modules/vite/bin/vite.js", ...webViteArgs(args)],
+    ["node_modules/vite/bin/vite.js", ...vite.args],
     {
       env: { ...process.env, NODE_OPTIONS: nodeOptions },
       stdio: ["inherit", "pipe", "pipe"],
     },
   );
-  const inspectorUrl = waitForInspector(vite);
+  const inspectorUrl = waitForInspector(viteProcess);
+  void inspectorUrl.catch(() => {});
   const viteExit = new Promise((resolve) =>
-    vite.once("exit", (code, signal) =>
+    viteProcess.once("exit", (code, signal) =>
       resolve({ reason: "vite", code: code ?? (signal ? 1 : 0) }),
     ),
   );
-  mirror(vite);
+  mirror(viteProcess);
 
   let browser;
   let session;
@@ -429,11 +467,9 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   let outcome;
   const failures = [];
   try {
-    await waitForServer(url, vite, control.abort.signal);
+    await waitForViteReady(url, viteProcess, control.abort.signal);
     control.abort.signal.throwIfAborted();
-    nodeProfiler = inspectorClient(
-      await Promise.race([inspectorUrl, cancelled]),
-    );
+    nodeProfiler = inspectorClient(await inspectorUrl);
     await nodeProfiler.send("Profiler.enable");
     await nodeProfiler.send("Profiler.setSamplingInterval", { interval: 1000 });
     await nodeProfiler.send("Profiler.start");
@@ -447,11 +483,17 @@ async function profileWeb({ directory, profileArgs, args, network }) {
       handleSIGINT: false,
       handleSIGTERM: false,
     });
-    void browserLaunch.then((launched) => {
+    const lateBrowserCleanup = browserLaunch.then(async (launched) => {
       if (control.abort.signal.aborted && launched !== browser)
-        return launched.close();
+        await launched.close();
+      return launched;
     });
-    browser = await Promise.race([browserLaunch, cancelled]);
+    browser = await Promise.race([
+      lateBrowserCleanup,
+      control.requested.then(() => undefined),
+    ]);
+    if (!browser)
+      throw new DOMException("Profiling startup cancelled.", "AbortError");
     control.abort.signal.throwIfAborted();
     const page = await browser.newPage();
     session = await page.context().newCDPSession(page);
@@ -567,9 +609,9 @@ async function profileDesktop({ directory, profileArgs, args }) {
     throw new Error("Desktop profiling owns Tauri's --runner option.");
   const trace = `${directory}/desktop-time-profile.trace`;
   await recordManifest(directory, "desktop", profileArgs, {
-    coverage: ["launched-desktop-application"],
+    coverage: ["launched-desktop-native-application"],
     caveat:
-      "Instruments launches and records the Buzz application process instead of all macOS processes. JavaScriptCore stacks may not resolve to application JavaScript.",
+      "Instruments launches and samples the Buzz native parent process only, not all macOS processes. WebKit subprocesses and the Vite broker are outside this trace; JavaScriptCore stacks may not resolve to application JavaScript.",
   });
   const control = stopController();
   const runner = fileURLToPath(
@@ -577,8 +619,8 @@ async function profileDesktop({ directory, profileArgs, args }) {
   );
   const desktop = run(
     process.execPath,
-    ["scripts/desktop-dev.mjs", "--runner", runner, ...args],
-    { env: { ...process.env, BUZZ_PROFILE_TRACE: trace }, detached: false },
+    ["scripts/desktop-dev.mjs", "--runner", runner, "--no-watch", ...args],
+    { env: { ...process.env, BUZZ_PROFILE_TRACE: trace } },
   );
   const desktopExit = new Promise((resolve) =>
     desktop.once("exit", (code, signal) =>

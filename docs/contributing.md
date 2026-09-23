@@ -68,8 +68,10 @@ need their own validation.
   override it; keep their development URL and frontend command consistent. Use `--`
   before runner/application arguments if they contain their own `--port` flag.
   On macOS, `just desktop profile` uses Instruments' Time Profiler to launch and
-  record only the Buzz application process, not every process on the desktop. Press
-  Ctrl+C to finalize and validate the trace; the command prints the saved `.trace`
+  record only the Buzz native parent process, not every process on the desktop.
+  WebKit subprocesses and the Vite broker are outside this native trace; use web
+  profiling when renderer/broker CPU coverage is required. Native file watching is
+  disabled during capture. Press Ctrl+C to finalize and validate the trace; the
   path, which opens in Instruments. Use `just profile-clean` to remove all generated
   web and desktop captures.
 - `just design [args...]`: install locked dependencies, start the standalone

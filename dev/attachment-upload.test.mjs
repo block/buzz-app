@@ -187,6 +187,51 @@ test.each([
 );
 
 test.each([
+  [413, "size", 413],
+  [401, "denied", 403],
+  [403, "denied", 403],
+  [429, "capacity", 429],
+  [500, "failed", 502],
+])(
+  "preserves upstream %i with oversized or absent bodies and releases admission",
+  async (status, code, expected) => {
+    let cancelled = 0;
+    let empty = false;
+    const h = await harness(
+      () =>
+        new Response(
+          empty
+            ? null
+            : new ReadableStream({
+                start(controller) {
+                  controller.enqueue(new Uint8Array(8193));
+                },
+                cancel() {
+                  cancelled++;
+                },
+              }),
+          { status },
+        ),
+    );
+    try {
+      for (let i = 0; i < 3; i++) {
+        const response = await h.post();
+        expect(response.status).toBe(expected);
+        expect(await response.json()).toEqual({ code });
+      }
+      expect(cancelled).toBe(3);
+      empty = true;
+      const response = await h.post();
+      expect(response.status).toBe(expected);
+      expect(await response.json()).toEqual({ code });
+      expect(h.calls).toHaveLength(4);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test.each([
   null,
   { size: 99 },
   { sha256: "0".repeat(64) },

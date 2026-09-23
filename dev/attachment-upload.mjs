@@ -65,6 +65,19 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
       },
       body: Buffer.concat(chunks, size),
     });
+    // These statuses do not need error text; cancel rather than read their bodies.
+    const status = response.status;
+    if (!response.ok && ![400, 415, 422].includes(status)) {
+      try {
+        await response.body?.cancel();
+      } catch {
+        // Cleanup failure must not replace a status we already received.
+      }
+      if (status === 413) throw new UploadError("size", 413);
+      if (status === 429) throw new UploadError("capacity", 429);
+      if ([401, 403].includes(status)) throw new UploadError("denied", 403);
+      throw new UploadError("failed", 502);
+    }
     // Bound response bytes, not decoded characters; cancel oversized streams.
     const reader = response.body?.getReader();
     if (!reader) throw new UploadError("invalid", 502);
@@ -83,15 +96,8 @@ export async function uploadAttachment(req, relay, key, fetchUpstream, signal) {
     }
     bounded.throwIfAborted();
     const text = Buffer.concat(parts).toString("utf8");
-    if (!response.ok) {
-      const status = response.status;
-      if ([400, 415, 422].includes(status))
-        throw new UploadError(/metadata/i.test(text) ? "metadata" : "rejected");
-      if (status === 413) throw new UploadError("size", 413);
-      if (status === 429) throw new UploadError("capacity", 429);
-      if ([401, 403].includes(status)) throw new UploadError("denied", 403);
-      throw new UploadError("failed", 502);
-    }
+    if (!response.ok)
+      throw new UploadError(/metadata/i.test(text) ? "metadata" : "rejected");
     let v, url;
     try {
       v = JSON.parse(text);

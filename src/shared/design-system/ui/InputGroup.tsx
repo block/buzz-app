@@ -5,21 +5,14 @@ export function InputGroup({
   children,
   leading,
   trailing,
-  shape = "control",
   ...props
 }: Omit<ComponentProps<"div">, "className"> & {
   children?: ReactNode;
   leading?: ReactNode;
   trailing?: ReactNode;
-  shape?: "control" | "panel";
 }) {
   return (
-    <div
-      {...props}
-      data-buzz-ui=""
-      className="buzz-input-group"
-      data-shape={shape}
-    >
+    <div {...props} data-buzz-ui="" className="buzz-input-group">
       {leading && <span className="buzz-input-leading">{leading}</span>}
       {children}
       {trailing !== undefined && (

@@ -98,7 +98,7 @@ test("fields connect labels, help and errors and keep textarea edits controlled"
   }
   render(<Example />);
   const title = screen.getByRole("textbox", { name: "Title" });
-  expect(title).toHaveAccessibleDescription(/A short name/);
+  expect(screen.queryByText("A short name")).not.toBeInTheDocument();
   expect(title).toHaveAccessibleDescription(/Name required/);
   expect(title).toHaveAttribute("aria-invalid", "true");
   const description = screen.getByRole("textbox", { name: "Description" });
@@ -478,6 +478,30 @@ test.each(["disabled", "late-mounted"])(
   },
 );
 
+test("field errors replace help until recovery without losing the entered value", async () => {
+  const user = userEvent.setup();
+  function Example({ error }: { error?: string }) {
+    return (
+      <Field label="Project" description="Use a short name." error={error}>
+        <Input defaultValue="Studio" />
+      </Field>
+    );
+  }
+  const { rerender } = render(<Example />);
+  const input = screen.getByRole("textbox", { name: "Project" });
+  expect(input).toHaveAccessibleDescription("Use a short name.");
+  await user.type(input, " project");
+  rerender(<Example error="That name is already in use." />);
+  expect(screen.queryByText("Use a short name.")).not.toBeInTheDocument();
+  expect(input).toHaveAccessibleDescription("That name is already in use.");
+  expect(input).toHaveAttribute("aria-invalid", "true");
+  rerender(<Example />);
+  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(input).toHaveAccessibleDescription("Use a short name.");
+  expect(input).not.toHaveAttribute("aria-invalid", "true");
+  expect(input).toHaveValue("Studio project");
+});
+
 test("search connects errors and disables clear in read-only mode", async () => {
   const user = userEvent.setup();
   const change = vi.fn();
@@ -492,9 +516,7 @@ test("search connects errors and disables clear in read-only mode", async () => 
     />,
   );
   const input = screen.getByRole("searchbox", { name: "Search records" });
-  expect(input).toHaveAccessibleDescription(
-    /Filter the list.*Search is unavailable/,
-  );
+  expect(input).toHaveAccessibleDescription("Search is unavailable.");
   expect(input).toHaveAttribute("aria-invalid", "true");
   const clear = screen.getByRole("button", { name: "Clear search records" });
   expect(clear).toBeDisabled();

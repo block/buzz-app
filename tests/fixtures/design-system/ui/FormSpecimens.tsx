@@ -102,7 +102,7 @@ export function TextareaExamples() {
     <div className="component-specimen-stack">
       <FormExample
         title="Textarea states"
-        description="Multiple lines of prose retain manual vertical resizing. Code uses the existing mono variant."
+        description="Multiple lines of prose retain manual vertical resizing. The resize grip sits inside the rounded corner. Code uses the existing mono variant."
       >
         <Field
           label="Description"
@@ -144,7 +144,7 @@ export function TextareaExamples() {
 
 export function SearchExamples() {
   const [query, setQuery] = useState("");
-  const [navigator, setNavigator] = useState("design");
+  const [filled, setFilled] = useState("design");
   const [invalid, setInvalid] = useState("unknown");
   return (
     <div className="component-specimen-stack">
@@ -168,11 +168,10 @@ export function SearchExamples() {
             .join(" · ") || "No workspaces match. Try a different name."}
         </p>
         <SearchField
-          label="Navigator search"
-          variant="navigator"
-          value={navigator}
-          onValueChange={setNavigator}
-          description="The existing navigator shape uses the panel radius."
+          label="Filled search"
+          value={filled}
+          onValueChange={setFilled}
+          description="Clear the query to start a new search."
         />
         <SearchField
           label="Read-only search"

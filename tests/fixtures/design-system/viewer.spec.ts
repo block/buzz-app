@@ -647,7 +647,9 @@ test("invalid input and textarea boundaries remain visible in both themes", asyn
     await expect(controls).toHaveCount(2);
     for (const control of await controls.all()) {
       await expect(control).toHaveAttribute("aria-invalid", "true");
-      await expect(control).toHaveCSS("box-shadow", /0px 0px 0px 1px inset/);
+      await expect(control).toHaveCSS("border-top-width", "1px");
+      await expect(control).toHaveCSS("border-top-style", "solid");
+      await expect(control).toHaveCSS("box-shadow", "none");
       const ratio = await control.evaluate((element) => {
         const style = getComputedStyle(element);
         const luminance = (color: string) => {
@@ -666,10 +668,7 @@ test("invalid input and textarea boundaries remain visible in both themes", asyn
           const [red = 0, green = 0, blue = 0] = linear;
           return red * 0.2126 + green * 0.7152 + blue * 0.0722;
         };
-        const strokeColor = style.boxShadow.match(/rgba?\([^)]+\)/)?.[0];
-        if (!strokeColor)
-          throw new Error(`Missing inset stroke: ${style.boxShadow}`);
-        const border = luminance(strokeColor);
+        const border = luminance(style.borderTopColor);
         const background = luminance(style.backgroundColor);
         return (
           (Math.max(border, background) + 0.05) /
@@ -1286,4 +1285,101 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
     .getByRole("link", { name: "Button", exact: true })
     .click();
   await expect(region).toHaveCount(0); // Leaving the owner clears the stack.
+});
+
+// Real engines own transition presence, filtering, portal dismissal, and focus.
+test("form choice popups settle, retain exit presence, and respect immediate motion", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/forms`);
+  // Select retains a hidden portal to measure labels; Combobox unmounts it.
+  // Both must remove the active surface after its exit completes.
+  const popup = page.locator(
+    ".buzz-select-positioner:not([hidden]) .buzz-select-popup",
+  );
+  await page.evaluate(() => {
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.matches(".buzz-select-popup")
+        )
+          return;
+        for (const animation of event.target.getAnimations()) animation.pause();
+      },
+      true,
+    );
+  });
+  const finish = () =>
+    page.evaluate(() => {
+      for (const animation of document.getAnimations()) animation.finish();
+    });
+  const paused = () =>
+    expect
+      .poll(() =>
+        popup.evaluate((el) =>
+          el
+            .getAnimations()
+            .some((animation) => animation.playState === "paused"),
+        ),
+      )
+      .toBe(true);
+  try {
+    for (const name of ["Destination", "Searchable destination"]) {
+      await page.emulateMedia({ reducedMotion: "no-preference" });
+      const field = page.getByRole("combobox", { name, exact: true }).first();
+      await field.click();
+      await paused();
+      await expect(popup).toHaveCSS(
+        "transition-duration",
+        "0.15s, 0.15s, 0.15s",
+      );
+      const frames = await popup.evaluate((el) =>
+        el
+          .getAnimations()
+          .flatMap((animation) =>
+            (animation.effect as KeyframeEffect).getKeyframes(),
+          ),
+      );
+      expect(frames.some((frame) => frame.filter === "blur(4px)")).toBe(true);
+      expect(
+        frames.some(
+          (frame) =>
+            typeof frame.transform === "string" &&
+            /translateY\(-?4px\)/.test(frame.transform),
+        ),
+      ).toBe(true);
+      await finish();
+      await expect(popup).toHaveCSS("filter", "blur(0px)");
+      await expect(popup).toHaveCSS("opacity", "1");
+      await page.getByRole("option", { name: /^Product team/ }).click();
+      await expect(popup).toHaveAttribute("data-ending-style", "");
+      await paused();
+      await expect(popup).toHaveCSS("transition-duration", "0.12s");
+      await finish();
+      await expect(popup).toHaveCount(0);
+      await expect(field).toBeFocused();
+
+      await page.keyboard.press("Tab");
+      await field.focus();
+      await field.press("ArrowDown");
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await field.click();
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await expect(popup).toHaveCSS("transform", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+    }
+  } finally {
+    await finish();
+  }
 });

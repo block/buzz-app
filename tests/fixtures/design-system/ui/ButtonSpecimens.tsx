@@ -169,9 +169,7 @@ export function ButtonSpecimen() {
               <Button>
                 Continue <ArrowRightIcon aria-hidden="true" />
               </Button>
-              <Button variant="outline" aria-invalid="true">
-                Choose a workspace
-              </Button>
+              <Button variant="outline">Choose a workspace</Button>
             </div>
             <div className="max-w-48">
               <Button>

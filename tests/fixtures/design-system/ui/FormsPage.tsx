@@ -98,7 +98,7 @@ export function FormsPage() {
       <div className="form-doc-preview" data-narrow={narrow}>
         <FormExample
           title="Controls together"
-          description="14px body text, 40px minimum control size, 16px text inset, 8px icon gap, and 12px control corners. Fields use a subtle inset fill and an inset focus stroke (150ms for pointer, immediate for keyboard). Controls can grow with larger text or wrapped values."
+          description="14px body text, 40px minimum control size, 16px text inset, 8px icon gap, and 12px control corners. Fields use a subtle inset fill and a perimeter focus stroke (150ms for pointer, immediate for keyboard). Controls can grow with larger text or wrapped values."
         >
           <Field label="Name">
             <div className="form-doc-input-action">
@@ -165,8 +165,13 @@ export function FormsPage() {
             asynchronous status to the field.
           </li>
           <li>
+            Errors replace secondary helper text until resolved. The outer field
+            owns the error stroke; browse and clear buttons keep their normal
+            appearance.
+          </li>
+          <li>
             Outer focus outlines remain hidden. Shared fields fade their active
-            zero-blur inset stroke in and out over 150ms with ease, with one
+            1px perimeter stroke in and out over 150ms with ease, with one
             stroke around composite controls. Keyboard focus and reduced motion
             make this immediate. Navigation and focus restoration remain intact.
           </li>
@@ -182,7 +187,9 @@ export function FormsPage() {
           <li>
             Use the shared floating surface for choices. Keep selected,
             highlighted, unavailable, loading, no-match, and failure states
-            distinct.
+            distinct. Select and Combobox popups fade, move 4px, and unblur over
+            150ms, with a 120ms exit. Keyboard navigation and reduced motion
+            make this immediate.
           </li>
           <li>
             Keep parsing, network requests, retry/cancel, and custom-value
@@ -201,8 +208,8 @@ export function FormsPage() {
           Select field metadata: description, error, name, required, readOnly,
           placeholder; options may be disabled. Combobox.Control accepts
           description and error; set readOnly/disabled on Combobox.Root.
-          SearchField accepts description/error and retains its
-          default/navigator variants.
+          SearchField accepts description/error and uses the same 12px control
+          corners as other fields.
         </p>
       </section>
       <section className="form-doc-guidance">

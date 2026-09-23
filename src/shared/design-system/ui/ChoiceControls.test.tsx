@@ -104,7 +104,7 @@ it("filters and selects through the real shared combobox", async () => {
   expect(screen.queryByRole("listbox")).not.toBeInTheDocument();
 });
 
-it("connects Select errors and help to the trigger and submits its named value", async () => {
+it("prioritizes Select errors over help and submits its named value", async () => {
   const user = userEvent.setup();
   render(
     <form aria-label="Example">
@@ -122,9 +122,7 @@ it("connects Select errors and help to the trigger and submits its named value",
   );
   const input = screen.getByRole("combobox", { name: "Destination" });
   expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(input).toHaveAccessibleDescription(
-    /Choose a workspace.*That workspace is unavailable/,
-  );
+  expect(input).toHaveAccessibleDescription("That workspace is unavailable.");
   expect(
     new FormData(screen.getByRole("form") as HTMLFormElement).get(
       "destination",
@@ -134,7 +132,7 @@ it("connects Select errors and help to the trigger and submits its named value",
   expect(input).toHaveFocus();
 });
 
-it("connects Combobox help and errors without duplicating its label", async () => {
+it("prioritizes Combobox errors without duplicating its label", async () => {
   const user = userEvent.setup();
   render(
     <Combobox.Root items={options}>
@@ -157,9 +155,7 @@ it("connects Combobox help and errors without duplicating its label", async () =
   );
   const input = screen.getByRole("combobox", { name: "Search" });
   expect(input).toHaveAttribute("aria-invalid", "true");
-  expect(input).toHaveAccessibleDescription(
-    /Search available choices.*Choose an available item/,
-  );
+  expect(input).toHaveAccessibleDescription("Choose an available item.");
   await user.click(screen.getByText("Search", { exact: true }));
   expect(input).toHaveFocus();
 });

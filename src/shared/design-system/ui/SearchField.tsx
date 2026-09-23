@@ -10,7 +10,6 @@ export function SearchField({
   onValueChange,
   label = "Search",
   placeholder = "Search",
-  variant = "default",
   inputRef,
   description,
   error,
@@ -23,8 +22,6 @@ export function SearchField({
   onValueChange: (value: string) => void;
   label?: string;
   placeholder?: string;
-  /** Navigator search uses the panel's broad corner to echo its enclosing surface. */
-  variant?: "default" | "navigator";
 } & Omit<
   ComponentProps<typeof Input>,
   "value" | "onValueChange" | "className" | "ref" | "render" | "type"
@@ -38,7 +35,6 @@ export function SearchField({
       error={error}
     >
       <InputGroup
-        shape={variant === "navigator" ? "panel" : "control"}
         leading={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
         trailing={
           value ? (

@@ -44,7 +44,7 @@ export function Field({
         {label}
       </BaseField.Label>
       {children}
-      {description && (
+      {description && !error && (
         <BaseField.Description className="buzz-field-description">
           {description}
         </BaseField.Description>

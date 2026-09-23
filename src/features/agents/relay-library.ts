@@ -1,5 +1,5 @@
-import { avatarSource } from "../../shared/avatar-source";
-import { newer, type RelayEvent } from "../relay/events";
+import { avatarSource } from "../../shared/avatar-source.ts";
+import { newer, type RelayEvent } from "../relay/events.ts";
 import type { RelayReader } from "../relay/reader";
 import type { AgentLibrary } from "./library";
 
@@ -16,7 +16,7 @@ export function definitionSlug(id: string): string {
   return (/^[a-z0-9]/.test(slug) ? slug : `a${slug}`).slice(0, 64);
 }
 
-/** Owner-authored inventory is display evidence, not agent custody or admission. */
+/** Owner-authored inventory is discovery evidence, not agent custody or admission. */
 export async function readRelayLibrary(
   reader: RelayReader,
   owner: string,

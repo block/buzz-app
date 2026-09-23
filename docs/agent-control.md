@@ -349,3 +349,15 @@ import can leave create-only app custody for retry but no enabled/configured age
 No remote/team/mesh runtime or conditional attestation is added. Synthetic checks
 do not establish actual Keychain ACLs, production TLS/inference, live replies,
 forced native quit, signed packaging or other-platform behavior.
+
+### Community setup confirmation
+
+Local installation import validates the source configuration, owner authorization
+and private key. It does not require relay inventory or a community confirmation.
+The imported agent stays stopped.
+
+For explicit setup in a community, the broker can sign the selected owner's
+intent for an identity/community pair. Native code verifies that signature against
+the retained source-owner authorization. This does not establish channel membership,
+key availability or exclusive community membership. It does not reserve a community
+before import, and the same owner can confirm another pair later.

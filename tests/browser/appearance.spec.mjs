@@ -134,11 +134,35 @@ test("storage denial is visible and retryable; another window updates a live con
     }, key);
     await other.getByRole("radio", { name: "Dark", exact: true }).check();
     await expectMode(other, "dark");
-    await expect(other.getByRole("alert")).toContainText("could not be saved");
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toContainText("could not be saved");
     await expectMode(page, "light");
+    await button(other, "Notifications").click();
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await button(other, "Appearance").click();
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toHaveCount(1);
     await other.evaluate(() => window.restoreStorage());
     await button(other, "Retry saving appearance").click();
-    await expect(other.getByRole("alert")).toHaveCount(0);
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toHaveCount(0);
     await expectMode(page, "dark");
     await expect(page.locator("em-emoji-picker #root")).toHaveAttribute(
       "data-theme",

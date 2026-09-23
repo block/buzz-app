@@ -12,7 +12,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
   await page.evaluate(() => {
     window.__bannerSeen = [];
     window.__bannerObserver = new MutationObserver(() => {
-      for (const status of document.querySelectorAll('[role="status"]')) {
+      for (const status of document.querySelectorAll(".buzz-toast")) {
         if (
           status.textContent.includes(
             "Only currently accessible messages remain readable.",
@@ -36,7 +36,7 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   const warning = page
-    .getByRole("status")
+    .getByRole("dialog", { name: "Live updates need attention", exact: true })
     .filter({ hasText: "Only currently accessible messages remain readable." });
   await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
   await expect(warning).toHaveCount(0);
@@ -85,7 +85,11 @@ for (const target of ["alpha", "profiles"]) {
   test(`quota recovery for ${target} stays quiet until attempts exhaust, and manual recovery waits for EOSE`, async ({
     page,
     app,
-  }) => {
+  }, testInfo) => {
+    if (target === "profiles")
+      await page.addInitScript(() =>
+        localStorage.setItem("buzz-appearance.v1", "dark"),
+      );
     await page.goto(app.origin);
     await page
       .getByRole("button", { name: "Messages", exact: true })
@@ -95,9 +99,11 @@ for (const target of ["alpha", "profiles"]) {
       page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
     ).toBeVisible();
     await expect.poll(() => app.relay.hasRoute("primary", target)).toBe(true);
-    const warning = page.getByRole("status").filter({
-      hasText: "Only currently accessible messages remain readable.",
-    });
+    const warning = page
+      .getByRole("dialog", { name: "Live updates need attention", exact: true })
+      .filter({
+        hasText: "Only currently accessible messages remain readable.",
+      });
     await expect(warning).toHaveCount(0);
     await page.getByLabel("Conversation options", { exact: true }).click();
     await page.getByText("Diagnostics", { exact: true }).click();
@@ -130,6 +136,20 @@ for (const target of ["alpha", "profiles"]) {
         await expect(warning).toContainText("recovery needs attention");
         await expect(warning).not.toContainText("retry in 0s");
       }
+    }
+    // Persistent feedback must not block the header, composer, or narrow navigation.
+    for (const width of [390, 800, 1440]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page.getByLabel("Conversation options", { exact: true }).click();
+      await page
+        .getByRole("textbox", { name: "Message #Alpha", exact: true })
+        .fill("Unsent recovery draft");
+      await expect(warning).toHaveCount(1); // Diagnostics must not emit a second toast.
+      await expect(warning).toHaveCSS("opacity", "1");
+      await page.screenshot({
+        path: testInfo.outputPath(`toast-app-${target}-${width}.png`),
+      });
+      await page.getByLabel("Conversation options", { exact: true }).click();
     }
     const beforeManual = requests().length;
     await page.getByLabel("Conversation options", { exact: true }).click();

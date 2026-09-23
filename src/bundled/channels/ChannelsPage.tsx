@@ -1,3 +1,4 @@
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -882,20 +883,23 @@ function ChannelWorkspace({
               <p className={styles.empty}>No channels yet.</p>
             )}
           </SidebarUnread>
-          {preferences.status !== "ready" && (
-            <div className={styles.preferenceNotice} role="status">
+          {preferences.status === "error" ? (
+            <ToastNotice
+              title="Saved groups and stars couldn’t refresh"
+              description="Your conversations are still available."
+              tone="warning"
+            >
+              <Button type="button" size="sm" onClick={preferences.reload}>
+                Retry
+              </Button>
+            </ToastNotice>
+          ) : preferences.status !== "ready" ? (
+            <p className={styles.preferenceNotice} role="status">
               {preferences.status === "loading"
                 ? "Loading saved groups and stars…"
-                : preferences.status === "unsupported"
-                  ? "Saved groups and stars aren’t supported by this host yet."
-                  : "Couldn’t refresh saved groups and stars. Your conversations are still available."}
-              {preferences.status === "error" && (
-                <Button type="button" onClick={preferences.reload}>
-                  Retry
-                </Button>
-              )}
-            </div>
-          )}
+                : "Saved groups and stars aren’t supported by this host yet."}
+            </p>
+          ) : null}
         </div>
       </Panel>
       <CreateChannelDialog

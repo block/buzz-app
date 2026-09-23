@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { act, cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
@@ -31,7 +32,9 @@ function setup(initial: IndicatorPermission) {
     set: vi.fn(async () => {}),
   });
   cleanups.push(dock.dispose);
-  render(<UnreadIndicatorSettings indicator={dock} />);
+  render(<UnreadIndicatorSettings indicator={dock} />, {
+    wrapper: ToastProvider,
+  });
   return { permission, dock };
 }
 it("requests permission only through the explicit Settings button and updates status", async () => {
@@ -127,18 +130,20 @@ it("shows a Dock write error and retries through the existing permission check",
     set,
   });
   cleanups.push(indicator.dispose);
-  render(<UnreadIndicatorSettings indicator={indicator} />);
+  render(<UnreadIndicatorSettings indicator={indicator} />, {
+    wrapper: ToastProvider,
+  });
   await act(() => indicator.refresh());
   set.mockRejectedValueOnce(new Error("Dock unavailable"));
   await act(async () => {
     indicator.setUnread(true);
   });
-  expect(await screen.findByRole("alert")).toHaveTextContent(
+  expect(await screen.findByRole("dialog")).toHaveTextContent(
     "Dock unavailable",
   );
   await userEvent
     .setup()
     .click(screen.getByRole("button", { name: "Check Dock permission" }));
   expect(set).toHaveBeenLastCalledWith(true);
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

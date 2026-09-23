@@ -1,3 +1,4 @@
+import { ToastSpecimens } from "./ToastSpecimens";
 import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
@@ -998,6 +999,7 @@ function RadioGroupSpecimen() {
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimens,
+  toast: ToastSpecimens,
   tooltip: () => (
     <SpecimenFrame>
       <Tooltip content="Create a note">

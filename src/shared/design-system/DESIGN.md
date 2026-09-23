@@ -176,6 +176,18 @@ Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
 Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
 
+ToastProvider mounts once in the host. ToastNotice belongs to the source that
+owns its state and recovery: unmounting the source removes its notification,
+without reporting user dismissal. Gate notices from hidden Settings sections
+explicitly; portals do not inherit a hidden ancestor. Keep form errors and
+blocked-page recovery inline.
+
+Use a finite timeout for transient feedback. Recovery defaults to no expiry and
+no dismissal unless the source supplies onDismiss; preserve all recovery actions.
+The bounded, scrollable stack keeps older actions available without covering the
+shell header or composer. F6 enters notifications, Tab reaches actions. Modals
+remain above the stack. Content updates do not restart expiry; timeout changes do.
+
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,

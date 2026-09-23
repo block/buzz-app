@@ -1,11 +1,14 @@
+import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { useSyncExternalStore } from "react";
 import type { UnreadIndicator } from "../features/notifications/indicator";
 import { Button } from "../shared/design-system/ui/Button";
 
 export function UnreadIndicatorSettings({
   indicator,
+  active = true,
 }: {
   indicator: UnreadIndicator;
+  active?: boolean;
 }) {
   const state = useSyncExternalStore(indicator.subscribe, indicator.snapshot);
   if (!indicator.available) return null;
@@ -53,10 +56,8 @@ export function UnreadIndicatorSettings({
           Check Dock permission
         </Button>
       </div>
-      {state.error && (
-        <p role="alert" className="notice">
-          {state.error}
-        </p>
+      {active && state.error && (
+        <ToastNotice title="Dock badge unavailable" description={state.error} />
       )}
     </div>
   );

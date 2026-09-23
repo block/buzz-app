@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { ToastProvider } from "../../shared/design-system/ui/Toast";
 import {
   cleanup,
   render,
@@ -19,7 +20,7 @@ it("failed automatic start is visible and dismissible without claiming the messa
     "Stop old Buzz before starting agents here.",
   );
   const control = createAgentControl(fixture.host);
-  render(<AgentWakeNotice control={control} />);
+  render(<AgentWakeNotice control={control} />, { wrapper: ToastProvider });
   await act(() =>
     control.prepareMention(
       [fixture.agent.pubkey],
@@ -28,11 +29,11 @@ it("failed automatic start is visible and dismissible without claiming the messa
       new AbortController().signal,
     )(),
   );
-  expect(screen.getByRole("alert")).toHaveTextContent(
+  expect(screen.getByRole("dialog")).toHaveTextContent(
     "Message sent, but Fixture agent could not start",
   );
-  expect(screen.getByRole("alert")).toHaveTextContent("Stop old Buzz");
+  expect(screen.getByRole("dialog")).toHaveTextContent("Stop old Buzz");
   fireEvent.click(screen.getByRole("button", { name: "Dismiss agent notice" }));
-  expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   control.dispose();
 });

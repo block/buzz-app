@@ -17,6 +17,7 @@ pill actions, consistent fields and shared states.
 | Tabs | Tabs | Emoji/GIF uses associated panels and Base UI keyboard activation. Workflow mode retains its existing externally owned editor view. |
 | Modals | Dialog and AlertDialog | Page search, community chooser/setup and workflow confirmations. Pending work prevents dismissal; focus returns to the opener. |
 | Panels and headers | Panel and PanelHeader | Settings, channels and companion cards use shared paint. Grids, scrolling, docks and subscriptions stay with the feature. |
+| Feedback | Toast | Agent-start, live-update, sidebar preferences and Settings feedback use a source-owned stack. Recovery stays available; form errors, blocked pages and lasting paused-state context remain inline. |
 | Hints | Tooltip | Control titles and agent activity use keyboard-accessible, dismissible hints. Accessible names stay on the controls. |
 | Sessions and activity | NavigationItem, Button, IconButton, Panel and PanelHeader | Session history, agent choice, child-channel navigation and activity actions retain unread, admission, draft and focus behavior. Base UI owns their menus. |
 | Media stages | surface-inverse with text-inverse | Preserve existing stage values and measure their text pairing explicitly; images and video pixels stay renderer-owned. |

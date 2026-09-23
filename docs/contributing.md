@@ -94,7 +94,7 @@ pnpm reuses its shared package cache; no node_modules directory needs to be copi
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
 downloads and native compilation can take time. Parallel worktrees need no port
 flags: each derives its own stable default from its path. Pass `--port` to run a
-second copy of one worktree or to pick a specific port; ports must be integers from 1 to 65535. Browser dev
+second instance from one checkout or to pick a specific port; ports must be integers from 1 to 65535. Browser dev
 prints its selected URL and can use a later port when the requested port is
 occupied. Port selection does not isolate credentials or native plugin data;
 use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.

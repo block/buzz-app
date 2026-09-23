@@ -28,12 +28,13 @@ own stable port automatically and parallel worktrees need no coordination;
 `just desktop` prints the URL it chose. Override it with `just web --port 1431`
 or `just desktop --port 1432`. Browser servers prefer the requested port and
 use the next open port automatically; desktop requires the exact port to be free and keeps
-Vite and the native window on the same URL. Only a second copy of the same
-worktree needs an explicit port:
+Vite and the native window on the same URL. Only a second instance started from
+the same checkout needs an explicit port, because it would derive the same
+default:
 
 ```sh
 just desktop
-# A second copy of the same worktree:
+# A second instance from the same checkout:
 just desktop --port 1431
 ```
 

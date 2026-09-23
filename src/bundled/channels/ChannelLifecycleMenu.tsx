@@ -56,8 +56,7 @@ export function ChannelLifecycleMenu({
         </MenuItem>
       </>
     );
-  if (!state)
-    return <MenuItem disabled>Checking channel permissions…</MenuItem>;
+  if (!state) return null;
   return (
     <>
       {state.canHide ? (

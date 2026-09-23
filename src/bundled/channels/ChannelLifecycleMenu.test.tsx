@@ -42,7 +42,7 @@ function capability() {
     refreshVisibility: async () => {},
   } satisfies ChannelLifecycleCapability;
 }
-it("shows fresh loading and the last-owner boundary", async () => {
+it("waits silently for fresh permissions and preserves the last-owner boundary", async () => {
   const user = userEvent.setup();
   const lifecycle = capability();
   const choose = vi.fn();
@@ -60,10 +60,10 @@ it("shows fresh loading and the last-owner boundary", async () => {
       </MenuPopup>
     </ContextMenuRoot>,
   );
-  expect(
-    await screen.findByText("Checking channel permissions…"),
-  ).toBeDefined();
-  expect(screen.queryByText("Delete channel")).toBeNull();
+  await waitFor(() => expect(lifecycle.load).toHaveBeenCalledOnce());
+  expect(screen.queryByText("Checking channel permissions…")).toBeNull();
+  expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+  expect(choose).not.toHaveBeenCalled();
   gate.resolve(settings);
   const remove = await screen.findByRole("menuitem", {
     name: "Delete channel",
@@ -139,9 +139,15 @@ it("failed permission reads offer retry rather than stale destructive actions", 
   expect(
     screen.queryByRole("menuitem", { name: "Archive channel" }),
   ).toBeNull();
+  const retry = deferred<ChannelLifecycleSettings>();
+  lifecycle.load.mockReturnValueOnce(retry.promise);
   await user.click(
     screen.getByRole("menuitem", { name: "Retry channel permissions" }),
   );
+  await waitFor(() => expect(lifecycle.load).toHaveBeenCalledTimes(2));
+  expect(screen.queryAllByRole("menuitem")).toHaveLength(0);
+  expect(screen.queryByRole("alert")).toBeNull();
+  retry.resolve(settings);
   expect(
     await screen.findByRole("menuitem", {
       name: "Archive channel",

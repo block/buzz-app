@@ -239,7 +239,8 @@ Membership accepts NIP-29 `p` tags with optional relay and role fields
 (`["p", pubkey, relay_hint?, role?]`), including the relay's four-field roster.
 These fields never substitute for the separate administrator record. Invalid
 member keys and duplicate entries still fail closed. Failed menu permission reads
-show "Channel actions unavailable" with retry, not raw protocol errors.
+show "Channel actions unavailable" with retry, not raw protocol errors. Pending
+permission reads show no loading row; actions appear only after verification.
 
 Each command has explicit confirmation; Delete additionally requires the channel
 name. The lifecycle owner rechecks authority before signing and again before

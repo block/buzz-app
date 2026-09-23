@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
@@ -41,6 +42,7 @@ export function ActivityAccessory({
         .ensure(keys.split(":"), "background")
         .catch(() => {});
   }, [session.profiles, keys]);
+  const resolveName = useIdentityNames(session.names);
   const profiles = useMemo(
     () => selectProfiles(session.profiles, keys ? keys.split(":") : []),
     [session.profiles, keys],
@@ -65,8 +67,10 @@ export function ActivityAccessory({
         {keys.split(":").map((agent) => {
           const target = activityTarget(agent, channelId);
           if (!canOpen(target)) return null;
-          const name =
-            identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`;
+          const name = resolveName(
+            agent,
+            identities.get(agent)?.name ?? `Agent ${agent.slice(0, 8)}`,
+          );
           const active = turns.filter((turn) => turn.agent === agent);
           const working = active.filter(
             (turn) => turn.state === "working",

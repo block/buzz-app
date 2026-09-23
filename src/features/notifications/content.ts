@@ -48,9 +48,11 @@ export function messageNotificationText(
   category: NotificationCategory,
   channel: ChannelSummary | undefined,
   profile: Profile | undefined,
+  resolvedName?: string | undefined,
 ): NotificationText {
   const sender =
-    shortText(profile?.name ?? "", 64) || message.authorId.slice(0, 10);
+    shortText(resolvedName ?? profile?.name ?? "", 64) ||
+    message.authorId.slice(0, 10);
   const destination =
     channel?.channelType === "dm"
       ? "a direct message"

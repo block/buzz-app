@@ -1,4 +1,5 @@
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useIdentityNames } from "../identity-names/react";
+import { useSyncExternalStore, type ReactNode } from "react";
 import { AtIcon, RobotIcon } from "../../shared/design-system/icons/index";
 import type { RelaySession } from "../relay/session";
 import type { Profile, ChannelSummary } from "../relay/contracts";
@@ -22,10 +23,7 @@ const profilesSnapshot = () => emptyProfiles;
 const channelsSnapshot = () => undefined;
 const agentsSnapshot = () => undefined;
 
-export function useReferenceDirectory(
-  session: RelaySession | undefined,
-  hasMentions: boolean,
-) {
+export function useReferenceDirectory(session: RelaySession | undefined) {
   const profiles = useSyncExternalStore(
     session?.profiles?.subscribe ?? noop,
     session?.profiles?.snapshot ?? profilesSnapshot,
@@ -41,10 +39,6 @@ export function useReferenceDirectory(
     session?.agentLibrary?.snapshot ?? agentsSnapshot,
     agentsSnapshot,
   );
-  useEffect(() => {
-    if (hasMentions && agents?.status === "idle")
-      void session?.agentLibrary.refresh();
-  }, [session, hasMentions, agents?.status]);
   return {
     profiles,
     channels: channels?.channels ?? emptyChannels,
@@ -93,6 +87,7 @@ export function ReferenceText({
   scope?: string | undefined;
   interactive?: boolean;
 }) {
+  const resolveName = useIdentityNames(session?.names);
   const references = messageReferences(
     text,
     mentions,
@@ -109,6 +104,10 @@ export function ReferenceText({
         {renderText(text.slice(offset, reference.start))}
       </span>,
     );
+    const label =
+      reference.kind === "channel"
+        ? reference.label.slice(1)
+        : resolveName(reference.id, reference.label.slice(1));
     const Icon = reference.kind === "agent" ? RobotIcon : AtIcon;
     parts.push(
       reference.kind === "channel" ? (
@@ -127,10 +126,10 @@ export function ReferenceText({
           key={reference.start}
           className={styles.link}
           data-mention-kind={reference.kind}
-          title={`${reference.kind === "agent" ? "Agent" : "Person"}: ${reference.label.slice(1)}\n${reference.id}`}
+          title={`${reference.kind === "agent" ? "Agent" : "Person"}: ${label}\n${reference.id}`}
         >
           <Icon aria-hidden="true" className={styles.icon} />
-          {reference.label.slice(1)}
+          {label}
         </span>
       ),
     );

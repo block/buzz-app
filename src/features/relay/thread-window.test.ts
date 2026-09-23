@@ -474,3 +474,45 @@ it.each(["dispose", "clear", "revoke"])(
     expect(h.requests).toHaveLength(2);
   },
 );
+
+it.each([8_210_266_876_800, Number.MAX_SAFE_INTEGER])(
+  "rejects signed timestamps outside chrono's domain (%s) before admission",
+  async (created_at) => {
+    const row = reply(0);
+    const h = await setup((filter) =>
+      filter.ids ? [root] : [row, bounds(filter, { created_at, id: row.id })],
+    );
+    const observer = h.session.observe([
+      { kinds: [9], "#h": [channel], limit: 50 },
+    ]);
+    await h.view.refresh();
+    expect(h.view.snapshot().status).toBe("error");
+    expect(
+      observer.snapshot().events.some((event) => event.id === row.id),
+    ).toBe(false);
+    expect(h.requests).toHaveLength(2);
+    observer.dispose();
+  },
+);
+it("accepts and echoes chrono's inclusive maximum cursor", async () => {
+  const cursor = { created_at: 8_210_266_876_799, id: "a".repeat(64) };
+  const h = await setup((filter) =>
+    filter.ids
+      ? [root]
+      : [bounds(filter, filter.until === undefined ? cursor : null)],
+  );
+  await h.view.refresh();
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: true,
+  });
+  await h.view.loadMore();
+  expect(h.requests.at(-1)?.[0]).toMatchObject({
+    until: cursor.created_at,
+    before_id: cursor.id,
+  });
+  expect(h.view.snapshot()).toMatchObject({
+    status: "ready",
+    canLoadMore: false,
+  });
+});

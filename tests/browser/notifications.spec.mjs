@@ -403,9 +403,9 @@ test("an installed producer shares policy and OS click navigation, including aft
   await expect(
     page.getByRole("heading", { name: "Appearance", exact: true }),
   ).toBeVisible();
-  expect(
-    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
-  ).toBe("opened");
+  await expect
+    .poll(() => page.evaluate(() => window.fixtureNavigation.snapshot().status))
+    .toBe("opened");
 });
 
 test("asynchronous browser display failure reaches Settings once without redelivery", async ({

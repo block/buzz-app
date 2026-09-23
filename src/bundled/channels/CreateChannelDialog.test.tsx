@@ -86,6 +86,63 @@ it("creates a private temporary channel and reports a rejected request", async (
   expect(screen.getByRole("switch", { name: "Private" })).toBeChecked();
 });
 
+it("keeps the visible draft when a pending creation fails", async () => {
+  const user = userEvent.setup();
+  let rejectCreation!: (reason: Error) => void;
+  const onCreate = vi.fn(
+    () =>
+      new Promise<void>((_resolve, reject) => {
+        rejectCreation = reject;
+      }),
+  );
+  const onOpenChange = vi.fn();
+  const dialog = (pending?: {
+    name: string;
+    description: string;
+    visibility: "private";
+    ttlSeconds: number;
+  }) => (
+    <CreateChannelDialog
+      open
+      pending={pending}
+      onOpenChange={onOpenChange}
+      onCreate={onCreate}
+    />
+  );
+  const view = render(dialog());
+  await user.type(screen.getByRole("textbox", { name: "Name" }), "ops");
+  await user.click(screen.getByRole("button", { name: "Add a description" }));
+  await user.type(
+    screen.getByRole("textbox", { name: "Description" }),
+    "Incident response",
+  );
+  await user.click(screen.getByRole("radio", { name: /Temporary/ }));
+  await user.click(screen.getByText("Private", { selector: "label" }));
+  await user.click(screen.getByRole("button", { name: "Create channel" }));
+  await waitFor(() => expect(onCreate).toHaveBeenCalledOnce());
+
+  view.rerender(
+    dialog({
+      name: "ops",
+      description: "Incident response",
+      visibility: "private",
+      ttlSeconds: 604800,
+    }),
+  );
+  view.rerender(dialog());
+  rejectCreation(new Error("Creation rejected"));
+
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Creation rejected",
+  );
+  expect(screen.getByRole("textbox", { name: "Name" })).toHaveValue("ops");
+  expect(screen.getByRole("textbox", { name: "Description" })).toHaveValue(
+    "Incident response",
+  );
+  expect(screen.getByRole("radio", { name: /Temporary/ })).toBeChecked();
+  expect(screen.getByRole("switch", { name: "Private" })).toBeChecked();
+});
+
 it("blocks edits during creation without applying disabled control styles", async () => {
   const user = userEvent.setup();
   let finishCreation!: () => void;

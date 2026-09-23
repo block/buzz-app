@@ -33,6 +33,8 @@ export function CreateChannelDialog({
   const descriptionInput = useRef<HTMLTextAreaElement>(null);
   const privateControlId = useId();
   const mounted = useRef(true);
+  const previousOpen = useRef(false);
+  const previousPending = useRef(pending);
   const [name, setName] = useState("");
   const [descriptionVisible, setDescriptionVisible] = useState(false);
   const [description, setDescription] = useState("");
@@ -48,7 +50,12 @@ export function CreateChannelDialog({
     };
   }, []);
   useEffect(() => {
-    if (!open) return;
+    const opening = open && !previousOpen.current;
+    const restoring =
+      open && pending !== undefined && previousPending.current === undefined;
+    previousOpen.current = open;
+    previousPending.current = pending;
+    if (!opening && !restoring) return;
     setName(pending?.name ?? "");
     setDescriptionVisible(!!pending?.description);
     setDescription(pending?.description ?? "");

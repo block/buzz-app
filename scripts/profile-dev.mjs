@@ -173,21 +173,33 @@ async function recordManifest(directory, target, profileArgs, extra = {}) {
   );
 }
 
-function waitForExit(child, timeoutMs) {
-  if (child.exitCode !== null) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("exit", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
+function processGroupAlive(pid) {
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if (error.code === "ESRCH") {
+      processGroups.delete(pid);
+      return false;
+    }
+    if (error.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+async function waitForProcessGroups(timeoutMs) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (![...processGroups].some(processGroupAlive)) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
 
 async function stopChildren() {
   for (const pid of processGroups) signalGroup(pid, "SIGINT");
-  await Promise.all([...children].map((child) => waitForExit(child, 30_000)));
-  for (const pid of processGroups) signalGroup(pid, "SIGTERM");
+  await waitForProcessGroups(30_000);
+  for (const pid of processGroups)
+    if (processGroupAlive(pid)) signalGroup(pid, "SIGTERM");
 }
 
 function stopController() {
@@ -253,12 +265,44 @@ export function normalizeWebViteArgs(values) {
 }
 
 async function reservePort(port) {
-  const server = createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen({ port, host: "::", ipv6Only: false }, resolve);
+  const servers = [];
+  try {
+    for (const host of ["127.0.0.1", "::1"]) {
+      const server = createServer();
+      await new Promise((resolve, reject) => {
+        server.once("error", reject);
+        server.listen(port, host, resolve);
+      });
+      servers.push(server);
+    }
+    return servers;
+  } catch (error) {
+    await Promise.all(
+      servers.map((server) => new Promise((resolve) => server.close(resolve))),
+    );
+    throw error;
+  }
+}
+
+function viteBindFailure(child) {
+  return new Promise((_, reject) => {
+    let output = "";
+    const onData = (chunk) => {
+      output += chunk;
+      if (/Port \d+ is (?:already )?in use/.test(output)) {
+        cleanup();
+        reject(new Error("Vite could not bind the profiling port."));
+      }
+      if (output.length > 16_384) output = output.slice(-8_192);
+    };
+    const cleanup = () => {
+      child.stdout.off("data", onData);
+      child.stderr.off("data", onData);
+    };
+    child.stdout.on("data", onData);
+    child.stderr.on("data", onData);
+    child.once("exit", cleanup);
   });
-  return server;
 }
 
 async function waitForViteReady(url, child, signal) {
@@ -431,15 +475,19 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   });
 
   const control = stopController();
-  let reservation;
+  let reservations;
   try {
-    reservation = await reservePort(vite.port);
+    reservations = await reservePort(vite.port);
   } catch (error) {
     throw new Error(`Profiling port ${vite.port} is already in use.`, {
       cause: error,
     });
   }
-  await new Promise((resolve) => reservation.close(resolve));
+  await Promise.all(
+    reservations.map(
+      (server) => new Promise((resolve) => server.close(resolve)),
+    ),
+  );
   const nodeOptions = [process.env.NODE_OPTIONS, "--inspect=127.0.0.1:0"]
     .filter(Boolean)
     .join(" ");
@@ -470,7 +518,10 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   let outcome;
   const failures = [];
   try {
-    await waitForViteReady(url, viteProcess, control.abort.signal);
+    await Promise.race([
+      waitForViteReady(url, viteProcess, control.abort.signal),
+      viteBindFailure(viteProcess),
+    ]);
     control.abort.signal.throwIfAborted();
     nodeProfiler = inspectorClient(await inspectorUrl);
     await nodeProfiler.send("Profiler.enable");

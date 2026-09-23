@@ -10,6 +10,7 @@ import type {
 import type { ChannelMessage, MessageReaction } from "../relay/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
+import type { OutgoingEvent } from "../relay/outbox";
 import { recordReaction, useQuickReactions } from "./quick-reactions";
 
 type Props = {
@@ -41,16 +42,12 @@ function useReactionAction({ row, session, scope, disabled }: Props) {
     session.outbox?.snapshot ?? empty,
     session.outbox?.snapshot ?? empty,
   );
-  const busy = operations.some(
-    (item) => session.messages.reactionTarget(item.event) === row.id,
-  );
+  const blocksToggle = (item: OutgoingEvent) =>
+    ["sending", "failed", "unknown"].includes(item.delivery) &&
+    session.messages.reactionTarget(item.event) === row.id;
+  const busy = operations.some(blocksToggle);
   const toggle = (content: string, emoji?: CustomEmoji) => {
-    if (
-      !active.current ||
-      session.outbox
-        ?.snapshot()
-        .some((item) => session.messages.reactionTarget(item.event) === row.id)
-    )
+    if (!active.current || session.outbox?.snapshot().some(blocksToggle))
       return false;
     try {
       const group = row.reactions.find(

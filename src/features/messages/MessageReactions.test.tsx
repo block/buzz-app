@@ -23,6 +23,7 @@ import type {
   ComposerTool,
   ContributionReader,
   InlineRenderer,
+  ReactionToolProps,
 } from "../conversation/contracts";
 import { PublishRejected } from "../relay/outbox";
 import { useSyncExternalStore } from "react";
@@ -58,6 +59,7 @@ const react = (key = viewer, time = 2) =>
 function harness(
   events: RelayEvent[] = [],
   publish = vi.fn(async (_event: RelayEvent) => {}),
+  pickerTools = tools,
 ) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
@@ -89,7 +91,7 @@ function harness(
             session={owner.session}
             scope="test"
             disabled={disabled}
-            tools={tools}
+            tools={pickerTools}
             inline={inline}
           />
           <MessageReactions
@@ -97,7 +99,7 @@ function harness(
             session={owner.session}
             scope="test"
             disabled={disabled}
-            tools={tools}
+            tools={pickerTools}
             inline={inline}
           />
         </>
@@ -174,4 +176,73 @@ it("prevents duplicate submissions and unavailable-message actions", async () =>
     await flush();
     await flush();
   });
+});
+
+it("forwards the contributed picker into true toggles and releases confirmed writes without an echo", async () => {
+  const pickerTools = registry<ComposerTool>([
+    {
+      key: "picker",
+      pluginId: "picker",
+      revision: "one",
+      id: "picker",
+      title: "Picker",
+      component: () => null,
+      reactionComponent: ({ select, disabled }: ReactionToolProps) => (
+        <button type="button" disabled={disabled} onClick={() => select("👍")}>
+          Choose from picker
+        </button>
+      ),
+    },
+  ]);
+  const h = harness([react()], undefined, pickerTools);
+  render(<h.Controls />);
+  fireEvent.click(screen.getByRole("button", { name: "Choose from picker" }));
+  expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(5);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
+  expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Choose from picker" }));
+  expect(h.session.outbox?.snapshot().map((item) => item.event.kind)).toEqual([
+    5, 7,
+  ]);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+
+it("rolls back a failed last-reaction removal and retries it after remount", async () => {
+  const publish = vi.fn(async (_event: RelayEvent) => {
+    throw new PublishRejected("Nope");
+  });
+  const h = harness([react()], publish);
+  const view = render(<h.Controls />);
+  fireEvent.click(
+    screen.getByRole("button", { name: "👍: 1 person, including you" }),
+  );
+  expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  expect(
+    screen.getByRole("button", { name: "👍: 1 person, including you" }),
+  ).toBeTruthy();
+  view.unmount();
+  render(<h.Controls />);
+  expect(
+    screen.getAllByRole("button", { name: "Retry reaction" }),
+  ).toHaveLength(1);
+  const original = publish.mock.calls[0]?.[0];
+  publish.mockImplementation(async () => undefined as never);
+  fireEvent.click(screen.getByRole("button", { name: "Retry reaction" }));
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  expect(publish.mock.calls[1]?.[0]).toEqual(original);
+  expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
 });

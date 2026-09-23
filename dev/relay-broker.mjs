@@ -1285,16 +1285,9 @@ export function relayBrokerPlugin({
                 });
               }
             } else if (
-              filters?.kind === 5 &&
-              Array.isArray(filters.tags) &&
-              filters.tags.some((tag) => Array.isArray(tag) && tag[0] === "h")
+              ![7, 9].includes(filters?.kind) &&
+              !validMessageDeletion(filters)
             ) {
-              if (!validMessageDeletion(filters))
-                return json(res, 400, {
-                  error: "Message removal rejected",
-                  sent: false,
-                });
-            } else if (![7, 9].includes(filters?.kind)) {
               try {
                 validateWorkflowEvent(
                   { ...filters, pubkey: signing ? viewer : filters.pubkey },
@@ -1307,7 +1300,10 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
-            } else if (!validMessageTemplate(filters))
+            } else if (
+              [7, 9].includes(filters?.kind) &&
+              !validMessageTemplate(filters)
+            )
               return json(res, 400, { error: "Message rejected" });
             // Never sign or publish after the requesting browser has left.
             cancel.signal.throwIfAborted();

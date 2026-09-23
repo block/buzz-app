@@ -1,3 +1,5 @@
+import { mentionChoices } from "./mention-choices";
+import { useIdentityNames } from "../../features/identity-names/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -36,6 +38,7 @@ export function MentionPicker({
   inviteAgents?: boolean | undefined;
   select: ComposerToolProps["insertMention"];
 }) {
+  const resolveName = useIdentityNames(session.names);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string>();
@@ -87,22 +90,15 @@ export function MentionPicker({
       current = false;
     };
   }, [session, open, memberKey]);
-  const choices = new Map(
-    [...agents.identities, ...available].map((agent) => [
-      agent.pubkey,
-      { pubkey: agent.pubkey, name: agent.name },
-    ]),
-  );
-  for (const pubkey of channel?.members ?? [])
-    choices.set(pubkey, {
-      pubkey,
-      name:
-        profiles.get(pubkey)?.name ??
-        choices.get(pubkey)?.name ??
-        pubkey.slice(0, 12),
-    });
-  const candidates = [...choices.values()].filter(({ name, pubkey }) =>
-    `${name} ${pubkey}`.toLowerCase().includes(search.trim().toLowerCase()),
+  const candidates = mentionChoices(
+    [...agents.identities, ...available],
+    channel?.members ?? [],
+    profiles,
+    resolveName,
+  ).filter(({ recipient, label }) =>
+    `${label} ${recipient.pubkey}`
+      .toLowerCase()
+      .includes(search.trim().toLowerCase()),
   );
   return (
     <fieldset
@@ -183,18 +179,18 @@ export function MentionPicker({
             Refresh members
           </Button>
           <div className={styles.mentionChoices}>
-            {candidates.slice(0, 100).map((recipient) => (
+            {candidates.slice(0, 100).map(({ recipient, label }) => (
               <NavigationItem
                 type="button"
                 key={recipient.pubkey}
-                aria-label={`${recipient.name} ${recipient.pubkey}`}
+                aria-label={`${label} ${recipient.pubkey}`}
                 disabled={disabled || !!channel?.archived}
                 onClick={() => {
                   if (select(recipient)) setOpen(false);
                 }}
                 label={
                   <span className="flex flex-col whitespace-normal">
-                    <span>{recipient.name}</span>
+                    <span>{label}</span>
                     {!channel?.members?.includes(recipient.pubkey) && (
                       <small className="text-caption text-subtle">
                         {inviteAgents
@@ -211,7 +207,7 @@ export function MentionPicker({
                 icon={
                   <Avatar
                     alt=""
-                    fallback={recipient.name}
+                    fallback={label}
                     src={session.media(
                       profiles.get(recipient.pubkey)?.picture ?? "",
                       "small",

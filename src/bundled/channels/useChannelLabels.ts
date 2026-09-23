@@ -1,3 +1,5 @@
+import { useIdentityNames } from "../../features/identity-names/react";
+import type { IdentityNameView } from "../../features/identity-names/service";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type { ProfileQueries } from "../../features/relay/profile-directory";
@@ -7,7 +9,9 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 export function useChannelLabels(
   roster: readonly ChannelSummary[],
   queries: ProfileQueries,
+  names?: IdentityNameView,
 ) {
+  const resolveName = useIdentityNames(names);
   const channels = useMemo(
     () =>
       roster.filter(
@@ -49,11 +53,13 @@ export function useChannelLabels(
           return channel;
         const name = channel.participants.length
           ? channel.participants
-              .map((id) => profiles.get(id)?.name ?? id.slice(0, 10))
+              .map((id) =>
+                resolveName(id, profiles.get(id)?.name ?? id.slice(0, 10)),
+              )
               .join(", ")
           : "Notes to self";
         return { ...channel, name };
       }),
-    [channels, profiles],
+    [channels, profiles, resolveName],
   );
 }

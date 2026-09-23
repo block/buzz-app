@@ -78,6 +78,8 @@ export function threadBounds(event: RelayEvent): {
       !Number.isSafeInteger(next.created_at) ||
       typeof next.created_at !== "number" ||
       next.created_at < 0 ||
+      // chrono 0.4's DateTime::MAX_UTC, used by the relay's Cursor::timestamp.
+      next.created_at > 8_210_266_876_799 ||
       typeof next.id !== "string" ||
       !hex.test(next.id))
   )

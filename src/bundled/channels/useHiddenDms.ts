@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import { readView, writeView } from "../../shared/view-state";
 
-type HiddenDm = { id: string; hiddenAt: number; latestMessageId?: string };
+type HiddenDm = { id: string; latestMessageId?: string };
 const key = "hidden-dms";
 
 function restore(scope: string): HiddenDm[] {
@@ -13,8 +13,6 @@ function restore(scope: string): HiddenDm[] {
       !!entry &&
       typeof entry === "object" &&
       typeof entry.id === "string" &&
-      typeof entry.hiddenAt === "number" &&
-      Number.isFinite(entry.hiddenAt) &&
       (entry.latestMessageId === undefined ||
         typeof entry.latestMessageId === "string"),
   );
@@ -50,7 +48,6 @@ export function useHiddenDms(scope: string, session: RelaySession) {
         ...current.current.filter((entry) => entry.id !== id),
         {
           id,
-          hiddenAt: Date.now(),
           ...(latest ? { latestMessageId: latest.id } : {}),
         },
       ]);
@@ -66,11 +63,7 @@ export function useHiddenDms(scope: string, session: RelaySession) {
           kind: "channel",
           channelId: entry.id,
         }).latestMessage;
-        return latest &&
-          latest.id !== entry.latestMessageId &&
-          latest.createdAt * 1000 > entry.hiddenAt
-          ? [entry.id]
-          : [];
+        return latest && latest.id !== entry.latestMessageId ? [entry.id] : [];
       });
       if (resurfaced.length) show(resurfaced);
     };

@@ -97,9 +97,17 @@ test("DM hide control removes a row and a new message restores it", async ({
   await hide.click();
   await expect(dm).toHaveCount(0);
   await page.reload();
+  await expect(row(page, "dm-031")).toBeVisible();
   await expect(dm).toHaveCount(0);
 
-  app.append("primary", "dm-030", "A new DM", false, false);
+  app.append("primary", "dm-030", "A new live DM", true, false);
+  await expect(dm).toBeVisible();
+  await dm.hover();
+  await hide.click();
+  await expect(dm).toHaveCount(0);
+  app.append("primary", "dm-030", "A DM missed while closed", false, false);
+  await page.reload();
+  await expect(row(page, "dm-031")).toBeVisible();
   await expect(dm).toBeVisible();
 });
 
@@ -286,7 +294,15 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect(row(page, "dm-030")).toBeFocused();
   if (info.project.name === "chromium") {
     await page.keyboard.press("Tab");
+    const remove = row(page, "dm-030")
+      .locator("..")
+      .locator("..")
+      .getByRole("button", { name: /Remove .* from DMs/ });
+    await expect(remove).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(row(page, "dm-031")).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(remove).toBeFocused();
     await page.keyboard.press("Shift+Tab");
     await expect(row(page, "dm-030")).toBeFocused();
   }

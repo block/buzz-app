@@ -14,7 +14,7 @@ afterEach(() => {
 function fixture() {
   let latest: { id: string; createdAt: number } | undefined = {
     id: "before",
-    createdAt: 99,
+    createdAt: 90,
   };
   const listeners = new Set<() => void>();
   const incoming = new Set<IncomingListener>();
@@ -105,11 +105,9 @@ it("hides per scope, survives remount, and restores on later verified activity",
   const other = renderHook(() => useHiddenDms("community:bob", h.session));
   expect(other.result.current.hiddenIds.has("dm")).toBe(false);
 
-  act(() => h.evidence("older-backfill", 98));
+  act(() => h.evidence("before", 90));
   expect(restored.result.current.hiddenIds.has("dm")).toBe(true);
   act(() => h.evidence("new-message", 100));
-  expect(restored.result.current.hiddenIds.has("dm")).toBe(true);
-  act(() => h.evidence("later-message", 101));
   expect(restored.result.current.hiddenIds.has("dm")).toBe(false);
 });
 
@@ -132,7 +130,7 @@ it("checks a hidden DM directly on return for messages missed while closed", asy
   const first = renderHook(() => useHiddenDms("community:alice", h.session));
   act(() => first.result.current.hide("dm"));
   first.unmount();
-  h.onNextRead(() => h.evidence("offline-message", 101));
+  h.onNextRead(() => h.evidence("offline-message", 98));
   const restored = renderHook(() => useHiddenDms("community:alice", h.session));
   await act(async () => {
     await Promise.resolve();

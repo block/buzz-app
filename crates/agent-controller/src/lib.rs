@@ -16,7 +16,9 @@ pub use bundle::RuntimeBundle;
 pub use config::{AgentEdit, AgentView, ControlSnapshot, HarnessEdit, ProcessStatus};
 pub use create::{CreationProfile, NewAgent};
 pub use credentials::PlatformCredentials;
-pub use import::{CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport};
+pub use import::{
+    CloneSettings, CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport,
+};
 pub use runtime::{Action, Controller, ModelContext};
 pub use secret::{Credentials, Secret};
 pub use store::Store;

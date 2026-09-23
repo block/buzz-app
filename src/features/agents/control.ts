@@ -65,7 +65,9 @@ export interface AgentImportPreview {
   candidates: Pick<AgentView, "id" | "pubkey" | "relayUrl" | "name">[];
   warnings: string[];
 }
+export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
 export interface AgentControlHost {
+  cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   models?: ModelHost;
   prepareCreate?(
     requestId: string,
@@ -107,6 +109,7 @@ export interface AgentControlState {
   error: string | null;
 }
 export interface AgentControl {
+  cloneSettings?: AgentControlHost["cloneSettings"];
   models?: AgentModels;
   create?(
     requestId: string,
@@ -415,6 +418,19 @@ export function createAgentControl(
           update({ mentionError: `Message sent, but ${failures.join(" ")}` });
       };
     },
+    ...(host?.cloneSettings
+      ? {
+          cloneSettings: (source: ImportSource, pubkey: string) =>
+            run(
+              (native) => {
+                if (!native.cloneSettings)
+                  throw new Error("Clone settings are unavailable.");
+                return native.cloneSettings(source, pubkey);
+              },
+              () => {},
+            ),
+        }
+      : {}),
     previewImport: (source, destination) =>
       run(
         (native) => native.previewImport(source, destination),

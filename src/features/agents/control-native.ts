@@ -23,6 +23,8 @@ export function nativeAgentControlHost(): AgentControlHost | null {
         action,
         ...(replayFloor === undefined ? {} : { replayFloor }),
       }),
+    cloneSettings: (source, pubkey) =>
+      invoke("agent_control_clone_settings", { source, pubkey }),
     previewImport: (source, destination) =>
       invoke("agent_control_import_preview", { source, destination }),
     commitImport: (token, ids) =>

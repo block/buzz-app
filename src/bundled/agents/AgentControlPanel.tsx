@@ -8,6 +8,7 @@ import type {
   AgentControl,
   AgentControlState,
   AgentView,
+  CloneSettings,
 } from "../../features/agents/control";
 import { PlusIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -37,6 +38,7 @@ export function AgentControlPanel({
   const [adding, setAdding] = useState<{
     destination: string;
     owner: string;
+    initialSettings?: CloneSettings;
   } | null>(null);
   const [importSections, setImportSections] = useState<string[]>([]);
   const [importedId, setImportedId] = useState<string | null>(null);
@@ -135,6 +137,17 @@ export function AgentControlPanel({
                     state.data.importAvailable !== false
                   }
                   disabled={state.busy}
+                  onClone={
+                    control.cloneSettings && createOwner && importDestination
+                      ? (initialSettings) => {
+                          setAdding({
+                            destination: importDestination,
+                            owner: createOwner,
+                            initialSettings,
+                          });
+                        }
+                      : undefined
+                  }
                   onImported={(agents) => {
                     setImportedId(agents[0]?.id ?? null);
                     setImportSections([]);
@@ -151,6 +164,7 @@ export function AgentControlPanel({
           state={state}
           destination={adding.destination}
           owner={adding.owner}
+          initialSettings={adding.initialSettings}
           onClose={() => setAdding(null)}
         />
       )}

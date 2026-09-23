@@ -38,6 +38,7 @@ export function createServices() {
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
     identityNames,
+    import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
   );
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));

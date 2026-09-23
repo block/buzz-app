@@ -58,6 +58,11 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
   ]);
   expect(sidebarSections(roster, preferences)[1]?.icon).toBe(":party:");
   expect(
+    sidebarSections(roster, preferences, new Set(["dm", "group-dm"])).some(
+      (section) => section.key === "dms",
+    ),
+  ).toBe(false);
+  expect(
     project(roster.filter((channel) => channel.id !== "star")),
   ).not.toContainEqual(["starred", ["star"]]);
   expect(sidebarSections([])).toEqual([

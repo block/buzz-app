@@ -29,6 +29,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onSelect,
   onNewSession,
   onOpenThread,
+  onHideDm,
 }: {
   channel: ChannelSummary;
   session: RelaySession;
@@ -43,6 +44,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
   onSelect: (id: string) => void;
   onNewSession: (id: string) => void;
   onOpenThread: (channelId: string, rootId: string) => void;
+  onHideDm?: (id: string) => void;
 }) {
   const Icon =
     channel.channelType === "dm"
@@ -97,6 +99,7 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       onPrepare={(id) => session.channels.prepare?.(id)}
       onSelect={onSelect}
       onNewSession={onNewSession}
+      {...(onHideDm ? { onHideDm } : {})}
     />
   );
 });

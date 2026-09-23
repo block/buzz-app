@@ -149,9 +149,13 @@ it("lazily refreshes dormant selectors and preserves identity when their value i
   const target = at(h.targets, 0);
   const before = h.unread.snapshot(target);
   at(h.stops, 0)();
-  h.owner.accept([message(h.viewer, "c0", "own message", 12)]);
+  const own = message(h.viewer, "c0", "own message", 12);
+  h.owner.accept([own]);
   expect(h.state).not.toHaveBeenCalled();
-  expect(h.unread.snapshot(target)).toBe(before);
+  const after = h.unread.snapshot(target);
+  expect(after).not.toBe(before);
+  expect(after.latestMessage).toEqual({ id: own.id, createdAt: 12 });
+  expect(h.unread.snapshot(target)).toBe(after);
   expect(h.state).toHaveBeenCalledTimes(1);
   h.reset();
   h.owner.accept([message(h.peer, "c0", "unread message", 13)]);

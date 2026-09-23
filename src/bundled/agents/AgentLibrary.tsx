@@ -38,6 +38,22 @@ export function AgentLibrary({
     snapshot,
     (key) => managedKeys.includes(key) || archives.state(key) === "archived",
   );
+  const groups = identityGroups(snapshot.definitions, identities);
+  for (const group of groups) {
+    group.identities.sort(
+      (a, b) =>
+        resolveName(a.pubkey, a.name).localeCompare(
+          resolveName(b.pubkey, b.name),
+          undefined,
+          { sensitivity: "base" },
+        ) || a.pubkey.localeCompare(b.pubkey),
+    );
+  }
+  profiles.sort(
+    (a, b) =>
+      a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) ||
+      a.id.localeCompare(b.id),
+  );
   const loading = snapshot.status === "loading";
   return (
     <div className="mx-auto mt-2 max-w-6xl space-y-section-gap">
@@ -86,7 +102,7 @@ export function AgentLibrary({
             {!identities.length && (
               <p>No visible identities in your Buzz library.</p>
             )}
-            {identityGroups(snapshot.definitions, identities).map((group) => (
+            {groups.map((group) => (
               <section
                 key={group.id ?? "unlinked"}
                 aria-label={group.name}

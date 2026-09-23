@@ -47,6 +47,10 @@ export function createServices() {
     import.meta.env.VITE_BUZZ_OPEN_RELAY ?? "",
     agentControl,
   );
+  ctx.provide("communityReader", {
+    snapshot: communities.snapshot,
+    subscribe: communities.subscribe,
+  });
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));
   const notifications = new NotificationsService(

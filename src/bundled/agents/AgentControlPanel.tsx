@@ -26,11 +26,13 @@ import "./AgentControls.css";
 /** No relay dependency. Page lifetime owns observation only, never native execution. */
 export function AgentControlPanel({
   control,
+  unifiedInventory = false,
   importDestination = "",
   createOwner,
   children,
 }: {
   control: AgentControl;
+  unifiedInventory?: boolean;
   importDestination?: string;
   createOwner?: string | undefined;
   children?: (
@@ -225,20 +227,24 @@ export function AgentControlPanel({
           ))}
         </div>
       )}
-      {state.data && !importSelection && (
-        <Accordion
-          variant="activity"
-          value={importSections}
-          onValueChange={setImportSections}
-          items={[
-            {
-              value: "old-buzz",
-              title: "Import from another installation",
-              content: importSections.includes("old-buzz") ? importForm : null,
-            },
-          ]}
-        />
-      )}
+      {state.data &&
+        !importSelection &&
+        (!unifiedInventory || state.data.parked === undefined) && (
+          <Accordion
+            variant="activity"
+            value={importSections}
+            onValueChange={setImportSections}
+            items={[
+              {
+                value: "old-buzz",
+                title: "Import from another installation",
+                content: importSections.includes("old-buzz")
+                  ? importForm
+                  : null,
+              },
+            ]}
+          />
+        )}
       {state.data?.parked !== undefined &&
         importSelection &&
         importSelection.destination === importDestination && (

@@ -1,3 +1,5 @@
+import type { CommunityReader } from "../../features/communities/service";
+import { UnifiedInventory } from "./UnifiedInventory";
 import { useIdentityNames } from "../../features/identity-names/react";
 import { useSyncExternalStore } from "react";
 import type {
@@ -15,14 +17,24 @@ import { AgentCard } from "./AgentCard";
 import { AgentControlPanel } from "./AgentControlPanel";
 import { ManagedAgentActions } from "./ManagedAgentActions";
 
+const noCommunities = { subscribe: () => () => {}, snapshot: () => undefined };
+
 export function AgentsPage({
   relay,
   control,
+  communities,
 }: {
   relay: RelayData;
   control?: AgentControl;
+  communities?: CommunityReader;
 }) {
   const connection = useRelayConnection(relay);
+  const reader = communities ?? noCommunities;
+  const client = useSyncExternalStore(
+    reader.subscribe,
+    reader.snapshot,
+    reader.snapshot,
+  );
   let importDestination = "";
   if (
     connection.viewer &&
@@ -60,15 +72,28 @@ export function AgentsPage({
             )}
             {control ? (
               <AgentControlPanel
+                unifiedInventory
                 control={control}
                 importDestination={importDestination}
                 createOwner={
                   connection.status === "ready" ? connection.viewer : undefined
                 }
               >
-                {(state, edit, importedId) =>
+                {(state, edit, importedId, onUseHere, onImport) =>
                   state.status === "unavailable" ? (
                     library
+                  ) : state.data?.parked !== undefined ? (
+                    <UnifiedInventory
+                      key={connection.viewer ?? "offline"}
+                      state={state}
+                      edit={edit}
+                      importedId={importedId}
+                      control={control}
+                      connection={connection}
+                      client={client}
+                      onUseHere={onUseHere}
+                      onImport={onImport}
+                    />
                   ) : (
                     <ManagedAgents
                       key={`${connection.scope}:${connection.generation}`}

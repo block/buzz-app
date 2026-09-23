@@ -1,5 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
+import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({
   productionBroker: true,
@@ -113,6 +114,24 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     panel.getByRole("combobox", { name: "Channel", exact: true }),
   ).toHaveText(/Alpha.*alpha/);
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
+  // Telemetry supplies keys before any profile or directory facts exist.
+  const agentSelect = panel.getByRole("combobox", {
+    name: "Agent",
+    exact: true,
+  });
+  for (const key of [second, first]) {
+    await agentSelect.click();
+    const choices = page.getByRole("option");
+    await expect(choices).toHaveCount(2);
+    const labels = await choices.allTextContents();
+    expect(new Set(labels).size).toBe(2);
+    const choice = page.getByRole("option", {
+      name: new RegExp(`^Agent · npub….*${npubEncode(key).slice(-3)}$`),
+    });
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect(panel.locator("code").first()).toHaveText(key);
+  }
   const unsafeDisclosure = panel.getByRole("button", { name: /turn_liveness/ });
   await unsafeDisclosure.focus();
   await unsafeDisclosure.press("Enter");

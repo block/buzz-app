@@ -160,3 +160,20 @@ it("trims names but keeps differently cased names distinct", () => {
   expect(collision.get(a)?.qualifier).toBeTruthy();
   expect(collision.get(b)?.qualifier).toBeTruthy();
 });
+
+it("terminates when literal human names exhaust the full key and fallback counters", () => {
+  const npub = npubEncode(a);
+  const occupied = [
+    ...Array.from({ length: npub.length - 3 }, (_, i) => npub.slice(-(i + 4))),
+    `${npub} · 1`,
+    `${npub} · 2`,
+  ].map((qualifier, i) =>
+    person((i + 16).toString(16).padStart(64, "0"), `Honey · ${qualifier}`),
+  );
+  const rows = [agent(a, me), agent(b, me), ...occupied];
+  const result = labels(rows);
+  expect(result[0]).toBe(`Honey · ${npub} · 3`);
+  expect(result[1]).toBe(`Honey · ${suffix(b)}`);
+  expect(result.slice(2)).toEqual(occupied.map((row) => row.name));
+  expect(new Set(result).size).toBe(rows.length);
+});

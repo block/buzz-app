@@ -76,7 +76,13 @@ export function resolveIdentityNames(
       if (qualified) continue;
       for (const row of changing) {
         row.length = row.length ? row.length + 1 : 4;
-        row.suffix = npubEncode(row.key).slice(-row.length);
+        const npub = npubEncode(row.key);
+        // Literal names can occupy even the full key. Keep advancing beyond it;
+        // finitely many names cannot exhaust this identity-specific sequence.
+        row.suffix =
+          row.length <= npub.length
+            ? npub.slice(-row.length)
+            : `${npub} · ${row.length - npub.length}`;
         row.label = `${row.base} · ${row.suffix}`;
       }
     }

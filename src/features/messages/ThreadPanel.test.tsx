@@ -526,7 +526,7 @@ it("finishes automatic pages before initial positioning and preserves a readerâ€
   expect(h.view.loadMore).toHaveBeenCalledTimes(1);
   expect(h.element.scrollTop).toBe(0);
   const section = h.render();
-  fireEvent.wheel(section);
+  fireEvent.wheel(section, { deltaY: -1 });
   h.scroll(500);
   h.snapshot.status = "loading";
   h.render();

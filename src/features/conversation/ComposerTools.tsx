@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { Contribution } from "../../plugins/contributions";
 import type {
   ComposerTool,
@@ -9,9 +15,12 @@ import { ContributionBoundary, contributionKey } from "./ContributionBoundary";
 
 export function ComposerTools({
   registry,
+  renderLeading,
   ...props
 }: ComposerToolProps & {
   registry: ContributionReader<ComposerTool>;
+  /** Host layout for tools ordered before the default group; preserves DOM order. */
+  renderLeading?: (tools: ReactNode) => ReactNode;
 }) {
   const tools = useSyncExternalStore(
     registry.subscribe,
@@ -25,14 +34,21 @@ export function ComposerTools({
     (a, b) =>
       order(a) - order(b) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0),
   );
-  return sorted.map((tool) => (
+  const render = (tool: Contribution<ComposerTool>) => (
     <ContributionBoundary
       key={contributionKey(tool)}
       fallback={<span role="status">{tool.title} unavailable</span>}
     >
       <OwnedTool tool={tool} registry={registry} {...props} />
     </ContributionBoundary>
-  ));
+  );
+  if (!renderLeading) return sorted.map(render);
+  return (
+    <>
+      {renderLeading(sorted.filter((tool) => order(tool) < 0).map(render))}
+      {sorted.filter((tool) => order(tool) >= 0).map(render)}
+    </>
+  );
 }
 function OwnedTool({
   tool,

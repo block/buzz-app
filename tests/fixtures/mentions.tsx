@@ -41,7 +41,8 @@ const owner = createRelaySession(
   {
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
-    media: (url) => url,
+    media: (url) =>
+      url.startsWith("https://avatars.test/") ? new URL(url).pathname : url,
     // Synthetic, lazy capability: only the explicit fixture action loads it.
     async readAgentLibrary() {
       libraryReads++;
@@ -69,8 +70,15 @@ const owner = createRelaySession(
           roster(relay, "other", [viewer.pubkey], time),
           metadata(relay, "other", "Other"),
           profile(viewer, { name: "Viewer" }),
-          profile(first, { name: delayed ? "Mary Jane" : "Honey" }),
-          profile(second, { name: "Honey", is_agent: true }),
+          profile(first, {
+            name: delayed ? "Mary Jane" : "Honey",
+            picture: "https://avatars.test/bestie.png",
+          }),
+          profile(second, {
+            name: "Honey",
+            is_agent: true,
+            picture: "https://avatars.test/app-icon.png",
+          }),
           ...publications,
         ];
         return events.filter((event) =>

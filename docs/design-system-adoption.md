@@ -37,8 +37,9 @@ pill actions, consistent fields and shared states.
   They are disclosures, not application menus; their content and state remain local.
 - Avatars, previews, links, mentions and thread summaries retain their identity
   and navigation ownership. Composer mentions use inert shared InlineChip rendering;
-  editing or deleting the mention removes its notification intent. Shared appearance
-  does not move their data.
+  editing or deleting the mention removes its notification intent. Host-owned
+  recipient avatars beside the mention tool also allow clearing that intent without
+  changing authored text. Shared appearance does not move their data.
 - Panel marks its surface separately from interactive components. Native product
   and plugin content inside it can still receive host defaults.
 - Legacy utility names remain available through the host bridge for existing

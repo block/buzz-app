@@ -134,9 +134,9 @@ export function createWorkSessions(
           ),
         15000,
       );
-      const inspect = () => {
+      const inspect = (reportError = true) => {
         const list = channels.list();
-        if (list.status === "error")
+        if (reportError && list.status === "error")
           done(new Error(list.error ?? "Session membership could not load."));
         else if (
           list.status === "ready" &&
@@ -158,7 +158,7 @@ export function createWorkSessions(
       unsubscribe = channels.subscribeList(inspect);
       signal.addEventListener("abort", abort, { once: true });
       if (signal.aborted) abort();
-      else inspect();
+      else inspect(false); // An earlier roster error does not decide this retry.
     });
     channels.refreshList?.();
     await wait;

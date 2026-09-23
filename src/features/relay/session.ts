@@ -293,7 +293,11 @@ export function createRelaySession(
       // Purge before notifying: callbacks must not be able to reseed denied data.
       for (const id of revoked) recent.delete(id);
       channels.purgeAccess((events) => events.filter(visibility(events)));
-      writes?.purgeConfirmed((event) => event.kind !== 0 && visible(event));
+      // Own creation receipts are recovery intent until creator membership
+      // completes, even while discovery denies channel-content access.
+      writes?.purgeConfirmed(
+        (event) => event.kind === 9007 || (event.kind !== 0 && visible(event)),
+      );
       profiles.clear();
       emoji.clear();
       agentLibrary.clear();

@@ -167,5 +167,7 @@ it("retains working injected control across Agents disable/re-enable and communi
     vi
       .mocked(invoke)
       .mock.calls.filter(([cmd]) => cmd.startsWith("agent_control_")),
-  ).toEqual(Array.from({ length: 4 }, () => ["agent_control_snapshot"]));
+    // Four explicit reads plus five naming-provider activations (re-enable,
+    // then disconnected and connected sessions for each joined community).
+  ).toEqual(Array.from({ length: 9 }, () => ["agent_control_snapshot"]));
 });

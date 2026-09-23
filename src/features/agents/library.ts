@@ -25,6 +25,7 @@ export function createAgentLibrary(
   notify = (listener: () => void) => listener(),
 ) {
   let closed = false;
+  const demands = new Set<object>();
   let controller: AbortController | undefined;
   let pending: Promise<void> | undefined;
   let snapshot: AgentLibrarySnapshot = {
@@ -79,6 +80,14 @@ export function createAgentLibrary(
     queries: Object.freeze({
       snapshot: () => snapshot,
       refresh,
+      retain() {
+        const demand = {};
+        demands.add(demand);
+        void refresh();
+        return () => {
+          demands.delete(demand);
+        };
+      },
       subscribe(listener: () => void) {
         if (closed) return () => {};
         listeners.add(listener);
@@ -88,8 +97,12 @@ export function createAgentLibrary(
       },
     }),
     clear,
+    reconnect() {
+      if (demands.size) void refresh();
+    },
     dispose() {
       closed = true;
+      demands.clear();
       clear();
       listeners.clear();
     },

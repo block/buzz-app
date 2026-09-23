@@ -125,9 +125,13 @@ test("channel activity consumes telemetry, isolates mixed batches, selects agent
     await expect(choices).toHaveCount(2);
     const labels = await choices.allTextContents();
     expect(new Set(labels).size).toBe(2);
-    const choice = page.getByRole("option", {
-      name: new RegExp(`^Agent · npub….*${npubEncode(key).slice(-3)}$`),
-    });
+    const label = labels.find(
+      (text) =>
+        text.startsWith("Agent · npub…") &&
+        npubEncode(key).endsWith(text.slice("Agent · npub…".length)),
+    );
+    expect(label).toBeDefined();
+    const choice = page.getByRole("option", { name: label, exact: true });
     await expect(choice).toBeVisible();
     await choice.click();
     await expect(panel.locator("code").first()).toHaveText(key);

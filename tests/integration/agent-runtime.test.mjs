@@ -10,8 +10,44 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { runtimeFixture } from "./agent-runtime-fixture.mjs";
+
+test("native library and bundled tools pin the same immutable source", () => {
+  const spec = JSON.parse(
+    readFileSync(
+      new URL("../../runtime/agent-runtime.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  // Let Cargo parse its own manifest rather than duplicating TOML parsing here.
+  const metadata = spawnSync(
+    fileURLToPath(new URL("../../bin/cargo", import.meta.url)),
+    ["metadata", "--format-version=1", "--no-deps", "--locked", "--offline"],
+    {
+      cwd: new URL("../../", import.meta.url),
+      encoding: "utf8",
+      timeout: 30_000,
+    },
+  );
+  assert.ifError(metadata.error);
+  assert.equal(metadata.status, 0, metadata.stderr);
+  const app = JSON.parse(metadata.stdout).packages.find(
+    (pkg) => pkg.name === "buzz-foundation",
+  );
+  assert.ok(app, "native app package must be present");
+  const agent = app.dependencies.find(
+    (dependency) => dependency.name === "buzz-agent",
+  );
+  assert.ok(agent, "native app must declare its buzz-agent dependency");
+  assert.match(spec.revision, /^[0-9a-f]{40}$/);
+  assert.equal(
+    agent.source,
+    `git+${spec.repository}?rev=${spec.revision}`,
+    "Update src-tauri/Cargo.toml and runtime/agent-runtime.json together",
+  );
+});
 
 test("runtime preparation builds missing resources, reuses verified files, and repairs stale or corrupt bundles", (t) => {
   const directory = mkdtempSync(path.join(tmpdir(), "buzz-agent-runtime-"));

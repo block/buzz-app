@@ -316,7 +316,9 @@ test("narrow link panels begin after the rendered sidebar", async ({
       .evaluate((element) => Number(getComputedStyle(element).zIndex)),
   ).toBeLessThan(
     await panel(page).evaluate((element) =>
-      Number(getComputedStyle(element.parentElement).zIndex),
+      Number(
+        getComputedStyle(element.closest('[class*="_panelStack_"]')).zIndex,
+      ),
     ),
   );
 });
@@ -390,6 +392,23 @@ readingTest(
     await settle(page);
     await expect(trigger).toBeFocused();
     expect(await page.evaluate(() => window.panelFocusScrollDelta)).toBe(0);
+    await expectAnchor(page, saved);
+    // Reflow can arrive after Virtua's 150ms imperative-scroll scheduler ends.
+    // Keep the selected reading anchor, not the partially clipped row above it.
+    await page.waitForTimeout(250);
+    const preceding = await history.evaluate((element, id) => {
+      const rows = [...element.querySelectorAll("[data-message-id]")];
+      const index = rows.findIndex((row) => row.dataset.messageId === id);
+      return rows[index - 1]?.dataset.messageId;
+    }, saved.id);
+    expect(preceding).toBeTruthy();
+    const delayedReflow = await page.addStyleTag({
+      content: `[data-message-id="${preceding}"] p { padding-bottom: 52px; }`,
+    });
+    await settle(page);
+    await expectAnchor(page, saved);
+    await delayedReflow.evaluate((element) => element.remove());
+    await settle(page);
     await expectAnchor(page, saved);
     await page.setViewportSize({ width: 1200, height: 700 });
     await settle(page);

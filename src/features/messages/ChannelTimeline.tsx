@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The history region must support keyboard scrolling.
+import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { MembershipRow } from "./MembershipRow";
 import { membershipRows } from "./membership-rows";
@@ -114,12 +115,13 @@ function Timeline({
   const savedPosition = useRef(initialPosition);
   const restoredAnchor = useRef<string | undefined>(undefined);
   const rows = useMemo(() => membershipRows(window.rows), [window.rows]);
+  const resolveName = useIdentityNames(queries.names);
   const profiles = useRowProfiles(queries.profiles, window.rows);
   const agentPubkeys = useKnownAgentPubkeys(queries, profiles);
   const geometry = useMemo(() => geometryFor(queries.channels), [queries]);
   const signature = useMemo(
-    () => geometrySignature(window.rows, profiles),
-    [window.rows, profiles],
+    () => geometrySignature(window.rows, profiles, resolveName),
+    [window.rows, profiles, resolveName],
   );
   const [focusedMessageId, setFocusedMessageId] = useState<string>();
   const focusedIndex = rows.findIndex((row) => row.id === focusedMessageId);
@@ -271,58 +273,58 @@ function Timeline({
         ? savedPosition.current
         : null;
     let observer: MutationObserver | undefined;
+    const restorePosition = () => {
+      if (intent.current !== scheduledIntent || !handle.current) return;
+      if (restore) {
+        const anchor = restore.anchor;
+        const index = anchor
+          ? rows.findIndex(
+              (row) =>
+                row.id === anchor.id ||
+                row.membershipRows?.some((member) => member.id === anchor.id),
+            )
+          : -1;
+        if (anchor && index >= 0) {
+          restoredAnchor.current = rows[index]?.id;
+          handle.current.scrollToIndex(index, {
+            align: "start",
+            offset: -anchor.y,
+          });
+        } else handle.current.scrollTo(restore.offset);
+        follow.current = false;
+      } else if (follow.current) {
+        handle.current.scrollToIndex(rows.length - 1, { align: "end" });
+      }
+    };
     let frame = requestAnimationFrame(() => {
       if (intent.current === scheduledIntent && handle.current) {
-        if (restore) {
-          const anchor = restore.anchor;
-          const index = anchor
-            ? rows.findIndex(
-                (row) =>
-                  row.id === anchor.id ||
-                  row.membershipRows?.some((member) => member.id === anchor.id),
-              )
-            : -1;
-          if (anchor && index >= 0) {
-            restoredAnchor.current = rows[index]?.id;
-            handle.current.scrollToIndex(index, {
-              align: "start",
-              offset: -anchor.y,
-            });
-          } else handle.current.scrollTo(restore.offset);
-          follow.current = false;
-        } else {
-          // Input can move the DOM before its scroll event is delivered.
-          if (scroller.current && measuredPosition.current)
-            recordPosition(scroller.current);
-          if (!follow.current) {
-            settled.current = true;
-            return;
-          }
-          handle.current.scrollToIndex(rows.length - 1, { align: "end" });
-          // Appends and width changes can measure after Virtua's end-scroll.
-          // Keep bottom intent through list reflow, never through a new gesture.
-          const list = scroller.current?.querySelector("ol");
-          if (list) {
-            // Virtua measures children in ResizeObserver and synchronously writes
-            // this parent height. Observing the parent box would create skipped
-            // resize notifications; watch only Virtua's committed height instead.
-            let height = list.style.height;
-            observer = new MutationObserver(() => {
-              if (list.style.height === height) return;
-              height = list.style.height;
-              cancelAnimationFrame(frame);
-              frame = requestAnimationFrame(() => {
-                if (intent.current === scheduledIntent && follow.current)
-                  handle.current?.scrollToIndex(rows.length - 1, {
-                    align: "end",
-                  });
-              });
-            });
-            observer.observe(list, {
-              attributes: true,
-              attributeFilter: ["style"],
-            });
-          }
+        // Input can move the DOM before its scroll event is delivered.
+        if (!restore && scroller.current && measuredPosition.current)
+          recordPosition(scroller.current);
+        if (!restore && !follow.current) {
+          settled.current = true;
+          return;
+        }
+        restorePosition();
+        // Width changes can measure after Virtua's imperative-scroll scheduler
+        // expires. Retain the same reading anchor (or bottom intent) through
+        // those late measurements, never through a new reader gesture.
+        const list = scroller.current?.querySelector("ol");
+        if (list) {
+          // Virtua measures children in ResizeObserver and synchronously writes
+          // this parent height. Observing the parent box would create skipped
+          // resize notifications; watch only Virtua's committed height instead.
+          let height = list.style.height;
+          observer = new MutationObserver(() => {
+            if (list.style.height === height) return;
+            height = list.style.height;
+            cancelAnimationFrame(frame);
+            frame = requestAnimationFrame(restorePosition);
+          });
+          observer.observe(list, {
+            attributes: true,
+            attributeFilter: ["style"],
+          });
         }
       }
       settled.current = true;
@@ -485,6 +487,7 @@ function Timeline({
                 new Date(row.createdAt * 1000).toDateString();
             return row.membership ? (
               <MembershipRow
+                names={queries.names}
                 key={row.id}
                 row={row}
                 profiles={profiles}

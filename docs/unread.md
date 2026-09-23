@@ -82,7 +82,7 @@ opens the existing thread panel, so overlapping priority and thread activity nev
 produce duplicate dots. Merely revealing the popover does not acknowledge a reply.
 A local manual-unread mark strengthens the label without fabricating priority; the
 underlying observed count remains available.
-Conversation options exposes explicit actions and Unread status/retry. Unknown and
+Channel Settings → Diagnostics exposes explicit actions and Unread status/retry. Unknown and
 observed-zero both omit unread styling; the API preserves the distinction. There is
 no notification, feed, or exact-count service here.
 

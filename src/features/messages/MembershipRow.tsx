@@ -1,3 +1,5 @@
+import type { IdentityNameView } from "../identity-names/service";
+import { useIdentityNames } from "../identity-names/react";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { memo } from "react";
 import type { Profile } from "../relay/contracts";
@@ -7,6 +9,7 @@ import styles from "./Messages.module.css";
 /** Quiet, non-conversational activity. Avatars are decorative; prose owns the label. */
 export const MembershipRow = memo(function MembershipRow({
   row,
+  names,
   profiles,
   viewer,
   media,
@@ -14,16 +17,19 @@ export const MembershipRow = memo(function MembershipRow({
   day,
 }: {
   row: TimelineRow;
+  names?: IdentityNameView | undefined;
   profiles: ReadonlyMap<string, Profile>;
   viewer?: string | undefined;
   media(url: string, size?: "small"): string | undefined;
   agentPubkeys?: ReadonlySet<string> | undefined;
   day: boolean;
 }) {
+  const resolveName = useIdentityNames(names);
   const { targets, text, title } = membershipDescription(
     row.membershipRows ?? [row],
     profiles,
     viewer,
+    resolveName,
   );
   return (
     <div data-message-id={row.id} data-membership-row="">
@@ -42,7 +48,7 @@ export const MembershipRow = memo(function MembershipRow({
         <span className={styles.membershipAvatars} aria-hidden="true">
           {targets.slice(0, 3).map((id) => {
             const profile = profiles.get(id);
-            const name = profile?.name ?? id.slice(0, 10);
+            const name = resolveName(id, profile?.name ?? id.slice(0, 10));
             const picture = profile?.picture
               ? media(profile.picture, "small")
               : undefined;

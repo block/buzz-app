@@ -110,11 +110,25 @@ Buzz is a place where people build together and bring their agents into the room
 
 ## Controls
 
-Button uses prominent, subtle, ghost, destructive and outline emphasis. Its
+Button and IconButton share prominent, subtle, ghost, inverted, destructive,
+outline and link emphasis. Inverted is for an inverse surface; link keeps its
+background clear and underlines on interaction. Its
 32 / 40 / 52px sizes are sm / md / lg at the default scale; labels may wrap and
 increase height at larger text settings. Text buttons use pill corners. Fields
-use the shared control corner. Legacy Button names map to these variants during
-migration; do not add new primary/quiet or compact/default call sites.
+use the shared control corner. Small buttons use 16px side padding and 16px
+icons; medium and large use 24px side padding and 24px icons. Labels use the
+complete text-label-sm / text-label roles, with an 8px icon gap.
+
+IconButton defaults to round and uses the same sm/md/lg sizes. Existing names
+remain compatibility aliases: primary/solid → prominent, quiet → subtle,
+compact/toolbar → sm, default → md, large → lg. Do not add new alias call sites.
+Buzz's tint and chrome icon variants remain for composer and backdrop actions.
+
+Disabled controls retain their filled, outline, or unfilled treatment and cannot
+activate. Loading retains the label's geometry, accessible name, focus and variant
+colors while blocking activation; never swap in a differently sized loading label.
+Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
+Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
 IconButton defaults to round across all sizes and variants. Use `shape="control"`
 only when a rectangular control shape is explicitly needed.
@@ -161,6 +175,18 @@ form one stack; avoid inserting form-section gaps between individual rows.
 Use Tooltip for short hints on labelled controls; use PreviewCard for richer
 content. Tooltip owns its description link and inherits placement, focus and
 Escape behavior from Base UI. Overlay layers keep menus and hints above dialogs.
+
+ToastProvider mounts once in the host. ToastNotice belongs to the source that
+owns its state and recovery: unmounting the source removes its notification,
+without reporting user dismissal. Gate notices from hidden Settings sections
+explicitly; portals do not inherit a hidden ancestor. Keep form errors and
+blocked-page recovery inline.
+
+Use a finite timeout for transient feedback. Recovery defaults to no expiry and
+no dismissal unless the source supplies onDismiss; preserve all recovery actions.
+The bounded, scrollable stack keeps older actions available without covering the
+shell header or composer. F6 enters notifications, Tab reaches actions. Modals
+remain above the stack. Content updates do not restart expiry; timeout changes do.
 
 Tabs with content use renderPanel, which lets Base UI connect each tab and panel.
 Route navigation uses NavigationItem with aria-current instead. NavigationItem

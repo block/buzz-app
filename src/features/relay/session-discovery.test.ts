@@ -29,7 +29,10 @@ it("recognizes only relay-authorized private channel session metadata and keeps 
   discovery.accept(metadata(relay, false, 1));
   expect(discovery.isSession("work")).toBe(false);
   discovery.accept(metadata(relay, true, 2));
-  expect(discovery.channels()[0]?.channelType).toBe("session");
+  expect(discovery.channels()[0]).toMatchObject({
+    channelType: "session",
+    private: true,
+  });
   discovery.accept(
     signed(relay, {
       kind: 39000,
@@ -69,6 +72,7 @@ it("restores an ordinary child from signed metadata without inheriting parent ac
   expect(discovery.channels().find((item) => item.id === child)).toMatchObject({
     channelType: "session",
     parentChannelId: parent,
+    private: true,
   });
   discovery.accept(roster(relay, parent, [], 1800000000));
   expect(discovery.authorized(parent)).toBe(false);

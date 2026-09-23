@@ -674,3 +674,85 @@ it("a failing delivered observer cannot turn a confirmed send into failure", asy
     owner.dispose();
   }
 });
+
+it("restores a retained creation to retained storage when dismissal cannot persist", async () => {
+  const event = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+  });
+  const retained: OutgoingEvent = { event, signed: event, delivery: "seen" };
+  let records: readonly OutgoingEvent[] = [retained];
+  const save = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("journal unavailable"))
+    .mockImplementation(async (next: readonly OutgoingEvent[]) => {
+      records = structuredClone(next);
+    });
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+    { load: () => structuredClone(records), save },
+  );
+  try {
+    await owner.ready;
+    expect(owner.outbox.snapshot()).toHaveLength(0);
+    await expect(owner.outbox.dismiss(event.id)).rejects.toThrow(
+      "journal unavailable",
+    );
+    expect(owner.outbox.snapshot()).toHaveLength(0);
+    expect(owner.local.snapshot()).toEqual([retained]);
+    await vi.waitFor(() =>
+      expect(records).toMatchObject([
+        { event: { id: event.id }, delivery: "seen" },
+      ]),
+    );
+  } finally {
+    owner.dispose();
+  }
+});
+
+it("keeps creation receipts when an access purge races journal hydration", async () => {
+  const creation = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+  });
+  const message = signed(viewer, {
+    kind: 9,
+    content: "private content",
+    tags: [["h", "11111111-1111-4111-8111-111111111111"]],
+  });
+  let hydrate!: (items: readonly OutgoingEvent[]) => void;
+  const owner = createOutbox(
+    viewer.pubkey,
+    {
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+    {
+      load: () =>
+        new Promise((resolve) => {
+          hydrate = resolve;
+        }),
+      save: async () => {},
+    },
+  );
+  try {
+    owner.purgeConfirmed((event) => event.kind === 9007);
+    hydrate([
+      { event: creation, signed: creation, delivery: "seen" },
+      { event: message, signed: message, delivery: "seen" },
+    ]);
+    await owner.ready;
+    expect(owner.outbox.snapshot()).toHaveLength(0);
+    expect(owner.local.snapshot().map(({ event }) => event.id)).toEqual([
+      creation.id,
+    ]);
+  } finally {
+    owner.dispose();
+  }
+});

@@ -48,7 +48,13 @@ async function visible(page) {
   });
 }
 async function options(page) {
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  const trigger = page.getByRole("button", {
+    name: "Channel settings",
+    exact: true,
+  });
+  const opening = (await trigger.getAttribute("aria-expanded")) === "false";
+  await trigger.click();
+  if (opening) await page.getByText("Diagnostics", { exact: true }).click();
 }
 
 test("built sidebar → visible dwell → durable journal → encrypted broker publication; reload preserves intent", async ({

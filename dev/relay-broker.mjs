@@ -1,5 +1,5 @@
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
-import { validSessionCommand } from "./session-commands.mjs";
+import { validChannelCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
 import {
   validateWorkflowEvent,
@@ -1200,11 +1200,11 @@ export function relayBrokerPlugin({
               const authority = await getAuthority(relay);
               if (
                 !enrollment &&
-                !(authority.channelCreation && validSessionCommand(filters))
+                !(authority.channelCreation && validChannelCommand(filters))
               )
                 return json(res, 400, {
                   error:
-                    "Agent enrollment or session operation unavailable or invalid",
+                    "Agent enrollment or channel operation unavailable or invalid",
                   sent: false,
                 });
             } else if (![7, 9].includes(filters?.kind)) {

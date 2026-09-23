@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../identity-names/react";
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import styles from "./TypingIndicator.module.css";
@@ -16,6 +17,7 @@ export function TypingIndicator({
     session.typing.subscribe,
     session.typing.snapshot,
   );
+  const resolveName = useIdentityNames(session.names);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
     session.profiles.snapshot,
@@ -28,7 +30,9 @@ export function TypingIndicator({
   // Reuse already available names; optional typing must not trigger profile reads.
   const names = matching
     .slice(0, 3)
-    .map(({ pubkey }) => profiles.get(pubkey)?.name ?? pubkey.slice(0, 10));
+    .map(({ pubkey }) =>
+      resolveName(pubkey, profiles.get(pubkey)?.name ?? pubkey.slice(0, 10)),
+    );
   const others = matching.length - names.length;
   return (
     <div className={styles.typing}>

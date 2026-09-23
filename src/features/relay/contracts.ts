@@ -15,6 +15,8 @@ export type ChannelSummary = Readonly<{
   hidden?: true;
   /** Relay-authored metadata; absent while metadata is unavailable. */
   channelType?: "stream" | "forum" | "dm" | "session";
+  /** Relay-authored channel visibility; private channels use restricted presentation. */
+  private?: true;
   /** Presentation-only parent from signed channel metadata; never grants access. */
   parentChannelId?: string | undefined;
   /** Metadata update time used for stable work-history ordering. */

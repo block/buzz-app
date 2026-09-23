@@ -990,6 +990,10 @@ export function relayBrokerPlugin({
               (typeof range !== "string" || !/^bytes=\d+-\d*$/.test(range))
             )
               return json(res, 416, { error: "Media range rejected" });
+            const mediaDeadline = AbortSignal.any([
+              cancel.signal,
+              AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
+            ]);
             const upstream = await fetchUpstream(target, {
               headers: {
                 Authorization:
@@ -998,10 +1002,7 @@ export function relayBrokerPlugin({
                 ...(range ? { Range: range } : {}),
               },
               redirect: "error",
-              signal: AbortSignal.any([
-                cancel.signal,
-                AbortSignal.timeout(UPLOAD_TIMEOUT_MS),
-              ]),
+              signal: mediaDeadline,
             });
             stats.media++;
             if (!upstream.ok) {
@@ -1065,7 +1066,7 @@ export function relayBrokerPlugin({
             // All media/downloads use backpressure; failed streams cannot emit JSON after headers.
             try {
               await pipeline(Readable.fromWeb(upstream.body), meter, res, {
-                signal: cancel.signal,
+                signal: mediaDeadline,
               });
             } catch {
               res.destroy();

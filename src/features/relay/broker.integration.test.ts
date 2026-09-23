@@ -39,7 +39,9 @@ it("profiles a first slow publish through real local IPC, signing, authenticated
   const upstream: typeof fetch = async (_input, init) => {
     if (String(_input).endsWith("/upload")) {
       uploaded++;
-      expect(new Uint8Array(init?.body as Buffer)).toEqual(attachmentBytes);
+      assert.exists(init?.body);
+      const received = await new Response(init.body).arrayBuffer();
+      expect(new Uint8Array(received)).toEqual(attachmentBytes);
       expect(init?.method).toBe("PUT");
       return Response.json({
         url: `${fixtureRelayUrl}/media/${hash}.pdf`,

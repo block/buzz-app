@@ -30,6 +30,8 @@ export const apply: PluginModule["apply"] = (ctx) => {
     id: "toggle",
     title: "Toggle channel terminal",
     binding: TOGGLE_BINDING,
+    // Plugin Settings order: the terminal action is the category's primary action.
+    order: 10,
     allowInEditable: true,
     when: () => !!binding?.available(),
     run: () => binding?.toggle(),

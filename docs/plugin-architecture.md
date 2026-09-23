@@ -513,10 +513,14 @@ registration method is deliberately absent from the injected type contract; plug
 remain trusted same-process code, not sandboxed adversaries.
 
 `order` is optional and defaults to `0`. It controls only the row order in Settings
-within this plugin's category; lower values appear first. Equal orders use the
-stable namespaced contribution key (`pluginId/shortcutId`), then title, as
-presentation tie-breakers. The host category keeps its explicit host title/key
-ordering policy. Presentation order does not affect dispatch precedence, and
+within this owner's category; lower values appear first. Every bundled plugin
+assigns deliberate values to its actions (for example, a primary action starts
+at `10`), leaving gaps for related actions to be added later. Equal orders use
+the stable namespaced contribution key (`pluginId/shortcutId`), then title, as
+presentation tie-breakers. The core Buzz host category uses the same metadata
+and a host-owned functional sequence: navigation, text sizing, search/settings,
+then development-only actions. Host rows use their bare IDs for tie-breaking.
+Presentation order does not affect dispatch precedence, and
 shortcuts with duplicate titles remain separate rows because registry keys—not
 titles—identify bindings and their overrides.
 

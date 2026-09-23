@@ -17,7 +17,7 @@ export type Shortcut = Readonly<{
   allowInModal?: boolean;
   /** Held keys are consumed but run only once unless opted in. */
   repeat?: boolean;
-  /** Lower values appear first within this plugin's Settings category; defaults to zero. */
+  /** Lower values appear first within this owner's Settings category; defaults to zero. */
   order?: number;
 }>;
 

@@ -81,12 +81,14 @@ async function harness() {
     id: "settings",
     title: "Open Settings",
     binding: { key: ",", mod: true },
+    order: 80,
     run: runs.settings,
   });
   shortcuts.registerHost({
     id: "global-search",
     title: "Search Buzz",
     binding: { key: "k", mod: true },
+    order: 70,
     run: runs.search,
   });
   shortcuts.registerHost({
@@ -98,6 +100,7 @@ async function harness() {
       { key: "=", mod: true, shift: true },
       { key: "+", mod: true, shift: true },
     ],
+    order: 41,
     run: runs.grow,
   });
   const contribute = (id: string, shortcut: Shortcut) =>
@@ -186,8 +189,8 @@ it("lists live host and plugin shortcuts grouped by owner, searchable, and follo
         ),
     ).toEqual([
       "Increase text size",
-      "Open Settings",
       "Search Buzz",
+      "Open Settings",
       "First action",
       "Increment shortcut counter",
       "Toggle channel terminal",
@@ -251,6 +254,13 @@ it("orders plugin rows by metadata then contribution key without merging duplica
       order: 10,
       run: vi.fn(),
     });
+    await h.contribute("example.counter", {
+      id: "zzz",
+      title: "Zed action",
+      binding: { key: "m", mod: true },
+      order: 10,
+      run: vi.fn(),
+    });
     render(
       <ShortcutSettings
         shortcuts={h.shortcuts}
@@ -267,11 +277,12 @@ it("orders plugin rows by metadata then contribution key without merging duplica
         ),
     ).toEqual([
       "Increase text size",
-      "Open Settings",
       "Search Buzz",
+      "Open Settings",
       "First action",
       "Increment shortcut counter",
       "Increment shortcut counter",
+      "Zed action",
       "Toggle channel terminal",
     ]);
     const duplicates = screen.getAllByRole("article", {

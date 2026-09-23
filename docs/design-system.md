@@ -118,7 +118,11 @@ does not overlap. Independent plugins that hard-code sizes and third-party shado
 widgets need their own adapter; this is not a forced CSS rewrite of arbitrary code.
 
 Settings → Shortcuts lists every host and active plugin shortcut from the live
-dispatcher, grouped by owner, with search, per-row Change/Reset and Reset all. It
+dispatcher, grouped by owner, with each owner's deliberate numeric order, search,
+per-row Change/Reset and Reset all. Buzz's host rows use a functional sequence
+(navigation, text sizing, search/settings, then development-only actions); plugins
+choose the order of their own actions. Equal orders use stable registry identity
+and then title as tie-breakers. It
 is built from existing components (`SearchField`, `Button`, `NavigationSection`,
 the Plugins-list row pattern) and `formatBinding`, which renders chords as glyphs
 in Control, Option, Shift, Command order on Apple platforms (⇧⌘K) and as words

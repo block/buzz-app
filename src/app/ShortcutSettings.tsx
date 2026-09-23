@@ -28,7 +28,7 @@ type Row = Readonly<{
   key: string;
   title: string;
   owner: string;
-  /** Plugin-defined presentation order; host rows use the host policy below. */
+  /** Owner-defined presentation order within the Settings category. */
   order: number;
   defaults: readonly KeyBinding[];
   override: KeyBinding | undefined;
@@ -72,10 +72,8 @@ const DESKTOP_CHORDS: readonly KeyBinding[] = [
 ];
 const includes = (chords: readonly KeyBinding[], binding: KeyBinding) =>
   chords.some((chord) => sameBinding(chord, binding));
-/** Host ordering is intentionally title/key based; plugin order is part of their API. */
-const byHostPresentation = (a: Row, b: Row) =>
-  a.title.localeCompare(b.title) || a.key.localeCompare(b.key);
-const byPluginPresentation = (a: Row, b: Row) =>
+/** Every owner supplies order; identity and title make ties deterministic. */
+const byPresentation = (a: Row, b: Row) =>
   a.order - b.order ||
   a.key.localeCompare(b.key) ||
   a.title.localeCompare(b.title);
@@ -170,9 +168,7 @@ export function ShortcutSettings({
   ]
     .map((group) => ({
       ...group,
-      rows: [...group.rows].sort(
-        group.id === "host" ? byHostPresentation : byPluginPresentation,
-      ),
+      rows: [...group.rows].sort(byPresentation),
     }))
     .filter((group) => group.rows.length);
   const rows = groups.flatMap((group) => group.rows);

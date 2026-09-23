@@ -69,6 +69,8 @@ export function PageSearch({
         id: SEARCH_ID,
         title: "Search Buzz",
         binding: SEARCH_BINDING,
+        // Host Settings order: navigation, text sizing, search, settings.
+        order: 30,
         allowInEditable: true,
         run: begin,
       }),

@@ -24,8 +24,24 @@ it("restores an unconfirmed ordinary channel without creating a second identity"
       ["ttl", "604800"],
     ],
   });
+  const sessionCreation = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", "22222222-2222-4222-8222-222222222222"],
+      ["name", "Work"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+    ],
+  });
   let records: readonly OutgoingEvent[] = [
     { event: creation, signed: creation, delivery: "unknown" },
+    {
+      event: sessionCreation,
+      signed: sessionCreation,
+      delivery: "accepted",
+    },
   ];
   const sign = vi.fn(async () => creation);
   const publish = vi.fn(async () => {
@@ -73,8 +89,11 @@ it("restores an unconfirmed ordinary channel without creating a second identity"
     ).rejects.toThrow(/acknowledgement lost/);
     expect(sign).not.toHaveBeenCalled();
     expect(publish).toHaveBeenCalledOnce();
-    expect(owner.session.outbox?.snapshot()).toHaveLength(1);
-    expect(owner.session.outbox?.snapshot()[0]?.event.id).toBe(creation.id);
+    expect(
+      owner.session.outbox
+        ?.snapshot()
+        .filter((item) => item.event.id === creation.id),
+    ).toHaveLength(1);
   } finally {
     owner.dispose();
   }

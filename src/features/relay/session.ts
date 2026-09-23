@@ -48,6 +48,7 @@ import {
   browserOutboxStorage,
   createOutbox,
   type LocalEvents,
+  type OutgoingEvent,
   type OutboxStorage,
 } from "./outbox";
 import { createMessages } from "./messages";
@@ -85,10 +86,16 @@ const channelId =
 function restoredChannelCreation(
   events: LocalEvents | undefined,
 ): PendingChannelCreation | undefined {
-  const item = [...(events?.snapshot() ?? [])]
-    .reverse()
-    .find(({ event, delivery }) => event.kind === 9007 && delivery !== "seen");
-  if (!item) return;
+  for (const item of [...(events?.snapshot() ?? [])].reverse()) {
+    const restored = parseChannelCreation(item);
+    if (restored) return restored;
+  }
+}
+
+function parseChannelCreation(
+  item: OutgoingEvent,
+): PendingChannelCreation | undefined {
+  if (item.event.kind !== 9007 || item.delivery === "seen") return;
   const tags = item.event.tags.filter(([name]) => name !== "client-id");
   const [h, name, visibility, channelType, ...optional] = tags;
   const optionalNames = optional.map(([key]) => key);

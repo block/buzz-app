@@ -30,6 +30,34 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.deepEqual(services.pages.snapshot(), []);
     await settle();
     assert.equal(services.pages.snapshot().length, 5);
+    assert.deepEqual(services.channelTemplates.snapshot(), []);
+    assert.deepEqual(
+      services.settingsCards.snapshot().map((card) => card.pluginId),
+      ["buzz.channels"],
+    );
+    await services.plugins.change("enable", "buzz.channel-templates");
+    await vi.waitFor(() =>
+      assert.equal(services.channelTemplates.snapshot().length, 1),
+    );
+    const originalTemplates = services.channelTemplates.snapshot()[0];
+    assert.ok(
+      services.settingsCards
+        .snapshot()
+        .some((card) => card.pluginId === "buzz.channel-templates"),
+    );
+    await services.plugins.change("disable", "buzz.channel-templates");
+    assert.deepEqual(services.channelTemplates.snapshot(), []);
+    assert.deepEqual(
+      services.settingsCards.snapshot().map((card) => card.pluginId),
+      ["buzz.channels"],
+    );
+    await services.plugins.change("enable", "buzz.channel-templates");
+    await vi.waitFor(() =>
+      assert.equal(services.channelTemplates.snapshot().length, 1),
+    );
+    assert.notEqual(services.channelTemplates.snapshot()[0], originalTemplates);
+    await services.plugins.change("disable", "buzz.channel-templates");
+
     await vi.waitFor(() =>
       assert.equal(services.conversation.tools.snapshot().length, 2),
     );

@@ -11,6 +11,7 @@ import {
   type PanelProps,
 } from "../../src/features/panels/service";
 import { PagesService } from "../../src/features/pages/service";
+import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
 import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
 import { createRelaySession } from "../../src/features/relay/session";
 import type {
@@ -176,6 +177,7 @@ const manager = createPluginManager(context, {
 });
 const panels = new PanelsService(context);
 const pages = new PagesService(context);
+const providers = new TemplateProvidersService(context);
 Object.assign(window, {
   profilesFixture: {
     report,
@@ -233,7 +235,12 @@ function Fixture() {
         Toggle appearance
       </button>
       <div style={{ height: "calc(100vh - 50px)", padding: 16 }}>
-        <ChannelsPage relay={relay} panels={panels} pages={pages} />
+        <ChannelsPage
+          relay={relay}
+          panels={panels}
+          pages={pages}
+          providers={providers}
+        />
       </div>
     </>
   );

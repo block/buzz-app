@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "identifier": "dev.local.buzz.foundation",
   "build": {
-    "beforeDevCommand": "pnpm dev:desktop",
+    "beforeDevCommand": "pnpm dev:desktop --port 1430",
     "devUrl": "http://localhost:1430",
     "beforeBuildCommand": "node scripts/build-agent-runtime.mjs && pnpm build",
     "frontendDist": "../dist"

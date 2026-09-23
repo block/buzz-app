@@ -1,4 +1,6 @@
 import { brokerUpload, type AttachmentUpload } from "./attachments";
+import type { ChannelKitHost } from "../channel-templates/host";
+import type { KitRecord } from "../channel-templates/model";
 import { workflowHost } from "../workflows/http";
 import type { WorkflowHost } from "../workflows/host";
 import { readReceiptText } from "./receipt";
@@ -59,6 +61,7 @@ export interface ReadTransport {
   /** Host-only decoder of the viewer's two signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly readState?: ReadStateHost;
+  readonly channelKit?: ChannelKitHost;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
@@ -229,6 +232,7 @@ export async function connectBrokerTransport(
     live?: boolean;
     presence?: boolean;
     sidebarPreferences?: boolean;
+    channelKit?: boolean;
     agentLibrary?: boolean;
     agentActivity?: boolean;
     readState?: boolean;
@@ -354,6 +358,44 @@ export async function connectBrokerTransport(
             if (!result.ok)
               throw new Error(`Local decoder failed (HTTP ${result.status})`);
             return result.json();
+          },
+        }
+      : {}),
+    ...(session.channelKit
+      ? {
+          channelKit: {
+            async prepare(record: KitRecord, signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/channel-kit-prepare`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(record),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Recipe preparation failed (${response.status})`,
+                );
+              const result = await response.json();
+              if (
+                typeof result.content !== "string" ||
+                result.content.length > 24 * 1024
+              )
+                throw new Error("Invalid encrypted recipe");
+              return result.content as string;
+            },
+            async decode(events: readonly RelayEvent[], signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/channel-kit-decode`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(events),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(`Recipe decode failed (${response.status})`);
+              return response.json();
+            },
           },
         }
       : {}),

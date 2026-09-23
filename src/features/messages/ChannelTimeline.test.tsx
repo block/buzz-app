@@ -247,7 +247,7 @@ function setup({
     ({
       channels: { loadOlder, window: snapshot },
       profiles: {},
-      agentLibrary: createAgentLibrary(undefined).queries,
+      agentChoices: createAgentLibrary(undefined).queries,
       // Geometry fixtures are read-only; reading behavior has its own boundary tests.
       unread: { sync: () => ({ capability: "unsupported" }) },
       media: () => undefined,

@@ -23,15 +23,18 @@ See [contributing](docs/contributing.md) for exact pins, registry settings,
 and the pinned pnpm package's Intel Mac limitation.
 
 Both commands forward arguments to their development tool (Vite or Tauri).
-Select a port (default: 1430) with `just web --port 1431` or
-`just desktop --port 1432`. Browser servers prefer the requested port and
+The default port is derived from the worktree's path, giving each checkout a
+stable default that normally avoids collisions between parallel worktrees;
+`just desktop` prints the URL it chose. Override it with `just web --port 1431`
+or `just desktop --port 1432`. Browser servers prefer the requested port and
 use the next open port automatically; desktop requires the exact port to be free and keeps
-Vite and the native window on the same URL. To run multiple desktop copies,
-use a different port in each terminal/worktree:
+Vite and the native window on the same URL. Use an explicit port if two paths
+collide, another process occupies the default, or you start a second instance
+from the same checkout:
 
 ```sh
-just desktop --port 1430
-# In another terminal/worktree:
+just desktop
+# A second instance from the same checkout:
 just desktop --port 1431
 ```
 
@@ -90,9 +93,10 @@ in the non-live shell/fixture state.
    just desktop
    ```
 
-   Open the Local URL printed by `just web`; parallel worktrees may use a port
-   above the requested port. If 1430 is busy, use `just desktop --port 1431`
-   (or another free port) instead of stopping the other copy.
+   Open the Local URL printed by `just web`. Each worktree derives a stable
+   default port from its path, but two paths can still collide. If the default
+   is busy, use `just desktop --port 1431` (or another free port) instead of
+   stopping the other copy.
 
 The broker reads the existing Keychain credential only after validating the
 public pin, refuses mismatches and never falls back to another credential. If it

@@ -1,4 +1,10 @@
 import { prepareMedia } from "./media-preparation.mjs";
+import {
+  prepareChannelKit,
+  decodeChannelKit,
+  admitChannelKit,
+  validCanvas,
+} from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
 import { validChannelCommand } from "./session-commands.mjs";
 import { SocketRequestError } from "../src/features/relay/socket-requests.ts";
@@ -556,10 +562,12 @@ export function relayBrokerPlugin({
             [
               "/api/relay/sidebar-preferences",
               "/api/relay/read-state-decode",
+              "/api/relay/channel-kit-decode",
             ].includes(route) &&
             req.method === "POST"
           ) {
             const readStateDecode = route === "/api/relay/read-state-decode";
+            const kitDecode = route === "/api/relay/channel-kit-decode";
             if (sidebarUploads >= SIDEBAR_UPLOAD_SLOTS)
               return json(res, 429, { error: "Sidebar decoder is busy" });
             sidebarUploads++;
@@ -573,7 +581,7 @@ export function relayBrokerPlugin({
                 bytes += Buffer.byteLength(part);
                 if (
                   bytes >
-                  (readStateDecode
+                  (readStateDecode || kitDecode
                     ? READ_STATE_DECODE_BYTES
                     : SIDEBAR_REQUEST_BYTES)
                 )
@@ -586,9 +594,11 @@ export function relayBrokerPlugin({
               return json(
                 res,
                 200,
-                readStateDecode
-                  ? decodeReadState(events, key)
-                  : decodeSidebarPreferences(events, key),
+                kitDecode
+                  ? decodeChannelKit(events, key, relay)
+                  : readStateDecode
+                    ? decodeReadState(events, key)
+                    : decodeSidebarPreferences(events, key),
               );
             } catch {
               if (!res.destroyed)
@@ -627,12 +637,15 @@ export function relayBrokerPlugin({
                 7,
                 9,
                 9000,
+                30078,
+                40100,
                 ...WORKFLOW_KINDS,
                 ...((await getAuthority(relay)).channelCreation ? [9007] : []),
               ],
               workflowReads: true,
               attachmentUploads: true,
               sidebarPreferences: true,
+              channelKit: true,
               readState: true,
               agentLibrary: true,
               live: true,
@@ -1080,6 +1093,7 @@ export function relayBrokerPlugin({
               "/api/relay/sign",
               "/api/relay/publish",
               "/api/relay/read-state-sign",
+              "/api/relay/channel-kit-prepare",
               "/api/relay/read-state-publish",
               "/api/relay/profile",
               "/api/relay/authorize-agent",
@@ -1105,6 +1119,16 @@ export function relayBrokerPlugin({
             filters = JSON.parse(raw);
           } catch {
             return json(res, 400, { error: "Filter body is not JSON" });
+          }
+          if (route === "/api/relay/channel-kit-prepare") {
+            try {
+              cancel.signal.throwIfAborted();
+              return json(res, 200, {
+                content: prepareChannelKit(filters, key, relay),
+              });
+            } catch {
+              return json(res, 400, { error: "Invalid channel recipe" });
+            }
           }
           if (route === "/api/relay/authorize-agent") {
             if (
@@ -1249,6 +1273,23 @@ export function relayBrokerPlugin({
                     "Agent enrollment or channel operation unavailable or invalid",
                   sent: false,
                 });
+            } else if (filters?.kind === 30078 || filters?.kind === 40100) {
+              try {
+                if (
+                  !Number.isInteger(filters.created_at) ||
+                  Math.abs(filters.created_at - Date.now() / 1000) > 15 * 60
+                )
+                  throw new Error("Expired operation");
+                if (filters.kind === 30078)
+                  admitChannelKit(filters, key, relay);
+                else if (!validCanvas(filters))
+                  throw new Error("Invalid Canvas");
+              } catch {
+                return json(res, 400, {
+                  error: "Channel recipe or Canvas rejected",
+                  sent: false,
+                });
+              }
             } else if (![7, 9].includes(filters?.kind)) {
               try {
                 validateWorkflowEvent(

@@ -2,7 +2,6 @@ import { useFileDrop } from "./use-file-drop";
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
-import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { knownAgentPubkeys } from "../agents/known";
 import { useKnownAgentPubkeys } from "../agents/use-known";
@@ -129,7 +128,6 @@ function Composer({
   inviteAgents = false,
   trailingTool,
 }: MessageComposerProps) {
-  const { control } = useMentionAgents(scope);
   const list = useSyncExternalStore(
     session.channels?.get || sessionConversation
       ? session.channels.subscribeList
@@ -432,14 +430,14 @@ function Composer({
       ...sessionRecipients(
         channel,
         session.profiles.snapshot(),
-        session.agentLibrary.snapshot(),
+        session.agentChoices.snapshot(),
         session.viewer,
         explicit,
       ),
     ];
     const missing = recipients.filter((key) => !channel.members?.includes(key));
     if (missing.length) {
-      await session.agentLibrary.refresh();
+      await session.agentChoices.refresh();
       if (!currentAdmission())
         throw new Error("The session changed. Review its channel and retry.");
       await session.workSessions.addAgents(
@@ -487,11 +485,20 @@ function Composer({
         admission.current = true;
         setAdmitting(true);
         recipients = await prepareRecipients(recipients);
-      } else if (control && recipients.length) {
+      } else if (recipients.length) {
         const members = session.channels
           .list()
           .channels.find((item) => item.id === channelId)?.members;
-        if (recipients.some((key) => !members?.includes(key))) {
+        const missing = recipients.filter((key) => !members?.includes(key));
+        // Removed people/legacy members go straight to session validation,
+        // without entering the asynchronous enrollment lock or making writes.
+        const managed = session.agentChoices.snapshot().identities;
+        if (
+          missing.length &&
+          missing.every((key) =>
+            managed.some((agent) => agent.managed && agent.pubkey === key),
+          )
+        ) {
           setSending(true);
           setError(undefined);
           await enrollMentionedAgents(
@@ -499,7 +506,6 @@ function Composer({
             scope,
             channelId,
             recipients,
-            control,
             attempt.signal,
           );
         }
@@ -532,7 +538,7 @@ function Composer({
       clearMediaTime?.();
       const agents = knownAgentPubkeys(
         session.profiles.snapshot(),
-        session.agentLibrary.snapshot(),
+        session.agentChoices.snapshot(),
       );
       const next = followupDraft(
         rememberAgentsPreference()

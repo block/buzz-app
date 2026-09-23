@@ -64,5 +64,7 @@ export function sidebarSections(
         (channel) => channel.channelType === "dm" && !hiddenDms.has(channel.id),
       ),
     },
-  ].filter((section) => section.key === "channels" || section.rows.length);
+  ].filter(
+    (section) => isChannelSectionKey(section.key) || section.rows.length,
+  );
 }

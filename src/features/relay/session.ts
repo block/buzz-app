@@ -293,10 +293,12 @@ export function createRelaySession(
       // Purge before notifying: callbacks must not be able to reseed denied data.
       for (const id of revoked) recent.delete(id);
       channels.purgeAccess((events) => events.filter(visibility(events)));
-      // Own creation receipts are recovery intent until creator membership
-      // completes, even while discovery denies channel-content access.
+      // An undismissed ordinary creation receipt is recovery intent until
+      // creator membership completes. Session receipts remain revocable.
       writes?.purgeConfirmed(
-        (event) => event.kind === 9007 || (event.kind !== 0 && visible(event)),
+        (event) =>
+          !!parseChannelCreation({ event, delivery: "seen" }) ||
+          (event.kind !== 0 && visible(event)),
       );
       profiles.clear();
       emoji.clear();

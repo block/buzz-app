@@ -193,9 +193,21 @@ it("keeps a seen private creation through an access purge and reconnect", async 
       ["channel_type", "stream"],
     ],
   });
+  const sessionCreation = signed(viewer, {
+    kind: 9007,
+    content: "",
+    tags: [
+      ["h", "22222222-2222-4222-8222-222222222222"],
+      ["name", "Old session"],
+      ["visibility", "private"],
+      ["channel_type", "stream"],
+      ["about", SESSION_CHANNEL_DESCRIPTION],
+    ],
+  });
   const input = { name: "Private notes", visibility: "private" as const };
   let records: readonly OutgoingEvent[] = [
     { event: creation, signed: creation, delivery: "seen" },
+    { event: sessionCreation, signed: sessionCreation, delivery: "seen" },
   ];
   const storage = {
     load: () => structuredClone(records),
@@ -221,12 +233,14 @@ it("keeps a seen private creation through an access purge and reconnect", async 
     );
     expect(owner.session.channels.list().channels).toHaveLength(0);
     expect(owner.session.channelCreation.snapshot()).toEqual(input);
-    expect(records).toEqual([
-      expect.objectContaining({
-        event: expect.objectContaining({ id: creation.id }),
-        delivery: "seen",
-      }),
-    ]);
+    await vi.waitFor(() =>
+      expect(records).toEqual([
+        expect.objectContaining({
+          event: expect.objectContaining({ id: creation.id }),
+          delivery: "seen",
+        }),
+      ]),
+    );
   } finally {
     owner.dispose();
   }

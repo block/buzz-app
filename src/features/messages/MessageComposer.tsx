@@ -1,6 +1,5 @@
 import { Button } from "../../shared/design-system/ui/Button";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { knownAgentPubkeys } from "../agents/known";
@@ -514,26 +513,6 @@ function Composer({
       open={(target) => onOpenLink?.(target) ?? false}
     />
   );
-  const renderLeadingTools = (tools: ReactNode) => (
-    <div className={styles.composerLeadingTools}>
-      {tools}
-      {!!value.recipients.length && (
-        <RecipientAvatars
-          session={session}
-          recipients={value.recipients}
-          disabled={editingDisabled}
-          remove={(pubkey) =>
-            saveDraft({
-              ...value,
-              recipients: value.recipients.filter(
-                (item) => item.pubkey !== pubkey,
-              ),
-            })
-          }
-        />
-      )}
-    </div>
-  );
   if (!outbox?.supports(9))
     return (
       <>
@@ -700,7 +679,6 @@ function Composer({
             {extensions ? (
               <ComposerTools
                 registry={extensions.tools}
-                renderLeading={renderLeadingTools}
                 session={session}
                 scope={scope}
                 channelId={channelId}
@@ -711,9 +689,7 @@ function Composer({
                 insertMention={insertMention}
                 focus={() => input.current?.focus()}
               />
-            ) : (
-              renderLeadingTools(null)
-            )}
+            ) : null}
           </div>
           {trailingTool ??
             (sessionConversation ? (
@@ -766,67 +742,5 @@ function Composer({
         )}
       </form>
     </>
-  );
-}
-
-/** Presentation stays host-owned even when the optional mention tool is disabled. */
-function RecipientAvatars({
-  session,
-  recipients,
-  disabled,
-  remove,
-}: {
-  session: RelaySession;
-  recipients: readonly MentionRecipient[];
-  disabled: boolean;
-  remove(pubkey: string): void;
-}) {
-  const profiles = useSyncExternalStore(
-    session.profiles.subscribe,
-    session.profiles.snapshot,
-    session.profiles.snapshot,
-  );
-  const unique = [
-    ...new Map(recipients.map((item) => [item.pubkey, item])).values(),
-  ];
-  return (
-    <section
-      className={styles.mentionRecipients}
-      aria-label="Notification recipients"
-    >
-      {unique.map((recipient) => {
-        const profile = profiles.get(recipient.pubkey);
-        return (
-          <IconButton
-            key={recipient.pubkey}
-            type="button"
-            size="toolbar"
-            data-mention-recipient=""
-            title={`Don't notify ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
-            aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
-            disabled={disabled}
-            onClick={() => remove(recipient.pubkey)}
-            icon={
-              <span
-                className={styles.mentionRecipientArtwork}
-                data-avatar-shape={profile?.isAgent ? "squircle" : "circle"}
-                aria-hidden="true"
-              >
-                <Avatar
-                  alt=""
-                  fallback={recipient.name}
-                  src={session.media(profile?.picture ?? "", "small")}
-                  size="small"
-                  shape={profile?.isAgent ? "squircle" : "circle"}
-                />
-                <span className={styles.mentionRecipientRemove}>
-                  <XIcon size={16} />
-                </span>
-              </span>
-            }
-          />
-        );
-      })}
-    </section>
   );
 }

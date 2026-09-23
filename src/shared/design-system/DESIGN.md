@@ -58,6 +58,34 @@ not density or emphasis. The caller supplies identity type from domain data,
 never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
 
+## Public identity text
+
+Public-key recognition labels use the shared pure formatter in
+`src/shared/identity/public-key.ts`: `npub…` followed by the last three canonical
+npub characters by default. This is text, not a component or a new identifier.
+Use `formatPublicKey` for one label; use `publicKeyLabels` for an ambiguous group
+so distinct keys receive a common suffix length that makes them distinguishable.
+Inputs are public identity keys in hex, never credentials. Invalid inputs produce
+no label; do not echo an invalid value as a fallback. Raw hex cannot establish
+whether a caller supplied a secret: callers must use public-identity fields only.
+
+Keep the full key for routing, persistence, identity comparisons, and explicit key
+copy actions. Short labels are recognition aids, not proof of identity. Full-key
+inspection/export surfaces remain explicit exceptions. Existing surfaces are not
+migrated automatically; new abbreviated public-key displays should reuse this rule.
+
+Hosts decide when ambiguity exists. Composer chips compare authored names without
+case or surrounding whitespace and qualify every selected same-name identity,
+including earlier selections. Repeating one identity is not ambiguous. Removing
+the last distinct namesake restores name-only display. Qualifiers never change
+message source, recipient spans, copyable message text, or notifications. Accessible
+names spell out the public-key ending. No hover or picker change is implied.
+
+When an existing composer chip gains a qualifier, reveal only the qualifier with
+shared settle motion; newly inserted chips appear at rest. Ordinary typing must
+not replay the reveal. The suffix stays visible while a long name ellipsizes.
+Removal is immediate and reduced motion disables the reveal animation.
+
 ## Posture
 
 Buzz is a place where people build together and bring their agents into the room. Everyday surfaces stay quiet, crisp, and highly functional; character shows up in identity, guidance, transitions, and ceremony rather than in the chrome of ordinary work. Colour is signal, not decoration. When in doubt, the interface gets out of the way of the conversation.

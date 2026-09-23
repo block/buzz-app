@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { test, expect } from "@playwright/test";
 import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
@@ -50,11 +51,94 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
           buttons.map((button) => button.getAttribute("aria-label")),
         );
     await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
+    const input = page.getByRole("textbox", { name: "Message #General" });
     await choose(keys.first);
+    await expect(input.locator(".inline-chip")).toHaveText("@Honey");
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.evaluate(() => {
+      window.qualifierReveals = [];
+      document.addEventListener("animationstart", (event) => {
+        if (event.animationName !== "inline-chip-qualifier-reveal") return;
+        window.qualifierReveals.push(event.target);
+        for (const animation of event.target.getAnimations()) {
+          animation.pause();
+          animation.currentTime = 0;
+        }
+      });
+    });
     await choose(keys.second);
+    const labels = [keys.first, keys.second].map(
+      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
+    );
+    await expect(input.locator(".inline-chip")).toHaveText(labels);
+    await expect
+      .poll(() => page.evaluate(() => window.qualifierReveals.length))
+      .toBe(1);
+    const widths = await input
+      .locator(".inline-chip-qualifier")
+      .first()
+      .evaluate((element) => {
+        const animation = element.getAnimations()[0];
+        const start = element.getBoundingClientRect().width;
+        const duration = animation.effect.getTiming().duration;
+        animation.currentTime = duration / 2;
+        const middle = element.getBoundingClientRect().width;
+        animation.finish();
+        return { start, middle, end: element.getBoundingClientRect().width };
+      });
+    expect(widths.start).toBeLessThan(widths.middle);
+    expect(widths.middle).toBeLessThan(widths.end);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
+      "animation-name",
+      "none",
+    );
+    await expect(
+      input.locator(".inline-chip-qualifier").last(),
+    ).not.toHaveAttribute("data-reveal");
+    // Copy serializes authored source, not the visible namesake qualifiers.
+    await input.focus();
+    await input.press("ControlOrMeta+a");
+    await expect(input.locator("[data-editor-selected]")).toHaveCount(2);
+    const copied = await input.evaluate((element) => {
+      const clipboardData = new DataTransfer();
+      element.dispatchEvent(
+        new ClipboardEvent("copy", {
+          bubbles: true,
+          cancelable: true,
+          clipboardData,
+        }),
+      );
+      return clipboardData.getData("text/plain");
+    });
+    expect(copied).toBe("@Honey @Honey ");
+    await input.press("ArrowRight");
+    // Typing can rebuild editor portals; it must not replay the reveal.
+    await input.press("x");
+    await expect(input).toHaveJSProperty("value", "@Honey @Honey x");
+    await expect(input.locator("[data-reveal]")).toHaveCount(0);
+    await input.press("Backspace");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    // The first chip's visual expansion must not change native source offsets.
+    await input.focus();
+    await input.evaluate((element) => element.setSelectionRange(7, 13));
+    await input.press("Backspace");
+    await expect(input).toHaveJSProperty("value", "@Honey  ");
+    await expect(input.locator(".inline-chip")).toHaveText("@Honey");
+    await input.press(process.platform === "darwin" ? "Meta+z" : "Control+z");
+    await expect(input).toHaveJSProperty("value", "@Honey @Honey ");
+    await expect(input.locator(".inline-chip")).toHaveText(labels);
+    await expect(input.locator("[data-reveal]")).toHaveCount(0);
+    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
+      "animation-name",
+      "none",
+    );
+    // Undo restores the former selected range. Continue the original typing journey at its end.
+    await input.evaluate((element) =>
+      element.setSelectionRange(element.value.length, element.value.length),
+    );
     // The merged toolbar must preserve exact recipients while the new picker
     // inserts Unicode and follows the host mode without recreating the draft.
-    const input = page.getByRole("textbox", { name: "Message #General" });
     await page.evaluate(() => {
       document.documentElement.dataset.colorMode = "dark";
     });
@@ -69,25 +153,51 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await search.fill("grinning");
     await page.getByRole("button", { name: "😀", exact: true }).click();
     await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
+    await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
+      2,
+    );
+    const chip = input.locator(".inline-chip").first();
     await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(2);
-    const chip = page
-      .getByRole("region", { name: "Notification recipients" })
-      .getByRole("button")
-      .first();
-    const removal = chip.locator("[data-avatar-shape] > span").last();
-    await expect(removal).toHaveCSS("opacity", "0");
+      page.getByRole("region", { name: "Notification recipients" }),
+    ).toHaveCount(0);
+    const chipRoles = await chip.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = "var(--affordance-accent)";
+      probe.style.color = "var(--text-standard)";
+      element.append(probe);
+      const style = getComputedStyle(probe);
+      const roles = { background: style.backgroundColor, text: style.color };
+      probe.remove();
+      return roles;
+    });
+    await expect(chip).toHaveCSS("background-color", chipRoles.background);
+    await expect(chip).toHaveCSS("color", chipRoles.text);
+    // Browser-only: shared chip geometry across themes/widths, without a
+    // nested focus target or hover preview competing with native editing.
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      for (const width of [360, 768, 1440]) {
+        await page.setViewportSize({ width, height: 950 });
+        const bounds = await input.boundingBox();
+        for (const item of await input.locator(".inline-chip").all()) {
+          const box = await item.boundingBox();
+          expect(box.x).toBeGreaterThanOrEqual(bounds.x);
+          expect(box.x + box.width).toBeLessThanOrEqual(
+            bounds.x + bounds.width,
+          );
+        }
+        await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
+      }
+    }
     await chip.hover();
-    await expect(removal).toHaveCSS("opacity", "1");
-    expect(
-      await removal.evaluate((el) => {
-        const style = getComputedStyle(el);
-        return style.color !== style.backgroundColor;
-      }),
-    ).toBe(true);
+    await chip.click();
+    await expect(input.locator("button, a, [tabindex], [title]")).toHaveCount(
+      0,
+    );
+    await expect(page.locator(".buzz-preview-card")).toHaveCount(0);
+    await input.press("Escape");
     await page.screenshot({
       path: test.info().outputPath("mention-recipients.png"),
     });
@@ -122,11 +232,9 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(
       page.getByRole("button", { name: "Mention a member", exact: true }),
     ).toHaveCount(0);
-    await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(1);
+    await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
+      1,
+    );
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
@@ -176,11 +284,9 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey ");
-    await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(1);
+    await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
+      1,
+    );
     await page
       .getByRole("button", { name: "Toggle disabled", exact: true })
       .click();
@@ -189,6 +295,96 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey @Honey ");
     expect(errors).toEqual([]);
+  } finally {
+    await server.close();
+  }
+});
+
+test("selected mentions inside code remain visible through draft restore and channel/reply publication", async ({
+  page,
+}) => {
+  // Browser-only boundary: real picker insertion and source selection in a code literal.
+  await page.addInitScript(() => {
+    localStorage.setItem("buzz-remember-mentioned-agents.v1", "off");
+  });
+  const server = await createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0 },
+  });
+  try {
+    await server.listen();
+    await page.goto(
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
+    );
+    const keys = await page.evaluate(() => [
+      window.mentionFixture.first,
+      window.mentionFixture.second,
+    ]);
+    const input = page.getByRole("textbox");
+    const labels = keys.map(
+      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
+    );
+    for (const reply of [false, true]) {
+      await input.fill("` `");
+      await input.evaluate((element) => element.setSelectionRange(1, 1));
+      for (const key of keys) {
+        await page
+          .getByRole("button", { name: "Mention a member", exact: true })
+          .click();
+        await page
+          .getByRole("region", { name: "Mention a member or agent" })
+          .getByRole("button", { name: `Honey ${key}`, exact: true })
+          .click();
+      }
+      const source = "`@Honey @Honey  `";
+      await expect(input).toHaveJSProperty("value", source);
+      await expect(input.locator(".inline-chip")).toHaveText(labels);
+      // Retargeting unmounts the destination's composer and restores its saved draft.
+      await page.getByRole("button", { name: "Toggle thread" }).click();
+      await expect(input).toHaveJSProperty("value", "");
+      await page.getByRole("button", { name: "Toggle thread" }).click();
+      await expect(input).toHaveJSProperty("value", source);
+      await expect(input.locator(".inline-chip")).toHaveText(labels);
+      await input.focus();
+      await input.press("ControlOrMeta+a");
+      const copied = await input.evaluate((element) => {
+        const clipboardData = new DataTransfer();
+        element.dispatchEvent(
+          new ClipboardEvent("copy", {
+            bubbles: true,
+            cancelable: true,
+            clipboardData,
+          }),
+        );
+        return clipboardData.getData("text/plain");
+      });
+      expect(copied).toBe(source);
+      await page
+        .getByRole("button", { name: "Send message", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(() => window.mentionFixture.publications.length),
+        )
+        .toBe(reply ? 2 : 1);
+      const sent = await page.evaluate(() =>
+        window.mentionFixture.publications.at(-1),
+      );
+      expect(sent.content).toBe(source);
+      expect(sent.tags.filter(([tag]) => tag === "p")).toEqual(
+        keys.map((key) => ["p", key]),
+      );
+      expect(sent.tags.filter(([tag]) => tag === "h")).toEqual([["h", "c"]]);
+      expect(sent.tags.filter(([tag]) => tag === "e")).toEqual(
+        reply ? [["e", "a".repeat(64), "", "reply"]] : [],
+      );
+      if (!reply)
+        await page.getByRole("button", { name: "Toggle thread" }).click();
+    }
   } finally {
     await server.close();
   }

@@ -22,19 +22,28 @@ const KIND_ICON: Partial<Record<ChipKind, typeof LinkIcon>> = {
 };
 
 /** Subscribes to face changes so a rename repaints without a document edit. */
-function useChipFace(address: ChipAddress): ChipFace {
+function useChipFace(address: ChipAddress, face?: ChipFace): ChipFace {
   return useSyncExternalStore(
-    (listener) => chipFaces.subscribe(listener),
-    () => chipFaces.get(address),
+    (listener) => (face ? () => {} : chipFaces.subscribe(listener)),
+    () => face ?? chipFaces.get(address),
+    () => face ?? chipFaces.get(address),
   );
 }
 
 export function InlineChip({
   address,
+  face: suppliedFace,
+  qualifier,
   interactive = true,
   onActivate,
 }: {
   address: ChipAddress;
+  /** Scoped display data supplied by a host that already owns identity lookup. */
+  face?: ChipFace;
+  /** Optional host-owned distinction; never part of the address or authored name. */
+  qualifier?:
+    | { text: string; accessibleLabel: string; reveal?: boolean }
+    | undefined;
   /**
    * An inert rendering for places where even a preview would compete with the
    * surrounding interaction, such as a future editable document boundary.
@@ -43,7 +52,7 @@ export function InlineChip({
   /** An explicit owner-provided action; previews never imply a deep-open. */
   onActivate?: (address: ChipAddress) => void;
 }) {
-  const face = useChipFace(address);
+  const face = useChipFace(address, suppliedFace);
   const Icon = KIND_ICON[address.kind];
   const trigger = CHIP_KIND_TRIGGER[address.kind];
   const kind = accessibleKind(address.kind);
@@ -55,11 +64,19 @@ export function InlineChip({
         {trigger}
         {face.label}
       </span>
+      {qualifier ? (
+        <span
+          className="inline-chip-qualifier"
+          data-reveal={qualifier.reveal || undefined}
+        >
+          <span>{` ${qualifier.text}`}</span>
+        </span>
+      ) : null}
     </>
   );
 
   const accessibleName = face.resolved
-    ? `${kind} ${face.label}`
+    ? `${kind} ${face.label}${qualifier ? `, ${qualifier.accessibleLabel}` : ""}`
     : `Unresolved ${kind.toLowerCase()}`;
   const state = face.loading
     ? "loading"

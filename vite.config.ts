@@ -38,7 +38,11 @@ export default defineConfig(async ({ command, mode }) => {
       name: "buzz-profile-ready",
       configureServer(server) {
         server.httpServer?.once("listening", () => {
-          console.log(`BUZZ_PROFILE_VITE_READY:${profileReadyToken}`);
+          const address = server.httpServer?.address();
+          if (address && typeof address === "object")
+            console.log(
+              `BUZZ_PROFILE_VITE_READY:${profileReadyToken}:${JSON.stringify(address)}`,
+            );
         });
       },
     });

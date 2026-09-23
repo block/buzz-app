@@ -264,19 +264,47 @@ export function normalizeWebViteArgs(values) {
   };
 }
 
+export function viteListenerUrl(address) {
+  if (
+    !address ||
+    typeof address !== "object" ||
+    !Number.isInteger(address.port) ||
+    address.port < 1 ||
+    address.port > 65535
+  )
+    throw new Error("Vite reported an invalid profiling listener address.");
+  let host = address.address;
+  if (host === "0.0.0.0") host = "127.0.0.1";
+  else if (host === "::") host = "::1";
+  if (typeof host !== "string" || !host)
+    throw new Error("Vite reported an invalid profiling listener address.");
+  if (host.includes(":")) host = `[${host}]`;
+  return `http://${host}:${address.port}`;
+}
+
 export function viteReadyToken(child, token, signal) {
   return new Promise((resolve, reject) => {
     let output = "";
-    const marker = `BUZZ_PROFILE_VITE_READY:${token}`;
-    const finish = (error) => {
+    const marker = `BUZZ_PROFILE_VITE_READY:${token}:`;
+    const finish = (error, url) => {
       cleanup();
       if (error) reject(error);
-      else resolve();
+      else resolve(url);
     };
     const onData = (chunk) => {
       output += chunk;
-      if (output.includes(marker)) finish();
-      else if (/Port \d+ is (?:already )?in use/.test(output))
+      const start = output.indexOf(marker);
+      const end = start < 0 ? -1 : output.indexOf("\n", start);
+      if (end >= 0) {
+        try {
+          const address = JSON.parse(
+            output.slice(start + marker.length, end).trim(),
+          );
+          finish(undefined, viteListenerUrl(address));
+        } catch (error) {
+          finish(error);
+        }
+      } else if (/Port \d+ is (?:already )?in use/.test(output))
         finish(new Error("Vite could not bind the profiling port."));
       if (output.length > 16_384) output = output.slice(-8_192);
     };
@@ -456,7 +484,6 @@ export function networkRecorder(session, directory) {
 
 async function profileWeb({ directory, profileArgs, args, network }) {
   const vite = normalizeWebViteArgs(args);
-  const url = `http://localhost:${vite.port}`;
   await recordManifest(directory, "web", profileArgs, {
     coverage: [
       "chromium-renderer",
@@ -501,8 +528,9 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   let captureStarted = false;
   let outcome;
   const failures = [];
+  let url;
   try {
-    await viteReadyToken(viteProcess, readyToken, control.abort.signal);
+    url = await viteReadyToken(viteProcess, readyToken, control.abort.signal);
     await waitForViteReady(url, viteProcess, control.abort.signal);
     control.abort.signal.throwIfAborted();
     nodeProfiler = inspectorClient(await inspectorUrl);

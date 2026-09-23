@@ -5,6 +5,7 @@ import {
   inspectorClient,
   normalizeWebViteArgs,
   safeUrl,
+  viteListenerUrl,
   viteReadyToken,
 } from "../../scripts/profile-dev.mjs";
 
@@ -26,23 +27,42 @@ test("web profiling canonicalizes its Vite port and strict-port contract", () =>
   );
 });
 
+test("web profiling derives navigation from its owned listener", () => {
+  assert.equal(
+    viteListenerUrl({ address: "127.0.0.1", port: 1430 }),
+    "http://127.0.0.1:1430",
+  );
+  assert.equal(
+    viteListenerUrl({ address: "::1", port: 1430 }),
+    "http://[::1]:1430",
+  );
+  assert.equal(
+    viteListenerUrl({ address: "::", port: 1430 }),
+    "http://[::1]:1430",
+  );
+});
+
 test("web profiling waits for its authenticated Vite listening marker", async () => {
   const child = new EventEmitter();
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
   const abort = new AbortController();
-  let settled = false;
-  const ready = viteReadyToken(child, "owned-token", abort.signal).then(
-    () => (settled = true),
-  );
+  const ready = viteReadyToken(child, "owned-token", abort.signal);
 
-  child.stdout.emit("data", "BUZZ_PROFILE_VITE_READY:other-token\n");
+  child.stdout.emit(
+    "data",
+    'BUZZ_PROFILE_VITE_READY:other-token:{"address":"::1","port":1430}\n',
+  );
+  let settled = false;
+  void ready.then(() => (settled = true));
   await Promise.resolve();
   assert.equal(settled, false);
 
-  child.stderr.emit("data", "BUZZ_PROFILE_VITE_READY:owned-token\n");
-  await ready;
-  assert.equal(settled, true);
+  child.stderr.emit(
+    "data",
+    'BUZZ_PROFILE_VITE_READY:owned-token:{"address":"127.0.0.1","port":1430}\n',
+  );
+  assert.equal(await ready, "http://127.0.0.1:1430");
 });
 
 test("web profiling rejects Vite bind failure before readiness", async () => {

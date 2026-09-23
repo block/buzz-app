@@ -68,9 +68,13 @@ function setup(available = true) {
   } as unknown as RelaySession;
   return { session, workSessions, messages };
 }
-it.each([true, false])(
-  "admits only explicit mentions when they override the picker (child: %s)",
-  async (child) => {
+it.each(
+  [true, false].flatMap((child) =>
+    [false, true].map((removeMention) => ({ child, removeMention })),
+  ),
+)(
+  "routes explicit mentions or the picker after removal: child=$child, removed=$removeMention",
+  async ({ child, removeMention }) => {
     const test = setup(),
       onStarted = vi.fn(),
       user = userEvent.setup();
@@ -104,6 +108,26 @@ it.each([true, false])(
     expect(
       screen.getByRole("textbox", { name: "Message this session" }),
     ).toHaveTextContent("Plan the release");
+    if (removeMention) {
+      const remove = screen.getByRole("button", {
+        name: `Remove mention Member agent ${"a".repeat(64)}`,
+      });
+      await user.hover(remove);
+      expect(await screen.findByRole("tooltip")).toHaveTextContent(
+        "Remove explicit mention of Member agent (aaaaaaaa)",
+      );
+      await user.click(remove);
+      expect(screen.getByRole("textbox")).toHaveProperty(
+        "value",
+        "@Member agent Plan the release",
+      );
+      expect(
+        screen.getByRole("textbox").querySelector(".inline-chip"),
+      ).toBeNull();
+      expect(
+        screen.queryByRole("region", { name: "Explicit mentions" }),
+      ).not.toBeInTheDocument();
+    }
     await user.click(screen.getByRole("textbox"));
     await user.keyboard("{Enter}");
     await waitFor(() => expect(onStarted).toHaveBeenCalled());
@@ -113,18 +137,24 @@ it.each([true, false])(
       "@Member agent Plan the release",
       child ? parent.id : undefined,
     );
-    expect(test.workSessions.invite).not.toHaveBeenCalled();
+    const recipient = (removeMention ? "b" : "a").repeat(64);
+    if (removeMention && !child)
+      expect(test.workSessions.invite).toHaveBeenCalledExactlyOnceWith(
+        id,
+        recipient,
+      );
+    else expect(test.workSessions.invite).not.toHaveBeenCalled();
     expect(test.workSessions.addAgents.mock.calls).toEqual(
-      (child ? [parent.id, id] : [id]).map((target) => [
+      (child ? [parent.id, id] : removeMention ? [] : [id]).map((target) => [
         target,
-        ["a".repeat(64)],
+        [recipient],
         expect.any(Function),
       ]),
     );
     expect(test.messages.send).toHaveBeenCalledWith(
       id,
       "@Member agent Plan the release",
-      ["a".repeat(64)],
+      [recipient],
     );
   },
 );

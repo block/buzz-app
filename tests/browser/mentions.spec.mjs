@@ -157,9 +157,42 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       2,
     );
     const chip = input.locator(".inline-chip").first();
+    const recipients = page.getByRole("region", {
+      name: "Explicit mentions",
+    });
+    await expect(recipients.getByRole("button")).toHaveCount(2);
     await expect(
-      page.getByRole("region", { name: "Notification recipients" }),
-    ).toHaveCount(0);
+      recipients.locator('.buzz-avatar[data-avatar-shape="circle"]'),
+    ).toHaveCount(1);
+    await expect(
+      recipients.locator('.buzz-avatar[data-avatar-shape="squircle"]'),
+    ).toHaveCount(1);
+    await expect
+      .poll(() =>
+        recipients
+          .locator("img")
+          .evaluateAll(
+            (images) =>
+              images.length === 2 &&
+              images.every((image) => image.complete && image.naturalWidth > 0),
+          ),
+      )
+      .toBe(true);
+    const mentionTool = page.getByRole("button", {
+      name: "Mention a member",
+      exact: true,
+    });
+    const emojiTool = page.getByRole("button", {
+      name: "Insert emoji",
+      exact: true,
+    });
+    await mentionTool.focus();
+    for (const recipient of await recipients.getByRole("button").all()) {
+      await page.keyboard.press("Tab");
+      await expect(recipient).toBeFocused();
+    }
+    await page.keyboard.press("Tab");
+    await expect(emojiTool).toBeFocused();
     const chipRoles = await chip.evaluate((element) => {
       const probe = document.createElement("span");
       probe.style.backgroundColor = "var(--affordance-accent)";
@@ -188,6 +221,17 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
             bounds.x + bounds.width,
           );
         }
+        // Avatars stay beside @, before Emoji, even on the narrow composer.
+        const mentionBox = await mentionTool.boundingBox();
+        const recipientsBox = await recipients.boundingBox();
+        const emojiBox = await emojiTool.boundingBox();
+        expect(recipientsBox.x).toBeGreaterThanOrEqual(
+          mentionBox.x + mentionBox.width,
+        );
+        expect(recipientsBox.x + recipientsBox.width).toBeLessThanOrEqual(
+          emojiBox.x,
+        );
+        expect(Math.abs(recipientsBox.y - mentionBox.y)).toBeLessThanOrEqual(2);
         await expect(input).toHaveJSProperty("value", "@Honey @Honey 😀");
       }
     }
@@ -235,6 +279,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
       1,
     );
+    await expect(recipients.getByRole("button")).toHaveCount(1);
     await page
       .getByRole("button", { name: "Send message", exact: true })
       .click();
@@ -278,6 +323,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toBeDisabled();
+    await expect(recipients.getByRole("button")).toBeDisabled();
     expect(
       await page.evaluate(() => window.mentionFixture.disabledCalls),
     ).toEqual([{ inputDisabled: true, text: false, mention: false }]);
@@ -287,6 +333,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(page.getByRole("textbox").locator(".inline-chip")).toHaveCount(
       1,
     );
+    await expect(recipients.getByRole("button")).toHaveCount(1);
     await page
       .getByRole("button", { name: "Toggle disabled", exact: true })
       .click();
@@ -294,6 +341,32 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(
       page.getByRole("textbox", { name: "Reply to thread" }),
     ).toHaveJSProperty("value", "@Honey @Honey ");
+    await recipients
+      .getByRole("button", {
+        name: `Remove mention Honey ${keys.first}`,
+        exact: true,
+      })
+      .click();
+    await expect(page.getByRole("textbox")).toHaveJSProperty(
+      "value",
+      "@Honey @Honey ",
+    );
+    await expect(recipients.getByRole("button")).toHaveCount(1);
+    await page
+      .getByRole("button", { name: "Send message", exact: true })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.mentionFixture.publications.length),
+      )
+      .toBe(3);
+    const afterRemoval = await page.evaluate(() =>
+      window.mentionFixture.publications.at(-1),
+    );
+    expect(afterRemoval.content).toBe("@Honey @Honey");
+    expect(afterRemoval.tags.filter(([tag]) => tag === "p")).toEqual([
+      ["p", keys.second],
+    ]);
     expect(errors).toEqual([]);
   } finally {
     await server.close();

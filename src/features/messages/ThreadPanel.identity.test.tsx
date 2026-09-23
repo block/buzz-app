@@ -1,12 +1,20 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { StrictMode } from "react";
 import { afterAll, afterEach, expect, it, vi } from "vitest";
 import type { ChannelMessage, Profile } from "../relay/contracts";
 import type { ProfileQueries } from "../relay/profile-directory";
 import { createRelaySession } from "../relay/session";
-import type { ThreadSnapshot, ThreadView } from "../relay/threads";
+import type { LiveCallbacks } from "../relay/live";
+import { keypair, message, scriptedTransport, signed } from "../relay/testing";
 import { ThreadPanel } from "./ThreadPanel";
 
 const bodyRender = vi.fn();
@@ -17,6 +25,11 @@ vi.mock("./MessageMarkdown", () => ({
   },
 }));
 vi.mock("./MessageComposer", () => ({ MessageComposer: () => null }));
+vi.mock("./MediaAttachment", () => ({
+  MediaAttachment: ({ seekTo }: { seekTo?: number }) => (
+    <span data-testid="video-seek">{seekTo ?? "none"}</span>
+  ),
+}));
 
 class TestResizeObserver {
   observe() {}
@@ -32,42 +45,6 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
 });
-
-const row = (id: string, authorId: string, content: string): ChannelMessage =>
-  Object.freeze({
-    id,
-    channelId: "a",
-    authorId,
-    createdAt: id === "root" ? 1 : 2,
-    content,
-    mentions: Object.freeze([]),
-    attachments: Object.freeze([]),
-    reactions: Object.freeze([]),
-    replyCount: 0,
-    participants: Object.freeze([]),
-  });
-
-function mutableThread(initial: ThreadSnapshot) {
-  let snapshot = initial;
-  const listeners = new Set<() => void>();
-  const view: ThreadView = {
-    snapshot: () => snapshot,
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    },
-    async refresh() {},
-    async loadMore() {},
-    dispose() {},
-  };
-  return {
-    view,
-    publish(next: ThreadSnapshot) {
-      snapshot = next;
-      for (const listener of listeners) listener();
-    },
-  };
-}
 
 function mutableProfiles(initial: ReadonlyMap<string, Profile>) {
   let snapshot = initial;
@@ -89,34 +66,38 @@ function mutableProfiles(initial: ReadonlyMap<string, Profile>) {
   };
 }
 
-it("does not rerender retained message bodies for status or equivalent profile updates", async () => {
-  const root = row("root", "alice", "Root body");
-  const reply = row("reply", "bob", "Reply body");
-  const replies = Object.freeze([reply]);
-  const thread = mutableThread(
-    Object.freeze({
-      status: "ready",
-      root,
-      replies,
-      error: undefined,
-      canLoadMore: false,
-      limited: false,
-    }),
-  );
+it("retains mounted rows through a deferred real-session page and profile noise", async () => {
+  const relay = keypair();
+  const viewer = keypair();
+  const aliceKey = keypair();
+  const bobKey = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  let traffic!: LiveCallbacks;
+  const owner = createRelaySession({
+    ...wire.transport,
+    subscribe(callbacks) {
+      traffic = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  const root = message(aliceKey, "a", "Root body", 1, [
+    ["imeta", "url https://example.com/video.mp4", "m video/mp4"],
+  ]);
+  const reply = message(bobKey, "a", "⏱ 0:42 — Reply body", 2, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+  ]);
+  traffic.receive([root, reply]);
+
   const alice: Profile = Object.freeze({ name: "Alice" });
   const bob: Profile = Object.freeze({ name: "Bob" });
   const profiles = mutableProfiles(
     new Map([
-      ["alice", alice],
-      ["bob", bob],
+      [aliceKey.pubkey, alice],
+      [bobKey.pubkey, bob],
     ]),
   );
-  const owner = createRelaySession(null);
-  const session = {
-    ...owner.session,
-    profiles: profiles.queries,
-    thread: () => thread.view,
-  };
+  const session = { ...owner.session, profiles: profiles.queries };
 
   render(
     <StrictMode>
@@ -125,53 +106,82 @@ it("does not rerender retained message bodies for status or equivalent profile u
         scope="identity-test"
         channelName="A"
         channelId="a"
-        messageId="root"
+        messageId={root.id}
         close={() => {}}
         onOpenLink={() => false}
       />
     </StrictMode>,
   );
+
+  await waitFor(() =>
+    expect(wire.pending.some((request) => !request.signal?.aborted)).toBe(true),
+  );
+  const initial = wire.pending.find((request) => !request.signal?.aborted);
+  if (!initial) throw new Error("Initial thread page was not requested");
+  initial.respond([root, reply]);
   expect(await screen.findByText("Alice")).toBeInTheDocument();
   expect(screen.getByText("Bob")).toBeInTheDocument();
+  expect(await screen.findByText("Loading thread…")).toBeInTheDocument();
+  await waitFor(() =>
+    expect(
+      wire.pending.filter(
+        (request) => request !== initial && !request.signal?.aborted,
+      ),
+    ).toHaveLength(1),
+  );
+  const page = wire.pending.find(
+    (request) => request !== initial && !request.signal?.aborted,
+  );
+  if (!page) throw new Error("Deferred thread page was not requested");
   bodyRender.mockClear();
 
-  thread.publish(
-    Object.freeze({
-      ...thread.view.snapshot(),
-      status: "loading",
-    }),
-  );
-  expect(await screen.findByText("Loading thread…")).toBeInTheDocument();
+  await act(async () => {
+    profiles.publish(
+      new Map([
+        [aliceKey.pubkey, alice],
+        [bobKey.pubkey, bob],
+        [keypair().pubkey, { name: "Other" }],
+      ]),
+    );
+  });
   expect(bodyRender).not.toHaveBeenCalled();
 
-  profiles.publish(
-    new Map([
-      ["alice", alice],
-      ["bob", bob],
-      ["other", { name: "Other" }],
-    ]),
-  );
-  expect(bodyRender).not.toHaveBeenCalled();
+  const appended = message(bobKey, "a", "Appended reply body", 3, [
+    ["e", root.id, "", "root"],
+    ["e", root.id, "", "reply"],
+  ]);
+  await act(async () => page.respond([root, appended]));
+  expect(await screen.findByText("Appended reply body")).toBeInTheDocument();
+  expect(bodyRender.mock.calls).toEqual([
+    ["Appended reply body"],
+    ["Appended reply body"],
+  ]);
+  bodyRender.mockClear();
 
-  const edited = row("reply", "bob", "Edited reply body");
-  thread.publish(
-    Object.freeze({
-      ...thread.view.snapshot(),
-      status: "ready",
-      replies: Object.freeze([edited]),
-    }),
-  );
+  fireEvent.click(screen.getByRole("button", { name: "0:42" }));
+  expect(screen.getByTestId("video-seek")).toHaveTextContent("42");
+  bodyRender.mockClear();
+
+  const edited = signed(bobKey, {
+    kind: 40003,
+    content: "Edited reply body",
+    created_at: 4,
+    tags: [["e", reply.id]],
+  });
+  traffic.receive([edited]);
   expect(await screen.findByText("Edited reply body")).toBeInTheDocument();
   expect(bodyRender).toHaveBeenCalledWith("Edited reply body");
   bodyRender.mockClear();
 
-  profiles.publish(
-    new Map([
-      ["alice", alice],
-      ["bob", { name: "Robert" }],
-    ]),
-  );
-  expect(await screen.findByText("Robert")).toBeInTheDocument();
+  await act(async () => {
+    profiles.publish(
+      new Map([
+        [aliceKey.pubkey, alice],
+        [bobKey.pubkey, { name: "Robert" }],
+      ]),
+    );
+  });
+  expect(await screen.findAllByText("Robert")).toHaveLength(2);
   expect(bodyRender).toHaveBeenCalled();
   owner.dispose();
 });

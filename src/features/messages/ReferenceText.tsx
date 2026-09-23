@@ -23,10 +23,15 @@ const profilesSnapshot = () => emptyProfiles;
 const channelsSnapshot = () => undefined;
 const agentsSnapshot = () => undefined;
 
-export function useReferenceDirectory(session: RelaySession | undefined) {
+export function useReferenceDirectory(
+  session: RelaySession | undefined,
+  selectedProfiles?: ReadonlyMap<string, Profile>,
+) {
   const profiles = useSyncExternalStore(
-    session?.profiles?.subscribe ?? noop,
-    session?.profiles?.snapshot ?? profilesSnapshot,
+    selectedProfiles ? noop : (session?.profiles?.subscribe ?? noop),
+    selectedProfiles
+      ? () => selectedProfiles
+      : (session?.profiles?.snapshot ?? profilesSnapshot),
     profilesSnapshot,
   );
   const channels = useSyncExternalStore(

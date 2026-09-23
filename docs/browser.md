@@ -29,6 +29,8 @@ The example only matches links when the capability is available. Existing first-
 
 One native website session is supported at a time. Closing or replacing the panel, changing community, or disabling the plugin unmounts the view and discards that session's website storage. Back/Forward retain history while the same panel remains open. There are no tabs, saved history or bookmarks. Temporarily hiding the website for an application dialog does not end its session or stop its network activity.
 
+Reloading Buzz's main document ends the website session. An attachment queued before that reload cannot replace a session opened by the new document.
+
 ## Native ownership
 
 The controls are ordinary trusted React UI in Buzz's main webview. Website content is a separate raw Wry child view positioned over the panel's website viewport, created without a Tauri IPC handler, custom protocols or host initialization scripts. It uses a nonpersistent data store. The main window's content-security policy is unchanged.

@@ -3,7 +3,11 @@
 mod platform;
 mod policy;
 
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::RefCell,
+    rc::Rc,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, LogicalPosition, LogicalSize, Manager, Webview};
@@ -15,6 +19,43 @@ use policy::NavigationPolicy;
 thread_local! {
     // Wry and its delegates must be created, used, and dropped on the UI thread.
     static BROWSER: RefCell<Option<BrowserSession>> = const { RefCell::new(None) };
+}
+
+static DOCUMENT_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+fn reset_document<Session>(
+    label: &str,
+    event: tauri::webview::PageLoadEvent,
+    generation: &AtomicU64,
+    session: &RefCell<Option<Session>>,
+) {
+    if label == "main" && event == tauri::webview::PageLoadEvent::Started {
+        generation.fetch_add(1, Ordering::SeqCst);
+        session.borrow_mut().take();
+    }
+}
+
+fn with_current_document<Output>(
+    generation: &AtomicU64,
+    expected: u64,
+    operation: impl FnOnce() -> Result<Output, String>,
+) -> Result<Output, String> {
+    if generation.load(Ordering::SeqCst) != expected {
+        return Err("Browser host document was reloaded".into());
+    }
+    operation()
+}
+
+pub(crate) fn page_load(webview: &Webview, payload: &tauri::webview::PageLoadPayload<'_>) {
+    // Wry forwards WKNavigationDelegate's callback synchronously on the UI thread.
+    BROWSER.with(|session| {
+        reset_document(
+            webview.label(),
+            payload.event(),
+            &DOCUMENT_GENERATION,
+            session,
+        );
+    });
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -152,7 +193,6 @@ fn build_contents(
     let title_snapshot = snapshot.clone();
     let load_snapshot = snapshot.clone();
     let download_snapshot = snapshot.clone();
-    let popup_snapshot = snapshot.clone();
     // No URL is loaded until native permission handlers replace Wry's defaults.
     // In particular, this builder receives no IPC handler or host initialization scripts.
     let builder = WebViewBuilder::new()
@@ -181,11 +221,7 @@ fn build_contents(
                 Some("Downloads are not supported in Buzz Browser".into());
             false
         })
-        .with_new_window_req_handler(move |_, _| {
-            popup_snapshot.borrow_mut().error =
-                Some("Pop-up windows are blocked in Buzz Browser".into());
-            wry::NewWindowResponse::Deny
-        });
+        .with_new_window_req_handler(|_, _| wry::NewWindowResponse::Deny);
     let guest = platform::build_guest(builder, &host.window())?;
     let permissions = platform::deny_permissions(&guest)?;
     let browser = BrowserSession {
@@ -207,14 +243,17 @@ pub async fn browser_attach(
     url: String,
     bounds: BrowserBounds,
 ) -> Result<String, String> {
+    let generation = DOCUMENT_GENERATION.load(Ordering::SeqCst);
     let handle = app.clone();
     on_main_thread(&app, move || {
-        // Drop the previous guest before creating another private browsing session.
-        shutdown();
-        let browser = build_contents(&handle, &url, bounds)?;
-        let session_id = browser.instance.clone();
-        BROWSER.with(|current| *current.borrow_mut() = Some(browser));
-        Ok(session_id)
+        with_current_document(&DOCUMENT_GENERATION, generation, || {
+            // Drop the previous guest before creating another private browsing session.
+            shutdown();
+            let browser = build_contents(&handle, &url, bounds)?;
+            let session_id = browser.instance.clone();
+            BROWSER.with(|current| *current.borrow_mut() = Some(browser));
+            Ok(session_id)
+        })
     })
     .await
 }
@@ -286,4 +325,100 @@ pub async fn browser_status(app: AppHandle, session_id: String) -> Result<Browse
         with_browser(&session_id, BrowserSession::snapshot)
     })
     .await
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    use std::{cell::Cell, thread::ThreadId};
+    use tauri::webview::PageLoadEvent::{Finished, Started};
+
+    struct Guest {
+        drops: Rc<RefCell<Vec<ThreadId>>>,
+    }
+
+    impl Drop for Guest {
+        fn drop(&mut self) {
+            self.drops.borrow_mut().push(std::thread::current().id());
+        }
+    }
+
+    #[test]
+    fn main_document_reload_drops_guest_on_callback_thread() {
+        let generation = AtomicU64::new(0);
+        let drops = Rc::new(RefCell::new(Vec::new()));
+        let session = RefCell::new(Some(Guest {
+            drops: drops.clone(),
+        }));
+
+        reset_document("main", Started, &generation, &session);
+
+        assert!(session.borrow().is_none());
+        assert_eq!(*drops.borrow(), vec![std::thread::current().id()]);
+        assert_eq!(generation.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn guest_navigation_and_finished_loads_keep_the_session() {
+        let generation = AtomicU64::new(7);
+        let session = RefCell::new(Some("current guest"));
+
+        for (label, event) in [("browser-content", Started), ("main", Finished)] {
+            reset_document(label, event, &generation, &session);
+            assert_eq!(*session.borrow(), Some("current guest"));
+            assert_eq!(generation.load(Ordering::SeqCst), 7);
+        }
+    }
+
+    #[test]
+    fn reload_rejects_queued_attach_without_replacing_new_guest() {
+        let generation = AtomicU64::new(0);
+        let session = RefCell::new(Some("old guest"));
+        let queued_generation = generation.load(Ordering::SeqCst);
+        let created = Cell::new(false);
+        let queued_attach = || {
+            with_current_document(&generation, queued_generation, || {
+                created.set(true);
+                session.replace(Some("stale guest"));
+                Ok(())
+            })
+        };
+
+        reset_document("main", Started, &generation, &session);
+        with_current_document(&generation, generation.load(Ordering::SeqCst), || {
+            session.replace(Some("new guest"));
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            queued_attach().unwrap_err(),
+            "Browser host document was reloaded"
+        );
+        assert!(!created.get());
+        assert_eq!(*session.borrow(), Some("new guest"));
+    }
+
+    #[test]
+    fn attach_before_reload_is_dropped_and_finished_keeps_replacement() {
+        let generation = AtomicU64::new(0);
+        let drops = Rc::new(RefCell::new(Vec::new()));
+        let session = RefCell::new(None);
+        let attach = |expected| {
+            with_current_document(&generation, expected, || {
+                session.replace(Some(Guest {
+                    drops: drops.clone(),
+                }));
+                Ok(())
+            })
+        };
+
+        attach(generation.load(Ordering::SeqCst)).unwrap();
+        reset_document("main", Started, &generation, &session);
+        assert_eq!(drops.borrow().len(), 1);
+        attach(generation.load(Ordering::SeqCst)).unwrap();
+        reset_document("main", Finished, &generation, &session);
+        assert!(session.borrow().is_some());
+        assert_eq!(drops.borrow().len(), 1);
+    }
 }

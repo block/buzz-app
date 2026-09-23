@@ -428,6 +428,7 @@ pub fn run() {
                 }
             }
         })
+        .on_page_load(browser::page_load)
         .on_window_event(browser::window_event)
         .build(app_context())
         .expect("failed to build Buzz Foundation")

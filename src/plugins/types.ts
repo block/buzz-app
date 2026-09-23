@@ -6,6 +6,7 @@ export type PluginInfo = {
   enabled: boolean;
   revision: string;
   previous: string | null;
+  reloadable: boolean;
   error: string | null;
 };
 export type Catalog = {

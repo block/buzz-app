@@ -1,3 +1,6 @@
+import { Select } from "../../shared/design-system/ui/Select";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { ControlSnapshot } from "../../features/agents/control";
 import type { AgentDraft } from "./agent-edit";
@@ -7,15 +10,18 @@ export function AgentHarnessEditor({
   draft,
   options,
   onChange,
+  disabled = false,
 }: {
   draft: AgentDraft;
   options: NonNullable<ControlSnapshot["harnessOptions"]>;
+  disabled?: boolean;
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const harness = options.find((option) => option.command === draft.command);
   return (
     <div className="space-y-4">
       <ConfigChoice
+        disabled={disabled}
         label="Harness"
         customLabel="Custom executable / current value"
         inputLabel="Executable"
@@ -27,6 +33,7 @@ export function AgentHarnessEditor({
         onChange={(command) => onChange({ command })}
       />
       <ConfigChoice
+        disabled={disabled}
         label="Provider"
         customLabel="Custom provider / current value"
         inputLabel="Custom provider"
@@ -48,12 +55,14 @@ function ConfigChoice({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   label: string;
   customLabel: string;
   inputLabel: string;
   value: string;
   options: { value: string; label: string }[];
+  disabled?: boolean;
   onChange(value: string): void;
 }) {
   // Custom is an editing mode, not a saved value. Entering it never erases data.
@@ -62,36 +71,40 @@ function ConfigChoice({
   const showInput = custom || index < 0;
   return (
     <div className="min-w-0 space-y-3">
-      <label className="agent-control-field">
-        {label}
-        <select
-          value={showInput ? "custom" : String(index)}
-          onChange={(event) => {
-            const selected = event.target.value;
-            setCustom(selected === "custom");
-            if (selected !== "custom") {
-              const option = options[Number(selected)];
-              if (option) onChange(option.value);
-            }
-          }}
-        >
-          {options.map((option, i) => (
-            <option key={option.value} value={String(i)}>
-              {option.label}
-            </option>
-          ))}
-          <option value="custom">{customLabel}</option>
-        </select>
-      </label>
+      <Select
+        label={label}
+        variant="field"
+        disabled={disabled}
+        value={showInput ? "custom" : String(index)}
+        groups={[
+          {
+            label: "",
+            options: [
+              ...options.map((option, i) => ({
+                value: String(i),
+                label: option.label,
+              })),
+              { value: "custom", label: customLabel },
+            ],
+          },
+        ]}
+        onValueChange={(selected) => {
+          setCustom(selected === "custom");
+          if (selected !== "custom") {
+            const option = options[Number(selected)];
+            if (option) onChange(option.value);
+          }
+        }}
+      />
       {showInput && (
-        <label className="agent-control-field">
-          {inputLabel}
-          <input
+        <Field label={inputLabel}>
+          <Input
+            disabled={disabled}
             value={value}
             spellCheck={false}
             onChange={(event) => onChange(event.target.value)}
           />
-        </label>
+        </Field>
       )}
     </div>
   );

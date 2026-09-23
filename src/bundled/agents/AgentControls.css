@@ -29,63 +29,9 @@
   grid-template-columns: repeat(auto-fill, minmax(min(100%, 180px), 1fr));
   gap: var(--space-4);
 }
-.agent-dialog-backdrop {
-  position: fixed;
-  inset: 0;
-  background: var(--overlay);
-  backdrop-filter: blur(4px);
-}
 .agent-dialog {
-  position: fixed;
-  inset: 0;
-  margin: auto;
-  width: min(860px, calc(100vw - 32px));
-  height: fit-content;
-  max-height: calc(100dvh - 32px);
-  overflow-y: auto;
-  border: 1px solid var(--border-primary);
-  border-radius: var(--radius-panel);
-  padding: var(--space-6);
-  background: var(--bg-panel);
-  color: var(--text-primary);
-  box-shadow: var(--shadow-lg);
+  width: min(860px, calc(100vw - 2rem));
 }
-.agent-editor-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 180px) minmax(0, 1fr);
-  gap: var(--space-6);
-  margin-top: var(--space-5);
-}
-.agent-editor-footer {
-  display: flex;
-  flex-direction: row-reverse;
-  gap: var(--space-2);
-  align-items: center;
-}
-.agent-model-select {
-  display: grid;
-  gap: var(--space-2);
-}
-.agent-model-control {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-}
-.agent-model-control > input {
-  flex: 1;
-}
-.agent-model-popup {
-  z-index: 1;
-}
-@media (max-width: 640px) {
-  .agent-editor-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
-  .agent-editor-layout > aside > [role="img"] {
-    display: none;
-  }
-  .agent-dialog {
-    padding: var(--space-4);
-  }
+.agent-editor {
+  width: min(40rem, calc(100vw - 2rem));
 }

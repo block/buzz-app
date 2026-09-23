@@ -1,0 +1,295 @@
+/* Gallery furniture only. Dialog recipes are imported unchanged from the app. */
+html,
+body,
+#root {
+  margin: 0;
+  min-height: 100%;
+}
+body {
+  background: var(--surface-base);
+  color: var(--text-standard);
+}
+.atlas {
+  max-width: 1480px;
+  margin: auto;
+  padding: 48px 48px 32px;
+  font:
+    var(--type-weight-regular) 16px / 1.5 Inter,
+    sans-serif;
+}
+.atlas-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 32px;
+  align-items: start;
+}
+.atlas-eyebrow {
+  margin: 0 0 12px;
+  color: var(--text-subtle);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  font-weight: 500;
+}
+.atlas h1 {
+  font-size: 48px;
+  line-height: 1.1;
+  letter-spacing: -0.045em;
+  font-weight: 500;
+  margin: 0 0 18px;
+}
+.atlas-intro {
+  max-width: 620px;
+  margin: 0;
+  font-size: 18px;
+  color: var(--text-subtle);
+}
+.atlas-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 28px;
+  padding: 24px 0;
+  margin-top: 20px;
+  border-bottom: 1px solid var(--border-standard);
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+.atlas-summary strong {
+  color: var(--text-standard);
+  font-weight: 500;
+}
+.atlas-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 24px 0;
+}
+.atlas-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 28px;
+}
+.atlas-card {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border-standard);
+  border-radius: 16px;
+  background: var(--surface-panel);
+}
+.atlas-open {
+  display: block;
+  position: relative;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  cursor: pointer;
+  background: var(--surface-base);
+  overflow: hidden;
+}
+.atlas-open:focus-visible {
+  outline: 3px solid var(--border-focus);
+  outline-offset: -3px;
+}
+.atlas-preview {
+  overflow: hidden;
+  pointer-events: none;
+}
+.atlas-preview iframe {
+  display: block;
+  border: 0;
+  transform-origin: top left;
+  pointer-events: none;
+}
+.atlas-open-label {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  border: 1px solid var(--border-standard);
+  border-radius: 100px;
+  padding: 6px 12px;
+  font-size: 11px;
+}
+.atlas-card-copy {
+  padding: 24px;
+}
+.atlas-kicker {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-subtle);
+  margin: 0 0 10px;
+}
+.atlas-card h2 {
+  font-size: 23px;
+  letter-spacing: -0.025em;
+  line-height: 1.2;
+  font-weight: 500;
+  margin: 0 0 12px;
+}
+.atlas-path {
+  font-size: 13px;
+  font-weight: 500;
+  margin: 0 0 10px;
+}
+.atlas-note {
+  color: var(--text-subtle);
+  font-size: 13px;
+  margin: 0 0 20px;
+}
+.atlas-source {
+  display: grid;
+  gap: 6px;
+  border-top: 1px solid var(--border-standard);
+  padding-top: 14px;
+}
+.atlas-source strong {
+  font-size: 11px;
+  font-weight: 500;
+}
+.atlas-source code,
+.inspector-note code {
+  overflow-wrap: anywhere;
+  font-size: 10px;
+  color: var(--text-subtle);
+}
+.atlas-footnote {
+  max-width: 820px;
+  padding: 32px 0;
+  font-size: 13px;
+  color: var(--text-subtle);
+}
+.atlas-inspector {
+  position: fixed;
+  inset: 16px;
+  width: calc(100vw - 32px);
+  height: calc(100dvh - 32px);
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 1px solid var(--border-standard);
+  border-radius: 16px;
+  background: var(--surface-panel);
+  color: var(--text-standard);
+}
+.atlas-inspector[open] {
+  display: flex;
+  flex-direction: column;
+}
+.atlas-inspector::backdrop {
+  background: var(--bg-scrim);
+}
+.inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 24px;
+}
+.inspector-header h2 {
+  font-size: 24px;
+  margin: 0;
+  font-weight: 500;
+}
+.inspector-header p {
+  margin: 4px 0;
+  font-size: 12px;
+  color: var(--text-subtle);
+}
+.inspector-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 24px;
+  border-block: 1px solid var(--border-standard);
+  font-size: 12px;
+}
+.inspector-tools label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.inspector-tools select {
+  padding: 6px 10px;
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  border: 1px solid var(--border-prominent);
+  border-radius: 6px;
+}
+.inspector-tools a {
+  color: var(--text-standard);
+  text-decoration: underline;
+  margin-left: auto;
+}
+.inspector-stage {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  justify-content: center;
+  background: var(--surface-base);
+  overflow: auto;
+}
+.inspector-stage iframe {
+  border: 0;
+  height: 100%;
+  max-width: 100%;
+  flex-shrink: 0;
+  background: var(--surface-panel);
+}
+.inspector-note {
+  font-size: 12px;
+  padding: 12px 24px;
+  margin: 0;
+  color: var(--text-subtle);
+}
+.inspector-note code {
+  display: block;
+  margin-top: 4px;
+}
+.scene {
+  min-height: 100dvh;
+}
+.scene-context {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 22px 28px;
+  font-size: 14px;
+  color: var(--text-subtle);
+}
+.scene-content {
+  padding: 32px;
+}
+.scene-content img {
+  max-height: 420px;
+}
+@media (max-width: 760px) {
+  .atlas {
+    padding: 28px 18px;
+  }
+  .atlas-grid {
+    grid-template-columns: 1fr;
+  }
+  .atlas h1 {
+    font-size: 36px;
+  }
+  .atlas-header {
+    flex-direction: column;
+    gap: 16px;
+  }
+  .inspector-header {
+    padding: 12px;
+  }
+  .inspector-tools {
+    gap: 8px;
+    padding: 8px 12px;
+  }
+  .inspector-note {
+    padding: 8px 12px;
+  }
+}

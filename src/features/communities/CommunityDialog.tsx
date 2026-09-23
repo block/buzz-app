@@ -4,6 +4,7 @@ import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ArrowUpRightIcon } from "../../shared/design-system/icons";
 import {
   communityRequest,
   inspectProfile,
@@ -160,6 +161,7 @@ export function CommunityDialog({
       }
     >
       <form
+        className="space-y-6"
         onSubmit={(event) => {
           event.preventDefault();
           void submit();
@@ -182,7 +184,10 @@ export function CommunityDialog({
                   Use your identity across communities. Your profile and
                   conversations stay separate in each one.
                 </p>
-                <Field label="Relay URL">
+                <Field
+                  label="Relay URL"
+                  description="Enter a wss:// or https:// relay address without a path. Continue contacts this relay using your Buzz identity; joining or publishing a profile requires a later step."
+                >
                   <Input
                     type="url"
                     required
@@ -191,7 +196,6 @@ export function CommunityDialog({
                     spellCheck={false}
                     placeholder="wss://relay.example.com"
                     maxLength={2048}
-                    aria-describedby="relay-url-note"
                     disabled={busy}
                     value={url}
                     onChange={(e) => {
@@ -207,11 +211,6 @@ export function CommunityDialog({
                     }}
                   />
                 </Field>
-                <p id="relay-url-note" className={styles.note}>
-                  Enter a wss:// or https:// relay address without a path.
-                  Continue contacts this relay using your Buzz identity; joining
-                  or publishing a profile requires a later step.
-                </p>
               </>
             )}
             {step === "access" && (
@@ -233,20 +232,24 @@ export function CommunityDialog({
                   <div className={styles.policy}>
                     {policy.terms_markdown && (
                       <a
+                        className="inline-flex items-center gap-1 self-start"
                         href={`${destination?.url}/api/join-policy/terms`}
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Terms of Service ↗
+                        Terms of Service
+                        <ArrowUpRightIcon size={16} aria-hidden="true" />
                       </a>
                     )}
                     {policy.privacy_markdown && (
                       <a
+                        className="inline-flex items-center gap-1 self-start"
                         href={`${destination?.url}/api/join-policy/privacy`}
                         target="_blank"
                         rel="noreferrer"
                       >
-                        Privacy Notice ↗
+                        Privacy Notice
+                        <ArrowUpRightIcon size={16} aria-hidden="true" />
                       </a>
                     )}
                     {(policy.terms_markdown || policy.privacy_markdown) && (
@@ -292,7 +295,7 @@ export function CommunityDialog({
                 {error}
               </p>
             )}
-            <footer className="mt-6 flex flex-wrap items-center justify-between gap-4">
+            <footer className="buzz-dialog-actions justify-between">
               <Button
                 type="button"
                 disabled={busy}

@@ -1,5 +1,7 @@
 //! Read-only acquisition. Preview owns immutable artifacts; installation never rereads a source.
-use crate::{artifact_from_text, err, hash, Catalog, Manager, Manifest, Result, LIMIT};
+use crate::{
+    artifact_from_text, err, hash, Catalog, Manager, Manifest, ReloadSource, Result, LIMIT,
+};
 use serde::Serialize;
 use std::{
     collections::BTreeMap,
@@ -35,10 +37,11 @@ pub struct Preview {
 
 pub struct PreparedImport {
     pub preview: Preview,
+    folder_root: Option<PathBuf>,
     artifacts: BTreeMap<String, Vec<u8>>,
 }
 impl PreparedImport {
-    fn new(source: String, commit: Option<String>) -> Result<Self> {
+    fn new(source: String, commit: Option<String>, folder_root: Option<PathBuf>) -> Result<Self> {
         // An opaque per-preview identity, independent of plugin IDs or source paths.
         let nonce = tempfile::NamedTempFile::new().map_err(err)?;
         Ok(Self {
@@ -49,6 +52,7 @@ impl PreparedImport {
                 candidates: vec![],
                 warnings: vec![],
             },
+            folder_root,
             artifacts: BTreeMap::new(),
         })
     }
@@ -88,7 +92,12 @@ impl PreparedImport {
             .artifacts
             .get(path)
             .ok_or("Choose a listed plugin folder")?;
-        manager.install_artifact(bytes)
+        let source = self
+            .folder_root
+            .clone()
+            .map(|root| ReloadSource::folder(root, path.to_owned()))
+            .transpose()?;
+        manager.install_artifact(bytes, source)
     }
 }
 
@@ -102,7 +111,7 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
     }
     let root = directory.canonicalize().map_err(err)?;
     let deadline = Instant::now() + Duration::from_secs(60);
-    let mut prepared = PreparedImport::new(root.display().to_string(), None)?;
+    let mut prepared = PreparedImport::new(root.display().to_string(), None, Some(root.clone()))?;
     let directory =
         cap_std::fs::Dir::open_ambient_dir(&root, cap_std::ambient_authority()).map_err(err)?;
     let mut pending = vec![(PathBuf::new(), 0)];
@@ -171,7 +180,7 @@ fn candidate_path(relative: &Path) -> Result<String> {
 
 // All descendant resolution is relative to an opened directory capability: an ancestor
 // swapped for an escaping symlink cannot redirect reads outside the selected folder.
-fn read_source_file(directory: &cap_std::fs::Dir, path: &Path) -> Result<String> {
+pub(crate) fn read_source_file(directory: &cap_std::fs::Dir, path: &Path) -> Result<String> {
     if !directory
         .symlink_metadata(path)
         .map_err(err)?
@@ -375,7 +384,7 @@ impl Git {
                 blobs.insert(path.to_string(), oid.to_string());
             }
         }
-        let mut prepared = PreparedImport::new(source, Some(commit))?;
+        let mut prepared = PreparedImport::new(source, Some(commit), None)?;
         for (path, manifest_oid) in &blobs {
             if path != "manifest.json" && !path.ends_with("/manifest.json") {
                 continue;

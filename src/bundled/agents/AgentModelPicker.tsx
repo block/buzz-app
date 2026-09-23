@@ -1,5 +1,8 @@
-import { Combobox } from "@base-ui/react/combobox";
-import { useEffect, useId, useRef, useState } from "react";
+import { Accordion } from "../../shared/design-system/ui/Accordion";
+import { Field } from "../../shared/design-system/ui/Field";
+import { Input } from "../../shared/design-system/ui/Input";
+import { Combobox } from "../../shared/design-system/ui/Combobox";
+import { useEffect, useRef, useState } from "react";
 import type {
   AgentControl,
   ControlSnapshot,
@@ -15,7 +18,9 @@ export function AgentModelPicker({
   control,
   defaults,
   onChange,
+  disabled = false,
 }: {
+  disabled?: boolean;
   id?: string | undefined;
   savedRevision?: number | undefined;
   draft: AgentDraft;
@@ -23,7 +28,6 @@ export function AgentModelPicker({
   defaults: ControlSnapshot["databricksDefaults"];
   onChange(patch: Partial<AgentDraft>): void;
 }) {
-  const searchId = useId();
   const host = draft.databricks?.host ?? defaults?.host ?? "";
   const filter = draft.databricks?.filter ?? defaults?.filter ?? "";
   const [catalog, setCatalog] = useState<{
@@ -71,7 +75,9 @@ export function AgentModelPicker({
   const run = async (action: "connect" | "refresh" | "disconnect") => {
     if (!control.models || pending.current) return;
     if (!host.trim()) {
-      setStatus("Set your Databricks workspace in Advanced to browse models.");
+      setStatus(
+        "Set your Databricks workspace under Advanced → Model to browse models.",
+      );
       return;
     }
     attempted.current = key;
@@ -105,7 +111,7 @@ export function AgentModelPicker({
           ? "Disconnected from this workspace in Foundation."
           : data.models.length
             ? ""
-            : "No models found. Enter a custom ID or check the workspace/filter in Advanced.",
+            : "No models found. Enter a custom ID or check the workspace/filter under Advanced → Model.",
       );
     } catch (error) {
       if (!abort.signal.aborted && currentKey.current === key)
@@ -140,62 +146,64 @@ export function AgentModelPicker({
     setQuery(null);
   };
   return (
-    <section
-      data-buzz-ui=""
-      className="space-y-3 text-body"
-      aria-label="Model settings"
-    >
-      <div className="buzz-select agent-model-select">
-        <Combobox.Root<ModelCatalog["models"][number]>
-          items={items}
-          filteredItems={
-            query === null
-              ? items
-              : items.filter((item) =>
-                  `${item.name} ${item.id}`
-                    .toLowerCase()
-                    .includes(query.toLowerCase()),
-                )
-          }
-          value={selected}
-          inputValue={query ?? selected?.name ?? ""}
-          open={open}
-          onInputValueChange={(value, details) => {
-            if (
-              details.reason === "input-change" ||
-              details.reason === "input-clear"
-            ) {
-              setQuery(value);
-              // Pending text is an unsaved edit too: enable Save and protect the
-              // dialog while blur/Enter commits it or Escape abandons the query.
-              onChange({});
+    <section data-buzz-ui="" className="text-body" aria-label="Model settings">
+      <div className="space-y-3">
+        <div>
+          <Combobox.Root<ModelCatalog["models"][number]>
+            disabled={disabled}
+            items={items}
+            filteredItems={
+              query === null
+                ? items
+                : items.filter((item) =>
+                    `${item.name} ${item.id}`
+                      .toLowerCase()
+                      .includes(query.toLowerCase()),
+                  )
             }
-          }}
-          onOpenChange={(next, details) => {
-            // Browse opens the list, even if typing already opened it. Base UI
-            // may deliver its mousedown toggle after the button's click handler.
-            if (!next && details.reason === "trigger-press") {
-              details.cancel();
-              return;
-            }
-            setOpen(next);
-            if (!next && details.reason === "escape-key") setQuery(null);
-          }}
-          modal={false}
-          onItemHighlighted={(item) => {
-            highlighted.current = item ?? null;
-          }}
-          itemToStringLabel={(model) => model.name}
-          isItemEqualToValue={(a, b) => a.id === b.id}
-          onValueChange={(model) => {
-            if (model) onChange({ model: model.id });
-            setQuery(null);
-          }}
-        >
-          <label htmlFor={searchId}>Model</label>
-          <div className="agent-model-control">
-            <Combobox.Input
-              id={searchId}
+            value={selected}
+            inputValue={query ?? selected?.name ?? ""}
+            open={open}
+            onInputValueChange={(value, details) => {
+              if (
+                details.reason === "input-change" ||
+                details.reason === "input-clear"
+              ) {
+                setQuery(value);
+                // Pending text is an unsaved edit too: enable Save and protect the
+                // dialog while blur/Enter commits it or Escape abandons the query.
+                onChange({});
+              }
+            }}
+            onOpenChange={(next, details) => {
+              // Browse opens the list, even if typing already opened it. Base UI
+              // may deliver its mousedown toggle after the button's click handler.
+              if (!next && details.reason === "trigger-press") {
+                details.cancel();
+                return;
+              }
+              setOpen(next);
+              if (!next && details.reason === "escape-key") setQuery(null);
+            }}
+            modal={false}
+            onItemHighlighted={(item) => {
+              highlighted.current = item ?? null;
+            }}
+            itemToStringLabel={(model) => model.name}
+            isItemEqualToValue={(a, b) => a.id === b.id}
+            onValueChange={(model) => {
+              if (model) onChange({ model: model.id });
+              setQuery(null);
+            }}
+          >
+            <Combobox.Control
+              label="Model"
+              triggerLabel="Browse models"
+              loading={busy}
+              onBrowse={() => {
+                if (supported && !fresh && attempted.current !== key)
+                  void run("connect");
+              }}
               placeholder="Choose or enter a model"
               onBlur={commitQuery}
               onKeyDown={(event) => {
@@ -211,130 +219,135 @@ export function AgentModelPicker({
                 }
               }}
             />
-            <Combobox.Trigger
-              tabIndex={0}
-              onClick={() => {
-                if (supported && !fresh && attempted.current !== key) {
-                  // Base UI owns opening; an immediate open here can be followed
-                  // by its deferred pointer-open after the user presses Escape.
-                  void run("connect");
-                }
-              }}
-              render={<Button aria-label="Browse models">⌄</Button>}
-            />
-          </div>
-          <Combobox.Portal>
-            <Combobox.Positioner sideOffset={4} className="agent-model-popup">
-              <Combobox.Popup
-                data-buzz-ui=""
-                className="buzz-select-popup text-body-sm"
-              >
-                <Combobox.Empty>
-                  {busy
-                    ? "Loading models…"
-                    : "Type a model ID to use a custom model."}
-                </Combobox.Empty>
-                <Combobox.List>
-                  {(model: ModelCatalog["models"][number]) => (
-                    <Combobox.Item
-                      key={model.id}
-                      value={model}
-                      className="buzz-select-option"
-                    >
-                      <span>{model.name}</span>
-                      <span className="text-secondary">
-                        {model.id}
-                        {!entries.some((entry) => entry.id === model.id)
-                          ? " · Custom ID"
-                          : ""}
-                      </span>
-                    </Combobox.Item>
-                  )}
-                </Combobox.List>
-              </Combobox.Popup>
-            </Combobox.Positioner>
-          </Combobox.Portal>
-        </Combobox.Root>
-      </div>
-      {status && (
-        <p role="status" className="text-body-sm text-secondary">
-          {status}
-        </p>
-      )}
-      {busy ? (
-        <Button
-          onClick={() => {
-            pending.current?.abort();
-            pending.current = null;
-            setBusy(false);
-            setStatus("Cancelled. Retry when ready.");
-          }}
-        >
-          Cancel sign-in
-        </Button>
-      ) : (
-        status &&
-        supported && (
-          <Button onClick={() => void run("connect")}>Retry models</Button>
-        )
-      )}
-      {fresh?.modelOverridden && (
-        <p className="text-body-sm text-warning">
-          A saved BUZZ_AGENT_MODEL override takes precedence. Change it in
-          Advanced to use this selection.
-        </p>
-      )}
-      <details className="space-y-3">
-        <summary className="cursor-pointer text-body-sm text-secondary">
-          Advanced model settings
-        </summary>
-        <label className="agent-control-field">
-          Model ID (custom or blank)
-          <input
-            value={draft.model}
-            spellCheck={false}
-            onChange={(event) => onChange({ model: event.target.value })}
-          />
-        </label>
-        {supported && (
-          <>
-            <label className="agent-control-field">
-              Databricks workspace (HTTPS origin)
-              <input
-                value={host}
-                placeholder="https://workspace.example.com"
-                spellCheck={false}
-                onChange={(event) =>
-                  onChange({ databricks: { host: event.target.value, filter } })
-                }
-              />
-            </label>
-            <label className="agent-control-field">
-              Model filter (optional)
-              <input
-                value={filter}
-                spellCheck={false}
-                onChange={(event) =>
-                  onChange({ databricks: { host, filter: event.target.value } })
-                }
-              />
-            </label>
-            <div className="flex flex-wrap gap-2">
-              <Button disabled={busy} onClick={() => void run("refresh")}>
-                Refresh models
-              </Button>
-              <Button disabled={busy} onClick={() => void run("disconnect")}>
-                Disconnect
-              </Button>
-            </div>
-            <p className="text-body-sm text-secondary">
-              Credentials are shared within Foundation for this workspace, not
-              with old Buzz. Disconnect removes this app’s cache, not your
-              browser session. Save does not restart an agent.
-            </p>
-          </>
+            <Combobox.Popup
+              empty={
+                busy
+                  ? "Loading models…"
+                  : "Type a model ID to use a custom model."
+              }
+            >
+              <Combobox.List>
+                {(model: ModelCatalog["models"][number]) => (
+                  <Combobox.Item
+                    key={model.id}
+                    value={model}
+                    description={`${model.id}${!entries.some((entry) => entry.id === model.id) ? " · Custom ID" : ""}`}
+                  >
+                    {model.name}
+                  </Combobox.Item>
+                )}
+              </Combobox.List>
+            </Combobox.Popup>
+          </Combobox.Root>
+        </div>
+        {status && (
+          <p role="status" className="text-body-sm text-secondary">
+            {status}
+          </p>
         )}
-      </details>
+        {busy ? (
+          <Button
+            disabled={disabled}
+            onClick={() => {
+              pending.current?.abort();
+              pending.current = null;
+              setBusy(false);
+              setStatus("Cancelled. Retry when ready.");
+            }}
+          >
+            Cancel sign-in
+          </Button>
+        ) : (
+          status &&
+          supported && (
+            <Button disabled={disabled} onClick={() => void run("connect")}>
+              Retry models
+            </Button>
+          )
+        )}
+        {fresh?.modelOverridden && (
+          <p className="text-body-sm text-warning">
+            A saved BUZZ_AGENT_MODEL override takes precedence. Change it in
+            Advanced → Environment to use this selection.
+          </p>
+        )}
+      </div>
+      <h3 className="mt-section-gap mb-2 text-label">Advanced</h3>
+      <div className="-mx-2">
+        <Accordion
+          variant="form"
+          keepMounted
+          items={[
+            {
+              value: "advanced",
+              title: "Model",
+              content: (
+                <div className="space-y-3">
+                  <Field label="Model ID (custom or blank)">
+                    <Input
+                      disabled={disabled}
+                      value={draft.model}
+                      spellCheck={false}
+                      onChange={(event) =>
+                        onChange({ model: event.target.value })
+                      }
+                    />
+                  </Field>
+                  {supported && (
+                    <>
+                      <Field label="Databricks workspace (HTTPS origin)">
+                        <Input
+                          disabled={disabled}
+                          value={host}
+                          placeholder="https://workspace.example.com"
+                          spellCheck={false}
+                          onChange={(event) =>
+                            onChange({
+                              databricks: { host: event.target.value, filter },
+                            })
+                          }
+                        />
+                      </Field>
+                      <Field label="Model filter (optional)">
+                        <Input
+                          disabled={disabled}
+                          value={filter}
+                          spellCheck={false}
+                          onChange={(event) =>
+                            onChange({
+                              databricks: { host, filter: event.target.value },
+                            })
+                          }
+                        />
+                      </Field>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          disabled={disabled || busy}
+                          onClick={() => void run("refresh")}
+                        >
+                          Refresh models
+                        </Button>
+                        <Button
+                          disabled={disabled || busy}
+                          onClick={() => void run("disconnect")}
+                        >
+                          Disconnect
+                        </Button>
+                      </div>
+                      <p className="text-body-sm text-secondary">
+                        Credentials are shared within Foundation for this
+                        workspace, not with old Buzz. Disconnect removes this
+                        app’s cache, not your browser session. Save does not
+                        restart an agent.
+                      </p>
+                    </>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
+      </div>
     </section>
   );
 }

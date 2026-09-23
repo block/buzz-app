@@ -46,6 +46,7 @@ beforeEach(() => {
                 revision: "bundled",
                 enabled,
                 previous: null,
+                reloadable: false,
                 error: null,
               },
             ],

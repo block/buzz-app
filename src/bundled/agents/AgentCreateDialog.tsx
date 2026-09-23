@@ -95,19 +95,21 @@ export function AgentCreateDialog({
       }}
     >
       <Dialog.Portal>
-        <Dialog.Backdrop className="agent-dialog-backdrop" />
+        <Dialog.Backdrop data-buzz-ui="" className="buzz-dialog-backdrop" />
         <Dialog.Popup
           data-buzz-ui=""
-          className="agent-controls agent-dialog text-body"
+          className="buzz-dialog agent-dialog text-body"
         >
-          <Dialog.Title className="text-heading">Create agent</Dialog.Title>
-          <Dialog.Description className="text-body-sm text-secondary">
+          <header className="buzz-dialog-header">
+            <Dialog.Title className="text-heading">Create agent</Dialog.Title>
+          </header>
+          <Dialog.Description className="buzz-dialog-description">
             Create a new identity in {destination || "a connected community"}.
             It stays stopped until you start it or send it a mention. No channel
             is joined automatically.
           </Dialog.Description>
           <form
-            className="space-y-5"
+            className="buzz-dialog-body space-y-section-gap"
             onSubmit={(event) => {
               event.preventDefault();
               void create();
@@ -159,7 +161,7 @@ export function AgentCreateDialog({
                 Retry status
               </Button>
             )}
-            <div className="flex justify-end gap-2">
+            <div className="buzz-dialog-actions">
               <Button onClick={onClose}>
                 {busy || saved ? "Close" : "Cancel"}
               </Button>

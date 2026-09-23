@@ -206,7 +206,9 @@ for (const mode of ["absolute", "saved-override", "draft-override"]) {
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
     const dialog = screen.getByRole("dialog", { name: "Edit agent" });
     if (mode === "draft-override") {
-      fireEvent.click(within(dialog).getByText("Advanced", { exact: true }));
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Environment" }),
+      );
       fireEvent.change(within(dialog).getByLabelText("Variable name"), {
         target: { value: "BUZZ_AGENT_PROVIDER" },
       });
@@ -220,7 +222,7 @@ for (const mode of ["absolute", "saved-override", "draft-override"]) {
         },
       );
     }
-    fireEvent.click(within(dialog).getByText("Advanced model settings"));
+    fireEvent.click(within(dialog).getByRole("button", { name: "Model" }));
     fireEvent.click(
       within(dialog).getByRole("button", { name: "Refresh models" }),
     );
@@ -330,7 +332,7 @@ it("keeps the read-only library available when native management is unavailable"
 });
 function expectAIFieldOrder(dialog: HTMLElement) {
   const fields = ["Harness", "Provider", "Model"].map((name) =>
-    within(dialog).getByLabelText(name, { exact: true }),
+    within(dialog).getByRole("combobox", { name }),
   );
   for (const [index, field] of fields.entries()) {
     expect(field).toBeVisible();
@@ -377,7 +379,20 @@ it("shows Harness, Provider and Model in order while preserving settings on Save
   fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
   await within(dialog).findByText("Saved. Running work was not restarted.");
   expect(f.agent.harness).toEqual(original);
-  fireEvent.click(within(dialog).getByText("Advanced", { exact: true }));
+  const advanced = within(dialog).getByRole("button", {
+    name: "Environment",
+  });
+  fireEvent.click(advanced);
+  fireEvent.change(within(dialog).getByLabelText("Variable name"), {
+    target: { value: "UNFINISHED_KEY" },
+  });
+  fireEvent.click(advanced);
+  expect(advanced).toHaveAttribute("aria-expanded", "false");
+  expect(within(dialog).getByLabelText("Variable name")).not.toBeVisible();
+  fireEvent.click(advanced);
+  expect(within(dialog).getByLabelText("Variable name")).toHaveValue(
+    "UNFINISHED_KEY",
+  );
   expect(
     within(dialog).getByLabelText("Harness", { exact: true }),
   ).toBeVisible();
@@ -429,9 +444,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     );
     fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
     const dialog = screen.getByRole("dialog", { name: "Edit agent" });
-    fireEvent.click(
-      within(dialog).getByText("Runtime and identity", { exact: true }),
-    );
+    fireEvent.click(within(dialog).getByRole("button", { name: "Runtime" }));
     expect(within(dialog).getByRole("button", { name: "Stop" })).toBeEnabled();
     expect(
       within(dialog).getByRole("button", { name: "Restart" }),
@@ -439,6 +452,22 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     expect(
       within(dialog).getByRole("button", { name: "Save changes" }),
     ).toBeDisabled();
+    for (const name of [
+      "Name",
+      "Agent instructions",
+      "Harness",
+      "Provider",
+      "Model",
+      "Model ID (custom or blank)",
+    ]) {
+      expect(
+        within(dialog).getByLabelText(name, {
+          exact: true,
+          selector: "input, textarea, button",
+        }),
+      ).toBeDisabled();
+    }
+    expect(within(dialog).getByRole("button", { name: "Model" })).toBeEnabled();
     expect(
       within(dialog).getByRole("button", { name: "Close editor" }),
     ).toBeEnabled();

@@ -10,13 +10,16 @@ export function Accordion({
   onValueChange,
   variant = "default",
   headingLevel = 3,
+  keepMounted = false,
 }: {
   items: readonly { value: string; title: ReactNode; content: ReactNode }[];
   defaultValue?: string[];
   value?: string[];
   onValueChange?: (value: string[]) => void;
-  variant?: "default" | "navigation" | "activity";
+  variant?: "default" | "form" | "navigation" | "activity";
   headingLevel?: 2 | 3;
+  /** Preserve local form state while its panel is collapsed. */
+  keepMounted?: boolean;
 }) {
   return (
     <BaseAccordion.Root
@@ -27,6 +30,7 @@ export function Accordion({
       value={value}
       onValueChange={onValueChange}
       multiple
+      keepMounted={keepMounted}
     >
       {items.map((item) => (
         <BaseAccordion.Item key={item.value} value={item.value}>

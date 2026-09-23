@@ -78,7 +78,11 @@ export type ChannelTimelineProps = {
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   navigation?: PageNavigation | undefined;
-  onOpenThread?(messageId: string, threadRootId: string): void;
+  onOpenThread?(
+    messageId: string,
+    threadRootId: string,
+    intent?: "reply",
+  ): void;
   onOpenMediaReview?(
     messageId: string,
     attachment: Attachment,

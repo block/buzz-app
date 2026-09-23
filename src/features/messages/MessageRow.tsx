@@ -48,7 +48,7 @@ export type MessageRowProps = {
   day: boolean;
   retry: ((id: string) => void) | undefined;
   onOpenThread?:
-    | ((messageId: string, threadRootId: string) => void)
+    | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onReply?: (() => void) | undefined;
   quickControls?: ReactNode;
@@ -186,7 +186,12 @@ export const MessageRow = memo(function MessageRow({
               onReply={
                 onReply ??
                 (onOpenThread
-                  ? () => onOpenThread(row.id, row.threadRootId ?? row.id)
+                  ? () =>
+                      onOpenThread(
+                        row.threadRootId ?? row.id,
+                        row.threadRootId ?? row.id,
+                        "reply",
+                      )
                   : undefined)
               }
               replyDisabled={

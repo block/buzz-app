@@ -545,9 +545,35 @@ function ChannelWorkspace({
   useEffect(() => {
     if (opened && !panel) open(undefined);
   }, [opened, panel, open]);
+  const [replyRequest, setReplyRequest] = useState<{
+    channelId: string;
+    messageId: string;
+    entryId: string | undefined;
+    sequence: number;
+  }>();
+  const activeEntryId = navigator?.snapshot().entry.id;
+  useEffect(() => {
+    if (
+      replyRequest &&
+      (replyRequest.channelId !== currentId ||
+        replyRequest.entryId !== activeEntryId)
+    )
+      setReplyRequest(undefined);
+  }, [currentId, activeEntryId, replyRequest]);
   const openThread = useCallback(
-    (messageId: string, threadRootId: string) => {
+    (messageId: string, threadRootId: string, intent?: "reply") => {
       if (!currentId) return;
+      const requestReply = () =>
+        setReplyRequest((previous) =>
+          intent === "reply"
+            ? {
+                channelId: currentId,
+                messageId,
+                entryId: navigator?.snapshot().entry.id,
+                sequence: (previous?.sequence ?? 0) + 1,
+              }
+            : undefined,
+        );
       setSettings(undefined);
       const target = navigator?.snapshot().entry.target;
       if (
@@ -555,8 +581,10 @@ function ChannelWorkspace({
         target.channelId === currentId &&
         target.messageId === messageId &&
         target.threadRootId === threadRootId
-      )
+      ) {
+        requestReply();
         return;
+      }
       threadTrigger.current =
         document.activeElement instanceof HTMLElement
           ? document.activeElement
@@ -575,6 +603,7 @@ function ChannelWorkspace({
           },
         });
       } else setThread({ channelId: currentId, messageId });
+      requestReply();
       open(undefined);
     },
     [currentId, navigator, viewer, scope, open],
@@ -656,6 +685,7 @@ function ChannelWorkspace({
     [navigate, navigator, viewer, scope, sidebar.list, open],
   );
   const closeThread = () => {
+    setReplyRequest(undefined);
     if (showingThread?.navigation && current) select(current.id);
     setThread(undefined);
     if (threadTrigger.current?.isConnected) threadTrigger.current.focus();
@@ -1178,6 +1208,13 @@ function ChannelWorkspace({
                   channelId={showingThread.channelId}
                   messageId={showingThread.messageId}
                   navigation={showingThread.navigation}
+                  replyRequest={
+                    replyRequest?.channelId === showingThread.channelId &&
+                    replyRequest.messageId === showingThread.messageId &&
+                    replyRequest.entryId === showingThread.navigation?.entryId
+                      ? replyRequest.sequence
+                      : undefined
+                  }
                   close={closeThread}
                   onOpenLink={openLink}
                   onOpenMediaReview={openMediaReview}
@@ -1336,7 +1373,7 @@ const ChannelBody = memo(function ChannelBody({
   canOpenLink?: ((target: string) => boolean) | undefined;
   revealMessageId?: string | undefined;
   onOpenThread?:
-    | ((messageId: string, threadRootId: string) => void)
+    | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
   onOpenMediaReview(
     messageId: string,

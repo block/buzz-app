@@ -36,6 +36,7 @@ export type ThreadPanelProps = {
   channelId: string;
   sessionConversation?: boolean | undefined;
   messageId: string;
+  replyRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
   close(): void;
   onOpenLink(url: string): boolean;
@@ -106,6 +107,7 @@ function OwnedThreadPanel({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  replyRequest,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
@@ -156,6 +158,7 @@ function OwnedThreadPanel({
       view={view}
       navigation={navigation}
       messageId={messageId}
+      replyRequest={replyRequest}
       onOpenLink={onOpenLink}
       onOpenMediaReview={onOpenMediaReview}
       canOpenLink={canOpenLink}
@@ -179,6 +182,7 @@ function ThreadMessages({
   onOpenMediaReview,
   canOpenLink,
   sessionConversation,
+  replyRequest,
 }: {
   sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
@@ -188,6 +192,7 @@ function ThreadMessages({
   channelName: string;
   messageId: string;
   view: ThreadView;
+  replyRequest?: number | undefined;
   navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
   onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
@@ -264,6 +269,9 @@ function ThreadMessages({
   const [sent, setSent] = useState<string>();
   const [replyFocus, setReplyFocus] = useState(0);
   const focusReply = useCallback(() => setReplyFocus((value) => value + 1), []);
+  useEffect(() => {
+    if (replyRequest) focusReply();
+  }, [replyRequest, focusReply]);
   const [mediaPlayback, setMediaPlayback] = useState<MediaPlayback>();
   const [mediaCommentTime, setMediaCommentTime] = useState<number>();
   const [mediaSeek, setMediaSeek] = useState<{

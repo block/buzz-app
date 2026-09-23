@@ -1,4 +1,4 @@
-import { sessionDescription } from "../sessions/metadata";
+import { sessionDescription, sessionMetadata } from "../sessions/metadata";
 import type { Outbox } from "./outbox";
 import type { ChannelQueries } from "./contracts";
 import type { RelayReader } from "./reader";
@@ -280,6 +280,8 @@ export function createWorkSessions(
         throw new Error("Use a channel name between 1 and 120 characters.");
       if (about && [...about].length > 1000)
         throw new Error("Keep the channel description under 1,000 characters.");
+      if (sessionMetadata(about) !== undefined)
+        throw new Error("Choose a different channel description.");
       if (
         ttlSeconds !== undefined &&
         (!Number.isInteger(ttlSeconds) ||

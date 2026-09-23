@@ -184,9 +184,11 @@ function ReviewShell({
   const [currentTime, setCurrentTime] = useState(initialTime);
   const [includeTime, setIncludeTime] = useState(true);
   const [selectedImageUrl, setSelectedImageUrl] = useState(attachment.url);
+  const [mediaFailed, setMediaFailed] = useState(false);
   // selectionRequest intentionally re-applies a seek when the same URL/time is selected again.
   useEffect(() => {
     void selectionRequest;
+    setMediaFailed(false);
     setSelectedImageUrl(attachment.url);
     const seconds = Math.max(0, initialTime);
     const element = video.current;
@@ -233,7 +235,7 @@ function ReviewShell({
           />
         </header>
         <div className={styles.mediaReviewStage}>
-          {!source || !rootId ? (
+          {!source || !rootId || mediaFailed ? (
             <p
               className={styles.mediaReviewUnavailable}
               role={error ? "alert" : "status"}
@@ -256,6 +258,7 @@ function ReviewShell({
               onLoadedMetadata={(event) => {
                 event.currentTarget.currentTime = initialTime;
               }}
+              onError={() => setMediaFailed(true)}
               onTimeUpdate={(event) =>
                 setCurrentTime(event.currentTarget.currentTime)
               }

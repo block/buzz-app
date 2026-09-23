@@ -23,5 +23,5 @@ pub use import::{
 };
 pub use runtime::{Action, Controller, ModelContext};
 pub use secret::{Credentials, Secret};
-pub use store::Store;
+pub use store::{ParkedIdentity, Store};
 type Result<T> = std::result::Result<T, String>;

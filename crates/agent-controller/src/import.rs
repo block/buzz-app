@@ -194,6 +194,7 @@ impl Imports {
         if data.digest != pending.digest {
             return Err("Source changed after preview; preview it again".into());
         }
+        let reservation = store.reserve_import()?;
         let existing = store.agents()?;
         let mut agents = Vec::new();
         for id in ids {
@@ -203,7 +204,7 @@ impl Imports {
                 .iter()
                 .find(|c| &c.id == id)
                 .ok_or("Identity was not in this preview")?;
-            if existing.iter().any(|a| a.id == *id) {
+            if existing.iter().any(|a| a.pubkey == candidate.pubkey) {
                 return Err("Selected identity is already imported".into());
             }
             let record = data
@@ -216,6 +217,7 @@ impl Imports {
             agents.push((agent, string(record, "private_key_nsec").to_owned()));
         }
         Ok(PreparedImport {
+            reservation,
             agents,
             source_kind: pending.source_kind,
             source: pending.source.clone(),
@@ -238,12 +240,14 @@ impl Imports {
 /// Native-only import plan; never serialized. Credential operations can happen
 /// outside the controller mutex. The source snapshot is copied, never mutated.
 pub struct PreparedImport {
+    reservation: crate::store::ImportReservation,
     agents: Vec<(Agent, String)>,
     source_kind: LegacySource,
     source: PathBuf,
     digest: String,
 }
 pub struct CredentialedImport {
+    reservation: crate::store::ImportReservation,
     agents: Vec<Agent>,
     source: PathBuf,
     digest: String,
@@ -274,6 +278,7 @@ impl PreparedImport {
             }
         }
         Ok(CredentialedImport {
+            reservation: self.reservation,
             agents: agents.into_iter().map(|(a, _)| a).collect(),
             source: self.source,
             digest: self.digest,
@@ -282,10 +287,30 @@ impl PreparedImport {
 }
 impl CredentialedImport {
     pub fn commit(self, store: &mut Store) -> Result<()> {
+        if !self.reservation.belongs_to(store) {
+            return Err("Import belongs to another agent store".into());
+        }
         if read_source(&self.source)?.digest != self.digest {
             return Err("Source changed during credential access; preview again".into());
         }
-        store.insert(self.agents)
+        let existing = store.agents()?;
+        if self
+            .agents
+            .iter()
+            .any(|incoming| existing.iter().any(|saved| saved.pubkey == incoming.pubkey))
+        {
+            return Err("Selected identity is already imported".into());
+        }
+        let agents = self
+            .agents
+            .into_iter()
+            .map(|mut agent| {
+                agent.extra.insert("configured".into(), Value::Bool(true));
+                agent.enabled = false;
+                agent
+            })
+            .collect();
+        store.insert(agents)
     }
 }
 fn string<'a>(value: &'a Value, key: &str) -> &'a str {

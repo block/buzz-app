@@ -6,20 +6,48 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 #[derive(Default, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Document {
     version: u32,
     agents: Vec<Agent>,
+    #[serde(default)]
+    parked: BTreeMap<String, ParkedIdentity>,
     #[serde(flatten)]
     extra: BTreeMap<String, Value>,
+}
+/// Keyless inventory. Provenance is not proof of present key custody or membership.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParkedIdentity {
+    pub pubkey: String,
+    pub name: String,
+    pub sources: Vec<crate::LegacySource>,
 }
 /// One native host owns this profile for its entire lifetime. A corrupt store is
 /// an error, never a fresh library; there is no auto-reset or legacy write path.
 pub struct Store {
     root: PathBuf,
     _lock: File,
+    importing: Arc<AtomicBool>,
+}
+// Hold across unlocked credential I/O and the final store write. Dropping any
+// intermediate import value releases the reservation, including on failure.
+pub(crate) struct ImportReservation(Arc<AtomicBool>);
+impl ImportReservation {
+    pub(crate) fn belongs_to(&self, store: &Store) -> bool {
+        Arc::ptr_eq(&self.0, &store.importing)
+    }
+}
+impl Drop for ImportReservation {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 impl Store {
     pub fn open(root: PathBuf) -> Result<Self> {
@@ -52,9 +80,19 @@ impl Store {
             .map_err(|_| "Could not open agent storage lock")?;
         lock.try_lock()
             .map_err(|_| "Another Buzz app owns this agent storage")?;
-        let store = Self { root, _lock: lock };
+        let store = Self {
+            root,
+            _lock: lock,
+            importing: Arc::default(),
+        };
         store.read()?;
         Ok(store)
+    }
+    pub(crate) fn reserve_import(&self) -> Result<ImportReservation> {
+        self.importing
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .map_err(|_| "Another import is in progress; wait for it to finish")?;
+        Ok(ImportReservation(self.importing.clone()))
     }
     pub fn root(&self) -> &Path {
         &self.root
@@ -119,11 +157,64 @@ impl Store {
         Ok(self.read()?.agents)
     }
     pub fn snapshot(&self) -> Result<crate::ControlSnapshot> {
+        let doc = self.read()?;
         Ok(crate::ControlSnapshot {
-            agents: self.agents()?.iter().map(Agent::view).collect(),
+            agents: doc.agents.iter().map(Agent::view).collect(),
+            parked: doc.parked.into_values().collect(),
             runtime_available: false,
             runtime_message: Some("Native runtime has not been connected".into()),
         })
+    }
+    /// Merge only safe metadata, independently per source. Missing or damaged legacy
+    /// files never erase saved inventory or prevent managing existing agents.
+    pub fn migrate_legacy(&mut self, parent: &Path) -> Vec<String> {
+        let mut warnings = Vec::new();
+        for source in [
+            crate::LegacySource::Installed,
+            crate::LegacySource::Development,
+        ] {
+            let path = parent
+                .join(source.app_directory())
+                .join("agents/managed-agents.json");
+            if matches!(fs::symlink_metadata(&path), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+            {
+                continue;
+            }
+            let result = (|| -> Result<()> {
+                let preview = crate::Imports::default().preview(
+                    source,
+                    parent.into(),
+                    self.root.clone(),
+                    "",
+                )?;
+                let mut doc = self.read()?;
+                let before = doc.parked.clone();
+                for candidate in preview.candidates {
+                    let row = doc
+                        .parked
+                        .entry(candidate.pubkey.clone())
+                        .or_insert_with(|| ParkedIdentity {
+                            pubkey: candidate.pubkey,
+                            name: candidate.name,
+                            sources: Vec::new(),
+                        });
+                    if !row.sources.contains(&source) {
+                        row.sources.push(source);
+                    }
+                }
+                if doc.parked != before {
+                    self.write(&doc)?;
+                }
+                Ok(())
+            })();
+            if let Err(error) = result {
+                warnings.push(format!(
+                    "Could not update inventory from {}: {error}",
+                    source.app_directory()
+                ));
+            }
+        }
+        warnings
     }
     pub fn save(&mut self, id: &str, revision: u64, edit: AgentEdit) -> Result<()> {
         let mut doc = self.read()?;
@@ -179,6 +270,13 @@ impl Drop for Store {
 fn validate(doc: &Document) -> Result<()> {
     if doc.version != 1 || doc.agents.len() > MAX_AGENTS {
         return Err("Unsupported agent storage version or size; left unchanged".into());
+    }
+    if doc.parked.len() > MAX_AGENTS
+        || doc.parked.iter().any(|(key, row)| {
+            key != &row.pubkey || !crate::config::canonical_key(key) || row.sources.is_empty()
+        })
+    {
+        return Err("Invalid parked identity inventory; left unchanged".into());
     }
     let mut ids = BTreeSet::new();
     for agent in &doc.agents {

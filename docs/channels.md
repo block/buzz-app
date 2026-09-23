@@ -207,11 +207,11 @@ are not loaded. Existing image Markdown is projected as an attachment instead. C
 remain event-local and are not substituted inside links or code. Authenticated live traffic
 reconciles through the same session. Channel creation and composer preview/toolbars are not
 implemented. Reply counts open a bounded thread view; attachments are links. Routine freshness
-labels are not shown; Conversation options → Diagnostics
+labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
 GitHub actions remain on GitHub. A saved-groups/stars failure keeps its specific
-reason under **Conversation options → Diagnostics → Saved groups and stars**.
+reason under **Channel Settings → Diagnostics → Saved groups and stars**.
 `Preference query` includes reader queueing, transport and verification; use relay
 timings to separate those. `Preference decode` identifies the local decoder stage.
 The diagnostic does not trigger another request or change retry policy.

@@ -4,6 +4,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useMentionAgents } from "../agents/mention-context";
 import { enrollMentionedAgents } from "../agents/mention-enrollment";
 import { knownAgentPubkeys } from "../agents/known";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 import { rememberAgentsPreference } from "./mention-preferences";
 import { SessionAgentControl } from "../sessions/SessionAgentControl";
 import { sessionRecipients } from "../sessions/recipients";
@@ -786,13 +787,14 @@ function RecipientAvatars({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const unique = [
     ...new Map(recipients.map((item) => [item.pubkey, item])).values(),
   ];
   return (
     <section
       className={styles.mentionRecipients}
-      aria-label="Notification recipients"
+      aria-label="Explicit mentions"
     >
       {unique.map((recipient) => {
         const profile = profiles.get(recipient.pubkey);
@@ -802,14 +804,16 @@ function RecipientAvatars({
             type="button"
             size="toolbar"
             data-mention-recipient=""
-            title={`Don't notify ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
+            title={`Remove explicit mention of ${recipient.name} (${recipient.pubkey.slice(0, 8)})`}
             aria-label={`Remove mention ${recipient.name} ${recipient.pubkey}`}
             disabled={disabled}
             onClick={() => remove(recipient.pubkey)}
             icon={
               <span
                 className={styles.mentionRecipientArtwork}
-                data-avatar-shape={profile?.isAgent ? "squircle" : "circle"}
+                data-avatar-shape={
+                  agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                }
                 aria-hidden="true"
               >
                 <Avatar
@@ -817,7 +821,9 @@ function RecipientAvatars({
                   fallback={recipient.name}
                   src={session.media(profile?.picture ?? "", "small")}
                   size="small"
-                  shape={profile?.isAgent ? "squircle" : "circle"}
+                  shape={
+                    agentPubkeys.has(recipient.pubkey) ? "squircle" : "circle"
+                  }
                 />
                 <span className={styles.mentionRecipientRemove}>
                   <XIcon size={16} />

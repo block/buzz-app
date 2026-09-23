@@ -171,3 +171,80 @@
   box-shadow: var(--shadow-sm);
   z-index: var(--layer-popover);
 }
+
+@layer components {
+  .buzz-toast-viewport {
+    /* Keep shell navigation, conversation tools and the composer outside the stack. */
+    --toast-top: 8rem;
+    position: fixed;
+    top: calc(var(--toast-top) + env(safe-area-inset-top));
+    right: max(var(--space-4), env(safe-area-inset-right));
+    z-index: calc(var(--layer-dialog-backdrop) - 1);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    width: min(24rem, calc(100vw - 2 * var(--space-4)));
+    max-height: min(
+      40dvh,
+      calc(
+        100dvh -
+        var(--toast-top) -
+        min(10rem, 25dvh) -
+        env(safe-area-inset-top)
+      )
+    );
+    overflow-y: auto;
+    padding: var(--space-1);
+  }
+  @media (max-width: 700px) {
+    .buzz-toast-viewport {
+      --toast-top: 12rem;
+    }
+  }
+  .buzz-toast {
+    flex-shrink: 0;
+    display: grid;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    overflow-wrap: anywhere;
+    pointer-events: auto;
+    transition: opacity var(--duration-state) var(--easing-state);
+  }
+  .buzz-toast[data-starting-style],
+  .buzz-toast[data-ending-style] {
+    opacity: 0;
+  }
+  .buzz-toast[data-ending-style] {
+    pointer-events: none;
+  }
+  .buzz-toast-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+  .buzz-toast-heading > :first-child,
+  .buzz-toast > p {
+    margin: 0;
+  }
+  .buzz-toast[data-type="error"] .buzz-toast-heading > :first-child {
+    color: var(--text-danger);
+  }
+  .buzz-toast[data-type="warning"] .buzz-toast-heading > :first-child {
+    color: var(--text-warning);
+  }
+  .buzz-toast-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  html[data-keyboard-navigation] .buzz-toast:focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-toast {
+      transition: none;
+    }
+  }
+}

@@ -14,3 +14,5 @@ For row lists in dialogs and panels, follow DESIGN.md § Align row content, not 
 Integrate global styles deliberately through the host entry point instead of layering two resets, and keep the host appearance owner.
 The theme helper is viewer-only; app surfaces read appearance through the host.
 Run the root design:typecheck, design:check, design:test, and design:build scripts.
+
+Public-key display text uses `src/shared/identity/public-key.ts`, not hand-written slicing or a new visual component. See DESIGN.md “Public identity text”. Never format secret keys with it.

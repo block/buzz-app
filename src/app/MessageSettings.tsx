@@ -1,3 +1,4 @@
+import { ToastNotice } from "../shared/design-system/ui/Toast";
 import { useState } from "react";
 import { Switch } from "../shared/design-system/ui/Switch";
 import { Button } from "../shared/design-system/ui/Button";
@@ -6,7 +7,7 @@ import {
   useRememberAgentsPreference,
 } from "../features/messages/mention-preferences";
 
-export function MessageSettings() {
+export function MessageSettings({ active = true }: { active?: boolean }) {
   const preference = useRememberAgentsPreference();
   const [error, setError] = useState<string | null>(null);
   const change = (enabled: boolean) =>
@@ -28,13 +29,15 @@ export function MessageSettings() {
         Turning this off stops prefilling future messages; your current draft is
         unchanged.
       </p>
-      {error && (
-        <div role="alert" className="notice">
-          <p>{error}</p>
-          <Button type="button" onClick={() => change(preference)}>
+      {active && error && (
+        <ToastNotice
+          title="Message preference wasn’t saved"
+          description={error}
+        >
+          <Button type="button" size="sm" onClick={() => change(preference)}>
             Retry saving
           </Button>
-        </div>
+        </ToastNotice>
       )}
     </section>
   );

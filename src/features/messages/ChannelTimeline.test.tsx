@@ -101,6 +101,19 @@ vi.mock("../relay/react", () => ({
 }));
 afterEach(() => vi.unstubAllGlobals());
 
+const timelineMessage = (id: string): ChannelMessage => ({
+  id,
+  channelId: "channel",
+  authorId: "author",
+  content: "",
+  createdAt: 1,
+  mentions: [],
+  participants: [],
+  attachments: [],
+  reactions: [],
+  replyCount: 0,
+});
+
 function setup({
   freshness = "verified" as NonNullable<ChannelWindow["freshness"]>,
   status = "ready" as ChannelWindow["status"],
@@ -239,12 +252,7 @@ function setup({
       unread: { sync: () => ({ capability: "unsupported" }) },
       media: () => undefined,
     } as unknown as RelaySession);
-  let rows =
-    initialRows ??
-    ([
-      { id: "first", authorId: "author" },
-      { id: "last", authorId: "author" },
-    ] as ChannelMessage[]);
+  let rows = initialRows ?? [timelineMessage("first"), timelineMessage("last")];
   type Section = ReactElement<{
     ref: { current: unknown };
     children: unknown[];
@@ -409,14 +417,11 @@ function setup({
       render(runFrames);
     },
     prepend() {
-      rows = [{ id: "older", authorId: "author" } as ChannelMessage, ...rows];
+      rows = [timelineMessage("older"), ...rows];
       render();
     },
     append() {
-      rows = [
-        ...rows,
-        { id: "appended", authorId: "author" } as ChannelMessage,
-      ];
+      rows = [...rows, timelineMessage("appended")];
       render();
     },
     unmount() {
@@ -789,12 +794,21 @@ it.each([false, true])(
     h.unmount();
   },
 );
-it("late measurements do not convert reading-anchor restoration to bottom follow", () => {
+it("late measurements restore the reading anchor instead of converting it to bottom follow", () => {
   const h = setup({ mounted: [{ id: "last", y: 42 }] });
   h.scroll();
   h.element.clientWidth = 650;
   h.resize();
   h.handle.scrollToIndex.mockClear();
+  h.measureRows();
+  expect(h.handle.scrollToIndex).toHaveBeenCalledExactlyOnceWith(1, {
+    align: "start",
+    offset: -42,
+  });
+  h.handle.scrollToIndex.mockClear();
+  h.measureRows(false);
+  h.gesture();
+  h.flush();
   h.measureRows();
   expect(h.handle.scrollToIndex).not.toHaveBeenCalled();
   h.unmount();

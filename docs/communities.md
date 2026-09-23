@@ -99,7 +99,12 @@ without it unscoped relay operations fail explicitly. `/api/relay/identity` stay
 available independently. These settings do not join/select a community or send a
 request on startup. Both are public routing values, not credentials; alias mappings
 are embedded in the frontend. Restart/rebuild after changing them. Environment
-variables override `.env.local`; see `.env.example`. Session acquisition/retry registers again, including startup of a
+variables override `.env.local`; see `.env.example`. As a separate opt-in,
+`BUZZ_DEV_OPEN_RELAY=1` makes a live dev server save and select the canonical
+`BUZZ_RELAY_URL` origin for a viewer whose local client record is absent, labeled
+with the relay host. Only `1` enables it and it requires `BUZZ_RELAY_URL`; any
+saved record, including Personal space, wins; switching in the UI never writes
+configuration; production builds ignore it. Session acquisition/retry registers again, including startup of a
 saved custom community after broker restart. Query/sign/publish, policy/claim,
 metadata, protected media and live traffic stay bound to the captured destination.
 HTTP authority discovery and other upstream fetches reject redirects.

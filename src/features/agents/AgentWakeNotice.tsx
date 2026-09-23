@@ -1,4 +1,5 @@
 import { useSyncExternalStore } from "react";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 import type { AgentControl } from "./control";
 
 export function AgentWakeNotice({ control }: { control: AgentControl }) {
@@ -8,11 +9,11 @@ export function AgentWakeNotice({ control }: { control: AgentControl }) {
     control.snapshot,
   );
   return state.mentionError ? (
-    <div role="alert" className="notice">
-      <p>{state.mentionError}</p>
-      <button type="button" onClick={control.dismissMentionError}>
-        Dismiss agent notice
-      </button>
-    </div>
+    <ToastNotice
+      title="Agent could not start"
+      description={state.mentionError}
+      onDismiss={control.dismissMentionError}
+      closeLabel="Dismiss agent notice"
+    />
   ) : null;
 }

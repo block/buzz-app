@@ -17,6 +17,7 @@ pill actions, consistent fields and shared states.
 | Tabs | Tabs | Emoji/GIF uses associated panels and Base UI keyboard activation. Workflow mode retains its existing externally owned editor view. |
 | Modals | Dialog and AlertDialog | Page search, community chooser/setup and workflow confirmations. Pending work prevents dismissal; focus returns to the opener. |
 | Panels and headers | Panel and PanelHeader | Settings, channels and companion cards use shared paint. Grids, scrolling, docks and subscriptions stay with the feature. |
+| Feedback | Toast | Agent-start, live-update, sidebar preferences and Settings feedback use a source-owned stack. Recovery stays available; form errors, blocked pages and lasting paused-state context remain inline. |
 | Hints | Tooltip | Control titles and agent activity use keyboard-accessible, dismissible hints. Accessible names stay on the controls. |
 | Sessions and activity | NavigationItem, Button, IconButton, Panel and PanelHeader | Session history, agent choice, child-channel navigation and activity actions retain unread, admission, draft and focus behavior. Base UI owns their menus. |
 | Media stages | surface-inverse with text-inverse | Preserve existing stage values and measure their text pairing explicitly; images and video pixels stay renderer-owned. |
@@ -35,8 +36,12 @@ pill actions, consistent fields and shared states.
   another appearance preference.
 - Native disclosures remain for persisted channel groups and diagnostic content.
   They are disclosures, not application menus; their content and state remain local.
-- Avatars, previews, links, mentions, thread summaries and recipient removal retain
-  their identity and navigation behavior. Shared appearance does not move their data.
+- Avatars, previews, links, mentions and thread summaries retain their identity
+  and navigation ownership. Composer mentions use inert shared InlineChip rendering;
+  editing or deleting the mention removes its explicit mention intent. Host-owned
+  recipient avatars beside the mention tool also allow clearing that intent without
+  changing authored text; Sessions can still route to the selected or sole agent.
+  Shared appearance does not move their data.
 - Panel marks its surface separately from interactive components. Native product
   and plugin content inside it can still receive host defaults.
 - Legacy utility names remain available through the host bridge for existing

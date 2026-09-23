@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { PresenceIndicator } from "../../features/presence/react";
 import {
   useEffect,
@@ -85,7 +86,8 @@ function ProfileDetails({
   }, [session, pubkey, attempt]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
-  const name = profile?.name ?? "Unknown profile";
+  const identityName = useIdentityNames(session.names);
+  const name = identityName(pubkey, profile?.name ?? "Unknown profile");
   const activity = activityTarget(pubkey, context?.channelId);
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
@@ -105,7 +107,7 @@ function ProfileDetails({
           <Avatar
             src={picture}
             alt={`${name} avatar`}
-            fallback={profile?.name ?? "?"}
+            fallback={name}
             size={picture ? "fill" : "large"}
             shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
           />

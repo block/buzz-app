@@ -47,6 +47,10 @@ export function ComposerCopyPreview() {
         groups={GROUPS}
         onValueChange={setValue}
       />
+      <p className="text-body-sm text-subtle">
+        Try mentioning both people named Alice or both agents named Honey.
+        Adding the second namesake reveals a short public key on both chips.
+      </p>
       <div className="composer-playground-stage">
         <MessageComposer key={context.value} {...props} />
       </div>

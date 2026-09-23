@@ -27,6 +27,7 @@ export const historySize = 640;
 export const test = base.extend({
   productionBroker: [false, { option: true }],
   actionProfile: [false, { option: true }],
+  profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
   presenceThreadAuthors: [0, { option: true }],
@@ -54,6 +55,7 @@ export const test = base.extend({
       browser,
       productionBroker,
       actionProfile,
+      profilePicture,
       readState,
       threadUnread,
       presenceThreadAuthors,
@@ -982,7 +984,7 @@ export const test = base.extend({
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
-                  agentLibrary: () => [],
+                  agentLibrary: () => ({ definitions: [], identities: [] }),
                   ...(readState
                     ? {}
                     : {
@@ -1037,13 +1039,13 @@ export const test = base.extend({
         }
       });
       await page.addInitScript(
-        ({ viewer }) => {
+        ({ viewer, profilePicture }) => {
           const key = `buzz-client.v1:${viewer}`;
           if (!localStorage.getItem(key))
             localStorage.setItem(
               key,
               JSON.stringify({
-                profile: { name: "Browser Fixture", picture: "" },
+                profile: { name: "Browser Fixture", picture: profilePicture },
                 memberships: [
                   { id: "primary", name: "Primary" },
                   { id: "secondary", name: "Secondary" },
@@ -1052,7 +1054,7 @@ export const test = base.extend({
               }),
             );
         },
-        { viewer },
+        { viewer, profilePicture },
       );
       await use({
         origin,

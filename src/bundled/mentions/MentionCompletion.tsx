@@ -1,3 +1,5 @@
+import { mentionChoices } from "./mention-choices";
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useMentionAgents } from "../../features/agents/mention-context";
 import { useAgentChoices } from "./use-agent-choices";
 import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
@@ -18,6 +20,7 @@ export function MentionCompletion({
   query,
   publish,
 }: ComposerCompletionProps) {
+  const resolveName = useIdentityNames(session.names);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -72,46 +75,38 @@ export function MentionCompletion({
   }, [session, memberKey, attempt]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const choices = new Map(
-      [...agents.identities, ...available].map((agent) => [
-        agent.pubkey,
-        { pubkey: agent.pubkey, name: agent.name },
-      ]),
+    const candidates = mentionChoices(
+      [...agents.identities, ...available],
+      members,
+      profiles,
+      resolveName,
     );
-    for (const pubkey of members)
-      choices.set(pubkey, {
-        pubkey,
-        name:
-          profiles.get(pubkey)?.name ??
-          choices.get(pubkey)?.name ??
-          pubkey.slice(0, 12),
-      });
-    const candidates = [...choices.values()];
     const needle = query.query.toLowerCase();
+    // Source names close completed mentions; display labels still admit multi-word searches.
     const admitted = matchesMentionQuery(
       query.query,
-      candidates.map((item) => item.name),
+      candidates.flatMap(({ recipient, label }) => [recipient.name, label]),
     );
     const matching =
       admitted && !channel?.archived
         ? candidates
-            .filter(({ pubkey, name }) =>
-              `${name} ${pubkey}`.toLowerCase().includes(needle),
+            .filter(({ recipient, label }) =>
+              `${label} ${recipient.pubkey}`.toLowerCase().includes(needle),
             )
             .sort(
               (a, b) =>
-                Number(!a.name.toLowerCase().startsWith(needle)) -
-                  Number(!b.name.toLowerCase().startsWith(needle)) ||
-                a.name.localeCompare(b.name) ||
-                a.pubkey.localeCompare(b.pubkey),
+                Number(!a.label.toLowerCase().startsWith(needle)) -
+                  Number(!b.label.toLowerCase().startsWith(needle)) ||
+                a.label.localeCompare(b.label) ||
+                a.recipient.pubkey.localeCompare(b.recipient.pubkey),
             )
         : [];
     const membershipMissing = (!inviteAgents || !!channel) && !channel?.members;
     const missing = members.some((key) => !profiles.has(key));
     const withdraw = publish({
-      items: matching.slice(0, 20).map((recipient) => ({
+      items: matching.slice(0, 20).map(({ recipient, label }) => ({
         id: recipient.pubkey,
-        label: recipient.name,
+        label,
         detail: members.includes(recipient.pubkey)
           ? recipient.pubkey
           : inviteAgents
@@ -120,7 +115,7 @@ export function MentionCompletion({
         preview: (
           <Avatar
             alt=""
-            fallback={recipient.name}
+            fallback={label}
             src={session.media(
               profiles.get(recipient.pubkey)?.picture ?? "",
               "small",
@@ -183,16 +178,19 @@ export function MentionCompletion({
     const profilesChanged = session.profiles.subscribe(() => {
       if (session.profiles.snapshot() !== profiles) revoke();
     });
+    const namesChanged = session.names.subscribe(revoke);
     const agentsChanged = inviteAgents
       ? session.agentLibrary.subscribe(revoke)
       : () => {};
     return () => {
+      namesChanged();
       agentsChanged();
       rosterChanged();
       profilesChanged();
       revoke();
     };
   }, [
+    resolveName,
     session,
     agents,
     inviteAgents,

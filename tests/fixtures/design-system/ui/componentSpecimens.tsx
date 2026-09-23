@@ -1,3 +1,5 @@
+import { ToastSpecimens } from "./ToastSpecimens";
+import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
 import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
@@ -22,7 +24,6 @@ import {
   HashIcon,
   ChatCircleIcon,
   PlusIcon,
-  GearIcon,
 } from "../../../../src/shared/design-system/icons/index";
 import type { ReactNode } from "react";
 import { useState } from "react";
@@ -130,177 +131,6 @@ function Specimen({
   );
 }
 
-function ButtonSpecimen() {
-  return (
-    <>
-      <SpecimenGroup label="Emphasis">
-        <div className="flex flex-wrap items-center gap-3">
-          {(
-            ["prominent", "subtle", "ghost", "destructive", "outline"] as const
-          ).map((variant) => (
-            <Button key={variant} variant={variant}>
-              {variant}
-            </Button>
-          ))}
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="Sizes">
-        <div className="flex flex-wrap items-center gap-3">
-          {(["sm", "md", "lg"] as const).map((size) => (
-            <Button key={size} size={size} variant="prominent">
-              Save · {size}
-            </Button>
-          ))}
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="States">
-        <div className="flex flex-wrap items-center gap-3">
-          <Button loading variant="prominent">
-            Save changes
-          </Button>
-          <Button disabled>Unavailable</Button>
-          <Button>Allow notifications for this workspace</Button>
-        </div>
-      </SpecimenGroup>
-    </>
-  );
-}
-
-function IconButtonSpecimen() {
-  const icons = {
-    add: <PlusIcon size={16} aria-hidden="true" />,
-    more: <DotsThreeIcon size={16} aria-hidden="true" />,
-    settings: <GearIcon size={16} aria-hidden="true" />,
-  };
-  return (
-    <div className="component-specimen-stack">
-      {/* `chrome` sits on the app backdrop, because it is a translucent glass
-          fill — on a flat panel it has nothing to be translucent over and reads
-          as a plain grey. */}
-      <SpecimenGroup label="Variants">
-        <div className="component-specimen-row">
-          <Specimen prop='variant="quiet"'>
-            <IconButton
-              aria-label="Quiet add"
-              icon={icons.add}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop='variant="ghost"'>
-            <IconButton
-              aria-label="Ghost more"
-              icon={icons.more}
-              variant="ghost"
-            />
-          </Specimen>
-          <Specimen prop='variant="solid"'>
-            <IconButton
-              aria-label="Solid add"
-              icon={icons.add}
-              variant="solid"
-            />
-          </Specimen>
-          <Specimen prop='variant="tint" shape="round"'>
-            <IconButton
-              aria-label="Round tinted send"
-              icon={icons.add}
-              shape="round"
-              variant="tint"
-            />
-          </Specimen>
-        </div>
-      </SpecimenGroup>
-      <section className="component-specimen-group">
-        <h2 className="text-body-sm text-tertiary">
-          Chrome, over the workspace backdrop
-        </h2>
-        <SpecimenFrame backdrop>
-          <div className="component-specimen-row">
-            <Specimen prop='variant="chrome"'>
-              <IconButton
-                aria-label="Chrome settings"
-                icon={icons.settings}
-                variant="chrome"
-              />
-            </Specimen>
-          </div>
-        </SpecimenFrame>
-      </section>
-      {/* Shown on `quiet`, not the default `ghost`: the three sizes differ only
-          in hit area (30 / 36 / 40px), and with no fill they render as three
-          identical 16px glyphs — the page would claim to show a size ramp while
-          showing nothing. A fill makes the box the sample. */}
-      <SpecimenGroup label="Sizes">
-        <div className="component-specimen-row">
-          <Specimen prop='size="compact"'>
-            <IconButton
-              aria-label="Compact settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="compact"
-            />
-          </Specimen>
-          <Specimen prop='size="toolbar"'>
-            <IconButton
-              aria-label="Toolbar settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="toolbar"
-            />
-          </Specimen>
-          <Specimen prop='size="default"'>
-            <IconButton
-              aria-label="Default settings"
-              icon={icons.settings}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop='size="large"'>
-            <IconButton
-              aria-label="Large settings"
-              icon={icons.settings}
-              variant="quiet"
-              size="large"
-            />
-          </Specimen>
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label="States">
-        <div className="component-specimen-row">
-          <Specimen>
-            <IconButton
-              aria-label="Enabled add"
-              icon={icons.add}
-              variant="quiet"
-            />
-          </Specimen>
-          <Specimen prop="disabled">
-            <IconButton
-              aria-label="Disabled add"
-              icon={icons.add}
-              variant="quiet"
-              disabled
-            />
-          </Specimen>
-          {(["tint", "solid"] as const).map((variant) => (
-            <Specimen
-              key={variant}
-              prop={`variant="${variant}" shape="round" disabled`}
-            >
-              <IconButton
-                aria-label={`Disabled round ${variant}`}
-                icon={icons.add}
-                shape="round"
-                variant={variant}
-                disabled
-              />
-            </Specimen>
-          ))}
-        </div>
-      </SpecimenGroup>
-    </div>
-  );
-}
 function AvatarSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -1169,6 +999,7 @@ function RadioGroupSpecimen() {
 export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   "alert-dialog": AlertDialogSpecimen,
   dialog: DialogSpecimens,
+  toast: ToastSpecimens,
   tooltip: () => (
     <SpecimenFrame>
       <Tooltip content="Create a note">

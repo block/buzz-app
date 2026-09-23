@@ -94,6 +94,26 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
     "the exact reply requires a second thread page",
   ).toBe(true);
   expect(app.report.queries.filter((q) => q.filter.until)).toHaveLength(0);
+  // Settings temporarily takes the rail without disposing the routed thread.
+  const threadElement = page.locator('[aria-label="Thread"]');
+  await threadElement.evaluate((element) => {
+    window.retainedSettingsThread = element;
+  });
+  const position = await thread(page).evaluate((element) => element.scrollTop);
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await expect(threadElement).toBeHidden();
+  await page.getByRole("button", { name: "Close channel settings" }).click();
+  await expect(threadElement).toBeVisible();
+  expect(
+    await threadElement.evaluate(
+      (element) => element === window.retainedSettingsThread,
+    ),
+  ).toBe(true);
+  await expect
+    .poll(() => thread(page).evaluate((element) => element.scrollTop))
+    .toBe(position);
   // Use an unedited reply to exercise exact mention/profile identity plumbing.
   expect(
     await openTarget(page, target(app, app.exact.replies.at(-2).id)),
@@ -108,6 +128,21 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   await expect(
     page.getByRole("region", { name: "Profile details" }),
   ).toBeVisible();
+  const profile = page.locator('[aria-label="Profile details"]');
+  await profile.evaluate((element) => {
+    window.retainedSettingsProfile = element;
+  });
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await expect(profile).toBeHidden();
+  await page.getByRole("button", { name: "Close channel settings" }).click();
+  await expect(profile).toBeVisible();
+  expect(
+    await profile.evaluate(
+      (element) => element === window.retainedSettingsProfile,
+    ),
+  ).toBe(true);
   await page
     .getByRole("button", { name: "Close channel panel", exact: true })
     .click();
@@ -378,7 +413,9 @@ test("post-success membership loss removes the thread and live updates do not sn
   await expect(channelButton).toBeFocused();
   expect(await region.evaluate((element) => element.scrollTop)).toBe(before);
   app.omitChannel("alpha");
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", { name: "Refresh channels", exact: true })

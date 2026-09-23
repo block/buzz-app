@@ -29,7 +29,20 @@ test("portForPath is deterministic and stays in [10010, 65009]", () => {
   assert.notEqual(portForPath(`${KNOWN[0][0]}/`), KNOWN[0][1]);
 });
 
-test("portForPath is block/buzz's base port plus ten for the same path", () => {
+test("portForPath remaps the browser-blocked default without colliding with same-path buzz ports", () => {
+  // This path's unadjusted SHA-256 mapping is 10080 (Amanda), which browsers
+  // reject even when an HTTP server successfully binds it.
+  const candidate = "/Users/dev/buzz-app-worktrees/feature-5098";
+  const digest = createHash("sha256").update(candidate, "utf8").digest("hex");
+  const buzzBasePort = Number(10000n + (BigInt(`0x${digest}`) % 55000n));
+  assert.equal(buzzBasePort + 10, 10080);
+  assert.equal(portForPath(candidate), 10081);
+  assert.equal(portForPath(candidate), portForPath(candidate));
+  for (const offset of [0, 1, 100])
+    assert.notEqual(portForPath(candidate), buzzBasePort + offset);
+});
+
+test("portForPath is block/buzz's base port plus ten when browser-safe", () => {
   // block/buzz's scripts/instance-env.sh one-liner, transcribed:
   // 10000 + sha256(path) % 55000. HMR is base + 1 and `just web` is base + 100,
   // so an offset of ten clears all three for a checkout at the same root.

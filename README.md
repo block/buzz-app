@@ -23,14 +23,14 @@ See [contributing](docs/contributing.md) for exact pins, registry settings,
 and the pinned pnpm package's Intel Mac limitation.
 
 Both commands forward arguments to their development tool (Vite or Tauri).
-The default port is derived from the worktree's path, so every checkout gets its
-own stable port automatically and parallel worktrees need no coordination;
+The default port is derived from the worktree's path, giving each checkout a
+stable default that normally avoids collisions between parallel worktrees;
 `just desktop` prints the URL it chose. Override it with `just web --port 1431`
 or `just desktop --port 1432`. Browser servers prefer the requested port and
 use the next open port automatically; desktop requires the exact port to be free and keeps
-Vite and the native window on the same URL. Only a second instance started from
-the same checkout needs an explicit port, because it would derive the same
-default:
+Vite and the native window on the same URL. Use an explicit port if two paths
+collide, another process occupies the default, or you start a second instance
+from the same checkout:
 
 ```sh
 just desktop
@@ -72,6 +72,8 @@ in the non-live shell/fixture state.
    BUZZ_DEV_VIEWER=npub1YOUR_PUBLIC_KEY
    # Optional default for unscoped development-broker requests:
    BUZZ_RELAY_URL=wss://relay.example.com
+   # Optional: on a fresh dev port, save and select BUZZ_RELAY_URL as a community.
+   BUZZ_DEV_OPEN_RELAY=1
    # Optional compatibility map for memberships saved with short aliases:
    BUZZ_COMMUNITY_ALIASES='{"example":"wss://relay.example.com"}'
    ```
@@ -79,7 +81,11 @@ in the non-live shell/fixture state.
    the account to use; it does not import or change a key. Relay URLs and aliases
    are public configuration, not secrets. With both relay settings unset, there is
    no default relay or alias map; Personal space and communities saved by canonical
-   URL remain usable. Configuration does not automatically join a community.
+   URL remain usable. Configuration does not automatically join a community:
+   `BUZZ_DEV_OPEN_RELAY=1` only saves and selects the default relay locally on a
+   dev port whose saved choice is absent. It does not implicitly join a community,
+   accept an invite, or publish a profile. Normal session traffic and presence still
+   apply.
 3. Start a development target:
    ```sh
    just web
@@ -87,10 +93,10 @@ in the non-live shell/fixture state.
    just desktop
    ```
 
-   Open the Local URL printed by `just web`. Each worktree derives its own
-   default port from its path, so parallel worktrees do not compete for one. If
-   this worktree's port is busy, use `just desktop --port 1431` (or another free
-   port) instead of stopping the other copy.
+   Open the Local URL printed by `just web`. Each worktree derives a stable
+   default port from its path, but two paths can still collide. If the default
+   is busy, use `just desktop --port 1431` (or another free port) instead of
+   stopping the other copy.
 
 The broker reads the existing Keychain credential only after validating the
 public pin, refuses mismatches and never falls back to another credential. If it

@@ -27,6 +27,7 @@ import {
   summary,
 } from "../../src/features/relay/testing";
 import { profileTarget } from "../../src/features/profiles/target";
+import { ToastProvider } from "../../src/shared/design-system/ui/Toast";
 import "../../src/shared/styles/globals.css";
 
 const viewer = keypair(),
@@ -241,6 +242,8 @@ const element = document.getElementById("root");
 if (!element) throw new Error("Missing root");
 createRoot(element).render(
   <StrictMode>
-    <Fixture />
+    <ToastProvider>
+      <Fixture />
+    </ToastProvider>
   </StrictMode>,
 );

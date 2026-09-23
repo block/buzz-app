@@ -44,6 +44,9 @@ async function startup(relayUrl = "", aliases = "") {
   vi.stubEnv("BUZZ_RELAY_URL", relayUrl);
   vi.stubEnv("BUZZ_COMMUNITY_ALIASES", aliases);
   vi.stubEnv("BUZZ_DEV_VIEWER", viewer);
+  // Neutralize the seed too: loadEnv would otherwise mix a developer's
+  // .env.local into what these tests assert.
+  vi.stubEnv("BUZZ_DEV_OPEN_RELAY", "");
   readCredential.mockReturnValue(
     Buffer.from(JSON.stringify({ identity: nip19.nsecEncode(key) })),
   );

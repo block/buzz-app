@@ -1,7 +1,9 @@
+import { useIdentityNames } from "../identity-names/react";
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
-import { HashIcon, LockIcon } from "../../shared/design-system/icons/index";
+import { LockIcon } from "../../shared/design-system/icons/index";
+import { channelIcon } from "../channels/channel-icon";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { relativeTimestamp } from "../../shared/relative-timestamp";
 import styles from "./LinkPreview.module.css";
@@ -46,6 +48,7 @@ function PreviewContent({
   session: RelaySession;
   messageId: string;
 }) {
+  const resolveName = useIdentityNames(session.names);
   const snapshot = useSyncExternalStore(
     view.subscribe,
     view.snapshot,
@@ -91,7 +94,10 @@ function PreviewContent({
       </span>
     );
   const profile = profiles.get(message.authorId);
-  const name = profile?.name ?? message.authorId.slice(0, 10);
+  const name = resolveName(
+    message.authorId,
+    profile?.name ?? message.authorId.slice(0, 10),
+  );
   const date = new Date(message.createdAt * 1000);
   if (!Number.isFinite(date.getTime()))
     return <span role="status">Message preview unavailable.</span>;
@@ -101,11 +107,15 @@ function PreviewContent({
   const channelName =
     channel?.channelType === "dm" && channel.participants
       ? channel.participants
-          .map((id) => profiles.get(id)?.name ?? id.slice(0, 10))
+          .map((id) =>
+            resolveName(id, profiles.get(id)?.name ?? id.slice(0, 10)),
+          )
           .join(", ") || "Notes to self"
       : (channel?.name ?? "Channel unavailable");
   const ChannelIcon =
-    channel?.hidden || channel?.channelType === "dm" ? LockIcon : HashIcon;
+    channel?.hidden || channel?.channelType === "dm"
+      ? LockIcon
+      : channelIcon(channel);
   return (
     <>
       <span className={styles.byline}>

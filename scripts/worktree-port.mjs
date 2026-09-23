@@ -4,19 +4,19 @@ import { resolve } from "node:path";
 
 // block/buzz's formula with the base offset by ten: sha256(absolute worktree
 // root) -> 10010 + digest % 55000, so the result lies in [10010, 65009].
+// The one browser-blocked port in this range, 10080, moves to 10081:
+// https://fetch.spec.whatwg.org/#port-blocking
 // block/buzz's scripts/instance-env.sh maps the same input with
 // 10000 + digest % 55000, then uses base + 1 for HMR and base + 100 for
-// `just web`. For any one path buzz-app's port is therefore exactly buzz's base
-// port plus ten, so a buzz and a buzz-app checkout at the same root never share
-// a port, and the buzz-app port also clears buzz's HMR and web ports for that
-// path. Different paths hash independently: a buzz worktree and a buzz-app
-// worktree at different paths avoid each other with the same odds as any two
-// worktrees of one repository. The two ranges are not disjoint.
+// `just web`. Our offset of ten (eleven for that exception) clears all three
+// for the same path. Different paths hash independently and can collide;
+// the two repositories' ranges are not disjoint. Use --port when occupied.
 // Hashing the path rather than the branch keeps the port, and with it Tauri's
 // config and Cargo's warm build, stable across branch switches inside a worktree.
 export function portForPath(path) {
   const digest = createHash("sha256").update(path, "utf8").digest("hex");
-  return Number(10010n + (BigInt(`0x${digest}`) % 55000n));
+  const port = Number(10010n + (BigInt(`0x${digest}`) % 55000n));
+  return port === 10080 ? 10081 : port;
 }
 
 // The worktree root reported by Git; outside a checkout, the directory itself.

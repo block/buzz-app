@@ -379,8 +379,9 @@ chooser UI belongs in tool plugins: `bundled/emoji` and `bundled/mentions` use t
 same `registerTool` contract. No page imports their implementations. Optional numeric
 `order` (default zero, lower first; ties by contribution key) keeps visual and
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
-`-10` to retain its position before default-order tools such as Emoji. The host
-renders tools in that order without a separate selected-recipient row.
+`-10` to retain its position before default-order tools such as Emoji. The host groups
+negative-order tools with selected-recipient avatars, preserving DOM/keyboard order;
+this is host layout, not a new plugin contract. Inline identity chips remain in the draft.
 
 Links, channel references, selected mentions and custom emoji render through shared
 message components directly in the editable draft. Display tokens retain the exact authored source;
@@ -401,11 +402,13 @@ presentation, never recipient resolution. Editing/pasting over an identity span
 removes its intent under the existing draft rules.
 
 **User intent outlives the tool that created it.** Disabling Mentions removes its
-chooser, not selected recipients, their inline chips, scoped drafts or pending
-messages. Editing or deleting a selected mention removes its notification intent;
-there is no separate avatar removal control. The session still owns roster/profile data, membership
-checks, signing and publication/retry. Plugins remain trusted same-process code;
-revocable editor commands do not sandbox the session capabilities they receive.
+chooser, not selected recipients, their inline chips and avatar removal controls,
+scoped drafts or pending messages. Editing or deleting a selected mention removes
+its explicit mention intent. Removing an avatar clears that identity's explicit
+mention intent without changing the authored text. This does not suppress Sessions
+routing: the selected agent or sole session agent can still be addressed. The session
+still owns roster/profile data, membership checks, signing and publication/retry.
+Plugins remain trusted same-process code; revocable editor commands do not sandbox the session capabilities they receive.
 
 This preview is host-matched: a tool using `insertMention` needs a host providing
 that command. The generated type-only `@buzz/author` package and `apiVersion: 1`

@@ -80,7 +80,9 @@ in the non-live shell/fixture state.
    no default relay or alias map; Personal space and communities saved by canonical
    URL remain usable. Configuration does not automatically join a community:
    `BUZZ_DEV_OPEN_RELAY=1` only saves and selects the default relay locally on a
-   dev port whose saved choice is absent, without publishing anything.
+   dev port whose saved choice is absent. It does not implicitly join a community,
+   accept an invite, or publish a profile. Normal session traffic and presence still
+   apply.
 3. Start a development target:
    ```sh
    just web

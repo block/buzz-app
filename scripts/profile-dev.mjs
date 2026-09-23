@@ -1,11 +1,13 @@
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
+import { createServer } from "node:net";
 import { fileURLToPath } from "node:url";
 import process from "node:process";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 
 const children = new Set();
+const processGroups = new Set();
 let forced = false;
 
 function run(command, commandArgs, options = {}) {
@@ -16,6 +18,7 @@ function run(command, commandArgs, options = {}) {
     ...options,
   });
   children.add(child);
+  if (child.pid) processGroups.add(child.pid);
   child.once("exit", () => children.delete(child));
   return child;
 }
@@ -126,13 +129,13 @@ export function inspectorClient(url) {
   };
 }
 
-function signal(child, name) {
-  if (!child.pid || child.exitCode !== null || child.signalCode !== null)
-    return;
+function signalGroup(pid, name) {
+  if (!pid) return;
   try {
-    process.kill(-child.pid, name);
+    process.kill(-pid, name);
   } catch (error) {
     if (error.code !== "ESRCH") throw error;
+    processGroups.delete(pid);
   }
 }
 
@@ -182,9 +185,9 @@ function waitForExit(child, timeoutMs) {
 }
 
 async function stopChildren() {
-  for (const child of children) signal(child, "SIGINT");
+  for (const pid of processGroups) signalGroup(pid, "SIGINT");
   await Promise.all([...children].map((child) => waitForExit(child, 30_000)));
-  for (const child of children) signal(child, "SIGTERM");
+  for (const pid of processGroups) signalGroup(pid, "SIGTERM");
 }
 
 function stopController() {
@@ -195,7 +198,7 @@ function stopController() {
     process.on(name, () => {
       if (abort.signal.aborted) {
         forced = true;
-        for (const child of children) signal(child, "SIGKILL");
+        for (const pid of processGroups) signalGroup(pid, "SIGKILL");
         return;
       }
       console.log(
@@ -249,39 +252,30 @@ export function normalizeWebViteArgs(values) {
   };
 }
 
-async function waitForViteReady(url, child, signal) {
+async function reservePort(port) {
+  const server = createServer();
   await new Promise((resolve, reject) => {
-    let output = "";
-    const onData = (chunk) => {
-      output = `${output}${chunk}`;
-      if (output.includes(`Local:   ${url}/`)) finish(resolve);
-      else if (/Port \d+ is (?:already )?in use/.test(output))
-        finish(() => reject(new Error(`Vite could not bind ${url}.`)));
-      if (output.length > 16_384) output = output.slice(-8_192);
-    };
-    const onExit = () =>
-      finish(() =>
-        reject(new Error(`Vite exited before ${url} became ready.`)),
-      );
-    const onAbort = () =>
-      finish(() =>
-        reject(new DOMException("Profiling startup cancelled.", "AbortError")),
-      );
-    const finish = (settle) => {
-      child.stdout.off("data", onData);
-      child.stderr.off("data", onData);
-      child.off("exit", onExit);
-      signal.removeEventListener("abort", onAbort);
-      settle();
-    };
-    child.stdout.on("data", onData);
-    child.stderr.on("data", onData);
-    child.once("exit", onExit);
-    signal.addEventListener("abort", onAbort, { once: true });
+    server.once("error", reject);
+    server.listen({ port, host: "::", ipv6Only: false }, resolve);
   });
-  const response = await fetch(url, { signal });
-  if (!response.ok)
-    throw new Error(`Vite at ${url} returned ${response.status}.`);
+  return server;
+}
+
+async function waitForViteReady(url, child, signal) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    signal.throwIfAborted();
+    if (child.exitCode !== null)
+      throw new Error(`Vite exited before ${url} became ready.`);
+    try {
+      const response = await fetch(url, { signal });
+      if (response.ok) return;
+    } catch (error) {
+      if (signal.aborted) throw error;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  throw new Error(`Timed out waiting for ${url}.`);
 }
 
 export function safeUrl(value) {
@@ -437,6 +431,15 @@ async function profileWeb({ directory, profileArgs, args, network }) {
   });
 
   const control = stopController();
+  let reservation;
+  try {
+    reservation = await reservePort(vite.port);
+  } catch (error) {
+    throw new Error(`Profiling port ${vite.port} is already in use.`, {
+      cause: error,
+    });
+  }
+  await new Promise((resolve) => reservation.close(resolve));
   const nodeOptions = [process.env.NODE_OPTIONS, "--inspect=127.0.0.1:0"]
     .filter(Boolean)
     .join(" ");
@@ -604,6 +607,17 @@ async function waitForTrace(trace) {
   );
 }
 
+function desktopProfileArgs(values) {
+  const separator = values.indexOf("--");
+  const options = separator < 0 ? values : values.slice(0, separator);
+  const application = separator < 0 ? [] : values.slice(separator);
+  return [
+    ...options.filter((value) => value !== "--no-watch"),
+    "--no-watch",
+    ...application,
+  ];
+}
+
 async function profileDesktop({ directory, profileArgs, args }) {
   if (hasRunnerArgument(args))
     throw new Error("Desktop profiling owns Tauri's --runner option.");
@@ -619,7 +633,12 @@ async function profileDesktop({ directory, profileArgs, args }) {
   );
   const desktop = run(
     process.execPath,
-    ["scripts/desktop-dev.mjs", "--runner", runner, "--no-watch", ...args],
+    [
+      "scripts/desktop-dev.mjs",
+      "--runner",
+      runner,
+      ...desktopProfileArgs(args),
+    ],
     { env: { ...process.env, BUZZ_PROFILE_TRACE: trace } },
   );
   const desktopExit = new Promise((resolve) =>

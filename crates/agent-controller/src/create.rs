@@ -45,6 +45,7 @@ impl NewAgent {
             session_policy_inherit: false,
             workspace: String::new(),
             harness: HarnessEdit {
+                configuration: None,
                 command: String::new(),
                 args: vec![],
                 model: String::new(),

@@ -10,6 +10,7 @@ export interface AgentDraft {
   command: string;
   args: string;
   model: string;
+  configuration?: AgentEdit["harness"]["configuration"];
   provider: string;
   environment: Record<string, string | null>;
   databricks?: { host: string; filter: string } | null;
@@ -63,6 +64,9 @@ export function agentDraft(agent: AgentView): AgentDraft {
     command: agent.harness.command,
     args: JSON.stringify(agent.harness.args, null, 2),
     model: agent.harness.model,
+    ...(agent.harness.configuration
+      ? { configuration: agent.harness.configuration }
+      : {}),
     provider: agent.harness.provider,
     environment: {},
     ...(databricks ? { databricks: { ...databricks } } : {}),
@@ -100,7 +104,8 @@ export function agentEdit(
     harness: {
       command: draft.command,
       args,
-      model: draft.model,
+      model: draft.configuration?.mode === "default" ? "" : draft.model,
+      ...(draft.configuration ? { configuration: draft.configuration } : {}),
       provider: draft.provider,
       ...(draft.databricks ? { databricks: { ...draft.databricks } } : {}),
     },

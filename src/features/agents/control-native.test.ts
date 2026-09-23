@@ -98,8 +98,10 @@ it("model operations use explicit ticket commands and no construction-time invoc
       environment: {},
       sessionPolicy: null,
     },
-    host: "https://example.com",
-    filter: "",
+    integration: {
+      kind: "databricks" as const,
+      settings: { host: "https://example.com", filter: "" },
+    },
     action: "refresh" as const,
   };
   await models?.begin();

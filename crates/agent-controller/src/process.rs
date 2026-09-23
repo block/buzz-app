@@ -8,7 +8,8 @@ use std::process::{Child, Command};
 #[cfg(unix)]
 use std::time::{Duration, Instant};
 
-pub(crate) struct Process {
+/// Contained subprocess owner; dropping it terminates its entire session.
+pub struct Process {
     child: Child,
     #[cfg(unix)]
     session: u32,
@@ -17,6 +18,7 @@ pub(crate) struct Process {
     stopped: bool,
 }
 impl Process {
+    /// Spawn a process in its own contained session.
     pub fn spawn(command: &mut Command) -> Result<Self> {
         #[cfg(unix)]
         {
@@ -54,6 +56,14 @@ impl Process {
             })
         }
     }
+    /// Inspect exit success without exposing subprocess output.
+    pub fn exit_success(&mut self) -> Result<Option<bool>> {
+        self.child
+            .try_wait()
+            .map(|status| status.map(|s| s.success()))
+            .map_err(|_| "Could not inspect subprocess status".into())
+    }
+    /// Whether the process is still running.
     pub fn alive(&mut self) -> Result<bool> {
         if self.stopped {
             return Ok(false);
@@ -72,6 +82,7 @@ impl Process {
             }
         }
     }
+    /// Stop and reap the process and its descendants.
     pub fn stop(&mut self) -> Result<()> {
         if self.stopped {
             return Ok(());

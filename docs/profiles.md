@@ -2,8 +2,9 @@
 
 The bundled `buzz.profiles` plugin supplies a profile panel for any
 public identity, human or agent. It uses the current session's shared profile
-directory. Agents retains agent-specific configuration/operations; this slice
-adds no ownership/running badge, editor, agent-library read or execution API.
+directory. Agents retains agent-specific configuration and its page-local editor. Profiles
+can dispatch existing local Start/Stop/Restart commands for an exact managed
+identity in the active community; profile metadata and library hints grant no authority.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant
@@ -159,3 +160,28 @@ Before publisher entry, navigation or loss of eligibility stops the write. Once
 publication begins, leaving the tab cannot undo the request; the session outbox
 retains its outcome and an unconfirmed result requires checking membership
 before attempting again. Neither list is a cross-community/global directory.
+
+## Owned local agent actions
+
+`ProfileAgentActions` observes the app-owned `AgentControl` injected into Profiles.
+It matches the exact public key and canonical active-community scope to one native
+ID; namesakes, other-community identities, ambiguous matches and browser-only
+profiles get no runtime actions. It adds no controller, relay scan or agent editor.
+While mounted it refreshes host evidence every five seconds when visible/ready,
+matching Agents; errors stop polling and expose explicit Retry status. Unmount
+releases observation, never native execution.
+
+Start/Restart require ready host evidence, an available runtime and no pending
+operation or process transition. Stop uses the controller's existing recovery
+policy, including stale evidence and pending launch/credential waits; it is the
+intentional exception to disabling pending actions. A pending Stop cannot repeat.
+Host failures remain visible with snapshot uncertainty, and retired relay
+presentations cannot dispatch commands. The separate runtime child owns badges
+and runtime detail; actions do not infer relay readiness.
+
+Edit ingress is deferred: Agents currently registers no specific editor route;
+its editor selection is page-local state. No invented route or second editor is
+added. Mounted React regression tests exercise exact dispatch, pending/failure/
+recovery and profile/community lifecycle through the real controller projection
+with a synthetic native host. Live process/credential handover and rendered native
+acceptance remain attended checks, not established by these tests.

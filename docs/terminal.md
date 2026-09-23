@@ -13,7 +13,8 @@ From the agreed feature worktree, use `bin/just desktop`. Native commands requir
 a rebuilt/restarted desktop process; Vite HMR alone cannot install the PTY bridge.
 Use the normal public `BUZZ_DEV_VIEWER` development setup from README for live
 channels. Do not copy private keys into `.env.local`. The launcher derives this
-worktree's port from its path; pass `--port` only if another server already owns it.
+worktree's port (40000 to 64999, disjoint from block/buzz's 10000 to 39999) from
+its path; pass `--port` only if another server already owns it.
 
 Local PTYs are implemented for macOS/Linux. Windows native startup reports that it
 is unsupported in this slice. Browser-only Buzz hides the terminal launcher and

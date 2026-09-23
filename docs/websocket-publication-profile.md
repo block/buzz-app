@@ -325,7 +325,8 @@ Fresh Linux evidence and full CI acceptance remain required. The separate live
 
 Run `bin/just web` in the feature worktree and open its printed URL. For native
 feedback, use `bin/just desktop` **instead**; it derives this worktree's own port
-from its path, so pass `--port` only if that port is already taken. Do not
+(in 40000 to 64999, a range block/buzz worktrees never use) from its path, so
+pass `--port` only if that port is already taken. Do not
 stop another worktree or the installed Buzz runner blindly. Restart this
 worktree's old dev server so frontend and broker match. Live development uses the
 configured real account, not a sandbox: use a destination where test messages are

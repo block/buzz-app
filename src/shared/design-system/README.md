@@ -24,7 +24,8 @@ bin/pnpm design:dev
 
 Open http://localhost:1442/tests/fixtures/design-system.html.
 The same fixture path works under the normal web dev server, at the
-worktree-derived port `just web` prints.
+worktree-derived port `just web` prints (40000 to 64999; block/buzz worktrees
+use 10000 to 39999, so the two repositories never collide).
 
 ```sh
 bin/pnpm design:typecheck

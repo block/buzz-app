@@ -1,7 +1,14 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, assert, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { createRelaySession } from "../relay/session";
 import { keypair, profile, roster, signed } from "../relay/testing";
@@ -11,6 +18,15 @@ import {
   type OutgoingEvent,
 } from "../relay/outbox";
 import type { ReadFilter, RelayEvent } from "../relay/events";
+import type { Contribution } from "../../plugins/contributions";
+import type {
+  ComposerTool,
+  ComposerCompletion,
+  ConversationExtensions,
+} from "../conversation/contracts";
+import { MentionPicker } from "../../bundled/mentions/MentionPicker";
+import { MentionCompletion } from "../../bundled/mentions/MentionCompletion";
+import { mentionQuery } from "../../bundled/mentions/mention-query";
 import { NewMessage } from "./NewMessage";
 import { OutboxStatus } from "../../bundled/channels/OutboxStatus";
 import { createRelayProfiler } from "../relay/profiling";
@@ -24,11 +40,29 @@ const scope = `https://relay.example:${viewer.pubkey}`;
 const owners: ReturnType<typeof createRelaySession>[] = [];
 beforeEach(() => {
   localStorage.clear();
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      disconnect() {}
+    },
+  );
+  Element.prototype.scrollIntoView = vi.fn();
+  vi.stubGlobal(
+    "Audio",
+    class {
+      play() {
+        return Promise.resolve();
+      }
+    },
+  );
 });
 afterEach(() => {
   cleanup();
   for (const owner of owners.splice(0)) owner.dispose();
   vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+  delete (Element.prototype as Partial<Element>).scrollIntoView;
 });
 function setup() {
   let records: readonly OutgoingEvent[] = [];
@@ -70,6 +104,13 @@ function setup() {
             )),
       ),
     );
+  const openDirectMessage = vi.fn(async (pubkeys: readonly string[]) => {
+    events[events.length - 1] = roster(relay, channel, [
+      viewer.pubkey,
+      ...pubkeys,
+    ]);
+    return channel;
+  });
   const create = () => {
     const owner = createRelaySession(
       {
@@ -77,13 +118,7 @@ function setup() {
         relayAuthor: relay.pubkey,
         media: () => undefined,
         query,
-        openDirectMessage: async (pubkeys) => {
-          events[events.length - 1] = roster(relay, channel, [
-            viewer.pubkey,
-            ...pubkeys,
-          ]);
-          return channel;
-        },
+        openDirectMessage,
         writer: {
           kinds: [9],
           sign: async (event) => signed(viewer, event),
@@ -96,12 +131,16 @@ function setup() {
     return owner;
   };
   const onStarted = vi.fn();
-  const mount = (owner: ReturnType<typeof create>) =>
+  const mount = (
+    owner: ReturnType<typeof create>,
+    extensions?: ConversationExtensions,
+  ) =>
     render(
       <NewMessage
         session={owner.session}
         scope={scope}
         onStarted={onStarted}
+        extensions={extensions}
       />,
     );
   const user = userEvent.setup();
@@ -111,6 +150,7 @@ function setup() {
   };
   return {
     storage,
+    openDirectMessage,
     publish,
     create,
     mount,
@@ -346,3 +386,109 @@ it("reconciles a remount while acknowledgement is held without reviving the deli
   );
   expect(send()).toBeDisabled();
 });
+
+const tools: readonly Contribution<ComposerTool>[] = [
+  {
+    id: "picker",
+    key: "mentions/picker",
+    pluginId: "mentions",
+    revision: "1",
+    title: "Mentions",
+    component: ({ insertMention, ...props }) => (
+      <MentionPicker {...props} select={insertMention} />
+    ),
+  },
+];
+const completions: readonly Contribution<ComposerCompletion>[] = [
+  {
+    id: "typeahead",
+    key: "mentions/typeahead",
+    pluginId: "mentions",
+    revision: "1",
+    title: "Mention",
+    match: ({ text, start }) => mentionQuery(text, start),
+    component: MentionCompletion,
+  },
+];
+const noSubscribe = () => () => {};
+const extensions: ConversationExtensions = {
+  tools: { snapshot: () => tools, subscribe: noSubscribe },
+  completions: { snapshot: () => completions, subscribe: noSubscribe },
+  inline: { snapshot: () => [], subscribe: noSubscribe },
+};
+
+it.each(["picker", "completion"])(
+  "offers selected recipients through %s and validates removed mentions on first send",
+  async (path) => {
+    const t = setup();
+    const owner = t.create();
+    t.mount(owner, extensions);
+    await t.user.click(await screen.findByRole("option", { name: "Avery" }));
+    await t.user.click(screen.getByRole("option", { name: "Zoe" }));
+    const composer = () => screen.getByRole("textbox", { name: /^Message / });
+    const choices = async () => {
+      if (path === "picker") {
+        await t.user.click(
+          screen.getByRole("button", { name: "Mention a member" }),
+        );
+        return within(
+          screen.getByRole("region", { name: "Mention a member or agent" }),
+        );
+      }
+      await t.user.type(composer(), "@");
+      return within(
+        await screen.findByRole("listbox", { name: "Mention suggestions" }),
+      );
+    };
+    const choiceRole = path === "picker" ? "button" : "option";
+    const first = await choices();
+    expect(
+      first.getByRole(choiceRole, {
+        name: new RegExp(`Avery.*${other.pubkey}`),
+      }),
+    ).toBeVisible();
+    await t.user.click(
+      first.getByRole(choiceRole, {
+        name: new RegExp(`Zoe.*${another.pubkey}`),
+      }),
+    );
+    expect(composer()).toHaveTextContent("@Zoe");
+    expect(t.openDirectMessage).not.toHaveBeenCalled();
+    expect(owner.session.channels.list().channels).toHaveLength(0);
+    // The provisional names are sufficient without warming the global profile cache.
+    expect(owner.session.profiles.snapshot().size).toBe(0);
+    await t.user.click(screen.getByRole("button", { name: "Remove Zoe" }));
+    const second = await choices();
+    expect(
+      second.getByRole(choiceRole, {
+        name: new RegExp(`Avery.*${other.pubkey}`),
+      }),
+    ).toBeVisible();
+    expect(
+      second.queryByRole(choiceRole, { name: new RegExp(another.pubkey) }),
+    ).not.toBeInTheDocument();
+    if (path === "picker") await t.user.keyboard("{Escape}");
+    else await t.user.type(composer(), " ");
+    expect(t.openDirectMessage).not.toHaveBeenCalled();
+    await t.user.click(send());
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "no longer a channel member",
+    );
+    expect(t.publish).not.toHaveBeenCalled();
+    expect(composer()).toHaveTextContent("@Zoe");
+    await t.user.clear(composer());
+    const last = await choices();
+    await t.user.click(
+      last.getByRole(choiceRole, {
+        name: new RegExp(`Avery.*${other.pubkey}`),
+      }),
+    );
+    await t.user.click(send());
+    await waitFor(() => expect(t.onStarted).toHaveBeenCalledOnce());
+    const sent = t.publish.mock.calls[0]?.[0];
+    expect(sent?.content).toBe("@Avery");
+    expect(sent?.tags.filter(([name]) => name === "p")).toEqual([
+      ["p", other.pubkey],
+    ]);
+  },
+);

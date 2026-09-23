@@ -12,6 +12,7 @@ import {
 import type { OutgoingEvent } from "../relay/outbox";
 import type { RelaySession } from "../relay/session";
 import type { ConversationExtensions } from "../conversation/contracts";
+import { DraftMentionRoster } from "../messages/draft-mention-roster";
 import { MessageComposer } from "../messages/MessageComposer";
 import { mentionDraft, type MentionDraft } from "../messages/mention-draft";
 import { clearView, readView, writeView } from "../../shared/view-state";
@@ -368,28 +369,30 @@ export function NewMessage({
           </div>
         )}
       </div>
-      <MessageComposer
-        key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
-        session={session}
-        scope={scope}
-        extensions={extensions}
-        channelId={draftChannel}
-        channelName={recipientNames || "new message"}
-        label={recipientNames ? `Message ${recipientNames}` : "New message"}
-        placeholder={recipientNames ? undefined : ""}
-        disabled={!recipients.length}
-        submission={{
-          draftKey,
-          recoveredDraft: restoredDraft,
-          locked,
-          disabled:
-            !ready ||
-            busy ||
-            !recipients.length ||
-            !session.directMessages.available,
-          submit: (draft) => void send(draft),
-        }}
-      />
+      <DraftMentionRoster.Provider value={recipients}>
+        <MessageComposer
+          key={`${ready ? "ready" : "hydrating"}:${draftRevision}`}
+          session={session}
+          scope={scope}
+          extensions={extensions}
+          channelId={draftChannel}
+          channelName={recipientNames || "new message"}
+          label={recipientNames ? `Message ${recipientNames}` : "New message"}
+          placeholder={recipientNames ? undefined : ""}
+          disabled={!recipients.length}
+          submission={{
+            draftKey,
+            recoveredDraft: restoredDraft,
+            locked,
+            disabled:
+              !ready ||
+              busy ||
+              !recipients.length ||
+              !session.directMessages.available,
+            submit: (draft) => void send(draft),
+          }}
+        />
+      </DraftMentionRoster.Provider>
     </section>
   );
 }

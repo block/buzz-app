@@ -475,11 +475,33 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     name: "Message Avery Chen",
     exact: true,
   });
-  await composer.fill("Our first direct message");
+  // Both real extension paths use the selected roster before any DM exists.
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  const mentions = page.getByRole("region", {
+    name: "Mention a member or agent",
+  });
+  const averyMention = mentions.getByRole("button", { name: /^Avery Chen / });
+  await expect(mentions.getByRole("button")).toHaveCount(1);
+  await averyMention.click();
+  await expect(composer).toHaveText("@Avery Chen ");
+  await composer.fill("");
+  await composer.pressSequentially("@Av");
+  const suggestions = page.getByRole("listbox", {
+    name: "Mention suggestions",
+  });
+  await expect(suggestions.getByRole("option")).toHaveCount(1);
+  await expect(
+    suggestions.getByRole("option", { name: /^Avery Chen / }),
+  ).toBeVisible();
+  expect(app.commands).toHaveLength(0);
+  await composer.press("Enter");
+  await composer.pressSequentially("Our first direct message");
   app.failOpening();
   await composer.press("Enter");
   await expect(page.getByRole("alert")).toBeVisible();
-  await expect(composer).toHaveText("Our first direct message");
+  await expect(composer).toHaveText("@Avery Chen Our first direct message");
   await expect(
     page.getByRole("button", { name: "Remove Avery Chen" }),
   ).toBeVisible();
@@ -496,6 +518,10 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
     .getByRole("complementary", { name: "Channel sidebar" })
     .getByRole("button", { name: "Avery Chen", exact: true });
   await expect(sidebarDm).toHaveCount(0);
+  const firstSend = app.publications.find((event) => event.kind === 9);
+  expect(firstSend.tags.filter(([name]) => name === "p")).toEqual(
+    app.commands[0].tags.filter(([name]) => name === "p"),
+  );
   app.confirm();
   await expect(sidebarDm).toBeVisible();
   await expect(

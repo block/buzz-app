@@ -108,8 +108,11 @@ loaded names without replacing local matches with a loading placeholder. Once th
 browse directory is complete, searches stay local; while it is incomplete, remote
 matches can append in the background. A failed background read
 keeps existing people visible and offers retry. Mentions retain their conversation-specific
-eligibility. The existing `MessageComposer` owns the draft and ordinary input
-behavior. Its placeholder is blank before selection and lists the selected names
+eligibility. Before a DM exists, a composer-local `DraftMentionRoster` supplies
+only the selected recipient identities and names to both mention tools. Removing
+a selection updates both menus; an already-inserted mention still requires actual
+DM membership on Send. Mentioning never opens the DM early or adds recipients.
+The existing `MessageComposer` owns the draft and ordinary input behavior. Its placeholder is blank before selection and lists the selected names
 afterward. Disabled mention and emoji icons stay unfilled. No timeline is mounted before the first message is confirmed. DMs omit the date
 pill at the beginning of their complete history, while retaining message times
 and date separators between days.

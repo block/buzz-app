@@ -155,74 +155,23 @@ it.each(["rejected", "unknown"])(
   },
 );
 
-it("exposes feedback upload only on writable supported scoped sessions and aborts disposed uploads", async () => {
-  const file = new File(["text"], "feedback-diagnostics.txt", {
-    type: "text/plain",
-  });
-  const scoped = {
+it("does not expose ordinary community media as private feedback uploads", () => {
+  const uploadAttachment = vi.fn();
+  const owner = createRelaySession({
     viewer: viewer.pubkey,
     relayAuthor: relay.pubkey,
     scope: "https://relay.test",
     media: () => undefined,
     query: vi.fn(async () => [] as RelayEvent[]),
-    uploadAttachment: vi.fn(async (_file: File, _signal: AbortSignal) => ({
-      name: file.name,
-      url: `https://relay.test/media/${"a".repeat(64)}.bin`,
-      type: "application/octet-stream",
-      size: file.size,
-      sha256: "a".repeat(64),
-    })),
-  };
-  const writable = {
-    ...scoped,
+    uploadAttachment,
     writer: {
       kinds: [42000],
       sign: async (template: Parameters<typeof signed>[1]) =>
         signed(viewer, template),
       publish: async () => {},
     },
-  };
-  expect(createRelaySession(scoped).session.feedbackUpload).toBeUndefined();
-  expect(
-    createRelaySession({
-      ...writable,
-      scope: undefined,
-    } as unknown as Parameters<typeof createRelaySession>[0]).session
-      .feedbackUpload,
-  ).toBeUndefined();
-  expect(
-    createRelaySession({
-      ...writable,
-      writer: { ...writable.writer, kinds: [9] },
-    }).session.feedbackUpload,
-  ).toBeUndefined();
-  const owner = createRelaySession(writable);
+  });
   owners.push(owner);
-  expect(
-    await owner.session.feedbackUpload?.upload(
-      file,
-      new AbortController().signal,
-    ),
-  ).toMatchObject({ name: file.name });
-  let release!: () => void;
-  writable.uploadAttachment.mockImplementationOnce(
-    (_file, signal) =>
-      new Promise((resolve) => {
-        release = () =>
-          resolve({
-            name: file.name,
-            url: `https://relay.test/media/${"a".repeat(64)}.bin`,
-            type: "application/octet-stream",
-            size: file.size,
-            sha256: "a".repeat(64),
-          });
-        expect(signal.aborted).toBe(false);
-      }),
-  );
-  const feedbackUpload = owner.session.feedbackUpload;
-  if (!feedbackUpload) throw new Error("Missing feedback upload");
-  const pending = feedbackUpload.upload(file, new AbortController().signal);
-  owner.dispose();
-  release();
-  await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  expect(owner.session.feedbackUpload).toBeUndefined();
+  expect(uploadAttachment).not.toHaveBeenCalled();
 });

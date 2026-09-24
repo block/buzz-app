@@ -299,7 +299,7 @@ export function validProductFeedback(event, mediaOrigin) {
         Array.isArray(tag) &&
         tag.every((part) => typeof part === "string") &&
         allowed.has(tag[0]) &&
-        (tag[0] === "imeta" ? tag.length === 6 : tag.length === 2),
+        (tag[0] === "imeta" ? tag.length >= 6 : tag.length === 2),
     ) ||
     Buffer.byteLength(JSON.stringify(event.tags)) > 64 * 1024
   )
@@ -327,7 +327,6 @@ export function validProductFeedback(event, mediaOrigin) {
           const code = char.charCodeAt(0);
           return code < 32 || code === 127;
         }) ||
-        fields.size !== 5 ||
         !/^[1-9][0-9]*$/.test(fields.get("size")) ||
         ![
           "image/jpeg",

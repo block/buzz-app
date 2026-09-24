@@ -346,6 +346,34 @@ it("does not close a reopened dialog when old Done completes", async () => {
   expect(close).not.toHaveBeenCalled();
 });
 
+it("does not offer attachments when the session has no private upload capability", () => {
+  const h = fixture();
+  const entries: readonly OutgoingEvent[] = [];
+  const outbox = {
+    subscribe,
+    snapshot: () => entries,
+    ready: async () => {},
+    supports: () => true,
+    send: h.send,
+    retry: h.retry,
+    dismiss: h.dismiss,
+  };
+  h.switchTo({
+    generation: 0,
+    status: "ready",
+    session: { outbox, feedbackUpload: undefined },
+  });
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  expect(
+    screen.queryByLabelText("Attach image (optional)"),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("checkbox", { name: "Attach diagnostics" }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByText(/Attachments are unavailable/)).toBeInTheDocument();
+  expect(h.upload).not.toHaveBeenCalled();
+});
+
 const hash = "a".repeat(64);
 const uploaded = (name: string, type: string, ext: string) => ({
   name,
@@ -481,6 +509,31 @@ it("uploads diagnostics only on explicit opt-in and sends a text-file descriptor
       tags: [expect.arrayContaining(["m application/octet-stream"])],
     }),
   );
+});
+
+it("reuses an uploaded diagnostics descriptor after a failed send", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  h.upload.mockResolvedValue(
+    uploaded("feedback-diagnostics.txt", "application/octet-stream", "bin"),
+  );
+  h.send.mockImplementationOnce(() => {
+    throw new Error("send failed");
+  });
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "A problem",
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await screen.findByRole("alert");
+  expect(h.upload).toHaveBeenCalledOnce();
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(2));
+  expect(h.upload).toHaveBeenCalledOnce();
 });
 
 it("discards an in-flight diagnostics result on relay generation switch", async () => {

@@ -95,6 +95,8 @@ function FeedbackForConnection({
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [image, setImage] = useState<UploadedAttachment>();
+  const [uploadedDiagnostics, setUploadedDiagnostics] =
+    useState<UploadedAttachment>();
   const [includeDiagnostics, setIncludeDiagnostics] = useState(false);
   const uploadController = useRef<AbortController | null>(null);
   const uploadAttempt = useRef(0);
@@ -181,25 +183,37 @@ function FeedbackForConnection({
     setError("");
     const attempt = ++uploadAttempt.current;
     try {
+      // Check text limits before creating an unreferenced diagnostics blob.
+      feedbackEvent(
+        message,
+        category,
+        image ? [image] : [],
+        connection.session.feedbackUpload?.origin,
+      );
       const attachments = image ? [image] : [];
       if (includeDiagnostics) {
-        const upload = connection.session.feedbackUpload;
-        if (!upload) throw new UploadError("unavailable");
-        const controller = new AbortController();
-        uploadController.current = controller;
-        const diagnostics = await feedbackDiagnostics();
-        controller.signal.throwIfAborted();
-        if (!mounted.current || attempt !== uploadAttempt.current) return;
-        const result = await upload.upload(diagnostics, controller.signal);
-        controller.signal.throwIfAborted();
-        if (!mounted.current || attempt !== uploadAttempt.current) return;
-        if (
-          result.type !== "application/octet-stream" &&
-          result.type !== "text/plain"
-        )
-          throw new UploadError("invalid");
-        attachments.push(result);
-        uploadController.current = null;
+        if (uploadedDiagnostics) {
+          attachments.push(uploadedDiagnostics);
+        } else {
+          const upload = connection.session.feedbackUpload;
+          if (!upload) throw new UploadError("unavailable");
+          const controller = new AbortController();
+          uploadController.current = controller;
+          const diagnostics = await feedbackDiagnostics();
+          controller.signal.throwIfAborted();
+          if (!mounted.current || attempt !== uploadAttempt.current) return;
+          const result = await upload.upload(diagnostics, controller.signal);
+          controller.signal.throwIfAborted();
+          if (!mounted.current || attempt !== uploadAttempt.current) return;
+          if (
+            result.type !== "application/octet-stream" &&
+            result.type !== "text/plain"
+          )
+            throw new UploadError("invalid");
+          setUploadedDiagnostics(result);
+          attachments.push(result);
+          uploadController.current = null;
+        }
       }
       if (!mounted.current || attempt !== uploadAttempt.current) return;
       outbox.send(
@@ -289,7 +303,7 @@ function FeedbackForConnection({
         else onOpenChange(next);
       }}
       title="Send feedback"
-      description="Feedback and optional attachments go to this Buzz deployment's private operator inbox, not a channel. Attachments upload before submission; removing one cannot undo its upload."
+      description="Feedback text goes to this Buzz deployment's private operator inbox, not a channel. Attachments are unavailable until operator-private media storage is supported."
       actions={
         <>
           <Button onClick={close}>Close</Button>

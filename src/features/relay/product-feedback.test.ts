@@ -80,9 +80,12 @@ it("bounds feedback attachments to local validated media metadata", () => {
     expect(() => feedbackEvent("Issue", null, [mutated], origin)).toThrow();
   const imeta = submitted.tags.at(-1);
   if (!imeta) throw new Error("Missing image metadata");
+  expect(validate(event({ tags: [[...imeta, "dim 100x100"]] }), origin)).toBe(
+    true,
+  );
   for (const tag of [
     imeta.slice(0, -1),
-    [...imeta, "unknown leak"],
+    [...imeta, "m image/jpeg"],
     imeta.map((part) => (part.startsWith("size ") ? "size NaN" : part)),
     imeta.map((part) => (part.startsWith("size ") ? "size 1e3" : part)),
     imeta.map((part) =>

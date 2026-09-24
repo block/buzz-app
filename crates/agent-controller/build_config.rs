@@ -62,7 +62,8 @@ pub fn load(
         let mut comment = false;
         for (i, c) in rest.char_indices() {
             // Backtick containment must never mask dotenvy's quote state.
-            if c == '`' && !escaped && !comment && (backtick || backtick_start == Some(i)) {
+            // A comment can block opening a frame, never closing an existing one.
+            if c == '`' && !escaped && (backtick || (!comment && backtick_start == Some(i))) {
                 backtick = !backtick;
             }
             if comment {

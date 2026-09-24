@@ -216,3 +216,39 @@ fn backtick_delimited_values_contain_multiline_text_and_reject_unclosed_framing(
         assert_eq!(load(&path, |_| Some(String::new())).unwrap().len(), 3);
     }
 }
+
+#[test]
+fn backtick_comments_do_not_reject_a_closed_value_at_end_of_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env.local");
+    for record in [
+        "OTHER=`note # literal`",
+        "  export OTHER = `first\nnext # literal`",
+        "OTHER=value # `not an opening delimiter",
+    ] {
+        std::fs::write(&path, format!("{record}\nBUZZ_BUILD_AGENT_ENV='DATABRICKS_MODEL=following-model'\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n")).unwrap();
+        let values = load(&path, |_| None).unwrap();
+        assert_eq!(values.len(), 3, "{record}");
+        assert_eq!(
+            values["BUZZ_BUILD_AGENT_ENV"],
+            "DATABRICKS_MODEL=following-model"
+        );
+        assert_eq!(values["BUZZ_BUILD_BUZZ_AGENT_PROVIDER"], "databricks_v2");
+        assert_eq!(values["BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY"], "1");
+    }
+}
+
+#[test]
+fn backtick_comments_do_not_absorb_defaults_before_a_later_literal_backtick() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env.local");
+    std::fs::write(&path, "OTHER=`note # literal`\nBUZZ_BUILD_AGENT_ENV='DATABRICKS_MODEL=following-model'\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\nAFTER=prefix`literal\n").unwrap();
+    let values = load(&path, |_| None).unwrap();
+    assert_eq!(values.len(), 3);
+    assert_eq!(
+        values["BUZZ_BUILD_AGENT_ENV"],
+        "DATABRICKS_MODEL=following-model"
+    );
+    assert_eq!(values["BUZZ_BUILD_BUZZ_AGENT_PROVIDER"], "databricks_v2");
+    assert_eq!(values["BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY"], "1");
+}

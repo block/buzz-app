@@ -25,6 +25,13 @@ broker/routing configuration. Browser-only builds have no native agent controlle
 production frontend builds neither load the dev broker nor expose the auto-open
 seed. Native settings do not enter Vite `define` or runtime-resource builds.
 
+Cargo watches `.env.local` even when it is absent so creating it later is detected.
+A missing watched file makes Cargo rerun the controller build script on each
+invocation and can rebuild dependent native crates. To avoid that cost when no
+local defaults are needed, create an empty repository-root `.env.local` once
+(`touch .env.local` preserves existing contents). Do not touch it on every build;
+normal edits and removal must continue to invalidate compiled defaults.
+
 An unset provider build flag does not select Databricks on behalf of an existing
 blank agent. The Create form retains its existing Databricks suggestion when no
 provider floor exists. Supplying a provider floor leaves the saved selector blank

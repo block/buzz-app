@@ -85,6 +85,23 @@ test("Cargo rebuilds the real controller's nonsecret defaults from local config 
     ownerOnly: true,
   };
   assert.deepEqual(run(), expected);
+  // A comment marker inside backtick framing must not swallow real defaults
+  // before a later literal backtick, or reject a genuinely closed value at EOF.
+  for (const suffix of ["", "AFTER=prefix`literal\n"]) {
+    writeFileSync(
+      local,
+      "OTHER=`note # literal`\nBUZZ_BUILD_AGENT_ENV='DATABRICKS_MODEL=following-model'\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n" +
+        suffix,
+    );
+    assert.deepEqual(run(), {
+      host: "",
+      filter: "",
+      model: "following-model",
+      provider: "databricks_v2",
+      ownerOnly: true,
+    });
+  }
+  writeDefaults("first");
   // The entire controller suite must also work with documented file defaults,
   // rather than assuming developers build with an empty native configuration.
   const tests = spawnSync(

@@ -53,5 +53,8 @@
   }
   .detail {
     padding: var(--space-4);
+    /* Reserve a scrollable landing area for the final control above the
+       panel's rounded, clipped bottom edge at short heights and large text. */
+    padding-bottom: var(--space-16);
   }
 }

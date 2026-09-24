@@ -635,15 +635,24 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     viewport.x + viewport.width / 2,
     viewport.y + viewport.height / 2,
   );
-  for (let gesture = 0; gesture < 4; gesture++) {
+  const visibleTop = Math.max(viewport.y, 0);
+  const visibleBottom = Math.min(viewport.y + viewport.height, 400);
+  for (let gesture = 0; gesture < 30; gesture++) {
     const toggle = await box(enabled);
     if (
-      toggle.y >= viewport.y &&
-      toggle.y + toggle.height <= viewport.y + viewport.height
+      toggle.y >= visibleTop + 8 &&
+      toggle.y + toggle.height <= visibleBottom - 8
     )
       break;
+    const distance =
+      toggle.y < visibleTop + 8
+        ? toggle.y - visibleTop - 8
+        : toggle.y + toggle.height - visibleBottom + 8;
     const before = await settingsPage.evaluate((el) => el.scrollTop);
-    await page.mouse.wheel(0, viewport.height * 0.75);
+    await page.mouse.wheel(
+      0,
+      Math.sign(distance) * Math.max(Math.abs(distance), 24),
+    );
     await expect
       .poll(() => settingsPage.evaluate((el) => el.scrollTop), {
         message: "Settings wheel input makes progress toward the plugin toggle",

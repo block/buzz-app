@@ -16,6 +16,11 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
         name: "attachment-download-fixture",
         configureServer(server) {
           server.middlewares.use((req, res, next) => {
+            if (req.url === "/api/relay/upload" && req.method === "POST") {
+              res.writeHead(204, { "X-Content-Type-Options": "nosniff" });
+              res.end();
+              return;
+            }
             if (!req.url?.startsWith("/api/relay/media?")) return next();
             res.writeHead(200, {
               "Content-Type": "application/octet-stream",
@@ -32,8 +37,13 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
   });
   await server.listen();
   try {
+    const uploadRequests = [];
+    page.on("request", (request) => {
+      if (new URL(request.url()).pathname === "/api/relay/upload")
+        uploadRequests.push(request);
+    });
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/relay-composer.html?attachments&uploadRequests`,
     );
     const form = page.getByRole("form", {
       name: "Send a message to General",
@@ -47,7 +57,8 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
       mimeType: "text/plain",
       buffer: Buffer.from("picked"),
     });
-    await expect(form.getByText(/Ready$/)).toHaveCount(1);
+    await expect(form.getByText(/Queued$/)).toHaveCount(1);
+    expect(uploadRequests).toHaveLength(0);
     await expect(form.locator("video")).toHaveCount(0);
     const transfer = await page.evaluateHandle(() => {
       const data = new DataTransfer();
@@ -61,7 +72,7 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
       await zone.dispatchEvent("dragenter", { dataTransfer: transfer });
       await expect(form).toHaveAttribute("data-file-drag", "true");
       await zone.dispatchEvent("drop", { dataTransfer: transfer });
-      await expect(form.getByText(/Ready$/)).toHaveCount(2);
+      await expect(form.getByText(/Queued$/)).toHaveCount(2);
       await expect(form).not.toHaveAttribute("data-file-drag", "true");
     } finally {
       await transfer.dispose();
@@ -79,10 +90,13 @@ test("picker, pane drop and clipboard files use the same attachment draft and ex
         }),
       );
     });
-    await expect(form.getByText(/Ready$/)).toHaveCount(3);
+    await expect(form.getByText(/Queued$/)).toHaveCount(3);
+    expect(uploadRequests).toHaveLength(0);
     await form.getByRole("button", { name: "Remove dropped.txt" }).click();
-    await expect(form.getByText(/Ready$/)).toHaveCount(2);
+    await expect(form.getByText(/Queued$/)).toHaveCount(2);
+    expect(uploadRequests).toHaveLength(0);
     await form.getByRole("textbox").press("Enter");
+    await expect.poll(() => uploadRequests.length).toBe(2);
     await expect(
       form.getByRole("button", { name: "Remove picked.txt" }),
     ).toHaveCount(0);

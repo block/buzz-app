@@ -199,7 +199,7 @@ it("adds no agent section or reads for a profile without an agent hint", async (
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  expect(query).toHaveBeenCalledTimes(1);
+  expect(agentReads(query)).toBe(1);
 });
 
 function timedProfile(

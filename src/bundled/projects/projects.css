@@ -72,6 +72,9 @@
 .project-markdown {
   overflow-wrap: anywhere;
 }
+.project-plain {
+  white-space: pre-wrap;
+}
 .project-markdown pre {
   overflow: auto;
 }

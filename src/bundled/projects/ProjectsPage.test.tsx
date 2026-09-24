@@ -17,13 +17,17 @@ import {
   useSyncExternalStore,
 } from "react";
 import { afterEach, expect, it, vi } from "vitest";
-import { finalizeEvent, getPublicKey } from "nostr-tools";
+import { finalizeEvent, getPublicKey, type VerifiedEvent } from "nostr-tools";
 import {
   provideNavigation,
   type PageNavigation,
 } from "../../features/navigation/service";
 import type { GitRead } from "../../features/projects/git";
 import type { ReadFilter } from "../../features/relay/events";
+import {
+  MAX_MARKDOWN_DEPTH,
+  MAX_MARKDOWN_LENGTH,
+} from "../../features/relay/message-content";
 import { ReadError } from "../../features/relay/errors";
 import type { LiveCallbacks } from "../../features/relay/live";
 import { entityTarget, type EntityRoute } from "../../features/projects/routes";
@@ -112,7 +116,12 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
 });
-function setup(route?: EntityRoute, unscoped = false, gitAvailable = true) {
+function setup(
+  route?: EntityRoute,
+  unscoped = false,
+  gitAvailable = true,
+  events: readonly VerifiedEvent[] = [repo, project, issue, pr],
+) {
   const roster = (allowed: boolean, created_at = 1) =>
     finalizeEvent(
       {
@@ -151,7 +160,7 @@ function setup(route?: EntityRoute, unscoped = false, gitAvailable = true) {
     }),
   );
   const query = vi.fn(async (filters: readonly ReadFilter[]) =>
-    [repo, project, issue, pr, roster(true), channel].filter((event) =>
+    [...events, roster(true), channel].filter((event) =>
       filters.some((filter) => matchesEvent(event, filter)),
     ),
   );
@@ -564,4 +573,107 @@ it("labels PR revision lookup as base-only and disables it without a host Git re
   expect(
     screen.getByText(/Exact PR diffs from external forks are unavailable/),
   ).toBeVisible();
+});
+
+// Exercise every remote Markdown producer through the real session and destination.
+for (const type of ["repo", "project", "issue", "pr"] as const) {
+  it.each([
+    {
+      boundary: "at the length limit",
+      text: "**bounded**".padEnd(MAX_MARKDOWN_LENGTH, "x"),
+      plain: false,
+    },
+    {
+      boundary: "over the length limit",
+      text: "**bounded**\n<img src=x>".padEnd(MAX_MARKDOWN_LENGTH + 1, "x"),
+      plain: true,
+    },
+    {
+      boundary: "at the depth limit",
+      // Root depth is zero; paragraph and text contribute two more levels.
+      text: `${"> ".repeat(MAX_MARKDOWN_DEPTH - 2)}bounded`,
+      plain: false,
+    },
+    {
+      boundary: "over the depth limit",
+      text: `${"> ".repeat(MAX_MARKDOWN_DEPTH - 1)}bounded\n<img src=x>`,
+      plain: true,
+    },
+  ])(
+    `renders ${type} content $boundary with the shared bounds`,
+    async ({ text, plain }) => {
+      const entity = finalizeEvent(
+        type === "project"
+          ? {
+              ...project,
+              tags: [
+                ...project.tags.filter((tag) => tag[0] !== "description"),
+                ["description", text],
+              ],
+            }
+          : { ...repo, content: text },
+        key,
+      );
+      const item = finalizeEvent(
+        { ...(type === "pr" ? pr : issue), content: text },
+        key,
+      );
+      const comment = finalizeEvent(
+        { kind: 1111, created_at: 3, content: text, tags: [["E", item.id]] },
+        key,
+      );
+      const t = setup(
+        {
+          type,
+          owner,
+          dtag: type === "project" ? "project" : "repo",
+          ...(["issue", "pr"].includes(type) ? { id: item.id } : {}),
+        } as EntityRoute,
+        false,
+        true,
+        [entity, ...(type === "project" ? [repo] : []), item, comment],
+      );
+      t.readGit.mockResolvedValue({ ...git, readme: text });
+      const { container } = t.mount();
+      await expect(t.promise).resolves.toEqual({ status: "opened" });
+      const bodies = container.querySelectorAll(".project-markdown");
+      // Overview description + README, project description, or item + discussion.
+      expect(bodies).toHaveLength(type === "project" ? 1 : 2);
+      for (const body of bodies) {
+        if (plain) {
+          expect(body).toHaveClass("project-plain");
+          expect(body.textContent).toBe(text);
+          expect(body.childElementCount).toBe(0);
+        } else {
+          expect(body).not.toHaveClass("project-plain");
+          expect(body.querySelector("strong, blockquote")).not.toBeNull();
+        }
+      }
+    },
+  );
+}
+
+it("keeps normal Markdown formatting and routes Buzz links through navigation", async () => {
+  const t = setup({ type: "repo", owner, dtag: "repo" });
+  const href = `buzz://project?owner=${owner}&d=project`;
+  t.readGit.mockResolvedValue({
+    ...git,
+    readme: `## Readme heading\n\n**Formatted** and ~~removed~~\n\n[Project](${href})\n\n[Unsafe](javascript:alert)`,
+  });
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  const content = screen.getByRole("region", { name: "Overview" });
+  expect(
+    within(content).getByRole("heading", { name: "Readme heading", level: 2 }),
+  ).toBeVisible();
+  expect(within(content).getByText("Formatted").tagName).toBe("STRONG");
+  expect(within(content).getByText("removed").tagName).toBe("DEL");
+  expect(within(content).getByText("Unsafe")).toHaveAttribute("href", "");
+  const link = within(content).getByRole("link", { name: "Project" });
+  expect(link).toHaveAttribute("href", href);
+  await userEvent.click(link);
+  await screen.findByText("Project overview");
+  expect(t.host.navigation.snapshot().entry.target).toMatchObject(
+    entityTarget({ type: "project", owner, dtag: "project" }, scope),
+  );
 });

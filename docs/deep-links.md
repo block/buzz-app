@@ -3,7 +3,8 @@
 Desktop builds register a URL scheme with the operating system, so a link opened
 outside the app brings it to the front and navigates, at cold start too. Every build
 uses `buzz://`, the same scheme in-app links and **Copy link** use. Windows/Linux
-register on launch; macOS requires a registered bundle, not `just desktop`. Builds share this
+register on launch; macOS requires the registered bundle itself to run, not
+`just desktop` or another copy with the same app identifier. Builds share this
 scheme (see [current limits](#current-limits)). The browser build has no OS ingress
 and keeps its `#buzz=` address form.
 
@@ -85,7 +86,9 @@ without that agreement.
 
 **macOS** only routes a scheme to a bundled app. `just desktop` binaries are never
 registered, so build a debug bundle and launch it once to register it with Launch
-Services:
+Services. First quit every other native Buzz copy, including `just desktop`.
+For warm delivery, the bundle selected by Launch Services must itself be running;
+forwarding an OS URL from that bundle to a different running copy is not supported:
 
 ```sh
 just desktop-bundle
@@ -120,9 +123,14 @@ xdg-open "buzz://channel/general"
   installed the two compete for it: Windows and Linux route it to whichever binary
   started last, and macOS to whichever registered bundle Launch Services picks.
 - Every local bundle keeps the same application identifier, so they share app data
-  and single-instance identity. A second checkout can forward its link to the
-  already running copy and exit. This is one active native Buzz per machine, not
+  and single-instance identity. This is one active native Buzz per machine, not
   per-worktree isolation; Launch Services can list several bundles under that identity.
+  On macOS, a registered bundle launched while a different copy (including an
+  unbundled dev process) is running can exit before receiving the OS URL. The running
+  copy may gain focus without opening the link. Cross-copy URL handoff is unsupported:
+  quit the other copy and open the link with the intended registered bundle. Cold-start
+  acceptance requires no native copy running; warm acceptance requires that exact
+  registered bundle already running. Windows/Linux use the plugin's argv handoff.
 - Invite links (`buzz://join`, `https://<relay>/invite/<code>`) and remote push
   are not handled; they end in the
   failure notice or, for HTTPS, never reach the app.

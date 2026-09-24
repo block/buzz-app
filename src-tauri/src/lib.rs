@@ -364,8 +364,9 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 pub fn run() {
     let builder = tauri::Builder::default()
         // Single instance comes first, as its documentation requires. Its deep-link
-        // feature forwards a second launch's deep-link argument to the running app
-        // through the deep-link plugin; this callback only foregrounds the window.
+        // feature forwards deep-link argv on Windows/Linux. macOS OS URLs reach
+        // the registered bundle directly; cross-copy URL handoff is unsupported.
+        // This callback only foregrounds the running window.
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             deep_links::focus_main(app);
         }))

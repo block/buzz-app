@@ -16,6 +16,10 @@ import { useRelayConnection, useChannelList } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import {
+  MAX_MARKDOWN_LENGTH,
+  scanMarkdown,
+} from "../../features/relay/message-content";
+import {
   EntityFailure,
   entityFailure,
   value,
@@ -699,6 +703,12 @@ function Body({
   open: Open;
   scope: NavigationScope;
 }) {
+  const plain = useMemo(
+    () => text.length > MAX_MARKDOWN_LENGTH || scanMarkdown(text).tooDeep,
+    [text],
+  );
+  if (plain)
+    return <div className="project-markdown project-plain">{text}</div>;
   return (
     <div className="project-markdown">
       <Markdown

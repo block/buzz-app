@@ -18,6 +18,7 @@ import {
   validCanvas,
 } from "./channel-kit.mjs";
 import { uploadAttachment, UploadError } from "./attachment-upload.mjs";
+import { validateUploadResult } from "../src/features/relay/attachments.ts";
 import { validChannelCommand } from "./session-commands.mjs";
 import {
   adminReason,
@@ -281,7 +282,7 @@ async function relayAuthority(fetch, relay) {
     ...(nip11.self === author ? { archiveAuthority: author } : {}),
   };
 }
-export function validProductFeedback(event) {
+export function validProductFeedback(event, mediaOrigin) {
   if (
     event?.kind !== 42000 ||
     typeof event.content !== "string" ||
@@ -291,18 +292,77 @@ export function validProductFeedback(event) {
     !Array.isArray(event.tags)
   )
     return false;
+  const allowed = new Set(["category", "client-id", "imeta"]);
   if (
     !event.tags.every(
       (tag) =>
         Array.isArray(tag) &&
-        tag.length === 2 &&
         tag.every((part) => typeof part === "string") &&
-        ["category", "client-id"].includes(tag[0]),
-    )
+        allowed.has(tag[0]) &&
+        (tag[0] === "imeta" ? tag.length === 6 : tag.length === 2),
+    ) ||
+    Buffer.byteLength(JSON.stringify(event.tags)) > 64 * 1024
   )
     return false;
   const categories = event.tags.filter((tag) => tag[0] === "category");
+  const imeta = event.tags.filter((tag) => tag[0] === "imeta");
   return (
+    imeta.every((tag) => {
+      const fields = new Map();
+      for (const part of tag.slice(1)) {
+        const split = part.indexOf(" ");
+        if (split <= 0 || fields.has(part.slice(0, split))) return false;
+        fields.set(part.slice(0, split), part.slice(split + 1));
+      }
+      if (
+        !mediaOrigin ||
+        !["url", "m", "size", "x", "filename"].every((name) =>
+          fields.has(name),
+        ) ||
+        !fields.get("filename") ||
+        fields.get("filename").includes("/") ||
+        fields.get("filename").includes("\\") ||
+        Buffer.byteLength(fields.get("filename")) > 255 ||
+        Array.from(fields.get("filename")).some((char) => {
+          const code = char.charCodeAt(0);
+          return code < 32 || code === 127;
+        }) ||
+        fields.size !== 5 ||
+        !/^[1-9][0-9]*$/.test(fields.get("size")) ||
+        ![
+          "image/jpeg",
+          "image/png",
+          "image/gif",
+          "image/webp",
+          "application/octet-stream",
+          "text/plain",
+        ].includes(fields.get("m"))
+      )
+        return false;
+      try {
+        const result = validateUploadResult(
+          {
+            url: fields.get("url"),
+            sha256: fields.get("x"),
+            size: Number(fields.get("size")),
+            type: fields.get("m"),
+          },
+          mediaOrigin,
+          Number(fields.get("size")),
+          "feedback",
+        );
+        const extension = result.url.match(/\.([a-z0-9]{1,8})$/)?.[1];
+        const imageExtension = {
+          "image/jpeg": "jpg",
+          "image/png": "png",
+          "image/gif": "gif",
+          "image/webp": "webp",
+        }[result.type];
+        return !imageExtension || extension === imageExtension;
+      } catch {
+        return false;
+      }
+    }) &&
     categories.length <= 1 &&
     (!categories.length ||
       ["bug", "praise", "needs-work"].includes(categories[0][1]))
@@ -1916,7 +1976,7 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
             } else if (filters?.kind === 42000) {
-              if (!validProductFeedback(filters))
+              if (!validProductFeedback(filters, relay))
                 return json(res, 400, {
                   error: "Product feedback rejected",
                   sent: false,

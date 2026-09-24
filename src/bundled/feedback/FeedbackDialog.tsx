@@ -1,7 +1,14 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { ChangeEvent } from "react";
 import type { OutgoingEvent } from "../../features/relay/outbox";
+import {
+  UploadError,
+  type UploadedAttachment,
+} from "../../features/relay/attachments";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import {
+  feedbackDiagnostics,
+  feedbackImage,
   feedbackEvent,
   PRODUCT_FEEDBACK_KIND,
   type FeedbackCategory,
@@ -75,10 +82,6 @@ function FeedbackForConnection({
   useEffect(() => {
     if (!open) setBusy(false);
   }, [open]);
-  function close() {
-    dialogEpoch.current++;
-    onOpenChange(false);
-  }
   const outbox = connection.session.outbox;
   const entries = useSyncExternalStore(
     outbox?.subscribe ?? noSubscription,
@@ -91,6 +94,26 @@ function FeedbackForConnection({
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [image, setImage] = useState<UploadedAttachment>();
+  const [includeDiagnostics, setIncludeDiagnostics] = useState(false);
+  const uploadController = useRef<AbortController | null>(null);
+  const uploadAttempt = useRef(0);
+  const mounted = useRef(true);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      uploadController.current?.abort();
+    };
+  }, []);
+  useEffect(() => {
+    if (!open) {
+      uploadAttempt.current++;
+      uploadController.current?.abort();
+      uploadController.current = null;
+      setBusy(false);
+    }
+  }, [open]);
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => {
     let active = true;
@@ -116,15 +139,91 @@ function FeedbackForConnection({
     hydrated &&
     connection.status === "ready" &&
     !!outbox?.supports(PRODUCT_FEEDBACK_KIND);
-  function submit() {
-    if (!outbox || !available || pending || busy) return;
+  async function attachImage(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || !connection.session.feedbackUpload || !available || busy)
+      return;
+    const attempt = ++uploadAttempt.current;
+    const controller = new AbortController();
+    uploadController.current = controller;
+    setBusy(true);
+    setError("");
     try {
-      outbox.send(feedbackEvent(message, category));
-      setError("");
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Could not send feedback.",
+      const checked = await feedbackImage(file, controller.signal);
+      controller.signal.throwIfAborted();
+      const result = await connection.session.feedbackUpload.upload(
+        checked,
+        controller.signal,
       );
+      controller.signal.throwIfAborted();
+      if (!mounted.current || attempt !== uploadAttempt.current) return;
+      if (result.type !== checked.type) throw new UploadError("invalid");
+      setImage(result);
+    } catch (reason) {
+      if (
+        !controller.signal.aborted &&
+        mounted.current &&
+        attempt === uploadAttempt.current
+      )
+        setError(
+          reason instanceof Error ? reason.message : "Image upload failed.",
+        );
+    } finally {
+      if (uploadController.current === controller)
+        uploadController.current = null;
+      if (mounted.current && attempt === uploadAttempt.current) setBusy(false);
+    }
+  }
+  async function submit() {
+    if (!outbox || !available || pending || busy) return;
+    setBusy(true);
+    setError("");
+    const attempt = ++uploadAttempt.current;
+    try {
+      const attachments = image ? [image] : [];
+      if (includeDiagnostics) {
+        const upload = connection.session.feedbackUpload;
+        if (!upload) throw new UploadError("unavailable");
+        const controller = new AbortController();
+        uploadController.current = controller;
+        const diagnostics = await feedbackDiagnostics();
+        controller.signal.throwIfAborted();
+        if (!mounted.current || attempt !== uploadAttempt.current) return;
+        const result = await upload.upload(diagnostics, controller.signal);
+        controller.signal.throwIfAborted();
+        if (!mounted.current || attempt !== uploadAttempt.current) return;
+        if (
+          result.type !== "application/octet-stream" &&
+          result.type !== "text/plain"
+        )
+          throw new UploadError("invalid");
+        attachments.push(result);
+        uploadController.current = null;
+      }
+      if (!mounted.current || attempt !== uploadAttempt.current) return;
+      outbox.send(
+        feedbackEvent(
+          message,
+          category,
+          attachments,
+          connection.session.feedbackUpload?.origin,
+        ),
+      );
+    } catch (reason) {
+      if (
+        mounted.current &&
+        attempt === uploadAttempt.current &&
+        !uploadController.current?.signal.aborted
+      )
+        setError(
+          reason instanceof Error ? reason.message : "Could not send feedback.",
+        );
+    } finally {
+      if (mounted.current && attempt === uploadAttempt.current) {
+        uploadController.current = null;
+        setBusy(false);
+      }
     }
   }
   async function clearPending() {
@@ -172,6 +271,14 @@ function FeedbackForConnection({
       );
     }
   }
+  function close() {
+    dialogEpoch.current++;
+    uploadAttempt.current++;
+    uploadController.current?.abort();
+    uploadController.current = null;
+    setBusy(false);
+    onOpenChange(false);
+  }
   const delivered =
     pending?.delivery === "accepted" || pending?.delivery === "seen";
   return (
@@ -182,7 +289,7 @@ function FeedbackForConnection({
         else onOpenChange(next);
       }}
       title="Send feedback"
-      description="Feedback goes to this Buzz deployment's private operator inbox, not a channel."
+      description="Feedback and optional attachments go to this Buzz deployment's private operator inbox, not a channel. Attachments upload before submission; removing one cannot undo its upload."
       actions={
         <>
           <Button onClick={close}>Close</Button>
@@ -212,7 +319,7 @@ function FeedbackForConnection({
             <Button
               variant="prominent"
               disabled={!available || !message.trim() || busy}
-              onClick={submit}
+              onClick={() => void submit()}
             >
               Send feedback
             </Button>
@@ -257,6 +364,46 @@ function FeedbackForConnection({
             onChange={(event) => setMessage(event.target.value)}
             placeholder="Tell us what went wrong, or share general feedback."
           />
+          {connection.session.feedbackUpload && (
+            <>
+              <label
+                htmlFor="feedback-image"
+                className="text-label-sm block mt-4"
+              >
+                Attach image (optional)
+              </label>
+              <input
+                id="feedback-image"
+                type="file"
+                accept="image/png,image/jpeg,image/gif,image/webp"
+                disabled={!available || busy}
+                onChange={(event) => void attachImage(event)}
+              />
+              {image && (
+                <p>
+                  Image uploaded: {image.name}{" "}
+                  <Button disabled={busy} onClick={() => setImage(undefined)}>
+                    Remove image
+                  </Button>
+                </p>
+              )}
+              <label className="block mt-4">
+                <input
+                  type="checkbox"
+                  checked={includeDiagnostics}
+                  disabled={!available || busy}
+                  onChange={(event) =>
+                    setIncludeDiagnostics(event.target.checked)
+                  }
+                />{" "}
+                Attach diagnostics
+              </label>
+              <p>
+                Includes capture time, app version when available, platform,
+                user agent, and language. No application logs.
+              </p>
+            </>
+          )}
         </>
       )}
       {!available && (

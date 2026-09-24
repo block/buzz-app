@@ -2101,6 +2101,55 @@ test("product feedback signs and publishes only private bounded text/category", 
   }
 });
 
+test("feedback media tags pass broker signing only for tenant-local bounded descriptors", async () => {
+  const h = await harness(success);
+  const hash = "a".repeat(64);
+  const valid = [
+    "imeta",
+    `url ${fixtureRelayUrl}/media/${hash}.png`,
+    "m image/png",
+    "size 64",
+    `x ${hash}`,
+    "filename capture.png",
+  ];
+  try {
+    await h.start();
+    const template = {
+      ...h.event,
+      kind: 42000,
+      content: `Broken\n\n![capture](<${fixtureRelayUrl}/media/${hash}.png>)`,
+      tags: [valid],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const signed = await response.json();
+    expect((await h.post("publish", signed)).status).toBe(200);
+    for (const tag of [
+      valid.map((part) =>
+        part.startsWith("url ")
+          ? `url https://other.test/media/${hash}.png`
+          : part,
+      ),
+      valid.map((part) => (part.startsWith("size ") ? "size NaN" : part)),
+      valid.map((part) =>
+        part.startsWith("filename ") ? "filename ../capture.png" : part,
+      ),
+      [...valid, "x duplicated"],
+      valid.slice(0, -1),
+    ]) {
+      expect((await h.post("sign", { ...template, tags: [tag] })).status).toBe(
+        400,
+      );
+      expect((await h.post("publish", { ...signed, tags: [tag] })).status).toBe(
+        400,
+      );
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
 test("private feedback crosses the real broker and session without a readback or shared view", async () => {
   const h = await harness(success);
   let live;

@@ -23,6 +23,7 @@ function fixture(
   status: "ready" | "disconnected" = "ready",
 ) {
   const send = vi.fn();
+  const upload = vi.fn();
   const retry = vi.fn();
   const dismiss = vi.fn(async () => {});
   let entries = initialEntries;
@@ -44,8 +45,18 @@ function fixture(
   let snapshot: {
     generation: number;
     status: "ready" | "disconnected";
-    session: { outbox?: typeof outbox };
-  } = { generation: 0, status, session: { outbox } };
+    session: {
+      outbox?: typeof outbox;
+      feedbackUpload?: { origin: string; upload: typeof upload } | undefined;
+    };
+  } = {
+    generation: 0,
+    status,
+    session: {
+      outbox,
+      feedbackUpload: { origin: "https://relay.test", upload },
+    },
+  };
   const relayListeners = new Set<() => void>();
   const relay = {
     subscribe(listener: () => void) {
@@ -57,6 +68,7 @@ function fixture(
   return {
     relay,
     send,
+    upload,
     retry,
     dismiss,
     setEntries(next: readonly OutgoingEvent[]) {
@@ -215,7 +227,7 @@ it("drops the previous relay draft on account switch", async () => {
     old.switchTo({
       generation: 1,
       status: "ready",
-      session: { outbox: nextOutbox },
+      session: { outbox: nextOutbox, feedbackUpload: undefined },
     }),
   );
   expect(screen.getByRole("textbox", { name: "Your feedback" })).toHaveValue(
@@ -248,7 +260,11 @@ it("waits for saved feedback hydration before allowing a new send", async () => 
     dismiss: h.dismiss,
     ready: () => loaded,
   };
-  h.switchTo({ generation: 1, status: "ready", session: { outbox: delayed } });
+  h.switchTo({
+    generation: 1,
+    status: "ready",
+    session: { outbox: delayed, feedbackUpload: undefined },
+  });
   render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
   await user.type(
     screen.getByRole("textbox", { name: "Your feedback" }),
@@ -328,4 +344,196 @@ it("does not close a reopened dialog when old Done completes", async () => {
     expect(screen.getByRole("button", { name: "Done" })).toBeEnabled(),
   );
   expect(close).not.toHaveBeenCalled();
+});
+
+const hash = "a".repeat(64);
+const uploaded = (name: string, type: string, ext: string) => ({
+  name,
+  type,
+  size: 64,
+  sha256: hash,
+  url: `https://relay.test/media/${hash}.${ext}`,
+});
+
+it("uploads an image before submission and retries the signed intent without another upload", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  h.upload.mockResolvedValue(uploaded("screen.gif", "image/gif", "gif"));
+  const view = render(
+    <FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />,
+  );
+  await waitFor(() =>
+    expect(screen.getByLabelText("Attach image (optional)")).toBeEnabled(),
+  );
+  await user.upload(
+    screen.getByLabelText("Attach image (optional)"),
+    new File(
+      [
+        new Uint8Array([
+          71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 0, 0, 0, 0x21, 0xf9, 4, 0, 10, 0,
+          0, 0, 0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 0x44, 1, 0, 0x3b,
+        ]),
+      ],
+      "screen.gif",
+      { type: "image/gif" },
+    ),
+  );
+  await waitFor(() => expect(h.upload).toHaveBeenCalledTimes(1));
+  await waitFor(() =>
+    expect(screen.getByText(/Image uploaded/)).toBeInTheDocument(),
+  );
+  expect(h.send).not.toHaveBeenCalled();
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "Image failed",
+  );
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  expect(h.upload).toHaveBeenCalledTimes(1);
+  expect(h.send).toHaveBeenCalledWith(
+    expect.objectContaining({
+      kind: 42000,
+      tags: [
+        expect.arrayContaining([
+          "imeta",
+          `url https://relay.test/media/${hash}.gif`,
+        ]),
+      ],
+    }),
+  );
+  view.unmount();
+  const signedIntent = pending("unknown", "Image failed");
+  const restored = fixture([signedIntent]);
+  render(
+    <FeedbackDialog open onOpenChange={() => {}} relay={restored.relay} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Retry same feedback" }));
+  expect(restored.retry).toHaveBeenCalledWith(signedIntent.event.id);
+  expect(restored.upload).not.toHaveBeenCalled();
+  expect(h.upload).toHaveBeenCalledTimes(1);
+});
+
+it("cancels opted-in diagnostics upload on close without sending", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  let release!: () => void;
+  const started = new Promise<void>((resolve) => {
+    h.upload.mockImplementationOnce((_file, signal) => {
+      expect(signal.aborted).toBe(false);
+      resolve();
+      return new Promise((done) => {
+        release = () =>
+          done(
+            uploaded(
+              "feedback-diagnostics.txt",
+              "application/octet-stream",
+              "bin",
+            ),
+          );
+      });
+    });
+  });
+  const close = vi.fn();
+  const view = render(
+    <FeedbackDialog open onOpenChange={close} relay={h.relay} />,
+  );
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "Broken",
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await started;
+  expect(h.send).not.toHaveBeenCalled();
+  const closeButton = screen.getAllByRole("button", { name: "Close" }).at(-1);
+  if (!closeButton) throw new Error("Missing close button");
+  await user.click(closeButton);
+  release();
+  await waitFor(() => expect(close).toHaveBeenCalledWith(false));
+  expect(h.send).not.toHaveBeenCalled();
+  view.unmount();
+});
+
+it("uploads diagnostics only on explicit opt-in and sends a text-file descriptor", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  h.upload.mockResolvedValue(
+    uploaded("feedback-diagnostics.txt", "application/octet-stream", "bin"),
+  );
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "A problem",
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await waitFor(() => expect(h.send).toHaveBeenCalledTimes(1));
+  const file = h.upload.mock.calls[0]?.[0] as File | undefined;
+  expect(file?.name).toBe("feedback-diagnostics.txt");
+  expect(file?.type).toBe("text/plain");
+  expect(await file?.text()).toContain("app version:");
+  expect(h.send).toHaveBeenCalledWith(
+    expect.objectContaining({
+      content: expect.stringContaining("feedback-diagnostics.txt"),
+      tags: [expect.arrayContaining(["m application/octet-stream"])],
+    }),
+  );
+});
+
+it("discards an in-flight diagnostics result on relay generation switch", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  let release!: () => void;
+  let started!: () => void;
+  const began = new Promise<void>((resolve) => {
+    started = resolve;
+  });
+  h.upload.mockImplementationOnce(() => {
+    started();
+    return new Promise((resolve) => {
+      release = () =>
+        resolve(
+          uploaded(
+            "feedback-diagnostics.txt",
+            "application/octet-stream",
+            "bin",
+          ),
+        );
+    });
+  });
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "Private A",
+  );
+  await user.click(
+    screen.getByRole("checkbox", { name: "Attach diagnostics" }),
+  );
+  await user.click(screen.getByRole("button", { name: "Send feedback" }));
+  await began;
+  const nextEntries: readonly OutgoingEvent[] = [];
+  const nextOutbox = {
+    subscribe,
+    snapshot: () => nextEntries,
+    ready: async () => {},
+    supports: () => true,
+    send: vi.fn(),
+    retry: vi.fn(),
+    dismiss: vi.fn(async () => {}),
+  };
+  act(() =>
+    h.switchTo({
+      generation: 1,
+      status: "ready",
+      session: { outbox: nextOutbox, feedbackUpload: undefined },
+    }),
+  );
+  release();
+  expect(screen.getByRole("textbox", { name: "Your feedback" })).toHaveValue(
+    "",
+  );
+  expect(h.send).not.toHaveBeenCalled();
 });

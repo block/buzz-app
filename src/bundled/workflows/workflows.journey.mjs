@@ -511,6 +511,56 @@ test("landing scan survives channel presentation churn without restarting", asyn
   expect(await open.boundingBox()).toEqual(openBounds);
 });
 
+test("a failed landing scan shows one recovery action instead of an error-card grid", async ({
+  page,
+}) => {
+  await page.goto(
+    url.replace("/fixture.html", "/session-fixture.html?many&hold"),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.definitionReadHeld()),
+    )
+    .toBe(true);
+  const open = page.getByRole("button", {
+    name: "Open Fixture A helper",
+    exact: true,
+  });
+  await expect(open).toBeVisible();
+  await page.evaluate(() => window.workflowSessionFixture.failDefinitionRead());
+  await expect(page.getByRole("status")).toContainText(
+    "Workflow discovery paused.",
+  );
+  const retry = page.getByRole("button", { name: "Retry", exact: true });
+  await expect(retry).toHaveCount(1);
+  await expect(page.locator(".workflow-card-grid > *")).toHaveCount(2);
+  // Browser-only acceptance: the real card stays onscreen, not buried beneath
+  // per-channel failure tiles. Recovery uses the real session/reader boundary.
+  await expect(open).toBeInViewport();
+  await expect(retry).toBeInViewport();
+  expect(
+    await page.evaluate(() =>
+      window.workflowSessionFixture.definitionQueries(),
+    ),
+  ).toBe(2);
+  await retry.click();
+  await expect(page.getByRole("status")).toHaveText(
+    "Workflow discovery complete.",
+  );
+  await expect(retry).toHaveCount(0);
+  expect(
+    await page.evaluate(() =>
+      window.workflowSessionFixture.definitionQueries(),
+    ),
+  ).toBe(18);
+  expect(
+    await page.evaluate(() =>
+      window.workflowSessionFixture.definitionChannelCount(),
+    ),
+  ).toBe(17);
+  await expect(open).toBeInViewport();
+});
+
 test("clearing the session cache purges landing workflow definitions", async ({
   page,
 }) => {

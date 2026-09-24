@@ -32,6 +32,7 @@ let definitionQueries = 0;
 const definitionChannels = new Set<string>();
 let metadataSequence = 0;
 let heldDefinitionRelease: (() => void) | undefined;
+let heldDefinitionReject: (() => void) | undefined;
 let definitionHoldReleased = false;
 let finishPublish: ((value: string) => void) | undefined;
 let failPublish: ((error: Error) => void) | undefined;
@@ -116,17 +117,23 @@ function session(scope: string) {
           )
             await new Promise<void>((resolve, reject) => {
               const abort = () => {
+                heldDefinitionReject = undefined;
                 if (heldDefinitionRelease === release)
                   heldDefinitionRelease = undefined;
                 reject(new DOMException("Aborted", "AbortError"));
               };
               const release = () => {
+                heldDefinitionReject = undefined;
                 signal?.removeEventListener("abort", abort);
                 if (heldDefinitionRelease === release)
                   heldDefinitionRelease = undefined;
                 resolve();
               };
               heldDefinitionRelease = release;
+              heldDefinitionReject = () => {
+                reject(new Error("Fixture workflow read failed"));
+                release();
+              };
               signal?.addEventListener("abort", abort, { once: true });
             });
         }
@@ -193,6 +200,10 @@ Object.assign(window, {
     definitionQueries: () => definitionQueries,
     definitionChannelCount: () => definitionChannels.size,
     definitionReadHeld: () => heldDefinitionRelease !== undefined,
+    failDefinitionRead: () => {
+      definitionHoldReleased = true;
+      heldDefinitionReject?.();
+    },
     releaseDefinitionRead: () => {
       definitionHoldReleased = true;
       heldDefinitionRelease?.();

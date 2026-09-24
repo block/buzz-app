@@ -83,10 +83,13 @@ function useLandingDefinitions(
   capability: WorkflowCapability,
   channels: readonly ChannelSummary[],
   refreshRequest: number,
+  retryRequest: number,
   operationRefreshKey: string,
 ) {
   const store = useMemo(() => {
     let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
+    let paused = false;
+    let state = { snapshots, paused };
     let channelIds: readonly string[] = [];
     const queued = new Set<string>();
     const listeners = new Set<() => void>();
@@ -101,6 +104,7 @@ function useLandingDefinitions(
     // discovery finishes. All other views are disposed; at most two are live.
     let retained: Read | undefined;
     const emit = () => {
+      state = { snapshots, paused };
       for (const listener of listeners) listener();
     };
     const release = (read: Read | undefined) => {
@@ -109,6 +113,7 @@ function useLandingDefinitions(
     };
     const purge = (snapshot: DefinitionsSnapshot) => {
       invalidated = true;
+      paused = false;
       queued.clear();
       const previous = active;
       active = undefined;
@@ -133,11 +138,12 @@ function useLandingDefinitions(
     const pause = (owned: Read, snapshot: DefinitionsSnapshot) => {
       // The view contract does not distinguish interruption from read failure.
       // Stop this scan on either; keep usable results and expose explicit retry.
-      for (const id of queued) snapshots = { ...snapshots, [id]: failure(id) };
-      queued.clear();
-      if (active && active !== owned) {
-        snapshots = { ...snapshots, [active.id]: failure(active.id) };
-        release(active);
+      paused = true;
+      // Unread IDs remain pending, not fabricated per-channel failures.
+      queued.add(owned.id);
+      if (active) {
+        queued.add(active.id);
+        if (active !== owned) release(active);
       }
       active = undefined;
       if (retained !== owned) release(retained);
@@ -175,8 +181,8 @@ function useLandingDefinitions(
       return owned;
     };
     const readNext = () => {
-      if (active) return;
-      const id = queued.values().next().value;
+      if (active || paused) return;
+      const id = channelIds.find((id) => queued.has(id));
       if (!id) return;
       queued.delete(id);
       let owned: Read;
@@ -190,7 +196,12 @@ function useLandingDefinitions(
           })
           .finally(() => {
             if (active !== owned) return;
-            snapshots = { ...snapshots, [id]: owned.view.snapshot() };
+            const snapshot = owned.view.snapshot();
+            if (snapshot.status === "error") {
+              pause(owned, snapshot);
+              return;
+            }
+            snapshots = { ...snapshots, [id]: snapshot };
             release(retained);
             retained = owned;
             active = undefined;
@@ -201,14 +212,13 @@ function useLandingDefinitions(
         release(active);
         active = undefined;
         snapshots = { ...snapshots, [id]: failure(id) };
-        for (const queuedId of queued)
-          snapshots = { ...snapshots, [queuedId]: failure(queuedId) };
-        queued.clear();
+        queued.add(id);
+        paused = true;
         emit();
       }
     };
     return {
-      snapshot: () => snapshots,
+      snapshot: () => state,
       subscribe(listener: () => void) {
         listeners.add(listener);
         return () => {
@@ -250,12 +260,19 @@ function useLandingDefinitions(
         emit();
         readNext();
       },
+      retry() {
+        paused = false;
+        readNext();
+        emit();
+      },
       refresh(ids = channelIds, afterPending = false) {
         invalidated = false;
+        if (!afterPending) paused = false;
         for (const id of ids) if (channelIds.includes(id)) queued.add(id);
         // A pending read already satisfies refresh; never cancel and repeat it.
         if (active && !afterPending) queued.delete(active.id);
         readNext();
+        emit();
       },
       dispose() {
         const previous = active;
@@ -265,6 +282,8 @@ function useLandingDefinitions(
         release(retained);
         retained = undefined;
         snapshots = {};
+        paused = false;
+        state = { snapshots, paused };
       },
     };
   }, [capability]);
@@ -280,6 +299,9 @@ function useLandingDefinitions(
     void refreshRequest;
     store.refresh();
   }, [refreshRequest, store]);
+  useEffect(() => {
+    if (retryRequest) store.retry();
+  }, [retryRequest, store]);
   useEffect(() => {
     if (operationRefreshKey)
       store.refresh(
@@ -464,7 +486,6 @@ function WorkflowChannelCards({
   snapshot,
   viewer,
   onOpen,
-  onRetry,
 }: {
   capability: WorkflowCapability;
   channel: ChannelSummary;
@@ -472,7 +493,6 @@ function WorkflowChannelCards({
   snapshot: DefinitionsSnapshot | undefined;
   viewer: string;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
-  onRetry: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
 
@@ -482,17 +502,6 @@ function WorkflowChannelCards({
 
   return (
     <>
-      {snapshot.status === "error" && (
-        <div className="workflow-state-card">
-          <p className="text-body-sm text-danger">
-            {snapshot.error ??
-              `Workflows in #${channel.name} could not be read.`}
-          </p>
-          <Button size="sm" onClick={onRetry}>
-            Retry
-          </Button>
-        </div>
-      )}
       {error && (
         <div className="workflow-state-card" role="alert">
           <p className="text-body-sm text-danger">{error}</p>
@@ -557,10 +566,11 @@ export function WorkflowLanding({
         `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}`,
     )
     .join(":");
-  const snapshots = useLandingDefinitions(
+  const { snapshots, paused } = useLandingDefinitions(
     capability,
     channels,
-    refreshRequest + retryRequest,
+    refreshRequest,
+    retryRequest,
     operationRefreshKey,
   );
   return (
@@ -571,20 +581,30 @@ export function WorkflowLanding({
         stopped or cancel work already running.
       </p>
       <p className="text-body-sm text-secondary" role="status">
-        {channels.some(
-          (channel) =>
-            !snapshots[channel.id] ||
-            snapshots[channel.id]?.status === "loading",
-        )
-          ? "Reading workflows…"
+        {paused
+          ? "Workflow discovery paused. Some channels could not be checked. Loaded workflows are still shown."
           : channels.some(
                 (channel) =>
-                  snapshots[channel.id]?.status === "idle" ||
-                  snapshots[channel.id]?.status === "unavailable",
+                  !snapshots[channel.id] ||
+                  snapshots[channel.id]?.status === "loading",
               )
-            ? "Workflow data cleared or unavailable. Refresh to check access."
-            : "Workflow discovery complete."}
+            ? "Reading workflows…"
+            : channels.some(
+                  (channel) =>
+                    snapshots[channel.id]?.status === "idle" ||
+                    snapshots[channel.id]?.status === "unavailable",
+                )
+              ? "Workflow data cleared or unavailable. Refresh to check access."
+              : "Workflow discovery complete."}
       </p>
+      {paused && (
+        <Button
+          size="sm"
+          onClick={() => setRetryRequest((request) => request + 1)}
+        >
+          Retry
+        </Button>
+      )}
       <div className="workflow-card-grid">
         <Button
           aria-label="New workflow"
@@ -601,7 +621,6 @@ export function WorkflowLanding({
             channel={channel}
             key={channel.id}
             onOpen={onOpen}
-            onRetry={() => setRetryRequest((request) => request + 1)}
             operations={operations}
             snapshot={snapshots[channel.id]}
             viewer={viewer}

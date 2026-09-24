@@ -35,7 +35,10 @@ function event(id: string): RelayEvent {
     content: fixtureYaml,
   });
 }
-function mount(initial = [channel(1), channel(2), channel(3)]) {
+function mount(
+  initial = [channel(1), channel(2), channel(3)],
+  prepare?: (owner: ReturnType<typeof createWorkflows>) => void,
+) {
   let channels = initial;
   const reads: {
     id: string;
@@ -62,6 +65,7 @@ function mount(initial = [channel(1), channel(2), channel(3)]) {
       },
     },
   });
+  prepare?.(owner);
   let refresh = 0;
   const element = () => (
     <StrictMode>
@@ -232,8 +236,8 @@ it("preserves partial results, exposes failures, and retries without dropping lo
     expect(
       screen.getByRole("button", { name: "Open Message helper" }),
     ).toBeVisible();
-    await fixture.finish(2, [event(a.id)]);
-    await fixture.finish(3);
+    await fixture.finish(2);
+    expect(fixture.reads.map((read) => read.id)).toEqual([a.id, b.id, b.id]);
     expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
   } finally {
     fixture.close();
@@ -328,6 +332,88 @@ it("does not reread recovered channels when a membership is added after explicit
     await fixture.finish(2);
     expect(fixture.reads.map((read) => read.id)).toEqual([a.id, a.id, b.id]);
   } finally {
+    fixture.close();
+  }
+});
+
+for (const interrupt of [false, true]) {
+  it(`pauses a large roster honestly on ${interrupt ? "interruption" : "read failure"} and retries only unfinished IDs`, async () => {
+    const channels = Array.from({ length: 24 }, (_, index) =>
+      channel(index + 1),
+    );
+    const fixture = mount(channels);
+    try {
+      await fixture.finish(0, [event(channel(1).id)]);
+      await waitFor(() => expect(fixture.reads).toHaveLength(2));
+      await act(async () => {
+        if (interrupt) fixture.owner.interrupt();
+        else fixture.reads[1]?.reject(new Error("offline"));
+      });
+      // Drain the cancelled read; it must not advance the remaining queue.
+      if (interrupt) await fixture.finish(1);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Workflow discovery paused.",
+      );
+      expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+      expect(document.querySelectorAll(".workflow-card-grid > *")).toHaveLength(
+        2,
+      );
+      expect(fixture.reads).toHaveLength(2);
+      const remaining = [
+        ...channels.filter((_, index) => index !== 2),
+        channel(25),
+      ];
+      fixture.change([...remaining].reverse());
+      expect(fixture.reads).toHaveLength(2);
+      fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+      for (let index = 2; index < (interrupt ? 26 : 25); index++)
+        await fixture.finish(
+          index,
+          interrupt && index === 2 ? [event(channel(1).id)] : [],
+        );
+      expect(fixture.reads.map((read) => read.id)).toEqual([
+        channel(1).id,
+        channel(2).id,
+        ...(interrupt ? [channel(1).id] : []),
+        ...remaining.slice(1).map((item) => item.id),
+      ]);
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Workflow discovery complete.",
+      );
+      expect(
+        screen.getByRole("button", { name: "Open Message helper" }),
+      ).toBeVisible();
+    } finally {
+      fixture.close();
+    }
+  });
+}
+
+it("reports synchronous view admission failure once and retries its unread roster", async () => {
+  const blockers: { dispose(): void }[] = [];
+  const fixture = mount([channel(1), channel(2)], (owner) => {
+    for (let index = 0; index < 16; index++)
+      blockers.push(owner.capability.definitions(channel(1).id));
+  });
+  try {
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Workflow discovery paused.",
+    );
+    expect(screen.getAllByRole("button", { name: "Retry" })).toHaveLength(1);
+    expect(fixture.reads).toHaveLength(0);
+    for (const view of blockers) view.dispose();
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+    await fixture.finish(0);
+    await fixture.finish(1);
+    expect(fixture.reads.map((read) => read.id)).toEqual([
+      channel(1).id,
+      channel(2).id,
+    ]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Workflow discovery complete.",
+    );
+  } finally {
+    for (const view of blockers) view.dispose();
     fixture.close();
   }
 });

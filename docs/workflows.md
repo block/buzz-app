@@ -58,7 +58,10 @@ new memberships add only their missing reads. One stable status replaces
 per-channel loading placeholders, and loaded cards remain visible during refresh.
 Refresh deliberately rereads the current roster; save outcomes request readback
 only for their affected channels. Read failures/interruption stop the queued scan
-and expose Retry without erasing already loaded configurations. Global clear
+and expose one paused status and Retry without erasing already loaded configurations
+or inventing errors for unread channels. Retry resumes only failed/interrupted and
+unread channels; membership additions join that paused queue, not restart it.
+The header Refresh still deliberately rereads the full roster. Global clear
 purges copied results without automatic rereads; a changed membership set
 re-establishes authorized interest. At most two capability views remain live,
 including one invalidation observer when discovery is idle.

@@ -54,14 +54,22 @@ export function mentionCandidates(
       recipient,
       member: members.includes(recipient.pubkey),
       agent: known.has(recipient.pubkey) || directory.some((p) => p.pubkey === recipient.pubkey && p.isAgent),
+      owned:
+        !!session.viewer &&
+        profiles.get(recipient.pubkey)?.ownerPubkey === session.viewer,
       managed: agents.some((a) => a.pubkey === recipient.pubkey && a.managed),
       aliases: [
-        ...new Set([
-          recipient.name,
-          ...agents
-            .filter((a) => a.pubkey === recipient.pubkey)
-            .map((a) => a.name),
-        ]),
+        ...new Set(
+          [
+            profiles.get(recipient.pubkey)?.name ||
+              directory.find((person) => person.pubkey === recipient.pubkey)?.name ||
+              roster?.find((person) => person.pubkey === recipient.pubkey)
+                ?.name,
+            ...agents
+              .filter((a) => a.pubkey === recipient.pubkey)
+              .map((a) => a.name),
+          ].filter((name): name is string => !!name),
+        ),
       ],
     }));
 }

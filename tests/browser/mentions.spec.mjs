@@ -65,7 +65,8 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
         name: "Mention a member or agent",
       });
       const search = picker.getByRole("searchbox");
-      await search.fill(key);
+      // Both fixture keys are Honey namesakes; public keys are not search terms.
+      await search.fill("Honey");
       await expect(
         picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();

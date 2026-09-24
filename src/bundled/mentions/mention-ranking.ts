@@ -1,38 +1,37 @@
-import { npubEncode } from "nostr-tools/nip19";
 import type { mentionCandidates } from "../../features/messages/mention-candidates";
 export type MentionChoice = ReturnType<typeof mentionCandidates>[number] & {
   label: string;
 };
 const normalized = (text: string) => text.trim().toLowerCase();
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+function nameMatch(text: string, needle: string) {
+  if (!needle) return 0;
+  const name = normalized(text);
+  const words = name.split(/\s+/u);
+  return name === needle
+    ? 0
+    : name.startsWith(needle)
+      ? 1
+      : words.includes(needle)
+        ? 2
+        : words.some((word) => word.startsWith(needle))
+          ? 3
+          : Infinity;
+}
+function baseMatch(choice: MentionChoice, query: string) {
+  return Math.min(
+    ...choice.aliases.map((name) => nameMatch(name, normalized(query))),
+  );
+}
 export function mentionMatch(choice: MentionChoice, query: string) {
   const needle = normalized(query);
   if (!needle) return 0;
-  let best = Infinity;
-  for (const name of [...choice.aliases, choice.label].map(normalized)) {
-    const words = name.split(/\s+/u);
-    best = Math.min(
-      best,
-      name === needle
-        ? 0
-        : name.startsWith(needle)
-          ? 1
-          : words.includes(needle)
-            ? 2
-            : words.some((word) => word.startsWith(needle))
-              ? 3
-              : Infinity,
-    );
-  }
-  for (const key of [
-    choice.recipient.pubkey,
-    npubEncode(choice.recipient.pubkey),
-  ])
-    best = Math.min(
-      best,
-      key.startsWith(needle) ? 4 : key.includes(needle) ? 5 : Infinity,
-    );
-  return best;
+  // No known name means the displayed label is only an identity fallback.
+  if (!choice.aliases.length) return Infinity;
+  // Rank what the user sees before other real names for the same identity.
+  const visible = nameMatch(choice.label, needle);
+  if (Number.isFinite(visible)) return visible;
+  return 4 + baseMatch(choice, query);
 }
 export function rankMentions(
   choices: readonly MentionChoice[],
@@ -51,13 +50,15 @@ export function rankMentions(
       return (
         group(a) - group(b) ||
         mentionMatch(a, query) - mentionMatch(b, query) ||
+        baseMatch(a, query) - baseMatch(b, query) ||
+        (a.agent && b.agent ? Number(b.owned) - Number(a.owned) : 0) ||
         (a.agent && b.agent && nameA === nameB
           ? (history?.get(b.recipient.pubkey) ?? 0) -
               (history?.get(a.recipient.pubkey) ?? 0) ||
             Number(b.managed) - Number(a.managed) ||
             online(a) - online(b)
           : 0) ||
-        compare(nameA, nameB) ||
+        compare(normalized(a.label), normalized(b.label)) ||
         compare(a.recipient.pubkey, b.recipient.pubkey)
       );
     });
@@ -66,8 +67,10 @@ export function rankMentions(
 export function exactMention(choices: readonly MentionChoice[], query: string) {
   const needle = normalized(query);
   if (!needle) return;
-  const matches = choices.filter((c) =>
-    [...c.aliases, c.label].some((name) => normalized(name) === needle),
+  const matches = choices.filter(
+    (c) =>
+      c.aliases.length > 0 &&
+      [...c.aliases, c.label].some((name) => normalized(name) === needle),
   );
   if (
     matches.length !== 1 ||

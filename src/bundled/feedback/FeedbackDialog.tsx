@@ -1,4 +1,5 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import type { OutgoingEvent } from "../../features/relay/outbox";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import {
   feedbackEvent,
@@ -14,8 +15,19 @@ const categories = [
   ["praise", "Praise"],
   ["needs-work", "Needs work"],
 ] as const;
-const emptyEntries = () => [];
+const emptyItems: readonly OutgoingEvent[] = [];
+const emptyEntries = () => emptyItems;
 const noSubscription = () => () => {};
+const sessionKeys = new WeakMap<object, number>();
+let nextSessionKey = 0;
+function sessionKey(session: object): number {
+  let key = sessionKeys.get(session);
+  if (key === undefined) {
+    key = ++nextSessionKey;
+    sessionKeys.set(session, key);
+  }
+  return key;
+}
 
 export function FeedbackDialog({
   open,
@@ -27,14 +39,15 @@ export function FeedbackDialog({
   relay: RelayData;
 }) {
   const connection = useSyncExternalStore(relay.subscribe, relay.snapshot);
-  // A relay/viewer switch must not carry a draft, error, or pending Done callback
-  // into a different private inbox.
+  const identity = sessionKey(connection.session);
+  // Session identity, unlike generation, distinguishes already-connected deployments.
   return (
     <FeedbackForConnection
-      key={connection.generation}
+      key={identity}
       open={open}
       onOpenChange={onOpenChange}
       connection={connection}
+      isCurrent={() => relay.snapshot().session === connection.session}
     />
   );
 }
@@ -43,11 +56,34 @@ function FeedbackForConnection({
   open,
   onOpenChange,
   connection,
+  isCurrent,
 }: {
   open: boolean;
   onOpenChange(open: boolean): void;
   connection: RelaySnapshot;
+  isCurrent(): boolean;
 }) {
+  const active = useRef(false);
+  const dialogEpoch = useRef(0);
+  const lastOpen = useRef(open);
+  if (lastOpen.current !== open) {
+    dialogEpoch.current++;
+    lastOpen.current = open;
+  }
+  useEffect(() => {
+    active.current = true;
+    return () => {
+      active.current = false;
+      dialogEpoch.current++;
+    };
+  }, []);
+  useEffect(() => {
+    if (!open) setBusy(false);
+  }, [open]);
+  function close() {
+    dialogEpoch.current++;
+    onOpenChange(false);
+  }
   const outbox = connection.session.outbox;
   const entries = useSyncExternalStore(
     outbox?.subscribe ?? noSubscription,
@@ -99,20 +135,26 @@ function FeedbackForConnection({
   async function finish() {
     if (!outbox || !pending || busy) return;
     setBusy(true);
+    const epoch = dialogEpoch.current;
     try {
       await outbox.dismiss(pending.event.id);
+      if (!active.current || !isCurrent() || epoch !== dialogEpoch.current)
+        return;
       setMessage("");
       setCategory(null);
       setError("");
-      onOpenChange(false);
+      close();
     } catch (reason) {
+      if (!active.current || !isCurrent() || epoch !== dialogEpoch.current)
+        return;
       setError(
         reason instanceof Error
           ? reason.message
           : "Could not clear delivered feedback.",
       );
     } finally {
-      setBusy(false);
+      if (active.current && isCurrent() && epoch === dialogEpoch.current)
+        setBusy(false);
     }
   }
   function retry() {
@@ -131,12 +173,15 @@ function FeedbackForConnection({
   return (
     <Dialog
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={(next) => {
+        if (!next) close();
+        else onOpenChange(next);
+      }}
       title="Send feedback"
       description="Feedback goes to this Buzz deployment's private operator inbox, not a channel."
       actions={
         <>
-          <Button onClick={() => onOpenChange(false)}>Close</Button>
+          <Button onClick={close}>Close</Button>
           {delivered ? (
             <Button
               variant="prominent"

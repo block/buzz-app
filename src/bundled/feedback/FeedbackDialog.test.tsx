@@ -34,7 +34,11 @@ function fixture(
     retry,
     dismiss,
   };
-  let snapshot = { generation: 0, status, session: { outbox } };
+  let snapshot: {
+    generation: number;
+    status: "ready" | "disconnected";
+    session: { outbox?: typeof outbox };
+  } = { generation: 0, status, session: { outbox } };
   const listeners = new Set<() => void>();
   const relay = {
     subscribe(listener: () => void) {
@@ -177,4 +181,68 @@ it("waits for saved feedback hydration before allowing a new send", async () => 
   await waitFor(() =>
     expect(screen.getByRole("button", { name: "Send feedback" })).toBeEnabled(),
   );
+});
+
+it("renders disconnected personal space without an outbox", () => {
+  const h = fixture();
+  h.switchTo({ generation: 0, status: "disconnected", session: {} });
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  expect(screen.getByRole("button", { name: "Send feedback" })).toBeDisabled();
+});
+
+it("does not retain a private draft when two deployments share a generation", async () => {
+  const user = userEvent.setup();
+  const h = fixture();
+  render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+  await user.type(
+    screen.getByRole("textbox", { name: "Your feedback" }),
+    "Secret A",
+  );
+  const nextEntries: readonly OutgoingEvent[] = [];
+  const nextOutbox = {
+    subscribe,
+    snapshot: () => nextEntries,
+    ready: async () => {},
+    supports: () => true,
+    send: vi.fn(),
+    retry: vi.fn(),
+    dismiss: vi.fn(async () => {}),
+  };
+  act(() =>
+    h.switchTo({
+      generation: 0,
+      status: "ready",
+      session: { outbox: nextOutbox },
+    }),
+  );
+  expect(screen.getByRole("textbox", { name: "Your feedback" })).toHaveValue(
+    "",
+  );
+  expect(h.send).not.toHaveBeenCalled();
+});
+
+it("does not close a reopened dialog when old Done completes", async () => {
+  const user = userEvent.setup();
+  const h = fixture([pending("accepted")]);
+  let release!: () => void;
+  h.dismiss.mockImplementationOnce(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const close = vi.fn();
+  const view = render(
+    <FeedbackDialog open onOpenChange={close} relay={h.relay} />,
+  );
+  await user.click(screen.getByRole("button", { name: "Done" }));
+  view.rerender(
+    <FeedbackDialog open={false} onOpenChange={close} relay={h.relay} />,
+  );
+  view.rerender(<FeedbackDialog open onOpenChange={close} relay={h.relay} />);
+  release();
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: "Done" })).toBeEnabled(),
+  );
+  expect(close).not.toHaveBeenCalled();
 });

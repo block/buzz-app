@@ -9,6 +9,7 @@ import {
   type ChannelCreationInput,
 } from "../channel-templates/setup";
 import { createPresence } from "../presence/presence";
+import { createAgentMemories } from "../agents/memory";
 import type { PresenceActivity } from "../presence/activity";
 import { bindNames, type IdentityNames } from "../identity-names/service";
 import { sessionMetadata } from "../sessions/metadata";
@@ -333,6 +334,7 @@ export function createRelaySession(
       profiles.clear();
       emoji.clear();
       activity.clear();
+      memories.clear();
       presence.clear();
       archives.clear();
       workflows.clear();
@@ -499,6 +501,13 @@ export function createRelaySession(
   );
   const profiles = createProfileDirectory(verified, localViews, notify);
   const emoji = createEmojiDirectory(verified, notify);
+  let memoryConnected = !transport?.subscribe;
+  const memories = createAgentMemories(
+    transport?.readAgentMemories,
+    transport?.viewer ?? "",
+    () => !closed && !revoking && memoryConnected,
+    notify,
+  );
   const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
   const agentChoices = createAgentChoices({
     scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
@@ -1222,6 +1231,7 @@ export function createRelaySession(
     agentChoices,
     workflows: workflows.capability,
     agentActivity: activity.queries,
+    agentMemories: memories.capability,
     archives: archives.queries,
     media: (url: string, size?: "small") => transport?.media(url, size),
     /** A plugin may request writes from this same interface when the host supports them. */
@@ -1610,9 +1620,13 @@ export function createRelaySession(
     },
     state(snapshot) {
       if (closed) return;
+      memoryConnected = snapshot.status === "connected";
       activity.state(snapshot);
       presence.connected(snapshot.status === "connected");
-      if (snapshot.status !== "connected") typing.clear();
+      if (snapshot.status !== "connected") {
+        typing.clear();
+        memories.clear();
+      }
       if (
         snapshot.status !== "connected" &&
         liveSnapshot.status === "connected"
@@ -1707,6 +1721,7 @@ export function createRelaySession(
       cancelUploads();
       cacheClearEpoch++;
       activity.clear();
+      memories.clear();
       presence.clear();
       typing.clear();
       sidebarPreferences.clear();
@@ -1731,6 +1746,7 @@ export function createRelaySession(
       typing.dispose();
       lifetime.abort();
       activity.dispose();
+      memories.dispose();
       presence.dispose();
       sidebarPreferences.dispose();
       stopInterests();

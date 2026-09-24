@@ -33,12 +33,13 @@ export function BuilderLabSettings({ active = true }: { active?: boolean }) {
       .then((status) => {
         if (!cancelled) setState(status);
       })
-      .catch(() =>
-        !cancelled &&
-        setState({
-          status: "error",
-          message: "Could not check the BuilderLab login status.",
-        }),
+      .catch(
+        () =>
+          !cancelled &&
+          setState({
+            status: "error",
+            message: "Could not check the BuilderLab login status.",
+          }),
       );
     return () => {
       cancelled = true;
@@ -62,9 +63,7 @@ export function BuilderLabSettings({ active = true }: { active?: boolean }) {
           </p>
         </>
       ) : (
-        <p role="alert">
-          BuilderLab connection unavailable. {state.message}
-        </p>
+        <p role="alert">BuilderLab connection unavailable. {state.message}</p>
       )}
     </section>
   );

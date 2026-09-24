@@ -395,9 +395,7 @@ fn parse_list_agents_response(body: &[u8]) -> Option<ListAgentsResponse> {
     let Ok(parsed) = serde_json::from_slice::<Value>(body) else {
         return None;
     };
-    let Some(object) = parsed.as_object() else {
-        return None;
-    };
+    let object = parsed.as_object()?;
     let status_valid = object.get("status").is_some_and(|status| {
         status == 1 || status == "SUCCESS" || status == "LIST_AGENTS_STATUS_SUCCESS"
     });

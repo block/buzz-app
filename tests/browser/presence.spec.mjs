@@ -415,14 +415,14 @@ test("avatar choices publish through the existing socket and persist across relo
       ({ event }) => event.content === status,
     ).length;
   await expect(
-    page.getByRole("img", { name: "Your status: Active" }),
+    avatar.getByRole("img", { name: "Your status: Active" }),
   ).toBeVisible();
   await avatar.click();
   await account
     .getByRole("menuitemradio", { name: "Away", exact: true })
     .click();
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
+    avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await expect.poll(() => published("away")).toBeGreaterThan(0);
   const editor = page.getByRole("textbox", {
@@ -432,7 +432,7 @@ test("avatar choices publish through the existing socket and persist across relo
   await editor.click();
   await editor.fill("Still away while typing");
   await expect(
-    page.getByRole("img", { name: "Your status: Away" }),
+    avatar.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
   await avatar.click();
   await account
@@ -441,7 +441,7 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect.poll(() => published("offline")).toBeGreaterThan(0);
   await page.reload();
   await expect(
-    page.getByRole("img", { name: "Your status: Offline" }),
+    avatar.getByRole("img", { name: "Your status: Offline" }),
   ).toBeVisible();
   await avatar.click();
   await expect(
@@ -452,7 +452,7 @@ test("avatar choices publish through the existing socket and persist across relo
     .getByRole("menuitemradio", { name: "Automatic", exact: true })
     .click();
   await expect(
-    page.getByRole("img", { name: "Your status: Active" }),
+    avatar.getByRole("img", { name: "Your status: Active" }),
   ).toBeVisible();
   await expect.poll(() => published("online")).toBeGreaterThan(before);
   await account.screenshot({

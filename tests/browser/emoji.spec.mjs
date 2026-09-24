@@ -337,7 +337,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
           (button) => getComputedStyle(button, "::before").backgroundColor,
         ),
       )
-      .toBe("rgb(232, 232, 232)");
+      .toBe("rgb(239, 239, 240)");
     await skinTone.click();
     await expect(skinTone).toHaveAttribute("aria-selected", "");
     const toneMenu = page.locator("em-emoji-picker #root > .menu");
@@ -694,7 +694,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
         };
       });
     expect(await selectedBackground()).toMatchObject({
-      background: "rgb(232, 232, 232)",
+      background: "rgb(239, 239, 240)",
       duration: "0.12s",
       height: "28px",
       width: "28px",
@@ -723,7 +723,7 @@ test("community picker uses keyboard, proxy thumbnails, event-local history and 
     ).toEqual(categoryPositions);
     await expect
       .poll(() => selectedBackground().then(({ background }) => background))
-      .toBe("rgb(232, 232, 232)");
+      .toBe("rgb(239, 239, 240)");
     await page.emulateMedia({ reducedMotion: "reduce" });
     expect((await selectedBackground()).duration).toBe("0s");
     await page.emulateMedia({ reducedMotion: "no-preference" });

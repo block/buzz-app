@@ -140,8 +140,9 @@ test("Settings text buttons contain enlarged labels without resizing icon button
           const bounds = root.getBoundingClientRect();
           for (const button of root.querySelectorAll("button.buzz-button")) {
             const box = button.getBoundingClientRect();
-            // Shared md controls are 40px at 100%; enlarged labels may grow.
-            if (scale === 100 && box.height !== 40)
+            // Shared sm/md controls are 32/40px at 100%; enlarged labels may grow.
+            const expectedHeight = button.dataset.size === "sm" ? 32 : 40;
+            if (scale === 100 && box.height !== expectedHeight)
               failures.push(`${button.textContent}: default height changed`);
             const text = document.createRange();
             text.selectNodeContents(button);
@@ -185,7 +186,15 @@ test("Settings text buttons contain enlarged labels without resizing icon button
         exact: true,
       });
       await appearance.getByRole("radio", { name: mode, exact: true }).check();
-      await expect(appearance.getByRole("button")).toHaveCount(3);
+      await expect(appearance.getByRole("button")).toHaveCount(
+        scale === 100 ? 2 : 3,
+      );
+      await expect(
+        appearance.getByRole("button", {
+          name: "Reset text size",
+          exact: true,
+        }),
+      ).toHaveCount(scale === 100 ? 0 : 1);
       await page.evaluate(() => document.fonts.ready);
       await checkButtons(appearance, scale);
       // Shared IconButton must not inherit the enlarged text button's minimum.

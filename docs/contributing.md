@@ -69,7 +69,10 @@ need their own validation.
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
   the adapter derives a stable port from the worktree path (the same derivation
   `just web` uses) and prints the chosen URL. Different paths can still collide.
-  Desktop requires the
+  It consumes `--scheme <value>` the same way, setting the URL scheme this build
+  registers with the OS; without it, each worktree derives its own from the same
+  path, so a development build never claims the released `buzz`. See
+  [OS deep links](deep-links.md). Desktop requires the
   exact port to be free; an occupied port fails rather than opening another copy's
   server. Other arguments, including runner/application arguments after `--`, pass
   through unchanged. Port configuration is prepended so Tauri parses it even with
@@ -83,6 +86,12 @@ need their own validation.
   disabled during capture. Press Ctrl+C to finalize and validate the trace; the
   path, which opens in Instruments. Use `just profile-clean` to remove all generated
   web and desktop captures.
+- `just desktop-bundle [args...]`: bundle a debug desktop app claiming the same
+  per-worktree deep-link scheme, for macOS, where the OS routes a scheme only to a
+  bundled application. It takes the same `--scheme <value>`, defaults to a `.app`
+  bundle unless `--bundles` or `--no-bundle` says otherwise, and passes everything
+  else to `tauri build`. Release bundling stays a plain `pnpm tauri build`, which
+  registers the scheme `tauri.conf.json` declares.
 - `just design [args...]`: install locked dependencies, start the standalone
   design-system viewer, and open it in your browser. Arguments pass through to
   Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port

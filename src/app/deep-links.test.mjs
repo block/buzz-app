@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
-import { DEEP_LINK_SCHEME } from "../features/navigation/deep-links";
+import { isBuzzLink } from "../features/navigation/buzz-links";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -20,19 +20,20 @@ it("registers single-instance ahead of deep-link in the native builder, with arg
   );
 });
 
-it("declares exactly one OS scheme, agreed by the config, the shell and the webview, and bundles so installers register it", () => {
-  // The three declarations cannot be derived from one another at build time, so a
-  // change to any one must be mirrored in the other two. This is the only check.
+it("registers exactly the in-app link scheme with the OS, and bundles so installers claim it", () => {
+  // This is the release declaration: a plain `tauri build` passes no overlay, so a
+  // shipped app claims this scheme, and it must be the one in-app links already use
+  // or **Copy link** would produce addresses the OS cannot route back. Development
+  // launches overlay a per-worktree scheme through `--config`, which never lands
+  // here. The shell reads the merged value at runtime and rewrites accepted links to
+  // `buzz:`, so there is nothing for the webview to agree with.
   const config = JSON.parse(read("../../src-tauri/tauri.conf.json"));
-  expect(config.plugins["deep-link"]).toEqual({
-    desktop: { schemes: [DEEP_LINK_SCHEME] },
-  });
-  const shell = read("../../src-tauri/src/deep_links.rs");
-  expect(shell.match(/^const SCHEME: &str = "([^"]+)";$/m)?.[1]).toBe(
-    DEEP_LINK_SCHEME,
-  );
+  const schemes = config.plugins["deep-link"].desktop.schemes;
+  expect(config.plugins["deep-link"]).toEqual({ desktop: { schemes } });
+  expect(schemes).toEqual(["buzz"]);
   // RFC 3986 scheme syntax; anything else registers nowhere and fails silently.
-  expect(DEEP_LINK_SCHEME).toMatch(/^[a-z][a-z0-9+.-]*$/);
+  expect(schemes[0]).toMatch(/^[a-z][a-z0-9+.-]*$/);
+  expect(isBuzzLink(`${schemes[0]}://channel/general`)).toBe(true);
   expect(config.bundle.active).toBe(true);
 });
 

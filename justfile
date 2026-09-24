@@ -18,6 +18,11 @@ web *args: install
 desktop *args: install
     if [ "${1:-}" = "profile" ]; then shift; set -m; node scripts/profile-dev.mjs desktop "$@"; else exec node scripts/desktop-dev.mjs "$@"; fi
 
+# Bundle a debug desktop app claiming this worktree's deep-link scheme (macOS testing).
+[positional-arguments]
+desktop-bundle *args: install
+    exec node scripts/desktop-build.mjs "$@"
+
 # Remove generated CPU, network, and Instruments profiles.
 profile-clean:
     rm -rf -- .profiles

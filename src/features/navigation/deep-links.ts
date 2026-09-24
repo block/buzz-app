@@ -9,17 +9,6 @@ import { parseBuzzLink } from "./buzz-links";
 import type { OpenFailure, OpenResult } from "./controller";
 import { bindSharedTarget, parseOpenTarget, type OpenTarget } from "./targets";
 
-/** The URL scheme desktop builds claim from the OS. In-app links, including what
- * **Copy link** produces, keep the `buzz:` scheme whatever this says, so shared
- * content stays compatible with the original Buzz client; this ingress alone maps
- * the OS scheme onto those same address forms.
- *
- * Development claims `buzz-app` so a machine with the released Buzz installed routes
- * test links here rather than to Buzz. It returns to `buzz` before release. The
- * shell's `SCHEME`, `tauri.conf.json` and this value must agree; tests fail on any
- * mismatch. */
-export const DEEP_LINK_SCHEME = "buzz-app";
-
 export type DeepLinkStep =
   | Readonly<{ open: OpenTarget }>
   | Readonly<{ fail: OpenFailure }>;
@@ -42,12 +31,13 @@ export function deepLinkStep(
   url: string,
   client: Pick<Client, "viewer" | "selected">,
 ): DeepLinkStep {
-  // The shell admits only the exact OS scheme. Agree with it here instead of with
-  // URL normalization so the two gates cannot drift apart. Past the gate the link
-  // is an ordinary in-app `buzz:` link and parses as one.
-  if (typeof url !== "string" || !url.startsWith(`${DEEP_LINK_SCHEME}:`))
+  // Which scheme the OS routed is the shell's business: it admits only the schemes
+  // the compiled config registers and rewrites them to `buzz:`, so a link arriving
+  // here is an ordinary in-app link. This guard is defence in depth, and matches the
+  // shell's exact comparison rather than URL normalization, so `BUZZ:` is refused.
+  if (typeof url !== "string" || !url.startsWith("buzz:"))
     return { fail: "invalid-target" };
-  const link = parseBuzzLink(`buzz:${url.slice(DEEP_LINK_SCHEME.length + 1)}`);
+  const link = parseBuzzLink(url);
   if (!link) return { fail: "invalid-target" };
   try {
     if (link.format === "shared") {

@@ -5,6 +5,7 @@ import type {
   AgentControl,
   AgentControlState,
   AgentView,
+  CloneSettings,
 } from "../../features/agents/control";
 import { PlusIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -37,6 +38,7 @@ export function AgentControlPanel({
   const [adding, setAdding] = useState<{
     destination: string;
     owner: string;
+    initialSettings?: CloneSettings;
   } | null>(null);
   const [importSections, setImportSections] = useState<string[]>([]);
   const [importedId, setImportedId] = useState<string | null>(null);
@@ -122,7 +124,7 @@ export function AgentControlPanel({
           items={[
             {
               value: "old-buzz",
-              title: "Not imported from old Buzz",
+              title: "Import from another installation",
               content: importSections.includes("old-buzz") ? (
                 <AgentImport
                   key={importDestination}
@@ -132,6 +134,18 @@ export function AgentControlPanel({
                   commitAvailable={
                     state.status === "ready" &&
                     state.data.importAvailable !== false
+                  }
+                  onClone={
+                    control.cloneSettings && createOwner && importDestination
+                      ? (initialSettings) => {
+                          setImportSections([]);
+                          setAdding({
+                            destination: importDestination,
+                            owner: createOwner,
+                            initialSettings,
+                          });
+                        }
+                      : undefined
                   }
                   disabled={state.busy}
                   onImported={(agents) => {
@@ -150,6 +164,7 @@ export function AgentControlPanel({
           state={state}
           destination={adding.destination}
           owner={adding.owner}
+          initialSettings={adding.initialSettings}
           onClose={() => setAdding(null)}
         />
       )}

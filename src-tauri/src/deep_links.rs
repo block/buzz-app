@@ -1,4 +1,4 @@
-//! OS `buzz://` ingress. The shell holds raw URL strings in a small queue until the
+//! OS deep-link ingress. The shell holds raw URL strings in a small queue until the
 //! webview drains them, so a link that launched the app is not lost. Every parse and
 //! every authorization decision stays in TypeScript: a valid address is not
 //! authorization, and the navigation target parser remains the single gate.
@@ -6,6 +6,14 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use tauri::{ipc::Channel, Manager};
+
+/// The URL scheme this binary claims from the OS. It must agree with
+/// `plugins.deep-link.desktop.schemes` in `tauri.conf.json` (checked by a test below)
+/// and with `DEEP_LINK_SCHEME` in `src/features/navigation/deep-links.ts` (checked
+/// by Vitest). Development claims `buzz-app` so a machine with the released Buzz
+/// installed routes test links here; it returns to `buzz` before release. In-app
+/// links keep the `buzz:` scheme regardless.
+const SCHEME: &str = "buzz-app";
 
 /// A cold start can receive links before the webview exists. The newest are kept so
 /// a late reader still sees the user's latest intent. The OS bounds each URL's size.
@@ -31,16 +39,16 @@ fn scheme(raw: &str) -> Option<&str> {
 }
 
 /// Exactly the registered scheme, compared before any URL normalization. A wrongly
-/// routed `http:` link or a `BUZZ:` variant never reaches the webview from here.
+/// routed `http:` link or an upper-case variant never reaches the webview from here.
 pub(crate) fn accepts(raw: &str) -> bool {
-    scheme(raw) == Some("buzz")
+    scheme(raw) == Some(SCHEME)
 }
 
 impl DeepLinks {
     /// Hold one OS-delivered URL for the webview.
     fn push(&self, raw: &str) -> Result<(), String> {
         if !accepts(raw) {
-            return Err("Only buzz: links are accepted".into());
+            return Err(format!("Only {SCHEME}: links are accepted"));
         }
         let mut queue = self.0.lock().map_err(|_| "Deep link state unavailable")?;
         if queue.urls.len() >= MAX_PENDING {
@@ -120,7 +128,7 @@ pub(crate) fn setup<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
         }
         // Installers register the scheme; portable and development binaries do not.
         if let Err(error) = app.deep_link().register_all() {
-            eprintln!("Could not register the buzz:// scheme for this binary: {error}");
+            eprintln!("Could not register the {SCHEME}:// scheme for this binary: {error}");
         }
     }
 }
@@ -153,29 +161,53 @@ mod tests {
     use super::*;
     use tauri::ipc::InvokeResponseBody;
 
+    /// An in-app style channel link under the registered OS scheme.
+    fn channel(id: impl std::fmt::Display) -> String {
+        format!("{SCHEME}://channel/{id}")
+    }
+
     #[test]
-    fn only_the_exact_buzz_scheme_is_accepted() {
+    fn the_registered_scheme_is_a_valid_lowercase_url_scheme() {
+        // RFC 3986: a letter, then letters, digits, `+`, `-` or `.`. Anything else
+        // would register nowhere and fail silently on every platform.
+        let mut chars = SCHEME.chars();
+        assert!(chars.next().is_some_and(|c| c.is_ascii_lowercase()));
+        assert!(chars.all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || "+-.".contains(c)));
+    }
+
+    #[test]
+    fn the_config_registers_the_same_scheme_with_the_os() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        assert_eq!(
+            config["plugins"]["deep-link"]["desktop"]["schemes"],
+            serde_json::json!([SCHEME])
+        );
+    }
+
+    #[test]
+    fn only_the_exact_registered_scheme_is_accepted() {
         for raw in [
-            "buzz://channel/general",
-            "buzz://open?target=%7B%7D",
-            "buzz://join?relay=example",
-            "buzz:agent-activity?agent=x",
-            "buzz:",
+            channel("general"),
+            format!("{SCHEME}://open?target=%7B%7D"),
+            format!("{SCHEME}://join?relay=example"),
+            format!("{SCHEME}:agent-activity?agent=x"),
+            format!("{SCHEME}:"),
         ] {
-            assert!(accepts(raw), "{raw}");
+            assert!(accepts(&raw), "{raw}");
         }
         for raw in [
-            "BUZZ://channel/general",
-            "Buzz://channel/general",
-            "http://example.com",
-            "https://buzz",
-            "buzz",
-            "",
-            " buzz://channel/general",
-            "javascript:alert(1)",
-            "xbuzz://channel/general",
+            format!("{}://channel/general", SCHEME.to_uppercase()),
+            "http://example.com".to_owned(),
+            format!("https://{SCHEME}"),
+            SCHEME.to_owned(),
+            String::new(),
+            format!(" {SCHEME}://channel/general"),
+            "javascript:alert(1)".to_owned(),
+            format!("x{SCHEME}://channel/general"),
+            format!("{SCHEME}x://channel/general"),
         ] {
-            assert!(!accepts(raw), "{raw}");
+            assert!(!accepts(&raw), "{raw}");
         }
     }
 
@@ -183,15 +215,11 @@ mod tests {
     fn held_links_drain_oldest_first_and_only_once() {
         let links = DeepLinks::default();
         for id in ["a", "b", "c"] {
-            links.push(&format!("buzz://channel/{id}")).unwrap();
+            links.push(&channel(id)).unwrap();
         }
         assert_eq!(
             links.drain().unwrap(),
-            vec![
-                "buzz://channel/a".to_owned(),
-                "buzz://channel/b".to_owned(),
-                "buzz://channel/c".to_owned(),
-            ]
+            vec![channel("a"), channel("b"), channel("c")]
         );
         assert_eq!(links.drain().unwrap(), Vec::<String>::new());
     }
@@ -200,24 +228,23 @@ mod tests {
     fn the_bound_keeps_the_newest_links() {
         let links = DeepLinks::default();
         for index in 0..MAX_PENDING + 2 {
-            links.push(&format!("buzz://channel/{index}")).unwrap();
+            links.push(&channel(index)).unwrap();
         }
         let held = links.drain().unwrap();
         assert_eq!(held.len(), MAX_PENDING);
-        assert_eq!(held.first().map(String::as_str), Some("buzz://channel/2"));
-        assert_eq!(
-            held.last().cloned(),
-            Some(format!("buzz://channel/{}", MAX_PENDING + 1))
-        );
+        assert_eq!(held.first().cloned(), Some(channel(2)));
+        assert_eq!(held.last().cloned(), Some(channel(MAX_PENDING + 1)));
     }
 
     #[test]
     fn rejected_schemes_are_never_held() {
         let links = DeepLinks::default();
         assert!(links
-            .push("https://example.com/?next=buzz://channel/general")
+            .push(&format!("https://example.com/?next={}", channel("general")))
             .is_err());
-        assert!(links.push("BUZZ://channel/general").is_err());
+        assert!(links
+            .push(&format!("{}://channel/general", SCHEME.to_uppercase()))
+            .is_err());
         assert!(links.drain().unwrap().is_empty());
     }
 
@@ -234,8 +261,8 @@ mod tests {
                 Ok(())
             }))
             .unwrap();
-        links.push("buzz://channel/a").unwrap();
-        links.push("buzz://channel/b").unwrap();
+        links.push(&channel("a")).unwrap();
+        links.push(&channel("b")).unwrap();
         assert!(links.push("http://example.com").is_err());
         assert_eq!(
             *seen.lock().unwrap(),

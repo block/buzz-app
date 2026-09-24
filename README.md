@@ -57,9 +57,12 @@ Press Ctrl+C to stop the server.
 
 ### OS deep links
 
-Desktop builds register the `buzz://` scheme. Opening a copied
-`buzz://open?target=…` link or a legacy `buzz://message?channel=…&id=…` link
-outside the app focuses Buzz and opens that conversation, on a cold start too.
+Desktop builds register a URL scheme with the OS: `buzz-app://` during development,
+so a machine with the released Buzz installed routes test links here, and `buzz://`
+at release. In-app links, including **Copy link**, stay `buzz://` either way.
+Opening a copied `buzz://open?target=…` link or a legacy
+`buzz://message?channel=…&id=…` link outside the app, with its prefix replaced by
+`buzz-app://`, focuses the app and opens that conversation, on a cold start too.
 macOS only routes the scheme to a bundled app, so test with
 `bin/pnpm tauri build --debug --bundles app`; Windows and Linux dev builds register
 themselves at launch. See [OS deep links](docs/deep-links.md) for per-platform steps

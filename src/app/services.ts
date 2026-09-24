@@ -58,7 +58,7 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
-  // OS buzz:// links; a no-op in the browser build.
+  // OS deep links; a no-op in the browser build.
   ctx.effect(() => bindDeepLinks(navigationHost, communities));
   if (notifications.indicator.available)
     ctx.effect(() =>

@@ -1,4 +1,4 @@
-// OS-delivered buzz:// links. The native shell holds raw strings; this module is the
+// OS-delivered deep links. The native shell holds raw strings; this module is the
 // only place that turns them into typed targets, and the ordinary navigation
 // admission path alone decides whether a target opens. Browsers have no OS scheme
 // handler, so everything here is a no-op outside Tauri.
@@ -8,6 +8,17 @@ import type { ClientSnapshot } from "../communities/service";
 import { parseBuzzLink } from "./buzz-links";
 import type { OpenFailure, OpenResult } from "./controller";
 import { bindSharedTarget, parseOpenTarget, type OpenTarget } from "./targets";
+
+/** The URL scheme desktop builds claim from the OS. In-app links, including what
+ * **Copy link** produces, keep the `buzz:` scheme whatever this says, so shared
+ * content stays compatible with the original Buzz client; this ingress alone maps
+ * the OS scheme onto those same address forms.
+ *
+ * Development claims `buzz-app` so a machine with the released Buzz installed routes
+ * test links here rather than to Buzz. It returns to `buzz` before release. The
+ * shell's `SCHEME`, `tauri.conf.json` and this value must agree; tests fail on any
+ * mismatch. */
+export const DEEP_LINK_SCHEME = "buzz-app";
 
 export type DeepLinkStep =
   | Readonly<{ open: OpenTarget }>
@@ -31,11 +42,12 @@ export function deepLinkStep(
   url: string,
   client: Pick<Client, "viewer" | "selected">,
 ): DeepLinkStep {
-  // The shell admits only the exact `buzz` scheme. Agree with it here instead of
-  // with URL normalization so the two gates cannot drift apart.
-  if (typeof url !== "string" || !url.startsWith("buzz:"))
+  // The shell admits only the exact OS scheme. Agree with it here instead of with
+  // URL normalization so the two gates cannot drift apart. Past the gate the link
+  // is an ordinary in-app `buzz:` link and parses as one.
+  if (typeof url !== "string" || !url.startsWith(`${DEEP_LINK_SCHEME}:`))
     return { fail: "invalid-target" };
-  const link = parseBuzzLink(url);
+  const link = parseBuzzLink(`buzz:${url.slice(DEEP_LINK_SCHEME.length + 1)}`);
   if (!link) return { fail: "invalid-target" };
   try {
     if (link.format === "shared") {

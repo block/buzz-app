@@ -3,6 +3,7 @@ import type { ClientSnapshot } from "../communities/service";
 import {
   bindDeepLinks,
   createDeepLinkShell,
+  DEEP_LINK_SCHEME,
   deepLinkStep,
   type DeepLinkShell,
 } from "./deep-links";
@@ -33,16 +34,33 @@ const message =
   "9a77911a6e94147b1ce2cdb3c4e87046c67a29f29f3dd25626134621a5f6924b";
 const root = "b".repeat(64);
 const client = { viewer, selected: origin };
-const legacyMessage = `buzz://message?channel=general&id=${message}&thread=${root}`;
-const shared = targetLink({
-  version: 1,
-  kind: "conversation",
-  scope: { viewer: "c".repeat(64), communityOrigin: elsewhere },
-  channelId: "general",
-  messageId: message,
-});
+/** The OS form of an in-app `buzz:` link: the same address under the registered
+ * scheme. This is what the shell hands over, and the only form admitted here. */
+const osLink = (buzzLink: string) =>
+  `${DEEP_LINK_SCHEME}:${buzzLink.slice("buzz:".length)}`;
+const legacyMessage = osLink(
+  `buzz://message?channel=general&id=${message}&thread=${root}`,
+);
+const shared = osLink(
+  targetLink({
+    version: 1,
+    kind: "conversation",
+    scope: { viewer: "c".repeat(64), communityOrigin: elsewhere },
+    channelId: "general",
+    messageId: message,
+  }),
+);
 const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 
+it("leaves Copy link on the in-app buzz: scheme; only the OS ingress speaks the registered one", () => {
+  // Shared content must stay readable by the original client whatever scheme the
+  // desktop build claims, so the OS scheme never leaks into produced links.
+  const copied = targetLink({ version: 1, kind: "home" });
+  expect(copied.startsWith("buzz://open?target=")).toBe(true);
+  expect(deepLinkStep(osLink(copied), { selected: null })).toEqual({
+    open: { version: 1, kind: "home" },
+  });
+});
 it("binds a shared link to the signed-in viewer and keeps the link's own community", () => {
   const bound: OpenTarget = {
     version: 1,
@@ -63,23 +81,27 @@ it("binds a shared link to the signed-in viewer and keeps the link's own communi
 it("opens unscoped shared links without any client identity", () => {
   const anonymous = { selected: null };
   expect(
-    deepLinkStep(targetLink({ version: 1, kind: "home" }), anonymous),
+    deepLinkStep(osLink(targetLink({ version: 1, kind: "home" })), anonymous),
   ).toEqual({ open: { version: 1, kind: "home" } });
   expect(
     deepLinkStep(
-      targetLink({ version: 1, kind: "settings", section: "appearance" }),
+      osLink(
+        targetLink({ version: 1, kind: "settings", section: "appearance" }),
+      ),
       anonymous,
     ),
   ).toEqual({ open: { version: 1, kind: "settings", section: "appearance" } });
   expect(
     deepLinkStep(
-      targetLink({
-        version: 1,
-        kind: "page",
-        pluginId: "buzz.projects",
-        pageId: "projects",
-        scope: null,
-      }),
+      osLink(
+        targetLink({
+          version: 1,
+          kind: "page",
+          pluginId: "buzz.projects",
+          pageId: "projects",
+          scope: null,
+        }),
+      ),
       anonymous,
     ),
   ).toEqual({
@@ -103,7 +125,7 @@ it("binds legacy message and channel links to the selected community and viewer"
       threadRootId: root,
     },
   });
-  expect(deepLinkStep("buzz://channel/general", client)).toEqual({
+  expect(deepLinkStep(osLink("buzz://channel/general"), client)).toEqual({
     open: {
       version: 1,
       kind: "conversation",
@@ -113,7 +135,7 @@ it("binds legacy message and channel links to the selected community and viewer"
   });
   expect(
     deepLinkStep(
-      `buzz://message?channel=general&id=${message.toUpperCase()}`,
+      osLink(`buzz://message?channel=general&id=${message.toUpperCase()}`),
       client,
     ),
   ).toEqual({
@@ -128,43 +150,52 @@ it("binds legacy message and channel links to the selected community and viewer"
 });
 it("fails legacy links as unavailable without a selected community or identity, never inventing one", () => {
   expect(
-    deepLinkStep("buzz://channel/general", { viewer, selected: null }),
+    deepLinkStep(osLink("buzz://channel/general"), { viewer, selected: null }),
   ).toEqual({ fail: "unavailable" });
   expect(deepLinkStep(legacyMessage, { selected: origin })).toEqual({
     fail: "unavailable",
   });
 });
 it.each([
-  "buzz://join?relay=example&code=abc123",
-  "buzz://join?relay=example",
-  "buzz://pr?id=1&owner=alice&d=repo",
-  "buzz://issue?id=1&owner=alice&d=repo",
-  "buzz://connect?relay=example",
-  "buzz://add-community?relay=example",
-  "buzz://unknown/general",
-  `buzz:agent-activity?agent=${"a".repeat(64)}`,
-  "BUZZ://channel/general",
-  `Buzz://message?channel=general&id=${message}`,
-  "buzz://user@channel/general",
-  "buzz://channel:443/general",
-  "buzz://channel/general?relay=evil",
+  osLink("buzz://join?relay=example&code=abc123"),
+  osLink("buzz://join?relay=example"),
+  osLink("buzz://pr?id=1&owner=alice&d=repo"),
+  osLink("buzz://issue?id=1&owner=alice&d=repo"),
+  osLink("buzz://connect?relay=example"),
+  osLink("buzz://add-community?relay=example"),
+  osLink("buzz://unknown/general"),
+  osLink(`buzz:agent-activity?agent=${"a".repeat(64)}`),
+  // Only the exact scheme: no other case, prefix, suffix or padding.
+  `${DEEP_LINK_SCHEME.toUpperCase()}://channel/general`,
+  `${DEEP_LINK_SCHEME.replace(/^./, (c) => c.toUpperCase())}://message?channel=general&id=${message}`,
+  `x${DEEP_LINK_SCHEME}://channel/general`,
+  `${DEEP_LINK_SCHEME}x://channel/general`,
+  ` ${DEEP_LINK_SCHEME}://channel/general`,
+  `${DEEP_LINK_SCHEME}`,
+  osLink("buzz://user@channel/general"),
+  osLink("buzz://channel:443/general"),
+  osLink("buzz://channel/general?relay=evil"),
   `${legacyMessage}#fragment`,
   `${legacyMessage}&viewer=${"b".repeat(64)}`,
-  "buzz://message?channel=general&id=bad",
-  "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D&extra=1",
-  "https://example.com/?next=buzz://channel/general",
+  osLink("buzz://message?channel=general&id=bad"),
+  osLink(
+    "buzz://open?target=%7B%22version%22%3A1%2C%22kind%22%3A%22home%22%7D&extra=1",
+  ),
+  `https://example.com/?next=${osLink("buzz://channel/general")}`,
   "javascript:alert(1)",
   "",
   "not a url",
-  `buzz://open?target=${"x".repeat(40_000)}`,
-  `buzz://open?target=${encodeURIComponent(
-    JSON.stringify({
-      version: 1,
-      kind: "settings",
-      section: "a".repeat(9_000),
-    }),
-  )}`,
-  `buzz://channel/${"g".repeat(40_000)}`,
+  osLink(`buzz://open?target=${"x".repeat(40_000)}`),
+  osLink(
+    `buzz://open?target=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "settings",
+        section: "a".repeat(9_000),
+      }),
+    )}`,
+  ),
+  osLink(`buzz://channel/${"g".repeat(40_000)}`),
 ])(
   "fails an unparseable OS link as invalid-target instead of dropping it: %s",
   (url) => {
@@ -244,7 +275,7 @@ const legacyOpen = `open:${JSON.stringify({
 })}`;
 
 it("drains the shell at startup and opens a held link only once the client is ready", async () => {
-  const t = harness(loading, ["buzz://channel/general"]);
+  const t = harness(loading, [osLink("buzz://channel/general")]);
   await settle();
   expect(t.take).toHaveBeenCalledTimes(1);
   expect(t.log).toEqual([]);
@@ -253,7 +284,7 @@ it("drains the shell at startup and opens a held link only once the client is re
   t.stop();
 });
 it("waits for loading to finish even for links that will fail, then reports them in arrival order", async () => {
-  const t = harness(loading, ["buzz://join?relay=example"]);
+  const t = harness(loading, [osLink("buzz://join?relay=example")]);
   await settle();
   expect(t.host.fail).not.toHaveBeenCalled();
   t.become({ status: "unavailable" });
@@ -263,7 +294,11 @@ it("waits for loading to finish even for links that will fail, then reports them
 it("opens later arrivals in order and surfaces unparseable ones through the host", async () => {
   const t = harness(ready);
   await settle();
-  t.arrive("buzz://channel/general", "buzz://join?relay=example", shared);
+  t.arrive(
+    osLink("buzz://channel/general"),
+    osLink("buzz://join?relay=example"),
+    shared,
+  );
   await settle();
   expect(t.log).toEqual([
     legacyOpen,
@@ -292,7 +327,7 @@ it("fails a legacy link as unavailable when the ready client has no selected com
 it("ignores non-string shell entries and keeps going", async () => {
   const t = harness(ready);
   await settle();
-  t.arrive(42, null, "buzz://channel/general");
+  t.arrive(42, null, osLink("buzz://channel/general"));
   await settle();
   expect(t.log).toEqual([legacyOpen]);
   t.stop();
@@ -301,7 +336,7 @@ it("reports a failing shell read without throwing or navigating", async () => {
   const error = vi.spyOn(console, "error").mockImplementation(() => {});
   const t = harness(ready);
   t.take.mockRejectedValueOnce(new Error("no shell"));
-  t.arrive("buzz://channel/general");
+  t.arrive(osLink("buzz://channel/general"));
   await settle();
   expect(error).toHaveBeenCalledWith(
     "Could not read pending deep links",
@@ -317,7 +352,7 @@ it("still drains once when the shell cannot deliver updates, without aborting st
     host,
     { snapshot: () => ready, subscribe: () => () => {} },
     {
-      take: async () => ["buzz://join?relay=example"],
+      take: async () => [osLink("buzz://join?relay=example")],
       watch() {
         throw new Error("no channel");
       },
@@ -332,12 +367,12 @@ it("still drains once when the shell cannot deliver updates, without aborting st
   stop();
 });
 it("stops draining and reacting after disposal", async () => {
-  const t = harness(loading, ["buzz://channel/general"]);
+  const t = harness(loading, [osLink("buzz://channel/general")]);
   await settle();
   t.stop();
   expect(t.watchers.size).toBe(0);
   t.become({ status: "ready", viewer, selected: origin });
-  t.arrive("buzz://channel/general");
+  t.arrive(osLink("buzz://channel/general"));
   await settle();
   expect(t.take).toHaveBeenCalledTimes(1);
   expect(t.log).toEqual([]);
@@ -359,6 +394,7 @@ it("bridges the Tauri shell with raw strings only and detaches its ping channel 
   native.value = true;
   let channel: { onmessage: (response: unknown) => void } | undefined;
   invoked.fn.mockImplementation(async (command, args) => {
+    // The bridge does not interpret what it carries; the scheme is irrelevant here.
     if (command === "deep_link_take")
       return ["buzz://channel/general", 7, null];
     if (command === "deep_link_watch") {

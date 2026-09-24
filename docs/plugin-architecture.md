@@ -356,7 +356,7 @@ verified thread, reveal the exact message after bounded history loading, and onl
 then acknowledge navigation. Supplied root hints do not override verified events.
 Missing or unavailable messages report failure. Ingress adapters must reuse this
 validated target/completion lifecycle; notification clicks
-([notifications](notifications.md)) and OS-delivered `buzz://` links on desktop
+([notifications](notifications.md)) and OS-delivered deep links on desktop
 ([OS deep links](deep-links.md)) do. Legacy OS links bind to the selected
 community; an OS link that does not parse fails `invalid-target` through the same
 failure notice rather than being dropped.

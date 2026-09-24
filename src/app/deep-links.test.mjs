@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { expect, it } from "vitest";
+import { DEEP_LINK_SCHEME } from "../features/navigation/deep-links";
 
 const read = (path) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -19,11 +20,19 @@ it("registers single-instance ahead of deep-link in the native builder, with arg
   );
 });
 
-it("declares exactly the buzz scheme and bundles, so installers register it with the OS", () => {
+it("declares exactly one OS scheme, agreed by the config, the shell and the webview, and bundles so installers register it", () => {
+  // The three declarations cannot be derived from one another at build time, so a
+  // change to any one must be mirrored in the other two. This is the only check.
   const config = JSON.parse(read("../../src-tauri/tauri.conf.json"));
   expect(config.plugins["deep-link"]).toEqual({
-    desktop: { schemes: ["buzz"] },
+    desktop: { schemes: [DEEP_LINK_SCHEME] },
   });
+  const shell = read("../../src-tauri/src/deep_links.rs");
+  expect(shell.match(/^const SCHEME: &str = "([^"]+)";$/m)?.[1]).toBe(
+    DEEP_LINK_SCHEME,
+  );
+  // RFC 3986 scheme syntax; anything else registers nowhere and fails silently.
+  expect(DEEP_LINK_SCHEME).toMatch(/^[a-z][a-z0-9+.-]*$/);
   expect(config.bundle.active).toBe(true);
 });
 

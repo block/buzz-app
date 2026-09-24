@@ -26,13 +26,15 @@
   vertical-align: middle;
 }
 .emojiFallback {
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   font-size: var(--user-status-emoji-size, 20px);
   line-height: 1;
   transform: translateY(var(--user-status-emoji-offset, 0px));
+}
+.emojiFallback[data-custom] {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .fields {
   display: grid;

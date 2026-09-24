@@ -43,6 +43,7 @@ export function StatusEmoji({
   ) : (
     <span
       className={styles.emojiFallback}
+      data-custom={code ? "" : undefined}
       aria-hidden={decorative || undefined}
     >
       {value}

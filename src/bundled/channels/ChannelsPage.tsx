@@ -335,7 +335,12 @@ function ChannelWorkspace({
   const threadTrigger = useRef<HTMLElement | null>(null);
   const [sectionMenu, setSectionMenu] = useState<{ key: string }>();
   const [sent, setSent] = useState<{ channelId: string; id: string }>();
-  const sidebar = useSidebarView(scope, startup.ready);
+  const sidebar = useSidebarView(
+    scope,
+    startup.ready &&
+      list.status === "ready" &&
+      preferences.status !== "loading",
+  );
   const { channels, profiles: dmProfiles } = useChannelLabels(
     list.channels,
     queries.profiles,

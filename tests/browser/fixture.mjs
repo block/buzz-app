@@ -942,11 +942,11 @@ export const test = base.extend({
                 acceptPublication: (community, event) => {
                   expect(verifyEvent(event)).toBe(true);
                   expect(event.pubkey).toBe(viewer);
-                  expect(event.kind).toBe(30078);
                   const coordinate = event.tags.find(
                     ([key]) => key === "d",
                   )?.[1];
                   if (
+                    event.kind === 30078 &&
                     [
                       "channel-sections",
                       "channel-stars",

@@ -20,7 +20,10 @@ import { createRelaySession } from "../relay/session";
 import { keypair, message, roster, signed } from "../relay/testing";
 import { MessageComposer } from "./MessageComposer";
 import { MediaReviewViewer } from "./MediaReviewViewer";
+import { composerDOMFixture } from "./composer-testing";
 import { useFileDrop } from "./use-file-drop";
+
+composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {

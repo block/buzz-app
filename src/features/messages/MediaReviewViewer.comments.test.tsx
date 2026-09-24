@@ -8,6 +8,9 @@ import type { RelayEvent } from "../relay/events";
 import { createRelaySession } from "../relay/session";
 import { keypair, message, metadata, roster, signed } from "../relay/testing";
 import { MediaReviewViewer } from "./MediaReviewViewer";
+import { composerDOMFixture } from "./composer-testing";
+
+composerDOMFixture();
 
 const owners: ReturnType<typeof createRelaySession>[] = [];
 

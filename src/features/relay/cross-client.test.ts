@@ -185,7 +185,7 @@ describe("cross-client rich content compatibility", () => {
     ]);
   });
 
-  it("renders spoiler syntax as ordinary literal text", () => {
+  it("fold preserves spoiler delimiters", () => {
     const row = fold(message(alice, channel, "Before ||secret|| after", 10));
 
     expect(row?.content).toBe("Before ||secret|| after");

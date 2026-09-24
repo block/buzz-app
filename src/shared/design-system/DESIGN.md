@@ -261,15 +261,13 @@ Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
 
-## Menu inset corners
+## Menu row corners
 
-Shared menu edge items follow the popup's inset curve: panel radius minus popup
-padding and border (24px − 4px − 1px = 19px at the default scale). A single item
-uses that radius on all four corners; multi-item menus use it only on the top
-corners of the first item and bottom corners of the last. Interior corners keep
-the row radius. The shared recipe handles direct items and edge radio groups,
-ignoring Base UI focus/portal sentinels. Do not add feature-local radius overrides
-or change the global row radius to correct a menu.
+Every shared menu item uses `--radius-pill` on all four corners. First, middle and
+last rows keep the same fully rounded highlight, so moving between them does not
+change its shape. Direct items, grouped choices and submenu triggers share this
+recipe. Do not add positional or feature-local radius overrides, derive a special
+menu inset radius, or change the global row radius to correct a menu.
 
 ## Align row content, not state backgrounds
 

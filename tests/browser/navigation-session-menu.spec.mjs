@@ -35,21 +35,23 @@ test("channel context menu opens and resumes a session draft without a row menu 
   await expect(start).toBeVisible();
   await expect(menu.getByRole("menuitem")).toHaveCount(1);
   await expect(alpha).toHaveAttribute("aria-current", "page");
-  // CSS inset geometry needs a real layout engine. A lone item follows all four
-  // popup corners in both themes, independent of available viewport width.
+  // CSS geometry needs a real layout engine. A lone item uses the shared full-
+  // round token in both themes, independent of available viewport width.
   for (const mode of ["light", "dark"]) {
     await page.evaluate((value) => {
       document.documentElement.dataset.colorMode = value;
     }, mode);
     for (const width of [720, 1000, 1440]) {
       await page.setViewportSize({ width, height: 950 });
-      const inset = await menu.evaluate((popup) => {
-        const style = getComputedStyle(popup);
-        return (
-          Number.parseFloat(style.borderTopLeftRadius) -
-          Number.parseFloat(style.paddingTop) -
-          Number.parseFloat(style.borderTopWidth)
+      const radius = await start.evaluate((element) => {
+        // The shared pill token is rem-based; computed corner values are pixels.
+        const rem = Number.parseFloat(
+          getComputedStyle(element).getPropertyValue("--radius-pill"),
         );
+        const rootSize = Number.parseFloat(
+          getComputedStyle(document.documentElement).fontSize,
+        );
+        return `${rem * rootSize}px`;
       });
       for (const corner of [
         "top-left",
@@ -57,7 +59,7 @@ test("channel context menu opens and resumes a session draft without a row menu 
         "bottom-left",
         "bottom-right",
       ]) {
-        await expect(start).toHaveCSS(`border-${corner}-radius`, `${inset}px`);
+        await expect(start).toHaveCSS(`border-${corner}-radius`, radius);
       }
     }
   }

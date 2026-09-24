@@ -940,7 +940,11 @@ function ChannelWorkspace({
       }
     : preferences.data;
   const sections = startup.ready
-    ? sidebarSections(sidebarChannels, displayedPreferences, hiddenDms.hiddenIds)
+    ? sidebarSections(
+        sidebarChannels,
+        displayedPreferences,
+        hiddenDms.hiddenIds,
+      )
     : [];
   const closeSectionMenu = useCallback(() => setSectionMenu(undefined), []);
   const setSectionSort = (key: string, mode: "alpha" | "recent") => {

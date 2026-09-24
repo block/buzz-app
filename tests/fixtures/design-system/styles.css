@@ -446,3 +446,51 @@
     overflow-y: auto;
   }
 }
+
+/* Form documentation layout only; controls come from the shared system. */
+.form-doc-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-block: var(--space-6);
+}
+.form-doc-preview {
+  width: 100%;
+}
+.form-doc-preview[data-narrow="true"] {
+  max-width: 22rem;
+}
+.form-doc-example {
+  display: grid;
+  gap: var(--space-3);
+  margin-bottom: var(--space-8);
+}
+.form-doc-example .component-specimen-frame {
+  display: block;
+}
+.form-doc-fields {
+  display: grid;
+  gap: var(--space-4);
+  min-width: 0;
+  width: 100%;
+}
+.form-doc-input-action {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: start;
+}
+.form-doc-input-action > input {
+  flex: 1 1 10rem;
+}
+.form-doc-guidance {
+  display: grid;
+  gap: var(--space-4);
+  margin-block: var(--space-8);
+}
+.form-doc-code {
+  overflow: auto;
+  padding: var(--space-4);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+}

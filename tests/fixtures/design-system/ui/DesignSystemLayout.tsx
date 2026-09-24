@@ -46,6 +46,7 @@ const SECTIONS: NavSection[] = [
   {
     heading: "System",
     items: [
+      ["Forms", "/design/forms"],
       ["Foundation alignment", "/design/foundation-alignment"],
       ["Maintaining the system", "/design/maintaining"],
       ["DESIGN.md", "/design/design-guide"],

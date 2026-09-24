@@ -3,19 +3,44 @@ import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
 
+const fixtureImage = `<svg xmlns="http://www.w3.org/2000/svg" width="640" height="360"><rect width="640" height="360" fill="#666"/></svg>`;
+
+function fixtureMediaPlugin() {
+  return {
+    name: "messages-fixture-media",
+    configureServer(server) {
+      server.middlewares.use("/api/relay/media", (req, res, next) => {
+        if (req.method !== "GET") return next();
+        const url = new URL(req.url ?? "", "http://fixture.local");
+        const target = url.searchParams.get("url") ?? "";
+        if (!target.startsWith("https://fixture.test/media/")) return next();
+        res.writeHead(200, {
+          "Content-Type": "image/svg+xml",
+          "Content-Length": Buffer.byteLength(fixtureImage),
+        });
+        res.end(fixtureImage);
+      });
+    },
+  };
+}
+
+function createMessagesServer() {
+  return createServer({
+    root: fileURLToPath(new URL("../../", import.meta.url)),
+    configFile: false,
+    envFile: false,
+    plugins: [fixtureMediaPlugin(), react()],
+    logLevel: "error",
+    server: { host: "127.0.0.1", port: 0, strictPort: false },
+  });
+}
+
 // Independent source consumer proves safe ordinary-prop reuse, with real React,
 // thread reader and durable outbox. No developer env, broker, credentials or relay.
 test("media review hands off the thread draft, contains focus and keeps narrow controls reachable", async ({
   page,
 }) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();
@@ -87,14 +112,7 @@ test("media review hands off the thread draft, contains focus and keeps narrow c
 test("shared thread UI auto-loads, follows live replies, retries and isolates retargeted drafts", async ({
   page,
 }, testInfo) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   try {
@@ -428,14 +446,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
 test("media review completions stay visible and preserve modal keyboard ownership", async ({
   page,
 }) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();
@@ -513,14 +524,7 @@ test("media review completions stay visible and preserve modal keyboard ownershi
 test("exact reply media keeps its selected attachment and canonical thread", async ({
   page,
 }) => {
-  const server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0, strictPort: false },
-  });
+  const server = await createMessagesServer();
   await server.listen();
   try {
     const address = server.httpServer.address();

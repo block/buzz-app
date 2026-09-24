@@ -1318,3 +1318,69 @@ test("message/reaction deletions pass real signing and publication without admit
     await h.close();
   }
 });
+
+test("direct-message transport signs only bounded participants and binds the returned channel to its receipt", async () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const h = await harness((call) =>
+    Response.json({
+      accepted: true,
+      event_id: call.body.id,
+      message: `response:${JSON.stringify({ channel_id: channelId })}`,
+    }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const recipients = ["a".repeat(64), "b".repeat(64)];
+    await expect(
+      transport.openDirectMessage(recipients, new AbortController().signal),
+    ).resolves.toBe(channelId);
+    const event = h.calls[0].body;
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(41010);
+    expect(event.pubkey).toBe(h.event.pubkey);
+    expect(event.content).toBe("");
+    expect(event.tags.filter(([tag]) => tag === "p")).toEqual(
+      recipients.map((key) => ["p", key]),
+    );
+    await transport.openDirectMessage(recipients, new AbortController().signal);
+    expect(h.calls[1].body.id).not.toBe(event.id);
+    for (const pubkeys of [
+      [],
+      [h.event.pubkey],
+      [recipients[0], recipients[0]],
+      Array(9).fill(recipients[0]),
+      ["invalid"],
+    ]) {
+      expect((await h.post("direct-message", { pubkeys })).status).toBe(400);
+    }
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  {
+    accepted: false,
+    message: 'response:{"channel_id":"11111111-1111-4111-8111-111111111111"}',
+  },
+  {
+    accepted: true,
+    event_id: "wrong",
+    message: 'response:{"channel_id":"11111111-1111-4111-8111-111111111111"}',
+  },
+  { accepted: true, message: 'response:{"channel_id":"not-a-channel"}' },
+])("direct-message rejects an invalid command receipt: %j", async (receipt) => {
+  const h = await harness((call) =>
+    Response.json({ event_id: call.body.id, ...receipt }),
+  );
+  try {
+    const response = await h.post("direct-message", {
+      pubkeys: ["a".repeat(64)],
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).not.toHaveProperty("channelId");
+  } finally {
+    await h.close();
+  }
+});

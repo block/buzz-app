@@ -1,3 +1,4 @@
+import { Field } from "../../shared/design-system/ui/Field";
 import { Input } from "../../shared/design-system/ui/Input";
 import { useState } from "react";
 import type { PluginModule } from "../../plugins/api";
@@ -142,21 +143,22 @@ function LinkLab() {
           </p>
         </section>
         <section>
-          <label className={styles.label} htmlFor="link-url">
-            Try a URL
-          </label>
-          <Input
-            id="link-url"
-            value={url}
-            onChange={(event) => setUrl(event.target.value)}
-            spellCheck={false}
-          />
+          <Field
+            label="Try a URL"
+            error={
+              !linkKind(url)
+                ? "Enter an HTTP, HTTPS, or supported Buzz link."
+                : undefined
+            }
+          >
+            <Input
+              id="link-url"
+              value={url}
+              onChange={(event) => setUrl(event.target.value)}
+              spellCheck={false}
+            />
+          </Field>
           <p>Take a look at {preview(url)}.</p>
-          {!linkKind(url) && (
-            <p className={styles.label}>
-              Enter an HTTP, HTTPS, or supported Buzz link.
-            </p>
-          )}
         </section>
       </div>
       <p className={styles.status} role="status">

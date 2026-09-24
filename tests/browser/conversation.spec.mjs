@@ -230,6 +230,12 @@ test("independent packed author consumer and native-installed contribution survi
         ),
       )
       .toEqual({
+        // The editor now persists its versioned document alongside the exact
+        // text/recipient projection consumed by independently built plugins.
+        document: {
+          version: 1,
+          content: expect.objectContaining({ type: "doc" }),
+        },
         text: "Hi @Member and @Member ",
         recipients: [
           { pubkey: member, name: "Member", start: 3, end: 10 },

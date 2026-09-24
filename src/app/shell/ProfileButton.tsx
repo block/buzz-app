@@ -66,8 +66,11 @@ export function ProfileButton({
       onOpenChangeComplete={(open) => {
         // Let the menu finish its keyboard handling before handing focus to
         // the page. Other dismissals retain the shared menu's focus behavior.
-        if (!open && openingSettings.current)
-          document.getElementById("main-content")?.focus();
+        if (!open && openingSettings.current) {
+          const main = document.getElementById("main-content");
+          // A user may already be editing Settings while the menu animates out.
+          if (!main?.contains(document.activeElement)) main?.focus();
+        }
       }}
     >
       <MenuTrigger

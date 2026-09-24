@@ -837,9 +837,9 @@ export const TYPE_ROLES: TypeRole[] = [
   },
   {
     token: "text-body",
-    pointsAt: "body/body-medium",
-    size: "16px",
-    lineHeight: "24px",
+    pointsAt: "body/body-medium (Buzz 14px override)",
+    size: "14px",
+    lineHeight: "20px",
     tracking: "-0.005em",
     weight: "400",
     use: "Reading text and messages.",
@@ -1132,7 +1132,7 @@ export const RADII = [
   {
     token: "radius-control",
     variable: "--radius-control",
-    value: "8px",
+    value: "12px",
     use: "Inputs and compact icon controls. Text buttons use radius-pill.",
   },
   {

@@ -484,11 +484,13 @@ function Timeline({
         >
           {rows.map((row, index) => {
             const day =
-              index === 0 ||
-              new Date(
-                (rows[index - 1]?.createdAt ?? 0) * 1000,
-              ).toDateString() !==
-                new Date(row.createdAt * 1000).toDateString();
+              index === 0
+                ? queries.channels.get?.(channelId)?.channelType !== "dm" ||
+                  window.hasMore
+                : new Date(
+                    (rows[index - 1]?.createdAt ?? 0) * 1000,
+                  ).toDateString() !==
+                  new Date(row.createdAt * 1000).toDateString();
             return row.membership ? (
               <MembershipRow
                 names={queries.names}

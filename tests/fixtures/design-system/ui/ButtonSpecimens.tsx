@@ -169,9 +169,7 @@ export function ButtonSpecimen() {
               <Button>
                 Continue <ArrowRightIcon aria-hidden="true" />
               </Button>
-              <Button variant="outline" aria-invalid="true">
-                Choose a workspace
-              </Button>
+              <Button variant="outline">Choose a workspace</Button>
             </div>
             <div className="max-w-48">
               <Button>
@@ -196,6 +194,16 @@ export function IconButtonSpecimen() {
         />
       </div>
       <ButtonMatrix kind="icon" />
+      <div className="component-specimen-frame">
+        <IconButton
+          size="xs"
+          shape="control"
+          aria-label="Dense formatting option"
+          title="Dense formatting option (28px)"
+          icon={<PlusIcon />}
+        />
+        <code className="text-mono-sm">size="xs" · 28px</code>
+      </div>
       <section
         className="component-specimen-group"
         aria-label="Buzz icon treatments"

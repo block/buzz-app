@@ -6,10 +6,11 @@ import {
   FONT_SCALE_KEY,
   createAppearance,
   parseColorMode,
+  parseColorModePreference,
   parseFontScale,
 } from "./service";
 
-function browser(stored: string | null = null) {
+function browser(stored: string | null = null, systemDark = false) {
   const values = new Map(stored === null ? [] : [[APPEARANCE_KEY, stored]]);
   const listeners = new Set<(event: StorageEvent) => void>();
   const root = {
@@ -21,8 +22,19 @@ function browser(stored: string | null = null) {
     getItem: vi.fn((key: string) => values.get(key) ?? null),
     setItem: vi.fn((key: string, value: string) => values.set(key, value)),
   };
+  let dark = systemDark;
+  const schemeListeners = new Set<() => void>();
+  const scheme = {
+    get matches() {
+      return dark;
+    },
+    addEventListener: (_: string, fn: () => void) => schemeListeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) =>
+      schemeListeners.delete(fn),
+  };
   const host = {
     localStorage: storage,
+    matchMedia: () => scheme,
     document: { documentElement: root, querySelector: () => meta },
     getComputedStyle: () => ({
       getPropertyValue: () =>
@@ -39,7 +51,12 @@ function browser(stored: string | null = null) {
     meta,
     storage,
     listeners,
+    schemeListeners,
     values,
+    systemDark(value: boolean) {
+      dark = value;
+      for (const fn of schemeListeners) fn();
+    },
     change(
       key: string | null = APPEARANCE_KEY,
       storageArea: unknown = storage,
@@ -49,18 +66,31 @@ function browser(stored: string | null = null) {
   };
 }
 
-it.each([null, "", "system", "LIGHT", '{"mode":"dark"}', "light", "dark"])(
-  "bootstrap and service agree for stored %j",
-  (value) => {
-    const b = browser(value);
+it.each([
+  [null, false],
+  ["", false],
+  ["LIGHT", false],
+  ['{"mode":"dark"}', false],
+  ["light", false],
+  ["dark", false],
+  ["system", false],
+  ["system", true],
+] as const)(
+  "bootstrap and service agree for stored %j with system dark %j",
+  (value, systemDark) => {
+    const b = browser(value, systemDark);
     runInNewContext(readFileSync("public/appearance-init.js", "utf8"), {
       localStorage: b.storage,
       document: b.host.document,
+      matchMedia: b.host.matchMedia,
     });
-    expect(b.root.dataset.colorMode).toBe(parseColorMode(value));
+    const mode =
+      value === "system" && systemDark ? "dark" : parseColorMode(value);
+    expect(b.root.dataset.colorMode).toBe(mode);
     const app = createAppearance(b.host);
     expect(app.snapshot()).toEqual({
-      mode: parseColorMode(value),
+      preference: parseColorModePreference(value),
+      mode,
       error: null,
       fontScale: 1,
       fontError: null,
@@ -68,7 +98,7 @@ it.each([null, "", "system", "LIGHT", '{"mode":"dark"}', "light", "dark"])(
     expect(b.root.dataset.colorMode).toBe(app.snapshot().mode);
     expect(b.meta.setAttribute).toHaveBeenLastCalledWith(
       "content",
-      value === "dark" ? "#11181d" : "#e7f0ef",
+      mode === "dark" ? "#11181d" : "#e7f0ef",
     );
     app.dispose();
   },
@@ -140,11 +170,39 @@ it("cross-window updates re-read current storage, ignore other stores, and dispo
   expect(app.snapshot().mode).toBe("light");
 });
 
+it("System follows computer changes, manual choices override it, and disposal stops updates", () => {
+  const b = browser();
+  const app = createAppearance(b.host);
+  const changed = vi.fn();
+  app.subscribe(changed);
+  app.setMode("system");
+  expect(b.values.get(APPEARANCE_KEY)).toBe("system");
+  expect(app.snapshot().preference).toBe("system");
+  expect(app.snapshot().mode).toBe("light");
+  b.systemDark(true);
+  expect(app.snapshot().mode).toBe("dark");
+  expect(b.root.dataset.colorMode).toBe("dark");
+  expect(b.meta.setAttribute).toHaveBeenLastCalledWith("content", "#11181d");
+  expect(changed).toHaveBeenCalledTimes(2);
+  app.setMode("light");
+  b.systemDark(false);
+  b.systemDark(true);
+  expect(app.snapshot().mode).toBe("light");
+  expect(changed).toHaveBeenCalledTimes(3);
+  b.values.set(APPEARANCE_KEY, "system");
+  b.change();
+  expect(app.snapshot().mode).toBe("dark");
+  app.dispose();
+  expect(b.schemeListeners.size).toBe(0);
+  b.systemDark(false);
+  expect(app.snapshot().mode).toBe("dark");
+});
+
 it("rejects an invalid runtime write without saving it", () => {
   const b = browser("dark");
   const app = createAppearance(b.host);
   // External JS callers do not have TypeScript's union guarantee.
-  app.setMode("system" as "light");
+  app.setMode("unknown" as "light");
   expect(app.snapshot().mode).toBe("dark");
   expect(b.storage.setItem).not.toHaveBeenCalled();
   app.dispose();

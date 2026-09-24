@@ -15,6 +15,7 @@ import "./styles.css";
 import { useKeyboardFocusVisibility } from "../../../src/shared/design-system/useKeyboardFocusVisibility";
 import { applyStoredColorScheme } from "../../../src/shared/design-system/theme/useColorScheme";
 import { DesignSystemLayout } from "./ui/DesignSystemLayout";
+import { FormsPage } from "./ui/FormsPage";
 import { OverviewPage } from "./ui/OverviewPage";
 import { ComponentDetailPage } from "./ui/ComponentDetailPage";
 import { ComponentsPage } from "./ui/ComponentsPage";
@@ -49,6 +50,11 @@ const detail = createRoute({
   component: () => <ComponentDetailPage slug={detail.useParams().component} />,
 });
 const pages = [
+  createRoute({
+    getParentRoute: () => design,
+    path: "forms",
+    component: FormsPage,
+  }),
   createRoute({
     getParentRoute: () => design,
     path: "/",

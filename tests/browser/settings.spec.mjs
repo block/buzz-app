@@ -337,7 +337,6 @@ test("community setup reuses profile fields without changing the local default",
     route.fulfill({ json: { name: "Primary", policy: null } }),
   );
   await page.goto(app.origin);
-  await button(page, "Switch community").click();
   await button(page, "Add a community").click();
   await page
     .getByRole("textbox", { name: "Relay URL", exact: true })

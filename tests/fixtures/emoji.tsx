@@ -4,11 +4,12 @@ import { createPluginManager } from "../../src/plugins/manager";
 import { ConversationService } from "../../src/features/conversation/service";
 import * as emojiPlugin from "../../src/bundled/emoji";
 import emojiManifest from "../../src/bundled/emoji/manifest.json";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { createRoot } from "react-dom/client";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { MessageRow } from "../../src/features/messages/MessageRow";
 import { createRelaySession } from "../../src/features/relay/session";
+import { PublishRejected } from "../../src/features/relay/outbox";
 import { foldMessages } from "../../src/features/relay/fold";
 import { mediaUrl } from "../../src/features/relay/transport";
 import {
@@ -117,14 +118,14 @@ const sessions = ["a", "b"].map((community) => {
         );
       },
       writer: {
-        kinds: [7, 9],
+        kinds: [5, 7, 9],
         async sign(template) {
           return signed(viewer, template);
         },
         async publish(event) {
-          if (event.kind === 7 && rejectReaction) {
+          if ([5, 7].includes(event.kind) && rejectReaction) {
             rejectReaction = false;
-            throw new Error("Fixture reaction rejected");
+            throw new PublishRejected("Fixture reaction rejected");
           }
           report.publications.push({ community, event });
           live.receive([event]);
@@ -172,7 +173,9 @@ const sessions = ["a", "b"].map((community) => {
     6,
     [["emoji", "party", `${origin}/media/blocks.png`]],
   );
-  live.receive([root]);
+  owner.session.channels.ensure("c");
+  live.receive([root, broken, unloaded, single, table, blocks]);
+  live.receive([reaction]);
   return {
     ...owner,
     community,
@@ -257,6 +260,11 @@ function Fixture() {
     return () => window.removeEventListener("emoji-remount", remount);
   }, []);
   const item = sessions[selected];
+  const liveRows = useSyncExternalStore(
+    (callback) =>
+      item ? item.session.channels.subscribeWindow("c", callback) : () => {},
+    () => item?.session.channels.window("c"),
+  );
   if (!item) return null;
   return (
     <main
@@ -276,7 +284,10 @@ function Fixture() {
       <h1>Community {item.community}</h1>
 
       <section key={`${selected}/${messageRevision}`}>
-        {item.rows.map((row) => (
+        {(new URLSearchParams(location.search).has("reactions")
+          ? (liveRows?.rows ?? [])
+          : item.rows
+        ).map((row) => (
           <MessageRow
             extensions={extensions}
             key={row.id}

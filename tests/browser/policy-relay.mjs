@@ -116,8 +116,12 @@ export function policyRelay({
       try {
         if (latencyMs)
           await new Promise((resolve) => setTimeout(resolve, latencyMs));
-        if (!init?.body && discovery)
-          return Response.json(discovery(communityOf(url)));
+        // NIP-11 is a public GET with no signed query body. The rail now reads
+        // it for saved communities, including inactive ones.
+        if (!init?.body) {
+          expect(new URL(url).pathname).toBe("/");
+          return Response.json(discovery?.(communityOf(url)) ?? {});
+        }
         expect(["/query", ...(acceptPublication ? ["/events"] : [])]).toContain(
           new URL(url).pathname,
         );

@@ -491,6 +491,39 @@ for (const destination of ["Home", "Projects", "Settings", "Back/Forward"]) {
   });
 }
 
+test("community rail stays visible across pages and switches without a picker", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const rail = page.getByRole("navigation", {
+    name: "Communities",
+    exact: true,
+  });
+  await expect(
+    rail.getByRole("button", { name: "Switch to Primary" }),
+  ).toHaveAttribute("aria-current", "true");
+  await rail.getByRole("button", { name: "Switch to Secondary" }).click();
+  await expect(
+    rail.getByRole("button", { name: "Switch to Secondary" }),
+  ).toHaveAttribute("aria-current", "true");
+  await button(page, "Home").first().click();
+  await expect(rail).toBeVisible();
+  await expect(button(page, "Switch community")).toHaveCount(0);
+  await rail.getByRole("button", { name: "Personal space" }).click();
+  await expect(
+    rail.getByRole("button", { name: "Personal space" }),
+  ).toHaveAttribute("aria-current", "true");
+  await rail.getByRole("button", { name: "Add a community" }).click();
+  await expect(
+    page.getByRole("heading", { name: "Add a community", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(
+    rail.getByRole("button", { name: "Add a community" }),
+  ).toBeFocused();
+});
+
 test("sidebar view state does not leak across communities", async ({
   page,
   app,
@@ -502,14 +535,12 @@ test("sidebar view state does not leak across communities", async ({
     .filter({ has: page.locator("summary", { hasText: /^Channels$/ }) });
   await group.locator("summary").click();
   await expect(group).not.toHaveAttribute("open");
-  await button(page, "Switch community").click();
   await button(page, "Switch to Secondary").click();
-  await expect(button(page, "Switch community")).toHaveAttribute(
-    "title",
-    "Secondary",
+  await expect(button(page, "Switch to Secondary")).toHaveAttribute(
+    "aria-current",
+    "true",
   );
   await expect(group).toHaveAttribute("open");
-  await button(page, "Switch community").click();
   await button(page, "Switch to Primary").click();
   await expect(group).not.toHaveAttribute("open");
 });
@@ -549,4 +580,37 @@ test("legacy filters are ignored and invalid saved sidebar fields fall back", as
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
+});
+
+test("rail loads relay-owned image icons for inactive communities without acquiring sessions", async ({
+  page,
+  app,
+}) => {
+  const rasterIcon =
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y79d4sAAAAASUVORK5CYII=";
+  const emojiSvg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512"><rect width="512" height="512" rx="112" fill="#ffe75c"/><text x="50%" y="56%" dominant-baseline="middle" text-anchor="middle" font-size="258">🐝</text></svg>';
+  const emojiIcon = `data:image/svg+xml,${encodeURIComponent(emojiSvg)}`;
+  const infoRequests = [];
+  await page.route("**/api/relay/*/icon-info", (route) => {
+    infoRequests.push(route.request().url());
+    const icon = route.request().url().includes("primary")
+      ? rasterIcon
+      : emojiIcon;
+    return route.fulfill({ json: { icon } });
+  });
+  await open(page, app);
+  const rail = page.getByRole("navigation", { name: "Communities" });
+  for (const [name, icon] of [
+    ["Primary", rasterIcon],
+    ["Secondary", emojiIcon],
+  ]) {
+    const image = rail
+      .getByRole("button", { name: `Switch to ${name}` })
+      .locator("img");
+    await expect(image).toHaveAttribute("src", icon);
+    await expect(image).toHaveAttribute("data-loaded", "true");
+  }
+  expect(infoRequests).toHaveLength(2);
+  expect(app.report.sessions).toEqual(["primary"]);
 });

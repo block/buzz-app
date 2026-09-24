@@ -48,7 +48,12 @@ async function harness(respond, capabilities = {}) {
       const auth = authorization
         ? JSON.parse(Buffer.from(authorization.slice(6), "base64").toString())
         : undefined;
-      if (upstreamUrl !== fixtureRelayUrl) expect(auth).toBeDefined();
+      if (
+        upstreamUrl === fixtureRelayUrl ||
+        upstreamUrl === `${fixtureRelayUrl}/api/join-policy`
+      )
+        expect(auth).toBeUndefined();
+      else expect(auth).toBeDefined();
       if (auth) {
         expect(verifyEvent(auth)).toBe(true);
         expect(auth.created_at).toBe(Math.floor(Date.now() / 1000));
@@ -113,6 +118,36 @@ const success = (call) =>
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
+  const icon = "https://images.example/icon@2x.png";
+  const h = await harness((call) => {
+    if (call.url === fixtureRelayUrl) return Response.json({ icon });
+    if (call.url === `${fixtureRelayUrl}/api/join-policy`)
+      return new Response("unavailable", { status: 503 });
+    return new Response(null, { status: 404 });
+  });
+  try {
+    const iconResponse = await h.get("icon-info");
+    expect(iconResponse.status).toBe(200);
+    expect(await iconResponse.json()).toEqual({ icon });
+    expect(h.calls.map(({ url }) => url)).toEqual([fixtureRelayUrl]);
+
+    const joinResponse = await h.get("info");
+    const joinBody = await joinResponse.json();
+    expect([joinResponse.status, joinBody]).toEqual([
+      503,
+      { error: "Could not load join policy" },
+    ]);
+    expect(h.calls.map(({ url }) => url)).toEqual([
+      fixtureRelayUrl,
+      fixtureRelayUrl,
+      `${fixtureRelayUrl}/api/join-policy`,
+    ]);
+  } finally {
+    await h.close();
+  }
+});
 
 test("GIF capability discovery does not depend on join-policy availability", async () => {
   const h = await harness((call) => {
@@ -1181,3 +1216,52 @@ test.each(["sign", "publish"])(
     }
   },
 );
+
+test("message/reaction deletions pass real signing and publication without admitting workflow or arbitrary deletion shapes", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["h", "c"],
+        ["e", "a".repeat(64)],
+        ["k", "7"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(5);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [
+          ["h", "c"],
+          ["e", "invalid"],
+          ["k", "7"],
+        ],
+        [
+          ["h", "c"],
+          ["e", "a".repeat(64)],
+          ["k", "30030"],
+        ],
+        [...template.tags, ["a", `30620:${h.event.pubkey}:workflow`]],
+        [...template.tags, ["h", "other"]],
+        [
+          ["h", "c"],
+          ["k", "7"],
+        ],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});

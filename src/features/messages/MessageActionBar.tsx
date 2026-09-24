@@ -1,4 +1,4 @@
-import { useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode, type Ref } from "react";
 import {
   ChatCircleIcon,
   CopyIcon,
@@ -24,8 +24,10 @@ export function MessageActionBar({
   quickControls,
   overflowItems,
   messageId,
+  menuTriggerRef,
 }: {
   messageId?: string;
+  menuTriggerRef?: Ref<HTMLButtonElement>;
   onReply?: (() => void) | undefined;
   replyDisabled?: boolean | undefined;
   link?: string | undefined;
@@ -94,6 +96,7 @@ export function MessageActionBar({
           <MenuTrigger
             render={
               <IconButton
+                ref={menuTriggerRef}
                 aria-label="More message actions"
                 title="More message actions"
                 size="sm"

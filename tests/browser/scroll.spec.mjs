@@ -108,7 +108,6 @@ readingTest(
       await button(page, "Alpha").click();
       await settle(page);
       await expectAnchor(page, saved);
-      await button(page, "Switch community").click();
       await button(page, "Switch to Secondary").click();
       await composer(page, "Alpha").waitFor();
       await expect(composer(page, "Alpha")).toHaveJSProperty(
@@ -116,7 +115,6 @@ readingTest(
         cycle ? "B draft" : "",
       );
       await composer(page, "Alpha").fill("B draft");
-      await button(page, "Switch community").click();
       await button(page, "Switch to Primary").click();
       await expect(composer(page, "Alpha")).toHaveJSProperty(
         "value",

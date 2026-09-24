@@ -127,7 +127,10 @@
   gap: var(--space-1);
   margin-top: var(--space-1h);
 }
-.reactions > span {
+.reactions:empty {
+  margin-top: 0;
+}
+.reactions > span:not([role]) {
   background: var(--affordance-subtle);
   border-radius: var(--radius-chip);
   padding: var(--space-half) var(--space-1h);
@@ -1108,7 +1111,8 @@ button.mediaPreview {
   }
   .message:hover .messageActions,
   .message:focus-within .messageActions,
-  .messageActions[data-open] {
+  .messageActions[data-open],
+  .messageActions:has([aria-expanded="true"]) {
     opacity: 1;
     pointer-events: auto;
   }

@@ -69,9 +69,17 @@ test("group icons resolve custom media without overlapping labels, and the creat
   const row = section.locator('[data-channel-id="beta"]');
   await row.focus();
   await page.keyboard.press("Shift+F10");
-  await page
-    .getByRole("menuitem", { name: "Move channel", exact: true })
-    .focus();
+  const move = page.getByRole("menuitem", {
+    name: "Move channel",
+    exact: true,
+  });
+  const icon = move.locator(".buzz-menu-icon svg");
+  await expect(icon).toBeVisible();
+  await expect(icon).toHaveAttribute("aria-hidden", "true");
+  await expect(icon).toHaveCSS("width", "14px");
+  await expect(icon).toHaveCSS("height", "14px");
+  await expect(move.locator(".buzz-menu-submenu-arrow")).toBeVisible();
+  await move.focus();
   await page.keyboard.press("ArrowRight");
   const menu = page.getByRole("menu", { name: "Move channel", exact: true });
   const work = menu.getByRole("menuitemradio", { name: "Work", exact: true });

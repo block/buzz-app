@@ -7,7 +7,10 @@ type BuilderLabStatus =
   | { status: "available" }
   | { status: "error"; message: string };
 
-type ViewState = { kind: "idle" | "loading" } | BuilderLabStatus;
+type ViewState =
+  | { kind: "idle" }
+  | { kind: "loading" }
+  | ({ kind: "result" } & BuilderLabStatus);
 
 export function BuilderLabSettings({ active = true }: { active?: boolean }) {
   const [state, setState] = useState<ViewState>({ kind: "idle" });
@@ -22,6 +25,7 @@ export function BuilderLabSettings({ active = true }: { active?: boolean }) {
     setState({ kind: "loading" });
     if (!isTauri()) {
       setState({
+        kind: "result",
         status: "error",
         message: "BuilderLab login status is available in the desktop app.",
       });
@@ -31,12 +35,13 @@ export function BuilderLabSettings({ active = true }: { active?: boolean }) {
     }
     void invoke<BuilderLabStatus>("builderlab_session_status")
       .then((status) => {
-        if (!cancelled) setState(status);
+        if (!cancelled) setState({ kind: "result", ...status });
       })
       .catch(
         () =>
           !cancelled &&
           setState({
+            kind: "result",
             status: "error",
             message: "Could not check the BuilderLab login status.",
           }),

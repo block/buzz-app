@@ -7,6 +7,7 @@ import {
   render,
   screen,
   within,
+  waitFor,
 } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { createAgentLibrary } from "../agents/library";
@@ -23,8 +24,8 @@ vi.mock("../relay/react", () => {
   return { useRowProfiles: () => profiles };
 });
 vi.mock("./MessageRow", () => ({
-  MessageRow: ({ row, onReply }: MessageRowProps) => (
-    <article data-message-id={row.id}>
+  MessageRow: ({ row, onReply, layout }: MessageRowProps) => (
+    <article data-message-id={row.id} data-layout={layout}>
       <span>{row.content}</span>
       <button type="button" onClick={() => onReply?.(row.id)}>
         Reply to {row.content}
@@ -99,6 +100,11 @@ function setup(messageId = "root") {
     agentChoices: createAgentLibrary(undefined).queries,
     messages: { retry: () => {} },
     media: () => undefined,
+    unread: {
+      subscribe: () => () => {},
+      snapshot: () => undefined,
+      attention: () => ({ unread: false }),
+    },
   } as unknown as RelaySession;
   render(
     <ThreadPanel
@@ -120,22 +126,26 @@ function setup(messageId = "root") {
     },
   };
 }
-it("expands immediate children, collapses all descendant state, and supports the rail shortcut", () => {
+it("expands immediate children, collapses all descendant state, and supports the rail shortcut", async () => {
   setup();
   expect(screen.getByText("parent")).toBeVisible();
   expect(screen.queryByText("child")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "1 reply loaded" }));
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
   expect(screen.getByText("child")).toBeVisible();
   expect(screen.queryByText("grandchild")).not.toBeInTheDocument();
-  fireEvent.click(screen.getByRole("button", { name: "1 reply loaded" }));
+  fireEvent.click(screen.getByRole("button", { name: "View 1 reply" }));
   expect(screen.getByText("grandchild")).toBeVisible();
-  const rail = screen.getAllByRole("button", { name: "Collapse replies" })[0];
+  const rail = screen.getAllByRole("button", { name: "Hide replies" })[1];
   expect(rail).toBeDefined();
   if (!rail) throw new Error("Missing branch rail");
   fireEvent.click(rail);
   expect(screen.queryByText("child")).not.toBeInTheDocument();
-  expect(screen.getByRole("button", { name: "1 reply loaded" })).toHaveFocus();
-  fireEvent.click(screen.getByRole("button", { name: "1 reply loaded" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "View 2 replies" }),
+    ).toHaveFocus(),
+  );
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
   expect(screen.getByText("child")).toBeVisible();
   expect(screen.queryByText("grandchild")).not.toBeInTheDocument();
 });
@@ -184,4 +194,87 @@ it("does not silently retarget a deleted parent to the root", () => {
   expect(
     screen.getByRole("button", { name: "Send fixture reply" }),
   ).toBeEnabled();
+});
+
+it("groups the first same-author reply with the root but respects the time window", () => {
+  const h = setup();
+  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-layout",
+    "continuation",
+  );
+  h.update([{ ...row("parent", "root"), createdAt: 602 }]);
+  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+  h.update([{ ...row("parent", "root"), authorId: "b".repeat(64) }]);
+  expect(screen.getByText("parent").closest("article")).toHaveAttribute(
+    "data-layout",
+    "thread",
+  );
+});
+it("collapses only replies, restores focus, and reopens one level without losing the composer", async () => {
+  const h = setup();
+  fireEvent.click(screen.getByRole("button", { name: "View 2 replies" }));
+  const rail = screen.getAllByRole("button", {
+    name: "Hide thread replies",
+  })[1];
+  if (!rail) throw new Error("Missing thread rail");
+  fireEvent.click(rail);
+  expect(screen.getByText("root")).toBeVisible();
+  expect(screen.queryByText("parent")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Composer")).toBeVisible();
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "View thread replies: 3" }),
+    ).toHaveFocus(),
+  );
+  h.update([
+    row("parent", "root"),
+    row("child", "parent"),
+    row("peer", "root"),
+  ]);
+  expect(screen.queryByText("peer")).not.toBeInTheDocument();
+  fireEvent.click(
+    screen.getByRole("button", { name: "View thread replies: 3" }),
+  );
+  expect(screen.getByText("parent")).toBeVisible();
+  expect(screen.getByText("peer")).toBeVisible();
+  expect(screen.queryByText("child")).not.toBeInTheDocument();
+});
+it("an own root reply reopens a collapsed thread and reveals its row", () => {
+  const h = setup();
+  const toggle = screen.getAllByRole("button", {
+    name: "Hide thread replies",
+  })[0];
+  if (!toggle) throw new Error("Missing thread toggle");
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: "Send fixture reply" }));
+  h.update([row("new", "root")]);
+  expect(screen.getByText("new")).toBeVisible();
+  expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalled();
+});
+
+it("does not offer collapse controls for an empty thread", () => {
+  const h = setup();
+  h.update([]);
+  expect(screen.getByText("root")).toBeVisible();
+  expect(
+    screen.queryByRole("button", { name: "Hide thread replies" }),
+  ).not.toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: /^View thread replies:/ }),
+  ).not.toBeInTheDocument();
+  expect(screen.getByLabelText("Composer")).toBeVisible();
+});
+
+it("keeps same-author continuation layout through pending, failed, and accepted delivery", () => {
+  const h = setup("child");
+  for (const delivery of ["sending", "failed", "accepted"] as const) {
+    h.update([row("parent", "root"), { ...row("child", "parent"), delivery }]);
+    expect(screen.getByText("child").closest("article")).toHaveAttribute(
+      "data-layout",
+      "continuation",
+    );
+  }
 });

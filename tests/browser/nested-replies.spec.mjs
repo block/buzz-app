@@ -28,7 +28,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     exact: true,
   });
   const editor = panel.getByRole("textbox", {
-    name: "Reply to thread",
+    name: /^Reply in thread to /,
     exact: true,
   });
   const parent = panel
@@ -81,13 +81,43 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   ]);
   const nestedRow = panel.locator(`[data-message-id="${nested.id}"]`);
   await expect(nestedRow).toBeInViewport();
+  // Morgan's continuation treatment uses a left-hand timestamp, not an elbow.
+  const connector = await nestedRow.evaluate(
+    (node) => getComputedStyle(node.closest("li"), "::before").content,
+  );
+  expect(connector).toBe("none");
+
   await expect(
     panel.getByRole("button", { name: "Cancel reply target" }),
   ).toHaveCount(0);
   await nestedRow.hover();
   await nestedRow.getByRole("button", { name: "Reply", exact: true }).click();
   await editor.fill("Grandchild browser reply");
+  let releaseGrandchild;
+  let grandchildRequested = false;
+  const grandchildGate = new Promise((resolve) => {
+    releaseGrandchild = resolve;
+  });
+  await page.route("**/api/relay/**/publish", async (route) => {
+    if (route.request().postDataJSON().content === "Grandchild browser reply") {
+      grandchildRequested = true;
+      await grandchildGate;
+      await route.continue();
+    } else await route.fallback();
+  });
   await editor.press("Enter");
+  try {
+    const pending = panel
+      .locator("[data-message-id]")
+      .filter({ hasText: "Grandchild browser reply" });
+    await expect(pending.locator('[data-layout="continuation"]')).toBeVisible();
+    await expect.poll(() => grandchildRequested).toBe(true);
+    await expect(
+      pending.getByRole("button", { name: "Reply", exact: true }),
+    ).toBeDisabled();
+  } finally {
+    releaseGrandchild();
+  }
   await expect
     .poll(() =>
       app.report.publications.some(
@@ -101,26 +131,42 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   const grandchildRow = panel.locator(`[data-message-id="${grandchild.id}"]`);
   await expect(grandchildRow).toBeInViewport();
   await expect(editor).toBeFocused();
+  // The same-author continuation clock is quiet until hover or keyboard focus.
+  const clock = grandchildRow.locator("time");
+  await editor.focus();
+  await editor.hover();
+  await expect(clock).toHaveCSS("opacity", "0");
+  await grandchildRow.hover();
+  await expect(clock).toHaveCSS("opacity", "1");
+  await clock.hover();
+  await expect(page.getByRole("tooltip")).toContainText(/\d{4}/);
+  await grandchildRow
+    .getByRole("button", { name: "Reply", exact: true })
+    .focus();
+  await editor.hover();
+  await expect(clock).toHaveCSS("opacity", "1");
+  await editor.focus();
   await parent
-    .locator("..")
+    .locator("../..")
     .getByRole("button", { name: "Hide replies", exact: true })
     .first()
     .click();
   await expect(nestedRow).toHaveCount(0);
   await parent
-    .locator("..")
-    .getByRole("button", { name: "1 reply loaded", exact: true })
+    .locator("../..")
+    .getByRole("button", { name: /^View 2 replies/ })
     .click();
   await expect(nestedRow).toBeVisible();
   await expect(grandchildRow).toHaveCount(0);
   await nestedRow
-    .locator("..")
-    .getByRole("button", { name: "1 reply loaded", exact: true })
+    .locator("../..")
+    .getByRole("button", { name: /^View 1 reply/ })
     .click();
   await expect(grandchildRow).toBeVisible();
 
   let deepest = grandchildRow;
   for (let depth = 0; depth < 6; depth++) {
+    await editor.hover();
     await deepest.hover();
     await deepest.getByRole("button", { name: "Reply", exact: true }).click();
     const content = `Deep reply ${depth}`;
@@ -137,14 +183,15 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     deepest = panel.locator(`[data-message-id="${event.id}"]`);
     await expect(deepest).toBeInViewport();
   }
-  for (const width of [1440, 900, 390]) {
+  // These desktop viewports produce 542/432/310px thread panels; 390 exercises full-width mobile.
+  for (const width of [1492, 1280, 1024, 390]) {
     await page.setViewportSize({ width, height: 950 });
     await deepest.scrollIntoViewIfNeeded();
     const geometry = await panel.evaluate((element) => {
       const history = element.querySelector('[aria-label="Thread messages"]');
-      const rail = element.querySelector(
-        'button[aria-label="Collapse replies"]',
-      );
+      const rail = [
+        ...element.querySelectorAll('button[aria-label="Hide replies"]'),
+      ].find((node) => getComputedStyle(node).position === "absolute");
       return {
         width: history.clientWidth,
         scroll: history.scrollWidth,
@@ -155,6 +202,25 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     expect(geometry.rail).toBeGreaterThanOrEqual(24);
     const deepestBox = await deepest.boundingBox();
     expect(deepestBox.width).toBeGreaterThan(140);
+    const capped = deepest.locator("xpath=ancestor::*[@data-depth][1]");
+    await expect(capped.locator(":scope > div").nth(1)).toBeHidden();
+    const rail = capped.locator(
+      ":scope > [id] > button[aria-label='Hide replies']",
+    );
+    await expect(rail).toBeHidden();
+    await expect(
+      capped.getByRole("button", { name: "Collapse this branch" }).first(),
+    ).toBeVisible();
+    const spine = await capped.evaluate((node) => {
+      const message = node.firstElementChild;
+      return {
+        stub: getComputedStyle(message, "::after").display,
+        offset: getComputedStyle(message, "::after").left,
+      };
+    });
+    expect(spine.stub).not.toBe("none");
+    expect(parseFloat(spine.offset)).toBeLessThan(0);
+
     for (const theme of ["light", "dark"]) {
       await page.evaluate(
         (mode) =>
@@ -170,6 +236,20 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     }
   }
   await page.setViewportSize({ width: 1440, height: 950 });
+  const collapseThread = panel.getByRole("button", {
+    name: "Hide thread replies",
+    exact: true,
+  });
+  await collapseThread.focus();
+  await collapseThread.press("Enter");
+  await expect(parent).toHaveCount(0);
+  const reopenThread = panel.getByRole("button", {
+    name: /^View thread replies:/,
+  });
+  await expect(reopenThread).toBeFocused();
+  await reopenThread.press("Enter");
+  await expect(parent).toBeVisible();
+  await expect(grandchildRow).toHaveCount(0);
   await panel
     .getByRole("button", { name: "Close thread", exact: true })
     .click();
@@ -189,7 +269,7 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     .toBe("opened");
   // A later live update must not undo an explicit collapse after revealing a link.
   await parent
-    .locator("..")
+    .locator("../..")
     .getByRole("button", { name: "Hide replies", exact: true })
     .first()
     .click();
@@ -198,6 +278,16 @@ test("nested replies send, collapse, and reveal through links at readable panel 
     panel.getByText("New peer reply", { exact: true }),
   ).toBeVisible();
   await expect(grandchildRow).toHaveCount(0);
+  await panel
+    .getByRole("button", { name: "Hide thread replies", exact: true })
+    .click();
+  await expect(parent).toHaveCount(0);
+  // Own send explicitly opens the root again; ordinary live arrivals must not.
+  await editor.fill("Own reply after root collapse");
+  await editor.press("Enter");
+  await expect(
+    panel.getByText("Own reply after root collapse", { exact: true }),
+  ).toBeInViewport();
 });
 
 test("an exact linked reply stays readable when its parent is outside loaded history", async ({
@@ -241,4 +331,210 @@ test("an exact linked reply stays readable when its parent is outside loaded his
       exact: true,
     }),
   ).toBeVisible();
+});
+
+test.describe("touch branch controls", () => {
+  test.use({ hasTouch: true, viewport: { width: 390, height: 844 } });
+  test("keeps a visible collapse label without hover", async ({
+    page,
+    app,
+  }) => {
+    await open(page, app);
+    const root = app.histories
+      .get("primary/alpha")
+      .find((event) => event.content === "Thread root 0");
+    const thread = page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+    // This case exercises touch controls inside the thread, not the virtualized feed's pointer lock.
+    await thread.focus();
+    await thread.press("Enter");
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const summary = panel.getByRole("button", { name: /^View 1 reply/ });
+    await expect(summary).toContainText("(1 new)");
+    await summary.tap();
+    const collapse = panel.getByRole("button", {
+      name: "Hide replies",
+      exact: true,
+    });
+    await expect(collapse).toHaveText("Hide replies");
+    const branch = collapse.locator("../..");
+    const spine = await branch.evaluate((node) => ({
+      stub: getComputedStyle(node.firstElementChild, "::after").display,
+      summary: getComputedStyle(node.children[1], "::before").display,
+    }));
+    expect(spine.stub).not.toBe("none");
+    expect(spine.summary).not.toBe("none");
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const motion = await branch.locator(":scope > [id]").evaluate((node) => ({
+      transition: getComputedStyle(node).transitionDuration,
+      animation: getComputedStyle(node).animationDuration,
+    }));
+    expect(motion).toEqual({ transition: "0s", animation: "0s" });
+
+    await collapse.tap();
+    await expect(summary).toBeVisible();
+    const collapseThread = panel.getByRole("button", {
+      name: "Hide thread replies",
+      exact: true,
+    });
+    await expect(collapseThread).toHaveText("Hide thread replies");
+    await collapseThread.tap();
+    await expect(summary).toHaveCount(0);
+    await panel.getByRole("button", { name: /^View thread replies:/ }).tap();
+    await expect(summary).toBeVisible();
+  });
+});
+
+// Real pointer hit testing and focus cannot be verified in jsdom.
+test("crowded capped branches own distinct collapse controls", async ({
+  page,
+  app,
+}) => {
+  const root = app.histories
+    .get("primary/alpha")
+    .find((e) => e.content === "Thread root 0");
+  let parent = root.id;
+  const ids = [];
+  for (let i = 0; i < 13; i++) {
+    parent = app.append(
+      "primary",
+      "alpha",
+      `Crowded reply ${i}`,
+      false,
+      i < 9 ? i % 2 === 0 : true,
+      root.id,
+      parent,
+    ).id;
+    ids.push(parent);
+  }
+  await open(page, app);
+  await page
+    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+    .getByRole("button", { name: /^View thread:/ })
+    .click();
+  const panel = page.getByRole("complementary", {
+    name: "Thread",
+    exact: true,
+  });
+  const branchFor = (id) =>
+    panel.locator(`[data-message-id="${id}"]`).locator("../..");
+  const expandAll = async () => {
+    for (const id of ids.slice(0, -1)) {
+      const branch = branchFor(id);
+      if ((await branch.getAttribute("data-open")) === "false")
+        await branch.locator(":scope > div").nth(1).getByRole("button").click();
+    }
+  };
+  for (const width of [1492, 1280, 1024]) {
+    await page.setViewportSize({ width, height: 950 });
+    await expandAll();
+    for (const id of ids.slice(0, -1)) {
+      const branch = branchFor(id);
+      const rail = branch.locator(
+        ":scope > [id] > button[aria-label='Hide replies']",
+      );
+      const rowControl = branch
+        .locator(":scope > div")
+        .first()
+        .getByRole("button", { name: "Collapse this branch" });
+      const control = (await rail.isVisible()) ? rail : rowControl;
+      await control.scrollIntoViewIfNeeded();
+      if (control === rowControl) await control.focus();
+      await expect
+        .poll(() =>
+          control.evaluate((node) => {
+            const r = node.getBoundingClientRect();
+            const viewport = node
+              .closest('[aria-label="Thread messages"]')
+              .getBoundingClientRect();
+            const top = Math.max(r.top, viewport.top);
+            const bottom = Math.min(r.bottom, viewport.bottom);
+            if (bottom <= top) return false;
+            const hit = document.elementFromPoint(
+              r.x + r.width / 2,
+              (top + bottom) / 2,
+            );
+            return node === hit || node.contains(hit);
+          }),
+        )
+        .toBe(true);
+      const row = panel.locator(`[data-message-id="${id}"]`);
+      await panel
+        .getByRole("textbox", { name: /^Reply in thread to / })
+        .focus();
+      await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
+      await row.scrollIntoViewIfNeeded();
+      const restingHeight = (await row.boundingBox()).height;
+      await row.hover();
+      expect((await row.boundingBox()).height).toBe(restingHeight);
+      const actions = row.getByRole("group", { name: "Message actions" });
+      await expect(actions).toHaveCSS("opacity", "1");
+      // Test rendered text fragments, not a block whose empty area may overlap.
+      // Hover actions must leave this row's own message and its neighbor readable.
+      await expect
+        .poll(() =>
+          row.evaluate((node) => {
+            const tray = node
+              .querySelector('[aria-label="Message actions"]')
+              .getBoundingClientRect();
+            const walker = document.createTreeWalker(
+              node,
+              NodeFilter.SHOW_TEXT,
+            );
+            for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+              if (!text.textContent.startsWith("Crowded reply")) continue;
+              const range = document.createRange();
+              range.selectNodeContents(text);
+              for (const rect of range.getClientRects()) {
+                if (
+                  tray.left < rect.right &&
+                  tray.right > rect.left &&
+                  tray.top < rect.bottom &&
+                  tray.bottom > rect.top
+                )
+                  return true;
+              }
+            }
+            return false;
+          }),
+        )
+        .toBe(false);
+      await control.hover();
+      await expect
+        .poll(() =>
+          branch.evaluate((node) =>
+            getComputedStyle(node).getPropertyValue("--reply-guide").trim(),
+          ),
+        )
+        .toBe("gray");
+      const child = ids[ids.indexOf(id) + 1];
+      await control.click();
+      await expect(panel.locator(`[data-message-id="${id}"]`)).toBeVisible();
+      await expect(panel.locator(`[data-message-id="${child}"]`)).toHaveCount(
+        0,
+      );
+      const summary = branch.locator(":scope > div").nth(1).getByRole("button");
+      await expect(summary).toBeFocused();
+      await summary.press("Enter");
+      await expect(control).toBeFocused();
+      await expect(panel.locator(`[data-message-id="${child}"]`)).toBeVisible();
+      await expandAll();
+    }
+    await panel.getByRole("textbox", { name: /^Reply in thread to / }).focus();
+    await panel.getByRole("heading", { name: "Thread", exact: true }).hover();
+    for (const id of ids) {
+      await expect(
+        panel
+          .locator(`[data-message-id="${id}"]`)
+          .getByRole("group", { name: "Message actions" }),
+      ).toHaveCSS("opacity", "0");
+    }
+    await panel.screenshot({
+      path: test.info().outputPath(`crowded-${width}.png`),
+    });
+  }
 });

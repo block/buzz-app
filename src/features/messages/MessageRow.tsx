@@ -1,6 +1,8 @@
+import { MessageTimestamp } from "./MessageTimestamp";
 import { UserStatusDisplay } from "../user-status/StatusDisplay";
 import { useChannelIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { ReplySummary } from "./ReplySummary";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
@@ -60,7 +62,9 @@ export type MessageRowProps = {
     | undefined;
   onReply?: ((messageId: string) => void) | undefined;
   quickControls?: ReactNode;
+  branchControl?: ReactNode;
   overflowItems?: ReactNode;
+  layout?: "timeline" | "thread" | "continuation";
   mediaMode?: "inline" | "thread";
   mediaSeekTo?: number;
   mediaSeekRequest?: number;
@@ -88,8 +92,10 @@ export const MessageRow = memo(function MessageRow({
   onOpenThread,
   onReply,
   quickControls,
+  branchControl,
   overflowItems,
   participantProfiles,
+  layout = "timeline",
   mediaMode = "inline",
   mediaSeekTo,
   mediaSeekRequest,
@@ -198,10 +204,14 @@ export const MessageRow = memo(function MessageRow({
           </span>
         </div>
       )}
-      <div className={styles.message}>
-        {clickable ? (
+      <div className={styles.message} data-layout={layout}>
+        {layout === "continuation" ? (
+          <span className={styles.messageGutter}>
+            <MessageTimestamp createdAt={row.createdAt} compact />
+          </span>
+        ) : clickable ? (
           <IconButton
-            size="default"
+            size={layout === "timeline" ? "default" : "sm"}
             shape="round"
             aria-label={`View ${name} profile`}
             onClick={(event) => {
@@ -223,13 +233,14 @@ export const MessageRow = memo(function MessageRow({
             src={picture}
             alt=""
             fallback={name}
-            size="large"
+            size={layout === "timeline" ? "large" : "default"}
             shape={avatarShape}
           />
         )}
         <div className={styles.messageBody}>
           {!row.membership && (
             <MessageActionBar
+              branchControl={branchControl}
               menuTriggerRef={menuTrigger}
               messageId={row.id}
               onReply={
@@ -279,7 +290,7 @@ export const MessageRow = memo(function MessageRow({
               overflowItems={overflowItems}
             />
           )}
-          <div className={styles.byline}>
+          <div className={layout === "continuation" ? "sr-only" : styles.byline}>
             <span className={styles.author}>
               <strong>{name}</strong>
               {session && (
@@ -291,12 +302,9 @@ export const MessageRow = memo(function MessageRow({
                 />
               )}
             </span>
-            <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
-              {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
-                hour: "numeric",
-                minute: "2-digit",
-              })}
-            </time>
+            {layout !== "continuation" && (
+              <MessageTimestamp createdAt={row.createdAt} />
+            )}
           </div>
           {timeReply && onMediaTime && (
             <span className={styles.mediaTimeLink}>
@@ -448,53 +456,15 @@ export const MessageRow = memo(function MessageRow({
                 onOpenThread(row.id, row.threadRootId ?? row.id);
               }}
             >
-              {row.participants.length > 0 && (
-                <span className={styles.threadAvatars} aria-hidden="true">
-                  {row.participants.slice(0, 3).map((id) => {
-                    const participant = participantProfiles?.get(id);
-                    const name = resolveName(
-                      id,
-                      participant?.name ?? id.slice(0, 10),
-                    );
-                    const picture = participant?.picture
-                      ? media(participant.picture, "small")
-                      : undefined;
-                    return (
-                      <span
-                        key={id}
-                        className={styles.threadAvatar}
-                        data-avatar-shape={
-                          agentPubkeys?.has(id) ? "squircle" : "circle"
-                        }
-                        title={name}
-                      >
-                        <Avatar
-                          src={picture}
-                          alt=""
-                          fallback={name}
-                          size="fill"
-                          shape={agentPubkeys?.has(id) ? "squircle" : "circle"}
-                        />
-                      </span>
-                    );
-                  })}
-                  {row.participants.length > 3 && (
-                    <span className={styles.threadAvatarCount}>
-                      +{row.participants.length - 3}
-                    </span>
-                  )}
-                </span>
-              )}
-              <span>
-                {row.replyCount} {row.replyCount === 1 ? "reply" : "replies"}
-              </span>
-              {unreadLabel && (
-                <span
-                  className={styles.threadUnread}
-                  aria-hidden="true"
-                  title={unreadLabel}
-                />
-              )}
+              <ReplySummary
+                count={row.replyCount}
+                participants={row.participants}
+                profiles={participantProfiles}
+                agentPubkeys={agentPubkeys}
+                resolveName={resolveName}
+                media={media}
+                unreadLabel={unreadLabel}
+              />
             </Button>
           )}
         </div>

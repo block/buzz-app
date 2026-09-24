@@ -205,7 +205,7 @@ test("thread buttons show observed unread independently, clear only after readin
         .find((row) => row.content === "Broadcast reply").id,
     });
   const replyComposer = panel.getByRole("textbox", {
-    name: "Reply to thread",
+    name: /^Reply in thread to /,
     exact: true,
   });
   await replyComposer.focus();
@@ -232,9 +232,7 @@ test("thread buttons show observed unread independently, clear only after readin
     panel.getByText("Broadcast descendant", { exact: true }),
   ).toHaveCount(0);
   await expect(first).toHaveAccessibleName(/Observed unread replies/);
-  await panel
-    .getByRole("button", { name: "1 reply loaded", exact: true })
-    .click();
+  await panel.getByRole("button", { name: /^View 1 reply/ }).click();
   await expect(
     panel.getByText("Broadcast descendant", { exact: true }),
   ).toBeInViewport();

@@ -1,4 +1,5 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { ReplySummary } from "./ReplySummary";
 import { ReplyBranch } from "./ReplyBranch";
 import { replyTree } from "./reply-tree";
 import { useChannelIdentityNames } from "../identity-names/react";
@@ -216,7 +217,37 @@ function ThreadMessages({
     () => replyTree(snapshot.replies, snapshot.root?.id),
     [snapshot.replies, snapshot.root?.id],
   );
+  const branchReplies = useMemo(() => {
+    const branches = new Map<string, ChannelMessage[]>();
+    for (const reply of snapshot.replies) {
+      for (const ancestor of tree.ancestors(reply.id)) {
+        const replies = branches.get(ancestor) ?? [];
+        replies.push(reply);
+        branches.set(ancestor, replies);
+      }
+    }
+    return branches;
+  }, [tree, snapshot.replies]);
+  const subscribeUnread = useCallback(
+    (listener: () => void) =>
+      session.unread.subscribe(
+        { kind: "thread", channelId, rootId: snapshot.root?.id ?? messageId },
+        listener,
+      ),
+    [session.unread, channelId, snapshot.root?.id, messageId],
+  );
+  const unreadSnapshot = useCallback(
+    () =>
+      session.unread.snapshot({
+        kind: "thread",
+        channelId,
+        rootId: snapshot.root?.id ?? messageId,
+      }),
+    [session.unread, channelId, snapshot.root?.id, messageId],
+  );
+  useSyncExternalStore(subscribeUnread, unreadSnapshot, unreadSnapshot);
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
+  const [rootCollapsed, setRootCollapsed] = useState(false);
   const [replyParent, setReplyParent] = useState<string>();
   const resolveName = useChannelIdentityNames(session, channelId);
   const rows = useMemo(
@@ -419,38 +450,78 @@ function ThreadMessages({
     positioned.current = true;
     follow.current = false;
   };
+  let previousReply: ChannelMessage | undefined = snapshot.root;
   function renderReplies(parent: string | undefined, depth = 0): ReactNode {
     return (tree.children.get(parent) ?? []).map((row) => {
       const children = tree.children.get(row.id);
+      const continuation =
+        previousReply?.authorId === row.authorId &&
+        row.createdAt >= previousReply.createdAt &&
+        row.createdAt - previousReply.createdAt <= 10 * 60 &&
+        !row.membership;
+      previousReply =
+        children?.length && !expanded.has(row.id) ? undefined : row;
+      const descendants = branchReplies.get(row.id) ?? [];
+      const unreadCount = descendants.filter(
+        (reply) => session.unread.attention(channelId, reply.id).unread,
+      ).length;
+      const unreadLabel = unreadCount
+        ? `${unreadCount} new in available replies`
+        : undefined;
+      const message = (branchControl?: ReactNode) => (
+        <MessageRow
+          branchControl={branchControl}
+          extensions={extensions}
+          session={session}
+          scope={scope}
+          onReply={snapshot.root ? targetReply : undefined}
+          row={row}
+          profile={profiles.get(row.authorId)}
+          participantProfiles={profiles}
+          agentPubkeys={agentPubkeys}
+          media={session.media}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
+          day={false}
+          layout={continuation ? "continuation" : "thread"}
+          retry={session.messages.retry}
+          {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
+          {...(onOpenMediaReview && rootId
+            ? { onOpenMediaReview: openRootMedia }
+            : {})}
+        />
+      );
       return (
-        <li key={row.id}>
+        <li
+          key={row.id}
+          className={styles.replyItem}
+          data-layout={continuation ? "continuation" : "thread"}
+        >
           {!parent && row.replyParentId && row.replyParentId !== rootId && (
             <p className={styles.threadNote}>
               Earlier reply unavailable in loaded history.
             </p>
           )}
-          <MessageRow
-            extensions={extensions}
-            session={session}
-            scope={scope}
-            onReply={snapshot.root ? targetReply : undefined}
-            row={row}
-            profile={profiles.get(row.authorId)}
-            participantProfiles={profiles}
-            agentPubkeys={agentPubkeys}
-            media={session.media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            day={false}
-            retry={session.messages.retry}
-            {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
-            {...(onOpenMediaReview && rootId
-              ? { onOpenMediaReview: openRootMedia }
-              : {})}
-          />
-          {!!children?.length && (
+
+          {children?.length ? (
             <ReplyBranch
-              count={children.length}
+              message={message}
+              layout={continuation ? "continuation" : "thread"}
+              label={`View ${descendants.length} ${descendants.length === 1 ? "reply" : "replies"}${unreadLabel ? `. ${unreadLabel}` : ""}`}
+              summary={
+                <ReplySummary
+                  count={descendants.length}
+                  participants={[
+                    ...new Set(descendants.map((reply) => reply.authorId)),
+                  ]}
+                  profiles={profiles}
+                  agentPubkeys={agentPubkeys}
+                  resolveName={resolveName}
+                  media={session.media}
+                  unreadLabel={unreadLabel}
+                  unreadCount={unreadCount}
+                />
+              }
               depth={depth}
               open={expanded.has(row.id)}
               onOpenChange={(open) => {
@@ -468,8 +539,12 @@ function ThreadMessages({
                 });
               }}
             >
-              <ol>{renderReplies(row.id, depth + 1)}</ol>
+              {expanded.has(row.id) && (
+                <ol>{renderReplies(row.id, depth + 1)}</ol>
+              )}
             </ReplyBranch>
+          ) : (
+            message()
           )}
         </li>
       );
@@ -509,55 +584,84 @@ function ThreadMessages({
         tabIndex={0}
       >
         {snapshot.root ? (
-          <>
-            <MessageRow
-              extensions={extensions}
-              session={session}
-              scope={scope}
-              onReply={focusReply}
-              row={snapshot.root}
-              profile={profiles.get(snapshot.root.authorId)}
-              participantProfiles={profiles}
-              agentPubkeys={agentPubkeys}
-              media={session.media}
-              onOpenLink={onOpenLink}
-              canOpenLink={canOpenLink}
-              day={false}
-              retry={session.messages.retry}
-              mediaMode="thread"
-              {...(mediaSeek
-                ? {
-                    mediaSeekTo: mediaSeek.seconds,
-                    mediaSeekRequest: mediaSeek.request,
-                  }
-                : {})}
-              onMediaPlayback={setMediaPlayback}
-              {...(onOpenMediaReview
-                ? { onOpenMediaReview: openRootMedia }
-                : {})}
-            />
-            {videoAttachment && mediaPlayback && (
-              <span className={styles.mediaCommentAction}>
-                <Button
-                  size="sm"
-                  type="button"
-                  onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
-                >
-                  Comment at {formatMediaTime(mediaPlayback.seconds)}
-                </Button>
-              </span>
-            )}
-          </>
+          <ReplyBranch
+            message={
+              <>
+                <MessageRow
+                  extensions={extensions}
+                  session={session}
+                  scope={scope}
+                  onReply={focusReply}
+                  row={snapshot.root}
+                  profile={profiles.get(snapshot.root.authorId)}
+                  participantProfiles={profiles}
+                  agentPubkeys={agentPubkeys}
+                  media={session.media}
+                  onOpenLink={onOpenLink}
+                  canOpenLink={canOpenLink}
+                  day={false}
+                  layout="thread"
+                  retry={session.messages.retry}
+                  mediaMode="thread"
+                  {...(mediaSeek
+                    ? {
+                        mediaSeekTo: mediaSeek.seconds,
+                        mediaSeekRequest: mediaSeek.request,
+                      }
+                    : {})}
+                  onMediaPlayback={setMediaPlayback}
+                  {...(onOpenMediaReview
+                    ? { onOpenMediaReview: openRootMedia }
+                    : {})}
+                />
+                {videoAttachment && mediaPlayback && (
+                  <span className={styles.mediaCommentAction}>
+                    <Button
+                      size="sm"
+                      type="button"
+                      onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
+                    >
+                      Comment at {formatMediaTime(mediaPlayback.seconds)}
+                    </Button>
+                  </span>
+                )}
+              </>
+            }
+            layout="thread"
+            depth={-1}
+            hideLabel="Hide thread replies"
+            collapsible={snapshot.replies.length > 0}
+            label={`View thread replies: ${snapshot.replies.length}`}
+            summary={
+              <ReplySummary
+                count={snapshot.replies.length}
+                participants={[
+                  ...new Set(snapshot.replies.map((reply) => reply.authorId)),
+                ]}
+                profiles={profiles}
+                agentPubkeys={agentPubkeys}
+                resolveName={resolveName}
+                media={session.media}
+              />
+            }
+            open={!rootCollapsed}
+            onOpenChange={(open) => {
+              follow.current = false;
+              targetAnchor.current = undefined;
+              setRootCollapsed(!open);
+              if (!open) setExpanded(new Set());
+            }}
+          >
+            {!rootCollapsed && <ol>{renderReplies(undefined)}</ol>}
+          </ReplyBranch>
         ) : (
-          snapshot.status !== "loading" && (
-            <p className={styles.empty}>Original message unavailable.</p>
-          )
+          <>
+            {snapshot.status !== "loading" && (
+              <p className={styles.empty}>Original message unavailable.</p>
+            )}
+            <ol>{renderReplies(undefined)}</ol>
+          </>
         )}
-        <div className={styles.threadDivider}>
-          {snapshot.replies.length}{" "}
-          {snapshot.replies.length === 1 ? "reply loaded" : "replies loaded"}
-        </div>
-        <ol>{renderReplies(undefined)}</ol>
         {(snapshot.status === "loading" ||
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>
@@ -586,6 +690,7 @@ function ThreadMessages({
           scope={scope}
           channelId={channelId}
           channelName={channelName}
+          label={`Reply in thread to ${resolveName(snapshot.root.authorId, profiles.get(snapshot.root.authorId)?.name ?? formatPublicKey(snapshot.root.authorId) ?? "Unknown author")}`}
           threadRootId={snapshot.root.id}
           replyParentId={replyParent}
           disabled={!!replyParent && !selectedParent}
@@ -631,6 +736,7 @@ function ThreadMessages({
             : {})}
           clearMediaTime={() => setMediaCommentTime(undefined)}
           onSend={(id) => {
+            setRootCollapsed(false);
             targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = !selectedParent;

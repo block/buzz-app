@@ -350,6 +350,8 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
       name: "New message",
     }),
   ).toHaveAttribute("contenteditable", "false");
+  // #203 moved data-placeholder from the textbox root to a decoration on the
+  // empty paragraph inside it; the visible behavior is unchanged.
   await expect(
     page
       .getByRole("textbox", { name: "New message", exact: true })

@@ -39,6 +39,7 @@ function fixture(available = true) {
     pubkey = agent,
     channelId: string | null = "channel-a",
     kind = "turn_started",
+    payload: unknown = { secret: "never render raw telemetry" },
   ) {
     owner.receive(
       {
@@ -50,7 +51,7 @@ function fixture(available = true) {
           channelId,
           turnId: String(serial),
           timestamp: new Date().toISOString(),
-          payload: { secret: "never render raw telemetry" },
+          payload,
         }),
       },
       observe.mock.lastCall?.[0] as number,
@@ -228,4 +229,38 @@ it("switches snapshots synchronously without requiring a parent remount key", ()
   expect(screen.getByRole("status")).toHaveTextContent("No activity yet");
   act(() => next.send());
   expect(screen.getByRole("status").querySelector("time")).toBeInTheDocument();
+});
+
+it("renders live text safely and clears content on profile changes and access loss", () => {
+  const f = fixture();
+  f.listening();
+  const mounted = render(f.view());
+  const update = (value: unknown) => ({
+    method: "session/update",
+    params: { update: value },
+  });
+  act(() =>
+    f.send(
+      agent,
+      "channel-a",
+      "acp_read",
+      update({
+        sessionUpdate: "agent_message_chunk",
+        content: {
+          type: "text",
+          text: "<img src=x onerror=alert(1)> Checking the tests.",
+        },
+      }),
+    ),
+  );
+  expect(
+    screen.getByRole("list", { name: "Recent activity" }),
+  ).toHaveTextContent("Checking the tests.");
+  expect(mounted.container.querySelector("img")).toBeNull();
+  mounted.rerender(f.view(foreign));
+  expect(screen.queryByRole("list")).not.toBeInTheDocument();
+  mounted.rerender(f.view());
+  expect(screen.getByRole("list")).toHaveTextContent("Checking the tests.");
+  act(f.deny);
+  expect(screen.queryByRole("list")).not.toBeInTheDocument();
 });

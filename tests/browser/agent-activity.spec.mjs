@@ -427,6 +427,65 @@ test("profile activity opens the exact agent and originating channel before its 
     "datetime",
     JSON.parse(expected.plaintext).timestamp,
   );
+  const update = (value) => ({
+    ...item("acp_read", "alpha", "wanted"),
+    payload: { method: "session/update", params: { update: value } },
+  });
+  app.observer(
+    update({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "reply",
+      content: {
+        type: "text",
+        text: "I found the issue in the channel subscription. ",
+      },
+    }),
+    agentKey,
+  );
+  app.observer(
+    update({
+      sessionUpdate: "agent_message_chunk",
+      messageId: "reply",
+      content: {
+        type: "text",
+        text: "Checking the fix against the existing tests.",
+      },
+    }),
+    agentKey,
+  );
+  app.observer(
+    update({
+      sessionUpdate: "tool_call",
+      toolCallId: "tests",
+      title: "Run profile tests",
+      status: "in_progress",
+    }),
+    agentKey,
+  );
+  await expect(
+    preview.getByRole("list", { name: "Recent activity" }),
+  ).toContainText(
+    "I found the issue in the channel subscription. Checking the fix against the existing tests.",
+  );
+  await expect(
+    preview.getByText("Run profile tests", { exact: true }),
+  ).toBeVisible();
+  app.observer(
+    update({
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tests",
+      status: "completed",
+    }),
+    agentKey,
+  );
+  await expect(
+    preview.getByText("Tool completed", { exact: true }),
+  ).toBeVisible();
+  await profile.getByRole("tab", { name: "Channels", exact: true }).click();
+  await profile.getByRole("tab", { name: "Info", exact: true }).click();
+  await expect(
+    preview.getByText("Run profile tests", { exact: true }),
+  ).toBeVisible();
   // Exercise painted theme/layout, not the separate appearance persistence contract.
   for (const mode of ["light", "dark"]) {
     await page.locator("html").evaluate((element, mode) => {

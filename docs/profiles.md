@@ -6,9 +6,16 @@ directory. Agents retains agent-specific configuration/operations; this slice
 adds no ownership/running badge, editor, agent-library read or execution API.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
-The Info tab's “Latest activity” preview shows the latest observed turn timestamp
-from the same session-owned snapshot, restricted to this exact public key and
-originating channel (including threads). It uses a short date and time rather than
+The Info tab's “Latest activity” card shows up to three recently updated assistant
+messages or tool titles/statuses from the existing session-owned records, restricted
+to this exact public key and originating channel (including threads). Text chunks
+are joined by session/turn/message identity; tool updates reuse the tool identity.
+Each item retains at most 600 trailing characters plus a truncation marker and
+renders at most three lines. Plain text only: no HTML, images or active links.
+Prompts, thinking, arguments, raw results and unsupported records are omitted;
+“View activity” retains the raw destination. This is a bounded preview, not a full
+transcript or history backfill. The timestamp includes visible content updates as
+well as turn signals. It uses a short date and time rather than
 a relative age that could become stale between snapshot updates. No context means
 no preview, never an all-channel fallback. Connecting, disconnected, unavailable
 and empty states are explicit. Counts and detailed explanations stay in the

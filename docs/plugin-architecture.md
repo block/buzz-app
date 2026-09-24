@@ -156,7 +156,9 @@ This is a host-matched preview addition, not cross-version capability negotiatio
 
 A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
 Channels renders these in its conversation header with public `context`, `pressed`,
-`available()` and `toggle(target)`. The page owns a single bottom drawer; a launcher
+`available()` and `toggle(target)`. The page owns one selected channel panel, placed
+in the bottom drawer by default or the existing companion column when the contribution
+sets `channelPlacement: "side"`; a launcher
 selects its **exact active contribution**, not target matching. `available()` and
 `toggle()` are revoked when the mounted context or contribution is retired. Optional
 `PanelProps.channelContext` carries the current displayed public context to a channel
@@ -174,9 +176,10 @@ not cross-version capability negotiation.
 ### Optional Canvas todos
 
 Todos (`buzz.todos`) is bundled **off by default** in browser and desktop. Enable
-it under Settings → Plugins. Its channel-header ListChecks button opens the existing
-bottom drawer, with add/check/uncheck and explicit Save/Refresh. It uses shared
-controls and theme tokens; Channels still owns drawer geometry and placement.
+it under Settings → Plugins. Its channel-header ListChecks button opens a right-hand
+side panel, with add/check/uncheck, one optional assignee per item, and explicit
+Save/Refresh. It uses shared controls and theme tokens; Channels still owns panel
+geometry, responsive placement and selection. Terminal remains in the bottom drawer.
 
 The source of truth is ordinary Markdown in one root level-two `Todos` section:
 
@@ -193,7 +196,19 @@ source byte; additions insert below the heading without rewriting other content.
 Duplicate Todos sections block editing until corrected in Canvas. Disabling removes
 the convenience UI, not the saved list: Channel settings → Canvas remains editable.
 
-Reads occur on open and explicit Refresh, not on a timer. Save uses the existing
+An optional terminal suffix records assignment as ordinary Markdown:
+` · Assignee: [Display name](nostr:npub…)`, using a full valid npub, not the abbreviated
+placeholder shown here. Only that exact structural suffix is assignment metadata;
+other links/prose remain task text. The public key is identity; names are escaped
+presentation. Assign/change/clear edits only the suffix. The selector uses the
+current channel member roster, with public-key qualifiers for namesakes. Missing
+rosters disable assignment controls; failed profile reads retain key/name fallbacks
+and offer retry. Profile renames never rewrite saved Canvas. Former members remain
+visible and can be changed or cleared. Assignment sends no notification and grants
+no channel membership or access.
+
+Canvas reads occur on open and explicit Refresh, not on a timer. Missing assignee
+and member profiles use the existing shared background directory. Save uses the existing
 session Canvas/outbox contract, including its 24 KiB limit, fresh membership check,
 optimistic head comparison and exact confirmation. This is **not atomic concurrency
 control**; simultaneous saves can overwrite edits. Detected conflicts retain the

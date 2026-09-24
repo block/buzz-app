@@ -1,11 +1,21 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { keypair, signed } from "../../features/relay/testing";
 import { readView } from "../../shared/view-state";
+import { createRelaySession } from "../../features/relay/session";
+import { bindNames } from "../../features/identity-names/service";
+import { assignTodo, readTodos } from "./model";
 import { TodosPanel } from "./TodosPanel";
 const context = {
   scope: "todos-test",
@@ -21,6 +31,15 @@ const head = signed(keypair(), {
   content: original,
   tags: [["h", context.channelId]],
 });
+const session = createRelaySession(null).session;
+const list = {
+  status: "ready" as const,
+  channels: [{ id: context.channelId, name: "Team", members: [] as string[] }],
+};
+const people = {
+  ...session,
+  channels: { ...session.channels, list: () => list },
+};
 function fixture() {
   let current = head;
   const canvas = {
@@ -35,7 +54,13 @@ function fixture() {
     ),
   };
   let active = true;
-  const props = { canvas, context, close: vi.fn(), active: () => active };
+  const props = {
+    canvas,
+    people,
+    context,
+    close: vi.fn(),
+    active: () => active,
+  };
   return {
     canvas,
     props,
@@ -239,4 +264,178 @@ it("keeps the editor usable when local recovery storage is unavailable", async (
     expect(screen.getByRole("status")).toHaveTextContent("Saved in Canvas"),
   );
   expect(f.canvas.save).toHaveBeenCalledTimes(1);
+});
+
+it("keeps exact assignees through rename, failed-save recovery and member removal, then clears", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const a = "a".repeat(64),
+    b = "b".repeat(64);
+  let roster = {
+    status: "ready" as const,
+    channels: [{ id: context.channelId, name: "Team", members: [a, b] }],
+  };
+  let profiles = new Map([
+    [a, { name: "Alex" }],
+    [b, { name: "Alex" }],
+  ]);
+  const rosterListeners = new Set<() => void>(),
+    profileListeners = new Set<() => void>();
+  const directory = {
+    snapshot: () => profiles,
+    subscribe: (listener: () => void) => {
+      profileListeners.add(listener);
+      return () => {
+        profileListeners.delete(listener);
+      };
+    },
+    ensure: vi.fn(async () => {}),
+  };
+  const names = bindNames({
+    profiles: directory,
+    agentLibrary: session.agentLibrary,
+  });
+  const users = {
+    profiles: directory,
+    names,
+    channels: {
+      ...people.channels,
+      list: () => roster,
+      subscribeList: (listener: () => void) => {
+        rosterListeners.add(listener);
+        return () => {
+          rosterListeners.delete(listener);
+        };
+      },
+    },
+  };
+  const select = () =>
+    within(
+      screen.getByRole("group", { name: "Assignee for First", exact: true }),
+    ).getByRole("combobox");
+  const view = render(<TodosPanel {...f.props} people={users} />);
+  await screen.findByRole("checkbox", { name: "First" });
+  await user.click(select());
+  expect(
+    screen.getByRole("option", { name: /Alex · aaaaaaaaaaaa/ }),
+  ).toBeInTheDocument();
+  expect(
+    screen.getByRole("option", { name: /Alex · bbbbbbbbbbbb/ }),
+  ).toBeInTheDocument();
+  await user.click(screen.getByRole("option", { name: /Alex · aaaaaaaaaaaa/ }));
+  const expected = assignTodo(
+    original,
+    readTodos(original).items[0]?.offset ?? -1,
+    {
+      pubkey: a,
+      name: "Alex",
+    },
+  );
+  f.canvas.save.mockRejectedValueOnce(new Error("Offline"));
+  await user.click(save());
+  await screen.findByRole("alert");
+  view.unmount();
+  const restored = render(<TodosPanel {...f.props} people={users} />);
+  await screen.findByRole("checkbox", { name: "First" });
+  expect(select()).toHaveTextContent("Alex · aaaaaaaaaaaa");
+  act(() => {
+    profiles = new Map([
+      [a, { name: "Renamed" }],
+      [b, { name: "Alex" }],
+    ]);
+    for (const listener of profileListeners) listener();
+  });
+  expect(select()).toHaveTextContent("Renamed");
+  await user.click(save());
+  await waitFor(() => expect(save()).toBeDisabled());
+  expect(f.canvas.save).toHaveBeenLastCalledWith(
+    context.channelId,
+    expected,
+    head.id,
+  );
+  act(() => {
+    roster = {
+      ...roster,
+      channels: [{ id: context.channelId, name: "Team", members: [b] }],
+    };
+    for (const listener of rosterListeners) listener();
+  });
+  expect(select()).toHaveTextContent("not in channel");
+  expect(save()).toBeDisabled();
+  act(() => select().focus());
+  await user.keyboard("{ArrowDown}");
+  await user.click(
+    await screen.findByRole("option", { name: "Unassigned", exact: true }),
+  );
+  await user.click(save());
+  expect(f.canvas.save).toHaveBeenLastCalledWith(
+    context.channelId,
+    original,
+    "b".repeat(64),
+  );
+  restored.unmount();
+  names.dispose();
+  expect(rosterListeners.size).toBe(0);
+  expect(profileListeners.size).toBe(0);
+});
+it("shows saved identity when profiles fail, disables missing-roster assignments and rejects stale membership selections", async () => {
+  const f = fixture(),
+    user = userEvent.setup();
+  const a = "a".repeat(64);
+  let roster = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: context.channelId,
+        name: "Team",
+        members: [a, "b".repeat(64)] as string[] | undefined,
+      },
+    ],
+  };
+  const users = {
+    ...people,
+    channels: { ...people.channels, list: () => roster },
+    profiles: {
+      ...people.profiles,
+      ensure: vi.fn(async () => {
+        throw new Error("Offline");
+      }),
+    },
+  };
+  const saved = assignTodo(
+    original,
+    readTodos(original).items[0]?.offset ?? -1,
+    {
+      pubkey: a,
+      name: "Saved name",
+    },
+  );
+  f.canvas.read.mockResolvedValue({ ...head, content: saved });
+  const view = render(<TodosPanel {...f.props} people={users} />);
+  const select = () =>
+    within(
+      screen.getByRole("group", { name: "Assignee for First", exact: true }),
+    ).getByRole("combobox");
+  await screen.findByRole("checkbox", { name: "First" });
+  expect(select()).toHaveTextContent("Saved name");
+  await screen.findByText(/Names unavailable/);
+  await user.click(screen.getByRole("button", { name: "Retry users" }));
+  await waitFor(() => expect(users.profiles.ensure).toHaveBeenCalledTimes(2));
+  // Captured option is stale; the click must read the current authoritative roster.
+  act(() => select().focus());
+  await user.keyboard("{ArrowDown}");
+  const stale = await screen.findByRole("option", { name: /bbbbbbbbbbbb/ });
+  roster = {
+    ...roster,
+    channels: [{ id: context.channelId, name: "Team", members: [] }],
+  };
+  await user.click(stale);
+  expect(save()).toBeDisabled();
+  roster = {
+    ...roster,
+    channels: [{ id: context.channelId, name: "Team", members: undefined }],
+  };
+  view.rerender(<TodosPanel {...f.props} people={users} />);
+  expect(select()).toBeDisabled();
+  expect(select()).toHaveTextContent("membership unavailable");
 });

@@ -4,6 +4,7 @@ import type {
   Panels,
   RegisteredPanel,
 } from "../../features/panels/service";
+import { Panel } from "../../shared/design-system/ui/Panel";
 import { PanelView } from "../../features/panels/PanelView";
 import styles from "./Channels.module.css";
 
@@ -98,7 +99,25 @@ export function useChannelPanels(
           })}
       </div>
     ),
-    content: selected && (
+    side: selected?.panel.channelPlacement === "side" && (
+      <Panel
+        aria-label={`${selected.panel.title} panel`}
+        onKeyDown={(event) => {
+          if (event.key === "Escape") {
+            event.stopPropagation();
+            hide(selected);
+          }
+        }}
+      >
+        <PanelView
+          panel={selected.panel}
+          target={selected.target}
+          channelContext={context}
+          close={() => hide(selected)}
+        />
+      </Panel>
+    ),
+    content: selected && selected.panel.channelPlacement !== "side" && (
       <section
         className={styles.channelDrawer}
         aria-label={`${selected.panel.title} drawer`}

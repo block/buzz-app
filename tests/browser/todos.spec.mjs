@@ -1,3 +1,4 @@
+import { npubEncode } from "nostr-tools/nip19";
 import { verifyEvent } from "nostr-tools";
 import { test, expect } from "./fixture.mjs";
 
@@ -78,7 +79,7 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await messages();
   await launcher.click();
   const drawer = page.getByRole("region", {
-    name: "Todos drawer",
+    name: "Todos panel",
     exact: true,
   });
   const input = drawer.getByRole("textbox", { name: "New todo" });
@@ -89,16 +90,44 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   await todo.press("Space");
   await expect(todo).toBeChecked();
   await expect(todo).toBeFocused();
+  const assignee = drawer
+    .getByRole("group", { name: "Assignee for Ship it", exact: true })
+    .getByRole("combobox");
+  await assignee.click();
+  await page.getByRole("option", { name: /Fixture Reader/ }).click();
   await drawer.getByRole("button", { name: "Save", exact: true }).click();
   await expect(drawer.getByRole("status")).toHaveText("Saved in Canvas");
   expect(writes).toHaveLength(1);
   expect(head.content).toBe(
-    original.replace("## Todos", "## Todos\n\n- [x] Ship it\n"),
+    original.replace(
+      "## Todos",
+      `## Todos\n\n- [x] Ship it · Assignee: [Fixture Reader](nostr:${npubEncode(app.viewer)})\n`,
+    ),
   );
+  const conversation = await page
+    .getByRole("article", { name: "Conversation", exact: true })
+    .boundingBox();
+  const bounds = await drawer.boundingBox();
+  expect(bounds.x).toBeGreaterThanOrEqual(conversation.x + conversation.width);
+  expect(Math.abs(bounds.y - conversation.y)).toBeLessThan(2);
+  await drawer.getByRole("button", { name: "Hide todos" }).click();
+  await launcher.click();
+  await expect(assignee).toContainText("Fixture Reader");
+  await assignee.click();
+  await page.getByRole("option", { name: "Unassigned", exact: true }).waitFor();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("listbox")).toHaveCount(0);
+  await expect(drawer).toBeVisible();
+  await expect(assignee).toBeFocused();
+  await assignee.press("Escape");
+  await expect(drawer).toHaveCount(0);
+  await expect(launcher).toBeFocused();
+  await launcher.click();
+  await expect(assignee).toContainText("Fixture Reader");
   await page.screenshot({
     path: test.info().outputPath("todos-light-wide.png"),
   });
-  // A shorter real drawer at narrow width with enlarged text; no second layout.
+  // Existing side-panel responsive placement with enlarged text.
   await page.setViewportSize({ width: 600, height: 800 });
   await page.evaluate(() => {
     document.documentElement.dataset.colorMode = "dark";

@@ -1,6 +1,7 @@
 import { createRoot } from "react-dom/client";
 import { useState } from "react";
 import "../../src/shared/styles/globals.css";
+import { createRelaySession } from "../../src/features/relay/session";
 import { TodosPanel } from "../../src/bundled/todos/TodosPanel";
 import type { RelayEvent } from "../../src/features/relay/events";
 import { Button } from "../../src/shared/design-system/ui/Button";
@@ -18,6 +19,21 @@ const canvas = {
       throw new Error("Canvas changed. Refresh before saving.");
     head = { ...head, id: `preview-${++revision}`, content };
     return head;
+  },
+};
+const session = createRelaySession(null).session;
+const members = ["a".repeat(64), "b".repeat(64)];
+const list = {
+  status: "ready" as const,
+  channels: [{ id: "preview", name: "Preview", members }],
+};
+const people = {
+  ...session,
+  channels: { ...session.channels, list: () => list },
+  names: {
+    ...session.names,
+    resolve: (key: string) =>
+      key === members[0] ? "Alex Fixture" : "Sam Fixture",
   },
 };
 function Preview() {
@@ -53,10 +69,13 @@ function Preview() {
       <p className="text-body-sm">
         Local preview only. No relay reads or writes.
       </p>
-      <div style={{ height: "42vh", minHeight: 180, marginTop: 16 }}>
+      <div
+        style={{ height: "75vh", width: 380, maxWidth: "100%", marginTop: 16 }}
+      >
         {open && (
           <TodosPanel
             canvas={canvas}
+            people={people}
             context={{
               scope: "todos-fixture",
               channelId: "preview",

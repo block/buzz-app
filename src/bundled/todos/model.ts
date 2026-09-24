@@ -1,6 +1,15 @@
 import { fromMarkdown } from "mdast-util-from-markdown";
+import { profileKey, profileTarget } from "../../features/profiles/target";
 
-export type Todo = { offset: number; label: string; checked: boolean };
+export type Assignee = { pubkey: string; name: string };
+export type Todo = {
+  offset: number;
+  label: string;
+  checked: boolean;
+  end: number;
+  assignee?: (Assignee & { start: number }) | undefined;
+};
+const assignment = " · Assignee: ";
 /** Source offsets let checkbox edits leave every other byte of the Canvas alone. */
 export function readTodos(content: string) {
   const nodes = fromMarkdown(content).children;
@@ -32,12 +41,45 @@ export function readTodos(content: string) {
       const match = /^([-+*][ \t]+\[)([ xX])\][ \t]+([^\r\n]+)/.exec(
         content.slice(offset),
       );
-      if (match?.[1] && match[3])
-        items.push({
-          offset: offset + match[1].length,
-          label: match[3].trim(),
-          checked: match[2] !== " ",
-        });
+      if (!match?.[1] || !match[3]) continue;
+      const end = offset + match[0].trimEnd().length;
+      const paragraph = item.children[0];
+      const link =
+        paragraph?.type === "paragraph"
+          ? paragraph.children.find(
+              (child) =>
+                child.type === "link" && child.position?.end.offset === end,
+            )
+          : undefined;
+      const linkStart = link?.position?.start.offset;
+      const linkEnd = link?.position?.end.offset;
+      const pubkey = link?.type === "link" ? profileKey(link.url) : undefined;
+      const name =
+        link?.type === "link" &&
+        link.children.length === 1 &&
+        link.children[0]?.type === "text"
+          ? link.children[0].value
+          : undefined;
+      const assignee =
+        pubkey &&
+        name &&
+        linkStart !== undefined &&
+        linkEnd === end &&
+        content.slice(linkStart - assignment.length, linkStart) === assignment
+          ? { pubkey, name, start: linkStart - assignment.length }
+          : undefined;
+      items.push({
+        offset: offset + match[1].length,
+        label: content
+          .slice(
+            offset + match[0].length - match[3].length,
+            assignee?.start ?? end,
+          )
+          .trim(),
+        checked: match[2] !== " ",
+        end,
+        assignee,
+      });
     }
   }
   return { items, start };
@@ -65,6 +107,37 @@ export function addTodo(content: string, label: string) {
   if (readTodos(next).items.length !== items.length + 1)
     throw new Error(
       "Could not add a todo safely. Check Canvas for unfinished Markdown blocks.",
+    );
+  return next;
+}
+
+/** Edit only the readable assignment suffix, leaving the rest of the Canvas intact. */
+export function assignTodo(
+  content: string,
+  offset: number,
+  assignee?: Assignee,
+) {
+  const { items } = readTodos(content);
+  const item = items.find((item) => item.offset === offset);
+  if (!item)
+    throw new Error("This todo changed. Reload the Canvas before editing it.");
+  const target = assignee && profileTarget(assignee.pubkey);
+  if (assignee && !target) throw new Error("Choose a valid Buzz user.");
+  const name =
+    assignee?.name.replace(/\s+/g, " ").trim() || assignee?.pubkey || "";
+  const escaped = name.replace(/[\\`*_{}[\]()#+\-.!<>|&]/g, "\\$&");
+  const suffix = assignee ? `${assignment}[${escaped}](${target})` : "";
+  const start = item.assignee?.start ?? item.end;
+  const next = content.slice(0, start) + suffix + content.slice(item.end);
+  const parsed = readTodos(next);
+  const edited = parsed.items.find((value) => value.offset === offset);
+  if (
+    parsed.items.length !== items.length ||
+    edited?.label !== item.label ||
+    edited?.assignee?.pubkey !== assignee?.pubkey.toLowerCase()
+  )
+    throw new Error(
+      "Could not assign safely. Check this todo’s Markdown in Canvas.",
     );
   return next;
 }

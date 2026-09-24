@@ -51,6 +51,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
       <TodosPanel
         key={`${state.scope}:${state.generation}:${channelContext.channelId}`}
         canvas={state.session.canvas}
+        people={state.session}
         context={channelContext}
         close={close}
         active={isActive}
@@ -62,6 +63,7 @@ export const apply: PluginModule["apply"] = (ctx) => {
     title: "Todos",
     matches: () => false,
     channelLauncher: Launcher,
+    channelPlacement: "side",
     component: Panel,
   });
 };

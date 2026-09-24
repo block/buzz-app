@@ -5,13 +5,14 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
+import type { RelaySession } from "../../features/relay/session";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { Select } from "../../shared/design-system/ui/Select";
 import type { ChannelCanvas } from "../../features/channel-templates/capability";
 import type { ChannelPanelContext } from "../../features/panels/service";
-import {
-  CaretDownIcon,
-  ListChecksIcon,
-} from "../../shared/design-system/icons/index";
+import { XIcon, ListChecksIcon } from "../../shared/design-system/icons/index";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Checkbox } from "../../shared/design-system/ui/Checkbox";
 import { Field } from "../../shared/design-system/ui/Field";
@@ -19,9 +20,17 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
 import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
 import { readView, writeView } from "../../shared/view-state";
-import { addTodo, readTodos, toggleTodo } from "./model";
+import { addTodo, assignTodo, readTodos, toggleTodo } from "./model";
 import styles from "./Todos.module.css";
 
+export type TodoPeople = {
+  channels: Pick<
+    RelaySession["channels"],
+    "list" | "subscribeList" | "ensureList" | "refreshList"
+  >;
+  profiles: RelaySession["profiles"];
+  names: RelaySession["names"];
+};
 type Draft = {
   content: string;
   original: string;
@@ -41,15 +50,25 @@ function readDraft(scope: string, key: string): Draft | undefined {
 }
 export function TodosPanel({
   canvas,
+  people,
   context,
   close,
   active,
 }: {
   canvas: ChannelCanvas;
+  people: TodoPeople;
   context: ChannelPanelContext;
   close(): void;
   active(): boolean;
 }) {
+  const list = useSyncExternalStore(
+    people.channels.subscribeList,
+    people.channels.list,
+  );
+  const resolveName = useIdentityNames(people.names);
+  const members = list.channels.find(
+    (channel) => channel.id === context.channelId,
+  )?.members;
   const key = `todos-draft-v1:${context.channelId}`;
   const [saved] = useState(() => readDraft(context.scope, key));
   const savedDirty = !!saved && saved.content !== saved.original;
@@ -163,6 +182,41 @@ export function TodosPanel({
     !loaded || !!busy || !canvas.available || !!parseError || conflict;
   const items = parsed?.items ?? [];
   const remaining = items.filter((item) => !item.checked).length;
+  const peopleKey = [
+    ...new Set([
+      ...(members ?? []),
+      ...items.flatMap((item) => (item.assignee ? [item.assignee.pubkey] : [])),
+    ]),
+  ]
+    .sort()
+    .join(":");
+  const [namesError, setNamesError] = useState(false);
+  const [namesRetry, setNamesRetry] = useState(0);
+  useEffect(() => {
+    void namesRetry; // Explicit user retry reruns this owned read.
+    let current = true;
+    people.channels.ensureList();
+    void people.profiles
+      .ensure(peopleKey ? peopleKey.split(":") : [], "background")
+      .then(
+        () => {
+          if (current && active()) setNamesError(false);
+        },
+        () => {
+          if (current && active()) setNamesError(true);
+        },
+      );
+    return () => {
+      current = false;
+    };
+  }, [people, peopleKey, active, namesRetry]);
+  const choices = (members ?? [])
+    .map((pubkey) => ({
+      value: pubkey,
+      label: `${resolveName(pubkey, pubkey.slice(0, 12))} · ${pubkey.slice(0, 12)}`,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label));
+
   const change = (edit: () => string) => {
     if (!active() || disabled) return;
     try {
@@ -189,7 +243,7 @@ export function TodosPanel({
           <IconButton
             size="sm"
             variant="ghost"
-            icon={<CaretDownIcon size={16} aria-hidden="true" />}
+            icon={<XIcon size={16} aria-hidden="true" />}
             aria-label="Hide todos"
             title="Hide todos"
             onClick={close}
@@ -239,6 +293,24 @@ export function TodosPanel({
             <p role="alert" className="text-body-sm text-danger">
               {error || parseError}
             </p>
+          )}
+          {(namesError || list.error || !members) && (
+            <div className="text-caption text-secondary">
+              {namesError
+                ? "Names unavailable; public keys still identify users."
+                : "Channel members unavailable or out of date."}
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => {
+                  if (!active()) return;
+                  people.channels.refreshList?.();
+                  setNamesRetry((value) => value + 1);
+                }}
+              >
+                Retry users
+              </Button>
+            </div>
           )}
           {!canvas.available && (
             <p className="text-body-sm text-secondary">
@@ -304,6 +376,72 @@ export function TodosPanel({
                                   </span>
                                 }
                               />
+                              <fieldset
+                                className={styles.assignee}
+                                aria-label={`Assignee for ${item.label}`}
+                              >
+                                <Select
+                                  label="Assignee"
+                                  variant="field"
+                                  value={item.assignee?.pubkey ?? ""}
+                                  disabled={disabled || !members}
+                                  groups={[
+                                    {
+                                      label: "Channel users",
+                                      options: [
+                                        { value: "", label: "Unassigned" },
+                                        ...choices.map((choice) =>
+                                          item.assignee?.pubkey === choice.value
+                                            ? {
+                                                ...choice,
+                                                label: `${resolveName(choice.value, item.assignee.name)} · ${choice.value.slice(0, 12)}`,
+                                              }
+                                            : choice,
+                                        ),
+                                        ...(item.assignee &&
+                                        !members?.includes(item.assignee.pubkey)
+                                          ? [
+                                              {
+                                                value: item.assignee.pubkey,
+                                                label: `${resolveName(item.assignee.pubkey, item.assignee.name)} · ${item.assignee.pubkey.slice(0, 12)} ${members ? "not in channel" : "membership unavailable"}`,
+                                                disabled: true,
+                                              },
+                                            ]
+                                          : []),
+                                      ],
+                                    },
+                                  ]}
+                                  onValueChange={(pubkey) => {
+                                    const currentMembers = people.channels
+                                      .list()
+                                      .channels.find(
+                                        (channel) =>
+                                          channel.id === context.channelId,
+                                      )?.members;
+                                    if (
+                                      !currentMembers ||
+                                      (pubkey &&
+                                        !currentMembers.includes(pubkey))
+                                    )
+                                      return;
+                                    change(() =>
+                                      assignTodo(
+                                        draft.content,
+                                        item.offset,
+                                        pubkey
+                                          ? {
+                                              pubkey,
+                                              name: resolveName(
+                                                pubkey,
+                                                pubkey.slice(0, 12),
+                                              ),
+                                            }
+                                          : undefined,
+                                      ),
+                                    );
+                                  }}
+                                />
+                              </fieldset>
                             </li>
                           ))}
                         </ul>

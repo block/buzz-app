@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { addTodo, readTodos, toggleTodo } from "./model";
+import { profileTarget } from "../../features/profiles/target";
+import { addTodo, assignTodo, readTodos, toggleTodo } from "./model";
 
 describe("Canvas todo source edits", () => {
   it("changes only the selected checkbox byte, including duplicate labels and CRLF", () => {
@@ -60,4 +61,87 @@ describe("Canvas todo source edits", () => {
     expect(() => addTodo("```unterminated\n", "Oops")).toThrow(/safely/);
     expect(() => addTodo("<!-- open comment\n", "Oops")).toThrow(/safely/);
   });
+});
+
+function first(content: string) {
+  const item = readTodos(content).items[0];
+  if (!item) throw new Error("Expected fixture todo");
+  return item;
+}
+const alex = { pubkey: "a".repeat(64), name: "Alex" };
+const sam = { pubkey: "b".repeat(64), name: "Sam" };
+it("assigns, replaces and clears only the suffix; keeps CRLF, prose, nested lines and trailing spaces", () => {
+  const before =
+    "# Notes\r\nKeep this.\r\n\r\n## Todos\r\n\r\n* [X] Ship **it**  \r\n  - Keep nested.\r\n\r\n## Decisions\r\nUntouched.";
+  const item = first(before);
+  const assigned = assignTodo(before, item.offset, alex);
+  expect(assigned).toBe(
+    before.replace(
+      "Ship **it**",
+      `Ship **it** · Assignee: [Alex](${profileTarget(alex.pubkey)})`,
+    ),
+  );
+  expect(readTodos(assigned).items[0]?.assignee).toMatchObject(alex);
+  expect(toggleTodo(assigned, item.offset, false)).toBe(
+    assigned.replace("[X]", "[ ]"),
+  );
+  const changed = assignTodo(assigned, item.offset, sam);
+  expect(changed).toBe(
+    assigned.replace(
+      `[Alex](${profileTarget(alex.pubkey)})`,
+      `[Sam](${profileTarget(sam.pubkey)})`,
+    ),
+  );
+  expect(assignTodo(changed, item.offset)).toBe(before);
+});
+it.each(["A] (B) \\ *C* &amp; <script>", "A\nB\rC", "", "👑 Queen [test]"])(
+  "round-trips untrusted profile name %j without changing identity or Markdown structure",
+  (name) => {
+    const before = "## Todos\n- [ ] First\n- [ ] Second\n";
+    const item = first(before);
+    const assigned = assignTodo(before, item.offset, { ...alex, name });
+    expect(readTodos(assigned).items[0]?.assignee).toMatchObject({
+      pubkey: alex.pubkey,
+      name: name.replace(/\s+/g, " ").trim() || alex.pubkey,
+    });
+    expect(assignTodo(assigned, item.offset)).toBe(before);
+  },
+);
+it.each([
+  `Task [Alex](${profileTarget(alex.pubkey)})`,
+  `Task · Assignee: [Alex](https://example.com)`,
+  `Task · Assignee: [Alex](nostr:npub1invalid)`,
+  `Task · Assignee: [Alex](${profileTarget(alex.pubkey)}) after`,
+  `Task \` · Assignee: [Alex](${profileTarget(alex.pubkey)})\``,
+  `Task · Assignee: **[Alex](${profileTarget(alex.pubkey)})**`,
+])("preserves lookalike prose %s", (label) => {
+  const before = `## Todos\n- [ ] ${label}\n`;
+  const item = first(before);
+  expect(item.assignee).toBeUndefined();
+  expect(assignTodo(before, item.offset)).toBe(before);
+  const next = assignTodo(before, item.offset, sam);
+  expect(readTodos(next).items[0]?.label).toBe(label);
+  expect(assignTodo(next, item.offset)).toBe(before);
+});
+it("refuses swallowed assignments, invalid users and stale offsets", () => {
+  const before = "## Todos\n- [ ] Task `unfinished\n  closed`";
+  expect(() => assignTodo(before, first(before).offset, alex)).toThrow(
+    /safely/,
+  );
+  expect(() => assignTodo("## Todos\n- [ ] Task", 0, alex)).toThrow(/changed/);
+  expect(() =>
+    assignTodo(before, first(before).offset, {
+      ...alex,
+      pubkey: "bad",
+    }),
+  ).toThrow(/valid/);
+});
+
+it("recognizes first-line assignment when continuation prose has another link", () => {
+  const before = `## Todos\n- [ ] Task · Assignee: [Alex](${profileTarget(alex.pubkey)})\n  See [docs](https://example.com).\n`;
+  const item = first(before);
+  expect(item.assignee?.pubkey).toBe(alex.pubkey);
+  expect(assignTodo(before, item.offset)).toBe(
+    "## Todos\n- [ ] Task\n  See [docs](https://example.com).\n",
+  );
 });

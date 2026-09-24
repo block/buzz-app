@@ -78,6 +78,12 @@ it("waits silently for fresh permissions and preserves the last-owner boundary",
   expect(
     screen.getAllByRole("menuitem").map((item) => item.textContent),
   ).toEqual(["Archive channel", "Delete channel"]);
+  for (const name of ["Archive channel", "Delete channel"]) {
+    const item = screen.getByRole("menuitem", { name });
+    expect(
+      item.querySelector('.buzz-menu-icon[aria-hidden="true"] svg'),
+    ).not.toBeNull();
+  }
   await user.click(remove);
   expect(choose).toHaveBeenCalledWith("delete");
 });
@@ -115,6 +121,9 @@ it.each([
       name: label,
     });
     expect(screen.getAllByRole("menuitem")).toHaveLength(1);
+    expect(
+      item.querySelector('.buzz-menu-icon[aria-hidden="true"] svg'),
+    ).not.toBeNull();
     await user.click(item);
     expect(choose).toHaveBeenCalledWith(action);
   },

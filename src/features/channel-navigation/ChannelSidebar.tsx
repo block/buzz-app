@@ -209,12 +209,11 @@ function ReadySidebar({
   const preparingDm = composingMessage ? handoff?.preparingDm : undefined;
   const sidebarChannels = channels.filter(
     (channel) =>
-      !dmVisibility.hiddenIds.includes(channel.id) && (
       !preparingDm ||
       preparingDm.existing.has(channel.id) ||
       channel.channelType !== "dm" ||
       channel.members?.length !== preparingDm.members.size ||
-      !channel.members.every((member) => preparingDm.members.has(member))),
+      !channel.members.every((member) => preparingDm.members.has(member)),
   );
   const current = channels.find(
     (channel) =>
@@ -269,7 +268,10 @@ function ReadySidebar({
       mounted.current = false;
     };
   }, []);
-  const chooseLifecycle = (channel: ChannelSummary, action: ChannelLifecycleAction) => {
+  const chooseLifecycle = (
+    channel: ChannelSummary,
+    action: ChannelLifecycleAction,
+  ) => {
     // Let the existing context menu restore focus before opening confirmation.
     requestAnimationFrame(() => {
       if (mounted.current) setLifecycleDialog({ channel, action });
@@ -279,10 +281,21 @@ function ReadySidebar({
     if (!lifecycleFocus.current || lifecycleDialog) return;
     const id = lifecycleFocus.current;
     lifecycleFocus.current = undefined;
-    const rows = [...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>("[data-channel-id]") ?? [])];
-    const row = rows.find((row) => row.dataset.channelId === id && row.getClientRects().length)
-      ?? rows.find((row) => row.getClientRects().length);
-    (row ?? sidebar.list.current?.closest("aside")?.querySelector<HTMLButtonElement>("button"))?.focus({ preventScroll: true });
+    const rows = [
+      ...(sidebar.list.current?.querySelectorAll<HTMLButtonElement>(
+        "[data-channel-id]",
+      ) ?? []),
+    ];
+    const row =
+      rows.find(
+        (row) => row.dataset.channelId === id && row.getClientRects().length,
+      ) ?? rows.find((row) => row.getClientRects().length);
+    (
+      row ??
+      sidebar.list.current
+        ?.closest("aside")
+        ?.querySelector<HTMLButtonElement>("button")
+    )?.focus({ preventScroll: true });
   }, [lifecycleDialog, sidebar.list]);
   const select = useCallback(
     (id: string) => {
@@ -366,7 +379,7 @@ function ReadySidebar({
           muted: preferences.data?.muted ?? [],
         }
       : preferences.data,
-    hiddenDms.hiddenIds,
+    new Set([...hiddenDms.hiddenIds, ...dmVisibility.hidden]),
   );
   // Compose actual items here; menu availability is their count, not the policy
   // of any one action. Sibling actions keep their own eligibility checks.
@@ -508,7 +521,9 @@ function ReadySidebar({
             lifecycleFocus.current = id;
             setLifecycleDialog(undefined);
             if (current?.id === id) {
-              const next = sections.flatMap((section) => section.rows).find((channel) => channel.id !== id);
+              const next = sections
+                .flatMap((section) => section.rows)
+                .find((channel) => channel.id !== id);
               if (next) select(next.id);
               else {
                 writeView(scope, "selected-channel", undefined);

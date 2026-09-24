@@ -76,7 +76,7 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
     await seen;
     await expect(menu).toBeVisible();
     await expect(menu.getByRole("separator")).toHaveCount(0);
-    await expect(menu.getByRole("menuitem")).toHaveCount(0);
+    await expect(menu.getByRole("menuitem")).toHaveText(["New session"]);
     await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
   } finally {
     release();
@@ -84,7 +84,22 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(
     menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
   ).toBeVisible();
-  await expect(menu.getByRole("separator")).toHaveCount(0);
+  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("menuitem")).toHaveText([
+    "New session",
+    "Archive channel",
+    "Delete channel",
+  ]);
+  await expect(
+    page.getByRole("button", { name: /More options for/ }),
+  ).toHaveCount(0);
+  for (const name of ["Archive channel", "Delete channel"]) {
+    await expect(
+      menu
+        .getByRole("menuitem", { name, exact: true })
+        .locator(".buzz-menu-icon svg"),
+    ).toHaveCount(1);
+  }
   await page.unroute("**/api/relay/**/query", permissionRoute);
   await expect(
     menu.getByRole("menuitem", { name: /^Leave channel/ }),
@@ -108,6 +123,22 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(dialog).toHaveCount(0);
   await expect(row).toBeFocused();
   expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
+  await row.click({ button: "right" });
+  await menu
+    .getByRole("menuitem", { name: "Archive channel", exact: true })
+    .click();
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(row).toBeFocused();
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await row.click();
   await row.click({ button: "right" });
   await menu
     .getByRole("menuitem", { name: "Archive channel", exact: true })

@@ -1,5 +1,15 @@
 import { useEffect, useState } from "react";
-import { MenuItem, MenuSeparator } from "../../shared/design-system/ui/Menu";
+import {
+  ArchiveIcon,
+  EyeSlashIcon,
+  SignOutIcon,
+  TrashIcon,
+} from "../../shared/design-system/icons";
+import {
+  MenuIcon,
+  MenuItem,
+  MenuSeparator,
+} from "../../shared/design-system/ui/Menu";
 import type { ChannelLifecycleCapability } from "../../features/relay/channel-lifecycle";
 import type {
   ChannelLifecycleAction,
@@ -72,22 +82,34 @@ export function ChannelLifecycleMenu({
       {separator && <MenuSeparator />}
       {state.canHide ? (
         <MenuItem disabled={disabled} onClick={() => choose("hide")}>
+          <MenuIcon>
+            <EyeSlashIcon size={14} />
+          </MenuIcon>
           Hide conversation
         </MenuItem>
       ) : (
         <>
           {state.canArchive && (
             <MenuItem disabled={disabled} onClick={() => choose("archive")}>
+              <MenuIcon>
+                <ArchiveIcon size={14} />
+              </MenuIcon>
               Archive channel
             </MenuItem>
           )}
           {state.canDelete && (
             <MenuItem disabled={disabled} onClick={() => choose("delete")}>
+              <MenuIcon>
+                <TrashIcon size={14} />
+              </MenuIcon>
               Delete channel
             </MenuItem>
           )}
           {state.canLeave && (
             <MenuItem disabled={disabled} onClick={() => choose("leave")}>
+              <MenuIcon>
+                <SignOutIcon size={14} />
+              </MenuIcon>
               Leave channel
             </MenuItem>
           )}

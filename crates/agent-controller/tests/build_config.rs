@@ -107,7 +107,14 @@ fn unclosed_unrelated_quotes_never_promote_embedded_settings() {
             format!("OTHER={quote}unterminated\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=true\n"),
         )
         .unwrap();
-        assert!(load(&path, |_| None).unwrap().is_empty());
+        if quote == "`" {
+            assert_eq!(
+                load(&path, |_| None).unwrap_err(),
+                "Invalid native build .env.local"
+            );
+        } else {
+            assert!(load(&path, |_| None).unwrap().is_empty());
+        }
     }
 }
 
@@ -161,4 +168,51 @@ fn selected_adjacent_segments_and_unrelated_comments_keep_record_boundaries() {
         parse(&values["BUZZ_BUILD_AGENT_ENV"]).unwrap(),
         (String::new(), "team-*".into(), "build-model".into())
     );
+}
+
+#[test]
+fn literal_backticks_do_not_hide_following_build_settings() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env.local");
+    for record in [
+        "OTHER=prefix`literal",
+        "OTHER=prefix`one`two`three",
+        "export OTHER = prefix`literal",
+        "OTHER=\"quoted ` literal\"",
+        "OTHER='quoted ` literal'",
+        "OTHER=\"prefix\"`literal",
+    ] {
+        let text = format!("{record}\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n");
+        let decoded: Vec<_> = dotenvy::from_read_iter(text.as_bytes())
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert_eq!(decoded.len(), 3, "{record}");
+        std::fs::write(&path, text).unwrap();
+        let values = load(&path, |_| None).unwrap();
+        assert_eq!(values.len(), 2, "{record}");
+        assert_eq!(values["BUZZ_BUILD_BUZZ_AGENT_PROVIDER"], "databricks_v2");
+        assert_eq!(values["BUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY"], "1");
+    }
+}
+
+#[test]
+fn backtick_delimited_values_contain_multiline_text_and_reject_unclosed_framing() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env.local");
+    for prefix in ["OTHER=", "  export OTHER = \t"] {
+        std::fs::write(&path, format!("{prefix}`multiline\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n`\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\n")).unwrap();
+        let values = load(&path, |_| None).unwrap();
+        assert_eq!(values.len(), 1);
+        assert_eq!(values["BUZZ_BUILD_BUZZ_AGENT_PROVIDER"], "databricks_v2");
+        std::fs::write(
+            &path,
+            format!("{prefix}`NEVER_PRINT\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n"),
+        )
+        .unwrap();
+        assert_eq!(
+            load(&path, |_| None).unwrap_err(),
+            "Invalid native build .env.local"
+        );
+        assert_eq!(load(&path, |_| Some(String::new())).unwrap().len(), 3);
+    }
 }

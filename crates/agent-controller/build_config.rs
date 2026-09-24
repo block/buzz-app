@@ -43,6 +43,14 @@ pub fn load(
             .next()
             .unwrap_or("");
         let selected = KEYS.contains(&key) && !values.contains_key(key);
+        // Only a value starting with a backtick uses alternate-loader framing.
+        // Mid-value backticks are literal characters in dotenvy.
+        let backtick_start = assignment
+            .strip_prefix(key)
+            .and_then(|tail| tail.trim_start().strip_prefix('='))
+            .map(str::trim_start)
+            .filter(|value| value.starts_with('`'))
+            .map(|value| line_end - value.len());
         // Follow dotenvy's whole-record quote/escape/comment boundaries, not
         // just the first quoted segment. Also conservatively contain backtick
         // records used by other dev loaders (dotenvy does not decode them).
@@ -54,7 +62,7 @@ pub fn load(
         let mut comment = false;
         for (i, c) in rest.char_indices() {
             // Backtick containment must never mask dotenvy's quote state.
-            if c == '`' && !escaped && !comment && (quote.is_none() || backtick) {
+            if c == '`' && !escaped && !comment && (backtick || backtick_start == Some(i)) {
                 backtick = !backtick;
             }
             if comment {
@@ -83,6 +91,9 @@ pub fn load(
                 end = i + 1;
                 break;
             }
+        }
+        if backtick {
+            return Err("Invalid native build .env.local");
         }
         if selected {
             for entry in dotenvy::from_read_iter(&rest.as_bytes()[..end]) {

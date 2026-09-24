@@ -120,6 +120,33 @@ test("Cargo rebuilds the real controller's nonsecret defaults from local config 
       "embedded policy text must not become a compiled setting",
     );
   }
+  writeFileSync(
+    local,
+    "OTHER=prefix`literal\nBUZZ_BUILD_AGENT_ENV='DATABRICKS_MODEL=following-model'\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n",
+  );
+  assert.deepEqual(run(), {
+    host: "",
+    filter: "",
+    model: "following-model",
+    provider: "databricks_v2",
+    ownerOnly: true,
+  });
+  writeFileSync(
+    local,
+    "OTHER=`multiline\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n`\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\n",
+  );
+  assert.deepEqual(run(), {
+    host: "",
+    filter: "",
+    model: "",
+    provider: "databricks_v2",
+    ownerOnly: false,
+  });
+  writeFileSync(
+    local,
+    "OTHER=`NEVER_PRINT_SECRET\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=1\n",
+  );
+  run({}, false);
   writeDefaults("changed");
   expected.host = "https://changed.example.com";
   assert.deepEqual(

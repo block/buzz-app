@@ -97,7 +97,7 @@ not complete: automatic-recipient inference must honor `complete`, and automatic
 saved-template resolution must wait for required pending identity/roster evidence.
 
 Action policy stays explicit: ordinary member mentions use the channel roster and
-never acquire template archive gates. Ordinary nonmember enrollment admits managed
+hide known-archived identities without requiring verified non-archived evidence. Ordinary nonmember enrollment admits managed
 same-community identities; session invitations also allow existing legacy choices.
 Templates additionally require verified non-archived state, and legacy-only choices
 need visible community membership. Save-as-template discloses an incomplete inferred
@@ -119,12 +119,54 @@ thread composers through the shared conversation tool contract. The host retains
 recipient intent, inline editing and avatar removal even when the chooser plugin is disabled.
 The picker shows keys alongside names (namesakes remain separate), reads optional
 profiles only on demand, and keeps selected identity spans in scoped drafts.
-Typing a name alone does not notify anyone. Editing a selected span removes its
-notification intent. Native beforeinput ranges preserve untouched spans; missing
+Typing a name alone does not notify anyone. Plain Space after a unique exact name
+selects its recipient; ambiguous names require Tab, Enter or click. Editing a
+selected span removes its notification intent. Native beforeinput ranges preserve untouched spans; missing
 range evidence, IME/history edits and collapsed deletions clear selections rather
 than guess. Even a same-text replacement drops the edited identity. Selected mentions appear as inline identity chips in the composer. Namesakes
 selected together receive visible key qualifiers; editing a selected span removes
 its notification intent. Chips remain available without the Mentions chooser.
+
+### Chooser rules
+
+Both the toolbar picker and inline completion use `mention-candidates.ts` and
+`mention-ranking.ts`. Membership permits notification, not a promise that an agent
+will accept or answer the prompt. DMs do not gain outside recipients. Existing
+managed-agent enrollment and session invitation rules remain the access owners;
+selection itself neither grants access nor starts an agent. Invalid recipient
+keys, known-archived identities, and archived/read-only destinations are excluded.
+Unknown archive state does not block selection. Optional archive reads are lazy.
+
+Search trims and lowercases the query and checks base names, known aliases,
+contextual labels, hex keys and npubs. Members precede outside agents. Within each
+group, matches rank by whole-name exact, name prefix, whole-word exact, word
+prefix, key prefix, then key substring. Arbitrary name substrings do not match.
+Equally matched, same-base-name agents use explicit-choice recency, managed status,
+then already-known online/away status. Remaining ties use base name and full key.
+Recency stays in memory per session/destination and is bounded to 100 destinations
+and 100 recipients each. It never overrides membership or match quality.
+
+An open query installs at most 50 keys. Their order and membership stay fixed until
+the query changes or the chooser reopens. Labels, insertion names and availability
+remain live. A removed/archived row stays disabled in place; Enter/Tab cannot fall
+through to sending. A member who becomes an outside invitation choice also stays
+disabled until reopening. Retry refreshes evidence, not the installed order. New
+arrivals need a changed query or reopening. Pending sources or missing profiles do
+not freeze a premature empty result. The first usable result (or settled empty
+result) establishes the list. Identity naming uses eligible candidates plus the
+current draft recipients, not every cached profile.
+
+Plain Space selects only a unique exact name/alias/label across the full uncapped
+candidate set, and only if that identity is displayed and still eligible. A known
+longer name beginning with that name plus a space prevents selection. Partial
+names, ambiguous names, modified Space, IME composition, code and protected literal
+ranges keep ordinary editing behavior. Selection rechecks available evidence and
+stores only `{pubkey, name}`; qualifiers are presentation, not wire data.
+
+The composer rejects already-known archived recipients at send entry and omits
+ineligible agents from the next draft. This is not an archive transaction: archive
+changes during enrollment, dispatch or retry are intentionally not covered. The
+existing relay membership/send/retry validator is unchanged.
 
 After an accepted send, the next draft starts with the exact selected agent-name
 mentions, deduplicated by key. Agent classification uses already-cached profile hints

@@ -42,6 +42,7 @@ export function ComposerCompletions({
     edit: CompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
+    key?: string,
   ): boolean;
 }) {
   const providers = useSyncExternalStore(
@@ -100,6 +101,7 @@ function OwnedCompletion({
     edit: CompletionEdit,
     query: CompletionQuery,
     observation: ComposerObservation,
+    key?: string,
   ): boolean;
 }) {
   const id = useId();
@@ -167,15 +169,20 @@ function OwnedCompletion({
       : items.findIndex((item) => item.id === selected);
   const selectedIndex = index < 0 ? 0 : index;
   const status = result?.status;
-  function accept(index: number) {
+  function accept(index: number, key = "click") {
     if (!active() || latest.current !== result) return false;
     if (index === items.length && result?.retry) {
       result.retry();
       return true;
     }
     const item = items[index];
-    if (!item) return false;
-    const accepted = current.current.replace(item.edit, query, observation);
+    if (!item || item.disabled || item.canSelect?.(key) === false) return false;
+    const accepted = current.current.replace(
+      item.edit,
+      query,
+      observation,
+      key,
+    );
     if (accepted) current.current.editor.invalidate();
     return accepted;
   }
@@ -216,6 +223,15 @@ function OwnedCompletion({
         }
         return false;
       }
+      if (event.key === " " && result?.spaceId) {
+        const exact = items.findIndex((item) => item.id === result.spaceId);
+        if (accept(exact, " ")) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
+        return false;
+      }
       if ((event.key === "ArrowDown" || event.key === "ArrowUp") && count) {
         event.preventDefault();
         event.stopPropagation();
@@ -228,7 +244,7 @@ function OwnedCompletion({
       if ((event.key === "Enter" || event.key === "Tab") && count) {
         event.preventDefault();
         event.stopPropagation();
-        accept(selectedIndex);
+        accept(selectedIndex, event.key);
         return true;
       }
       return false;
@@ -283,6 +299,7 @@ function OwnedCompletion({
                   role="option"
                   tabIndex={-1}
                   aria-selected={i === selectedIndex}
+                  aria-disabled={!!item.disabled}
                   aria-label={
                     compact && item.detail
                       ? `${item.label} ${item.detail}`

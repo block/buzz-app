@@ -1,4 +1,7 @@
-import { availableMentionAgents } from "../agents/mention-choices";
+import { useMentionArchives } from "./use-mention-archives";
+import { useContext } from "react";
+import { DraftMentionRoster } from "./draft-mention-roster";
+import { mentionCandidates } from "./mention-candidates";
 import { useAgentChoices } from "../agents/use-choices";
 import { useLayoutEffect, useMemo, useRef } from "react";
 import { useIdentityNames } from "../identity-names/react";
@@ -38,6 +41,8 @@ export function RichComposerInput({
   inviteAgents?: boolean;
 }) {
   const directory = useReferenceDirectory(session);
+  useMentionArchives(session);
+  const roster = useContext(DraftMentionRoster);
   const profiles = new Map(directory.profiles);
   for (const recipient of draft.recipients)
     profiles.set(recipient.pubkey, {
@@ -45,22 +50,13 @@ export function RichComposerInput({
       name: recipient.name,
     });
   const resolveName = useIdentityNames(session.names);
-  const agents = useAgentChoices(session, inviteAgents);
-  const channel = directory.channels.find(
-    (channel) => channel.id === channelId,
-  );
-  const available = availableMentionAgents(
-    channel,
-    agents.identities,
-    inviteAgents,
-    session.outbox?.supports(9000),
-  );
+  useAgentChoices(session, inviteAgents);
   const candidates = [
     ...new Set([
-      ...(channel?.members ?? []),
-      ...available.map((agent) => agent.pubkey),
-      ...(inviteAgents ? agents.identities.map((agent) => agent.pubkey) : []),
-      ...draft.recipients.map((recipient) => recipient.pubkey),
+      ...mentionCandidates(session, channelId, inviteAgents, roster).map(
+        (c) => c.recipient.pubkey,
+      ),
+      ...draft.recipients.map((p) => p.pubkey),
     ]),
   ];
   const displayFacts = draft.recipients

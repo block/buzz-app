@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
 import type { ChannelSummary } from "../../features/relay/contracts";
 
@@ -59,11 +59,12 @@ export function useMentionDirectory(
     state.query === query
       ? state
       : undefined;
-  return {
+  const retry = useCallback(() => setAttempt((value) => value + 1), []);
+  return useMemo(() => ({
     people: current?.people ?? empty,
     loading: !!active && (!current || current.loading),
     error: current?.error,
     more: !!current?.more,
-    retry: useCallback(() => setAttempt((value) => value + 1), []),
-  };
+    retry,
+  }), [current, active, retry]);
 }

@@ -1034,4 +1034,201 @@ it("ignores a late directory result after the query changes and retries the curr
       ),
     ).toEqual(["New person"]),
   );
+
+it("keeps installed rows and fresh authorization through rename, removal, arrivals and archive Retry", async () => {
+  const test = setup();
+  const a = "a".repeat(64),
+    b = "b".repeat(64),
+    c = "c".repeat(64);
+  let profiles = new Map([
+    [a, { name: "Alpha" }],
+    [b, { name: "Beta" }],
+    [c, { name: "Aaron Bee" }],
+  ]);
+  let list = {
+    status: "ready" as const,
+    channels: [{ id: "parent", name: "Parent", members: [a, b] }],
+  };
+  let archive = { status: "ready" as const, archived: [] as string[] };
+  const listeners = new Set<() => void>();
+  const subscribe = (fn: () => void) => {
+    listeners.add(fn);
+    return () => {
+      listeners.delete(fn);
+    };
+  };
+  const refresh = vi.fn(async () => {
+    for (const fn of listeners) fn();
+  });
+  const session = {
+    ...test.session,
+    channels: {
+      ...test.session.channels,
+      list: () => list,
+      subscribeList: subscribe,
+    },
+    profiles: { ...test.session.profiles, snapshot: () => profiles, subscribe },
+    archives: {
+      snapshot: () => archive,
+      subscribe,
+      state: (key: string) =>
+        archive.archived.includes(key) ? "archived" : "not-archived",
+      ensure: async () => {},
+      refresh,
+    },
+  } as RelaySession;
+  let result: CompletionResult | undefined;
+  const publish = (value: CompletionResult) => {
+    result = value;
+    return () => {};
+  };
+  const props = {
+    session,
+    scope: "test",
+    channelId: "parent",
+    observation: { revision: 1, text: "@", start: 1, end: 1 },
+    query: { start: 0, end: 1, query: "" },
+    publish,
+  };
+  const view = render(<MentionCompletion {...props} />);
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  const original = result?.items[0];
+  act(() => {
+    profiles = new Map([
+      [a, { name: "Zeta" }],
+      [b, { name: "Beta" }],
+      [c, { name: "Aaron Bee" }],
+    ]);
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  expect(result?.items[0]?.label).toBe("Zeta");
+  expect(result?.items[0]?.edit).toEqual({
+    mention: { pubkey: a, name: "Zeta" },
+  });
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "parent", name: "Parent", members: [b, c] }],
+    };
+    // Selection sees the new source even before subscriber callbacks/render.
+    expect(original?.canSelect?.("Enter")).toBe(false);
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  expect(result?.items[0]?.disabled).toBeTruthy();
+  act(() => {
+    archive = { ...archive, archived: [b] };
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items[1]?.disabled).toBe("Archived");
+  await act(() => refresh());
+  expect(result?.items.map((i) => i.id)).toEqual([a, b]);
+  view.rerender(
+    <MentionCompletion {...props} query={{ start: 0, end: 2, query: "a" }} />,
+  );
+  expect(result?.items.map((i) => i.id)).toEqual([c]);
+  view.rerender(
+    <MentionCompletion
+      {...props}
+      query={{ start: 0, end: 8, query: "Aaron B" }}
+    />,
+  );
+  expect(result?.items.map((i) => i.id)).toEqual([c]);
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "parent", name: "Parent", members: [] }],
+    };
+    for (const fn of listeners) fn();
+  });
+  expect(result?.items.map((i) => i.id)).toEqual([c]);
+  expect(result?.items[0]?.disabled).toBeTruthy();
+  view.unmount();
+  test.library.dispose();
+});
+
+it("retains button rows while disabling an archived member, then hides it on reopen", async () => {
+  const test = setup(),
+    user = userEvent.setup(),
+    select = vi.fn(() => true);
+  let archive = { status: "ready" as const, archived: [] as string[] };
+  const listeners = new Set<() => void>();
+  const session = {
+    ...test.session,
+    archives: {
+      snapshot: () => archive,
+      state: (key: string) =>
+        archive.archived.includes(key) ? "archived" : "not-archived",
+      subscribe: (fn: () => void) => {
+        listeners.add(fn);
+        return () => {
+          listeners.delete(fn);
+        };
+      },
+      ensure: async () => {},
+      refresh: async () => {},
+    },
+  } as RelaySession;
+  render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      select={select}
+    />,
+  );
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  const row = screen.getByRole("button", { name: `Member ${"a".repeat(64)}` });
+  act(() => {
+    archive = { ...archive, archived: ["a".repeat(64)] };
+    for (const fn of listeners) fn();
+  });
+  expect(row).toBeDisabled();
+  await user.click(row);
+  expect(select).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  await user.click(screen.getByRole("button", { name: "Mention a member" }));
+  expect(
+    screen.queryByRole("button", { name: `Member ${"a".repeat(64)}` }),
+  ).not.toBeInTheDocument();
+  test.library.dispose();
+});
+
+it("offers usable partial agent choices without waiting for another source", async () => {
+  const test = setup();
+  const snapshot = {
+    ...test.session.agentChoices.snapshot(),
+    status: "ready" as const,
+    pending: true,
+    complete: false,
+    identities: [
+      { pubkey: "f".repeat(64), name: "Ready Agent", managed: true },
+    ],
+  };
+  const session = {
+    ...test.session,
+    agentChoices: { ...test.session.agentChoices, snapshot: () => snapshot },
+  };
+  const view = render(
+    <MentionPicker
+      session={session}
+      scope="test"
+      channelId="parent"
+      disabled={false}
+      inviteAgents
+      select={() => true}
+    />,
+  );
+  await userEvent
+    .setup()
+    .click(screen.getByRole("button", { name: "Mention a member" }));
+  expect(
+    await screen.findByRole("button", {
+      name: `Ready Agent ${"f".repeat(64)}`,
+    }),
+  ).toBeEnabled();
+  view.unmount();
+  test.library.dispose();
 });

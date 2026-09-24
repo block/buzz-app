@@ -1224,3 +1224,8 @@ button.mediaPreview {
   letter-spacing: var(--text-mono--letter-spacing);
   font-weight: var(--text-mono--font-weight);
 }
+
+html[data-keyboard-navigation] .rawDiff:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}

@@ -377,7 +377,13 @@ kind 40008. Shared history, live, thread and exact readers retain these messages
 independently of the plugin, preserving raw patches rather than interpreting them
 as Markdown images or links. The plugin supplies an inline preview and expanded
 Unified/Split dialog. Disabled/failed rendering, malformed/incomplete patches and
-patches over the display parsing budget retain escaped raw text. Metadata is
+patches over the display parsing budget retain escaped raw text. Unconsumed
+patch lines and unsupported binary payloads also fall back to the complete raw
+patch; metadata-only rename/mode/binary summaries retain rich presentation.
+Preview, file and raw scroll regions support native keyboard navigation. Diff
+messages are not editable, including through the composer's Up-arrow shortcut.
+Diff search remains deferred: the client accepts kind 40008 hits, but relays
+whose search index allowlist excludes that kind cannot return them. Metadata is
 untrusted presentation, not repository access authority. No sending, applying,
 repository fetching or sidebar panels are added.
 

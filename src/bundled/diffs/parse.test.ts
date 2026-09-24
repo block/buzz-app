@@ -108,6 +108,13 @@ it.each([
 it.each([
   "malformed <script>alert(1)</script>",
   patch.replace("-1 +1", "-1,3 +1,3"),
+  `${patch}UNPARSED_TRAILER\n`,
+  patch.replace("-old", "UNKNOWN_HUNK_LINE\n-old"),
+  patch.replace("--- a/a.ts", "UNKNOWN_HEADER\n--- a/a.ts"),
+  `PREAMBLE\n${patch}`,
+  `${patch}\\ not a newline marker\n`,
+  `${patch}\\ No newline at end of file\n\\ No newline at end of file\n`,
+  "diff --git a/a.bin b/a.bin\nGIT binary patch\nliteral 3\nKcmZQzWC8#H2mk;8\n",
   "x".repeat(100_001),
 ])(
   "falls back without discarding malformed, incomplete or excessive content",
@@ -120,4 +127,19 @@ it("distinguishes empty patches and supports plain unified patches", () => {
   expect(
     parsePatch(patch.slice(patch.indexOf("---")))?.[0]?.hunks,
   ).toHaveLength(1);
+});
+
+it("retains multiple hunks and exact no-newline markers", () => {
+  const files = parsePatch(
+    patch.replace("-old\n", "-old\n\\ No newline at end of file\n") +
+      "\\ No newline at end of file\n@@ -4 +4 @@\n-before\n+after\n",
+  );
+  expect(files?.[0]?.hunks).toHaveLength(2);
+  expect(files?.[0]).toMatchObject({
+    oldEndingNewLine: false,
+    newEndingNewLine: false,
+  });
+  expect(files?.[0]?.hunks[1]?.changes.map((change) => change.content)).toEqual(
+    ["before", "after"],
+  );
 });

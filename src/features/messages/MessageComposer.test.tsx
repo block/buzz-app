@@ -2153,6 +2153,7 @@ it("inserts mention links without new notification recipients during edits", () 
 it.each([
   { authorId: second.pubkey },
   { agentEnvelope: true as const },
+  { diff: { filePath: "a.ts", truncated: false } },
   {
     membership: {
       type: "member_joined" as const,
@@ -2256,5 +2257,23 @@ it.each(["archived", "readOnly"] as const)(
     expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
     fireEvent.keyDown(h.input(), { key: "Escape" });
     expect(h.input()).toHaveValue("");
+  },
+);
+
+it.each([undefined, "thread-root"])(
+  "does not edit a diff-only conversation (thread: %s)",
+  (threadRootId) => {
+    const h = mount({}, undefined, first.pubkey);
+    const row = editableMessage({
+      diff: { filePath: "a.ts", truncated: false },
+      content: "raw patch",
+      ...(threadRootId ? { threadRootId } : {}),
+    });
+    if (threadRootId) h.retarget({ threadRootId, editMessages: [row] });
+    else h.setRows([row]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveValue("");
+    expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+    expect(h.messages.edit).not.toHaveBeenCalled();
   },
 );

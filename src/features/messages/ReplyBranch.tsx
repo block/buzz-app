@@ -28,7 +28,11 @@ export function ReplyBranch({
     >
       <Collapsible.Trigger
         ref={trigger}
-        render={(props) => <Button {...props} variant="ghost" size="sm" />}
+        render={(props) => (
+          <Button {...props} variant="ghost" size="sm">
+            {props.children}
+          </Button>
+        )}
         onClick={() => {
           if (!open)
             requestAnimationFrame(() =>

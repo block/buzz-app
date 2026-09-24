@@ -1,4 +1,10 @@
-import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { ReactionDelivery, ReactionTool } from "../conversation/ReactionTool";
@@ -16,6 +22,7 @@ import type {
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
+import { selectProfiles } from "../relay/profile-selection";
 import { recordReaction, useQuickReactions } from "./quick-reactions";
 import { AnimatedReactionCount } from "./AnimatedReactionCount";
 import styles from "./Messages.module.css";
@@ -186,8 +193,15 @@ function ReactionGlyph({
       onError={() => setFailed(source)}
     />
   ) : (
-    <span className={styles.reactionNativeEmoji} aria-hidden="true">
-      {reaction.emoji ? "?" : reaction.content}
+    <span
+      className={
+        reaction.emoji
+          ? styles.reactionFallbackEmoji
+          : styles.reactionNativeEmoji
+      }
+      aria-hidden="true"
+    >
+      {reaction.emoji ? `:${reaction.emoji.shortcode}:` : reaction.content}
     </span>
   );
 }
@@ -197,6 +211,7 @@ function ReactionPill({
   session,
   profiles,
   disabled,
+  unavailable,
   toggle,
   onFocusedRemoval,
   previewDelay,
@@ -208,6 +223,7 @@ function ReactionPill({
   session: RelaySession;
   profiles?: ReadonlyMap<string, Profile> | undefined;
   disabled: boolean;
+  unavailable: boolean;
   toggle(content: string, emoji?: CustomEmoji): boolean;
   onFocusedRemoval?: (() => void) | undefined;
   previewDelay: number;
@@ -217,12 +233,28 @@ function ReactionPill({
 }) {
   const [name, setName] = useState(reaction.content);
   const authors = [...new Set(reaction.events.map((event) => event.authorId))];
+  const authorIds = authors.slice().sort().join(":");
+  const reactorProfiles = useMemo(
+    () =>
+      selectProfiles(session.profiles, authorIds ? authorIds.split(":") : []),
+    [session.profiles, authorIds],
+  );
+  const loadedReactors = useSyncExternalStore(
+    reactorProfiles.subscribe,
+    reactorProfiles.snapshot,
+    reactorProfiles.snapshot,
+  );
   const mine = authors.includes(session.viewer ?? "");
   const users = [
     ...(mine ? ["You"] : []),
     ...authors
       .filter((author) => author !== session.viewer)
-      .map((author) => profiles?.get(author)?.name ?? author.slice(0, 10)),
+      .map(
+        (author) =>
+          loadedReactors.get(author)?.name ??
+          profiles?.get(author)?.name ??
+          author.slice(0, 10),
+      ),
   ];
   const revealName = () => {
     void session.profiles.ensure(authors, "background").catch(() => {});
@@ -252,10 +284,12 @@ function ReactionPill({
             data-reaction={reaction.content}
             aria-label={`${reaction.content}: ${authors.length} ${authors.length === 1 ? "person" : "people"}${mine ? ", including you" : ""}`}
             aria-pressed={mine}
+            aria-disabled={unavailable}
             disabled={disabled}
             onMouseEnter={revealName}
             onFocus={revealName}
             onClick={(event) => {
+              if (unavailable) return;
               const losesFocus =
                 mine &&
                 authors.length === 1 &&
@@ -300,15 +334,11 @@ export function MessageReactions(
     fromIndex: number | undefined;
   }>();
   const select = (content: string) => {
-    const existing = row.reactions.find(
-      (reaction) => reaction.content.toLowerCase() === content.toLowerCase(),
-    );
     return action.toggle(
       content,
-      existing?.emoji ??
-        catalog.entries.find(
-          (entry) => `:${entry.shortcode}:` === content.toLowerCase(),
-        ),
+      catalog.entries.find(
+        (entry) => `:${entry.shortcode}:` === content.toLowerCase(),
+      ),
     );
   };
   return (
@@ -341,6 +371,7 @@ export function MessageReactions(
             session={session}
             profiles={props.profiles}
             disabled={props.disabled}
+            unavailable={action.disabled}
             toggle={action.toggle}
             onFocusedRemoval={props.onFocusedRemoval}
             previewDelay={pointerInRow && preview ? 0 : 1200}

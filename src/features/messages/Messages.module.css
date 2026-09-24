@@ -184,6 +184,10 @@
   font-size: var(--text-caption);
   line-height: 1;
 }
+.reactionFallbackEmoji {
+  font-size: var(--text-caption);
+  line-height: 1;
+}
 .reactionCustomEmoji {
   display: block;
   width: 14px;

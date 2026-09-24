@@ -686,7 +686,7 @@ test("exact reply media keeps its selected attachment and canonical thread", asy
     );
     const reply = comments.locator(`[data-message-id="${exactReplyId}"]`);
     await reply.hover();
-    const addReaction = reply.getByRole("button", {
+    const addReaction = reply.getByTestId("reaction-row").getByRole("button", {
       name: "Add reaction",
       exact: true,
     });

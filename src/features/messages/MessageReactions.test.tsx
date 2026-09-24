@@ -5,6 +5,8 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
+  within,
 } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { MessageReactionControls, MessageReactions } from "./MessageReactions";
@@ -13,6 +15,7 @@ import {
   flush,
   keypair,
   message,
+  profile,
   roster,
   scriptedTransport,
   signed,
@@ -56,16 +59,29 @@ const react = (key = viewer, time = 2) =>
       ["e", root.id],
     ],
   });
+const customReaction = (key: typeof viewer, code: string, url: string) =>
+  signed(key, {
+    kind: 7,
+    content: `:${code}:`,
+    created_at: 2,
+    tags: [
+      ["h", "c"],
+      ["e", root.id],
+      ["emoji", code, url],
+    ],
+  });
 function harness(
   events: RelayEvent[] = [],
   publish = vi.fn(async (_event: RelayEvent) => {}),
   pickerTools = tools,
+  media?: (url: string) => string | undefined,
 ) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let live!: LiveCallbacks;
   const owner = createRelaySession(
     {
       ...wire.transport,
+      ...(media ? { media } : {}),
       writer: { sign: async (template) => signed(viewer, template), publish },
       subscribe(callbacks) {
         live = callbacks;
@@ -106,7 +122,7 @@ function harness(
       )
     );
   }
-  return { ...owner, live, publish, Controls };
+  return { ...owner, live, wire, publish, Controls };
 }
 it("shows three shortcuts and groups distinct people while removing all own duplicates", async () => {
   const mine = react(),
@@ -176,6 +192,169 @@ it("prevents duplicate submissions and unavailable-message actions", async () =>
     await flush();
     await flush();
   });
+});
+
+it("keeps pills visually active but rejects another click while delivery is pending or failed", async () => {
+  let release!: () => void;
+  const publish = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const h = harness([react(other)], publish);
+  render(<h.Controls />);
+  fireEvent.click(screen.getByRole("button", { name: "👍: 1 person" }));
+  await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+  const pill = screen.getByRole("button", {
+    name: "👍: 2 people, including you",
+  });
+  expect(pill.getAttribute("aria-disabled")).toBe("true");
+  expect(pill.hasAttribute("disabled")).toBe(false);
+  fireEvent.click(pill);
+  expect(h.session.outbox?.snapshot()).toHaveLength(1);
+  await act(async () => {
+    release();
+    await flush();
+    await flush();
+  });
+  expect(pill.getAttribute("aria-disabled")).toBe("false");
+
+  const failed = harness(
+    [react(other)],
+    vi.fn(async () => {
+      throw new PublishRejected("Nope");
+    }),
+  );
+  const failedView = render(<failed.Controls />);
+  fireEvent.click(
+    within(failedView.container).getByRole("button", { name: "👍: 1 person" }),
+  );
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+  const failedPill = within(failedView.container).getByRole("button", {
+    name: "👍: 1 person",
+  });
+  expect(failedPill.getAttribute("aria-disabled")).toBe("true");
+  fireEvent.click(failedPill);
+  expect(failed.session.outbox?.snapshot()).toHaveLength(1);
+});
+
+it("uses the picker catalog URL even when an old URL has my reaction", async () => {
+  const oldUrl = "https://a.test/old.png";
+  const newUrl = "https://a.test/new.png";
+  const pickerTools = registry<ComposerTool>([
+    {
+      key: "picker",
+      pluginId: "picker",
+      revision: "one",
+      id: "picker",
+      title: "Picker",
+      component: () => null,
+      reactionComponent: ({ select }: ReactionToolProps) => (
+        <button type="button" onClick={() => select(":party:")}>
+          Choose party
+        </button>
+      ),
+    },
+  ]);
+  const h = harness(
+    [customReaction(viewer, "party", oldUrl)],
+    undefined,
+    pickerTools,
+  );
+  h.live.receive([
+    signed(other, {
+      kind: 30030,
+      content: "",
+      created_at: 3,
+      tags: [
+        ["d", "buzz:custom-emoji"],
+        ["emoji", "party", newUrl],
+      ],
+    }),
+  ]);
+  render(<h.Controls />);
+  fireEvent.click(
+    within(screen.getByTestId("inline-add-reaction")).getByRole("button", {
+      name: "Choose party",
+    }),
+  );
+  const operation = h.session.outbox?.snapshot()[0];
+  expect(operation?.event.kind).toBe(7);
+  expect(operation?.event.tags).toContainEqual(["emoji", "party", newUrl]);
+  const parties = screen.getAllByRole("button", {
+    name: ":party:: 1 person, including you",
+  });
+  expect(parties).toHaveLength(2);
+  expect(parties[0]?.querySelector("img")?.getAttribute("src")).toBe(oldUrl);
+  expect(parties[1]?.querySelector("img")?.getAttribute("src")).toBe(newUrl);
+  await act(async () => {
+    await flush();
+    await flush();
+  });
+});
+
+it("loads names for people who only reacted after a preview opens", async () => {
+  const h = harness([react(other)]);
+  render(<h.Controls />);
+  const pill = screen.getByRole("button", { name: "👍: 1 person" });
+  fireEvent.mouseEnter(pill);
+  await screen.findByText(other.pubkey.slice(0, 10), {}, { timeout: 2500 });
+  await waitFor(() =>
+    expect(
+      h.wire.pending.some((entry) => entry.filters[0]?.kinds?.includes(0)),
+    ).toBe(true),
+  );
+  const pending = h.wire.pending.find((entry) =>
+    entry.filters[0]?.kinds?.includes(0),
+  );
+  expect(pending?.filters).toEqual([
+    { kinds: [0], authors: [other.pubkey], limit: 500 },
+  ]);
+  await act(async () => {
+    pending?.respond([profile(other, { name: "Fresh Reactor" })]);
+    await flush();
+  });
+  await waitFor(() => expect(screen.getByText("Fresh Reactor")).toBeTruthy(), {
+    timeout: 2500,
+  });
+});
+
+it("shows custom shortcodes in pills and previews when media is refused or fails", async () => {
+  const h = harness(
+    [
+      customReaction(other, "denied", "https://a.test/denied.png"),
+      customReaction(other, "broken", "https://a.test/broken.png"),
+    ],
+    undefined,
+    tools,
+    (url) => (url.includes("denied") ? undefined : url),
+  );
+  render(<h.Controls />);
+  const denied = screen.getByRole("button", { name: ":denied:: 1 person" });
+  const broken = screen.getByRole("button", { name: ":broken:: 1 person" });
+  expect(denied.textContent).toContain(":denied:");
+  const image = broken.querySelector("img");
+  if (!image) throw new Error("Custom reaction image missing");
+  fireEvent.error(image);
+  expect(broken.textContent).toContain(":broken:");
+  fireEvent.mouseEnter(denied);
+  const preview = await screen.findByRole("tooltip", {}, { timeout: 2500 });
+  expect(preview.textContent).toContain(":denied:");
+  fireEvent.mouseLeave(denied);
+  fireEvent.mouseEnter(broken);
+  await waitFor(
+    () =>
+      expect(
+        screen
+          .queryAllByRole("tooltip")
+          .some((item) => item.textContent?.includes(":broken:")),
+      ).toBe(true),
+    { timeout: 2500 },
+  );
 });
 
 it("forwards the contributed picker into true toggles and releases confirmed writes without an echo", async () => {

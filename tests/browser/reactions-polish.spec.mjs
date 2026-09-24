@@ -77,21 +77,32 @@ test("reaction pills wrap, preview, toggle, and add from the inline control", as
   await page.waitForTimeout(300);
   await expect(tooltip).toHaveCount(0);
 
-  await page.evaluate(() => window.emojiFixture.delayNextReaction(":party:"));
-  await custom.click();
-  await expect(custom).toHaveAttribute("aria-pressed", "true");
-  await expect(custom).toHaveAttribute("aria-label", /2 people/);
-  await expect(native).toBeEnabled();
-  await expect(custom).toHaveCSS("opacity", "1");
-  await expect(custom).toBeEnabled();
-  await expect(custom).toHaveAttribute("aria-label", /2 people/, {
-    timeout: 1500,
-  });
+  await page.evaluate(() => window.emojiFixture.holdNextReaction(":party:"));
+  try {
+    await custom.click();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.emojiFixture.report.reactionStarted),
+      )
+      .toBe(true);
+    await expect(custom).toHaveAttribute("aria-pressed", "true");
+    await expect(custom).toHaveAttribute("aria-label", /2 people/);
+    await expect(native).toHaveAttribute("aria-disabled", "true");
+    await expect(custom).toHaveCSS("opacity", "1");
+    await expect(custom).toHaveAttribute("aria-disabled", "true");
+    await native.evaluate((button) => button.click());
+    await expect
+      .poll(() => page.evaluate(() => window.emojiFixture.operations()))
+      .toBe(1);
+  } finally {
+    await page.evaluate(() => window.emojiFixture.releaseReaction());
+  }
   await expect
     .poll(() =>
       page.evaluate(() => window.emojiFixture.report.publications.length),
     )
     .toBe(1);
+  await expect(custom).toHaveAttribute("aria-disabled", "false");
   expect(await order()).toEqual(initialOrder);
   await custom.click();
   await expect(custom).toHaveAttribute("aria-pressed", "false");

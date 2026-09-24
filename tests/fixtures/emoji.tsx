@@ -46,13 +46,15 @@ const participantProfiles = new Map([
 const report = {
   publications: [] as { community: string; event: RelayEvent }[],
   reads: [] as string[],
+  reactionStarted: false,
 };
 const sessions = ["a", "b"].map((community) => {
   const origin = `https://${community}.test`;
   let time = 1,
     fail = false,
     rejectReaction = false,
-    delayNextReaction: string | null = null;
+    holdNextReaction: string | null = null;
+  let releaseReaction: (() => void) | undefined;
   let live!: LiveCallbacks;
   let catalogRead: Promise<void> | undefined;
   let releaseCatalogRead: (() => void) | undefined;
@@ -129,9 +131,13 @@ const sessions = ["a", "b"].map((community) => {
           return signed(viewer, template);
         },
         async publish(event) {
-          if (delayNextReaction === event.content) {
-            delayNextReaction = null;
-            await new Promise((resolve) => setTimeout(resolve, 800));
+          if (holdNextReaction === event.content) {
+            holdNextReaction = null;
+            report.reactionStarted = true;
+            await new Promise<void>((resolve) => {
+              releaseReaction = resolve;
+            });
+            releaseReaction = undefined;
           }
           if ([5, 7].includes(event.kind) && rejectReaction) {
             rejectReaction = false;
@@ -248,8 +254,15 @@ const sessions = ["a", "b"].map((community) => {
     rejectReaction() {
       rejectReaction = true;
     },
-    delayNextReaction(content: string) {
-      delayNextReaction = content;
+    holdNextReaction(content: string) {
+      report.reactionStarted = false;
+      holdNextReaction = content;
+    },
+    releaseReaction() {
+      releaseReaction?.();
+    },
+    operations() {
+      return owner.session.outbox?.snapshot().length ?? 0;
     },
     archive(value: boolean) {
       live.receive([
@@ -279,8 +292,10 @@ Object.assign(window, {
     remove: () => sessions[0]?.replace(true),
     fail: (value: boolean) => sessions[0]?.fail(value),
     rejectReaction: () => sessions[0]?.rejectReaction(),
-    delayNextReaction: (content: string) =>
-      sessions[0]?.delayNextReaction(content),
+    holdNextReaction: (content: string) =>
+      sessions[0]?.holdNextReaction(content),
+    releaseReaction: () => sessions[0]?.releaseReaction(),
+    operations: () => sessions[0]?.operations(),
     refresh: () => sessions[0]?.session.emoji.refresh(),
     holdCatalog: () => sessions[0]?.holdCatalog(),
     releaseCatalog: () => sessions[0]?.releaseCatalog(),

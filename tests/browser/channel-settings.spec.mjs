@@ -76,8 +76,15 @@ test("channel settings owns its responsive side panel and returns keyboard focus
   await page.setViewportSize({ width: 1440, height: 950 });
   await trigger.click();
   await expect(panel).toBeVisible();
-  await page.locator("summary", { hasText: "DMs" }).hover();
-  await page.getByRole("button", { name: "New message", exact: true }).click();
+  const messages = page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .locator("summary")
+    .filter({ hasText: /^Messages$/ });
+  await messages.hover();
+  await page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "New message", exact: true })
+    .click();
   await expect(
     page.getByRole("region", { name: "New message", exact: true }),
   ).toBeVisible();

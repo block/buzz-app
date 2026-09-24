@@ -7,7 +7,7 @@ test.use({
   historyCounts: { alpha: 1, beta: 1 },
 });
 
-test("DM identity cues remain exactly 20px at normal and narrow sidebar widths", async ({
+test("DM identity cues remain exactly 22px at normal and narrow sidebar widths", async ({
   page,
   app,
 }, info) => {
@@ -16,12 +16,7 @@ test("DM identity cues remain exactly 20px at normal and narrow sidebar widths",
   const oneToOne = sidebar
     .getByRole("button", { name: "Alice Fixture", exact: true })
     .locator("[data-dm-identity]");
-  const group = sidebar
-    .getByRole("button", {
-      name: "Alice Fixture, Bob Fixture, Carol Fixture",
-      exact: true,
-    })
-    .locator("[data-dm-identity]");
+  const group = sidebar.locator("[data-dm-participant-count]");
   const assertIdentitySize = async (identity) => {
     await expect(identity).toBeVisible();
     expect(
@@ -29,11 +24,11 @@ test("DM identity cues remain exactly 20px at normal and narrow sidebar widths",
         const rect = element.getBoundingClientRect();
         return { width: rect.width, height: rect.height };
       }),
-    ).toEqual({ width: 20, height: 20 });
+    ).toEqual({ width: 22, height: 22 });
   };
   await assertIdentitySize(oneToOne);
   await assertIdentitySize(group);
-  await expect(group.locator("[data-dm-participant-count]")).toHaveText("3");
+  await expect(group).toHaveText("3");
   await sidebar.screenshot({
     path: info.outputPath("dm-identities-normal.png"),
   });

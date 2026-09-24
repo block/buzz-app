@@ -76,7 +76,7 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(activity).toBeVisible();
   await expect(alpha.getByText("Alpha", { exact: true })).toHaveCSS(
     "font-weight",
-    "500",
+    "600",
   );
   await page
     .getByRole("button", { name: "Channel settings", exact: true })

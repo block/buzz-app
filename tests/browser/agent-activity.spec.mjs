@@ -333,207 +333,233 @@ for (const mode of ["light", "dark"]) {
   });
 }
 
-test("profile activity opens the exact agent and originating channel before its first frame", async ({
-  page,
-  app,
-}, testInfo) => {
-  await open(page, app);
-  await expect.poll(() => app.relay.hasRoute("primary", "observer")).toBe(true);
-  const agentKey = generateSecretKey();
-  const agent = getPublicKey(agentKey);
-  const message = finalizeEvent(
-    {
-      kind: 9,
-      tags: [["h", "alpha"]],
-      content: "Contextual agent entry",
-      created_at: Math.floor(Date.now() / 1000),
-    },
-    agentKey,
-  );
-  app.relay.publish("primary", message);
-  const avatar = page
-    .locator(`[data-message-id="${message.id}"]`)
-    .getByRole("button", { name: /profile/ });
-  await avatar.click();
-  const profile = page.getByRole("complementary", {
-    name: "Profile",
-    exact: true,
-  });
-  await expect(
-    profile.getByRole("region", { name: "Activity preview" }),
-  ).toContainText("No activity yet");
-  await profile
-    .getByRole("button", { name: "View activity", exact: true })
-    .click();
-  await expect(profile).toHaveCount(0);
-  const panel = page.getByRole("region", {
-    name: "Agent activity",
-    exact: true,
-  });
-  await expect(panel.locator("code").first()).toHaveText(agent);
-  await expect(
-    panel.getByRole("combobox", { name: "Channel", exact: true }),
-  ).toHaveText(/Alpha.*alpha/);
-  await expect(
-    panel.getByText(
-      /Waiting for live records for this identity in this channel/,
-    ),
-  ).toBeVisible();
-  const item = (kind, channelId, turnId) => ({
-    kind,
-    channelId,
-    turnId,
-    sessionId: null,
-    timestamp: new Date().toISOString(),
-  });
-  app.observer(item("acp_read", "alpha", "other-agent"), generateSecretKey());
-  app.observer(item("acp_write", "beta", "other-channel"), agentKey);
-  app.observer(item("session_resolved", null, "unscoped"), agentKey);
-  const expected = app.observer(
-    item("turn_liveness", "alpha", "wanted"),
-    agentKey,
-  );
-  const row = panel.getByRole("button", { name: /turn_liveness/ });
-  await expect(row).toBeVisible();
-  await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
-  await expect(
-    panel.getByRole("button", { name: /acp_read|acp_write|session_resolved/ }),
-  ).toHaveCount(0);
-  await row.click();
-  await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
-  await panel.getByRole("combobox", { name: "Channel", exact: true }).click();
-  await page
-    .getByRole("option", {
-      name: "All channels (including unscoped records)",
-      exact: true,
-    })
-    .click();
-  await expect(panel.getByRole("button", { name: /acp_write/ })).toBeVisible();
-  await expect(
-    panel.getByRole("button", { name: /session_resolved/ }),
-  ).toBeVisible();
-  await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(0);
-  await panel.press("Escape");
-  await expect(avatar).toBeFocused();
-  await avatar.click();
-  await expect(
-    profile.getByRole("region", { name: "Activity preview" }).locator("time"),
-  ).toHaveAttribute("datetime", JSON.parse(expected.plaintext).timestamp);
-  const preview = profile.getByRole("region", { name: "Activity preview" });
-  await profile.getByRole("tab", { name: "Channels", exact: true }).click();
-  await expect(preview).toHaveCount(0);
-  await profile.getByRole("tab", { name: "Info", exact: true }).click();
-  await expect(preview.locator("time")).toHaveAttribute(
-    "datetime",
-    JSON.parse(expected.plaintext).timestamp,
-  );
-  const update = (value) => ({
-    ...item("acp_read", "alpha", "wanted"),
-    payload: { method: "session/update", params: { update: value } },
-  });
-  app.observer(
-    update({
-      sessionUpdate: "agent_message_chunk",
-      messageId: "reply",
-      content: {
-        type: "text",
-        text: "I found the issue in the channel subscription. ",
+const profileTest = test.extend({ readState: true });
+profileTest(
+  "profile activity opens the exact agent and originating channel before its first frame",
+  async ({ page, app }, testInfo) => {
+    await open(page, app);
+    await expect
+      .poll(() => app.relay.hasRoute("primary", "observer"))
+      .toBe(true);
+    const agentKey = generateSecretKey();
+    const agent = getPublicKey(agentKey);
+    const message = finalizeEvent(
+      {
+        kind: 9,
+        tags: [["h", "alpha"]],
+        content: "Contextual agent entry",
+        created_at: Math.floor(Date.now() / 1000),
       },
-    }),
-    agentKey,
-  );
-  app.observer(
-    update({
-      sessionUpdate: "agent_message_chunk",
-      messageId: "reply",
-      content: {
-        type: "text",
-        text: "Checking the fix against the existing tests.",
-      },
-    }),
-    agentKey,
-  );
-  app.observer(
-    update({
-      sessionUpdate: "tool_call",
-      toolCallId: "tests",
-      title: "Run profile tests",
-      status: "in_progress",
-    }),
-    agentKey,
-  );
-  await expect(
-    preview.getByRole("list", { name: "Recent activity" }),
-  ).toContainText(
-    "I found the issue in the channel subscription. Checking the fix against the existing tests.",
-  );
-  await expect(
-    preview.getByText("Run profile tests", { exact: true }),
-  ).toBeVisible();
-  app.observer(
-    update({
-      sessionUpdate: "tool_call_update",
-      toolCallId: "tests",
-      status: "completed",
-    }),
-    agentKey,
-  );
-  await expect(
-    preview.getByText("Tool completed", { exact: true }),
-  ).toBeVisible();
-  await profile.getByRole("tab", { name: "Channels", exact: true }).click();
-  await profile.getByRole("tab", { name: "Info", exact: true }).click();
-  await expect(
-    preview.getByText("Run profile tests", { exact: true }),
-  ).toBeVisible();
-  // Exercise painted theme/layout, not the separate appearance persistence contract.
-  for (const mode of ["light", "dark"]) {
-    await page.locator("html").evaluate((element, mode) => {
-      element.setAttribute("data-color-mode", mode);
-    }, mode);
-    for (const width of [1280, 390]) {
-      await page.setViewportSize({ width, height: 844 });
-      await expect(preview).toBeVisible();
-      await expect(
-        preview.getByRole("button", { name: "View activity" }),
-      ).toBeVisible();
-      const bounds = await preview.boundingBox();
-      expect(bounds.x).toBeGreaterThanOrEqual(0);
-      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
-      expect(
-        await preview.evaluate(
-          (element) => element.scrollWidth <= element.clientWidth,
+      agentKey,
+    );
+    app.relay.publish("primary", message);
+    const avatar = page
+      .locator(`[data-message-id="${message.id}"]`)
+      .getByRole("button", { name: /profile/ });
+    await avatar.waitFor();
+    // Exercise the real read publication before opening the profile, rather than
+    // allowing its normal dwell/debounce to race this journey's teardown.
+    await page
+      .getByRole("region", { name: "Channel message history", exact: true })
+      .focus();
+    await expect
+      .poll(() =>
+        app.report.readPublications.some(
+          ({ community, blob }) =>
+            community === "primary" &&
+            blob.contexts[`msg:${message.id}`] === message.created_at,
         ),
-      ).toBe(true);
-      await page.screenshot({
-        path: testInfo.outputPath(`profile-preview-${mode}-${width}.png`),
-      });
+      )
+      .toBe(true);
+    await avatar.click();
+    const profile = page.getByRole("complementary", {
+      name: "Profile",
+      exact: true,
+    });
+    await expect(
+      profile.getByRole("region", { name: "Activity preview" }),
+    ).toContainText("No activity yet");
+    await profile
+      .getByRole("button", { name: "View activity", exact: true })
+      .click();
+    await expect(profile).toHaveCount(0);
+    const panel = page.getByRole("region", {
+      name: "Agent activity",
+      exact: true,
+    });
+    await expect(panel.locator("code").first()).toHaveText(agent);
+    await expect(
+      panel.getByRole("combobox", { name: "Channel", exact: true }),
+    ).toHaveText(/Alpha.*alpha/);
+    await expect(
+      panel.getByText(
+        /Waiting for live records for this identity in this channel/,
+      ),
+    ).toBeVisible();
+    const item = (kind, channelId, turnId) => ({
+      kind,
+      channelId,
+      turnId,
+      sessionId: null,
+      timestamp: new Date().toISOString(),
+    });
+    app.observer(item("acp_read", "alpha", "other-agent"), generateSecretKey());
+    app.observer(item("acp_write", "beta", "other-channel"), agentKey);
+    app.observer(item("session_resolved", null, "unscoped"), agentKey);
+    const expected = app.observer(
+      item("turn_liveness", "alpha", "wanted"),
+      agentKey,
+    );
+    const row = panel.getByRole("button", { name: /turn_liveness/ });
+    await expect(row).toBeVisible();
+    await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
+    await expect(
+      panel.getByRole("button", {
+        name: /acp_read|acp_write|session_resolved/,
+      }),
+    ).toHaveCount(0);
+    await row.click();
+    await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
+    await panel.getByRole("combobox", { name: "Channel", exact: true }).click();
+    await page
+      .getByRole("option", {
+        name: "All channels (including unscoped records)",
+        exact: true,
+      })
+      .click();
+    await expect(
+      panel.getByRole("button", { name: /acp_write/ }),
+    ).toBeVisible();
+    await expect(
+      panel.getByRole("button", { name: /session_resolved/ }),
+    ).toBeVisible();
+    await expect(panel.getByRole("button", { name: /acp_read/ })).toHaveCount(
+      0,
+    );
+    await panel.press("Escape");
+    await expect(avatar).toBeFocused();
+    await avatar.click();
+    await expect(
+      profile.getByRole("region", { name: "Activity preview" }).locator("time"),
+    ).toHaveAttribute("datetime", JSON.parse(expected.plaintext).timestamp);
+    const preview = profile.getByRole("region", { name: "Activity preview" });
+    await profile.getByRole("tab", { name: "Channels", exact: true }).click();
+    await expect(preview).toHaveCount(0);
+    await profile.getByRole("tab", { name: "Info", exact: true }).click();
+    await expect(preview.locator("time")).toHaveAttribute(
+      "datetime",
+      JSON.parse(expected.plaintext).timestamp,
+    );
+    const update = (value) => ({
+      ...item("acp_read", "alpha", "wanted"),
+      payload: { method: "session/update", params: { update: value } },
+    });
+    app.observer(
+      update({
+        sessionUpdate: "agent_message_chunk",
+        messageId: "reply",
+        content: {
+          type: "text",
+          text: "I found the issue in the channel subscription. ",
+        },
+      }),
+      agentKey,
+    );
+    app.observer(
+      update({
+        sessionUpdate: "agent_message_chunk",
+        messageId: "reply",
+        content: {
+          type: "text",
+          text: "Checking the fix against the existing tests.",
+        },
+      }),
+      agentKey,
+    );
+    app.observer(
+      update({
+        sessionUpdate: "tool_call",
+        toolCallId: "tests",
+        title: "Run profile tests",
+        status: "in_progress",
+      }),
+      agentKey,
+    );
+    await expect(
+      preview.getByRole("list", { name: "Recent activity" }),
+    ).toContainText(
+      "I found the issue in the channel subscription. Checking the fix against the existing tests.",
+    );
+    await expect(
+      preview.getByText("Run profile tests", { exact: true }),
+    ).toBeVisible();
+    app.observer(
+      update({
+        sessionUpdate: "tool_call_update",
+        toolCallId: "tests",
+        status: "completed",
+      }),
+      agentKey,
+    );
+    await expect(
+      preview.getByText("Tool completed", { exact: true }),
+    ).toBeVisible();
+    await profile.getByRole("tab", { name: "Channels", exact: true }).click();
+    await profile.getByRole("tab", { name: "Info", exact: true }).click();
+    await expect(
+      preview.getByText("Run profile tests", { exact: true }),
+    ).toBeVisible();
+    // Exercise painted theme/layout, not the separate appearance persistence contract.
+    for (const mode of ["light", "dark"]) {
+      await page.locator("html").evaluate((element, mode) => {
+        element.setAttribute("data-color-mode", mode);
+      }, mode);
+      for (const width of [1280, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await expect(preview).toBeVisible();
+        await expect(
+          preview.getByRole("button", { name: "View activity" }),
+        ).toBeVisible();
+        const bounds = await preview.boundingBox();
+        expect(bounds.x).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
+        expect(
+          await preview.evaluate(
+            (element) => element.scrollWidth <= element.clientWidth,
+          ),
+        ).toBe(true);
+        await page.screenshot({
+          path: testInfo.outputPath(`profile-preview-${mode}-${width}.png`),
+        });
+      }
     }
-  }
-  await page.setViewportSize({ width: 1440, height: 950 });
-  await profile
-    .getByRole("button", { name: "View activity", exact: true })
-    .click();
-  await page.locator('[data-channel-id="beta"]').click();
-  await expect(panel).toHaveCount(0);
-  // Disable removes both registration and profile affordance, not the profile itself.
-  await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Plugins", exact: true }).click();
-  await page
-    .getByRole("switch", { name: "Enable Agent Activity", exact: true })
-    .click();
-  await page
-    .getByRole("navigation", { name: "Pages", exact: true })
-    .getByRole("button", { name: "Messages", exact: true })
-    .click();
-  await page.locator('[data-channel-id="alpha"]').click();
-  await avatar.click();
-  await expect(profile).toBeVisible();
-  await expect(
-    profile.getByRole("button", { name: "View activity", exact: true }),
-  ).toHaveCount(0);
-});
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await profile
+      .getByRole("button", { name: "View activity", exact: true })
+      .click();
+    await page.locator('[data-channel-id="beta"]').click();
+    await expect(panel).toHaveCount(0);
+    // Disable removes both registration and profile affordance, not the profile itself.
+    await page
+      .getByRole("button", { name: "Your profile", exact: true })
+      .click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Plugins", exact: true }).click();
+    await page
+      .getByRole("switch", { name: "Enable Agent Activity", exact: true })
+      .click();
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Messages", exact: true })
+      .click();
+    await page.locator('[data-channel-id="alpha"]').click();
+    await avatar.click();
+    await expect(profile).toBeVisible();
+    await expect(
+      profile.getByRole("button", { name: "View activity", exact: true }),
+    ).toHaveCount(0);
+  },
+);
 
 test.describe("thread activity", () => {
   test.use({

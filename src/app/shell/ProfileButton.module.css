@@ -1,31 +1,27 @@
-.dot,
-.statusDot {
-  width: 11px;
-  height: 11px;
-  border: 2px solid var(--surface-panel);
-  border-radius: 50%;
-  background: var(--text-success);
-}
-:is(.dot, .statusDot)[data-status="away"] {
-  background: linear-gradient(
-    90deg,
-    var(--text-warning) 50%,
-    var(--surface-panel) 50%
-  );
-}
-:is(.dot, .statusDot)[data-status="offline"] {
-  background: var(--surface-panel);
-  box-shadow: inset 0 0 0 1.5px var(--text-subtle);
-}
-
-.dot {
-  position: absolute;
-  right: -1px;
-  bottom: -1px;
-}
 .statusDot {
   flex: 0 0 auto;
-  width: 12px;
-  height: 12px;
-  border: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--status-online);
+}
+
+.statusDot[data-status="away"] {
+  background: var(--status-away);
+}
+
+.statusDot[data-status="offline"] {
+  background: var(--status-offline);
+}
+
+.statusText {
+  color: var(--text-success);
+}
+
+.statusText[data-status="away"] {
+  color: var(--text-warning);
+}
+
+.statusText[data-status="offline"] {
+  color: var(--text-subtle);
 }

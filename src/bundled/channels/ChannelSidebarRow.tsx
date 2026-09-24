@@ -16,6 +16,7 @@ export function ChannelSidebarRow({
   childContent,
   wrapSelect,
   selected,
+  presenceDescription,
   sessions,
   draft,
   draftSelected,
@@ -32,6 +33,7 @@ export function ChannelSidebarRow({
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
+  presenceDescription?: string | undefined;
   sessions: readonly ChannelSummary[];
   draft: boolean;
   draftSelected: boolean;
@@ -52,6 +54,7 @@ export function ChannelSidebarRow({
       aria-current={
         selected === channel.id && !draftSelected ? "page" : undefined
       }
+      aria-description={presenceDescription}
       onPointerEnter={() => onPrepare(channel.id)}
       onFocus={() => onPrepare(channel.id)}
       onClick={() => onSelect(channel.id)}

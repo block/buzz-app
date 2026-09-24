@@ -6,7 +6,10 @@ import { ProfileInstances } from "./ProfileInstances";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { PresenceIndicator } from "../../features/presence/react";
+import {
+  PresenceIndicator,
+  usePresenceStatus,
+} from "../../features/presence/react";
 import {
   type ReactNode,
   useEffect,
@@ -119,6 +122,7 @@ function ProfileDetails({
     };
   }, [session, pubkey, attempt]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const presence = usePresenceStatus(session.presence, pubkey, true);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -147,10 +151,13 @@ function ProfileDetails({
         <div className={picture ? styles.portrait : undefined}>
           <Avatar
             src={picture}
-            alt={`${name} avatar`}
+            alt={
+              tab === "info" && presence !== "unknown" ? "" : `${name} avatar`
+            }
             fallback={name}
             size={picture ? "fill" : "large"}
             shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
         <h2 className="text-heading">{name}</h2>

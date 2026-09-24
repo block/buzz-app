@@ -48,7 +48,12 @@ async function harness(respond, capabilities = {}) {
       const auth = authorization
         ? JSON.parse(Buffer.from(authorization.slice(6), "base64").toString())
         : undefined;
-      if (upstreamUrl !== fixtureRelayUrl) expect(auth).toBeDefined();
+      if (
+        upstreamUrl === fixtureRelayUrl ||
+        upstreamUrl === `${fixtureRelayUrl}/api/join-policy`
+      )
+        expect(auth).toBeUndefined();
+      else expect(auth).toBeDefined();
       if (auth) {
         expect(verifyEvent(auth)).toBe(true);
         expect(auth.created_at).toBe(Math.floor(Date.now() / 1000));
@@ -113,6 +118,36 @@ const success = (call) =>
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
+  const icon = "https://images.example/icon@2x.png";
+  const h = await harness((call) => {
+    if (call.url === fixtureRelayUrl) return Response.json({ icon });
+    if (call.url === `${fixtureRelayUrl}/api/join-policy`)
+      return new Response("unavailable", { status: 503 });
+    return new Response(null, { status: 404 });
+  });
+  try {
+    const iconResponse = await h.get("icon-info");
+    expect(iconResponse.status).toBe(200);
+    expect(await iconResponse.json()).toEqual({ icon });
+    expect(h.calls.map(({ url }) => url)).toEqual([fixtureRelayUrl]);
+
+    const joinResponse = await h.get("info");
+    const joinBody = await joinResponse.json();
+    expect([joinResponse.status, joinBody]).toEqual([
+      503,
+      { error: "Could not load join policy" },
+    ]);
+    expect(h.calls.map(({ url }) => url)).toEqual([
+      fixtureRelayUrl,
+      fixtureRelayUrl,
+      `${fixtureRelayUrl}/api/join-policy`,
+    ]);
+  } finally {
+    await h.close();
+  }
+});
 
 test("GIF capability discovery does not depend on join-policy availability", async () => {
   const h = await harness((call) => {

@@ -15,7 +15,7 @@ pill actions, consistent fields and shared states.
 | Search | SearchField | Channels, pages, members and GIFs preserve their query, ref and keyboard handlers. |
 | Navigation | NavigationItem | Settings, channel rows, shell destinations, Home and community choices. Route destinations remain buttons, not tabs. |
 | Tabs | Tabs | Emoji/GIF uses associated panels and Base UI keyboard activation. Workflow mode retains its existing externally owned editor view. |
-| Modals | Dialog and AlertDialog | Page search, community chooser/setup and workflow confirmations. Pending work prevents dismissal; focus returns to the opener. |
+| Modals | Dialog and AlertDialog | Page search, community setup and workflow confirmations. Pending work prevents dismissal; focus returns to the opener. |
 | Panels and headers | Panel and PanelHeader | Settings, channels and companion cards use shared paint. Grids, scrolling, docks and subscriptions stay with the feature. |
 | Feedback | Toast | Agent-start, live-update, sidebar preferences and Settings feedback use a source-owned stack. Recovery stays available; form errors, blocked pages and lasting paused-state context remain inline. |
 | Hints | Tooltip | Control titles and agent activity use keyboard-accessible, dismissible hints. Accessible names stay on the controls. |

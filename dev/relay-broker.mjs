@@ -519,7 +519,10 @@ export function relayBrokerPlugin({
                 : {}),
             });
           }
-          if (route === "/api/relay/info" && req.method === "GET") {
+          if (
+            (route === "/api/relay/info" || route === "/api/relay/icon-info") &&
+            req.method === "GET"
+          ) {
             const response = await fetchUpstream(relay, {
               headers: { Accept: "application/nostr+json" },
               redirect: "error",
@@ -530,6 +533,9 @@ export function relayBrokerPlugin({
                 error: "Community discovery failed",
               });
             const info = await response.json();
+            // Saved-community icons are public NIP-11 metadata, not join admission.
+            if (route === "/api/relay/icon-info")
+              return json(res, 200, { icon: info?.icon });
             const gifSearchPath = relayKlipySearchPath(info);
             if (gifSearchPath)
               gifSearchPaths.set(relay, Promise.resolve(gifSearchPath));

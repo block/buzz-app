@@ -15,16 +15,14 @@ for (const startingScope of ["Primary", "Personal space"]) {
       route.fulfill({ json: { name: "Secondary", policy: null } }),
     );
     await open(page, app);
-    const switcher = button(page, "Switch community");
+    const rail = page.getByRole("navigation", { name: "Communities" });
     if (startingScope === "Personal space") {
-      await switcher.click();
       await button(page, "Personal space").click();
       await expect(
         page.getByRole("heading", { name: "Your channels, one conversation." }),
       ).toBeVisible();
     }
     const before = await entry(page);
-    await switcher.click();
     await button(page, "Add a community").click();
     await page
       .getByRole("textbox", { name: "Relay URL", exact: true })
@@ -37,9 +35,9 @@ for (const startingScope of ["Primary", "Personal space"]) {
       }),
     ).toBeVisible();
     await button(page, "Open community").click();
-    await expect(switcher).toHaveAttribute("title", "Secondary", {
-      timeout: 1500,
-    });
+    await expect(
+      rail.getByRole("button", { name: "Switch to Secondary" }),
+    ).toHaveAttribute("aria-current", "true", { timeout: 1500 });
     const secondaryMessage = page.getByText("secondary alpha message 639", {
       exact: false,
     });
@@ -52,7 +50,12 @@ for (const startingScope of ["Primary", "Personal space"]) {
     });
 
     await button(page, "Go back").click();
-    await expect(switcher).toHaveAttribute("title", startingScope);
+    await expect(
+      rail.getByRole("button", {
+        name:
+          startingScope === "Primary" ? "Switch to Primary" : "Personal space",
+      }),
+    ).toHaveAttribute("aria-current", "true");
     expect(await entry(page)).toEqual(before);
     if (startingScope === "Primary")
       await expect(
@@ -63,7 +66,9 @@ for (const startingScope of ["Primary", "Personal space"]) {
         page.getByRole("heading", { name: "Your channels, one conversation." }),
       ).toBeVisible();
     await button(page, "Go forward").click();
-    await expect(switcher).toHaveAttribute("title", "Secondary");
+    await expect(
+      rail.getByRole("button", { name: "Switch to Secondary" }),
+    ).toHaveAttribute("aria-current", "true");
     await expect(secondaryMessage).toBeVisible();
     expect(await entry(page)).toEqual(joined);
   });

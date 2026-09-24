@@ -116,6 +116,7 @@ it("sorts every section independently with deterministic inactive and tie fallba
     ["group:work", ["new", "a-id", "z-id", "quiet-a", "quiet-b"]],
     ["channels", []],
     ["forums", ["forum-new", "forum-old"]],
+    ["dms", []],
   ]);
   expect(sidebarSections(roster)[0]?.rows.map((channel) => channel.id)).toEqual(
     ["quiet-a", "quiet-b", "a-id", "z-id", "new"],
@@ -137,11 +138,13 @@ it("Star projection is exclusive and retains empty saved groups", () => {
     ["starred", ["alpha", "beta"]],
     ["group:work", []],
     ["channels", []],
+    ["dms", []],
   ]);
   expect(placements(["alpha"])).toEqual([
     ["starred", ["alpha"]],
     ["group:work", ["beta"]],
     ["channels", []],
+    ["dms", []],
   ]);
   expect(saved.assignments).toEqual({ beta: "work" });
 });

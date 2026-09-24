@@ -1,5 +1,5 @@
 import { attachmentMessage, type UploadedAttachment } from "./attachments";
-import { validReactionContent } from "./emoji";
+import { validReactionContent, type CustomEmoji } from "./emoji";
 import type { EventData } from "./events";
 import type { Outbox } from "./outbox";
 
@@ -92,9 +92,9 @@ export function createMessages(
         tags: [["h", channelId], ["e", messageId], ...emojiTags(content)],
       });
     },
-    react(messageId: string, content: string) {
+    react(messageId: string, content: string, emoji?: CustomEmoji) {
       const original = find(messageId);
-      if (!original || ![9, 40002].includes(original.kind))
+      if (!original || ![9, 40002, 40008].includes(original.kind))
         throw new Error("Load the message before reacting to it");
       const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channelId) throw new Error("Message has no channel");
@@ -103,8 +103,61 @@ export function createMessages(
       return writer(7, channelId).send({
         kind: 7,
         content: value,
-        tags: [["h", channelId], ["e", messageId], ...emojiTags(value)],
+        tags: [
+          ["h", channelId],
+          ["e", messageId],
+          ...(emoji && value.toLowerCase() === `:${emoji.shortcode}:`
+            ? [["emoji", emoji.shortcode, emoji.url]]
+            : emojiTags(value)),
+        ],
       });
+    },
+    remove(eventIds: readonly string[]) {
+      const ids = [...new Set(eventIds)];
+      if (!ids.length || ids.length > 100)
+        throw new Error("Choose between 1 and 100 events to remove");
+      const originals = ids.map((id) => {
+        const event = find(id);
+        if (!event || ![7, 9, 40002].includes(event.kind))
+          throw new Error("Load the message or reaction before removing it");
+        if (event.pubkey !== viewer)
+          throw new Error(
+            "Only your own messages and reactions can be removed",
+          );
+        return event;
+      });
+      const channel = (event: EventData) =>
+        event.tags.find(([name]) => name === "h")?.[1] ??
+        (event.kind === 7
+          ? find(
+              event.tags.find(([name]) => name === "e")?.[1] ?? "",
+            )?.tags.find(([name]) => name === "h")?.[1]
+          : undefined);
+      const first = originals[0];
+      const channelId = first ? channel(first) : undefined;
+      if (!channelId || originals.some((event) => channel(event) !== channelId))
+        throw new Error("Removal must belong to one loaded conversation");
+      return writer(5, channelId).send({
+        kind: 5,
+        content: "",
+        tags: [
+          ["h", channelId],
+          ...ids.map((id) => ["e", id]),
+          ...[...new Set(originals.map((event) => event.kind))].map((kind) => [
+            "k",
+            String(kind),
+          ]),
+        ],
+      });
+    },
+    reactionTarget(event: Pick<EventData, "kind" | "tags">) {
+      const target = event.tags.find(([name]) => name === "e")?.[1];
+      if (event.kind === 7) return target;
+      if (event.kind !== 5 || !target) return undefined;
+      const original = find(target);
+      return original?.kind === 7
+        ? original.tags.find(([name]) => name === "e")?.[1]
+        : undefined;
     },
     retry(id: string) {
       outbox?.retry(id);

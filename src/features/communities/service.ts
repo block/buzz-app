@@ -202,6 +202,7 @@ export function createCommunities(
         }
         if (!saved.memberships.some((m) => m.id === saved.selected))
           saved.selected = null;
+        presenceActivity.setViewer(viewer);
         if (saved.selected) acquire(saved.selected);
         // A seeded record is saved once so later configuration changes cannot revoke it.
         update({ ...saved, viewer, status: "ready" }, seeded);
@@ -219,6 +220,7 @@ export function createCommunities(
     return Promise.all(scopes.map((scope) => scope.fiber.dispose()));
   });
   return {
+    presence: presenceActivity,
     relay,
     snapshot: () => state,
     subscribe(fn: () => void) {

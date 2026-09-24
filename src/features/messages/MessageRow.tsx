@@ -2,13 +2,19 @@ import { useIdentityNames } from "../identity-names/react";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { memo, useCallback, useSyncExternalStore, type ReactNode } from "react";
-import { PresenceIndicator } from "../presence/react";
+import {
+  memo,
+  useRef,
+  useCallback,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
 import { parseMediaTimeReply } from "./media-timecode";
 import { profileTarget } from "../profiles/target";
+import { MessageBody } from "../conversation/MessageBody";
 import { InlineText } from "../conversation/InlineText";
 import type { ConversationExtensions } from "../conversation/contracts";
 import type { ChannelMessage, Profile } from "../relay/contracts";
@@ -21,7 +27,7 @@ import { MessageMarkdown } from "./MessageMarkdown";
 import { safeMessageUrl } from "../relay/message-content";
 import styles from "./Messages.module.css";
 import { usesLargeEmojiPresentation } from "./emoji-size";
-import { ReactionTool } from "../conversation/ReactionTool";
+import { MessageReactionControls, MessageReactions } from "./MessageReactions";
 
 import { MessageActionBar } from "./MessageActionBar";
 import { messageCopyLink, messageCopyText } from "./message-copy";
@@ -123,7 +129,7 @@ export const MessageRow = memo(function MessageRow({
     row.agentEnvelope || agentPubkeys?.has(row.authorId)
       ? "squircle"
       : "circle";
-  const timeReply = parseMediaTimeReply(row.content);
+  const timeReply = row.diff ? undefined : parseMediaTimeReply(row.content);
   const replaceTime = !!timeReply && !!onMediaTime;
   const displayRow = replaceTime ? { ...row, content: timeReply.content } : row;
   const emojiOnly = usesLargeEmojiPresentation(displayRow.content, row.emoji);
@@ -132,10 +138,41 @@ export const MessageRow = memo(function MessageRow({
     session &&
     scope &&
     session.outbox?.supports(7) &&
+    session.outbox.supports(5) &&
     (!session.channels.get ||
       channelList.channels.some((channel) => channel.id === row.channelId)) &&
     !channelList.channels.find((channel) => channel.id === row.channelId)
-      ?.archived
+      ?.archived &&
+    !channelList.channels.find((channel) => channel.id === row.channelId)
+      ?.readOnly
+  );
+  const menuTrigger = useRef<HTMLButtonElement>(null);
+  const body = row.diff ? (
+    <div>
+      <p className="text-label-sm">{row.diff.filePath || "Diff"}</p>
+      {row.diff.description && (
+        <p className="text-body-sm">{row.diff.description}</p>
+      )}
+      <pre className={styles.rawDiff}>{row.content || "No diff content"}</pre>
+      {row.diff.truncated && (
+        <p className="text-body-sm">
+          Diff truncated. View the full diff at the source repository.
+        </p>
+      )}
+    </div>
+  ) : (
+    <MessageMarkdown
+      directory={directory}
+      session={session}
+      scope={scope}
+      row={displayRow}
+      extensions={extensions}
+      media={media}
+      onOpenLink={onOpenLink}
+      canOpenLink={canOpenLink}
+      participantProfiles={participantProfiles}
+      largeEmoji={emojiOnly}
+    />
   );
   return (
     <div data-message-id={row.id}>
@@ -182,6 +219,7 @@ export const MessageRow = memo(function MessageRow({
         <div className={styles.messageBody}>
           {!row.membership && (
             <MessageActionBar
+              menuTriggerRef={menuTrigger}
               messageId={row.id}
               onReply={
                 onReply ??
@@ -211,18 +249,27 @@ export const MessageRow = memo(function MessageRow({
               copyText={() =>
                 messageCopyText(row, directory.profiles, directory.agents)
               }
-              quickControls={quickControls}
+              quickControls={
+                quickControls ??
+                (canReact && session && scope && extensions ? (
+                  <MessageReactionControls
+                    row={row}
+                    session={session}
+                    scope={scope}
+                    tools={extensions.tools}
+                    inline={extensions.inline}
+                    disabled={
+                      !!row.delivery &&
+                      !["accepted", "seen"].includes(row.delivery)
+                    }
+                  />
+                ) : undefined)
+              }
               overflowItems={overflowItems}
             />
           )}
           <div className={styles.byline}>
             <strong>{name}</strong>
-            {session && (
-              <PresenceIndicator
-                presence={session.presence}
-                pubkey={row.authorId}
-              />
-            )}
             <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",
@@ -241,18 +288,13 @@ export const MessageRow = memo(function MessageRow({
               </Button>
             </span>
           )}
-          <MessageMarkdown
-            directory={directory}
-            session={session}
-            scope={scope}
-            row={displayRow}
-            extensions={extensions}
-            media={media}
-            onOpenLink={onOpenLink}
-            canOpenLink={canOpenLink}
-            participantProfiles={participantProfiles}
-            largeEmoji={emojiOnly}
-          />
+          {extensions?.messages ? (
+            <MessageBody registry={extensions.messages} message={row}>
+              {body}
+            </MessageBody>
+          ) : (
+            body
+          )}
           <DeliveryNotice row={row} retry={retry} />
           {row.attachments.map((attachment) => {
             const url = safeMessageUrl(attachment.url);
@@ -325,38 +367,53 @@ export const MessageRow = memo(function MessageRow({
               />
             );
           })}
-          {row.reactions.length > 0 && (
+          {session && scope && extensions ? (
             <div className={styles.reactions}>
-              {row.reactions.map((reaction) => (
-                <span key={JSON.stringify(reaction)}>
-                  {extensions ? (
-                    <InlineText
-                      registry={extensions.inline}
-                      content={{
-                        text: reaction.content,
-                        message: row,
-                        reaction,
-                      }}
-                      media={media}
-                    />
-                  ) : (
-                    reaction.content
-                  )}
-                </span>
-              ))}
-              {canReact && extensions && session && scope && (
-                <ReactionTool
-                  registry={extensions.tools}
-                  session={session}
-                  scope={scope}
-                  messageId={row.id}
-                  disabled={
-                    !!row.delivery &&
-                    !["accepted", "seen"].includes(row.delivery)
-                  }
-                />
-              )}
+              <MessageReactions
+                onFocusedRemoval={() => menuTrigger.current?.focus()}
+                row={row}
+                session={session}
+                scope={scope}
+                tools={extensions.tools}
+                inline={extensions.inline}
+                disabled={
+                  !canReact ||
+                  (!!row.delivery &&
+                    !["accepted", "seen"].includes(row.delivery))
+                }
+              />
             </div>
+          ) : (
+            row.reactions.length > 0 && (
+              <div className={styles.reactions}>
+                {row.reactions.map((reaction) => (
+                  <span
+                    key={JSON.stringify([
+                      reaction.content,
+                      reaction.emoji?.url,
+                    ])}
+                  >
+                    {extensions ? (
+                      <InlineText
+                        registry={extensions.inline}
+                        content={{
+                          text: reaction.content,
+                          message: row,
+                          reaction,
+                        }}
+                        media={media}
+                      />
+                    ) : (
+                      reaction.content
+                    )}{" "}
+                    {
+                      new Set(reaction.events.map((event) => event.authorId))
+                        .size
+                    }
+                  </span>
+                ))}
+              </div>
+            )
           )}
           {row.replyCount > 0 && onOpenThread && (
             <Button

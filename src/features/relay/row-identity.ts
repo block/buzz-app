@@ -23,7 +23,14 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.authorId === right.authorId &&
     left.createdAt === right.createdAt &&
     left.content === right.content &&
+    left.sourceContent === right.sourceContent &&
     left.agentEnvelope === right.agentEnvelope &&
+    !!left.diff === !!right.diff &&
+    left.diff?.filePath === right.diff?.filePath &&
+    left.diff?.repoUrl === right.diff?.repoUrl &&
+    left.diff?.commitSha === right.diff?.commitSha &&
+    left.diff?.description === right.diff?.description &&
+    left.diff?.truncated === right.diff?.truncated &&
     left.membership?.type === right.membership?.type &&
     left.membership?.actor === right.membership?.actor &&
     left.membership?.target === right.membership?.target &&
@@ -56,7 +63,13 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
       (a, b) =>
         a.content === b.content &&
         a.emoji?.shortcode === b.emoji?.shortcode &&
-        a.emoji?.url === b.emoji?.url,
+        a.emoji?.url === b.emoji?.url &&
+        sameArray(
+          a.events,
+          b.events,
+          (left, right) =>
+            left.id === right.id && left.authorId === right.authorId,
+        ),
     ) &&
     left.threadRootId === right.threadRootId &&
     left.replyCount === right.replyCount &&

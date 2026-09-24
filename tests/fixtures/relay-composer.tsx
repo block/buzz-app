@@ -88,7 +88,7 @@ const owner = createRelaySession(
       ];
     },
     writer: {
-      kinds: [9],
+      kinds: [9, 40003],
       async sign(event) {
         await new Promise((resolve) => setTimeout(resolve, 500));
         return signed(viewer, event);
@@ -115,6 +115,17 @@ const owner = createRelaySession(
         },
   },
 );
+// Observable delivery barrier for keyboard workflows; the fixture never uses real keys.
+Object.assign(window, {
+  composerFixture: {
+    pending: () =>
+      owner.session.outbox?.snapshot().map((item) => ({
+        kind: item.event.kind,
+        content: item.event.content,
+        delivery: item.delivery,
+      })),
+  },
+});
 const snapshot = Object.freeze({
   status: "ready" as const,
   generation: 0,

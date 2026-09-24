@@ -250,7 +250,7 @@ async function relayAuthority(fetch, relay) {
 export function validMessageTemplate(event) {
   return (
     event &&
-    [7, 9].includes(event.kind) &&
+    [7, 9, 40003].includes(event.kind) &&
     typeof event.content === "string" &&
     event.content.trim().length > 0 &&
     Buffer.byteLength(event.content) <= 32000 &&
@@ -266,10 +266,10 @@ export function validMessageTemplate(event) {
     ).length === 1 &&
     (() => {
       const references = event.tags.filter((tag) => tag[0] === "e");
-      if (event.kind === 7)
+      if (event.kind === 7 || event.kind === 40003)
         return (
           event.content === event.content.trim() &&
-          validReactionContent(event.content) &&
+          (event.kind === 40003 || validReactionContent(event.content)) &&
           references.length === 1 &&
           references[0].length === 2 &&
           /^[0-9a-f]{64}$/.test(references[0][1])
@@ -287,6 +287,41 @@ export function validMessageTemplate(event) {
     })()
   );
 }
+/** Channel-local NIP-09 removal; the relay enforces authorship of each target. */
+export function validMessageDeletion(event) {
+  if (
+    event?.kind !== 5 ||
+    event.content !== "" ||
+    !Number.isSafeInteger(event.created_at) ||
+    event.created_at < 0 ||
+    !Array.isArray(event.tags) ||
+    event.tags.length > 106 ||
+    !event.tags.every(
+      (tag) =>
+        Array.isArray(tag) &&
+        tag.length === 2 &&
+        tag.every((value) => typeof value === "string") &&
+        ["h", "e", "k", "client-id"].includes(tag[0]),
+    )
+  )
+    return false;
+  const channels = event.tags.filter(([name]) => name === "h");
+  const targets = event.tags.filter(([name]) => name === "e");
+  const kinds = event.tags.filter(([name]) => name === "k");
+  return (
+    channels.length === 1 &&
+    channels[0][1].length > 0 &&
+    channels[0][1].length <= 256 &&
+    targets.length > 0 &&
+    targets.length <= 100 &&
+    targets.every(([, id]) => /^[0-9a-f]{64}$/.test(id)) &&
+    new Set(targets.map(([, id]) => id)).size === targets.length &&
+    kinds.length > 0 &&
+    kinds.length <= 3 &&
+    kinds.every(([, kind]) => ["7", "9", "40002"].includes(kind))
+  );
+}
+
 /** Only explicit bot enrollment; never removal, role elevation or arbitrary kind-9000 tags. */
 export function validAgentEnrollment(event) {
   const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -642,6 +677,7 @@ export function relayBrokerPlugin({
               writeKinds: [
                 7,
                 9,
+                40003,
                 9000,
                 30078,
                 40100,
@@ -694,7 +730,11 @@ export function relayBrokerPlugin({
               streamId = body.streamId;
               if (publishingPresence) {
                 status = body.status;
-                if (status !== "online" && status !== "away")
+                if (
+                  status !== "online" &&
+                  status !== "away" &&
+                  status !== "offline"
+                )
                   throw new Error("Invalid presence");
               }
               if (observing) observer = observerGeneration(body.observer);
@@ -1299,7 +1339,10 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
-            } else if (![7, 9].includes(filters?.kind)) {
+            } else if (
+              ![7, 9, 40003].includes(filters?.kind) &&
+              !validMessageDeletion(filters)
+            ) {
               try {
                 validateWorkflowEvent(
                   { ...filters, pubkey: signing ? viewer : filters.pubkey },
@@ -1312,7 +1355,10 @@ export function relayBrokerPlugin({
                   sent: false,
                 });
               }
-            } else if (!validMessageTemplate(filters))
+            } else if (
+              [7, 9, 40003].includes(filters?.kind) &&
+              !validMessageTemplate(filters)
+            )
               return json(res, 400, { error: "Message rejected" });
             // Never sign or publish after the requesting browser has left.
             cancel.signal.throwIfAborted();

@@ -148,7 +148,9 @@ export function policyRelay({
             "#h": replies["#h"],
             limit: 1,
           });
-          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([9, 40002]);
+          expect(replies.kinds.toSorted((a, b) => a - b)).toEqual([
+            9, 40002, 40008,
+          ]);
           for (const filter of filters)
             report.queries.push({
               community: communityOf(url),
@@ -380,7 +382,7 @@ export function policyRelay({
               expect(verifyEvent(id)).toBe(true);
               expect(id.pubkey).toBe(viewer);
               expect(id.kind).toBe(20001);
-              expect(["online", "away"]).toContain(id.content);
+              expect(["online", "away", "offline"]).toContain(id.content);
               expect(id.tags).toEqual([]);
               report.presencePublications.push({
                 community: this.community,

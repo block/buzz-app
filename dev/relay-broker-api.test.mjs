@@ -1256,3 +1256,105 @@ test("member addition works without channel creation, while role elevation remai
     await h.close();
   }
 });
+
+test("edit capability signs and publishes canonical replacements, rejecting malformed edits locally", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(40003);
+    const template = {
+      ...h.event,
+      kind: 40003,
+      content: "corrected **message**",
+      tags: [
+        ["h", "c"],
+        ["e", h.event.id],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({
+      kind: 40003,
+      content: template.content,
+      tags: template.tags,
+      pubkey: h.event.pubkey,
+    });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [["h", "c"]],
+        [
+          ["h", "c"],
+          ["e", "bad"],
+        ],
+        [
+          ["h", "c"],
+          ["e", h.event.id, "", "reply"],
+        ],
+        [...event.tags, ["e", "a".repeat(64)]],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+      expect((await h.post(route, { ...event, content: " " })).status).toBe(
+        400,
+      );
+      expect(
+        (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
+      ).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("message/reaction deletions pass real signing and publication without admitting workflow or arbitrary deletion shapes", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["h", "c"],
+        ["e", "a".repeat(64)],
+        ["k", "7"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(5);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [
+          ["h", "c"],
+          ["e", "invalid"],
+          ["k", "7"],
+        ],
+        [
+          ["h", "c"],
+          ["e", "a".repeat(64)],
+          ["k", "30030"],
+        ],
+        [...template.tags, ["a", `30620:${h.event.pubkey}:workflow`]],
+        [...template.tags, ["h", "other"]],
+        [
+          ["h", "c"],
+          ["k", "7"],
+        ],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});

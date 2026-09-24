@@ -25,6 +25,11 @@
     color: var(--text-standard);
     box-shadow: var(--shadow-sm);
   }
+  .buzz-dialog[data-size="expanded"] {
+    width: calc(100vw - 3rem);
+    height: calc(100dvh - 3rem);
+    overflow: hidden;
+  }
   /* Base UI retains controlled dialogs until these transitions complete. */
   .buzz-dialog-backdrop[data-motion="default"] {
     opacity: 1;
@@ -100,6 +105,12 @@
   .buzz-dialog-body {
     min-width: 0;
   }
+  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+  }
+
   .buzz-dialog-content {
     padding-block: var(--dialog-padding);
   }

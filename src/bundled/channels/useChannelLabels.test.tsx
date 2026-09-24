@@ -77,9 +77,15 @@ it.each([
       tags: [["d", "dm"], ["t", "dm"], ["hidden"]],
     });
     let labels: readonly ChannelSummary[] = [];
+    let selectedProfiles: ReadonlyMap<
+      string,
+      import("../../features/relay/contracts").Profile
+    > = new Map();
     function Probe() {
       const list = useChannelList(owner.session.channels);
-      labels = useChannelLabels(list.channels, owner.session.profiles);
+      const selected = useChannelLabels(list.channels, owner.session.profiles);
+      labels = selected.channels;
+      selectedProfiles = selected.profiles;
       return null;
     }
     const root = createRoot(container());
@@ -113,10 +119,18 @@ it.each([
       const initial = wire.next();
       if (loaded) {
         await act(async () => {
-          initial.respond([profile(alice, { display_name: "Alice" })]);
+          initial.respond([
+            profile(alice, {
+              display_name: "Alice",
+              picture: "https://example.com/alice.png",
+            }),
+          ]);
           await flush();
         });
         expect(labels.find((row) => row.id === "dm")?.name).toBe("Alice");
+        expect(selectedProfiles.get(alice.pubkey)?.picture).toBe(
+          "https://example.com/alice.png",
+        );
       }
       expect(wire.pending).toHaveLength(0);
       // Exercise the actual complete-roster omission -> session purge. Do not
@@ -135,6 +149,7 @@ it.each([
       }
       expect(labels.map((row) => row.id)).toEqual(["dm"]);
       expect(owner.session.profiles.snapshot().has(alice.pubkey)).toBe(false);
+      expect(selectedProfiles.has(alice.pubkey)).toBe(false);
       expect(labels[0]?.name).toBe(alice.pubkey.slice(0, 10));
       expect(wire.pending).toHaveLength(1);
       expect(wire.pending[0]?.filters).toEqual([
@@ -199,7 +214,7 @@ it("retains a labelled DM across roster and profile recomputations until its sou
   } as unknown as import("../../features/identity-names/service").IdentityNameView;
   let labels: readonly ChannelSummary[] = [];
   function Probe() {
-    labels = useChannelLabels(roster, queries, names);
+    labels = useChannelLabels(roster, queries, names).channels;
     return null;
   }
   const root = createRoot(container());

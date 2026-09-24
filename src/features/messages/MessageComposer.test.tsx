@@ -32,7 +32,8 @@ import { MessageComposer, type MessageComposerProps } from "./MessageComposer";
 import { createRelaySession, type RelaySession } from "../relay/session";
 import { keypair, metadata, roster, signed } from "../relay/testing";
 import type { EventTemplate } from "nostr-tools";
-import type { Profile } from "../relay/contracts";
+import type { ChannelMessage, Profile } from "../relay/contracts";
+import { readView } from "../../shared/view-state";
 import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
@@ -61,6 +62,7 @@ afterEach(() => {
 function mount(
   options: Partial<MessageComposerProps> = {},
   control?: AgentControl,
+  viewer?: string,
 ) {
   let commands: ComposerToolProps;
   const completionRequests: ComposerCompletionProps["publish"][] = [];
@@ -116,7 +118,33 @@ function mount(
     status: "ready" as const,
     entries: [] as readonly CustomEmoji[],
   };
+  const outboxListeners = new Set<() => void>();
+  let pending: readonly OutgoingEvent[] = [];
+  let rows: readonly ChannelMessage[] = [];
+  const setPending = (next: readonly OutgoingEvent[]) => {
+    pending = next;
+    for (const listener of outboxListeners) listener();
+  };
   const messages = {
+    edit: vi.fn<RelaySession["messages"]["edit"]>((id, content) => {
+      setPending([
+        {
+          event: {
+            id: "edit-id",
+            kind: 40003,
+            pubkey: first.pubkey,
+            created_at: 100,
+            content,
+            tags: [
+              ["h", "channel"],
+              ["e", id],
+            ],
+          },
+          delivery: "sending",
+        },
+      ]);
+      return "edit-id";
+    }),
     send: vi.fn<RelaySession["messages"]["send"]>(() => "channel-id"),
     reply: vi.fn<RelaySession["messages"]["reply"]>(() => "reply-id"),
   };
@@ -134,6 +162,7 @@ function mount(
     channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
   };
   const session = {
+    viewer,
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
     profiles: {
@@ -166,8 +195,25 @@ function mount(
       refresh: vi.fn(() => Promise.resolve()),
     },
     media: (url: string) => url,
-    outbox: { supports: () => true },
+    outbox: {
+      supports: () => true,
+      snapshot: () => pending,
+      subscribe(listener: () => void) {
+        outboxListeners.add(listener);
+        return () => outboxListeners.delete(listener);
+      },
+      retry: vi.fn((id: string) =>
+        setPending(
+          pending.map((item) =>
+            item.event.id === id
+              ? { ...item, delivery: "sending", error: undefined }
+              : item,
+          ),
+        ),
+      ),
+    },
     channels: {
+      window: () => ({ rows }),
       list: () => channelList,
       subscribeList: () => () => {},
     },
@@ -237,6 +283,21 @@ function mount(
     ...view,
     input,
     messages,
+    setRows(next: readonly ChannelMessage[]) {
+      rows = next;
+    },
+    setDelivery(delivery: OutgoingEvent["delivery"]) {
+      act(() =>
+        setPending(
+          pending.map((item) => ({
+            ...item,
+            delivery,
+            error:
+              delivery === "failed" ? "Relay rejected this edit" : undefined,
+          })),
+        ),
+      );
+    },
     onSend,
     session: props.session,
     emojiListeners,
@@ -1746,5 +1807,296 @@ it.each([false, true])(
       owner.dispose();
       native.dispose();
     }
+  },
+);
+
+const editableMessage = (
+  overrides: Partial<ChannelMessage> = {},
+): ChannelMessage => ({
+  id: "c".repeat(64),
+  channelId: "channel",
+  authorId: first.pubkey,
+  createdAt: 10,
+  content: "Original message",
+  replyCount: 0,
+  participants: [],
+  mentions: [],
+  attachments: [],
+  reactions: [],
+  ...overrides,
+});
+
+it("edits in the same composer, cancels without persisting edit text, and restores draft undo history", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  h.fill("Unsent draft");
+  h.fill("");
+  const input = h.input();
+  fireEvent.keyDown(input, { key: "ArrowUp" });
+  expect(h.input()).toBe(input);
+  expect(input).toHaveAccessibleName("Edit message");
+  expect(input).toHaveValue("Original message");
+  h.fill("Temporary edit");
+  expect(readView("scope", "draft:channel", null)).toMatchObject({ text: "" });
+  fireEvent.keyDown(input, { key: "Escape" });
+  expect(input).toHaveValue("");
+  expect(input).toHaveFocus();
+  fireEvent.keyDown(input, { key: "z", ctrlKey: true });
+  expect(input).toHaveValue("Unsent draft");
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it("saves only once, locks until delivery, and restores the new-message composer on acceptance", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const row = editableMessage();
+  h.setRows([row]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Revised message");
+  act(() => {
+    h.submit();
+    h.submit();
+  });
+  expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+    row.id,
+    "Revised message",
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+  expect(h.input()).toHaveAttribute("contenteditable", "false");
+  expect(screen.getByRole("button", { name: "Close edit" })).toBeDisabled();
+  h.setDelivery("accepted");
+  expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+  expect(h.input()).toHaveValue("");
+  expect(h.input()).toHaveFocus();
+  expect(h.onSend).not.toHaveBeenCalled();
+});
+
+it.each(["failed", "unknown"] as const)(
+  "keeps a %s edit and retries the same operation, not a new message",
+  (delivery) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    h.fill("Revised");
+    h.submit();
+    h.setDelivery(delivery);
+    expect(h.input()).toHaveValue("Revised");
+    expect(h.input()).toHaveAttribute("contenteditable", "false");
+    fireEvent.click(screen.getByRole("button", { name: "Retry edit" }));
+    expect(h.session.outbox?.retry).toHaveBeenCalledExactlyOnceWith("edit-id");
+    expect(h.messages.edit).toHaveBeenCalledTimes(1);
+    h.setDelivery("seen");
+    expect(h.input()).toHaveValue("");
+  },
+);
+
+it.each(["changed", "deleted"])(
+  "preserves text and refuses to overwrite a %s target",
+  (state) => {
+    const h = mount({}, undefined, first.pubkey);
+    const row = editableMessage();
+    h.setRows([row]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    h.fill("My changes");
+    h.setRows(
+      state === "deleted"
+        ? []
+        : [{ ...row, content: "Another client edited this" }],
+    );
+    h.submit();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      state === "deleted"
+        ? "no longer available"
+        : "changed while you were editing",
+    );
+    expect(h.input()).toHaveValue("My changes");
+    expect(h.messages.edit).not.toHaveBeenCalled();
+  },
+);
+
+it("does not publish blank or unchanged content and preserves attachment source", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const sourceContent =
+    "Caption\n\n[report.pdf](https://files.test/report.pdf)";
+  h.setRows([editableMessage({ content: "Caption", sourceContent })]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue(sourceContent);
+  h.fill(" ");
+  h.submit();
+  expect(screen.getByText("Editing message")).toBeVisible();
+  h.fill(sourceContent);
+  h.submit();
+  expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it.each([
+  { shiftKey: true },
+  { altKey: true },
+  { ctrlKey: true },
+  { metaKey: true },
+  { repeat: true },
+  { isComposing: true },
+  { keyCode: 229 },
+])("does not take over modified/repeated/composing ArrowUp: %j", (keys) => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp", ...keys });
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+});
+
+it("does not replace a nonempty draft and confines channel/thread targets to their owner", () => {
+  const h = mount({}, undefined, first.pubkey);
+  const channelRow = editableMessage();
+  const reply = editableMessage({
+    id: "d".repeat(64),
+    content: "Thread reply",
+    threadRootId: channelRow.id,
+  });
+  h.setRows([channelRow, reply]);
+  h.fill("Draft");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("Draft");
+  h.fill("");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue(channelRow.content);
+  h.retarget({
+    threadRootId: channelRow.id,
+    editMessages: [channelRow, reply],
+  });
+  expect(h.input()).toHaveValue("");
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue(reply.content);
+  h.fill("Unsubmitted edit");
+  h.retarget({ channelId: "other", threadRootId: "another", editMessages: [] });
+  expect(h.input()).toHaveValue("");
+  expect(h.messages.edit).not.toHaveBeenCalled();
+});
+
+it("inserts mention links without new notification recipients during edits", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  act(() => {
+    h.commands().insertMention(second);
+  });
+  expect(h.input().value).toContain("nostr:npub");
+  expect(
+    screen.queryByRole("region", { name: "Explicit mentions" }),
+  ).not.toBeInTheDocument();
+  h.submit();
+  expect(h.messages.edit).toHaveBeenCalledWith(
+    "c".repeat(64),
+    expect.stringContaining("nostr:npub"),
+  );
+  expect(h.messages.send).not.toHaveBeenCalled();
+});
+
+it.each([
+  { authorId: second.pubkey },
+  { agentEnvelope: true as const },
+  {
+    membership: {
+      type: "member_joined" as const,
+      actor: first.pubkey,
+      target: second.pubkey,
+    },
+  },
+  { delivery: "sending" as const },
+  { delivery: "failed" as const },
+  { delivery: "unknown" as const },
+])("skips a newer ineligible row: %j", (overrides) => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([
+    editableMessage(),
+    editableMessage({
+      ...overrides,
+      id: "d".repeat(64),
+      content: "Ineligible",
+    }),
+  ]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("Original message");
+});
+
+it("does not start editing without a viewer or edit capability", () => {
+  const h = mount();
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("");
+  const outbox = h.session.outbox;
+  if (!outbox) throw new Error("Missing fixture outbox");
+  h.retarget({
+    session: {
+      ...h.session,
+      viewer: first.pubkey,
+      outbox: { ...outbox, supports: (kind) => kind === 9 },
+    },
+  });
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("");
+});
+
+it("does not reopen a target with an unresolved edit after closing it", () => {
+  const h = mount({}, undefined, first.pubkey);
+  h.setRows([editableMessage()]);
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  h.fill("Waiting for delivery");
+  h.submit();
+  h.setDelivery("unknown");
+  fireEvent.click(screen.getByRole("button", { name: "Close edit" }));
+  fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+  expect(h.input()).toHaveValue("");
+  expect(screen.queryByText("Editing message")).not.toBeInTheDocument();
+});
+
+it.each(["archived", "readOnly"] as const)(
+  "blocks edit entry and save when channel becomes %s",
+  (flag) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    let channel = {
+      id: "channel",
+      name: "General",
+      members: [first.pubkey],
+      [flag]: true,
+    };
+    let list = { status: "ready" as const, channels: [channel] };
+    const listeners = new Set<() => void>();
+    h.retarget({
+      session: {
+        ...h.session,
+        channels: {
+          ...h.session.channels,
+          get: () => channel,
+          list: () => list,
+          subscribeList: (listener) => {
+            listeners.add(listener);
+            return () => {
+              listeners.delete(listener);
+            };
+          },
+        },
+      },
+    });
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    expect(h.input()).toHaveValue("");
+    act(() => {
+      channel = { ...channel, [flag]: false };
+      list = { ...list, channels: [channel] };
+      for (const listener of listeners) listener();
+    });
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    h.fill("Changes");
+    act(() => {
+      channel = { ...channel, [flag]: true };
+      list = { ...list, channels: [channel] };
+      for (const listener of listeners) listener();
+    });
+    h.submit();
+    expect(h.messages.edit).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    fireEvent.keyDown(h.input(), { key: "Escape" });
+    expect(h.input()).toHaveValue("");
   },
 );

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import {
   canStopAgent,
+  agentLaunchBlock,
   type AgentControl,
   type AgentControlState,
   type AgentView,
@@ -26,19 +27,7 @@ export function ManagedAgentActions({
       details.current?.focus();
     }
   }, [imported]);
-  const transitioning =
-    agent.status === "starting" || agent.status === "stopping";
-  const startBlock =
-    state.status !== "ready"
-      ? "Refresh status before starting."
-      : state.busy
-        ? "Waiting for the current operation."
-        : !state.data?.runtimeAvailable
-          ? state.data?.runtimeMessage ||
-            "The bundled agent runtime is unavailable."
-          : transitioning
-            ? "Waiting for the process transition."
-            : null;
+  const startBlock = agentLaunchBlock(state, agent);
   const act = (action: "start" | "stop") => {
     void control.action(agent.id, action).catch(() => {});
   };

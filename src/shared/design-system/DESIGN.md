@@ -74,12 +74,21 @@ copy actions. Short labels are recognition aids, not proof of identity. Full-key
 inspection/export surfaces remain explicit exceptions. Existing surfaces are not
 migrated automatically; new abbreviated public-key displays should reuse this rule.
 
-Hosts decide when ambiguity exists. Composer chips compare authored names without
-case or surrounding whitespace and qualify every selected same-name identity,
-including earlier selections. Repeating one identity is not ambiguous. Removing
-the last distinct namesake restores name-only display. Qualifiers never change
-message source, recipient spans, copyable message text, or notifications. Accessible
-names spell out the public-key ending. No hover or picker change is implied.
+Identity display names use the active naming policy, not a separate composer rule.
+The default policy compares trimmed resolved names case-sensitively (`Honey` and
+`honey` are different). It ranks the viewer human, other humans, viewer-owned agents,
+then other agents. Unique names stay plain; ties do not choose an arbitrary winner.
+Readable owner/agent labels come before last-four npub endings, extended only when
+needed. These policy qualifiers are distinct from standalone abbreviated-key labels.
+
+Views supply the comparison set: channel members for reading (plus the referenced
+historical identity), DM participants for DM labels, and complete eligible choices
+before search filtering for pickers and composer chips (plus existing recipients).
+Removing a selected chip does not remove an otherwise eligible namesake from that
+set. Repeating one identity is not ambiguous. Live profile and membership changes
+update display labels, never authored message source, recipient spans, copyable
+text, or notification targets. Accessible names spell out a public-key ending
+when the policy uses one. With no active policy, use profile/caller fallbacks.
 
 When an existing composer chip gains a qualifier, reveal only the qualifier with
 shared settle motion; newly inserted chips appear at rest. Ordinary typing must
@@ -161,7 +170,10 @@ independent choice and Switch for an immediate on/off setting. Use the native
 form semantics exposed by those Base UI primitives rather than duplicating them.
 
 For finite choices, use Select: its inline layout fits compact toolbars and
-`variant="field"` fits labelled forms. Pass `disabled` explicitly when the choice
+`variant="field"` fits labelled forms. The proposed `variant="compact"` fits
+trailing row choices: a small ghost trigger with a visually hidden accessible
+label, bounded single-line value, and full choice text in the popup and value hint.
+The caller owns its column width. Pass `disabled` explicitly when the choice
 is unavailable. For searchable choices, use the shared Combobox parts; keep
 filtering, custom-value commits, and async requests with the feature. Its Control
 owns the label, input and integrated browse caret; Popup and Item own the shared
@@ -260,6 +272,14 @@ Tabs with content use renderPanel, which lets Base UI connect each tab and panel
 Route navigation uses NavigationItem with aria-current instead. NavigationItem
 forwards normal button events, refs and data attributes so unread observation,
 preloading and product shortcuts remain with the caller.
+
+## Menu row corners
+
+Every shared menu item uses `--radius-pill` on all four corners. First, middle and
+last rows keep the same fully rounded highlight, so moving between them does not
+change its shape. Direct items, grouped choices and submenu triggers share this
+recipe. Do not add positional or feature-local radius overrides, derive a special
+menu inset radius, or change the global row radius to correct a menu.
 
 ## Align row content, not state backgrounds
 

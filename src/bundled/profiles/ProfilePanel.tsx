@@ -1,11 +1,14 @@
+import { ProfileAgentActions } from "./ProfileAgentActions";
+import { ProfileMemories } from "./ProfileMemories";
 import { relayOrigin } from "../../features/communities/destination";
 import type { AgentControl } from "../../features/agents/control";
 import { ProfileInstances } from "./ProfileInstances";
 import type { Navigation } from "../../features/navigation/controller";
 import { ProfileChannels } from "./ProfileChannels";
-import { useIdentityNames } from "../../features/identity-names/react";
+import { useChannelIdentityNames } from "../../features/identity-names/react";
 import { PresenceIndicator } from "../../features/presence/react";
 import {
+  type ReactNode,
   useEffect,
   useMemo,
   useRef,
@@ -17,7 +20,7 @@ import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { Button } from "../../shared/design-system/ui/Button";
 import { Tabs } from "../../shared/design-system/ui/Tabs";
-import { activityTarget } from "../../features/agents/activity-target";
+import { ProfileActivity } from "./ProfileActivity";
 import type { PanelProps } from "../../features/panels/service";
 import { profileKey, profileTarget } from "../../features/profiles/target";
 import { selectProfiles } from "../../features/relay/profile-selection";
@@ -52,10 +55,15 @@ export function ProfilePanel({
       control={control}
       scope={connection.scope}
       viewer={connection.viewer}
-    />
+    >
+      {control && (
+        <ProfileAgentActions control={control} relay={relay} pubkey={pubkey} />
+      )}
+    </ProfileDetails>
   );
 }
 function ProfileDetails({
+  children,
   session,
   pubkey,
   context,
@@ -64,6 +72,7 @@ function ProfileDetails({
   scope,
   viewer,
 }: {
+  children?: ReactNode;
   session: RelaySession;
   pubkey: string;
   context: PanelProps["context"];
@@ -87,7 +96,7 @@ function ProfileDetails({
   );
   const [attempt, retry] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
-  const [tab, setTab] = useState<"info" | "channels">("info");
+  const [tab, setTab] = useState<"info" | "channels" | "memories">("info");
   const region = useRef<HTMLElement>(null);
   useEffect(() => {
     region.current?.focus();
@@ -119,9 +128,8 @@ function ProfileDetails({
     }
   }
   const npub = profileTarget(pubkey)?.slice(6) ?? pubkey;
-  const identityName = useIdentityNames(session.names);
+  const identityName = useChannelIdentityNames(session, context?.channelId);
   const name = identityName(pubkey, profile?.name ?? "Unknown profile");
-  const activity = activityTarget(pubkey, context?.channelId);
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
@@ -153,6 +161,7 @@ function ProfileDetails({
         items={[
           { value: "info", label: "Info" },
           { value: "channels", label: "Channels" },
+          { value: "memories", label: "Memories" },
         ]}
         label="Profile sections"
         variant="panel"
@@ -168,21 +177,15 @@ function ProfileDetails({
                 {profile?.about && (
                   <p className={styles.about}>{profile.about}</p>
                 )}
-                {context?.canOpen(activity) && (
-                  <div>
-                    <Button
-                      size="compact"
-                      onClick={() => context.open(activity)}
-                    >
-                      View activity
-                    </Button>
-                    <p className="text-body-sm text-secondary">
-                      Owner-only agent telemetry in this channel, if published.
-                    </p>
-                  </div>
-                )}
+                {children}
+                <ProfileActivity
+                  session={session}
+                  pubkey={pubkey}
+                  context={context}
+                />
                 {control && (
                   <ProfileInstances
+                    errorHandledByActions
                     control={control}
                     pubkey={pubkey}
                     navigation={navigation}
@@ -240,6 +243,8 @@ function ProfileDetails({
                     </>
                   ))}
               </>
+            ) : selected === "memories" ? (
+              <ProfileMemories session={session} pubkey={pubkey} />
             ) : (
               <ProfileChannels
                 session={session}
@@ -247,6 +252,8 @@ function ProfileDetails({
                 navigation={navigation}
                 communityOrigin={communityOrigin}
                 viewer={viewer}
+                control={control}
+                scope={scope}
               />
             )}
           </div>

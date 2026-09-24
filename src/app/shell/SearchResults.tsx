@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
@@ -11,12 +12,19 @@ import { useSearchMessages } from "./useSearchMessages";
 function conversationName(
   channel: ChannelSummary,
   profiles: ReadonlyMap<string, Profile>,
+  resolveName: ReturnType<typeof useIdentityNames>,
 ) {
   if (channel.channelType !== "dm" || !channel.participants)
     return channel.name;
   return (
     channel.participants
-      .map((id) => profiles.get(id)?.name ?? id.slice(0, 10))
+      .map((id) =>
+        resolveName(
+          id,
+          profiles.get(id)?.name ?? id.slice(0, 10),
+          channel.participants,
+        ),
+      )
       .join(", ") || "Notes to self"
   );
 }
@@ -33,6 +41,7 @@ export function SearchResults({
   pages: readonly SearchDestination[];
   openConversation: (channelId: string, messageId?: string) => void;
 } & SearchInputProps) {
+  const resolveName = useIdentityNames(session.names);
   const list = useChannelList(session.channels);
   const profiles = useSyncExternalStore(
     session.profiles.subscribe,
@@ -51,7 +60,7 @@ export function SearchResults({
   const names = new Map(
     channels.map((channel) => [
       channel.id,
-      conversationName(channel, profiles),
+      conversationName(channel, profiles, resolveName),
     ]),
   );
   const profileKey = [
@@ -90,7 +99,7 @@ export function SearchResults({
   const messages: SearchDestination[] = search.messages.map((message) => ({
     key: message.id,
     label: message.preview,
-    detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${profiles.get(message.authorId)?.name ?? message.authorId.slice(0, 10)} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
+    detail: `${names.get(message.channelId) ?? session.channels.get?.(message.channelId)?.name ?? "Conversation"} · ${resolveName(message.authorId, profiles.get(message.authorId)?.name ?? message.authorId.slice(0, 10), list.channels.find((channel) => channel.id === message.channelId)?.members ?? [])} · ${new Date(message.createdAt * 1000).toLocaleDateString()}`,
     icon: ChatCircleIcon,
     run: () => openConversation(message.channelId, message.id),
   }));

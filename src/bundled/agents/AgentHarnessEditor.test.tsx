@@ -66,3 +66,60 @@ it("keeps custom mode separate from saved values and supports an unset provider"
     '{"command":"/custom/agent","provider":""}',
   );
 });
+
+it("preserves Goose settings while editing a custom executable path", async () => {
+  const f = controlFixture();
+  const user = userEvent.setup();
+  function Example() {
+    const [draft, setDraft] = useState({
+      ...agentDraft(f.agent),
+      command: "/usr/local/bin/goose",
+      args: '["acp"]',
+      provider: "openrouter",
+      model: "m",
+    });
+    return (
+      <>
+        <AgentHarnessEditor
+          draft={draft}
+          options={[
+            {
+              command: "buzz-agent",
+              label: "Buzz Agent",
+              defaultArgs: [],
+              providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+            },
+            {
+              command: "/usr/local/bin/goose",
+              label: "Goose",
+              defaultArgs: ["acp"],
+              providers: [{ value: "openrouter", label: "OpenRouter" }],
+            },
+          ]}
+          onChange={(patch) =>
+            setDraft((current) => ({ ...current, ...patch }))
+          }
+        />
+        <output>{JSON.stringify(draft)}</output>
+      </>
+    );
+  }
+  render(<Example />);
+  await user.click(screen.getByRole("combobox", { name: "Harness" }));
+  await user.click(
+    await screen.findByRole("option", {
+      name: "Custom executable / current value",
+    }),
+  );
+  const executable = screen.getByRole("textbox", { name: "Executable" });
+  await user.clear(executable);
+  await user.type(executable, "/opt/homebrew/bin/goose");
+  expect(
+    JSON.parse(screen.getByRole("status").textContent ?? ""),
+  ).toMatchObject({
+    command: "/opt/homebrew/bin/goose",
+    args: '["acp"]',
+    provider: "openrouter",
+    model: "m",
+  });
+});

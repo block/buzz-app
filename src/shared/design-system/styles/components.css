@@ -749,7 +749,7 @@
     min-height: var(--size-row);
     align-items: center;
     gap: var(--space-row-gap);
-    border-radius: var(--radius-row);
+    border-radius: var(--radius-pill);
     padding: var(--space-1) var(--space-2);
     color: var(--text-standard);
     cursor: default;

@@ -1,9 +1,6 @@
-import {
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import type { useIdentityNames } from "../../features/identity-names/react";
+import { useAgentControl } from "../../features/agents/control-react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -23,8 +20,10 @@ export function AgentControlPanel({
   control,
   importDestination = "",
   createOwner,
+  resolveName,
   children,
 }: {
+  resolveName?: ReturnType<typeof useIdentityNames>;
   control: AgentControl;
   importDestination?: string;
   createOwner?: string | undefined;
@@ -32,6 +31,7 @@ export function AgentControlPanel({
     state: AgentControlState,
     edit: (agent: AgentView, avatar?: string) => void,
     importedId: string | null,
+    label: (agent: AgentView) => string,
   ) => ReactNode;
 }) {
   const [adding, setAdding] = useState<{
@@ -46,22 +46,7 @@ export function AgentControlPanel({
   } | null>(null);
   const edit = (agent: AgentView, avatar?: string) =>
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
-  const state = useSyncExternalStore(
-    control.subscribe,
-    control.snapshot,
-    control.snapshot,
-  );
-  useEffect(() => {
-    void control.refresh();
-    const timer = setInterval(() => {
-      if (
-        document.visibilityState !== "hidden" &&
-        control.snapshot().status === "ready"
-      )
-        void control.refresh();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [control]);
+  const state = useAgentControl(control);
   useEffect(() => {
     if (
       state.data?.agents.some(
@@ -70,6 +55,20 @@ export function AgentControlPanel({
     )
       setImportedId(null);
   }, [state.data, importedId]);
+  const facts =
+    state.data?.agents.map((agent) => ({
+      pubkey: agent.pubkey,
+      name: agent.name,
+      isAgent: true,
+    })) ?? [];
+  const candidates = facts.map((agent) => agent.pubkey);
+  // One identity may have separate configurations in different communities.
+  // The edited row supplies its own configured name; control still uses agent.id.
+  const label = (agent: AgentView) =>
+    resolveName?.(agent.pubkey, agent.name, candidates, [
+      ...facts,
+      { pubkey: agent.pubkey, name: agent.name, isAgent: true },
+    ]) ?? agent.name;
   const editing = state.data?.agents.find((agent) => agent.id === selected?.id);
   return (
     <section
@@ -101,13 +100,13 @@ export function AgentControlPanel({
         )}
       </header>
       {children ? (
-        children(state, edit, importedId)
+        children(state, edit, importedId, label)
       ) : (
         <div className="agent-grid">
           {state.data?.agents.map((agent) => (
             <AgentCard
               key={agent.id}
-              name={agent.name}
+              name={label(agent)}
               identities={[agent]}
               editable={[agent]}
               onEdit={edit}
@@ -176,6 +175,7 @@ export function AgentControlPanel({
         <AgentEditor
           key={editing.id}
           agent={editing}
+          displayName={label(editing)}
           control={control}
           state={state}
           avatar={selected?.avatar}

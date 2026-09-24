@@ -143,7 +143,14 @@ export function bindMessageNotifications(
                 .list()
                 .channels.find((item) => item.id === message.channelId),
               owned.profiles.snapshot().get(message.authorId),
-              owned.names.resolve(message.authorId),
+              owned.names.resolve(
+                message.authorId,
+                undefined,
+                owned.channels
+                  .list()
+                  .channels.find((item) => item.id === message.channelId)
+                  ?.members ?? [],
+              ),
             ),
         );
       }

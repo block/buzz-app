@@ -6,7 +6,11 @@ export function mentionChoices(
   agents: readonly MentionRecipient[],
   members: readonly string[],
   profiles: ReadonlyMap<string, Profile>,
-  resolveName: (pubkey: string, fallback: string) => string,
+  resolveName: (
+    pubkey: string,
+    fallback: string,
+    candidates?: readonly string[],
+  ) => string,
 ) {
   const choices = new Map(
     agents.map(({ pubkey, name }) => [pubkey, { pubkey, name }]),
@@ -19,8 +23,9 @@ export function mentionChoices(
         choices.get(pubkey)?.name ??
         pubkey.slice(0, 12),
     });
+  const candidates = [...choices.keys()];
   return [...choices.values()].map((recipient) => ({
     recipient,
-    label: resolveName(recipient.pubkey, recipient.name),
+    label: resolveName(recipient.pubkey, recipient.name, candidates),
   }));
 }

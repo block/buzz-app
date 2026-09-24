@@ -314,6 +314,9 @@ export function TodosPanel({
               </>
             )
           )}
+          <p className="text-caption text-secondary">
+            Shared Markdown. Simultaneous saves can overwrite edits.
+          </p>
         </div>
       </div>
       <footer className={styles.footer}>
@@ -324,9 +327,6 @@ export function TodosPanel({
               : loaded
                 ? "Saved in Canvas"
                 : "Channel Canvas"}
-          </p>
-          <p className="text-caption text-secondary">
-            Shared Markdown. Simultaneous saves can overwrite edits.
           </p>
         </div>
         <div className={styles.actions}>

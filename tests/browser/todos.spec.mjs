@@ -106,6 +106,12 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
   });
   await expect(drawer).toBeVisible();
   await expect(
+    drawer.getByRole("button", { name: "Add", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  await expect(
+    drawer.getByRole("checkbox", { name: "First", exact: true }),
+  ).toBeInViewport({ ratio: 1 });
+  await expect(
     drawer.getByRole("button", { name: "Refresh" }),
   ).toBeInViewport();
   await expect(

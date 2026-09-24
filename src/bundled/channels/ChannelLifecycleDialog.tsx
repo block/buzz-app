@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Input } from "../../shared/design-system/ui/Input";
 import {
   ChannelLifecycleUnconfirmed,
   type ChannelLifecycleCapability,
@@ -98,9 +99,10 @@ export function ChannelLifecycleDialog({
       </h2>
       <p id="channel-lifecycle-description">{copy[action].detail}</p>
       {action === "delete" && (
-        <label>
+        <label htmlFor="channel-lifecycle-confirmation">
           Type {channelName} to confirm
-          <input
+          <Input
+            id="channel-lifecycle-confirmation"
             aria-label="Channel name confirmation"
             value={confirmation}
             disabled={busy}
@@ -121,7 +123,7 @@ export function ChannelLifecycleDialog({
         </Button>
         <Button
           type="button"
-          data-destructive=""
+          variant="destructive"
           disabled={
             busy ||
             refreshRequired ||

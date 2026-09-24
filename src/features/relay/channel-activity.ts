@@ -1,6 +1,6 @@
 import type { RelayEvent } from "./events";
 
-export const CHANNEL_ACTIVITY_KINDS = [9, 40002, 45001, 45003] as const;
+export const CHANNEL_ACTIVITY_KINDS = [9, 40002, 40008, 45001, 45003] as const;
 const CHANNEL_BATCH = 128;
 export type ChannelActivityReader = (
   channelIds: readonly string[],

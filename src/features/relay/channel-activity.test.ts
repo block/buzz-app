@@ -42,7 +42,7 @@ it("reads authoritative activity in 128-channel batches across message and forum
   for (const [index, size] of [128, 128, 1].entries()) {
     const request = take(wire.pending);
     expect(request.ids).toEqual(ids.slice(index * 128, index * 128 + size));
-    expect(CHANNEL_ACTIVITY_KINDS).toEqual([9, 40002, 45001, 45003]);
+    expect(CHANNEL_ACTIVITY_KINDS).toEqual([9, 40002, 40008, 45001, 45003]);
     const channelId = ids[index * 128];
     assert.exists(channelId);
     request.resolve([forumActivity(peer, channelId, 45003, 100 + index)]);
@@ -202,5 +202,22 @@ it("publishes settled readiness even for empty activity and failure without chan
   expect(activity.status()).toBe("error");
   activity.clear();
   expect(activity.status()).toBe("idle");
+  activity.dispose();
+});
+
+it("includes diff messages in both historical and live recency", async () => {
+  const peer = keypair();
+  const diff = (created_at: number) =>
+    signed(peer, {
+      kind: 40008,
+      created_at,
+      content: "diff --git a/file b/file",
+      tags: [["h", "alpha"]],
+    });
+  const activity = createChannelActivity(async () => [diff(50)]);
+  await activity.refresh(["alpha"]);
+  expect(activity.last("alpha")).toBe(50);
+  activity.accept([diff(90)]);
+  expect(activity.last("alpha")).toBe(90);
   activity.dispose();
 });

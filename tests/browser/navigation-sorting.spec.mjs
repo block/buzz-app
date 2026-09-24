@@ -96,7 +96,11 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   await expect.poll(order).toEqual(alphaOrder);
   await page.unroute("**/sidebar-sort");
   // Error ownership is session-scoped, not coupled to the dismissed menu/page.
-  await page.getByRole("button", { name: "Home", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
+  await expect(sidebar).toHaveCount(0);
   await page
     .getByRole("button", { name: "Messages", exact: true })
     .first()

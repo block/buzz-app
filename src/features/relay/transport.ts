@@ -633,7 +633,7 @@ export async function connectBrokerTransport(
               },
               body: JSON.stringify(
                 channelIds.map((channelId) => ({
-                  kinds: [9, 40002, 45001, 45003],
+                  kinds: [9, 40002, 40008, 45001, 45003],
                   "#h": [channelId],
                   limit: 1,
                 })),

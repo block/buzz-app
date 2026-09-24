@@ -200,7 +200,7 @@ export function policyRelay({
             (filter) =>
               filter.limit === 1 &&
               filter["#h"]?.length === 1 &&
-              [9, 40002, 45001, 45003].every((kind) =>
+              [9, 40002, 40008, 45001, 45003].every((kind) =>
                 filter.kinds?.includes(kind),
               ),
           )

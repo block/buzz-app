@@ -175,7 +175,7 @@ it("activity uses the purpose-bound 128-channel broker route without widening ge
   const filters = h.calls[0].body;
   expect(filters).toEqual(
     ids.map((id) => ({
-      kinds: [9, 40002, 45001, 45003],
+      kinds: [9, 40002, 40008, 45001, 45003],
       "#h": [id],
       limit: 1,
     })),

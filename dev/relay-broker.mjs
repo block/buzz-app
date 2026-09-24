@@ -371,8 +371,10 @@ export function validChannelActivityFilters(filters) {
         typeof filter === "object" &&
         filter.limit === 1 &&
         Array.isArray(filter.kinds) &&
-        filter.kinds.length === 4 &&
-        [9, 40002, 45001, 45003].every((kind) => filter.kinds.includes(kind)) &&
+        filter.kinds.length === 5 &&
+        [9, 40002, 40008, 45001, 45003].every((kind) =>
+          filter.kinds.includes(kind),
+        ) &&
         Array.isArray(filter["#h"]) &&
         filter["#h"].length === 1 &&
         typeof filter["#h"][0] === "string" &&

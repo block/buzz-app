@@ -111,10 +111,11 @@ export const test = base.extend({
         forged ? userKey : relayKey,
         time,
       );
-    const peerKey =
+    const peerKeys =
       dmLabels || readState || exactMessages || actionProfile
-        ? key(5)
-        : undefined;
+        ? [key(5), ...(dmLabels ? [key(6), key(7)] : [])]
+        : [];
+    const peerKey = peerKeys[0];
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
@@ -134,16 +135,14 @@ export const test = base.extend({
       ? Array.from({ length: 1001 }, (_, i) =>
           (i + 1).toString(16).padStart(64, "0"),
         )
-      : peerKey
-        ? [getPublicKey(peerKey)]
-        : [];
+      : peerKeys.map(getPublicKey);
     const dmIds = largeSidebar
       ? Array.from(
           { length: 128 },
           (_, i) => `dm-${i.toString().padStart(3, "0")}`,
         )
       : dmLabels
-        ? ["dm-peer"]
+        ? ["dm-peer", "dm-group"]
         : [];
     const rosterIds = [
       ...new Set([...channels, ...dmIds, ...Object.values(sessionParents)]),
@@ -499,9 +498,13 @@ export const test = base.extend({
             sign(39002, [
               ["d", id],
               ["p", viewer],
-              ...participants
-                .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-                .map((pubkey) => ["p", pubkey]),
+              ...(dmLabels && id === "dm-peer"
+                ? [["p", participants[0]]]
+                : dmLabels && id === "dm-group"
+                  ? participants.map((pubkey) => ["p", pubkey])
+                  : participants
+                      .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
+                      .map((pubkey) => ["p", pubkey])),
             ]),
           );
       if (filter.kinds?.includes(39000))
@@ -576,16 +579,22 @@ export const test = base.extend({
                 key,
               ),
             ),
-          ...(peerKey && filter.authors?.includes(getPublicKey(peerKey))
-            ? [
-                sign(
-                  0,
-                  [],
-                  JSON.stringify({ display_name: "Alice Fixture" }),
-                  peerKey,
-                ),
-              ]
-            : []),
+          ...peerKeys
+            .filter((key) => filter.authors?.includes(getPublicKey(key)))
+            .map((key) =>
+              sign(
+                0,
+                [],
+                JSON.stringify({
+                  display_name: [
+                    "Alice Fixture",
+                    "Bob Fixture",
+                    "Carol Fixture",
+                  ][peerKeys.indexOf(key)],
+                }),
+                key,
+              ),
+            ),
         ];
       if (filter.search !== undefined)
         return [...histories.entries()]

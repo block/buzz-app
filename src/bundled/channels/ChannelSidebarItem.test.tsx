@@ -9,6 +9,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import type { ChannelSummary, Profile } from "../../features/relay/contracts";
 import type { RelaySession } from "../../features/relay/session";
 import type { UnreadSnapshot } from "../../features/relay/unread";
 import { ChannelSidebarItem } from "./ChannelSidebarItem";
@@ -16,7 +17,7 @@ import { ContextMenuRoot } from "../../shared/design-system/ui/Menu";
 
 afterEach(cleanup);
 
-function owner() {
+function owner(profiles = new Map<string, Profile>()) {
   const listeners = new Set<() => void>();
   let snapshot: UnreadSnapshot = {
     target: { kind: "channel", channelId: "alpha" },
@@ -34,6 +35,11 @@ function owner() {
   };
   const session = {
     channels: { prepare: vi.fn() },
+    media: (url: string) => `media:${url}`,
+    profiles: {
+      snapshot: () => profiles,
+      subscribe: () => () => {},
+    },
     unread: {
       snapshot: () => snapshot,
       subscribe: (_target: unknown, listener: () => void) => {
@@ -46,13 +52,129 @@ function owner() {
   } as unknown as RelaySession;
   return {
     session,
+    profiles,
     listeners,
-    unread(count: number) {
-      snapshot = { ...snapshot, observedCount: count };
+    unread(count: number, attentionCount = 0) {
+      snapshot = { ...snapshot, observedCount: count, attentionCount };
       for (const listener of listeners) listener();
     },
   };
 }
+
+function itemProps(
+  session: RelaySession,
+  working: boolean,
+  channel: ChannelSummary = {
+    id: "alpha",
+    name: "Alpha",
+    channelType: "stream",
+  },
+) {
+  return {
+    channel,
+    session,
+    working,
+    sessionsEnabled: true,
+    selected: undefined,
+    collapsed: false,
+    onToggle: vi.fn(),
+    draft: false,
+    draftSelected: false,
+    sessions: undefined,
+    onSelect: vi.fn(),
+    onNewSession: vi.fn(),
+    onOpenThread: vi.fn(),
+  };
+}
+
+it("renders a 1:1 DM counterpart avatar and its missing-picture fallback", () => {
+  const state = owner(
+    new Map([
+      ["alice", { name: "Alice", picture: "https://example.test/alice.png" }],
+    ]),
+  );
+  const channel = {
+    id: "alpha",
+    name: "Alice",
+    channelType: "dm" as const,
+    participants: ["alice"],
+  };
+  const props = itemProps(state.session, false, channel);
+  const view = render(
+    <ChannelSidebarItem {...props} profile={state.profiles.get("alice")} />,
+  );
+  expect(document.querySelector("[data-dm-identity] img")).toHaveAttribute(
+    "src",
+    "media:https://example.test/alice.png",
+  );
+  const fallback = owner(new Map([["alice", { name: "Alice" }]]));
+  view.rerender(
+    <ChannelSidebarItem
+      {...itemProps(fallback.session, false, channel)}
+      profile={fallback.profiles.get("alice")}
+    />,
+  );
+  expect(document.querySelector("[data-dm-identity] img")).toBeNull();
+  expect(document.querySelector("[data-dm-identity]")).toHaveTextContent("A");
+});
+
+it("renders a compact group DM participant count without widening the icon slot", () => {
+  const state = owner();
+  render(
+    <div style={{ width: 124 }}>
+      <ChannelSidebarItem
+        {...itemProps(state.session, false, {
+          id: "alpha",
+          name: "A very long group conversation name",
+          channelType: "dm" as const,
+          participants: ["alice", "bob", "carol"],
+        })}
+      />
+    </div>,
+  );
+  const count = document.querySelector("[data-dm-participant-count]");
+  expect(count).toHaveTextContent("3");
+  expect(count?.closest("[data-dm-identity]")).toBeInTheDocument();
+  expect(
+    screen.getByRole("button", { name: "A very long group conversation name" }),
+  ).toBeInTheDocument();
+});
+
+it.each([
+  { name: "unread-only", working: false, unread: true },
+  { name: "working-only", working: true, unread: false },
+])(
+  "keeps $name state in the shared indicator position",
+  ({ working, unread }) => {
+    const state = owner();
+    render(<ChannelSidebarItem {...itemProps(state.session, working)} />);
+    if (unread) act(() => state.unread(1, 1));
+    const stack = document.querySelector("[data-channel-indicators]");
+    if (!(stack instanceof HTMLElement))
+      throw new Error("Missing indicator stack");
+    expect(stack.querySelector("[data-channel-working]") !== null).toBe(
+      working,
+    );
+    expect(stack.querySelector("[data-channel-priority]") !== null).toBe(
+      unread,
+    );
+  },
+);
+
+it("layers the working indicator above unread at the same position", () => {
+  const state = owner();
+  render(<ChannelSidebarItem {...itemProps(state.session, true)} />);
+  act(() => state.unread(1, 1));
+  const stack = document.querySelector("[data-channel-indicators]");
+  const unread = stack?.querySelector("[data-channel-priority]");
+  const working = stack?.querySelector("[data-channel-working]");
+  expect(stack).toBeInTheDocument();
+  expect(unread).toHaveAttribute("data-indicator-layer", "unread");
+  expect(working).toHaveAttribute("data-indicator-layer", "working");
+  expect(working?.compareDocumentPosition(unread as Node)).toBe(
+    Node.DOCUMENT_POSITION_PRECEDING,
+  );
+});
 
 it("keeps live unread updates and uses replacement session callbacks across row updates", async () => {
   const user = userEvent.setup(),
@@ -94,6 +216,8 @@ it("keeps live unread updates and uses replacement session callbacks across row 
   );
   expect(screen.getByRole("button", { name: /^Alpha/ })).toBe(row);
   expect(row).toHaveAttribute("aria-current", "page");
+  expect(row.querySelector("svg")).toHaveAttribute("width", "16");
+  expect(row.querySelector("svg")).toHaveAttribute("height", "16");
   expect(
     screen.getByRole("img", { name: "Agent working" }),
   ).toBeInTheDocument();

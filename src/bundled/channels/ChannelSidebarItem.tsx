@@ -62,46 +62,52 @@ export const ChannelSidebarItem = memo(function ChannelSidebarItem({
       channel={channel}
       icon={
         channel.channelType === "dm" && channel.participants?.length === 1 ? (
-          <Avatar
-            src={
-              profile?.picture
-                ? session.media(profile.picture, "small")
-                : undefined
-            }
-            alt=""
-            fallback={channel.name}
-            size="small"
-            shape={profile?.isAgent ? "squircle" : "circle"}
-          />
+          <span className={styles.dmAvatar} data-dm-identity="">
+            <Avatar
+              src={
+                profile?.picture
+                  ? session.media(profile.picture, "small")
+                  : undefined
+              }
+              alt=""
+              fallback={channel.name}
+              size="fill"
+              shape={profile?.isAgent ? "squircle" : "circle"}
+            />
+          </span>
         ) : channel.channelType === "dm" &&
           (channel.participants?.length ?? 0) > 1 ? (
           <span
             className={styles.dmCount}
+            data-dm-identity=""
+            data-dm-participant-count=""
             title={`${channel.participants?.length} other participants`}
             aria-hidden="true"
           >
             {channel.participants?.length}
           </span>
         ) : (
-          <Icon size={17} />
+          <Icon size={16} />
         )
       }
       badge={
-        <>
-          {working && (
-            <span
-              className={styles.working}
-              role="img"
-              aria-label="Agent working"
-              title="Agent working in this channel"
-            />
-          )}
+        <span className={styles.indicatorStack} data-channel-indicators="">
           <UnreadBadge
             session={session}
             channelId={channel.id}
             dm={channel.channelType === "dm"}
           />
-        </>
+          {working && (
+            <span
+              className={styles.working}
+              data-channel-working=""
+              data-indicator-layer="working"
+              role="img"
+              aria-label="Agent working"
+              title="Agent working in this channel"
+            />
+          )}
+        </span>
       }
       wrapSelect={(trigger) => {
         const activity = (

@@ -7,6 +7,49 @@ test.use({
   historyCounts: { alpha: 1, beta: 1 },
 });
 
+test("DM identity cues remain exactly 20px at normal and narrow sidebar widths", async ({
+  page,
+  app,
+}, info) => {
+  await open(page, app);
+  const sidebar = page.getByRole("navigation", { name: "Subscribed channels" });
+  const oneToOne = sidebar
+    .getByRole("button", { name: "Alice Fixture", exact: true })
+    .locator("[data-dm-identity]");
+  const group = sidebar
+    .getByRole("button", {
+      name: "Alice Fixture, Bob Fixture, Carol Fixture",
+      exact: true,
+    })
+    .locator("[data-dm-identity]");
+  const assertIdentitySize = async (identity) => {
+    await expect(identity).toBeVisible();
+    expect(
+      await identity.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { width: rect.width, height: rect.height };
+      }),
+    ).toEqual({ width: 20, height: 20 });
+  };
+  await assertIdentitySize(oneToOne);
+  await assertIdentitySize(group);
+  await expect(group.locator("[data-dm-participant-count]")).toHaveText("3");
+  await sidebar.screenshot({
+    path: info.outputPath("dm-identities-normal.png"),
+  });
+  await page.evaluate(() => {
+    const board = document.querySelector("[style*='--channel-sidebar-width']");
+    if (!(board instanceof HTMLElement))
+      throw new Error("Missing channel board");
+    board.style.setProperty("--channel-sidebar-width", "124px");
+  });
+  await assertIdentitySize(oneToOne);
+  await assertIdentitySize(group);
+  await sidebar.screenshot({
+    path: info.outputPath("dm-identities-narrow.png"),
+  });
+});
+
 for (const cold of [false, true]) {
   test(`DM names recover after ${cold ? "hidden channel deletion aborts a cold fetch" : "channel deletion purges loaded profiles"}`, async ({
     page,
@@ -64,7 +107,7 @@ for (const cold of [false, true]) {
         .getByRole("button", { name: "Refresh channels", exact: true })
         .click();
       await expect(
-        page.getByText("Roster · 2 channels", { exact: true }),
+        page.getByText("Roster · 3 channels", { exact: true }),
       ).toBeVisible();
       await expect(fallback).toBeVisible();
       await expect(dm).toHaveCount(0);

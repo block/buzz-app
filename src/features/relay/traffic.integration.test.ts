@@ -352,6 +352,149 @@ it("merges incoming traffic, stale reads, own echoes, and edit rollback through 
   expect(h.stop).toHaveBeenCalledTimes(1);
 });
 
+it("removes a visible h-less reaction when its owner deletion arrives from live traffic", async () => {
+  const root = message(other, "c", "reacted", 1);
+  const reactor = keypair();
+  const intruder = keypair();
+  const reaction = signed(reactor, {
+    kind: 7,
+    content: "+",
+    created_at: 2,
+    tags: [["e", root.id]],
+  });
+  const h = fixture([root]);
+  await h.open();
+  h.emit([reaction]);
+  expect(h.session.channels.window("c").rows).toMatchObject([
+    { id: root.id, reactions: [{ content: "+" }] },
+  ]);
+
+  h.emit([
+    signed(intruder, {
+      kind: 5,
+      content: "",
+      created_at: 3,
+      tags: [["e", reaction.id]],
+    }),
+  ]);
+  expect(h.session.channels.window("c").rows).toMatchObject([
+    { id: root.id, reactions: [{ content: "+" }] },
+  ]);
+
+  h.emit([
+    signed(reactor, {
+      kind: 5,
+      content: "",
+      created_at: 4,
+      tags: [["e", reaction.id]],
+    }),
+  ]);
+
+  expect(h.session.channels.window("c").rows).toMatchObject([
+    { id: root.id, reactions: [] },
+  ]);
+});
+
+it("applies a h-less reaction deletion delivered in the same live batch", async () => {
+  const root = message(other, "c", "same batch", 1);
+  const reactor = keypair();
+  const reaction = signed(reactor, {
+    kind: 7,
+    content: "+",
+    created_at: 2,
+    tags: [["e", root.id]],
+  });
+  const remove = signed(reactor, {
+    kind: 5,
+    content: "",
+    created_at: 3,
+    tags: [["e", reaction.id]],
+  });
+  const h = fixture([root]);
+  await h.open();
+
+  h.emit([remove, reaction]);
+
+  expect(h.session.channels.window("c").rows).toMatchObject([
+    { id: root.id, reactions: [] },
+  ]);
+});
+
+it("preserves more than 64 direct reactions when one reaction is deleted", async () => {
+  const root = message(other, "c", "busy", 1);
+  const reactor = keypair();
+  const reactions = Array.from({ length: 70 }, (_, index) =>
+    signed(reactor, {
+      kind: 7,
+      content: `+${index}`,
+      created_at: 2 + index,
+      tags: [["e", root.id]],
+    }),
+  );
+  const h = fixture([root]);
+  await h.open();
+  h.emit(reactions);
+  expect(h.session.channels.window("c").rows[0]?.reactions).toHaveLength(70);
+
+  h.emit([
+    signed(reactor, {
+      kind: 5,
+      content: "",
+      created_at: 100,
+      tags: [["e", reactions[69]?.id ?? ""]],
+    }),
+  ]);
+
+  const contents = h.session.channels
+    .window("c")
+    .rows[0]?.reactions.map((reaction) => reaction.content);
+  expect(contents).toHaveLength(69);
+  expect(contents).toContain("+0");
+  expect(contents).toContain("+68");
+  expect(contents).not.toContain("+69");
+});
+
+it("restores content when an h-less owner deletion targets a live edit", async () => {
+  const root = message(other, "c", "original", 1);
+  const edit = signed(other, {
+    kind: 40003,
+    content: "edited",
+    created_at: 2,
+    tags: [["e", root.id]],
+  });
+  const h = fixture([root]);
+  await h.open();
+  h.emit([edit]);
+  expect(h.session.channels.window("c").rows).toMatchObject([
+    { id: root.id, content: "edited", edited: true },
+  ]);
+
+  h.emit([
+    signed(keypair(), {
+      kind: 5,
+      content: "",
+      created_at: 3,
+      tags: [["e", edit.id]],
+    }),
+  ]);
+  expect(h.session.channels.window("c").rows).toMatchObject([
+    { id: root.id, content: "edited", edited: true },
+  ]);
+
+  h.emit([
+    signed(other, {
+      kind: 5,
+      content: "",
+      created_at: 4,
+      tags: [["e", edit.id]],
+    }),
+  ]);
+  expect(h.session.channels.window("c").rows).toMatchObject([
+    { id: root.id, content: "original" },
+  ]);
+  expect(h.session.channels.window("c").rows[0]).not.toHaveProperty("edited");
+});
+
 it("automatically retires more than 256 confirmed writes and restores confirmed evidence without publishing", async () => {
   const h = fixture();
   const events: RelayEvent[] = [];

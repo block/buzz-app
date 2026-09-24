@@ -24,6 +24,8 @@ import { createAgentActivity } from "../agents/activity";
 import { OBSERVER_KIND } from "../agents/observer";
 import { createDirectMessages } from "./direct-messages";
 import { createWorkSessions } from "./work-sessions";
+import { inventoryReader } from "../agents/inventory";
+import { readRelayLibrary } from "../agents/relay-library";
 import { createAgentLibrary } from "../agents/library";
 import { createIdentityArchives } from "./identity-archives";
 import {
@@ -313,9 +315,25 @@ export function createRelaySession(
       accessEpoch++;
       cancelUploads();
       typing.clear();
-      // Filters cannot tell us ownership of broad/ID/reference reads. Infrequent
-      // authoritative access loss cancels them all, not merely explicit #h reads.
-      requests.invalidate();
+      // Saved owner inventory does not depend on channel access. Preserve only
+      // that narrow read; broad, mixed, ID and channel reads must still retire.
+      requests.invalidate(
+        (filters) =>
+          !filters.length ||
+          filters.some(
+            (filter) =>
+              filter.authors?.length !== 1 ||
+              filter.authors[0] !== transport?.viewer ||
+              !filter.kinds?.length ||
+              filter.kinds.some((kind) => ![30175, 30177].includes(kind)) ||
+              Object.keys(filter).some(
+                (key) =>
+                  !["authors", "kinds", "limit", "until", "before_id"].includes(
+                    key,
+                  ),
+              ),
+          ),
+      );
       const visible = visibility();
       const revoked = recent
         .entries()
@@ -509,7 +527,14 @@ export function createRelaySession(
     () => !closed && !revoking && !cacheClearing && memoryConnected,
     notify,
   );
-  const agentLibrary = createAgentLibrary(transport?.readAgentLibrary, notify);
+  const agentLibrary = createAgentLibrary(
+    transport
+      ? inventoryReader(transport.readAgentLibrary, (signal) =>
+          readRelayLibrary(requests.reader, transport.viewer, signal),
+        )
+      : undefined,
+    notify,
+  );
   const agentChoices = createAgentChoices({
     scope: `${transport?.scope ?? transport?.relayAuthor}:${transport?.viewer}`,
     library: agentLibrary.queries,

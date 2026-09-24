@@ -164,6 +164,9 @@ before attempting again. Neither list is a cross-community/global directory.
 ## Owned local agent actions
 
 `ProfileAgentActions` observes the app-owned `AgentControl` injected into Profiles.
+It mounts only in Info, alongside the linked-instance child; changing tabs releases
+the actions view without cancelling an admitted app-owned command. Returning to
+Info observes current host evidence without restoring focus from the retired view.
 It matches the exact public key and canonical active-community scope to one native
 ID; namesakes, other-community identities, ambiguous matches and browser-only
 profiles get no runtime actions. It adds no controller, relay scan or agent editor.

@@ -311,3 +311,38 @@ test("local agent actions retain keyboard focus through pending and success with
     "restart",
   ]);
 });
+
+// Switching profile tabs must release the actions view, not its app-owned command.
+test("local agent command survives Info tab unmount without stealing tab focus", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/profiles.html?agent-actions");
+  await page
+    .getByRole("button", { name: "View Mic profile", exact: true })
+    .click();
+  const actions = page.getByRole("region", { name: "Local agent actions" });
+  await actions
+    .getByRole("button", { name: "Start", exact: true })
+    .press("Enter");
+  const channels = page.getByRole("tab", { name: "Channels", exact: true });
+  const info = page.getByRole("tab", { name: "Info", exact: true });
+  try {
+    await page.waitForFunction(() => window.profilesFixture.launchPending());
+    await channels.click();
+    await expect(actions).toHaveCount(0);
+  } finally {
+    await page.evaluate(() => window.profilesFixture.finishLaunch());
+  }
+  await expect(channels).toBeFocused();
+  await info.click();
+  await expect(
+    actions.getByRole("button", { name: "Start", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    actions.getByRole("button", { name: "Stop", exact: true }),
+  ).toBeEnabled();
+  await expect(info).toBeFocused();
+  expect(await page.evaluate(() => window.profilesFixture.commands())).toEqual([
+    "start",
+  ]);
+});

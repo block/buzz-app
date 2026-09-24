@@ -696,9 +696,9 @@ test.describe("thread activity", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     sendTyping(root.id);
     await expect(entry).toBeVisible();
-    expect(
-      await page.evaluate(() => document.documentElement.scrollWidth),
-    ).toBe(390);
+    await expect
+      .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+      .toBe(390);
     const narrowEntry = await entry.boundingBox(),
       narrowForm = await form.boundingBox();
     expect(narrowEntry.y + narrowEntry.height).toBeLessThanOrEqual(

@@ -14,13 +14,13 @@ app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
 harness/provider/model/workspace, collapsible instructions, saved-vs-running
 revision drift, the host's sanitized error and diagnostics. Environment keys and
-arguments are not shown. Opening a profile makes one coalesced status read; there
-is no polling. A failed read keeps the last evidence, labels it unconfirmed and
-offers Retry. Browser/unavailable hosts, loading/error without evidence, unknown
-keys and records saved for another community render nothing, leaving the public
-identity. Community switches re-filter immediately. Start/Stop/Restart are the
-separate profile actions above; Edit, harness logs and memory stay on Agents or
-need separate contracts.
+arguments are not shown. Opening the Info tab requests a status read; concurrent
+requests coalesce; there is no polling. A failed read keeps the last evidence,
+labels it unconfirmed and offers Retry. Browser/unavailable hosts, loading/error
+without evidence, unknown keys and records saved for another community render
+nothing, leaving the public identity. Community switches re-filter immediately.
+Start/Stop/Restart are the separate profile actions above; Edit, harness logs and
+memory stay on Agents or need separate contracts.
 When Agent Activity is enabled and the host supplies conversation context, **View
 activity** opens its raw panel for this exact identity and originating channel.
 The Info tab's “Latest activity” card shows up to three recently updated assistant

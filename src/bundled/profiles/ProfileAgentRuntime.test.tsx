@@ -252,3 +252,28 @@ it("explains an unavailable runtime on a known agent", async () => {
     await screen.findByText("Agent runtime resources are missing."),
   ).toBeVisible();
 });
+
+it("requests a read on each Info open, coalescing re-entry while one is pending", async () => {
+  const { control, reads, settle, data, agent } = heldHost();
+  agent.relayUrl = "wss://relay.example.test";
+  mount(control, relayAt(home).relay);
+  const reenter = async () => {
+    await userEvent.click(screen.getByRole("tab", { name: "Channels" }));
+    expect(screen.queryByRole("region", { name: "Local agent" })).toBeNull();
+    await userEvent.click(screen.getByRole("tab", { name: "Info" }));
+    await act(async () => {});
+  };
+  await vi.waitFor(() => expect(reads).toHaveLength(1));
+  await reenter();
+  expect(reads).toHaveLength(1);
+  await settle(0, data);
+  await screen.findByRole("region", { name: "Local agent" });
+  for (const index of [1, 2]) {
+    await reenter();
+    await vi.waitFor(() => expect(reads).toHaveLength(index + 1));
+    expect(screen.getByRole("region", { name: "Local agent" })).toBeVisible();
+    await reenter();
+    expect(reads).toHaveLength(index + 1);
+    await settle(index, data);
+  }
+});

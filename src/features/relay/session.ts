@@ -1,4 +1,6 @@
 // FOUNDATION: One relay session owns reads, local intent, delivery and shared views.
+import { createMemberAdditions } from "../channel-members/operations";
+import { addChannelMember, startAddedAgent } from "../channel-members/members";
 import type { AgentControl } from "../agents/control";
 import { createAgentChoices, templateAgentChoices } from "../agents/choices";
 import { parseLineup } from "../channel-templates/model";
@@ -1070,7 +1072,30 @@ export function createRelaySession(
       }
     },
   });
+  const memberAdditions = createMemberAdditions(
+    lifetime.signal,
+    async (channelId, pubkey, superseded): Promise<void> => {
+      await addChannelMember(
+        session,
+        channelId,
+        pubkey,
+        lifetime.signal,
+        superseded,
+      );
+    },
+    async (channelId, pubkey, control, retryStart): Promise<void> => {
+      await startAddedAgent(
+        control,
+        session,
+        channelId,
+        pubkey,
+        lifetime.signal,
+        retryStart,
+      );
+    },
+  );
   const session = Object.freeze({
+    memberAdditions,
     presence,
     viewer: transport?.viewer,
     scope: readScope,

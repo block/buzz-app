@@ -13,7 +13,67 @@ import {
 } from "./testing";
 import { createRelaySession } from "./session";
 import { PublishRejected } from "./outbox";
+import { canAddMembers } from "../channel-members/members";
 const event = message(keypair(), "session", "Work", 1);
+
+it("keeps verified session roster reads available for sends without member-add capability", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const id = "11111111-1111-4111-8111-111111111111";
+  const current = roster(relay, id, [viewer.pubkey]);
+  const query = vi.fn(
+    async (filters: readonly { kinds?: readonly number[] }[]) =>
+      filters.some((filter) => filter.kinds?.includes(39000))
+        ? [
+            current,
+            signed(relay, {
+              kind: 39000,
+              content: "",
+              tags: [
+                ["d", id],
+                ["t", "stream"],
+                ["private"],
+                ["about", SESSION_CHANNEL_DESCRIPTION],
+              ],
+            }),
+          ]
+        : [current],
+  );
+  const owner = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: relay.pubkey,
+    media: () => undefined,
+    query,
+    writer: {
+      kinds: [9, 9007],
+      sign: async (template) => signed(viewer, template),
+      publish: async () => {},
+    },
+  });
+  try {
+    owner.session.channels.ensureList();
+    await vi.waitFor(() =>
+      expect(owner.session.channels.list().status).toBe("ready"),
+    );
+    expect(owner.session.outbox?.supports(9000)).toBe(false);
+    await expect(
+      owner.session.workSessions.refreshMembership(id),
+    ).resolves.toMatchObject({
+      id,
+      members: [viewer.pubkey],
+    });
+    expect(
+      canAddMembers(owner.session, owner.session.channels.list().channels[0]),
+    ).toBe(false);
+    expect(
+      query.mock.calls.some(([filters]) =>
+        filters.some((filter) => filter.kinds?.includes(39002)),
+      ),
+    ).toBe(true);
+  } finally {
+    owner.dispose();
+  }
+});
 
 it("restores an unconfirmed ordinary channel without creating a second identity", async () => {
   const viewer = keypair(),

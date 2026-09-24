@@ -4,6 +4,14 @@ import type { Outbox } from "../relay/outbox";
 import type { AgentControl } from "../agents/control";
 import { sameCommunityAgents } from "../agents/choices";
 
+export class MembershipChanged extends Error {
+  constructor(readonly superseded: readonly string[]) {
+    super(
+      "Membership changed. This agent is no longer in the channel and was not started. Select Add to invite it again.",
+    );
+  }
+}
+
 const keyPattern = /^[0-9a-f]{64}$/;
 
 /** The relay remains authoritative; never offer role changes or DM expansion. */
@@ -59,6 +67,7 @@ export async function addChannelMember(
   channelId: string,
   pubkey: string,
   signal: AbortSignal,
+  superseded: readonly string[] = [],
 ) {
   if (!keyPattern.test(pubkey))
     throw new Error("Choose a valid person or agent.");
@@ -83,15 +92,15 @@ export async function addChannelMember(
   await session.workSessions.refreshMembership(channelId);
   check();
   if (channel()?.members?.includes(pubkey)) return;
-  const pending = outbox
-    .snapshot()
-    .find(
-      ({ event }) =>
-        event.kind === 9000 &&
-        event.tags.some(([tag, value]) => tag === "h" && value === channelId) &&
-        event.tags.some(([tag, value]) => tag === "p" && value === pubkey) &&
-        !event.tags.some(([tag, value]) => tag === "role" && value !== "bot"),
-    );
+  const pending = outbox.snapshot().find(
+    ({ event }) =>
+      // Only successes predating a proven removal are superseded by explicit Add.
+      !superseded.includes(event.id) &&
+      event.kind === 9000 &&
+      event.tags.some(([tag, value]) => tag === "h" && value === channelId) &&
+      event.tags.some(([tag, value]) => tag === "p" && value === pubkey) &&
+      !event.tags.some(([tag, value]) => tag === "role" && value !== "bot"),
+  );
   if (
     pending?.delivery === "failed" &&
     Date.now() / 1000 - pending.event.created_at >= 15 * 60
@@ -134,6 +143,7 @@ export async function startAddedAgent(
   channelId: string,
   pubkey: string,
   signal: AbortSignal,
+  retryStart = false,
 ) {
   signal.throwIfAborted();
   const wasManaged =
@@ -153,6 +163,9 @@ export async function startAddedAgent(
     throw new Error(
       "Added to the channel, but local agent controls are unavailable.",
     );
+  // A failed start may be retried long after its successful membership write.
+  if (retryStart) await session.workSessions.refreshMembership(channelId);
+  signal.throwIfAborted();
   await control.refresh();
   signal.throwIfAborted();
   const state = control.snapshot();
@@ -164,6 +177,20 @@ export async function startAddedAgent(
   const channel =
     session.channels.list().channels.find((item) => item.id === channelId) ??
     session.channels.get?.(channelId);
+  if (retryStart && !channel?.members?.includes(pubkey))
+    throw new MembershipChanged(
+      (session.outbox?.snapshot() ?? [])
+        .filter(
+          ({ event, delivery }) =>
+            event.kind === 9000 &&
+            (delivery === "accepted" || delivery === "seen") &&
+            event.tags.some(
+              ([tag, value]) => tag === "h" && value === channelId,
+            ) &&
+            event.tags.some(([tag, value]) => tag === "p" && value === pubkey),
+        )
+        .map(({ event }) => event.id),
+    );
   if (!agent || !channel?.members?.includes(pubkey))
     throw new Error(
       "Added, but the local agent could not be checked. Retry to start it.",

@@ -164,7 +164,7 @@ export function createWorkSessions(
     await wait;
   }
   async function refreshMembership(id: string) {
-    if (signal.aborted || !outbox?.supports(9000))
+    if (signal.aborted || (!outbox?.supports(9007) && !outbox?.supports(9000)))
       throw new Error("Channel membership is unavailable.");
     if (!relayAuthor) throw new Error("Channel membership is unavailable.");
     const events = await reader.read(

@@ -276,6 +276,7 @@ export function createWorkSessions(
           .find(
             (item) =>
               item.event.kind === 9000 &&
+              !item.acknowledged &&
               !["accepted", "seen"].includes(item.delivery) &&
               item.event.tags.some(
                 ([name, value]) => name === "h" && value === targetId,

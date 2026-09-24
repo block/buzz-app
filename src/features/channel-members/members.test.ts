@@ -19,6 +19,7 @@ function setup(type = "stream") {
   let clock = 1700000000;
   let fail = "";
   let unknown = false;
+  let loseReceipt = false;
   let apply = true;
   let foreign = false;
   let agent = false;
@@ -32,6 +33,7 @@ function setup(type = "stream") {
     if (apply) members = [...new Set([...members, person.pubkey])];
     clock++;
     published.push(event);
+    if (loseReceipt) throw new Error("Receipt lost after membership applied");
     return event;
   });
   let records: readonly OutgoingEvent[] = [];
@@ -46,7 +48,7 @@ function setup(type = "stream") {
           identities: agent ? [{ pubkey: person.pubkey, name: "Agent" }] : [],
         }),
         writer: {
-          kinds: [9, 9000],
+          kinds: [9, 9000, 9007],
           sign: async (template) => signed(viewer, template),
           publish: async (event) => {
             await publish(event);
@@ -113,6 +115,11 @@ function setup(type = "stream") {
     person,
     viewer,
     publish,
+    setLostReceipt: (value: boolean) => {
+      loseReceipt = value;
+    },
+    profileAdd: (active = () => true) =>
+      owner.session.workSessions.addAgents(id, [person.pubkey], active),
     setSaveFailure: (value: boolean) => {
       failSave = value;
     },
@@ -584,3 +591,64 @@ it("does not bypass profile eligibility when recovering a guarded invitation aft
   await expect(t.managedAdd()).rejects.toThrow(/agent’s profile/);
   expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([first]);
 });
+
+it.each([false, true])(
+  "profile re-add skips a Members-acknowledged receipt (restart: %s)",
+  async (restart) => {
+    const t = setup();
+    await t.ready();
+    await t.setAgent();
+    t.setLostReceipt(true);
+    await expect(t.profileAdd()).rejects.toThrow(/Receipt lost/);
+    const first = t.publish.mock.calls[0]?.[0].id;
+    expect(t.session.outbox?.snapshot()[0]).toMatchObject({
+      guarded: true,
+      delivery: "unknown",
+    });
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()[0]).toMatchObject({
+      acknowledged: true,
+      delivery: "unknown",
+    });
+    t.removePerson();
+    t.setLostReceipt(false);
+    if (restart) {
+      t.restart();
+      await t.ready();
+      await t.setAgent();
+    }
+    await expect(t.profileAdd(() => false)).rejects.toThrow(/cancelled/);
+    expect(t.publish).toHaveBeenCalledOnce();
+    await t.profileAdd();
+    const second = t.publish.mock.calls[1]?.[0].id;
+    expect(second).toBeDefined();
+    expect(second).not.toBe(first);
+    expect(t.session.channels.list().channels[0]?.members).toContain(
+      t.person.pubkey,
+    );
+  },
+);
+it.each([false, true])(
+  "profile retry preserves its unacknowledged invitation (restart: %s)",
+  async (restart) => {
+    const t = setup();
+    await t.ready();
+    await t.setAgent();
+    t.setFail("Receipt lost", true);
+    await expect(t.profileAdd()).rejects.toThrow(/Receipt lost/);
+    const first = t.publish.mock.calls[0]?.[0].id;
+    await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("unknown"));
+    if (restart) {
+      t.restart();
+      await t.ready();
+      await t.setAgent();
+    }
+    t.setFail("");
+    await t.profileAdd();
+    expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
+      first,
+      first,
+    ]);
+  },
+);

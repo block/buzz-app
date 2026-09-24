@@ -38,6 +38,8 @@ export type Profile = Readonly<{
   name: string;
   picture?: string;
   about?: string;
+  /** Self-declared NIP-05 identifier; not proof of DNS verification. */
+  nip05?: string;
   /** Self-declared display hint, not proof of ownership, membership or authority. */
   isAgent?: true;
   /** Owner named by the profile auth tag; display metadata, never authorization. */

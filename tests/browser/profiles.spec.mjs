@@ -98,6 +98,7 @@ test("profile plumbing: exact avatar/mention targets, thread enrichment, lifecyc
   });
   await mention.click();
   await expect(key).toHaveText(npubs.mic);
+  await expect(panel.getByText("📅 In a meeting")).toBeVisible();
   await expect(panel.locator("[data-avatar-shape]")).toHaveAttribute(
     "data-avatar-shape",
     "circle",

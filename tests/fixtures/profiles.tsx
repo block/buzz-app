@@ -105,6 +105,19 @@ function session() {
               ],
             }),
           ];
+        if (filter.kinds?.includes(30315))
+          return filter.authors?.includes(mic.pubkey)
+            ? [
+                signed(mic, {
+                  kind: 30315,
+                  content: "In a meeting",
+                  tags: [
+                    ["d", "general"],
+                    ["emoji", "📅"],
+                  ],
+                }),
+              ]
+            : [];
         if (filter.kinds?.includes(0)) {
           report.profileReads.push([...(filter.authors ?? [])]);
           if (

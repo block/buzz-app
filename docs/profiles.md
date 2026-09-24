@@ -66,16 +66,26 @@ Remove from outbox does not revoke an invitation already dispatched to the relay
   prose, drafts, delivery or recipient intent. Re-enable does not reopen it.
 - Profile enrichment in channels and threads remains a background batch. The
   panel fetches only its selected missing key, with explicit failure/missing retry.
-  Community/session replacement disposes the old view. About metadata stays in
-  the existing bounded directory and follows about-only replacements/removal.
+  Community/session replacement disposes the old view. About and self-declared
+  NIP-05 metadata stay in the existing bounded directory and follow
+  replacements/removal.
 - A profile replaces the existing thread/object slot, not a second parallel dock.
   Close/Escape returns focus to the original control, falling back to the stable
   originating thread control if opening the profile unmounted the thread.
 
 ## UI and iteration
 
-Avatar, name, about, exact copyable npub, and an optional compact activity preview/action. Shared design-system Avatar and
-Button use the host-loaded styles directly. The profile content marks its
+Avatar, name, about, self-declared NIP-05 (not DNS-verified), exact copyable
+npub, and an optional compact activity preview/action. **Message** is offered for a
+foreign profile when the session can start direct messages. It opens (or
+reopens) the one-to-one DM through the session's direct-message operation and
+navigates to the relay-confirmed channel in the scope captured at click time. A
+confirmed open also clears that DM's local sidebar hide. The person's
+self-published NIP-38 `general` status (kind 30315, emoji tag plus text) is read
+once when the profile opens; it is not live-updated, ignores NIP-40 expiry, and
+renders custom `:shortcode:` emoji as plain text. Setting your own status is not
+supported. Shared design-system
+Avatar and Button use the host-loaded styles directly. The profile content marks its
 `data-buzz-ui` boundary and uses shared heading/body/mono roles; its stylesheet
 owns layout, not component overrides. No new theme owner, second global reset or
 shell migration. Designers own later refinement.

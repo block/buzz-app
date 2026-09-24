@@ -109,7 +109,7 @@
   position: relative;
   width: calc(100% + 4px);
   min-width: 0;
-  min-height: 0;
+  min-height: calc(var(--space-6) + var(--space-5) + var(--space-1) + 1px);
   flex: 1;
   padding-block-start: var(--space-2);
 }

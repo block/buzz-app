@@ -767,8 +767,16 @@ it.each(["commit", "reject", "echo"] as const)(
     });
     const pending: OutgoingEvent = { event, signed: event, delivery: "failed" };
     let records: readonly OutgoingEvent[] = [pending];
-    const gate = Promise.withResolvers<void>();
-    const started = Promise.withResolvers<void>();
+    let release = () => {};
+    let reject = (_error: Error) => {};
+    const gate = new Promise<void>((resolve, fail) => {
+      release = resolve;
+      reject = fail;
+    });
+    let saving = () => {};
+    const started = new Promise<void>((resolve) => {
+      saving = resolve;
+    });
     let hold = true;
     const sign = vi.fn(async (template: EventTemplate) =>
       signed(viewer, template),
@@ -781,8 +789,8 @@ it.each(["commit", "reject", "echo"] as const)(
         load: () => records,
         async save(next) {
           if (hold && !next.some((item) => item.event.id === event.id)) {
-            started.resolve();
-            await gate.promise;
+            saving();
+            await gate;
           }
           records = next;
         },
@@ -795,7 +803,7 @@ it.each(["commit", "reject", "echo"] as const)(
         () => undefined,
         (error: unknown) => error,
       );
-      await started.promise;
+      await started;
       expect(owner.outbox.snapshot()).toEqual([pending]);
       expect(owner.local.snapshot()).toEqual([pending]);
       owner.outbox.retry(event.id);
@@ -807,8 +815,8 @@ it.each(["commit", "reject", "echo"] as const)(
       });
       if (outcome === "echo") owner.observe([event]);
       hold = false;
-      if (outcome === "commit") gate.resolve();
-      else gate.reject(new Error("Disk unavailable"));
+      if (outcome === "commit") release();
+      else reject(new Error("Disk unavailable"));
       expect(await result).toEqual(
         outcome === "commit" ? undefined : new Error("Disk unavailable"),
       );
@@ -836,7 +844,7 @@ it.each(["commit", "reject", "echo"] as const)(
         owner.outbox.snapshot().some((item) => item.event.id === event.id),
       ).toBe(outcome === "reject");
     } finally {
-      gate.resolve();
+      release();
       owner.dispose();
     }
   },

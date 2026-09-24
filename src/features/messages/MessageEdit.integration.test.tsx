@@ -322,8 +322,16 @@ it.each(["reject", "commit"] as const)(
     const reply = message(viewer, "channel", "Own reply", 11, [
       ["e", root.id, "", "reply"],
     ]);
-    const gate = Promise.withResolvers<void>();
-    const started = Promise.withResolvers<void>();
+    let release = () => {};
+    let reject = (_error: Error) => {};
+    const gate = new Promise<void>((resolve, fail) => {
+      release = resolve;
+      reject = fail;
+    });
+    let saving = () => {};
+    const started = new Promise<void>((resolve) => {
+      saving = resolve;
+    });
     let holdRemoval = false;
     let operation: string | undefined;
     const storage: OutboxStorage = {
@@ -333,8 +341,8 @@ it.each(["reject", "commit"] as const)(
           holdRemoval &&
           !records.some((item) => item.event.id === operation)
         ) {
-          started.resolve();
-          await gate.promise;
+          saving();
+          await gate;
         }
       },
     };
@@ -379,14 +387,14 @@ it.each(["reject", "commit"] as const)(
         (error: unknown) => error,
       );
       await act(async () => {
-        await started.promise;
+        await started;
       });
       expect(input).toHaveAccessibleName("Edit message");
       expect(input).toHaveValue("Keep my revision");
       await act(async () => {
         holdRemoval = false;
-        if (outcome === "reject") gate.reject(new Error("Disk unavailable"));
-        else gate.resolve();
+        if (outcome === "reject") reject(new Error("Disk unavailable"));
+        else release();
         await result;
       });
       if (outcome === "reject") {
@@ -407,7 +415,7 @@ it.each(["reject", "commit"] as const)(
       }
       expect(input).toHaveValue("");
     } finally {
-      gate.resolve();
+      release();
       cleanup();
       owner.dispose();
     }

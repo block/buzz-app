@@ -257,7 +257,7 @@ export function projectDestinations(read: Read) {
           )
         )
           throw new EntityFailure("not-found");
-        const authorized = new Set([
+        const statusAuthors = new Set([
           item.pubkey,
           entity.owner,
           ...entity.event.tags
@@ -276,7 +276,7 @@ export function projectDestinations(read: Read) {
               e.tags.some(
                 (t) => t[0] === "clone" && t.slice(1).some((url) => url.trim()),
               ) &&
-              authorized.has(e.pubkey),
+              e.pubkey === item.pubkey,
           )
           .reduce<EventData | undefined>(
             (head, e) => newer(head, e),
@@ -296,7 +296,7 @@ export function projectDestinations(read: Read) {
               e.tags
                 .filter((t) => t[0] === "a")
                 .every((t) => t[1] === entity.address) &&
-              authorized.has(e.pubkey)
+              statusAuthors.has(e.pubkey)
             );
           })
           .reduce<EventData | undefined>(

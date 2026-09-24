@@ -25,10 +25,11 @@ const project = finalizeEvent(
   {
     kind: 30621,
     created_at: 1,
-    content: "Actual recovered destination",
+    content: "",
     tags: [
       ["d", "project"],
       ["name", "Recovered project"],
+      ["description", "Actual recovered destination"],
     ],
   },
   key,

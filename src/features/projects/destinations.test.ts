@@ -289,6 +289,56 @@ it.each([issue, pr])(
     expect(result.status).toBe("Closed");
   },
 );
+it.each([
+  ["maintainer", outsider],
+  ["repository owner", key],
+] as const)(
+  "does not let a %s replace another author's PR tip",
+  async (_, signer) => {
+    const author = new Uint8Array(32).fill(3);
+    const maintained = event(30617, [
+      ["d", "repo"],
+      ["maintainers", getPublicKey(outsider)],
+    ]);
+    const root = event(
+      1618,
+      [
+        ["a", address],
+        ["c", "a".repeat(40)],
+      ],
+      "",
+      1,
+      author,
+    );
+    const tags = [
+      ["a", address],
+      ["E", root.id],
+      ["P", root.pubkey],
+      ["c", "b".repeat(40)],
+      ["clone", "https://git.example/repo.git"],
+    ];
+    const valid = event(1619, tags, "", 2, author);
+    const forged = event(
+      1619,
+      tags.map((t) => (t[0] === "c" ? ["c", "c".repeat(40)] : t)),
+      "",
+      3,
+      signer,
+    );
+    const status = event(1632, [["e", root.id, "", "root"]], "", 4, signer);
+    const result = await fixture([
+      maintained,
+      root,
+      valid,
+      forged,
+      status,
+    ]).destinations.load(
+      { type: "pr", ...base, id: root.id },
+      new AbortController().signal,
+    );
+    expect(result).toMatchObject({ commit: "b".repeat(40), status: "Closed" });
+  },
+);
 it.each(
   [
     [["E", pr.id]],

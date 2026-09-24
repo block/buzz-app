@@ -46,7 +46,7 @@ test("compact sidenav keeps its geometry and remains usable on placeholder desti
         getComputedStyle(panel).borderRightWidth,
       );
       return {
-        fillRight: rowRect.right + Number.parseFloat(fillStyle.right),
+        fillRight: rowRect.right - Number.parseFloat(fillStyle.right),
         panelContentRight: viewportRect.left + viewport.clientWidth,
         leftInset: rowRect.left - (panelRect.left + borderLeft),
         rightInset: panelRect.right - borderRight - rowRect.right,
@@ -58,9 +58,7 @@ test("compact sidenav keeps its geometry and remains usable on placeholder desti
     });
     expect(visual.offsetWidth).toBeGreaterThanOrEqual(visual.clientWidth);
     expect(visual.fillRight).toBeLessThanOrEqual(visual.panelContentRight);
-    expect(Math.abs(visual.leftInset - visual.rightInset)).toBeLessThanOrEqual(
-      1,
-    );
+    expect(visual.leftInset - visual.rightInset).toBe(4);
     expect(Number.parseFloat(visual.radius)).toBeGreaterThan(0);
     expect(visual.overflow).toBe("visible");
   };

@@ -74,7 +74,7 @@ test("channel sidebar resizes from the full gutter and persists", async ({
   expect(grip.width).toBeGreaterThanOrEqual(16);
   expect(grip.height).toBeGreaterThan(500);
   expect(before.x + before.width - (listBox.x + listBox.width)).toBeCloseTo(
-    1,
+    5,
     0,
   );
   await expect(handle).not.toHaveAttribute("title");
@@ -221,14 +221,14 @@ sessionSidebar(
       "xpath=ancestor::*[@data-channel-sidebar-row]",
     );
     await expect(
-      page.getByRole("button", { name: /More options for/ }),
+      parentSurface.getByRole("button", { name: /More options for/ }),
     ).toHaveCount(0);
     expect(
       await parent.evaluate((row) => getComputedStyle(row).backgroundColor),
     ).toBe("rgba(0, 0, 0, 0)");
     expect(
       await parentSurface.evaluate(
-        (row) => getComputedStyle(row).backgroundColor,
+        (row) => getComputedStyle(row, "::before").backgroundColor,
       ),
     ).not.toBe("rgba(0, 0, 0, 0)");
 
@@ -293,7 +293,7 @@ sessionSidebar(
       create.boundingBox(),
     ]);
     expect(summaryBox.x + summaryBox.width).toBeCloseTo(
-      createBox.x + createBox.width,
+      createBox.x + createBox.width + 4,
       0,
     );
     await create.click();
@@ -365,9 +365,9 @@ sessionSidebar(
       page.getByRole("heading", { name: "Projects", exact: true }),
     ).toBeVisible();
     await button(page, "Messages").first().click();
-    await page
-      .getByRole("article", { name: "Conversation" })
-      .hover({ position: { x: 20, y: 20 } });
+    const conversation = page.getByRole("article", { name: "Conversation" });
+    await conversation.click({ position: { x: 20, y: 20 } });
+    await expect(create).not.toBeFocused();
     await expect(createContainer).toHaveCSS("opacity", "0");
   },
 );

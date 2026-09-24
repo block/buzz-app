@@ -276,11 +276,13 @@ impl Manager {
         let mut plugins: Vec<PluginInfo> = bundled_manifests()
             .into_iter()
             .map(|manifest| {
-                let enabled = registry
-                    .bundled_overrides
-                    .get(&manifest.id)
-                    .copied()
-                    .unwrap_or(manifest.id != "buzz.channel-templates");
+                // Required even when an older profile saved a disabled override.
+                let enabled = manifest.id == "buzz.channels"
+                    || registry
+                        .bundled_overrides
+                        .get(&manifest.id)
+                        .copied()
+                        .unwrap_or(manifest.id != "buzz.channel-templates");
                 PluginInfo {
                     manifest,
                     source: "bundled",
@@ -359,6 +361,9 @@ impl Manager {
                         registry.bundled_overrides.insert(id.into(), true);
                     }
                     "disable" => {
+                        if id == "buzz.channels" {
+                            return Err("Channels is required and cannot be disabled".into());
+                        }
                         registry.bundled_overrides.insert(id.into(), false);
                     }
                     _ => return Err("Bundled pages can only be enabled or disabled".into()),

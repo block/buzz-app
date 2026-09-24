@@ -194,7 +194,7 @@ focus to the launcher if available.
 Pages explicitly opt in with `companion: true` and receive `{ companion?: ReactNode }`,
 a ready-to-render card. They must place it in **every** state, including no relay,
 loading and empty data. Channels places its local target above this card in one
-right column. Non-opted/legacy pages and Home/Settings use the generic host fallback;
+right column. Non-opted/legacy pages and Settings use the generic host fallback;
 there is never a second simultaneous host dock. The fallback frame stays mounted
 while opening/closing to preserve page-local state. `PanelCard` and `PanelFrame`
 are ordinary shared components, not another registry.
@@ -320,7 +320,7 @@ A visit has stable identity; retrying/reclicking preserves that visit and Forwar
 while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
 
-Version-1 `OpenTarget` supports Home, Settings sections, contributed pages with
+Version-1 `OpenTarget` accepts legacy Home targets (resolved to Messages), Settings sections, contributed pages with
 optional versioned JSON routes, and account/community-bound conversations.
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.

@@ -12,7 +12,6 @@ import { useAppNavigation } from "./navigation";
 import { NavigationControls } from "./shell/NavigationControls";
 import { registerNavigationShortcuts } from "./shortcuts";
 import { AppShell } from "./shell/AppShell";
-import { Home } from "./shell/Home";
 import { pagePresentation, shellPresentation } from "./shell/presentation";
 import { usePanelLauncher } from "./shell/usePanelLauncher";
 import { PanelLaunchers } from "./shell/PanelLaunchers";
@@ -23,7 +22,6 @@ export function App({ services }: { services: AppServices }) {
   const startup = useSyncExternalStore(plugins.subscribe, plugins.startup);
   const route = useAppNavigation(services);
   const launcher = usePanelLauncher(services.panels, startup === "ready");
-  const home = route.target.kind === "home";
   const settings = route.target.kind === "settings";
   const select = route.select;
   useEffect(
@@ -43,11 +41,9 @@ export function App({ services }: { services: AppServices }) {
     () => registerNavigationShortcuts(services.shortcuts, services.navigation),
     [services],
   );
-  const presentation = home
-    ? shellPresentation.home
-    : route.page
-      ? pagePresentation(route.page)
-      : shellPresentation.settings;
+  const presentation = route.page
+    ? pagePresentation(route.page)
+    : shellPresentation.settings;
   const selectedPanel = launcher.selected;
   const companion = selectedPanel && (
     <PanelCard
@@ -56,7 +52,7 @@ export function App({ services }: { services: AppServices }) {
       close={launcher.close}
     />
   );
-  const pageOwnsCompanion = !home && !!route.page?.companion;
+  const pageOwnsCompanion = !!route.page?.companion;
   return (
     <ToastProvider>
       <AppShell
@@ -84,13 +80,13 @@ export function App({ services }: { services: AppServices }) {
         selected={route.selected}
         onSelect={select}
         tone={presentation.tone}
-        workspace={
-          startup === "ready" && !home && route.page?.layout === "workspace"
-        }
+        workspace={startup === "ready" && route.page?.layout === "workspace"}
       >
         <AgentWakeNotice control={services.agentControl} />
-        {(!route.state.ingress && route.failure) ||
-        route.state.status === "failed" ? (
+        {startup === "recovery" && !settings ? (
+          <RecoveryScreen plugins={plugins} />
+        ) : (!route.state.ingress && route.failure) ||
+          route.state.status === "failed" ? (
           <div role="alert" className="notice">
             <h1>This destination couldn’t open</h1>
             <p>
@@ -105,8 +101,8 @@ export function App({ services }: { services: AppServices }) {
                 Retry navigation
               </Button>
             )}
-            <Button type="button" onClick={() => select("home")}>
-              Go Home
+            <Button type="button" onClick={() => select("settings")}>
+              Open Settings
             </Button>
           </div>
         ) : settings ? (
@@ -127,10 +123,6 @@ export function App({ services }: { services: AppServices }) {
               })
             }
           />
-        ) : home ? (
-          <Home pages={route.pages} onSelect={select} />
-        ) : startup === "recovery" ? (
-          <RecoveryScreen plugins={plugins} />
         ) : route.waiting || startup === "loading" ? (
           <p role="status">Opening destination…</p>
         ) : route.page ? (

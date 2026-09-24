@@ -80,13 +80,36 @@ export function ProjectsPage({
   const scope = target?.kind === "page" ? target.scope : undefined;
   useEffect(() => {
     if (!request || request.signal.aborted) return;
+    if (target?.kind === "page" && !target.route && !scope) {
+      if (
+        connection.status === "ready" &&
+        connection.scope &&
+        connection.viewer &&
+        scope === undefined
+      )
+        request.resolve({
+          ...target,
+          scope: {
+            viewer: connection.viewer,
+            communityOrigin: connection.scope.slice(
+              0,
+              -(connection.viewer.length + 1),
+            ),
+          },
+        });
+      else if (connection.status === "disconnected")
+        request.complete({ status: "opened" });
+      else if (connection.status !== "connecting")
+        request.complete({ status: "failed", reason: "unavailable" });
+      return;
+    }
     if (
       !scope ||
       connection.status === "error" ||
       connection.status === "disconnected"
     )
       request.complete({ status: "failed", reason: "unavailable" });
-  }, [request, connection, scope]);
+  }, [request, connection, scope, target]);
   return (
     <FullPageSurface aria-label="Projects">
       <div className="projects-page text-body">

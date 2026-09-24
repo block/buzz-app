@@ -44,7 +44,8 @@ export function useAppNavigation(services: AppServices) {
       )
     : undefined;
   let failure: OpenFailure | undefined;
-  let waiting = false;
+  const legacyHome = target.kind === "home";
+  let waiting = legacyHome;
   if (scope === null) {
     waiting = client.status === "loading" || client.selected !== null;
   } else if (scope) {
@@ -89,6 +90,18 @@ export function useAppNavigation(services: AppServices) {
     !(developerMode && target.section === "developer")
   )
     failure = "unavailable";
+  // Legacy Home targets (including unaddressed startup) resolve to Messages.
+  // Resolve in place before paint: links and history share one policy.
+  // Keep the caller and visit rather than adding a redirect to browser history.
+  useLayoutEffect(() => {
+    if (legacyHome)
+      services.navigationHost.resolve(state.attempt, {
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.channels",
+        pageId: "channels",
+      });
+  }, [services, state.attempt, legacyHome]);
   const owner = useMemo(
     () => ({ attempt: state.attempt, page, waiting, failure }),
     [state.attempt, page, waiting, failure],
@@ -161,15 +174,10 @@ export function useAppNavigation(services: AppServices) {
       services.communities.select(membership.id);
     }
   }, [services, state.attempt, failure, scope, client, membership]);
-  useEffect(() => {
-    if (!waiting && !failure && target.kind === "home")
-      request?.complete({ status: "opened" });
-  }, [waiting, failure, target, request]);
   const select = (key: string) => {
     const selectedClient = services.communities.snapshot();
     let destination: OpenTarget;
-    if (key === "home") destination = { version: 1, kind: "home" };
-    else if (key === "settings") destination = { version: 1, kind: "settings" };
+    if (key === "settings") destination = { version: 1, kind: "settings" };
     else {
       const selected = pages.find((page) => page.key === key);
       if (!selected) return;

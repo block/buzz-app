@@ -30,7 +30,7 @@ viewer, and fail `unavailable` when no community is selected or no identity is
 known. Every other link, including `buzz://open?target=…`, `buzz://join`,
 incomplete entity links, unknown hosts, case variants of the scheme and oversize links, fails as
 `invalid-target` and shows "This destination couldn't open" with
-the start-page action. Unsupported links have no Retry action. Nothing is
+**Open Settings**. Unsupported links have no Retry action. Nothing is
 auto-joined. A valid address is never authorization: bound targets pass the same
 viewer, membership and channel checks as in-app navigation, so a link into a channel
 you cannot read still fails `denied`.

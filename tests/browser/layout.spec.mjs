@@ -78,9 +78,9 @@ async function shellFits(page, width) {
   );
   expect(actions.x + actions.width).toBeLessThanOrEqual(width);
   expect(communities.x + communities.width).toBeLessThan(actions.x);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    width,
-  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBe(width);
   if (width > 700) {
     expect(communities.x + communities.width).toBeLessThan(tabs.x);
     expect(tabs.x + tabs.width).toBeLessThan(actions.x);
@@ -259,12 +259,12 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   await button(page, "Search Buzz").click();
   await page
     .getByRole("dialog", { name: "Search Buzz" })
-    .getByRole("option", { name: "Home", exact: true })
+    .getByRole("option", { name: "Projects", exact: true })
     .click();
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Home" }),
+      .getByRole("button", { name: "Projects" }),
   ).toHaveAttribute("aria-current", "page");
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
@@ -273,23 +273,24 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   ).toHaveValue("Browser Fixture");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await button(page, "Plugins").click();
-  const channels = page.getByRole("switch", {
-    name: "Enable Channels",
+  // Channels has no off switch; use another page to exercise UI activation.
+  const projects = page.getByRole("switch", {
+    name: "Enable Projects",
     exact: true,
   });
-  await channels.click();
-  await expect(channels).toHaveAttribute("aria-checked", "false");
+  await projects.click();
+  await expect(projects).toHaveAttribute("aria-checked", "false");
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages" }),
+      .getByRole("button", { name: "Projects" }),
   ).toHaveCount(0);
-  await channels.click();
-  await expect(channels).toHaveAttribute("aria-checked", "true");
+  await projects.click();
+  await expect(projects).toHaveAttribute("aria-checked", "true");
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages" }),
+      .getByRole("button", { name: "Projects" }),
   ).toBeVisible();
 });
 
@@ -566,9 +567,6 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await button(page, "Your profile").click();
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
-  await page
-    .getByRole("switch", { name: "Enable Channels", exact: true })
-    .click();
   await expect(bestie).toHaveCount(1);
   for (const [width, height] of [
     [800, 600],
@@ -703,14 +701,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = [
-    "Home",
-    "Messages",
-    "Projects",
-    "Agents",
-    "Sessions",
-    "Workflows",
-  ];
+  const titles = ["Messages", "Projects", "Agents", "Sessions", "Workflows"];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -750,7 +741,6 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   });
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText([
-    "Home",
     "Messages",
     "Agents",
     "Sessions",
@@ -758,30 +748,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   ]);
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
-  // Leave registration order reversed so every navigation surface must sort it.
-  const channels = page.getByRole("switch", {
-    name: "Enable Channels",
-    exact: true,
-  });
-  await channels.click();
-  await expect(nav.getByRole("button")).toHaveText([
-    "Home",
-    "Projects",
-    "Agents",
-    "Sessions",
-    "Workflows",
-  ]);
-  await channels.click();
-  await expect(nav.getByRole("button")).toHaveText(titles);
-  await nav.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("button")).toHaveText([
-    "Messages",
-    "Projects",
-    "Agents",
-    "Sessions",
-    "Workflows",
-    "Make it yours · Settings",
-  ]);
+  // Re-enabled Projects registered last; navigation surfaces must still sort it.
   await button(page, "Search Buzz").click();
   const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
   const pageResults = search.locator("section").filter({

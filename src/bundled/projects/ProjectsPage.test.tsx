@@ -109,7 +109,7 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
   vi.restoreAllMocks();
 });
-function setup(route?: EntityRoute) {
+function setup(route?: EntityRoute, unscoped = false) {
   const roster = (allowed: boolean, created_at = 1) =>
     finalizeEvent(
       {
@@ -199,7 +199,7 @@ function setup(route?: EntityRoute) {
           kind: "page",
           pluginId: "buzz.projects",
           pageId: "projects",
-          scope,
+          ...(unscoped ? {} : { scope }),
         },
   );
   function Presentation() {
@@ -260,6 +260,25 @@ function setup(route?: EntityRoute) {
     },
   };
 }
+it("binds an unscoped directory to the active community in the same visit", async () => {
+  const t = setup(undefined, true);
+  const entryId = t.host.navigation.snapshot().entry.id;
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  expect(screen.getByRole("button", { name: "Real repository" })).toBeVisible();
+  expect(t.host.navigation.snapshot().entry).toMatchObject({
+    id: entryId,
+    target: { scope },
+  });
+});
+it("opens the unscoped directory's community selection state without querying", async () => {
+  const t = setup(undefined, true);
+  t.replace();
+  t.mount();
+  await expect(t.promise).resolves.toEqual({ status: "opened" });
+  expect(screen.getByRole("status")).toHaveTextContent("Select a community");
+  expect(t.query).not.toHaveBeenCalled();
+});
 it.each([
   {
     route: { type: "repo", owner, dtag: "repo" },

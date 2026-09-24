@@ -35,6 +35,14 @@ export function createMessages(
     validateMentions(channelId, unique);
     return unique.map((key) => ["p", key]);
   };
+  const referenceTags = (pubkeys: readonly string[]) => {
+    if (
+      pubkeys.length > 32 ||
+      pubkeys.some((key) => !/^[0-9a-f]{64}$/.test(key))
+    )
+      throw new Error("Choose at most 32 valid mention references");
+    return [...new Set(pubkeys)].map((key) => ["mention", key]);
+  };
   return Object.freeze({
     send(
       channelId: string,
@@ -42,6 +50,7 @@ export function createMessages(
       mentions: readonly string[] = [],
       attachments: readonly UploadedAttachment[] = [],
       recovery?: OutboxRecovery,
+      references: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
@@ -52,6 +61,7 @@ export function createMessages(
           tags: [
             ["h", channelId],
             ...mentionTags(channelId, mentions),
+            ...referenceTags(references),
             ...emojiTags(content),
             ...message.tags,
           ],
@@ -66,6 +76,7 @@ export function createMessages(
       mentions: readonly string[] = [],
       attachments: readonly UploadedAttachment[] = [],
       parentId: string = rootId,
+      references: readonly string[] = [],
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
@@ -81,6 +92,7 @@ export function createMessages(
           ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
           ["e", parentId, "", "reply"],
           ...mentionTags(channelId, mentions),
+          ...referenceTags(references),
           ...emojiTags(content),
           ...message.tags,
         ],

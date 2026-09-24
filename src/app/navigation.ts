@@ -28,6 +28,10 @@ export function useAppNavigation(services: AppServices) {
     services.plugins.subscribe,
     services.plugins.snapshot,
   );
+  const settingsCards = useSyncExternalStore(
+    services.settingsCards.subscribe,
+    services.settingsCards.snapshot,
+  );
   const startup = plugins.configuration.status;
   const target = state.entry.target;
   const scope = "scope" in target ? target.scope : undefined;
@@ -88,8 +92,19 @@ export function useAppNavigation(services: AppServices) {
       "notifications",
     ].includes(target.section) &&
     !(developerMode && target.section === "developer")
-  )
-    failure = "unavailable";
+  ) {
+    // Grouped plugin cards are addressed by contribution key.
+    const section = target.section;
+    const owner = section.split("/")[0] ?? "";
+    if (!settingsCards.some((card) => card.group && card.key === section)) {
+      if (
+        startup === "loading" ||
+        plugins.activation[owner]?.status === "starting"
+      )
+        waiting = true;
+      else failure = "unavailable";
+    }
+  }
   // Legacy Home targets (including unaddressed startup) resolve to Messages.
   // Resolve in place before paint: links and history share one policy.
   // Keep the caller and visit rather than adding a redirect to browser history.

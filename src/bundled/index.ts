@@ -31,6 +31,8 @@ import * as workflows from "./workflows";
 import type { BundledPlugin } from "../plugins/manager";
 import linksManifest from "./links/manifest.json";
 import * as links from "./links";
+import hostedManifest from "./hosted-communities/manifest.json";
+import * as hosted from "./hosted-communities";
 import sessionsManifest from "./sessions/manifest.json";
 import * as sessions from "./sessions";
 
@@ -60,4 +62,5 @@ export const bundledPlugins: readonly BundledPlugin[] = [
   { manifest: { ...agentsManifest, apiVersion: 1 }, module: agents },
   { manifest: { ...workflowsManifest, apiVersion: 1 }, module: workflows },
   { manifest: { ...sessionsManifest, apiVersion: 1 }, module: sessions },
+  { manifest: { ...hostedManifest, apiVersion: 1 }, module: hosted },
 ];

@@ -142,7 +142,13 @@ pub fn prepare_folder(directory: &Path) -> Result<PreparedImport> {
             if name == "manifest.json" {
                 has_manifest = true;
             }
-            if kind.is_dir() && name != ".git" && name != "node_modules" && name != "target" {
+            // Hidden folders hold VCS and tool state, including other checkouts such as
+            // .claude/worktrees; choose one of those folders directly to import from it.
+            if kind.is_dir()
+                && !name.as_encoded_bytes().starts_with(b".")
+                && name != "node_modules"
+                && name != "target"
+            {
                 pending.push((relative.join(name), depth + 1));
             }
         }

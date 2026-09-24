@@ -1,6 +1,7 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { useSyncExternalStore } from "react";
 import type { RelaySession } from "../../features/relay/session";
-import styles from "./Channels.module.css";
+import { ToastNotice } from "../../shared/design-system/ui/Toast";
 
 export function LiveStatus({
   live,
@@ -82,11 +83,15 @@ export function LiveStatus({
   // Startup and bounded automatic quota recovery do not need user attention.
   if (!issue) return null;
   return (
-    <div role="status" className={styles.liveStatus}>
-      <span>{reason} Retained messages remain readable.</span>
-      <button type="button" onClick={live.retry}>
+    <ToastNotice
+      key={channelId}
+      title="Live updates need attention"
+      description={`${reason} Only currently accessible messages remain readable.`}
+      tone="warning"
+    >
+      <Button type="button" size="sm" onClick={live.retry}>
         Retry live updates
-      </button>
-    </div>
+      </Button>
+    </ToastNotice>
   );
 }

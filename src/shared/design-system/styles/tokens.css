@@ -1,3 +1,5 @@
+/* BlockUI neutral values (canonical text and ratified surface ladder), adapted
+   to the existing Buzz ramp. Chromatic ramps and glass remain Buzz-specific. */
 /*
  * Buzz colour tokens.
  *
@@ -154,6 +156,7 @@
   --orange-12: #582d1d;
 }
 
+:root[data-color-mode="dark"],
 .dark {
   /* gray */
 
@@ -288,17 +291,18 @@
      is a deliberately cool near-neutral, not a warm tint; use it directly
      rather than preserve an exploratory #f9f9f9 stop or recreate it with
      alpha. */
-  --neutral-2: #f5f5f6; /* quiet compact controls, callouts, and grouping */
-  --neutral-3: #f0f0f0; /* available for a future, genuinely recessed region; bg-panel in dark */
-  --neutral-4: #e8e8e8; /* border-primary in light mode            */
-  --neutral-5: #e0e0e0; /* unused in light; float + selected, dark */
-  --neutral-6: #d9d9d9; /* border-primary in dark mode             */
-  --neutral-7: #cecece; /* no readers                              */
-  --neutral-8: #bbbbbb; /* text-disabled                           */
-  --neutral-9: #8d8d8d; /* text-tertiary                           */
-  --neutral-10: #646464; /* text-secondary                         */
-  --neutral-11: #262626; /* inverse fill, paired with neutral-1    */
-  --neutral-12: #0a0a0a; /* text-primary                           */
+  --neutral-2: #f0f0f0; /* quiet compact controls, callouts, and grouping */
+  --neutral-3: #e8e8e8; /* available for a future, genuinely recessed region; bg-panel in dark */
+  --neutral-4: #dadada; /* border-primary in light mode            */
+  --neutral-5: #cccccc; /* unused in light; float + selected, dark */
+  --neutral-6: #b3b3b3; /* border-primary in dark mode             */
+  --neutral-7: #959595; /* no readers                              */
+  --neutral-8: #808080; /* text-disabled                           */
+  --neutral-9: #666666; /* text-tertiary                           */
+  --neutral-10: #525252; /* text-secondary                         */
+  --neutral-11: #191919; /* inverse fill, paired with neutral-1    */
+  --neutral-action-pressed: #525252;
+  --neutral-12: #000000; /* text-primary                           */
 
   /* --- Glass. A translucency ramp of fills. ---------------- */
   --glass-1: #ffffff5c; /* barely there   */
@@ -342,12 +346,16 @@
      The scale is intentionally short: 4/8/12/16/20/24 covers the repeated
      panel gap, row inset, header inset, and workspace gutter without turning
      every measured distance into a token.                                    */
+  --space-half: 0.125rem;
+  --space-1h: 0.375rem;
   --space-1: 0.25rem;
   --space-2: 0.5rem;
   --space-3: 0.75rem;
   --space-4: 1rem;
   --space-5: 1.25rem;
   --space-6: 1.5rem;
+  --space-8: 2rem;
+  --space-16: 4rem;
 
   /* --- Corner. Four shapes, each with a distinct job. ------- */
   --corner-row: 0.625rem;
@@ -364,6 +372,7 @@
   --ease-settle: cubic-bezier(0.645, 0.045, 0.355, 1);
 }
 
+:root[data-color-mode="dark"],
 .dark {
   /* Dark surfaces stay hand-authored rather than taking palette gray. The
      palette's dark grays start at #111 and step in even increments; these were
@@ -371,24 +380,25 @@
      are deliberately tighter at the bottom. A documented divergence, not drift:
      if these ever want to be palette steps, the palette's gray ramp is what
      should change. */
-  --neutral-1: #0f0f0f;
-  --neutral-2: #161616;
-  --neutral-3: #1c1c1c;
+  --neutral-1: #000000;
+  --neutral-2: #101010;
+  --neutral-3: #1a1a1a;
   --neutral-4: #232323;
-  --neutral-5: #2a2a2a;
-  --neutral-6: #333333;
-  --neutral-7: #424242;
-  --neutral-8: #5a5a5a;
+  --neutral-5: #333333;
+  --neutral-6: #404040;
+  --neutral-7: #595959;
+  --neutral-8: #737373;
   /* Steps 9 and 10 are lighter than a linear ramp would put them, because in
      dark mode they carry text and APCA is polarity-asymmetric: light-on-dark
      needs more separation than the WCAG ratio implies. At #6e6e6e and #8f8f8f
      they measured Lc 23–26 and Lc 38–41 against the Lc 60 body-text target
      while passing WCAG AA — legal, and visibly murky. Sized against the
      lightest dark surface (bg-float #2a2a2a), which is the binding case. */
-  --neutral-9: #a6a6a6;
-  --neutral-10: #c1c1c1;
-  --neutral-11: #e5e5e5;
-  --neutral-12: #f5f5f5;
+  --neutral-9: #808080;
+  --neutral-10: #a4a4a4;
+  --neutral-11: #c7c7c7;
+  --neutral-action-pressed: #b8b8b8;
+  --neutral-12: #ffffff;
 
   /* Every coloured family is absent here on purpose. A family points at a
      palette step, and `.dark` already redefines the whole palette — so
@@ -462,11 +472,101 @@
   --gradient-4: var(--gradient-orchid-field);
 }
 
+:root[data-color-mode="dark"],
 .dark {
   --gradient-1: var(--gradient-night-garden);
   --gradient-2: var(--gradient-signal-flare);
   --gradient-3: var(--gradient-electric-dusk);
   --gradient-4: var(--gradient-ultraviolet);
+}
+
+/* Semantic colors: color / purpose / emphasis / state.
+   Components consume roles; palette steps stay inside this shared layer. */
+:root {
+  --surface-base: var(--neutral-2);
+  --surface-panel: var(--neutral-1);
+  --surface-popover: var(--neutral-1);
+  --surface-inset: var(--neutral-2);
+  --surface-inverse: var(--neutral-11);
+  --text-standard: var(--neutral-12);
+  --text-subtle: var(--neutral-10);
+  --text-metadata: var(--neutral-9);
+  --text-inverse: var(--neutral-1);
+  --text-unavailable: var(--neutral-7);
+  --text-danger: var(--red-12);
+  --text-warning: var(--amber-12);
+  --text-success: var(--green-12);
+  --text-accent: var(--purple-12);
+  --text-link: var(--blue-12);
+  --affordance-link-hover: var(--blue-4);
+  --border-standard: var(--neutral-3);
+  --border-prominent: var(--neutral-8);
+  --border-focus: var(--neutral-12);
+  --border-danger: var(--red-9);
+  --border-warning: var(--amber-11);
+  --affordance-prominent: var(--neutral-12);
+  --affordance-prominent-hover: var(--neutral-11);
+  --affordance-prominent-pressed: var(--neutral-action-pressed);
+  --affordance-subtle: var(--neutral-2);
+  --affordance-subtle-hover: var(--neutral-3);
+  --affordance-subtle-pressed: var(--neutral-4);
+  --affordance-panel-hover: var(--neutral-3);
+  --affordance-selected: var(--neutral-3);
+  --affordance-disabled: var(--neutral-3);
+  --affordance-danger: var(--red-3);
+  --affordance-danger-hover: var(--red-4);
+  --affordance-danger-pressed: var(--red-5);
+  --affordance-warning: var(--amber-3);
+  --affordance-success: var(--green-3);
+  --affordance-accent: var(--purple-3);
+  --affordance-accent-hover: var(--purple-4);
+  --affordance-accent-prominent: var(--purple-9);
+  --affordance-accent-prominent-hover: var(--purple-10);
+  --border-accent: var(--purple-8);
+}
+
+:root[data-color-mode="dark"],
+.dark {
+  --surface-base: var(--neutral-1);
+  --surface-panel: var(--neutral-3);
+  --surface-popover: var(--neutral-5);
+  --surface-inset: var(--neutral-2);
+  --surface-inverse: var(--neutral-11);
+  --text-standard: var(--neutral-12);
+  --text-subtle: var(--neutral-11);
+  --text-metadata: var(--neutral-10);
+  --text-inverse: var(--neutral-1);
+  --text-unavailable: var(--neutral-7);
+  --text-danger: var(--red-12);
+  --text-warning: var(--amber-12);
+  --text-success: var(--green-12);
+  --text-accent: var(--purple-12);
+  --text-link: var(--blue-12);
+  --affordance-link-hover: var(--blue-4);
+  --border-standard: var(--neutral-4);
+  --border-prominent: var(--neutral-8);
+  --border-focus: var(--neutral-12);
+  --border-danger: var(--red-9);
+  --border-warning: var(--amber-9);
+  --affordance-prominent: var(--neutral-12);
+  --affordance-prominent-hover: var(--neutral-11);
+  --affordance-prominent-pressed: var(--neutral-action-pressed);
+  --affordance-subtle: var(--neutral-5);
+  --affordance-subtle-hover: var(--neutral-6);
+  --affordance-subtle-pressed: var(--neutral-7);
+  --affordance-panel-hover: var(--neutral-4);
+  --affordance-selected: var(--neutral-5);
+  --affordance-disabled: var(--neutral-3);
+  --affordance-danger: var(--red-3);
+  --affordance-danger-hover: var(--red-4);
+  --affordance-danger-pressed: var(--red-5);
+  --affordance-warning: var(--amber-3);
+  --affordance-success: var(--green-3);
+  --affordance-accent: var(--purple-3);
+  --affordance-accent-hover: var(--purple-4);
+  --affordance-accent-prominent: var(--purple-9);
+  --affordance-accent-prominent-hover: var(--purple-10);
+  --border-accent: var(--purple-8);
 }
 
 /* ============================================================
@@ -477,96 +577,30 @@
    ============================================================ */
 
 :root {
-  /* --- Structural surfaces. ---------------------------------
-     THE ROLES THAT EXIST BECAUSE A RAMP STEP CANNOT SAY THEM.
-     Each one takes a DIFFERENT step per mode, so no class like
-     `bg-neutral-1` is correct in both. That is the whole test for
-     whether a name is earned; everything that passed it is here.
-
-     `bg-app` qualifies for the same reason in a different shape:
-     the gradient itself is swapped per mode.                  */
   --bg-app: var(--gradient-1);
-  --bg-panel: var(--neutral-1); /* dark: neutral-3 */
-  --bg-float: var(--neutral-1); /* dark: neutral-5 */
+  --bg-panel: var(--surface-panel); /* dark: neutral-3 */
+  --bg-float: var(--surface-popover); /* dark: neutral-5 */
+  --bg-scrim: #00000060;
+  --border-control: var(--border-prominent);
+  /* Emoji artwork scales with text without becoming a readable type role. */
+  --size-emoji-display: calc(var(--type-rem) * 2.625);
+  --size-emoji-line: calc(var(--type-rem) * 3);
+  --size-emoji-inline: calc(var(--type-rem) * 1.375);
 
-  /* `bg-hover` was here and is gone. It was neutral-4 in both modes, so
-     `bg-neutral-4` says it exactly. Its five call sites now do.
-
-     Worth knowing before recreating it: hover means "one step more
-     contrast than whatever is underneath", which is a relationship, not
-     a value — hover on a panel and hover on an inset are different
-     numbers. A single token could never express that, so the name was
-     promising something it did not deliver.                   */
-
-  /* --- Emphasis. -------------------------------------------
-     These are the exception to the rule above: every one is the
-     same step in both modes, so a class would work. They stay
-     because the NAME enforces something — there are deliberately
-     three levels of text and one border weight, and a ramp cannot
-     say "three". Reaching for `text-neutral-11` because it looks
-     right is how a fourth level appears without anyone deciding.  */
-  --text-primary: var(--neutral-12);
-  --text-secondary: var(--neutral-10);
-  --text-tertiary: var(--neutral-9);
+  --text-primary: var(--text-standard);
+  --text-secondary: var(--text-subtle);
+  --text-tertiary: var(--text-metadata);
   /* Deliberately below the contrast targets: low contrast is the signal that a
      control is unavailable, and WCAG exempts inactive controls for the same
      reason. Raising it to Lc 60 would make disabled read as enabled. Never put
      information here that a person needs. */
-  --text-disabled: var(--neutral-8);
+  --text-disabled: var(--text-unavailable);
 
   /* One border, not three. `primary` names the sole deliberate weight,
      and neutral-4 keeps it at the threshold of perception over both the
      panel and the atmospheric backdrop. A second weight arrives only with
      a design that proves a different boundary needs one. */
-  --border-primary: var(--neutral-4);
-
-  /* --- Identity: deliberately absent. ----------------------
-     There were six accent roles and every one held the same purple
-     step in both modes, so each was a name in front of a number —
-     `bg-accent` was `purple-9` and nothing else. The screens now say
-     `bg-purple-9`, `bg-purple-3`, `text-purple-12`, `border-purple-8`.
-
-     `bg-inverse` went the same way (`neutral-11`), and so did its
-     paired text (`neutral-1`).
-
-     The argument FOR naming them was that accent is a slot whose hue
-     could change. It is a real argument and it lost to a simpler fact:
-     the hue already changed once — the accent moved to Tailwind purple
-     — and it was five values in the ramp, not a rename. The ramp is
-     the slot. A role in front of it only adds a hop.
-
-     When a repeated accent PATTERN appears — not a colour, a pattern,
-     like a tinted callout that turns up on four screens — that earns a
-     name, and it will be named for the pattern.               */
-
-  /* --- Status: deliberately absent. ------------------------
-     There were twenty roles here — danger, success, warning, info, five
-     each, the accent's shape copied four times. Nineteen of the twenty
-     had no reader outside the /design pages that displayed them, and the
-     one real consumer was a 8px presence dot.
-
-     They were invented by symmetry rather than by need, and the symmetry
-     was actively misleading: the red ramp alone offers red-3, red-8,
-     red-9 and red-12 for "an error", and a set of pre-made names hid
-     that choice instead of making it. `text-danger` shipped pointing at
-     the wrong red for months (see the registration note below) and
-     nothing noticed, because no design had ever looked at it.
-
-     Status colour gets designed when there is a screen to design it on.
-     Until then the ramps are right there: an error message picks its
-     step, and once two screens pick the same one it earns a name. The
-     hues stay in the palette — nothing was deleted from layer 0.
-
-     Two things briefly had names here — `text-error` and
-     `bg-agent-running` — and they went too, for the same reason as the
-     accent: both were one step, identical in both modes. Error text is
-     `text-red-12` and the running dot is `bg-green-9`, written where
-     they are used.
-
-     The measurement that chose red-12 is the part worth keeping, and it
-     lives in DESIGN.md rather than in a token: red-11 is the more
-     obviously red choice and fails the Lc 60 body target on a dark panel
-     (59.7) and the dark composer (57.5).                      */
+  --border-primary: var(--border-standard);
 
   /* --- Material. Translucency and blur live inside the value.
      A component never assembles them.
@@ -585,33 +619,30 @@
   --bg-glass-secondary-hover: var(--glass-5);
   --bg-chrome-selected: var(--neutral-1);
 
-  /* --- Focus: `purple-8`, written directly. -----------------
-     Same step in both modes, so it was a name in front of a number too.
-     The judgement that survives is not the value: purple-8 is legible on
-     every neutral surface (WCAG 3.0–3.5:1) but measures 1.1:1 on
-     `purple-9` and disappears. **A focused primary button needs the ring
-     separated from the fill** — an offset in the surface colour, not a
-     different ring hue, so one focus treatment works everywhere. That
-     belongs to whichever component layer introduces focus. It is in
-     DESIGN.md, which is where a rule lives; a token could not state it. */
-
   /* --- Geometry. Repeated relationships from Messages. ----- */
   --space-workspace-inset: var(--space-4);
   --space-panel-gap: var(--space-2);
-  --space-panel-inset: var(--space-5);
-  --space-control-inset: var(--space-3);
+  --space-panel-inset: var(--space-6);
+  --space-control-inset: var(--space-4);
   --space-row-gap: var(--space-2);
-  --space-section-gap: var(--space-4);
+  --space-section-gap: var(--space-8);
+  --space-page-section-gap: var(--space-16);
   /* An inline chip sits in a line of text, so its inset and gap are tighter
      than a control's and are its own repeated relationship. Both are below the
      4px spacing floor because a chip hugs its label — the design draws 3px of
      inset and a 4px gap. */
   --space-chip-inset: 0.1875rem;
   --space-chip-gap: var(--space-1);
+  --layer-dialog-backdrop: 1000;
+  --layer-dialog: 1001;
+  --layer-popover: 1100;
+  --layer-tooltip: 1200;
   --size-topbar: 3.5rem;
   --size-panel-header: 3.5rem;
-  --size-control: 2.25rem;
-  --size-row: 1.875rem;
+  --size-control-sm: 2rem;
+  --size-control: 2.5rem;
+  --size-control-lg: 3.25rem;
+  --size-row: var(--size-control-sm);
   --size-navigator: 13.5rem;
   /* The grab area of a resize seam, deliberately wider than the gutter it sits
      in. The gutter is a visual decision; this is a hit target, and a person
@@ -628,17 +659,10 @@
   --duration-fast: var(--time-fast);
   --duration-state: var(--time-state);
   --duration-settle: var(--time-settle);
+  --duration-field-focus: var(--time-state);
   --easing-state: var(--ease-state);
   --easing-settle: var(--ease-settle);
 
-  /* ==========================================================
-     DELIBERATE EXCEPTIONS — the entire list.
-     ==========================================================
-
-     1. Paired text. Computed from its fill's lightness rather
-        than fixed, because white is readable on a blue or
-        purple fill and unreadable on yellow or lime. Until the
-        computation lands, these hold literals.                */
   --text-on-accent: #ffffff;
 
   /* `text-on-inverse` was `var(--neutral-1)` in both modes and went with
@@ -671,25 +695,22 @@
   --rim-shade: #ffffff1f;
 }
 
+:root[data-color-mode="dark"],
 .dark {
-  --bg-panel: var(--neutral-3);
-  --bg-float: var(--neutral-5);
+  --bg-panel: var(--surface-panel);
+  --bg-float: var(--surface-popover);
+  --bg-scrim: #000000a6;
+  --border-control: var(--border-prominent);
   --bg-chrome-selected: var(--neutral-5);
 
-  /* Two steps lighter than light mode's neutral-4, because a hairline needs more
-     separation on a dark surface than the same step number provides. Measured
-     against every surface a border sits on: neutral-4 is 1.08:1 on a panel and
-     1.09:1 on the floating composer — drawn, and effectively invisible.
-     neutral-6 is 1.35 and 1.14.
+  /* BlockUI's darker secondary/tertiary grays fall below Buzz's APCA targets
+     on raised panels. Keep the BlockUI ramp, selecting its lighter steps for
+     readable text: secondary >= 60, metadata >= 45 on every opaque surface. */
+  --text-secondary: var(--text-subtle);
+  --text-tertiary: var(--text-metadata);
 
-     Not neutral-5, which is one step and would have been the obvious answer:
-     `bg-float` and `bg-chrome-selected` are both neutral-5 in dark, so a border
-     on a floating surface would measure 1.00:1 — the same colour as the thing it
-     is meant to bound.
-
-     **This asymmetry is the reason the role exists.** Light and dark do not have
-     to reach for the same step, and no `border-neutral-4` class could say this. */
-  --border-primary: var(--neutral-6);
+  /* BlockUI subtle border: E8E8E8 in light, 232323 in dark. */
+  --border-primary: var(--border-standard);
 
   --rim-lit: #ffffff2e;
   --rim-shade: #ffffff0f;
@@ -703,27 +724,51 @@
 
 @theme inline {
   --color-*: initial;
+  /* Semantic utilities. Text and border stay in their own namespaces. */
+  --text-color-link: var(--text-link);
+  --color-affordance-link-hover: var(--affordance-link-hover);
+  --color-surface-base: var(--surface-base);
+  --color-surface-panel: var(--surface-panel);
+  --color-surface-popover: var(--surface-popover);
+  --color-surface-inset: var(--surface-inset);
+  --color-surface-inverse: var(--surface-inverse);
+  --text-color-standard: var(--text-standard);
+  --text-color-subtle: var(--text-subtle);
+  --text-color-metadata: var(--text-metadata);
+  --text-color-inverse: var(--text-inverse);
+  --text-color-unavailable: var(--text-unavailable);
+  --text-color-danger: var(--text-danger);
+  --text-color-warning: var(--text-warning);
+  --text-color-success: var(--text-success);
+  --text-color-accent: var(--text-accent);
+  --border-color-standard: var(--border-standard);
+  --border-color-prominent: var(--border-prominent);
+  --border-color-focus: var(--border-focus);
+  --border-color-danger: var(--border-danger);
+  --border-color-warning: var(--border-warning);
+  --color-affordance-prominent: var(--affordance-prominent);
+  --color-affordance-prominent-hover: var(--affordance-prominent-hover);
+  --color-affordance-prominent-pressed: var(--affordance-prominent-pressed);
+  --color-affordance-subtle: var(--affordance-subtle);
+  --color-affordance-subtle-hover: var(--affordance-subtle-hover);
+  --color-affordance-subtle-pressed: var(--affordance-subtle-pressed);
+  --color-affordance-panel-hover: var(--affordance-panel-hover);
+  --color-affordance-selected: var(--affordance-selected);
+  --color-affordance-disabled: var(--affordance-disabled);
+  --color-affordance-danger: var(--affordance-danger);
+  --color-affordance-danger-hover: var(--affordance-danger-hover);
+  --color-affordance-danger-pressed: var(--affordance-danger-pressed);
+  --color-affordance-warning: var(--affordance-warning);
+  --color-affordance-success: var(--affordance-success);
+  --color-affordance-accent: var(--affordance-accent);
+  --color-affordance-accent-hover: var(--affordance-accent-hover);
+  --color-affordance-accent-prominent: var(--affordance-accent-prominent);
+  --color-affordance-accent-prominent-hover: var(
+    --affordance-accent-prominent-hover
+  );
+  --border-color-accent: var(--border-accent);
 
-  /* ---------------------------------------------------------------
-     THE RAMPS, REACHABLE DIRECTLY.
-
-     `bg-neutral-4`, `text-red-12`, `border-purple-8`. This is the layer
-     a screen is built from now, and it is a deliberate reversal: the
-     colour guard used to reject exactly these classes.
-
-     The reason it is safe here and was not safe in Tailwind's own
-     palette is that **every step is authored per mode.** `neutral-11`
-     is one value in light and another in dark, so a component naming a
-     step still behaves in both. Tailwind's `neutral-800` is a single
-     literal, which is why reaching for it used to break dark mode and
-     why a semantic name was the only correct move.
-
-     What a semantic role is still FOR is the case a step cannot
-     express — see the four surface roles above, where light and dark
-     take different steps. Everything else was a name in front of a
-     number, and a name in front of a number hides the choice instead
-     of recording it.
-     --------------------------------------------------------------- */
+  /* Palette utilities remain for the palette viewer and staged migration. */
   /* neutral */
   --color-neutral-1: var(--neutral-1);
   --color-neutral-2: var(--neutral-2);
@@ -837,6 +882,7 @@
   --color-orange-12: var(--orange-12);
 
   --color-app: var(--bg-app);
+  --color-inset: var(--neutral-2);
   --color-panel: var(--bg-panel);
   --color-float: var(--bg-float);
 

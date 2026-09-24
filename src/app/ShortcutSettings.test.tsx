@@ -1,0 +1,940 @@
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { Context } from "@deepseek-ai/cordis";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, expect, it, vi } from "vitest";
+import { ShortcutSettings } from "./ShortcutSettings";
+import type { Shortcut } from "../features/shortcuts/bindings";
+import {
+  createShortcutBindings,
+  SHORTCUT_BINDINGS_KEY,
+} from "../features/shortcuts/preferences";
+import { ShortcutsService } from "../features/shortcuts/service";
+import type { PluginManager } from "../plugins/manager";
+import type { PluginInfo } from "../plugins/types";
+import { createAppearance } from "../shared/theme/service";
+import { createNavigationController } from "../features/navigation/controller";
+import { createMemoryHistory } from "../features/navigation/history";
+import { registerAppShortcuts, registerNavigationShortcuts } from "./shortcuts";
+import { PageSearch, type SearchServices } from "./shell/PageSearch";
+
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+  localStorage.clear();
+});
+
+const info = (id: string, name: string): PluginInfo => ({
+  manifest: { id, name, apiVersion: 1 },
+  source: "external",
+  enabled: true,
+  revision: "one",
+  previous: null,
+  reloadable: false,
+  error: null,
+});
+const catalog = (
+  plugins: PluginInfo[],
+): Pick<PluginManager, "subscribe" | "snapshot"> => {
+  const snapshot = {
+    configuration: {
+      status: "ready" as const,
+      catalog: { profile: "", location: "", plugins },
+      externalPluginsPaused: false,
+    },
+    activation: {},
+    busy: false,
+    error: null,
+    refreshError: null,
+  };
+  return { subscribe: () => () => {}, snapshot: () => snapshot };
+};
+
+// jsdom reports an empty platform, so the real dispatcher on `window` treats
+// Control as Mod; the page follows the same test unless told otherwise.
+async function harness() {
+  const root = new Context();
+  const inactive = new Set<string>();
+  const statusListeners = new Set<() => void>();
+  root.provide("pluginStatus", {
+    isActive: (id: string) => !inactive.has(id),
+    subscribe: (listener: () => void) => {
+      statusListeners.add(listener);
+      return () => {
+        statusListeners.delete(listener);
+      };
+    },
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const runs = {
+    settings: vi.fn(),
+    search: vi.fn(),
+    grow: vi.fn(),
+    increment: vi.fn(),
+    terminal: vi.fn(),
+  };
+  shortcuts.registerHost({
+    id: "settings",
+    title: "Open Settings",
+    binding: { key: ",", mod: true },
+    order: 80,
+    run: runs.settings,
+  });
+  shortcuts.registerHost({
+    id: "global-search",
+    title: "Search Buzz",
+    binding: { key: "k", mod: true },
+    order: 70,
+    run: runs.search,
+  });
+  shortcuts.registerHost({
+    id: "font-increase",
+    title: "Increase text size",
+    binding: [
+      { key: "=", mod: true },
+      { key: "+", mod: true },
+      { key: "=", mod: true, shift: true },
+      { key: "+", mod: true, shift: true },
+    ],
+    order: 41,
+    run: runs.grow,
+  });
+  const contribute = (id: string, shortcut: Shortcut) =>
+    root
+      .extend({ pluginOwner: { id, revision: "one" } })
+      .plugin((ctx) => {
+        ctx.shortcuts.register(shortcut);
+      })
+      .await();
+  await contribute("example.counter", {
+    id: "increment",
+    title: "Increment shortcut counter",
+    binding: { key: "k", mod: true, shift: true },
+    order: 10,
+    run: runs.increment,
+  });
+  await contribute("example.counter", {
+    id: "first",
+    title: "First action",
+    binding: { key: "l", mod: true, shift: true },
+    order: -10,
+    run: vi.fn(),
+  });
+  await contribute("buzz.terminal", {
+    id: "toggle",
+    title: "Toggle channel terminal",
+    binding: { key: "j", mod: true },
+    run: runs.terminal,
+  });
+  return {
+    runs,
+    bindings,
+    shortcuts,
+    contribute,
+    plugins: catalog([
+      info("example.counter", "Shortcut counter"),
+      info("buzz.terminal", "Terminal"),
+    ]),
+    setActive(id: string, active: boolean) {
+      if (active) inactive.delete(id);
+      else inactive.add(id);
+      for (const listener of statusListeners) listener();
+    },
+    /** Dispatch to the window listener from a non-editable target. */
+    press: (key: string, init: KeyboardEventInit = {}) =>
+      fireEvent.keyDown(document.body, { key, ctrlKey: true, ...init }),
+    async dispose() {
+      bindings.dispose();
+      await root.fiber.dispose();
+    },
+  };
+}
+const row = (title: string) => screen.getByRole("article", { name: title });
+const change = (title: string) =>
+  screen.getByRole("button", { name: `Change shortcut for ${title}` });
+const capture = (title: string) =>
+  screen.getByRole("textbox", { name: `New shortcut for ${title}` });
+
+it("lists live host and plugin shortcuts without search or intro text and follows plugin state", async () => {
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    const groups = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((heading) => heading.textContent);
+    expect(groups).toEqual([
+      "Shortcuts",
+      "Buzz",
+      "Shortcut counter",
+      "Terminal",
+    ]);
+    expect(
+      screen
+        .getAllByRole("article")
+        .map(
+          (article) =>
+            within(article).getByRole("heading", { level: 3 }).textContent,
+        ),
+    ).toEqual([
+      "Increase text size",
+      "Search Buzz",
+      "Open Settings",
+      "First action",
+      "Increment shortcut counter",
+      "Toggle channel terminal",
+    ]);
+    // Chips show the first alias with glyphs; the label reads as words.
+    const grow = row("Increase text size");
+    expect(within(grow).getByText("Command =")).toHaveClass("sr-only");
+    const chips = grow.querySelectorAll("kbd kbd");
+    expect([...chips].map((chip) => chip.textContent)).toEqual(["⌘", "="]);
+    expect(chips[0]?.parentElement).toHaveAttribute("aria-hidden", "true");
+    expect(grow.querySelector("[data-design-pass='pending']")).toHaveAttribute(
+      "data-binding",
+      "⌘=",
+    );
+    expect(
+      within(row("Increment shortcut counter")).getByText("Shift Command K"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Modified")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Reset all shortcuts" }),
+    ).toBeDisabled();
+
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(
+        "Every shortcut from Buzz and your enabled plugins. Choose Change, then press the new keys; Escape cancels. Saved on this device.",
+      ),
+    ).not.toBeInTheDocument();
+
+    act(() => h.setActive("buzz.terminal", false));
+    expect(
+      screen.queryByRole("heading", { name: "Terminal" }),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByRole("article")).toHaveLength(5);
+    act(() => h.setActive("buzz.terminal", true));
+    expect(row("Toggle channel terminal")).toBeInTheDocument();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("presents actual host registrations in navigation, text sizing, search/settings, then development order", async () => {
+  const root = new Context();
+  root.provide("pluginStatus", {
+    isActive: () => true,
+    subscribe: () => () => {},
+  });
+  const bindings = createShortcutBindings(window);
+  const shortcuts = new ShortcutsService(root, window, bindings);
+  const appearance = createAppearance(window);
+  const navigation = createNavigationController(createMemoryHistory());
+  const removeApp = registerAppShortcuts(shortcuts, appearance, vi.fn(), true);
+  const removeNavigation = registerNavigationShortcuts(
+    shortcuts,
+    navigation.navigation,
+  );
+  try {
+    render(
+      <>
+        <PageSearch
+          pages={[]}
+          onSelect={vi.fn()}
+          // Only shortcuts and bindings are read while Search is closed.
+          services={
+            {
+              shortcuts,
+              shortcutBindings: bindings,
+            } as unknown as SearchServices
+          }
+        />
+        <ShortcutSettings
+          shortcuts={shortcuts}
+          bindings={bindings}
+          plugins={catalog([])}
+        />
+      </>,
+    );
+    expect(
+      screen
+        .getAllByRole("article")
+        .map(
+          (article) =>
+            within(article).getByRole("heading", { level: 3 }).textContent,
+        ),
+    ).toEqual([
+      "Go back",
+      "Go forward",
+      "Increase text size",
+      "Decrease text size",
+      "Reset text size",
+      "Search Buzz",
+      "Open Settings",
+      ...(import.meta.env.DEV ? ["Reload development app"] : []),
+    ]);
+  } finally {
+    cleanup();
+    removeNavigation();
+    removeApp();
+    navigation.dispose();
+    appearance.dispose();
+    bindings.dispose();
+    await root.fiber.dispose();
+  }
+});
+
+it("orders plugin rows by metadata then contribution key without merging duplicate titles", async () => {
+  const h = await harness();
+  try {
+    await h.contribute("example.counter", {
+      id: "aaa",
+      title: "Increment shortcut counter",
+      binding: { key: "l", mod: true },
+      order: 10,
+      run: vi.fn(),
+    });
+    await h.contribute("example.counter", {
+      id: "zzz",
+      title: "Zed action",
+      binding: { key: "m", mod: true },
+      order: 10,
+      run: vi.fn(),
+    });
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    expect(
+      screen
+        .getAllByRole("article")
+        .map(
+          (article) =>
+            within(article).getByRole("heading", { level: 3 }).textContent,
+        ),
+    ).toEqual([
+      "Increase text size",
+      "Search Buzz",
+      "Open Settings",
+      "First action",
+      "Increment shortcut counter",
+      "Increment shortcut counter",
+      "Zed action",
+      "Toggle channel terminal",
+    ]);
+    const duplicates = screen.getAllByRole("article", {
+      name: "Increment shortcut counter",
+    });
+    const [firstDuplicate, secondDuplicate] = duplicates;
+    if (!firstDuplicate || !secondDuplicate)
+      throw new Error("Missing duplicate row");
+    expect(within(firstDuplicate).getByText("Control L")).toBeInTheDocument();
+    expect(
+      within(secondDuplicate).getByText("Control Shift K"),
+    ).toBeInTheDocument();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("captures a chord, refuses conflicts and bare keys, applies overrides to the dispatcher, and resets", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    const title = "Increment shortcut counter";
+    expect(within(row(title)).getByText("Control Shift K")).toBeInTheDocument();
+    await user.click(change(title));
+    const input = capture(title);
+    expect(input).toHaveFocus();
+    expect(input).toHaveValue("Press a shortcut…");
+    expect(input).toHaveAttribute("data-state", "listening");
+    expect(input).toHaveAttribute("data-design-pass", "pending");
+    expect(
+      screen.getByRole("button", { name: `Cancel changing ${title}` }),
+    ).toBeInTheDocument();
+    // IME, bare modifiers and unmodified keys never become bindings.
+    fireEvent.keyDown(input, { key: "k", ctrlKey: true, isComposing: true });
+    fireEvent.keyDown(input, { key: "k", ctrlKey: true, keyCode: 229 });
+    fireEvent.keyDown(input, { key: "Control", ctrlKey: true });
+    fireEvent.keyDown(input, { key: "Shift", shiftKey: true });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(capture(title)).toBe(input);
+    fireEvent.keyDown(input, { key: "k", shiftKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Include Control or Alt so ordinary typing keeps working.",
+    );
+    fireEvent.keyDown(input, { key: "k", metaKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The Windows/Command key isn’t used for shortcuts on this device.",
+    );
+    // Dead and unidentified keys, and the chords copy, paste and select all need.
+    fireEvent.keyDown(input, { key: "Dead", altKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "That key can’t be used for a shortcut. Try another.",
+    );
+    fireEvent.keyDown(input, { key: "Unidentified", ctrlKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "That key can’t be used for a shortcut. Try another.",
+    );
+    for (const key of ["c", "v", "x", "a"]) {
+      fireEvent.keyDown(input, { key, ctrlKey: true });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        `Ctrl+${key.toUpperCase()} is reserved for copy, cut, paste and select all. Try another.`,
+      );
+    }
+    // Conflicts are reported by title and owner; nothing is saved or fired.
+    fireEvent.keyDown(input, { key: "k", ctrlKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Ctrl+K is already used by Search Buzz (Buzz).",
+    );
+    expect(screen.getByRole("alert")).toHaveClass("text-standard");
+    expect(input).toHaveAttribute(
+      "aria-describedby",
+      expect.stringContaining(screen.getByRole("alert").id),
+    );
+    fireEvent.keyDown(input, { key: "j", ctrlKey: true });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Ctrl+J is already used by Toggle channel terminal (Terminal).",
+    );
+    expect(h.runs.search).not.toHaveBeenCalled();
+    expect(h.runs.terminal).not.toHaveBeenCalled();
+    expect(h.bindings.snapshot().overrides).toEqual({});
+    expect(capture(title)).toBe(input);
+
+    await user.keyboard("{Control>}{Shift>}u{/Shift}{/Control}");
+    expect(screen.queryByRole("textbox", { name: /New shortcut/ })).toBeNull();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(row(title)).getByText("Modified")).toBeInTheDocument();
+    expect(within(row(title)).getByText("Control Shift U")).toBeInTheDocument();
+    expect(change(title)).toHaveFocus();
+    expect(h.bindings.snapshot().overrides).toEqual({
+      "example.counter/increment": { key: "u", mod: true, shift: true },
+    });
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe(
+      JSON.stringify({
+        "example.counter/increment": { key: "u", mod: true, shift: true },
+      }),
+    );
+    expect(h.press("k", { shiftKey: true })).toBe(true);
+    expect(h.runs.increment).not.toHaveBeenCalled();
+    expect(h.press("u", { shiftKey: true })).toBe(false);
+    expect(h.runs.increment).toHaveBeenCalledTimes(1);
+    await user.click(
+      screen.getByRole("button", { name: `Reset shortcut for ${title}` }),
+    );
+    expect(within(row(title)).queryByText("Modified")).toBeNull();
+    // Reset unmounts its own button; keyboard focus stays anchored in the row.
+    expect(change(title)).toHaveFocus();
+    expect(h.bindings.resolve("example.counter/increment")).toBeUndefined();
+    h.press("k", { shiftKey: true });
+    expect(h.runs.increment).toHaveBeenCalledTimes(2);
+
+    // Escape cancels whatever else is held, as does blur; nothing is saved and
+    // focus returns to the row action.
+    for (const held of [
+      {},
+      { shiftKey: true },
+      { ctrlKey: true },
+      { metaKey: true, altKey: true },
+    ]) {
+      await user.click(change("Open Settings"));
+      fireEvent.keyDown(capture("Open Settings"), { key: "Escape", ...held });
+      expect(
+        screen.queryByRole("textbox", { name: /New shortcut/ }),
+      ).toBeNull();
+      expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+      expect(change("Open Settings")).toHaveFocus();
+    }
+    await user.click(change("Open Settings"));
+    await user.click(document.body);
+    expect(screen.queryByRole("textbox", { name: /New shortcut/ })).toBeNull();
+    expect(h.bindings.snapshot().overrides).toEqual({});
+
+    // Editor-local chords save with a warning; the freed chord becomes usable.
+    await user.click(change("Open Settings"));
+    fireEvent.keyDown(capture("Open Settings"), { key: "z", ctrlKey: true });
+    const warning = within(row("Open Settings")).getByRole("alert");
+    expect(warning).toHaveTextContent("message editor handles Ctrl+Z");
+    expect(warning).toHaveClass("text-standard");
+    expect(h.bindings.resolve("settings")).toEqual([{ key: "z", mod: true }]);
+    for (const [key, chord] of [
+      ["y", "Ctrl+Shift+Y"],
+      ["End", "Ctrl+Shift+End"],
+    ] as const) {
+      await user.click(change("Open Settings"));
+      fireEvent.keyDown(capture("Open Settings"), {
+        key,
+        ctrlKey: true,
+        shiftKey: true,
+      });
+      expect(within(row("Open Settings")).getByRole("alert")).toHaveTextContent(
+        `message editor handles ${chord}`,
+      );
+    }
+    await user.click(change("Toggle channel terminal"));
+    fireEvent.keyDown(capture("Toggle channel terminal"), {
+      key: ",",
+      ctrlKey: true,
+    });
+    expect(
+      within(row("Toggle channel terminal")).getByText("Modified"),
+    ).toBeInTheDocument();
+    h.press(",");
+    expect(h.runs.terminal).toHaveBeenCalledTimes(1);
+    expect(h.runs.settings).not.toHaveBeenCalled();
+    // Choosing a shortcut's own default clears its override instead.
+    await user.click(change("Toggle channel terminal"));
+    fireEvent.keyDown(capture("Toggle channel terminal"), {
+      key: "j",
+      ctrlKey: true,
+    });
+    expect(within(row("Toggle channel terminal")).queryByText("Modified")).toBe(
+      null,
+    );
+    expect(h.bindings.resolve("buzz.terminal/toggle")).toBeUndefined();
+
+    // Rebinding an alias set replaces the whole set; reset restores it.
+    await user.click(change("Increase text size"));
+    fireEvent.keyDown(capture("Increase text size"), {
+      key: "=",
+      ctrlKey: true,
+      altKey: true,
+    });
+    expect(
+      within(row("Increase text size")).getByText("Control Alt ="),
+    ).toBeInTheDocument();
+    h.press("=");
+    h.press("+", { shiftKey: true });
+    expect(h.runs.grow).not.toHaveBeenCalled();
+    h.press("=", { altKey: true });
+    expect(h.runs.grow).toHaveBeenCalledTimes(1);
+    const resetAll = screen.getByRole("button", {
+      name: "Reset all shortcuts",
+    });
+    expect(resetAll).toBeEnabled();
+    await user.click(resetAll);
+    expect(screen.queryByText("Modified")).not.toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(resetAll).toBeDisabled();
+    expect(h.bindings.snapshot().overrides).toEqual({});
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBeNull();
+    h.press("+", { shiftKey: true });
+    expect(h.runs.grow).toHaveBeenCalledTimes(2);
+    h.press(",");
+    expect(h.runs.settings).toHaveBeenCalledTimes(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it.each([true, false])(
+  "warns for every accepted Enter modifier combination but still dispatches outside the editor (Apple=%s)",
+  async (apple) => {
+    vi.spyOn(navigator, "platform", "get").mockReturnValue(
+      apple ? "MacIntel" : "Win32",
+    );
+    const user = userEvent.setup();
+    const h = await harness();
+    try {
+      render(
+        <ShortcutSettings
+          shortcuts={h.shortcuts}
+          bindings={h.bindings}
+          plugins={h.plugins}
+          apple={apple}
+        />,
+      );
+      const title = "Open Settings";
+      await user.click(change(title));
+      for (const shiftKey of [false, true]) {
+        fireEvent.keyDown(capture(title), { key: "Enter", shiftKey });
+        expect(screen.getByRole("alert")).toHaveTextContent("Include");
+        expect(h.bindings.resolve("settings")).toBeUndefined();
+      }
+      let dispatched = 0;
+      for (const modifiers of [
+        { mod: true },
+        { mod: true, shift: true },
+        { alt: true },
+        { alt: true, shift: true },
+        { mod: true, alt: true },
+        { mod: true, alt: true, shift: true },
+      ]) {
+        if (dispatched) await user.click(change(title));
+        const event = {
+          key: "Enter",
+          ctrlKey: !apple && !!modifiers.mod,
+          metaKey: apple && !!modifiers.mod,
+          altKey: !!modifiers.alt,
+          shiftKey: !!modifiers.shift,
+        };
+        fireEvent.keyDown(capture(title), event);
+        expect(within(row(title)).getByRole("alert")).toHaveTextContent(
+          "Saved. The message editor handles",
+        );
+        expect(within(row(title)).getByRole("alert")).toHaveClass(
+          "text-standard",
+        );
+        expect(h.bindings.resolve("settings")).toEqual([
+          { key: "Enter", ...modifiers },
+        ]);
+        expect(change(title)).toHaveFocus();
+        expect(h.runs.settings).toHaveBeenCalledTimes(dispatched);
+        expect(fireEvent.keyDown(document.body, event)).toBe(false);
+        expect(h.runs.settings).toHaveBeenCalledTimes(++dispatched);
+      }
+    } finally {
+      await h.dispose();
+    }
+  },
+);
+
+it("ignores AltGraph capture without changing a saved override, then captures and dispatches a non-AltGraph chord", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    h.bindings.set("settings", { key: "u", mod: true });
+    const saved = localStorage.getItem(SHORTCUT_BINDINGS_KEY);
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    const title = "Open Settings";
+    await user.click(change(title));
+    const input = capture(title);
+    // Windows German AltGr+Q reports @ with Control and Alt held.
+    const chord = { key: "@", ctrlKey: true, altKey: true };
+    const altGraph = () =>
+      new KeyboardEvent("keydown", {
+        ...chord,
+        modifierAltGraph: true,
+        bubbles: true,
+        cancelable: true,
+      });
+    const event = altGraph();
+    expect(event.getModifierState("AltGraph")).toBe(true);
+    fireEvent(input, event);
+    expect(capture(title)).toBe(input);
+    expect(input).toHaveFocus();
+    expect(h.bindings.resolve("settings")).toEqual([{ key: "u", mod: true }]);
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe(saved);
+    expect(h.runs.settings).not.toHaveBeenCalled();
+
+    // Control+Alt is still usable when the event is not AltGraph.
+    fireEvent.keyDown(input, chord);
+    expect(change(title)).toHaveFocus();
+    expect(h.bindings.resolve("settings")).toEqual([
+      { key: "@", mod: true, alt: true },
+    ]);
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe(
+      JSON.stringify({ settings: { key: "@", mod: true, alt: true } }),
+    );
+    // The original dispatcher safety guard must still ignore AltGraph even
+    // when its key and modifier flags match a valid saved override exactly.
+    expect(fireEvent(document.body, altGraph())).toBe(true);
+    expect(h.press("u")).toBe(true);
+    expect(h.runs.settings).not.toHaveBeenCalled();
+    expect(fireEvent.keyDown(document.body, chord)).toBe(false);
+    expect(h.runs.settings).toHaveBeenCalledTimes(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("keeps a change active when saving fails and offers a retry", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    const write = vi
+      .spyOn(Storage.prototype, "setItem")
+      .mockImplementation(() => {
+        throw new Error("quota");
+      });
+    await user.click(change("Toggle channel terminal"));
+    fireEvent.keyDown(capture("Toggle channel terminal"), {
+      key: "u",
+      ctrlKey: true,
+    });
+    const alert = screen.getByRole("alert");
+    expect(alert).toHaveTextContent("could not be saved on this device");
+    expect(alert).toHaveClass("text-standard");
+    expect(
+      within(row("Toggle channel terminal")).getByText("Modified"),
+    ).toBeInTheDocument();
+    h.press("u");
+    expect(h.runs.terminal).toHaveBeenCalledTimes(1);
+    write.mockRestore();
+    await user.click(
+      within(alert).getByRole("button", { name: "Retry saving shortcuts" }),
+    );
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(localStorage.getItem(SHORTCUT_BINDINGS_KEY)).toBe(
+      JSON.stringify({ "buzz.terminal/toggle": { key: "u", mod: true } }),
+    );
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("stores Option and Shift chords as the composed key on Apple platforms (known limitation)", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    // macOS reports the composed character for Option chords: Option+K is "˚".
+    // Capture and dispatch both read event.key, so the chord fires but is
+    // layout-dependent and displays as the composed character.
+    const terminal = "Toggle channel terminal";
+    await user.click(change(terminal));
+    fireEvent.keyDown(capture(terminal), { key: "˚", altKey: true });
+    expect(within(row(terminal)).getByText("Option ˚")).toBeInTheDocument();
+    expect(
+      row(terminal).querySelector("[data-design-pass='pending']"),
+    ).toHaveAttribute("data-binding", "⌥˚");
+    expect(h.bindings.resolve("buzz.terminal/toggle")).toEqual([
+      { key: "˚", alt: true },
+    ]);
+    expect(fireEvent.keyDown(document.body, { key: "˚", altKey: true })).toBe(
+      false,
+    );
+    expect(h.runs.terminal).toHaveBeenCalledTimes(1);
+    // Shift+digit likewise stores the punctuation the layout produced.
+    const settings = "Open Settings";
+    await user.click(change(settings));
+    fireEvent.keyDown(capture(settings), {
+      key: "!",
+      metaKey: true,
+      shiftKey: true,
+    });
+    expect(
+      within(row(settings)).getByText("Shift Command !"),
+    ).toBeInTheDocument();
+    expect(h.bindings.resolve("settings")).toEqual([
+      { key: "!", mod: true, shift: true },
+    ]);
+    expect(h.press("!", { shiftKey: true })).toBe(false);
+    expect(h.runs.settings).toHaveBeenCalledTimes(1);
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("refuses close and quit chords only in the desktop build", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    const desktop = render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+        desktop
+      />,
+    );
+    const title = "Open Settings";
+    await user.click(change(title));
+    for (const key of ["q", "w"]) {
+      fireEvent.keyDown(capture(title), { key, metaKey: true });
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        `⌘${key.toUpperCase()} is reserved for closing the window and quitting Buzz. Try another.`,
+      );
+    }
+    expect(h.bindings.snapshot().overrides).toEqual({});
+    desktop.unmount();
+    // A browser tab handles these before the page sees them, so nothing is lost.
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+        apple
+      />,
+    );
+    await user.click(change(title));
+    fireEvent.keyDown(capture(title), { key: "w", metaKey: true });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(within(row(title)).getByText("Command W")).toBeInTheDocument();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("marks rows that share an effective chord once a plugin is re-enabled, and clears the marker on reset", async () => {
+  const user = userEvent.setup();
+  const h = await harness();
+  try {
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={h.plugins}
+      />,
+    );
+    const counter = "Increment shortcut counter";
+    const terminal = "Toggle channel terminal";
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    // With the terminal disabled its chord is not listed, so Ctrl+J is accepted.
+    act(() => h.setActive("buzz.terminal", false));
+    await user.click(change(counter));
+    fireEvent.keyDown(capture(counter), { key: "j", ctrlKey: true });
+    expect(within(row(counter)).getByText("Control J")).toBeInTheDocument();
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    // Re-enabling brings the default back; the dispatcher would pick one silently.
+    act(() => h.setActive("buzz.terminal", true));
+    const marker = within(row(counter)).getByText(
+      "Also used by Toggle channel terminal (Terminal)",
+    );
+    expect(marker).toHaveClass("text-subtle");
+    expect(marker).not.toHaveClass("text-danger");
+    expect(marker).not.toHaveClass("text-warning");
+    expect(marker).not.toHaveAttribute("role");
+    expect(
+      within(row(terminal)).getByText(
+        "Also used by Increment shortcut counter (Shortcut counter)",
+      ),
+    ).toBeInTheDocument();
+    h.press("j");
+    expect(h.runs.terminal).toHaveBeenCalledTimes(1);
+    expect(h.runs.increment).not.toHaveBeenCalled();
+    // A host chord shared with a plugin is marked on both rows as well.
+    act(() => h.bindings.set("global-search", { key: "j", mod: true }));
+    expect(
+      within(row("Search Buzz")).getByText(/^Also used by/),
+    ).toHaveTextContent(
+      "Also used by Increment shortcut counter (Shortcut counter), Toggle channel terminal (Terminal)",
+    );
+    act(() => h.bindings.set("global-search", null));
+    expect(within(row("Search Buzz")).queryByText(/Also used by/)).toBeNull();
+    await user.click(
+      screen.getByRole("button", { name: `Reset shortcut for ${counter}` }),
+    );
+    expect(screen.queryByText(/Also used by/)).toBeNull();
+    expect(change(counter)).toHaveFocus();
+  } finally {
+    await h.dispose();
+  }
+});
+
+it("keeps the host group distinct from a plugin whose manifest id is buzz", async () => {
+  const h = await harness();
+  const error = vi.spyOn(console, "error").mockImplementation(() => {});
+  try {
+    await h.contribute("buzz", {
+      id: "ping",
+      title: "Ping",
+      binding: { key: "p", mod: true },
+      run: vi.fn(),
+    });
+    render(
+      <ShortcutSettings
+        shortcuts={h.shortcuts}
+        bindings={h.bindings}
+        plugins={catalog([
+          info("example.counter", "Shortcut counter"),
+          info("buzz.terminal", "Terminal"),
+          info("buzz", "Buzz plugin"),
+        ])}
+        apple
+      />,
+    );
+    expect(
+      screen
+        .getAllByRole("heading", { level: 2 })
+        .map((heading) => heading.textContent),
+    ).toEqual([
+      "Shortcuts",
+      "Buzz",
+      "Buzz plugin",
+      "Shortcut counter",
+      "Terminal",
+    ]);
+    expect(row("Ping")).toBeInTheDocument();
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    error.mockRestore();
+    await h.dispose();
+  }
+});
+
+it.each([false, true])(
+  "Tab leaves capture without saving (backwards=%s)",
+  async (shift) => {
+    const h = await harness();
+    const user = userEvent.setup();
+    try {
+      const run = vi.fn();
+      await h.contribute("example.tab", {
+        id: "tab",
+        title: "Plugin Tab",
+        binding: { key: "Tab", shift },
+        allowInEditable: true,
+        run,
+      });
+      render(
+        <ShortcutSettings
+          shortcuts={h.shortcuts}
+          bindings={h.bindings}
+          plugins={h.plugins}
+        />,
+      );
+      await user.click(change("Open Settings"));
+      expect(capture("Open Settings")).toHaveAccessibleDescription(
+        /Press Escape to cancel, or Tab to leave/,
+      );
+      await user.tab({ shift });
+      expect(
+        screen.queryByRole("textbox", { name: /New shortcut/ }),
+      ).toBeNull();
+      expect(h.bindings.snapshot().overrides).toEqual({});
+      expect(h.runs.settings).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+      expect(document.activeElement).not.toBe(document.body);
+    } finally {
+      await h.dispose();
+    }
+  },
+);

@@ -1,12 +1,15 @@
-import { AppWindow, House, MessagesSquare, Settings2 } from "lucide-react";
+import {
+  BrowserIcon,
+  ChatsCircleIcon,
+  GearIcon,
+} from "../../shared/design-system/icons/index";
 import type { RegisteredPage } from "../../features/pages/service";
 
 // Shell-owned presentation keeps plugin content independent of navigation chrome.
 // Add page identities here; unknown plugins inherit a consistent layout default.
 export const shellPresentation = {
-  home: { label: "Home", icon: House, tone: "sky" },
-  settings: { label: "Settings", icon: Settings2, tone: "lavender" },
-  channels: { label: "Messages", icon: MessagesSquare, tone: "lime" },
+  settings: { label: "Settings", icon: GearIcon, tone: "lavender" },
+  channels: { label: "Messages", icon: ChatsCircleIcon, tone: "lime" },
 } as const;
 
 // Navigation order is host policy, never plugin activation timing. Match full
@@ -32,7 +35,7 @@ export function pagePresentation(page: RegisteredPage) {
   if (page.id === "channels") return shellPresentation.channels;
   return {
     label: page.title,
-    icon: AppWindow,
+    icon: BrowserIcon,
     tone: page.layout === "workspace" ? "lime" : "sky",
   };
 }

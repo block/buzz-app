@@ -1,3 +1,6 @@
+import type { AgentControl } from "../agents/control";
+import type { IdentityNames } from "../identity-names/service";
+import type { PresenceActivity } from "../presence/activity";
 import type { Context } from "@deepseek-ai/cordis";
 import { createRelaySession, type RelaySession } from "./session";
 import { createHeadPersistence } from "./persistence";
@@ -29,12 +32,15 @@ declare module "@deepseek-ai/cordis" {
 export function provideRelay(
   ctx: Context,
   connect?: (signal: AbortSignal) => Promise<ReadTransport>,
+  presenceActivity?: PresenceActivity,
+  identityNames?: IdentityNames,
+  agentChoices?: Pick<AgentControl, "snapshot" | "subscribe" | "refresh">,
 ) {
   let disposed = false;
   let generation = 0;
   let controller: AbortController | undefined;
   let deadline: ReturnType<typeof setTimeout> | undefined;
-  let store = createRelaySession(null);
+  let store = createRelaySession(null, { identityNames });
   let snapshot: RelaySnapshot = Object.freeze({
     status: "disconnected",
     generation,
@@ -50,7 +56,7 @@ export function provideRelay(
     controller?.abort();
     clearTimeout(deadline);
     store.dispose();
-    store = createRelaySession(null);
+    store = createRelaySession(null, { identityNames });
   };
   const service: RelayData = {
     snapshot: () => snapshot,
@@ -85,7 +91,12 @@ export function provideRelay(
             if (disposed || signal.aborted || current !== generation) return;
             store.dispose();
             store = createRelaySession(transport, {
+              identityNames,
+              agentChoices,
+              ...(presenceActivity ? { presenceActivity } : {}),
               prepared: true,
+              // Keep intent preparation, but do not fetch every unopened channel.
+              warm: false,
               persistence: createHeadPersistence(
                 transport.viewer,
                 transport.scope ?? transport.relayAuthor,

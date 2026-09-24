@@ -13,6 +13,7 @@
       "!!.hermit",
       "!!dist",
       "!!dist-author",
+      "!!.profiles",
       "!!src-tauri/target",
       "!!src-tauri/gen",
       "!!target",
@@ -29,6 +30,39 @@
       "preset": "recommended",
       "suspicious": {
         "noUnknownAtRules": "off"
+      },
+      "style": {
+        "noRestrictedImports": {
+          "level": "error",
+          "options": {
+            "patterns": [
+              {
+                "group": [
+                  "lucide*",
+                  "lucide*/**",
+                  "@lucide/**",
+                  "@tabler/icons*",
+                  "@tabler/icons*/**",
+                  "react-icons",
+                  "react-icons/**",
+                  "@heroicons/**",
+                  "@fortawesome/**",
+                  "@iconify/**",
+                  "iconoir*",
+                  "iconoir*/**",
+                  "iconsax*",
+                  "iconsax*/**",
+                  "@radix-ui/react-icons",
+                  "@radix-ui/react-icons/**",
+                  "phosphor-react",
+                  "phosphor-react/**",
+                  "@phosphor-icons/**"
+                ],
+                "message": "Use the shared design-system/icons gateway; Phosphor only."
+              }
+            ]
+          }
+        }
       }
     }
   },
@@ -44,5 +78,46 @@
     "parser": {
       "tailwindDirectives": true
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/shared/design-system/icons/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": [
+                      "lucide*",
+                      "lucide*/**",
+                      "@lucide/**",
+                      "@tabler/icons*",
+                      "@tabler/icons*/**",
+                      "react-icons",
+                      "react-icons/**",
+                      "@heroicons/**",
+                      "@fortawesome/**",
+                      "@iconify/**",
+                      "iconoir*",
+                      "iconoir*/**",
+                      "iconsax*",
+                      "iconsax*/**",
+                      "@radix-ui/react-icons",
+                      "@radix-ui/react-icons/**",
+                      "phosphor-react",
+                      "phosphor-react/**"
+                    ],
+                    "message": "Phosphor only."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }

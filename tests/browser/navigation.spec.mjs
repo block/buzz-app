@@ -1,6 +1,8 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
 
+test.use({ historyCounts: { alpha: 1, beta: 0 } });
+
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const composer = (page, name) =>
   page.getByRole("textbox", { name: `Message #${name}`, exact: true });
@@ -33,7 +35,7 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await page.goForward();
   await expect(composer(page, "Beta")).toBeVisible();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const sections = page.getByRole("navigation", { name: "Settings sections" });
   await expect(
     sections.getByRole("button", { name: "Profile", exact: true }),
@@ -44,10 +46,8 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),
   ).toHaveAttribute("aria-current", "page");
+  // Option/Alt arrows are native editing controls, not Buzz history shortcuts.
   await page.keyboard.press("Alt+ArrowLeft");
-  await expect(
-    sections.getByRole("button", { name: "Profile", exact: true }),
-  ).toHaveAttribute("aria-current", "page");
   await page.keyboard.press("Alt+ArrowRight");
   await expect(
     sections.getByRole("button", { name: "Appearance", exact: true }),

@@ -1,3 +1,4 @@
+import { Button } from "../shared/design-system/ui/Button";
 import { useState, useSyncExternalStore } from "react";
 import type {
   Communities,
@@ -19,11 +20,11 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
   const profile = draft ?? client.profile;
   return (
     <section aria-labelledby="profile-settings-title">
-      <h2 id="profile-settings-title" className="mt-0 mb-3 text-lg font-medium">
+      <h2 id="profile-settings-title" className="mt-0 mb-6 text-label">
         Profile
       </h2>
-      <div className="rounded-3xl border border-shell-edge/80 bg-surface p-5 shadow-surface sm:p-6">
-        <p className="mt-0 text-sm text-muted">
+      <div>
+        <p className="mt-0 text-body-sm text-muted">
           Your local default for new communities. Saving here does not change
           your existing community profiles.
         </p>
@@ -68,14 +69,14 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
               </p>
             )}
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <button
+              <Button
                 type="submit"
                 disabled={!canSaveProfile(profile)}
-                className="border-ink bg-primary text-on-primary hover:bg-primary/90"
+                variant="primary"
               >
                 Save profile
-              </button>
-              <button
+              </Button>
+              <Button
                 type="button"
                 onClick={() => {
                   setDraft(null);
@@ -84,8 +85,8 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
                 }}
               >
                 Cancel
-              </button>
-              <p role="status" className="m-0 text-sm text-muted">
+              </Button>
+              <p role="status" className="m-0 text-body-sm text-muted">
                 {saved ? "Profile updated." : ""}
               </p>
             </div>

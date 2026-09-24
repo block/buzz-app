@@ -1,0 +1,65 @@
+@layer components {
+  .product-page {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-6);
+  }
+  /* Title and its description are one pair: the tightest gap on the page. */
+  .product-page-header,
+  .product-specimen-heading {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-1);
+  }
+  .product-section-heading {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-2);
+  }
+  .product-page-header > p,
+  .product-section-heading > p,
+  .product-specimen-heading > p {
+    max-inline-size: 42rem;
+  }
+  .product-section {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-6);
+  }
+  /* The one genuine boundary on these pages: between top-level sections. A
+     lone section needs no rule, so this draws only where a section follows one. */
+  .product-section + .product-section {
+    padding-top: var(--space-6);
+    border-top: 1px solid var(--border-standard);
+  }
+  /* Widest step between sibling specimens, so each state reads as one block. */
+  .product-specimens {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-6);
+  }
+  .product-specimen {
+    display: grid;
+    min-width: 0;
+    gap: var(--space-3);
+  }
+  .product-specimen-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+  }
+  /* The one framed surface on these pages. The composer is designed to sit at
+     the bottom of a conversation panel, so documenting it without that panel
+     would misreport its own edges and shadow. */
+  .composer-playground-stage {
+    display: flex;
+    min-width: 0;
+    height: min(24rem, 65vh);
+    flex-direction: column;
+    justify-content: flex-end;
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-panel);
+    /* The production composer supplies its conversation inset; do not double it. */
+    background: var(--surface-panel);
+  }
+}

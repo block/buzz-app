@@ -1,39 +1,19 @@
 /* Shared card chrome; pages choose the surrounding layout. */
+.cardLayout {
+  min-width: 0;
+  min-height: 0;
+}
 .card {
+  height: 100%;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  box-shadow: var(--elevation-card);
-  font-size: calc(14px * var(--buzz-text-scale, 1));
-  color: var(--text);
-}
-.heading {
-  min-height: 58px;
-  padding: 12px 16px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  flex-shrink: 0;
-}
-.heading strong {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.heading button {
-  display: inline-flex;
-  flex-shrink: 0;
-  border: 0;
-  background: var(--surface-control);
-  color: inherit;
-  padding: 7px 9px;
+  font-size: var(--text-body-sm);
+  line-height: var(--text-body-sm--line-height);
+  letter-spacing: var(--text-body-sm--letter-spacing);
+  color: var(--text-standard);
 }
 .content {
   display: flex;
@@ -49,7 +29,7 @@
   min-height: 0;
   position: relative;
   overflow: hidden;
-  gap: 16px;
+  gap: var(--space-4);
 }
 .withCompanion {
   grid-template-columns: minmax(0, 1fr) minmax(300px, 420px);
@@ -77,12 +57,6 @@
   }
 }
 @media (max-width: 650px) {
-  .card {
-    border-radius: var(--radius-card-compact);
-  }
-  .heading {
-    padding: 12px;
-  }
   .dock {
     width: 100%;
   }

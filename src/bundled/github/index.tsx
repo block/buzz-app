@@ -1,11 +1,12 @@
+import { Button } from "../../shared/design-system/ui/Button";
 import { useEffect, useMemo, useState } from "react";
 import {
-  ExternalLink,
-  GitPullRequest,
-  CircleDot,
-  GitCommitHorizontal,
-  FolderGit2,
-} from "lucide-react";
+  ArrowSquareOutIcon,
+  GitPullRequestIcon,
+  GitHubIssueIcon,
+  GitCommitIcon,
+  FolderSimpleIcon,
+} from "../../shared/design-system/icons/index";
 import type { PluginModule } from "../../plugins/api";
 import type { PanelProps } from "../../features/panels/service";
 import { parseGitHubReference, type GitHubReference } from "./references";
@@ -28,10 +29,10 @@ const labels = {
   commit: "Commit",
 };
 const icons = {
-  repository: FolderGit2,
-  pull: GitPullRequest,
-  issue: CircleDot,
-  commit: GitCommitHorizontal,
+  repository: FolderSimpleIcon,
+  pull: GitPullRequestIcon,
+  issue: GitHubIssueIcon,
+  commit: GitCommitIcon,
 };
 
 export function GitHubPanel({ target }: PanelProps) {
@@ -77,7 +78,7 @@ function ObjectPanel({
     <div className={styles.root}>
       <div className={styles.identity}>
         <span className={styles.icon}>
-          <Icon size={22} />
+          <Icon size={22} aria-hidden="true" />
         </span>
         <div>
           <small>{reference.repository}</small>
@@ -92,16 +93,16 @@ function ObjectPanel({
         target="_blank"
         rel="noreferrer"
       >
-        Open on GitHub <ExternalLink size={14} />
+        Open on GitHub <ArrowSquareOutIcon size={14} />
       </a>
       {result === undefined ? (
         <p role="status">Loading from GitHub…</p>
       ) : typeof result === "string" ? (
         <div role="alert">
           <p>{result}</p>
-          <button type="button" onClick={retry}>
+          <Button type="button" onClick={retry}>
             Try again
-          </button>
+          </Button>
         </div>
       ) : (
         <>

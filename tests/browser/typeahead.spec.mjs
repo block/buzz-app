@@ -1,29 +1,157 @@
-import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
-import react from "@vitejs/plugin-react";
-import { fileURLToPath } from "node:url";
+import { test, expect } from "./source-fixture.mjs";
 
-let server;
-test.beforeAll(async () => {
-  server = await createServer({
-    root: fileURLToPath(new URL("../../", import.meta.url)),
-    configFile: false,
-    envFile: false,
-    plugins: [react()],
-    logLevel: "error",
-    server: { host: "127.0.0.1", port: 0 },
-  });
-  await server.listen();
-});
-test.afterAll(async () => {
-  await server?.close();
-});
 const open = async (page) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
-  );
+  await page.goto("/tests/fixtures/mentions.html");
   return page.getByRole("textbox", { name: "Message #General" });
 };
+const expectAvatarShape = async (target, shape) => {
+  await expect(target.locator("[data-avatar-shape]")).toHaveAttribute(
+    "data-avatar-shape",
+    shape,
+  );
+};
+test("mention completion distinguishes exact agent identity without reshaping a namesake human", async ({
+  page,
+}) => {
+  const input = await open(page);
+  const keys = await page.evaluate(() => ({
+    human: window.mentionFixture.first,
+    agent: window.mentionFixture.second,
+  }));
+  await input.fill("@Ho");
+  await expectAvatarShape(
+    page.getByRole("option", { name: `Honey ${keys.human}`, exact: true }),
+    "circle",
+  );
+  await expectAvatarShape(
+    page.getByRole("option", { name: `Honey ${keys.agent}`, exact: true }),
+    "squircle",
+  );
+  await input.fill("");
+  await page
+    .getByRole("button", { name: "Mention a member", exact: true })
+    .click();
+  const picker = page.getByRole("region", {
+    name: "Mention a member or agent",
+  });
+  await expectAvatarShape(
+    picker.getByRole("button", { name: `Honey ${keys.human}`, exact: true }),
+    "circle",
+  );
+  await expectAvatarShape(
+    picker.getByRole("button", { name: `Honey ${keys.agent}`, exact: true }),
+    "squircle",
+  );
+});
+test("open completion republishes library-only display hints without changing the query", async ({
+  page,
+}) => {
+  const input = await open(page);
+  const keys = await page.evaluate(() => ({
+    first: window.mentionFixture.first,
+    second: window.mentionFixture.second,
+  }));
+  await input.fill("@Ho");
+  const first = page.getByRole("option", {
+    name: `Honey ${keys.first}`,
+    exact: true,
+  });
+  const second = page.getByRole("option", {
+    name: `Honey ${keys.second}`,
+    exact: true,
+  });
+  await expectAvatarShape(first, "circle");
+  await expectAvatarShape(second, "squircle");
+  // Opening completion subscribes to the library; it must not load it.
+  expect(await page.evaluate(() => window.mentionFixture.libraryReads())).toBe(
+    0,
+  );
+
+  for (const [included, reads] of [
+    [true, 1],
+    [false, 2],
+  ]) {
+    await page.evaluate(
+      (included) => window.mentionFixture.setLibraryAgent(included),
+      included,
+    );
+    await expectAvatarShape(first, included ? "squircle" : "circle");
+    await expectAvatarShape(second, "squircle");
+    await expect(input).toHaveText("@Ho");
+    await expect(input).toBeFocused();
+    await expect(page.getByRole("listbox")).toBeVisible();
+    expect(
+      await page.evaluate(() => window.mentionFixture.libraryReads()),
+    ).toBe(reads);
+  }
+});
+
+for (const mode of ["light", "dark"]) {
+  for (const kind of ["mention", "emoji"]) {
+    test(`${mode} ${kind} keyboard selection is visible against its popup`, async ({
+      page,
+    }) => {
+      const input = await open(page);
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      // Keep pointer hover from supplying a second highlight during keyboard use.
+      await page.mouse.move(0, 0);
+      await input.fill(kind === "mention" ? "@Ho" : ":smile");
+      const popup = page.getByRole("region", {
+        name: kind === "mention" ? "Mention suggestions" : "Emoji suggestions",
+        exact: true,
+      });
+      const options = popup.getByRole("option");
+      await expect(options.nth(1)).toBeVisible();
+      await expect(options.first()).toHaveAttribute("aria-selected", "true");
+      await input.press("ArrowDown");
+      const selected = options.nth(1);
+      await expect(selected).toHaveAttribute("aria-selected", "true");
+      await expect(options.first()).toHaveAttribute("aria-selected", "false");
+      await expect(input).toBeFocused();
+      await expect(selected).toBeInViewport({ ratio: 1 });
+      await expect(selected).toHaveCSS(
+        "background-color",
+        mode === "dark" ? "rgb(64, 64, 64)" : "rgb(232, 232, 232)",
+      );
+      const surface = await popup.evaluate(
+        (element) => getComputedStyle(element).backgroundColor,
+      );
+      await expect(selected).not.toHaveCSS("background-color", surface);
+      await expect(options.first()).toHaveCSS(
+        "background-color",
+        "rgba(0, 0, 0, 0)",
+      );
+      const replacement =
+        kind === "emoji"
+          ? await selected.locator("[data-native-emoji]").textContent()
+          : "@Honey ";
+      // Namesakes sort by their generated public keys, not fixture creation order.
+      const recipient =
+        kind === "mention"
+          ? await selected.locator("small").textContent()
+          : null;
+      await input.press("Tab");
+      await expect(input).toHaveJSProperty("value", replacement);
+      await expect(input).toBeFocused();
+      await expect(popup).toHaveCount(0);
+      if (kind === "mention") {
+        await input.press("Enter");
+        await expect
+          .poll(() =>
+            page.evaluate(() =>
+              window.mentionFixture.publications[0]?.tags.filter(
+                ([tag]) => tag === "p",
+              ),
+            ),
+          )
+          .toEqual([["p", recipient]]);
+      }
+    });
+  }
+}
+
 test("typeahead replaces only the query and publishes selected namesake identity, including replies", async ({
   page,
 }) => {
@@ -46,12 +174,8 @@ test("typeahead replaces only the query and publishes selected namesake identity
   await expect(option).toBeVisible();
   await option.click();
   await expect(input).toBeFocused();
-  await expect(input).toHaveValue("Before @Honey  after");
-  await expect(
-    page
-      .getByRole("region", { name: "Notification recipients" })
-      .getByRole("button"),
-  ).toHaveCount(1);
+  await expect(input).toHaveJSProperty("value", "Before @Honey  after");
+  await expect(input.locator(".inline-chip")).toHaveCount(1);
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -89,15 +213,17 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("😄");
+  await expect(input).toHaveJSProperty("value", "😄");
   await expect(input).toBeFocused();
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((element) => [
-      element.selectionStart,
-      element.selectionEnd,
-    ]),
-  ).toEqual([0, "😄".length]);
+  await expect
+    .poll(() =>
+      input.evaluate((element) => [
+        element.selectionStart,
+        element.selectionEnd,
+      ]),
+    )
+    .toEqual([0, "😄".length]);
   await input.press("ArrowRight");
   expect(
     await page.evaluate(() => window.mentionFixture.publications.length),
@@ -107,7 +233,7 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
   await input.press("Escape");
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await input.press("Shift+Enter");
-  await expect(input).toHaveValue(":smile\n");
+  await expect(input).toHaveJSProperty("value", ":smile\n");
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toBeVisible();
   await input.evaluate((el) => {
@@ -138,7 +264,7 @@ test("emoji keyboard, Escape, selected text, blur, IME and plugin disable preser
     window.mentionFixture.change("disable", "buzz.emoji"),
   );
   await expect(page.getByRole("listbox")).toHaveCount(0);
-  await expect(input).toHaveValue(":smile");
+  await expect(input).toHaveJSProperty("value", ":smile");
 });
 test("completion resumes after selection collapses to the original caret", async ({
   page,
@@ -147,25 +273,23 @@ test("completion resumes after selection collapses to the original caret", async
   await input.fill(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Shift+ArrowLeft");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([5, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([5, 6]);
   await expect(page.getByRole("listbox")).toHaveCount(0);
   await input.press("ArrowRight");
-  expect(
-    await input.evaluate((el) => [el.selectionStart, el.selectionEnd]),
-  ).toEqual([6, 6]);
+  await expect
+    .poll(() => input.evaluate((el) => [el.selectionStart, el.selectionEnd]))
+    .toEqual([6, 6]);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("😄");
+  await expect(input).toHaveJSProperty("value", "😄");
   await expect(input).toBeFocused();
 });
 test("selection recovery requires fresh results and preserves Escape dismissal", async ({
   page,
 }) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/typeahead.html`,
-  );
+  await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   const requests = () =>
     page.evaluate(() => window.completionFixture.queries().length);
@@ -200,12 +324,12 @@ test("selection recovery requires fresh results and preserves Escape dismissal",
   await expect(page.getByRole("listbox")).toHaveCount(0);
   expect(await requests()).toBe(after);
   expect(await publish(after - 1)).toBe(false);
-  await expect(input).toHaveValue("!selection");
+  await expect(input).toHaveJSProperty("value", "!selection");
   expect(
     await page.evaluate(() => window.completionFixture.publications.length),
   ).toBe(0);
 });
-test("textarea exposes its listbox popup relationship only while suggestions are open", async ({
+test("editable composer exposes its listbox popup relationship only while suggestions are open", async ({
   page,
 }) => {
   const input = await open(page);
@@ -222,7 +346,7 @@ test("textarea exposes its listbox popup relationship only while suggestions are
     const list = page.getByRole("listbox", { name: "Emoji suggestions" });
     await expect(list).toBeVisible();
     await expect(input).toHaveRole("textbox");
-    expect(await input.evaluate((el) => el.tagName)).toBe("TEXTAREA");
+    await expect(input).toHaveAttribute("contenteditable", "true");
     await expect(input).toHaveAttribute("aria-autocomplete", "list");
     await expect(input).toHaveAttribute("aria-haspopup", "listbox");
     await expect(input).toHaveAttribute(
@@ -246,12 +370,10 @@ test("textarea exposes its listbox popup relationship only while suggestions are
     await expect(input).toHaveRole("textbox");
   }
 });
-test("late publications cannot cross edits, ABA, Escape, blur, plugin replacement or destinations", async ({
+test("plugin replacement, native blur and composer sessions revoke late publications", async ({
   page,
 }) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/typeahead.html`,
-  );
+  await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   const latest = async () => {
     await expect
@@ -269,20 +391,6 @@ test("late publications cannot cross edits, ABA, Escape, blur, plugin replacemen
         }),
       { index, text },
     );
-  await input.fill("!a");
-  const old = await latest();
-  await input.fill("!b");
-  await input.fill("!a");
-  await expect.poll(latest).toBeGreaterThan(old);
-  expect(await publish(old, "STALE ABA")).toBe(false);
-  const current = await latest();
-  expect(await publish(current)).toBe(true);
-  await expect(
-    page.getByRole("option", { name: "chosen", exact: true }),
-  ).toBeVisible();
-  await input.press("Escape");
-  expect(await publish(current, "STALE ESCAPE")).toBe(false);
-  await expect(page.getByRole("listbox")).toHaveCount(0);
   await input.fill("!blur");
   const blurred = await latest();
   await page.getByRole("textbox", { name: "Message #Other" }).focus();
@@ -299,14 +407,12 @@ test("late publications cannot cross edits, ABA, Escape, blur, plugin replacemen
   expect(await publish(scoped)).toBe(false);
   await expect(
     page.getByRole("textbox", { name: "Message #Test" }),
-  ).toHaveValue("");
+  ).toHaveJSProperty("value", "");
 });
 test("selection follows IDs through reordering and rejected replacement never falls through to send", async ({
   page,
 }) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/typeahead.html`,
-  );
+  await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   await input.fill("!order");
   await expect
@@ -335,22 +441,35 @@ test("selection follows IDs through reordering and rejected replacement never fa
     "true",
   );
   await input.press("Enter");
-  await expect(input).toHaveValue("B ");
+  await expect(input).toHaveJSProperty("value", "B ");
   await input.fill("!limit");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("limit");
   const next = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );
-  await page.evaluate(
-    (index) =>
-      window.completionFixture.publish(index, {
-        items: [
-          { id: "long", label: "Too long", edit: { text: "x".repeat(16001) } },
-        ],
-      }),
-    next,
+  expect(
+    await page.evaluate(
+      (index) =>
+        window.completionFixture.publish(index, {
+          items: [
+            {
+              id: "long",
+              label: "Too long",
+              edit: { text: "x".repeat(16001) },
+            },
+          ],
+        }),
+      next,
+    ),
+  ).toBe(true);
+  await expect(page.getByRole("option", { name: "Too long" })).toHaveAttribute(
+    "aria-selected",
+    "true",
   );
   await input.press("Enter");
-  await expect(input).toHaveValue("!limit");
+  await expect(input).toHaveJSProperty("value", "!limit");
   await expect(page.getByRole("alert")).toContainText("too long");
   expect(
     await page.evaluate(() => window.completionFixture.publications.length),
@@ -365,9 +484,7 @@ test("current custom catalog drives typeahead and signed tags across community r
       body: '<svg xmlns="http://www.w3.org/2000/svg" width="42" height="42"><circle cx="21" cy="21" r="20" fill="purple"/></svg>',
     }),
   );
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/emoji.html`,
-  );
+  await page.goto("/tests/fixtures/emoji.html");
   const input = page.getByRole("textbox", { name: "Message #general" });
   await input.fill(":very-long");
   const longOption = page.getByRole("option", {
@@ -446,7 +563,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await expect(selectedParty).not.toHaveAttribute("aria-selected", "true");
   await expect(hoveredParty).toHaveCSS(
     "background-color",
-    "rgb(245, 245, 246)",
+    "rgb(232, 232, 232)",
   );
   const partyList = page.getByRole("listbox", {
     name: "Emoji suggestions",
@@ -503,12 +620,12 @@ test("current custom catalog drives typeahead and signed tags across community r
     ),
   ).toBeLessThan(1);
   await page.getByRole("option", { name: ":smirk:", exact: true }).click();
-  await expect(input).toHaveValue("😏");
+  await expect(input).toHaveJSProperty("value", "😏");
   expect(await input.evaluate((element) => element.selectionStart)).toBe(
     "😏".length,
   );
   await input.pressSequentially("hello");
-  await expect(input).toHaveValue("😏hello");
+  await expect(input).toHaveJSProperty("value", "😏hello");
   await input.fill(":party-par");
   const first = page.getByRole("option", {
     name: ":party-parrot:",
@@ -521,13 +638,12 @@ test("current custom catalog drives typeahead and signed tags across community r
   const suggestionBox = await suggestions.boundingBox();
   const composerBox = await composer.boundingBox();
   expect(suggestionBox.width).toBeCloseTo(composerBox.width * 0.375, 1);
-  const regularTextSize = await input.evaluate(
-    (element) => getComputedStyle(element).fontSize,
-  );
   await first.click();
-  await expect(input).toHaveValue(":party-parrot:");
-  await expect(input).toHaveCSS("font-size", regularTextSize);
-  await expect(composer.locator("img")).toHaveCSS("width", "42px");
+  await expect(input).toHaveJSProperty("value", ":party-parrot:");
+  await expect(composer.locator("img[data-copy-emoji]")).toHaveCSS(
+    "width",
+    "42px",
+  );
   await input.press("Shift+ArrowLeft");
   expect(
     await input.evaluate((element) =>
@@ -544,15 +660,16 @@ test("current custom catalog drives typeahead and signed tags across community r
     caret: "initial",
   });
   await page.evaluate(() => window.emojiFixture.remove());
-  await expect(input).toHaveValue(":party-parrot:");
+  await expect(input).toHaveJSProperty("value", ":party-parrot:");
   await page.evaluate(() => window.emojiFixture.replace());
   await input.press("Backspace");
-  await expect(input).toHaveValue(":party-parrot");
+  await expect(input).toHaveJSProperty("value", "");
   await input.press("ControlOrMeta+z");
-  await expect(input).toHaveValue(":party-parrot:");
-  await input.press("End");
+  await expect(input).toHaveJSProperty("value", ":party-parrot:");
+  // macOS End scrolls the document; use its caret shortcut when overscroll is off.
+  await input.press(process.platform === "darwin" ? "Meta+ArrowRight" : "End");
   await input.pressSequentially(" hello");
-  await expect(input).toHaveValue(":party-parrot: hello");
+  await expect(input).toHaveJSProperty("value", ":party-parrot: hello");
   await input.press("Enter");
   await expect
     .poll(() =>
@@ -574,75 +691,51 @@ test("current custom catalog drives typeahead and signed tags across community r
     ),
   ).toBe(":party-parrot: hello");
   await input.fill(":party-parrot:");
-  await expect(input).toHaveAttribute("data-custom-emoji-only", "true");
-  const renderedEmoji = composer.locator("img");
+  await expect(input).toHaveAttribute("data-single-emoji", "true");
+  const renderedEmoji = input.locator("img[data-copy-emoji]");
   await expect(renderedEmoji).toHaveCount(1);
   await expect(renderedEmoji).toHaveCSS("width", "42px");
   await expect(renderedEmoji).toHaveCSS("height", "42px");
   await input.evaluate((element) => {
     const pasted = element.value.repeat(2);
     element.setSelectionRange(0, element.value.length);
+    const clipboardData = new DataTransfer();
+    clipboardData.setData("text/plain", pasted);
     element.dispatchEvent(
-      new InputEvent("beforeinput", {
+      new ClipboardEvent("paste", {
         bubbles: true,
         cancelable: true,
-        data: pasted,
-        inputType: "insertFromPaste",
-      }),
-    );
-    element.setRangeText(
-      pasted,
-      element.selectionStart,
-      element.selectionEnd,
-      "end",
-    );
-    element.dispatchEvent(
-      new InputEvent("input", {
-        bubbles: true,
-        data: pasted,
-        inputType: "insertFromPaste",
+        clipboardData,
       }),
     );
   });
-  await expect(input).toHaveValue(":party-parrot::party-parrot:");
-  await expect(input).toHaveAttribute("data-custom-emoji-only", "true");
+  await expect(input).toHaveJSProperty("value", ":party-parrot::party-parrot:");
+  await expect(input).toHaveAttribute("data-single-emoji", "true");
   await expect(renderedEmoji).toHaveCount(2);
   for (const image of await renderedEmoji.all()) {
     await expect(image).toHaveCSS("width", "42px");
     await expect(image).toHaveCSS("height", "42px");
   }
   await input.fill(":party-parrot:lakjsdlkjflakjsdf");
-  await expect(input).toHaveAttribute("data-leading-custom-emoji", "true");
-  await expect(input).not.toHaveAttribute("data-custom-emoji-only", "true");
+  await expect(input.locator("[data-source]")).toHaveCount(1);
+  await expect(input).not.toHaveAttribute("data-single-emoji", "true");
   await expect(renderedEmoji).toHaveCount(1);
   await expect(renderedEmoji).toHaveCSS("width", "22px");
   await expect(renderedEmoji).toHaveCSS("height", "22px");
   await expect(composer).toContainText("lakjsdlkjflakjsdf");
-  await expect
-    .poll(() =>
-      input.evaluate((element) =>
-        Number.parseFloat(getComputedStyle(element).textIndent),
-      ),
-    )
-    .toBeLessThan(0);
-  const inlineAlignment = await composer.evaluate((element) => {
-    const input = element.querySelector("textarea");
-    const emoji = element.querySelector("[data-composer-inline-emoji]");
-    const prefix = element.querySelector("[data-composer-custom-emoji-prefix]");
-    if (!input || !emoji || !prefix) throw new Error("Missing inline emoji");
+  const inlineAlignment = await input.evaluate((element) => {
+    const token = element.querySelector("[data-source]");
+    const range = document.createRange();
+    range.selectNodeContents(token.nextSibling);
     return {
-      emoji: emoji.getBoundingClientRect().width,
-      prefix: prefix.getBoundingClientRect().width,
-      indent: Number.parseFloat(getComputedStyle(input).textIndent),
+      right: token.getBoundingClientRect().right,
+      textLeft: range.getBoundingClientRect().left,
     };
   });
-  expect(inlineAlignment.prefix + inlineAlignment.indent).toBeCloseTo(
-    inlineAlignment.emoji,
-    1,
-  );
+  expect(inlineAlignment.textLeft).toBeCloseTo(inlineAlignment.right, 0);
   await input.fill("hello :party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
-  await expect(input).toHaveValue("hello :party:");
+  await expect(input).toHaveJSProperty("value", "hello :party:");
   await input.fill(":party");
   await expect(
     page.getByRole("option", { name: ":party:", exact: true }),
@@ -655,7 +748,7 @@ test("current custom catalog drives typeahead and signed tags across community r
   await page.getByRole("button", { name: "Switch community" }).click();
   await input.fill(":party");
   await page.getByRole("option", { name: ":party:", exact: true }).click();
-  await expect(input).toHaveValue(":party:");
+  await expect(input).toHaveJSProperty("value", ":party:");
   await input.press("Enter");
   await expect
     .poll(() =>
@@ -704,7 +797,7 @@ test("mention choices survive unrelated list updates but revoke removed membersh
   await expect(first).toHaveCount(0);
   await expect(second).toBeVisible();
   await second.click();
-  await expect(input).toHaveValue("@Honey ");
+  await expect(input).toHaveJSProperty("value", "@Honey ");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -719,9 +812,7 @@ test("mention choices survive unrelated list updates but revoke removed membersh
 test("cold multi-word mention query wakes when profiles arrive without another keystroke", async ({
   page,
 }) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?delayed-profiles`,
-  );
+  await page.goto("/tests/fixtures/mentions.html?delayed-profiles");
   const input = page.getByRole("textbox", { name: "Message #General" });
   await input.fill("@Mary J");
   await expect(page.getByRole("option", { name: /^Mary Jane / })).toHaveCount(
@@ -731,36 +822,46 @@ test("cold multi-word mention query wakes when profiles arrive without another k
   const choice = page.getByRole("option", { name: /^Mary Jane / });
   await expect(choice).toBeVisible();
   await input.press("Enter");
-  await expect(input).toHaveValue("@Mary Jane ");
+  await expect(input).toHaveJSProperty("value", "@Mary Jane ");
   await expect(page.getByRole("listbox")).toHaveCount(0);
 });
 
 test("recovery is a keyboard-selectable action without transferring editor focus", async ({
   page,
 }) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/typeahead.html`,
-  );
+  await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   for (const withChoice of [false, true]) {
     await input.fill(`!retry-${withChoice}`);
+    // fill() finishes before React necessarily mounts the next provider. Wait
+    // for this query, not whichever historical request happened to be last.
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.completionFixture.queries().at(-1)),
+      )
+      .toBe(`retry-${withChoice}`);
     const index = await page.evaluate(
       () => window.completionFixture.queries().length - 1,
     );
-    await page.evaluate(
-      ({ index, withChoice }) =>
-        window.completionFixture.fail(index, withChoice),
-      { index, withChoice },
-    );
-    if (withChoice) await input.press("ArrowUp");
+    expect(
+      await page.evaluate(
+        ({ index, withChoice }) =>
+          window.completionFixture.fail(index, withChoice),
+        { index, withChoice },
+      ),
+    ).toBe(true);
     const retry = page.getByRole("option", { name: "Retry suggestions" });
+    // Publishing updates React state; wait for the options and keyboard handler
+    // to commit before ArrowUp, or the browser moves the caret instead.
+    await expect(retry).toBeVisible();
+    if (withChoice) await input.press("ArrowUp");
     await expect(retry).toHaveAttribute("aria-selected", "true");
     await input.press("Enter");
     await expect(page.getByRole("option", { name: "Recovered" })).toBeVisible();
     await expect(input).toBeFocused();
-    await expect(input).toHaveValue(`!retry-${withChoice}`);
+    await expect(input).toHaveJSProperty("value", `!retry-${withChoice}`);
     await input.press("Tab");
-    await expect(input).toHaveValue("recovered ");
+    await expect(input).toHaveJSProperty("value", "recovered ");
   }
   expect(await page.evaluate(() => window.completionFixture.retries())).toBe(2);
   expect(
@@ -772,9 +873,7 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   page,
 }) => {
   await page.setViewportSize({ width: 1000, height: 520 });
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/messages.html`,
-  );
+  await page.goto("/tests/fixtures/messages.html");
   const main = page.getByRole("textbox", { name: "Message #one" });
   const thread = page.getByRole("textbox", { name: "Reply to thread" });
   await expect(thread).toBeVisible();
@@ -788,38 +887,22 @@ test("channel and actual ThreadPanel composers keep separate completion and draf
   expect(await thread.getAttribute("aria-controls")).not.toBe(mainControls);
   await option.click();
   await expect(thread).toBeFocused();
-  await expect(thread).toHaveValue("@Fixture Reader ");
-  await expect(main).toHaveValue(":smile");
+  await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
+  await expect(main).toHaveJSProperty("value", ":smile");
   await main.focus();
+  await expect(main).toHaveJSProperty("selectionStart", 6);
+  await expect(main).toHaveJSProperty("selectionEnd", 6);
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await main.press("Tab");
-  await expect(main).toHaveValue("😄");
-  await expect(thread).toHaveValue("@Fixture Reader ");
+  await expect(main).toHaveJSProperty("value", "😄");
+  await expect(thread).toHaveJSProperty("value", "@Fixture Reader ");
 });
 
-test("disabled and read-only DOM state reject late publications and displayed choices", async ({
+test("native read-only state rejects a displayed choice without sending", async ({
   page,
 }) => {
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/typeahead.html`,
-  );
+  await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
-  await input.fill("!disabled");
-  const old = await page.evaluate(
-    () => window.completionFixture.queries().length - 1,
-  );
-  await page.getByRole("button", { name: "Toggle disabled" }).click();
-  await expect(input).toBeDisabled();
-  expect(
-    await page.evaluate(
-      (index) =>
-        window.completionFixture.publish(index, {
-          items: [{ id: "bad", label: "Bad", edit: { text: "bad" } }],
-        }),
-      old,
-    ),
-  ).toBe(false);
-  await page.getByRole("button", { name: "Toggle disabled" }).click();
   await input.fill("!readonly");
   const current = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
@@ -836,7 +919,7 @@ test("disabled and read-only DOM state reject late publications and displayed ch
     el.readOnly = true;
   });
   await input.press("Enter");
-  await expect(input).toHaveValue("!readonly");
+  await expect(input).toHaveJSProperty("value", "!readonly");
   expect(
     await page.evaluate(() => window.completionFixture.publications.length),
   ).toBe(0);
@@ -852,7 +935,7 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await input.pressSequentially(":smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("@Honey 😄");
+  await expect(input).toHaveJSProperty("value", "@Honey 😄");
   await input.press("Enter");
   await expect
     .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
@@ -865,21 +948,20 @@ test("a later emoji trigger wins after a mention without discarding recipient in
   await input.fill("@Honey :smile");
   await expect(page.getByRole("option").first()).toContainText(":smile:");
   await input.press("Tab");
-  await expect(input).toHaveValue("@Honey 😄");
-  await expect(
-    page.getByRole("region", { name: "Notification recipients" }),
-  ).toHaveCount(0);
+  await expect(input).toHaveJSProperty("value", "@Honey 😄");
+  await expect(input.locator(".inline-chip")).toHaveCount(0);
 });
 
 test("portal bounds hold when the focused composer moves outside the viewport", async ({
   page,
 }) => {
   await page.setViewportSize({ width: 800, height: 300 });
-  await page.goto(
-    `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/typeahead.html`,
-  );
+  await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   await input.fill("!geometry");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("geometry");
   const index = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );

@@ -1,41 +1,26 @@
-import { useState } from "react";
+import { Avatar as SharedAvatar } from "./design-system/ui/Avatar";
 
-/** Caller resolves private relay media through the current session. */
+/** Compatibility for newer feature callers; the design system owns rendering. */
 export function Avatar({
   name,
   src,
   className = "",
+  shape = "circle",
 }: {
   name: string;
   src?: string | undefined;
   className?: string;
+  shape?: "circle" | "squircle";
 }) {
-  const [failed, setFailed] = useState<string>();
-  const initials =
-    name
-      .trim()
-      .split(/\s+/)
-      .slice(0, 2)
-      .map((word) => Array.from(word)[0] ?? "")
-      .join("")
-      .toUpperCase() || "?";
   return (
-    <span
-      className={`relative inline-grid shrink-0 place-items-center overflow-hidden rounded-2xl bg-[#ece9f4] font-semibold text-[#675780] ${className}`}
-      aria-hidden="true"
-    >
-      {initials}
-      {src && src !== failed && (
-        <img
-          src={src}
-          alt=""
-          loading="lazy"
-          decoding="async"
-          referrerPolicy="no-referrer"
-          onError={() => setFailed(src)}
-          className="absolute inset-0 h-full w-full object-cover"
-        />
-      )}
+    <span className={`relative inline-grid shrink-0 ${className}`}>
+      <SharedAvatar
+        src={src}
+        alt=""
+        fallback={name}
+        size="fill"
+        shape={shape}
+      />
     </span>
   );
 }

@@ -20,12 +20,23 @@ bin/pnpm test:browser         # both engines; serial measurements, two functiona
 bin/just scan                # includes browser tests and all existing gates
 ```
 
-Playwright is pinned to 1.60.0; the browser installer downloads its matching
+Playwright is pinned to 1.63.0; the browser installer downloads its matching
 Chromium and WebKit revisions. Do not borrow another checkout's node_modules or
 silently skip an engine when its executable is missing. Linux runners also need
 Playwright's documented system libraries provisioned by their administrator.
 The initial verified runner is Apple Silicon macOS, not a cross-platform result.
 No native application or interactive browser is opened.
+
+The 1.63.0 pin replaces 1.60.0 after an isolated Ubuntu 24.04 ARM64 replay showed
+WebKit 2287 stranding the tail of an open Fetch stream until another write.
+Stock WebKit 2359 consumed it while the server stayed idle, with byte streams
+still enabled, both with and without Playwright interception. The unchanged
+`sidebar-unread.spec.mjs` then passed all ten Chromium/WebKit cases; its two
+previously failing assertions and timeouts are unchanged. The full scroll file
+passed five of six cases: the documented Linux WebKit wheel-edge limitation
+remains. This is bounded test-browser evidence, not a fix for older Safari clients
+or proof of hosted CI success. No browser feature overrides or CI exclusions were
+added by the pin update; existing local-only cases below remain unchanged.
 
 For repeatability and diagnostic baselines:
 
@@ -62,11 +73,25 @@ isolation and one invocation to preserve both engines' evidence.
 
 Compiled frontend assets are worker-scoped, split by `developmentReact` and
 `pluginFixtures`, and removed when that worker ends. They are never reused across
-invocations. Every test still gets a fresh preview server/port, ephemeral signing
-keys, signed histories, relay state and browser context/storage. Evidence records
-the worker and its build time; worker restarts rebuild rather than reuse stale assets.
+invocations. Every built-app test still gets a fresh preview server/port, ephemeral
+signing keys, signed histories, relay state and browser context/storage. Evidence records
+the worker and its build time, plus history counts and signing time; worker
+restarts rebuild rather than reuse stale assets.
 
-Results go to ignored `test-results/browser/`: each test writes `evidence.json`
+Declare `historyCounts` with `test.use` for built-app tests that do not need large
+histories, for example `{ alpha: 1, beta: 0 }`. Counts apply per community. Keep
+pagination, anchor and measurement datasets unchanged unless their behavior is
+revalidated at the new size. The legacy large default remains for unaudited cases;
+new tests should explicitly choose their data rather than inherit it accidentally.
+
+Source-only diagnostic pages can import `test` and `expect` from
+`source-fixture.mjs` and navigate to `/tests/fixtures/example.html`. That fixture
+shares a stateless Vite server and its isolated optimizer cache per worker, with
+fresh browser contexts/storage for every test. Do not use it for custom mutable
+server middleware or a different Vite configuration. The existing `vite-server.mjs`
+helper keeps independently configured servers' caches isolated.
+
+Results go to ignored `test-results/browser/`: each built-app test writes `evidence.json`
 with runtime versions, HEAD/dirty status, request ledger, runtime errors and
 measurements. Failure screenshots and traces are retained too. The next invocation
 replaces that output; copy artifacts before a rerun if you need to compare them.
@@ -78,8 +103,8 @@ verified clean commit or source manifest.
 CI stays on `ubuntu-24.04`. `pnpm test:browser:ci` inherits the ordinary config and
 excludes only tests tagged `@local-webkit` from `webkit-measurements`. Their Chromium
 instances and every untagged WebKit case remain required. Both engines, serial
-measurement order, zero retries, all existing assertions and budgets, and the
-strict `CI required` aggregate remain in place.
+measurement order, zero retries, the documented functional assertions and
+measurement ceilings, and the strict `CI required` aggregate remain in place.
 
 CI shards each functional engine across two runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
@@ -99,7 +124,7 @@ The following **three WebKit cases are local-only**, not passing CI coverage:
 
 | Case | Reason and coverage gap |
 | --- | --- |
-| `channel-opening.spec.mjs`: cold opening / warm switching | Hosted Linux WebKit recorded 104ms against the unchanged <100ms warm budget. The whole case is local-only, including its cold opening under held DM labels and no-new-head-read assertions. This is runner-sensitive evidence, not proof of an app or engine cause. Chromium retains the full case in CI. |
+| `channel-opening.spec.mjs`: cold opening / warm switching | Originally excluded after hosted Linux WebKit recorded 104ms against the former <100ms budget. The warm gate now uses the target/ceiling policy below; this change does not revalidate Linux WebKit or restore its CI selection. The whole case remains local-only, including cold opening under held DM labels and no-new-head-read assertions. Chromium retains the full case in CI. |
 | `scroll.spec.mjs`: cursor paging / large-history virtualization | Linux WebKit repeatedly stops short of the requested wheel edge. The cause remains unresolved between engine/input handling and the harness. Its 31 unique cursor requests, 640-message traversal, 4px anchors and DOM ceilings remain local-only on WebKit; Chromium retains them in CI. |
 | `scroll.spec.mjs`: live edits / reading anchor | Linux WebKit's fetch reader can leave part of an edit undelivered while the SSE stream is open. WebKit growth/shrinkage and reading-anchor checks are local-only; Chromium retains the case in CI. The delivery defect is not fixed by this selection change. |
 
@@ -118,7 +143,8 @@ bin/pnpm test:browser            # complete original suite, including those case
 The full suite remains part of `pnpm test` and `just scan` on every local platform;
 these cases are not silently skipped on Linux. The local-only command may still
 fail there. No macOS CI runner is configured. To restore a case to CI, remove its
-tag only after unchanged Linux assertions and budgets pass repeatedly. Live-edit
+tag only after the documented Linux functional assertions and measurement
+ceilings pass repeatedly. Live-edit
 closure also needs complete delivery on the open stream without a later write,
 heartbeat or close rescuing it. Do not move ordinary app/test failures out of CI
 or grow this exception list merely to get a green run.
@@ -180,10 +206,31 @@ or attended live-account acceptance.
 `channel-opening.spec.mjs` uses the actual app/session and production broker with
 an offline upstream: 128 DMs and 1,001 uncached participants. Profile responses
 stay held while an unprepared channel opens. This checks the **actual sidebar
-label caller**, not just the reader's priority flag. Cached returns then require
-no new head request and less than **100ms** from a browser-clock button click to
-visible correct-channel rows across a paint opportunity. This is a controlled
-regression budget, not a universal device/relay SLA or hardware input measurement.
+label caller**, not just the reader's priority flag. Cached returns require no
+new head request and visible correct-channel rows with the matching composer
+across a paint opportunity. The existing **1s completion watchdog** still fails
+an unfinished switch.
+
+Warm timing keeps a **<100ms target** and a provisional **<200ms per-switch hard
+ceiling**. All four browser-clock samples and the functional checks complete
+before the ceiling is enforced; there are no retries or discarded outliers.
+Target misses add `performance` annotations to the downloadable Playwright JSON
+report (`ci-report.json` in CI), not the GitHub job-summary table. Raw timings,
+first-visible times and frame diagnostics remain in `evidence.json`, including on
+passing runs. Authors and reviewers should inspect target misses when changing
+opening/rendering paths; green CI does not mean the 100ms target was met.
+
+The ceiling is an explicit tolerance policy, not a statistically established
+flake-free limit. Hosted Chromium recorded intermittent 111–120.5ms misses across
+main and multiple PRs ([main](https://github.com/block/buzz-app/actions/runs/35925546559),
+[#182](https://github.com/block/buzz-app/actions/runs/35932973673),
+[#185](https://github.com/block/buzz-app/actions/runs/35936296156)). The 200ms ceiling
+leaves roughly 80ms above the largest observed miss while retaining an automatic
+slowdown alarm. The timer includes browser scheduling and layout observation as
+well as application work: those samples do not establish runner contention as the
+cause, and severe stalls can still fail. Regressions between 100ms and 200ms now
+require performance review rather than automatically failing CI. This is not a
+universal device/relay SLA or hardware input measurement.
 
 Run this focused journey when changing startup/sidebar scheduling:
 
@@ -246,9 +293,42 @@ Measured geometry stays in memory, with the unchanged three-entry / 256KiB
 signature limits in `src/features/messages/geometry.ts`.
 
 Panel opening/closing and viewport resizing preserve bottom intent or the visible
-reading anchor. A new input gesture supersedes a queued restoration. The layout
+reading anchor. Restoration-generated scrolls retain that message while its row
+intersects the viewport, even when narrower wrapping makes its paragraph too tall
+to fit wholly. A new input gesture or local-send navigation releases that preference;
+missing/offscreen rows use ordinary visible-anchor selection. A new input gesture
+also supersedes a queued restoration. The layout
 journey also checks separate cards, independent panel scrolling, window-centered
 tabs, community-dialog focus, and widths down to 390px.
+
+Closing a link panel returns focus to its still-mounted trigger without scrolling
+that link into view. The layout journey observes the native focus call's scroll
+delta as well as the final reading anchor: a transient focus jump must not be
+hidden by a successful later virtualizer correction. The test explicitly moves
+focus into the panel before closing; removing focus restoration must also fail.
+
+Resize journeys use the existing tall-message fixture and assert no older-page
+requests plus a reading position outside prefetch. The ordinary fixture holds
+cursor responses for explicit paging tests; accidentally entering that path is not
+valid resize setup. `upper()` establishes above-bottom reading with at most four
+real wheel gestures, requiring progress and settled distance >400px. It does not
+measure exact wheel displacement. Partial-input and blocked-input controls guard
+that setup; same-ID/Y <4px and bottom <4px assertions remain unchanged. Anchor
+capture prefers a whole paragraph, falling back to the first intersecting row
+when tall messages leave only clipped paragraphs. A deterministic helper control
+covers that geometry, whole-paragraph preference, offscreen rejection, and rejection
+of an actual anchor displacement. No retries
+or additional WebKit exclusions are used. The underlying Linux WebKit single-wheel
+shortfall remains unattributed; this setup change does not fix or explain it.
+
+`image-scroll.spec.mjs` separately holds image responses while real wheel input
+establishes its reading/bottom setup. Traversal ends at the observed settled target,
+not a fixed gesture count: virtualizer remeasurement and native input may apply
+only part of a requested displacement. Every gesture must make directional
+progress that remains after settling, and the existing test deadline bounds the
+operation. A 400px partial-input control requires more than eight gestures; blocked
+input must fail on its first gesture. Once image responses are released, no
+corrective scrolling is allowed during the strict image/anchor assertions.
 
 These checks do not persist measured geometry or guarantee smoothness. A live edit
 to a partly clipped, still-visible row can move the following visible messages:
@@ -324,3 +404,13 @@ focused visible dwell, non-reading opening/composer focus, individual markers,
 encrypted publication/readback, reload, cancellation and local manual-unread.
 The reload control holds network content so verified disk-restore wiring is required.
 This is not a deployed-relay, native signer or cross-device integration test.
+
+## Fixture server isolation
+
+Concurrent Vite fixture servers must own separate optimizer caches. Use
+`tests/browser/vite-server.mjs` for new fixtures; its `close()` releases the owned
+cache. The existing emoji and conversation fixtures retain their explicitly owned
+temporary caches. Do not share Vite's default `node_modules/.vite`: another server
+can invalidate dependency imports and leave a blank fixture with a 504
+`Outdated Optimize Dep`. Keep import failures visible; retries or longer UI waits
+do not repair module loading.

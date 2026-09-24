@@ -10,7 +10,10 @@ export function apply(ctx) {
       const [note, setNote] = React.useState("");
       return React.createElement(
         "section",
-        { style: { padding: 24, background: "white", borderRadius: 24 } },
+        {
+          className: "ui-card",
+          style: { padding: "var(--space-panel-inset)" },
+        },
         React.createElement("h1", null, "Notes playground"),
         React.createElement(
           "p",
@@ -24,7 +27,11 @@ export function apply(ctx) {
           React.createElement("textarea", {
             value: note,
             rows: 5,
-            style: { display: "block", width: "100%", marginTop: 8 },
+            style: {
+              display: "block",
+              width: "100%",
+              marginTop: "var(--space-2)",
+            },
             onChange: (event) => setNote(event.target.value),
           }),
         ),

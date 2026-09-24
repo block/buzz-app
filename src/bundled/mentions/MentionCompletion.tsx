@@ -1,8 +1,20 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { DraftMentionRoster } from "../../features/messages/draft-mention-roster";
+import { mentionChoices } from "./mention-choices";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { useAgentChoices } from "../../features/agents/use-choices";
+import {
+  useContext,
+  useEffect,
+  useMemo,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ComposerCompletionProps } from "../../features/conversation/contracts";
 import type { RelaySession } from "../../features/relay/session";
-import { Avatar } from "../../shared/Avatar";
+import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { useKnownAgentPubkeys } from "../../features/agents/use-known";
 import { matchesMentionQuery } from "./mention-query";
+import { peopleOrder } from "../../features/profiles/people-order";
 
 // Demand bookkeeping only, not another profile cache. Missing names do not issue
 // the same network request on every query keystroke; explicit retry remains available.
@@ -10,9 +22,12 @@ const demands = new WeakMap<RelaySession, Set<string>>();
 export function MentionCompletion({
   session,
   channelId,
+  inviteAgents,
   query,
   publish,
 }: ComposerCompletionProps) {
+  const draftRoster = useContext(DraftMentionRoster);
+  const resolveName = useIdentityNames(session.names);
   const list = useSyncExternalStore(
     session.channels.subscribeList,
     session.channels.list,
@@ -23,12 +38,33 @@ export function MentionCompletion({
     session.profiles.snapshot,
     session.profiles.snapshot,
   );
+  const agents = useAgentChoices(session, !!inviteAgents);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const channel = list.channels.find((item) => item.id === channelId);
-  const members = channel?.members ?? [];
+  const available = useMemo(
+    () =>
+      !inviteAgents &&
+      channel?.members &&
+      !channel.archived &&
+      (channel.channelType === "stream" || channel.channelType === "forum") &&
+      session.outbox?.supports(9000)
+        ? agents.identities
+            .filter((agent) => agent.managed)
+            .filter((agent) => !channel.members?.includes(agent.pubkey))
+            .map(({ pubkey, name }) => ({ pubkey, name }))
+        : [],
+    [channel, agents, session.outbox, inviteAgents],
+  );
+  const parentAdmission =
+    !!channel &&
+    (channel.channelType !== "session" || !!channel.parentChannelId);
+  const members =
+    draftRoster?.map((person) => person.pubkey) ?? channel?.members ?? [];
   const memberKey = members.join(":");
   const [attempt, retry] = useState(0);
   const [error, setError] = useState(false);
   useEffect(() => {
+    if (draftRoster) return;
     session.channels.ensureList();
     const requested = demands.get(session) ?? new Set<string>();
     demands.set(session, requested);
@@ -45,65 +81,93 @@ export function MentionCompletion({
     return () => {
       live = false;
     };
-  }, [session, memberKey, attempt]);
+  }, [session, memberKey, attempt, draftRoster]);
   useEffect(() => {
     const members = memberKey ? memberKey.split(":") : [];
-    const candidates = members.map((pubkey) => ({
-      pubkey,
-      name: profiles.get(pubkey)?.name ?? pubkey.slice(0, 12),
-    }));
+    const candidates = mentionChoices(
+      draftRoster ?? [...(inviteAgents ? agents.identities : []), ...available],
+      members,
+      profiles,
+      resolveName,
+    );
     const needle = query.query.toLowerCase();
+    // Source names close completed mentions; display labels still admit multi-word searches.
     const admitted = matchesMentionQuery(
       query.query,
-      candidates.map((item) => item.name),
+      candidates.flatMap(({ recipient, label }) => [recipient.name, label]),
     );
+    const order = peopleOrder(query.query);
     const matching =
       admitted && !channel?.archived
         ? candidates
-            .filter(({ pubkey, name }) =>
-              `${name} ${pubkey}`.toLowerCase().includes(needle),
+            .filter(({ recipient, label }) =>
+              `${label} ${recipient.pubkey}`.toLowerCase().includes(needle),
             )
-            .sort(
-              (a, b) =>
-                Number(!a.name.toLowerCase().startsWith(needle)) -
-                  Number(!b.name.toLowerCase().startsWith(needle)) ||
-                a.name.localeCompare(b.name) ||
-                a.pubkey.localeCompare(b.pubkey),
+            .sort((a, b) =>
+              order(
+                { name: a.label, pubkey: a.recipient.pubkey },
+                { name: b.label, pubkey: b.recipient.pubkey },
+              ),
             )
         : [];
-    const missing = members.some((key) => !profiles.has(key));
+    const membershipMissing =
+      !draftRoster && (!inviteAgents || !!channel) && !channel?.members;
+    const membershipError = !draftRoster && list.error;
+    const missing = !draftRoster && members.some((key) => !profiles.has(key));
     const withdraw = publish({
-      items: matching.slice(0, 20).map((recipient) => ({
+      items: matching.slice(0, 20).map(({ recipient, label }) => ({
         id: recipient.pubkey,
-        label: recipient.name,
-        detail: recipient.pubkey,
+        label,
+        detail: members.includes(recipient.pubkey)
+          ? recipient.pubkey
+          : inviteAgents
+            ? `${parentAdmission ? "Adds to session and parent channel" : "Adds to session"} · ${recipient.pubkey}`
+            : "Adds to channel when you send",
         preview: (
           <Avatar
-            name={recipient.name}
-            src={session.media(profiles.get(recipient.pubkey)?.picture ?? "")}
-            className="size-7 rounded-lg text-xs"
+            alt=""
+            fallback={label}
+            src={session.media(
+              profiles.get(recipient.pubkey)?.picture ?? "",
+              "small",
+            )}
+            size="small"
+            shape={
+              agentPubkeys.has(recipient.pubkey) ||
+              !members.includes(recipient.pubkey)
+                ? "squircle"
+                : "circle"
+            }
           />
         ),
         edit: { mention: recipient },
       })),
-      ...(admitted && !channel?.members
-        ? { status: "Channel membership unavailable." }
-        : admitted && list.error
-          ? { status: "Could not refresh channel membership." }
-          : error || missing
-            ? {
-                status:
-                  "Some names unavailable. Exact public keys still identify recipients.",
-              }
-            : matching.length > 20
-              ? { status: "Narrow your search to see more members." }
-              : {}),
-      ...(!channel?.members || list.error || error || missing
+      ...(agents.status === "error" || agents.error
+        ? { status: "Could not load agents. Retry to refresh." }
+        : admitted && membershipMissing
+          ? { status: "Channel membership unavailable." }
+          : admitted && membershipError
+            ? { status: "Could not refresh channel membership." }
+            : error || missing
+              ? {
+                  status:
+                    "Some names unavailable. Exact public keys still identify recipients.",
+                }
+              : matching.length > 20
+                ? { status: "Narrow your search to see more members." }
+                : {}),
+      ...(agents.status === "error" ||
+      agents.error ||
+      membershipMissing ||
+      membershipError ||
+      error ||
+      missing
         ? {
             retry: () => {
+              void session.agentChoices.refresh();
               setError(false);
               retry((value) => value + 1);
-              if (!channel?.members || list.error)
+              if (membershipMissing || membershipError)
                 session.channels.refreshList?.();
             },
           }
@@ -126,17 +190,28 @@ export function MentionCompletion({
     const profilesChanged = session.profiles.subscribe(() => {
       if (session.profiles.snapshot() !== profiles) revoke();
     });
+    const namesChanged = session.names.subscribe(revoke);
+    const agentsChanged = session.agentChoices.subscribe(revoke);
     return () => {
+      namesChanged();
+      agentsChanged();
       rosterChanged();
       profilesChanged();
       revoke();
     };
   }, [
+    draftRoster,
+    resolveName,
     session,
+    agents,
+    inviteAgents,
     channel,
     channelId,
     memberKey,
+    available,
+    parentAdmission,
     profiles,
+    agentPubkeys,
     query.query,
     publish,
     error,

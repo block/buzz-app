@@ -10,7 +10,7 @@ export function NavigationSection({
   children: ReactNode;
 }) {
   return (
-    <section className="navigation-section">
+    <section data-buzz-ui="" className="navigation-section">
       <div className="navigation-section-heading">
         <h2 className="navigation-section-label text-body text-secondary">
           {label}

@@ -1,0 +1,93 @@
+import type { MentionDraft, MentionRecipient } from "./mention-draft";
+
+export const inlineFormats = [
+  {
+    mark: "bold",
+    label: "Bold",
+    inputType: "formatBold",
+    binding: { key: "b", mod: true, shift: false },
+  },
+  {
+    mark: "italic",
+    label: "Italic",
+    inputType: "formatItalic",
+    binding: { key: "i", mod: true, shift: false },
+  },
+  {
+    mark: "strike",
+    label: "Strikethrough",
+    inputType: "formatStrikeThrough",
+    binding: { key: "x", mod: true, shift: true },
+  },
+  {
+    mark: "spoiler",
+    label: "Spoiler",
+    inputType: "formatSpoiler",
+    binding: { key: "p", mod: true, shift: true },
+  },
+  {
+    mark: "code",
+    label: "Code",
+    inputType: "formatInlineCode",
+    binding: { key: "e", mod: true, shift: false },
+  },
+] as const;
+export type InlineFormat = (typeof inlineFormats)[number]["mark"];
+export const blockFormats = [
+  {
+    mark: "code_block",
+    label: "Code block",
+    binding: { key: "c", mod: true, alt: true, shift: false },
+  },
+  {
+    mark: "bullet_list",
+    label: "Bullet list",
+    binding: { key: "8", mod: true, shift: true },
+  },
+  {
+    mark: "ordered_list",
+    label: "Ordered list",
+    binding: { key: "7", mod: true, shift: true },
+  },
+  {
+    mark: "blockquote",
+    label: "Quote",
+    binding: { key: "b", mod: true, shift: true },
+  },
+] as const;
+export type BlockFormat = (typeof blockFormats)[number]["mark"];
+export type ComposerFormat = InlineFormat | BlockFormat;
+export const composerFormats = [...inlineFormats, ...blockFormats];
+
+export type ComposerLinkEdit = {
+  text: string;
+  href: string;
+  existing: boolean;
+  save(text: string, href: string): boolean;
+  remove(): boolean;
+};
+
+/** Public commands remain in authored-source offsets. Only the editor adapter
+ * translates them into document positions; callers never manipulate its DOM. */
+export type ComposerInputElement = HTMLDivElement & {
+  value: string;
+  selectionStart: number;
+  selectionEnd: number;
+  selectionDirection: "forward" | "backward" | "none";
+  disabled: boolean;
+  readOnly: boolean;
+  setSelectionRange(start: number, end: number, direction?: string): void;
+  insertText(
+    text: string,
+    recipient?: MentionRecipient,
+    range?: { start: number; end: number },
+  ): boolean;
+  toggleFormat(format: ComposerFormat): void;
+  insertLineBreak(): boolean;
+  editLink(): ComposerLinkEdit | null;
+  removeRecipient(pubkey: string): void;
+  undo(redo: boolean): void;
+  reset(draft: MentionDraft): void;
+  /** Retain this editor's document, selection and undo state across a temporary edit. */
+  checkpoint(): () => void;
+};

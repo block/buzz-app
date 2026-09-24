@@ -1,0 +1,57 @@
+@reference "../shared/styles/globals.css";
+
+.root {
+  height: 100%;
+  min-height: 0;
+  container-type: inline-size;
+  overflow: hidden;
+}
+.layout {
+  display: grid;
+  grid-template-columns: var(--size-navigator) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+}
+.sidebar,
+.detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+}
+.sidebar {
+  border-right: 1px solid var(--border-standard);
+  padding: var(--space-2);
+}
+.navigation {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+.detail {
+  padding: var(--space-6);
+  container-type: inline-size;
+}
+
+@container (max-width: 36rem) {
+  .layout {
+    /* Let wrapped navigation scroll away instead of shrinking the details
+       to nothing in a short window or at large text sizes. */
+    display: block;
+    overflow-y: auto;
+  }
+  .sidebar,
+  .detail {
+    overflow-y: visible;
+  }
+  .sidebar {
+    border-right: 0;
+    border-bottom: 1px solid var(--border-standard);
+  }
+  .navigation {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .detail {
+    padding: var(--space-4);
+  }
+}

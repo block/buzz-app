@@ -1,4 +1,7 @@
-import { IconMoon, IconSun } from "@tabler/icons-react";
+import {
+  MoonIcon,
+  SunIcon,
+} from "../../../../src/shared/design-system/icons/index";
 import { Link, Outlet } from "@tanstack/react-router";
 import { Fragment, type ReactNode } from "react";
 
@@ -30,9 +33,11 @@ const SECTIONS: NavSection[] = [
     items: [
       ["Color", "/design/color", [["Token table", "/design/color/table"]]],
       ["Typography", "/design/typography"],
+      ["Icons", "/design/icons"],
       ["Spacing", "/design/spacing"],
       ["Radius", "/design/radius"],
       ["Elevation", "/design/elevation"],
+      ["Floating surfaces", "/design/floating-surfaces"],
       ["Glass", "/design/glass"],
       ["Motion", "/design/motion"],
       ["Base UI backing", "/design/components/base-ui"],
@@ -41,6 +46,8 @@ const SECTIONS: NavSection[] = [
   {
     heading: "System",
     items: [
+      ["Forms", "/design/forms"],
+      ["Foundation alignment", "/design/foundation-alignment"],
       ["Maintaining the system", "/design/maintaining"],
       ["DESIGN.md", "/design/design-guide"],
       ["AGENTS.md", "/design/agents-guide"],
@@ -51,6 +58,10 @@ const SECTIONS: NavSection[] = [
     items: [
       ["Overview", "/design/components", componentNavItems("components")],
     ],
+  },
+  {
+    heading: "Product patterns",
+    items: [["Messages", "/design/messages"]],
   },
   {
     heading: "Layout playgrounds",
@@ -135,9 +146,9 @@ export function DesignSystemLayout({ children }: { children?: ReactNode }) {
           aria-label={scheme === "dark" ? "Use light mode" : "Use dark mode"}
           icon={
             scheme === "dark" ? (
-              <IconSun size={16} aria-hidden="true" />
+              <SunIcon size={16} aria-hidden="true" />
             ) : (
-              <IconMoon size={16} aria-hidden="true" />
+              <MoonIcon size={16} aria-hidden="true" />
             )
           }
           size="toolbar"

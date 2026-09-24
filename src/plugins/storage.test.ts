@@ -8,6 +8,7 @@ const catalog = (): PluginInfo[] =>
     enabled: true,
     revision: "bundled",
     previous: null,
+    reloadable: false,
     error: null,
   }));
 afterEach(() => vi.unstubAllGlobals());
@@ -40,5 +41,37 @@ it("ignores the retired Welcome setting and changes each bundled plugin independ
     catalog: {
       plugins: [{ enabled: true }, { enabled: false }],
     },
+  });
+});
+
+it("restores required Channels from saved disabled settings and rejects disabling it", async () => {
+  const saved = JSON.stringify({
+    version: 2,
+    enabled: {
+      "buzz.channels": false,
+      "buzz.github": false,
+    },
+  });
+  const values = new Map([["buzzodz.plugins.v1", saved]]);
+  vi.stubGlobal("localStorage", {
+    getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value),
+  });
+  for (let reopen = 0; reopen < 2; reopen++) {
+    const storage = createPluginStorage(catalog);
+    expect(await storage.getCatalog()).toMatchObject({
+      status: "ready",
+      catalog: { plugins: [{ enabled: true }, { enabled: false }] },
+    });
+    await expect(
+      storage.changePlugin("disable", "buzz.channels"),
+    ).rejects.toThrow("Channels is required");
+    expect(values.get("buzzodz.plugins.v1")).toBe(saved);
+  }
+  expect(
+    await createPluginStorage(catalog).changePlugin("enable", "buzz.github"),
+  ).toMatchObject({
+    status: "ready",
+    catalog: { plugins: [{ enabled: true }, { enabled: true }] },
   });
 });

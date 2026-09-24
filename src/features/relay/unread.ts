@@ -5,6 +5,7 @@ import {
   overrideActive,
   targetKey,
   type ReadTarget,
+  type ReadState,
 } from "./read-state-model";
 import type {
   createReadState,
@@ -12,10 +13,13 @@ import type {
   ReadSyncSnapshot,
 } from "./read-state";
 import type { Priority, RelayReader } from "./reader";
+import { foldMessages } from "./fold";
 import { threadReference } from "./thread-reference";
 
 export type UnreadSnapshot = Readonly<{
   target: ReadTarget;
+  /** Latest verified content evidence, including read and self-authored messages. */
+  latestMessage?: Readonly<{ id: string; createdAt: number }>;
   /** null means unobserved/denied, never a fabricated zero or an exact relay total. */
   observedCount: number | null;
   attentionCount: number | null;
@@ -24,14 +28,44 @@ export type UnreadSnapshot = Readonly<{
   manual: "none" | "local-only" | "remote";
   error?: string | undefined;
 }>;
+export type MessageAttention = Readonly<{
+  status: "unknown" | "ineligible" | "eligible";
+  category?: "mention" | "direct" | "thread";
+  rootId?: string;
+  unread: boolean;
+  viewing: boolean;
+}>;
+export type ThreadActivityItem = Readonly<{
+  channelId: string;
+  rootId: string;
+  latestMessageId: string;
+  authorId: string;
+  createdAt: number;
+  preview: string;
+  unreadCount: number;
+}>;
+export type ThreadActivitySnapshot = Readonly<{
+  channelId: string;
+  /** null means activity evidence is unknown or access is denied. */
+  items: readonly ThreadActivityItem[] | null;
+  coverage: "unknown" | "observed";
+  freshness: "unknown" | "observed" | "stale";
+  error?: string | undefined;
+}>;
 export type ReadingHandle = Readonly<{
+  /** Qualified visible rows only. This publishes no read intent and ends with the lease. */
+  view(messageIds: readonly string[], visible: () => boolean): void;
   /** Only message IDs actually visible to the active consumer; no caller timestamps. */
   observe(messageIds: readonly string[]): Promise<void>;
   dispose(): void;
 }>;
 export interface UnreadCapability {
   snapshot(target: ReadTarget): UnreadSnapshot;
+  /** Same verified attention/frontier policy as badges, not a notification event source. */
+  attention(channelId: string, messageId: string): MessageAttention;
   subscribe(target: ReadTarget, listener: () => void): () => void;
+  activity(channelId: string): ThreadActivitySnapshot;
+  subscribeActivity(channelId: string, listener: () => void): () => void;
   sync(): ReadSyncSnapshot;
   subscribeSync(listener: () => void): () => void;
   ensure(): Promise<void>;
@@ -47,11 +81,49 @@ export interface UnreadCapability {
   readonly syncedManualUnread: false;
 }
 const contentKind = (event: RelayEvent) =>
-  event.kind === 9 || event.kind === 40002;
+  event.kind === 9 || event.kind === 40002 || event.kind === 40008;
 const channelOf = (event: RelayEvent) => {
   const tags = event.tags.filter(([name]) => name === "h");
   return tags.length === 1 ? tags[0]?.[1] : undefined;
 };
+const auxiliaryKind = (event: RelayEvent) =>
+  event.kind === 40003 || event.kind === 5 || event.kind === 9005;
+/** Resolve every owning channel through bounded reference-only auxiliary ancestry.
+ * A missing target, cycle, or unsupported intermediary fails closed. */
+function channelOwnership(find: (id: string) => RelayEvent | undefined) {
+  const memo = new Map<string, ReadonlySet<string> | undefined>();
+  const visiting = new Set<string>();
+  function owners(event: RelayEvent): ReadonlySet<string> | undefined {
+    if (memo.has(event.id)) return memo.get(event.id);
+    if (visiting.has(event.id) || visiting.size >= 32) return;
+    visiting.add(event.id);
+    const direct = channelOf(event);
+    let resolved: Set<string> | undefined;
+    if (contentKind(event)) {
+      if (direct) resolved = new Set([direct]);
+    } else if (auxiliaryKind(event)) {
+      resolved = direct ? new Set([direct]) : new Set();
+      const targets = event.tags.flatMap(([name, id]) =>
+        name === "e" && id ? [id] : [],
+      );
+      if (!direct && !targets.length) resolved = undefined;
+      for (const id of targets) {
+        const target = find(id);
+        const inherited = target && owners(target);
+        if (!inherited) {
+          resolved = undefined;
+          break;
+        }
+        for (const channel of inherited) resolved?.add(channel);
+      }
+      if (!resolved?.size) resolved = undefined;
+    }
+    visiting.delete(event.id);
+    memo.set(event.id, resolved);
+    return resolved;
+  }
+  return owners;
+}
 /** Bounded verified evidence and one projection; no sidebar counters, sockets or implicit reads. */
 export function createUnread({
   reads,
@@ -78,7 +150,14 @@ export function createUnread({
   const listeners = new Map<string, Set<() => void>>();
   const snapshots = new Map<string, UnreadSnapshot>();
   const dirty = new Set<string>();
+  const activityListeners = new Map<string, Set<() => void>>();
+  const activitySnapshots = new Map<string, ThreadActivitySnapshot>();
+  const activityDirty = new Set<string>();
   const handles = new Set<() => void>();
+  const views = new Map<
+    () => void,
+    { ids: ReadonlySet<string>; visible: () => boolean }
+  >();
   let bytes = 0;
   const allowed = (id: string) =>
     channels
@@ -154,6 +233,87 @@ export function createUnread({
           root(event) === target.rootId))
     );
   }
+  function isUnread({ event, rootId }: Evidence, state: ReadState) {
+    const channelId = channelOf(event);
+    if (!channelId || event.pubkey === viewer) return false;
+    const frontier = effectiveFrontier(
+      state,
+      `msg:${event.id}`,
+      channelId,
+      rootId,
+    );
+    const forced =
+      overrideActive(state.overrides[`msg:${event.id}`], frontier) ||
+      overrideActive(
+        state.overrides[channelId],
+        effectiveFrontier(state, channelId),
+      ) ||
+      (rootId !== undefined &&
+        overrideActive(
+          state.overrides[`thread:${rootId}`],
+          effectiveFrontier(state, `thread:${rootId}`, channelId),
+        ));
+    return frontier === undefined || event.created_at > frontier || !!forced;
+  }
+  function category(
+    { rootId, mentioned }: Evidence,
+    dm: boolean,
+  ): MessageAttention["category"] {
+    return mentioned
+      ? "mention"
+      : dm
+        ? "direct"
+        : rootId && participants.has(rootId)
+          ? "thread"
+          : undefined;
+  }
+  function priority(entry: Evidence, dm: boolean) {
+    return (
+      !!category(entry, dm) ||
+      entry.event.tags.some(
+        ([name, value]) => name === "broadcast" && value === "1",
+      )
+    );
+  }
+  function attention(channelId: string, messageId: string): MessageAttention {
+    const unknown = Object.freeze({
+      status: "unknown",
+      unread: false,
+      viewing: false,
+    } as const);
+    if (closed || !allowed(channelId)) return unknown;
+    indexEvidence();
+    const event = events.get(messageId);
+    if (!event || channelOf(event) !== channelId || !contentKind(event))
+      return unknown;
+    const entry = byChannel
+      .get(channelId)
+      ?.find((row) => row.event.id === messageId);
+    if (!entry || event.pubkey === viewer)
+      return Object.freeze({
+        status: "ineligible",
+        unread: false,
+        viewing: false,
+      });
+    const dm =
+      channels.list().channels.find((channel) => channel.id === channelId)
+        ?.channelType === "dm";
+    const kind = category(entry, dm);
+    const viewing = [...views.values()].some(
+      (view) => view.ids.has(messageId) && view.visible(),
+    );
+    return Object.freeze({
+      status: kind
+        ? "eligible"
+        : threadReference(event) && !entry.rootId
+          ? "unknown"
+          : "ineligible",
+      ...(kind ? { category: kind } : {}),
+      ...(entry.rootId ? { rootId: entry.rootId } : {}),
+      unread: isUnread(entry, reads.state()),
+      viewing,
+    });
+  }
   function compute(target: ReadTarget): UnreadSnapshot {
     const key = targetKey(target);
     const accessible =
@@ -188,31 +348,19 @@ export function createUnread({
         .channels.find((channel) => channel.id === target.channelId)
         ?.channelType === "dm";
     indexEvidence();
-    for (const { event, rootId, mentioned } of byChannel.get(
-      target.channelId,
-    ) ?? []) {
-      if (event.pubkey === viewer || !inTarget(event, target)) continue;
-      const frontier = effectiveFrontier(
-        state,
-        `msg:${event.id}`,
-        target.channelId,
-        rootId,
-      );
-      const forced =
-        overrideActive(state.overrides[`msg:${event.id}`], frontier) ||
-        overrideActive(
-          state.overrides[target.channelId],
-          effectiveFrontier(state, target.channelId),
-        ) ||
-        (rootId !== undefined &&
-          overrideActive(
-            state.overrides[`thread:${rootId}`],
-            effectiveFrontier(state, `thread:${rootId}`, target.channelId),
-          ));
-      if (frontier !== undefined && event.created_at <= frontier && !forced)
-        continue;
+    let latest: RelayEvent | undefined;
+    for (const entry of byChannel.get(target.channelId) ?? []) {
+      const event = entry.event;
+      if (
+        target.kind === "channel" &&
+        (!latest ||
+          event.created_at > latest.created_at ||
+          (event.created_at === latest.created_at && event.id < latest.id))
+      )
+        latest = event;
+      if (!inTarget(entry.event, target) || !isUnread(entry, state)) continue;
       count++;
-      if (dm || mentioned || (rootId && participants.has(rootId))) attention++;
+      if (priority(entry, dm)) attention++;
     }
     const manual = reads.localUnread(key)
       ? "local-only"
@@ -224,6 +372,9 @@ export function createUnread({
         : "none";
     return Object.freeze({
       target,
+      ...(latest
+        ? { latestMessage: { id: latest.id, createdAt: latest.created_at } }
+        : {}),
       observedCount: evidence ? count : null,
       attentionCount: evidence ? attention : null,
       coverage: evidence ? "observed" : "unknown",
@@ -233,12 +384,118 @@ export function createUnread({
     });
   }
   const equal = (a: UnreadSnapshot, b: UnreadSnapshot) =>
+    a.latestMessage?.id === b.latestMessage?.id &&
     a.observedCount === b.observedCount &&
     a.attentionCount === b.attentionCount &&
     a.coverage === b.coverage &&
     a.freshness === b.freshness &&
     a.manual === b.manual &&
     a.error === b.error;
+  function computeActivity(channelId: string): ThreadActivitySnapshot {
+    if (!allowed(channelId) || !known.has(channelId))
+      return Object.freeze({
+        channelId,
+        items: null,
+        coverage: "unknown",
+        freshness: "unknown",
+      });
+    indexEvidence();
+    const state = reads.state();
+    const grouped = new Map<string, ThreadActivityItem>();
+    const presented = new Map(
+      foldMessages(channelId, "", [...events.values()], {
+        includeReplies: true,
+      }).map((message) => [message.id, message.content]),
+    );
+    for (const evidence of byChannel.get(channelId) ?? []) {
+      const { event, rootId, mentioned } = evidence;
+      const broadcast = event.tags.some(
+        ([name, value]) => name === "broadcast" && value === "1",
+      );
+      if (
+        !rootId ||
+        (!mentioned && !broadcast && !participants.has(rootId)) ||
+        !isUnread(evidence, state)
+      )
+        continue;
+      const current = grouped.get(rootId);
+      const preview = presented.get(event.id) ?? event.content;
+      if (!current) {
+        grouped.set(
+          rootId,
+          Object.freeze({
+            channelId,
+            rootId,
+            latestMessageId: event.id,
+            authorId: event.pubkey,
+            createdAt: event.created_at,
+            preview,
+            unreadCount: 1,
+          }),
+        );
+        continue;
+      }
+      const latest =
+        event.created_at > current.createdAt ||
+        (event.created_at === current.createdAt &&
+          event.id < current.latestMessageId);
+      grouped.set(
+        rootId,
+        Object.freeze({
+          channelId,
+          rootId,
+          latestMessageId: latest ? event.id : current.latestMessageId,
+          authorId: latest ? event.pubkey : current.authorId,
+          createdAt: latest ? event.created_at : current.createdAt,
+          preview: latest ? preview : current.preview,
+          unreadCount: current.unreadCount + 1,
+        }),
+      );
+    }
+    return Object.freeze({
+      channelId,
+      items: Object.freeze(
+        [...grouped.values()].sort(
+          (a, b) =>
+            b.createdAt - a.createdAt ||
+            a.latestMessageId.localeCompare(b.latestMessageId),
+        ),
+      ),
+      coverage: "observed",
+      freshness,
+      ...(error ? { error } : {}),
+    });
+  }
+  const equalActivity = (
+    a: ThreadActivitySnapshot,
+    b: ThreadActivitySnapshot,
+  ) =>
+    a.coverage === b.coverage &&
+    a.freshness === b.freshness &&
+    a.error === b.error &&
+    ((a.items === null && b.items === null) ||
+      (a.items !== null &&
+        b.items !== null &&
+        a.items.length === b.items.length &&
+        a.items.every((item, index) => {
+          const other = b.items?.[index];
+          return (
+            item.rootId === other?.rootId &&
+            item.latestMessageId === other.latestMessageId &&
+            item.authorId === other.authorId &&
+            item.createdAt === other.createdAt &&
+            item.preview === other.preview &&
+            item.unreadCount === other.unreadCount
+          );
+        })));
+  function activity(channelId: string) {
+    const previous = activitySnapshots.get(channelId);
+    if (previous && !activityDirty.delete(channelId)) return previous;
+    const value = computeActivity(channelId);
+    if (previous && equalActivity(previous, value)) return previous;
+    activitySnapshots.set(channelId, value);
+    return value;
+  }
   function snapshot(target: ReadTarget) {
     const key = keyFor(target),
       previous = snapshots.get(key);
@@ -257,9 +514,20 @@ export function createUnread({
     snapshots.set(key, value);
     return value;
   }
+  function addActivityListener(channelId: string, listener: () => void) {
+    activity(channelId);
+    const set = activityListeners.get(channelId) ?? new Set();
+    set.add(listener);
+    activityListeners.set(channelId, set);
+    return () => {
+      set.delete(listener);
+      if (!set.size) activityListeners.delete(channelId);
+    };
+  }
   function publish(channelIds?: ReadonlySet<string>) {
     if (closed) return;
     const changed: string[] = [];
+    const changedActivity: string[] = [];
     for (const [key, old] of snapshots) {
       if (channelIds && !channelIds.has(old.target.channelId)) continue;
       // Revisit dormant selectors lazily, retaining identity if unchanged.
@@ -273,9 +541,24 @@ export function createUnread({
         changed.push(key);
       }
     }
+    for (const [channelId, old] of activitySnapshots) {
+      if (channelIds && !channelIds.has(channelId)) continue;
+      if (!activityListeners.has(channelId)) {
+        activityDirty.add(channelId);
+        continue;
+      }
+      const next = computeActivity(channelId);
+      if (!equalActivity(old, next)) {
+        activitySnapshots.set(channelId, next);
+        changedActivity.push(channelId);
+      }
+    }
     // Replace/invalidate ALL affected projections before any reentrant callback.
     for (const key of changed)
       for (const listener of listeners.get(key) ?? []) notify(listener);
+    for (const channelId of changedActivity)
+      for (const listener of activityListeners.get(channelId) ?? [])
+        notify(listener);
   }
   const stopRead = reads.subscribe(publish);
   function purge() {
@@ -283,22 +566,11 @@ export function createUnread({
     epoch++;
     const denied = new Set([...known].filter((channel) => !allowed(channel)));
     for (const channel of denied) known.delete(channel);
-    for (const [id, event] of events) {
-      const channel = channelOf(event);
-      if (
-        channel
-          ? !allowed(channel)
-          : !event.tags.some(
-              ([name, value]) =>
-                name === "e" &&
-                value &&
-                (() => {
-                  const target = events.get(value);
-                  const owner = target && channelOf(target);
-                  return owner && allowed(owner);
-                })(),
-            )
-      )
+    const retained = new Map(events);
+    const owners = channelOwnership((targetId) => retained.get(targetId));
+    for (const [id, event] of retained) {
+      const channels = owners(event);
+      if (!channels || [...channels].some((channel) => !allowed(channel)))
         events.delete(id);
     }
     indexed = false;
@@ -363,7 +635,7 @@ export function createUnread({
           const result = await reader.read(
             [
               {
-                kinds: [9, 40002],
+                kinds: [9, 40002, 40008],
                 "#h": ids.slice(offset, offset + 128),
                 include_aux: true,
                 limit: 500,
@@ -394,19 +666,16 @@ export function createUnread({
     const changed = new Set<string>();
     indexed = false;
     const incoming = new Map(batch.map((event) => [event.id, event]));
+    const owners = channelOwnership((id) => incoming.get(id) ?? events.get(id));
     for (const event of batch) {
-      if (![9, 40002, 5, 9005].includes(event.kind) || events.has(event.id))
+      if (
+        ![9, 40002, 40008, 40003, 5, 9005].includes(event.kind) ||
+        events.has(event.id)
+      )
         continue;
-      const channel =
-        channelOf(event) ??
-        event.tags
-          .flatMap(([name, value]) =>
-            name === "e" && value
-              ? [channelOf(incoming.get(value) ?? events.get(value) ?? event)]
-              : [],
-          )
-          .find(Boolean);
-      if (!channel || !allowed(channel)) continue;
+      const channels = owners(event);
+      if (!channels || [...channels].some((channel) => !allowed(channel)))
+        continue;
       const size = new TextEncoder().encode(JSON.stringify(event)).byteLength;
       if (events.size >= 4096 || bytes + size > 8 * 1024 * 1024) {
         events.clear();
@@ -419,17 +688,12 @@ export function createUnread({
       }
       events.set(event.id, event);
       bytes += size;
-      known.add(channel);
-      changed.add(channel);
-      // A signed deletion may target readable messages in several channels.
-      // Invalidate every affected projection, not only its explicit/first owner.
-      if (event.kind === 5 || event.kind === 9005)
-        for (const [name, id] of event.tags) {
-          const target =
-            name === "e" && id && (incoming.get(id) ?? events.get(id));
-          const affected = target && channelOf(target);
-          if (affected) changed.add(affected);
-        }
+      for (const channel of channels) {
+        known.add(channel);
+        changed.add(channel);
+      }
+      // The recursively resolved owner set already includes every activity
+      // projection affected by a deletion, including delete-of-edit chains.
     }
     if (changed.size) {
       const global = freshness !== "observed";
@@ -465,6 +729,7 @@ export function createUnread({
   }
   const capability: UnreadCapability = Object.freeze<UnreadCapability>({
     snapshot,
+    attention,
     subscribe(target, listener) {
       snapshot(target);
       const key = keyFor(target),
@@ -476,6 +741,8 @@ export function createUnread({
         if (!set.size) listeners.delete(key);
       };
     },
+    activity,
+    subscribeActivity: addActivityListener,
     sync: reads.snapshot,
     subscribeSync: reads.subscribe,
     ensure: () => refresh ?? (requested ? Promise.resolve() : repair()),
@@ -498,6 +765,7 @@ export function createUnread({
       const dispose = () => {
         active = false;
         handles.delete(dispose);
+        views.delete(dispose);
       };
       const valid = () =>
         active &&
@@ -508,6 +776,21 @@ export function createUnread({
       handles.add(dispose);
       return Object.freeze({
         dispose,
+        view(ids: readonly string[], visible: () => boolean) {
+          if (!valid() || ids.length > 128) return;
+          const verified = ids.filter((id) => {
+            try {
+              requireMessage({ kind: "message", channelId, messageId: id }, id);
+              return true;
+            } catch {
+              return false;
+            }
+          });
+          views.set(dispose, {
+            ids: new Set(verified),
+            visible: () => valid() && visible(),
+          });
+        },
         async observe(ids: readonly string[]) {
           if (!valid() || ids.length > 128) return;
           for (const id of ids) {
@@ -572,12 +855,16 @@ export function createUnread({
   return {
     capability,
     // Private session evidence lookup; never seeds timeline windows or grants access.
+    // Reference-only auxiliaries inherit every owning channel through the same
+    // bounded, fail-closed ancestry used for retention.
     event(id: string) {
+      if (closed) return;
       const event = events.get(id);
-      const channel = event && channelOf(event);
-      return !closed && event && channel && allowed(channel)
-        ? event
-        : undefined;
+      if (!event) return;
+      const owners = channelOwnership((targetId) => events.get(targetId))(
+        event,
+      );
+      return owners && [...owners].every(allowed) ? event : undefined;
     },
     accept,
     purge,
@@ -610,6 +897,9 @@ export function createUnread({
       listeners.clear();
       snapshots.clear();
       dirty.clear();
+      activityListeners.clear();
+      activitySnapshots.clear();
+      activityDirty.clear();
       events.clear();
       reads.dispose();
     },

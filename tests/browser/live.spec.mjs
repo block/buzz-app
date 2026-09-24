@@ -1,7 +1,10 @@
 import { test, expect } from "./fixture.mjs";
 import { open, settle, upper, expectAnchor, end, anchor } from "./timeline.mjs";
 
-test.use({ productionBroker: true });
+test.use({
+  productionBroker: true,
+  historyCounts: { alpha: 640, beta: 20 },
+});
 const history = (page) =>
   page.getByRole("region", { name: "Channel message history" });
 const retry = (page) =>
@@ -76,7 +79,9 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await retry(page).click();
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(
-    page.getByRole("status").filter({ hasText: "rate-limited" }),
+    page
+      .getByRole("dialog", { name: "Live updates need attention", exact: true })
+      .filter({ hasText: "rate-limited" }),
   ).toBeVisible();
   const calls = heads(app, "alpha").length;
   await retry(page).click();
@@ -97,7 +102,7 @@ test("production WS → broker → mounted UI delivers messages and retries a pa
   await expectAnchor(page, reading);
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
-  ).toHaveValue("Keep my draft");
+  ).toHaveJSProperty("value", "Keep my draft");
   await end(page);
   await expect(
     history(page).locator(`[data-message-id="${missed.id}"]`),
@@ -165,14 +170,21 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
     .click();
   await expect.poll(() => app.relay.rejected.length).toBe(1);
   await expect(
-    page.getByRole("status").filter({ hasText: "rate-limited" }),
+    page
+      .getByRole("dialog", { name: "Live updates need attention", exact: true })
+      .filter({ hasText: "rate-limited" }),
   ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCount(0);
   const globals = () =>
-    app.relay.requests.filter(({ filter }) => !filter["#h"]);
+    app.relay.requests.filter(
+      ({ filter }) => !filter["#h"] && !filter.kinds.includes(24200),
+    );
+  const observer = () =>
+    app.relay.requests.filter(({ filter }) => filter.kinds.includes(24200));
   await expect.poll(() => globals().length).toBe(2);
+  await expect.poll(() => observer().length).toBe(1);
   const sockets = app.relay.sockets.length;
   const rosters = () =>
     app.report.queries.filter(({ filter }) => filter.kinds?.includes(39002));
@@ -191,4 +203,10 @@ test("Live retry recovers an empty paused roster without restarting healthy glob
   expect(rosters()).toHaveLength(calls + 1);
   expect(app.relay.sockets).toHaveLength(sockets);
   expect(globals()).toHaveLength(2);
+  // The first authoritative (empty) roster resets activity's access generation.
+  // Only its live-only route is renewed; healthy chat globals stay untouched.
+  await expect.poll(() => observer().length).toBe(2);
+  expect(observer()[1].filter.since).toBeGreaterThanOrEqual(
+    observer()[0].filter.since,
+  );
 });

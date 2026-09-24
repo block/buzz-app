@@ -1,0 +1,1362 @@
+import {
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type KeyboardEvent,
+  type RefObject,
+  type HTMLAttributes,
+} from "react";
+import { createPortal } from "react-dom";
+import {
+  EditorState,
+  Plugin,
+  Selection,
+  AllSelection,
+  TextSelection,
+  type Transaction,
+} from "prosemirror-state";
+import { EditorView, Decoration, DecorationSet } from "prosemirror-view";
+import {
+  history,
+  undo,
+  redo,
+  closeHistory,
+  isHistoryTransaction,
+} from "prosemirror-history";
+import {
+  toggleMark,
+  joinBackward,
+  joinForward,
+  deleteSelection,
+  selectAll,
+} from "prosemirror-commands";
+import { sinkListItem, liftListItem } from "prosemirror-schema-list";
+import { Fragment } from "prosemirror-model";
+import {
+  composerSchema,
+  readComposerDocument,
+  projectComposerDocument,
+  composerMarkdownContext,
+  markdownRanges,
+} from "./composer-document";
+import {
+  activeBlockFormats,
+  toggleComposerBlock,
+  composerBlockLineBreak,
+} from "./composer-blocks";
+import { composerLinkLabel } from "./composer-link-label";
+import { applyComposerCodeInput } from "./composer-code-input";
+import { composerMarkdown } from "./composer-markdown";
+import {
+  mentionDraft,
+  type MentionDraft,
+  type MentionRecipient,
+} from "./mention-draft";
+import {
+  inlineFormats,
+  blockFormats,
+  composerFormats,
+  type ComposerFormat,
+  type ComposerLinkEdit,
+  type ComposerInputElement,
+} from "./composer-dom";
+import { isApplePlatform } from "../shortcuts/format";
+import { composerLinkUrl } from "./composer-link";
+import { messageLinkParts } from "./message-link-parts";
+import { updatePlainLinks, type PlainLink } from "./composer-link-edit";
+import "prosemirror-view/style/prosemirror.css";
+import styles from "./EditableInput.module.css";
+
+export type EditorDecoration = {
+  start: number;
+  end: number;
+  content: ReactNode;
+  editAsText?: boolean;
+};
+export type EditableInputProps = Omit<
+  HTMLAttributes<ComposerInputElement>,
+  "onChange" | "onInput"
+> & {
+  ref: RefObject<ComposerInputElement | null>;
+  value: string;
+  disabled: boolean;
+  placeholder: string;
+  maxLength: number;
+  onDraftChange(draft: MentionDraft): void;
+  onFormatsChange(active: readonly ComposerFormat[]): void;
+  onEditLink?(edit: ComposerLinkEdit): void;
+};
+
+/** ProseMirror owns native editing, composition, selection and a single history.
+ * React owns only the noneditable token artwork and the surrounding composer. */
+export function EditableInput({
+  ref,
+  draft,
+  decorationsFor,
+  value: _value,
+  disabled,
+  placeholder,
+  maxLength,
+  onDraftChange,
+  onFormatsChange,
+  onEditLink,
+  ...events
+}: EditableInputProps & {
+  draft: MentionDraft;
+  decorationsFor(draft: MentionDraft): readonly EditorDecoration[];
+}) {
+  const mount = useRef<HTMLDivElement>(null);
+  const view = useRef<EditorView | null>(null);
+  const current = useRef({
+    draft,
+    decorationsFor,
+    maxLength,
+    onDraftChange,
+    onFormatsChange,
+    onEditLink,
+    disabled,
+    placeholder,
+  });
+  current.current = {
+    draft,
+    decorationsFor,
+    maxLength,
+    onDraftChange,
+    onFormatsChange,
+    onEditLink,
+    disabled,
+    placeholder,
+  };
+  const hosts = useRef(
+    new Map<HTMLElement, { source: string; position(): number | undefined }>(),
+  );
+  const [, refresh] = useState(0);
+  const scrollAfterTokens = useRef(false);
+  const composing = useRef(false);
+  const plain = useRef<PlainLink[]>([]);
+  const locked = useRef(false);
+  const emitted = useRef(draft);
+  const api = useRef<{
+    sync(draft: MentionDraft, reset?: boolean): void;
+  } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!mount.current) return;
+    const initial = readComposerDocument(
+      current.current.draft,
+      current.current.decorationsFor(current.current.draft),
+    );
+    let editor: EditorView;
+    let separateHistory = false;
+    const editable = () => !current.current.disabled && !locked.current;
+    const projection = () => projectComposerDocument(editor.state.doc);
+    const tokenViews = () => refresh((revision) => revision + 1);
+    const selected = () => {
+      const { from, to, empty, $from } = editor.state.selection;
+      const active = inlineFormats
+        .filter(({ mark }) => {
+          const type = composerSchema.marks[mark];
+          let present = empty
+            ? !!type.isInSet(editor.state.storedMarks ?? $from.marks())
+            : true;
+          if (!empty)
+            editor.state.doc.nodesBetween(from, to, (node) => {
+              if (node.isInline && !type.isInSet(node.marks)) present = false;
+            });
+          return present;
+        })
+        .map(({ mark }) => mark);
+      current.current.onFormatsChange([
+        ...active,
+        ...activeBlockFormats(editor.state),
+      ]);
+      editor.dom.dispatchEvent(new Event("select"));
+    };
+    const normalize = new Plugin({
+      filterTransaction(tr) {
+        return (
+          !tr.docChanged ||
+          composerMarkdown(projectComposerDocument(tr.doc).draft).length <=
+            current.current.maxLength
+        );
+      },
+      appendTransaction(transactions, old, state) {
+        if (
+          !transactions.some(
+            (tr) => tr.docChanged || tr.getMeta("composer-decorations"),
+          ) ||
+          transactions.some((tr) => tr.getMeta("composer-normalized"))
+        )
+          return;
+        const before = projectComposerDocument(old.doc);
+        const next = projectComposerDocument(state.doc);
+        plain.current = updatePlainLinks(
+          before.draft.text,
+          next.draft.text,
+          before.tokens.filter((token) => token.editAsText),
+          plain.current,
+          transactions
+            .find((tr) => tr.getMeta("composer-edit"))
+            ?.getMeta("composer-edit"),
+        );
+        const safe = mentionDraft(next.draft);
+        const decorations = current.current
+          .decorationsFor(safe)
+          .filter((item) => {
+            const from = next.position(item.start),
+              to = next.position(item.end, -1);
+            if (
+              next.blocks.some(
+                (block) => block.code && from >= block.from && to <= block.to,
+              )
+            )
+              return false;
+            return (
+              (safe.recipients.some(
+                (recipient) =>
+                  recipient.start === item.start && recipient.end === item.end,
+              ) ||
+                !state.doc.rangeHasMark(
+                  from,
+                  to,
+                  composerSchema.marks.literal,
+                )) &&
+              !state.doc.rangeHasMark(from, to, composerSchema.marks.code) &&
+              !state.doc.rangeHasMark(from, to, composerSchema.marks.link) &&
+              !plain.current.some(
+                (range) => item.start < range.end && item.end > range.start,
+              )
+            );
+          });
+        const tr = state.tr;
+        // Only adopt newly recognized tokens. Never rebuild editable text from
+        // Markdown here: that would discard stored marks/whitespace on each key.
+        for (const item of [...decorations].reverse()) {
+          if (
+            next.tokens.some(
+              (token) => token.start === item.start && token.end === item.end,
+            )
+          )
+            continue;
+          const from = next.position(item.start),
+            to = next.position(item.end, -1);
+          if (next.source(from) !== item.start || next.source(to) !== item.end)
+            continue;
+          tr.replaceWith(
+            from,
+            to,
+            composerSchema.nodes.token.create(
+              {
+                source: safe.text.slice(item.start, item.end),
+                editAsText: !!item.editAsText,
+                recipient:
+                  safe.recipients.find(
+                    (recipient) =>
+                      recipient.start === item.start &&
+                      recipient.end === item.end,
+                  ) ?? null,
+              },
+              null,
+              state.doc.resolve(from).marks(),
+            ),
+          );
+        }
+        // An edit at a mention boundary can invalidate identity without touching
+        // the atom itself. Remove only that provenance, in the same history event.
+        for (const token of next.tokens) {
+          if (
+            !token.node.attrs.recipient ||
+            safe.recipients.some(
+              (item) => item.start === token.start && item.end === token.end,
+            )
+          )
+            continue;
+          const from = tr.mapping.map(token.from),
+            to = tr.mapping.map(token.to);
+          tr.replaceWith(
+            from,
+            to,
+            composerSchema.text(token.node.attrs.source, token.node.marks),
+          );
+        }
+        if (!tr.docChanged) return;
+        if (state.storedMarks) tr.setStoredMarks(state.storedMarks);
+        return tr.setMeta("composer-normalized", true);
+      },
+      props: {
+        decorations(state) {
+          const { from, to } = state.selection;
+          const ranges: Decoration[] = [];
+          if (!projectComposerDocument(state.doc).draft.text) {
+            state.doc.descendants((node, pos) => {
+              if (node.isTextblock) {
+                ranges.push(
+                  Decoration.node(pos, pos + node.nodeSize, {
+                    "data-placeholder": current.current.placeholder,
+                  }),
+                );
+                return false;
+              }
+            });
+          }
+          state.doc.descendants((node, pos) => {
+            if (
+              node.type.name === "token" &&
+              from < to &&
+              from <= pos &&
+              to >= pos + node.nodeSize
+            )
+              ranges.push(
+                Decoration.node(pos, pos + node.nodeSize, {
+                  "data-editor-selected": "",
+                }),
+              );
+          });
+          return DecorationSet.create(state.doc, ranges);
+        },
+      },
+    });
+    const state = (doc = initial) =>
+      EditorState.create({ doc, plugins: [history(), normalize] });
+    const setRange = (start: number, end: number, direction?: string) => {
+      openTokens(start, end);
+      const source = projection();
+      const first = source.position(start),
+        last = source.position(end, -1);
+      editor.dispatch(
+        closeHistory(editor.state.tr).setSelection(
+          TextSelection.create(
+            editor.state.doc,
+            direction === "backward" ? last : first,
+            direction === "backward" ? first : last,
+          ),
+        ),
+      );
+    };
+    const openTokens = (start: number, end: number) => {
+      const source = projection();
+      const inside = source.tokens.filter(
+        (token) =>
+          (start > token.start && start < token.end) ||
+          (end > token.start && end < token.end),
+      );
+      if (!inside.length) return;
+      const tr = editor.state.tr;
+      for (const token of inside.reverse()) {
+        plain.current.push({ start: token.start, end: token.end });
+        tr.replaceWith(
+          token.from,
+          token.to,
+          composerSchema.text(
+            token.node.attrs.source,
+            token.node.attrs.recipient
+              ? [
+                  ...token.node.marks,
+                  composerSchema.marks.recipient.create(
+                    token.node.attrs.recipient,
+                  ),
+                ]
+              : token.node.marks,
+          ),
+        );
+      }
+      editor.dispatch(
+        tr.setMeta("composer-normalized", true).setMeta("addToHistory", false),
+      );
+    };
+    const insert = (
+      text: string,
+      recipient?: MentionRecipient,
+      range?: { start: number; end: number },
+    ) => {
+      if (!editable() || composing.current) return false;
+      if (range) setRange(range.start, range.end);
+      const { from, to, $from } = editor.state.selection;
+      const marks = $from.parent.type
+        .allowedMarks(editor.state.storedMarks ?? $from.marks())
+        .filter((mark) => mark.type !== composerSchema.marks.recipient);
+      text = text.replace(/\r\n?/g, "\n");
+      const tr = closeHistory(editor.state.tr);
+      if (recipient) {
+        const token = $from.parent.type.spec.code
+          ? composerSchema.text(`@${recipient.name}`, [
+              composerSchema.marks.recipient.create(recipient),
+            ])
+          : composerSchema.nodes.token.create(
+              { source: `@${recipient.name}`, recipient, editAsText: false },
+              null,
+              marks,
+            );
+        tr.replaceWith(
+          from,
+          to,
+          Fragment.fromArray([token, composerSchema.text(" ", marks)]),
+        );
+      } else if (text)
+        tr.replaceWith(from, to, composerSchema.text(text, marks));
+      else tr.delete(from, to);
+      tr.setSelection(
+        Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
+      );
+      if (
+        text &&
+        composerSchema.marks.code.isInSet(editor.state.storedMarks ?? [])
+      )
+        tr.setStoredMarks(marks);
+      if (
+        composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+        current.current.maxLength
+      )
+        return false;
+      editor.dispatch(tr.scrollIntoView());
+      editor.focus();
+      return true;
+    };
+    const toggleFormat = (format: ComposerFormat) => {
+      if (!editable() || composing.current || editor.composing) return;
+      // Formatting operates on textblock contents, not the document's outer edges.
+      if (editor.state.selection instanceof AllSelection) {
+        const doc = editor.state.doc;
+        editor.dispatch(
+          editor.state.tr.setSelection(
+            TextSelection.between(
+              Selection.atStart(doc).$from,
+              Selection.atEnd(doc).$to,
+            ),
+          ),
+        );
+      }
+      const block = blockFormats.find((item) => item.mark === format);
+      if (block) {
+        const tr = toggleComposerBlock(editor.state, block.mark);
+        if (tr) editor.dispatch(closeHistory(tr).scrollIntoView());
+        editor.focus();
+        return;
+      }
+      if (
+        format === "spoiler" &&
+        editor.state.selection.empty &&
+        editor.state.doc.textContent.trim()
+      ) {
+        const original = editor.state.selection;
+        const selection = TextSelection.between(
+          Selection.atStart(editor.state.doc).$from,
+          Selection.atEnd(editor.state.doc).$to,
+        );
+        const state = EditorState.create({ doc: editor.state.doc, selection });
+        toggleMark(composerSchema.marks.spoiler, null, {
+          removeWhenPresent: false,
+        })(state, (tr) =>
+          editor.dispatch(
+            closeHistory(tr.setSelection(original.map(tr.doc, tr.mapping))),
+          ),
+        );
+        editor.focus();
+        return;
+      }
+      if (editor.state.selection.$from.parent.type.spec.code) return;
+      const source = projection();
+      const { from, to } = editor.state.selection;
+      // Existing Markdown code stays literal for other formats. Explicit inline
+      // code treats the selected characters literally, with no fence input rule.
+      if (
+        format !== "code" &&
+        markdownRanges(
+          composerMarkdownContext(editor.state.doc, source).text,
+        ).literal.some(
+          (range) =>
+            source.source(from) < range.end && source.source(to) >= range.start,
+        )
+      )
+        return;
+      if (format === "code" && !editor.state.selection.empty) {
+        // A source token becomes literal editable text inside code. Preserve
+        // explicit mention provenance, and put conversion + mark in one undo step.
+        const tr = editor.state.tr;
+        for (const token of [...source.tokens].reverse()) {
+          if (token.from < from || token.to > to) continue;
+          const marks = token.node.attrs.recipient
+            ? [
+                ...token.node.marks,
+                composerSchema.marks.recipient.create(
+                  token.node.attrs.recipient,
+                ),
+              ]
+            : token.node.marks;
+          tr.replaceWith(
+            token.from,
+            token.to,
+            composerSchema.text(token.node.attrs.source, marks),
+          );
+        }
+        if (tr.docChanged) {
+          const state = EditorState.create({
+            doc: tr.doc,
+            selection: tr.selection,
+          });
+          toggleMark(composerSchema.marks.code, null, {
+            removeWhenPresent: false,
+          })(state, (mark) => {
+            for (const step of mark.steps) tr.step(step);
+          });
+          editor.dispatch(closeHistory(tr));
+          editor.focus();
+          return;
+        }
+      }
+      const mark = composerSchema.marks[format];
+      if (!mark) return;
+      toggleMark(mark, null, {
+        removeWhenPresent: false,
+      })(editor.state, (tr) => editor.dispatch(closeHistory(tr)));
+      editor.focus();
+    };
+    const editLink = (): ComposerLinkEdit | null => {
+      if (!editable() || composing.current || editor.composing) return null;
+      const doc = editor.state.doc,
+        source = projection();
+      const context = composerMarkdownContext(doc, source);
+      const literals = markdownRanges(context.text).literal;
+      let { from, to } = editor.state.selection;
+      if (editor.state.selection instanceof AllSelection) {
+        from = Selection.atStart(doc).from;
+        to = Selection.atEnd(doc).to;
+      }
+      if (doc.resolve(from).parent.type.spec.code) return null;
+      const link = composerSchema.marks.link;
+      let href = "",
+        text = "",
+        sourceLink = false;
+      let labelContent: Fragment | undefined;
+      const spans: { from: number; to: number; href: string }[] = [];
+      doc.descendants((node, position) => {
+        const mark = link.isInSet(node.marks);
+        if (!node.isInline || !mark) return;
+        const last = spans.at(-1);
+        if (last?.to === position && last.href === mark.attrs.href)
+          last.to += node.nodeSize;
+        else
+          spans.push({
+            from: position,
+            to: position + node.nodeSize,
+            href: mark.attrs.href,
+          });
+      });
+      const existing = spans.find((span) => from >= span.from && to <= span.to);
+      if (existing) {
+        from = existing.from;
+        to = existing.to;
+        href = existing.href;
+      } else {
+        // Preserve the current raw/pasted-link representation until it is edited
+        // explicitly; the formatting dialog can adopt it without a global migration.
+        const start = source.source(from),
+          end = source.source(to);
+        messageLinkParts(context.text, undefined, (first, last, url) => {
+          if (sourceLink || start < first || end > last) return;
+          if (
+            [...literals, ...context.protected].some(
+              (range) => first < range.end && last > range.start,
+            )
+          )
+            return;
+          from = source.position(first);
+          to = source.position(last, -1);
+          href = url;
+          const raw = source.draft.text.slice(first, last);
+          const label = composerLinkLabel(
+            raw,
+            doc.nodeAt(from)?.marks ?? doc.resolve(from).marks(),
+          );
+          labelContent = label;
+          text = label.textBetween(0, label.size, "\n");
+          sourceLink = true;
+        });
+      }
+      if (!sourceLink)
+        text = source.draft.text.slice(source.source(from), source.source(to));
+      // Inline code is literal, not a nested hyperlink. Block syntax stays source.
+      if (
+        source.blocks.some(
+          (block) => block.code && from < block.to && to > block.from,
+        ) ||
+        doc.rangeHasMark(from, to, composerSchema.marks.code) ||
+        (from === to &&
+          composerSchema.marks.code.isInSet(
+            editor.state.storedMarks ?? doc.resolve(from).marks(),
+          )) ||
+        literals.some(
+          (range) =>
+            source.source(from) < range.end && source.source(to) >= range.start,
+        )
+      )
+        return null;
+      let applied = false;
+      const commit = (label: string, destination?: string) => {
+        // Dialog callbacks are valid only for the document that supplied the range.
+        if (
+          applied ||
+          !editable() ||
+          editor.state.doc !== doc ||
+          view.current !== editor ||
+          composing.current
+        )
+          return false;
+        const url =
+          destination === undefined ? undefined : composerLinkUrl(destination);
+        if (destination !== undefined && !url) return false;
+        const value = label || url || text;
+        if (!value || /[\r\n]/.test(value)) return false;
+        const tr = closeHistory(editor.state.tr);
+        const replace = sourceLink || value !== text || from === to;
+        if (replace) {
+          const marks = doc
+            .resolve(from)
+            .marks()
+            .filter(
+              (mark) =>
+                ![
+                  link,
+                  composerSchema.marks.code,
+                  composerSchema.marks.recipient,
+                ].includes(mark.type),
+            );
+          tr.replaceWith(
+            from,
+            to,
+            sourceLink && value === text && labelContent
+              ? labelContent
+              : composerSchema.text(value, marks),
+          );
+        }
+        const end = replace ? from + value.length : to;
+        tr.removeMark(from, end, link);
+        tr.addMark(from, end, composerSchema.marks.literal.create());
+        if (url) tr.addMark(from, end, link.create({ href: url }));
+        tr.setSelection(TextSelection.create(tr.doc, end));
+        tr.setStoredMarks(
+          tr.doc
+            .resolve(end)
+            .marks()
+            .filter(
+              (mark) =>
+                ![
+                  link,
+                  composerSchema.marks.literal,
+                  composerSchema.marks.recipient,
+                ].includes(mark.type),
+            ),
+        );
+        if (
+          composerMarkdown(projectComposerDocument(tr.doc).draft).length >
+          current.current.maxLength
+        )
+          return false;
+        applied = true;
+        editor.dispatch(tr.scrollIntoView());
+        return true;
+      };
+      return {
+        text,
+        href,
+        existing: !!href,
+        save: (label, url) => commit(label, url),
+        remove: () => commit(text),
+      };
+    };
+    const copySelection = (from: number, to: number) => {
+      const content = editor.state.doc.slice(from, to, true).content;
+      const doc = composerSchema.nodes.doc.create(
+        null,
+        content.firstChild?.isBlock
+          ? content
+          : composerSchema.nodes.paragraph.create(null, content),
+      );
+      return composerMarkdown(projectComposerDocument(doc).draft);
+    };
+    const historyCommand = (forward: boolean) => {
+      if (!editable() || composing.current || editor.composing) return;
+      (forward ? redo : undo)(editor.state, editor.dispatch);
+      editor.focus();
+    };
+    const syncNativeSelection = () => {
+      const selection = editor.dom.ownerDocument.getSelection();
+      if (
+        !selection?.anchorNode ||
+        !selection.focusNode ||
+        !editor.dom.contains(selection.anchorNode) ||
+        !editor.dom.contains(selection.focusNode)
+      )
+        return;
+      const position = (node: Node, offset: number) => {
+        for (const [element, host] of hosts.current) {
+          if (element.contains(node)) {
+            const pos = host.position();
+            if (pos !== undefined) return pos + 1;
+          }
+        }
+        return editor.posAtDOM(node, offset);
+      };
+      const anchor = position(selection.anchorNode, selection.anchorOffset);
+      const head = position(selection.focusNode, selection.focusOffset);
+      const doc = editor.state.doc;
+      // DOM select-all may end at text nodes or at the editor's child boundaries.
+      // Preserve whole-document intent so deletion also clears block structure.
+      const all =
+        anchor !== head &&
+        Math.min(anchor, head) <= Selection.atStart(doc).from &&
+        Math.max(anchor, head) >= Selection.atEnd(doc).to;
+      const text = TextSelection.between(
+        doc.resolve(anchor),
+        doc.resolve(head),
+      );
+      // A Shift+Arrow range covering all inline content still has a direction.
+      // Do not turn an already-synchronized editor range into AllSelection.
+      if (text.eq(editor.state.selection)) return;
+      const next = all ? new AllSelection(doc) : text;
+      if (!next.eq(editor.state.selection))
+        editor.dispatch(editor.state.tr.setSelection(next));
+    };
+    const adjacent = (backward: boolean, arrow: boolean, extend: boolean) => {
+      const { from, to, head, anchor, empty } = editor.state.selection;
+      if (!empty) {
+        if (arrow && !extend) {
+          editor.dispatch(
+            editor.state.tr.setSelection(
+              Selection.near(
+                editor.state.doc.resolve(backward ? from : to),
+                backward ? 1 : -1,
+              ),
+            ),
+          );
+          return true;
+        }
+        if (!arrow || !extend) return false;
+      }
+      const source = projection();
+      const token = source.tokens.find(
+        (token) => head === (backward ? token.to : token.from),
+      );
+      if (!token) return false;
+      if (!token.editAsText) {
+        editor.dispatch(
+          editor.state.tr.setSelection(
+            TextSelection.create(
+              editor.state.doc,
+              arrow && !extend ? (backward ? token.from : token.to) : anchor,
+              backward ? token.from : token.to,
+            ),
+          ),
+        );
+        return arrow;
+      }
+      if (!empty) return false;
+      plain.current.push({ start: token.start, end: token.end });
+      const tr = editor.state.tr.replaceWith(
+        token.from,
+        token.to,
+        composerSchema.text(token.node.attrs.source, token.node.marks),
+      );
+      const edge = token.from + (backward ? token.node.attrs.source.length : 0);
+      const next = arrow ? edge + (backward ? -1 : 1) : edge;
+      tr.setSelection(
+        TextSelection.create(tr.doc, arrow && extend ? edge : next, next),
+      );
+      editor.dispatch(
+        tr.setMeta("composer-normalized", true).setMeta("addToHistory", false),
+      );
+      return arrow;
+    };
+    editor = new EditorView(
+      { mount: mount.current },
+      {
+        state: state(),
+        editable,
+        attributes: {
+          role: "textbox",
+          "aria-multiline": "true",
+          class: styles.input ?? "",
+          // Keep spelling hints, but do not let native suggestions rewrite rich text.
+          spellcheck: "true",
+          autocorrect: "off",
+          autocapitalize: "off",
+          autocomplete: "off",
+          writingsuggestions: "false",
+        },
+        dispatchTransaction(tr: Transaction) {
+          if (tr.docChanged && separateHistory) {
+            closeHistory(tr);
+            separateHistory = false;
+          }
+          const previous = editor.state;
+          // Native Backspace drops noninclusive marks via marksAcross. Keep an
+          // explicit Code-on mode only for a pure deletion beside surviving code;
+          // clearing the span and undo/redo must retain their own mark semantics.
+          const code = composerSchema.marks.code;
+          if (
+            tr.docChanged &&
+            code.isInSet(previous.storedMarks ?? []) &&
+            !isHistoryTransaction(tr)
+          ) {
+            let deleted = false,
+              inserted = false;
+            for (const map of tr.mapping.maps)
+              map.forEach((from, to, nextFrom, nextTo) => {
+                deleted ||= to > from;
+                inserted ||= nextTo > nextFrom;
+              });
+            const { empty, $from } = tr.selection;
+            if (
+              deleted &&
+              !inserted &&
+              empty &&
+              [$from.nodeBefore, $from.nodeAfter].some(
+                (node) => node && code.isInSet(node.marks),
+              )
+            )
+              tr.addStoredMark(code.create());
+          }
+          const next = previous.applyTransaction(tr).state;
+          if (previous === next) {
+            editor.updateState(previous);
+            return;
+          }
+          editor.updateState(next);
+          if (tr.docChanged) {
+            scrollAfterTokens.current ||=
+              tr.scrolledIntoView && hosts.current.size > 0;
+            emitted.current = projection().draft;
+            current.current.onDraftChange(emitted.current);
+            tokenViews();
+          }
+          selected();
+        },
+        nodeViews: {
+          token(node, _view, getPos) {
+            const dom = document.createElement("span");
+            dom.className = styles.token ?? "";
+            dom.contentEditable = "false";
+            dom.dataset.source = node.attrs.source;
+            hosts.current.set(dom, {
+              source: node.attrs.source,
+              position: getPos,
+            });
+            return {
+              dom,
+              ignoreMutation: () => true,
+              destroy() {
+                hosts.current.delete(dom);
+              },
+            };
+          },
+        },
+        handleTextInput(_view, from, to, text, defaultTransaction) {
+          // Provenance is not an inheritable formatting mark. Replacing text,
+          // including an identical string, revokes the identity it touches.
+          const source = projection();
+          const tr = (
+            from === to ? editor.state.tr : closeHistory(editor.state.tr)
+          ).setMeta("composer-edit", {
+            text: source.draft.text,
+            start: source.source(from),
+            end: source.source(to),
+          });
+          editor.state.doc.descendants((node, pos) => {
+            const mark = composerSchema.marks.recipient.isInSet(node.marks);
+            if (mark && from < pos + node.nodeSize && to > pos)
+              tr.removeMark(pos, pos + node.nodeSize, mark);
+          });
+          const marks = (
+            editor.state.storedMarks ?? editor.state.doc.resolve(from).marks()
+          ).filter((mark) => mark.type !== composerSchema.marks.recipient);
+          if (text) tr.replaceWith(from, to, composerSchema.text(text, marks));
+          else tr.delete(from, to);
+          // DOM reconciliation may describe only the changed middle of a native
+          // replacement. The browser selection can be after an unchanged suffix.
+          tr.setSelection(
+            Selection.fromJSON(tr.doc, defaultTransaction().selection.toJSON()),
+          );
+          // Only an explicit code toggle persists at the edge; merely moving there
+          // or deleting a span must not switch the next text back into code.
+          if (
+            text &&
+            composerSchema.marks.code.isInSet(editor.state.storedMarks ?? [])
+          )
+            tr.setStoredMarks(marks);
+          const codeInput =
+            text === "`" &&
+            from === to &&
+            !composing.current &&
+            !editor.composing &&
+            applyComposerCodeInput(tr);
+          if (codeInput) closeHistory(tr);
+          editor.dispatch(tr.scrollIntoView());
+          if (codeInput) separateHistory = true;
+          return true;
+        },
+        handleKeyDown(_view, event) {
+          if (composing.current || event.isComposing || event.keyCode === 229)
+            return false;
+          syncNativeSelection();
+          const primary = isApplePlatform(navigator.platform)
+            ? event.metaKey && !event.ctrlKey
+            : event.ctrlKey && !event.metaKey;
+          const key = event.key.toLowerCase();
+          if (primary && !event.altKey && !event.shiftKey && key === "a")
+            return selectAll(editor.state, editor.dispatch);
+          const format =
+            primary &&
+            composerFormats.find(
+              ({ binding }) =>
+                (key === binding.key ||
+                  event.code === `Digit${binding.key}` ||
+                  (event.altKey &&
+                    event.code === `Key${binding.key.toUpperCase()}`)) &&
+                event.shiftKey === binding.shift &&
+                event.altKey === ("alt" in binding && binding.alt),
+            );
+          if (format) {
+            if (!event.repeat) toggleFormat(format.mark);
+            return true;
+          }
+          if (primary && !event.altKey && !event.shiftKey && key === "k") {
+            const edit = editLink();
+            if (
+              edit &&
+              (edit.existing || !editor.state.selection.empty) &&
+              current.current.onEditLink
+            ) {
+              if (!event.repeat) current.current.onEditLink(edit);
+              return true;
+            }
+          }
+          if (primary && !event.altKey && (key === "z" || key === "y")) {
+            historyCommand(event.shiftKey || key === "y");
+            return true;
+          }
+          if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+            if (
+              !event.altKey &&
+              !primary &&
+              adjacent(event.key === "ArrowLeft", true, event.shiftKey)
+            )
+              return true;
+          }
+          if (
+            event.key === "Tab" &&
+            !event.altKey &&
+            !event.metaKey &&
+            !event.ctrlKey &&
+            editable()
+          ) {
+            const command = event.shiftKey ? liftListItem : sinkListItem;
+            if (
+              command(composerSchema.nodes.list_item)(editor.state, (tr) =>
+                editor.dispatch(closeHistory(tr)),
+              )
+            )
+              return true;
+          }
+          if (event.key === "Backspace" || event.key === "Delete") {
+            if (!editable()) return false;
+            if (
+              deleteSelection(editor.state, (tr) =>
+                editor.dispatch(closeHistory(tr)),
+              )
+            )
+              return true;
+            if (event.altKey || primary) return false;
+            adjacent(event.key === "Backspace", false, false);
+            const { empty, $from } = editor.state.selection;
+            if (
+              empty &&
+              $from.parent.type.spec.code &&
+              !$from.parentOffset &&
+              event.key === "Backspace"
+            ) {
+              toggleFormat("code_block");
+              return true;
+            }
+            if (
+              editable() &&
+              (event.key === "Backspace" ? joinBackward : joinForward)(
+                editor.state,
+                (tr) => editor.dispatch(closeHistory(tr)),
+              )
+            )
+              return true;
+          }
+          return false;
+        },
+        handleDOMEvents: {
+          click(_view, event) {
+            // Composer links are editable text, never navigation targets.
+            if (event.target instanceof Element && event.target.closest("a"))
+              event.preventDefault();
+            return false;
+          },
+          // Send/completion/cancel policy belongs to the host. ProseMirror's
+          // default capture otherwise prevents Escape before React can cancel edits.
+          keydown(_view, event) {
+            return (
+              (event.key === "Enter" || event.key === "Escape") &&
+              !event.isComposing &&
+              !composing.current
+            );
+          },
+          beforeinput(_view, event) {
+            if (!event.isComposing) syncNativeSelection();
+            if (event.inputType.startsWith("delete")) {
+              separateHistory = true;
+              // Some native deletion commands arrive without a keydown. A selected
+              // range still belongs to ProseMirror, especially across block nodes.
+              if (
+                event.cancelable &&
+                !event.isComposing &&
+                !composing.current &&
+                editable() &&
+                deleteSelection(editor.state, (tr) =>
+                  editor.dispatch(closeHistory(tr)),
+                )
+              ) {
+                event.preventDefault();
+                return true;
+              }
+              if (editor.dom.ownerDocument.getSelection()?.isCollapsed)
+                adjacent(event.inputType.endsWith("Backward"), false, false);
+            }
+            const format = inlineFormats.find(
+              (item) => item.inputType === event.inputType,
+            );
+            if (format) {
+              event.preventDefault();
+              toggleFormat(format.mark);
+              return true;
+            }
+            if (event.inputType.startsWith("history")) {
+              event.preventDefault();
+              historyCommand(event.inputType === "historyRedo");
+              return true;
+            }
+            return false;
+          },
+          copy(_view, event) {
+            const { from, to } = editor.state.selection;
+            event.clipboardData?.setData("text/plain", copySelection(from, to));
+            event.preventDefault();
+            return true;
+          },
+          cut(_view, event) {
+            const { from, to } = editor.state.selection;
+            event.clipboardData?.setData("text/plain", copySelection(from, to));
+            event.preventDefault();
+            if (editable())
+              editor.dispatch(closeHistory(editor.state.tr.deleteSelection()));
+            return true;
+          },
+          paste(_view, event) {
+            event.preventDefault();
+            // File paste belongs to the host attachment capture; never replace text.
+            if (
+              Array.from(event.clipboardData?.items ?? []).some(
+                (item) => item.kind === "file",
+              )
+            )
+              return true;
+            let text = event.clipboardData?.getData("text/plain") ?? "";
+            if (!text) return true;
+            let link = false;
+            if (!editor.state.selection.$from.parent.type.spec.code)
+              messageLinkParts(text, undefined, (start, end) => {
+                if (start === 0 && end === text.length) link = true;
+              });
+            const source = projection(),
+              end = source.source(editor.state.selection.to);
+            const reuse = link && source.draft.text[end] === " ";
+            if (
+              link &&
+              !reuse &&
+              source.draft.text.length -
+                (end - source.source(editor.state.selection.from)) +
+                text.length <
+                current.current.maxLength
+            )
+              text += " ";
+            if (insert(text) && reuse) {
+              const pos = editor.state.selection.to + 1;
+              editor.dispatch(
+                editor.state.tr.setSelection(
+                  TextSelection.create(editor.state.doc, pos),
+                ),
+              );
+            }
+            return true;
+          },
+          drop(_view, event) {
+            event.preventDefault();
+            return true;
+          },
+        },
+        handleClickOn(_view, _pos, node, pos, event, direct) {
+          if (!direct || node.type.name !== "token" || event.shiftKey)
+            return false;
+          editor.dispatch(
+            editor.state.tr.setSelection(
+              TextSelection.create(editor.state.doc, pos + node.nodeSize),
+            ),
+          );
+          editor.focus();
+          return true;
+        },
+        handleDoubleClickOn(_view, _pos, node, pos, _event, direct) {
+          if (!direct || node.type.name !== "token") return false;
+          editor.dispatch(
+            editor.state.tr.setSelection(
+              TextSelection.create(editor.state.doc, pos, pos + node.nodeSize),
+            ),
+          );
+          editor.focus();
+          return true;
+        },
+        handleTripleClick(_view, pos) {
+          const source = projection(),
+            offset = source.source(pos),
+            text = source.draft.text;
+          const start =
+            offset === 0 ? 0 : text.lastIndexOf("\n", offset - 1) + 1;
+          const end = text.indexOf("\n", offset);
+          setRange(start, end < 0 ? text.length : end + 1);
+          return true;
+        },
+      },
+    );
+    view.current = editor;
+    const root = editor.dom as ComposerInputElement;
+    Object.defineProperties(root, {
+      value: {
+        configurable: true,
+        get: () => projection().draft.text,
+        set: (text: string) => {
+          if (text.length <= current.current.maxLength)
+            editor.dispatch(
+              editor.state.tr.replaceWith(
+                0,
+                editor.state.doc.content.size,
+                composerSchema.nodes.paragraph.create(
+                  null,
+                  text ? composerSchema.text(text) : undefined,
+                ),
+              ),
+            );
+        },
+      },
+      selectionStart: {
+        configurable: true,
+        get: () => projection().source(editor.state.selection.from),
+      },
+      selectionEnd: {
+        configurable: true,
+        get: () => projection().source(editor.state.selection.to),
+      },
+      selectionDirection: {
+        configurable: true,
+        get: () =>
+          editor.state.selection.anchor > editor.state.selection.head
+            ? "backward"
+            : "forward",
+      },
+      disabled: { configurable: true, get: () => current.current.disabled },
+      readOnly: {
+        configurable: true,
+        get: () => !editable(),
+        set: (next: boolean) => {
+          locked.current = next;
+          editor.setProps({ editable });
+        },
+      },
+      setSelectionRange: { configurable: true, value: setRange },
+      insertText: { configurable: true, value: insert },
+      toggleFormat: { configurable: true, value: toggleFormat },
+      insertLineBreak: {
+        configurable: true,
+        value: () => {
+          if (!editable() || composing.current || editor.composing)
+            return false;
+          const tr = composerBlockLineBreak(editor.state);
+          if (!tr) return insert("\n");
+          editor.dispatch(closeHistory(tr).scrollIntoView());
+          editor.focus();
+          return true;
+        },
+      },
+      editLink: { configurable: true, value: editLink },
+      removeRecipient: {
+        configurable: true,
+        value: (pubkey: string) => {
+          if (!editable()) return;
+          const tr = closeHistory(editor.state.tr);
+          editor.state.doc.descendants((node, pos) => {
+            if (
+              node.type.name === "token" &&
+              node.attrs.recipient?.pubkey === pubkey
+            )
+              tr.setNodeMarkup(pos, undefined, {
+                ...node.attrs,
+                recipient: null,
+              });
+            const mark = composerSchema.marks.recipient.isInSet(node.marks);
+            if (mark?.attrs.pubkey === pubkey)
+              tr.removeMark(pos, pos + node.nodeSize, mark);
+          });
+          if (editor.state.storedMarks)
+            tr.setStoredMarks(editor.state.storedMarks);
+          editor.dispatch(tr);
+        },
+      },
+      undo: { configurable: true, value: historyCommand },
+      checkpoint: {
+        configurable: true,
+        value: () => {
+          const saved = editor.state;
+          const savedDraft = emitted.current;
+          const savedPlain = [...plain.current];
+          const savedSeparateHistory = separateHistory;
+          return () => {
+            if (view.current !== editor) return;
+            plain.current = savedPlain;
+            separateHistory = savedSeparateHistory;
+            emitted.current = savedDraft;
+            editor.updateState(saved);
+            tokenViews();
+            selected();
+          };
+        },
+      },
+      reset: {
+        configurable: true,
+        value: (next: MentionDraft) => api.current?.sync(next, true),
+      },
+    });
+    api.current = {
+      sync(next, reset = false) {
+        if (
+          !reset &&
+          JSON.stringify(next) === JSON.stringify(projection().draft)
+        )
+          return;
+        plain.current = [];
+        const doc = readComposerDocument(
+          next,
+          current.current.decorationsFor(next),
+        );
+        if (reset) {
+          separateHistory = false;
+          editor.updateState(state(doc));
+        } else
+          editor.dispatch(
+            closeHistory(
+              editor.state.tr.replaceWith(
+                0,
+                editor.state.doc.content.size,
+                doc.content,
+              ),
+            ),
+          );
+        emitted.current = next;
+        tokenViews();
+        selected();
+      },
+    };
+    ref.current = root;
+    tokenViews();
+    selected();
+    return () => {
+      ref.current = null;
+      view.current = null;
+      api.current = null;
+      editor.destroy();
+    };
+  }, [ref]);
+
+  useLayoutEffect(() => {
+    const editor = view.current;
+    if (!editor) return;
+    if (draft !== emitted.current && !composing.current)
+      api.current?.sync(draft);
+    editor.setProps({ editable: () => !disabled && !locked.current });
+  }, [draft, disabled]);
+
+  const projection =
+    view.current && projectComposerDocument(view.current.state.doc);
+  const decorations = projection ? decorationsFor(projection.draft) : [];
+  const decorationRanges = JSON.stringify(
+    decorations.map(({ start, end, editAsText }) => [start, end, editAsText]),
+  );
+  useLayoutEffect(() => {
+    // Palette/directory arrivals can make existing prose renderable without a
+    // keystroke. Reconcile via the same token normalizer, outside undo history.
+    const editor = view.current;
+    if (editor)
+      editor.dispatch(
+        editor.state.tr
+          .setMeta("composer-decorations", decorationRanges)
+          .setMeta("addToHistory", false),
+      );
+  }, [decorationRanges]);
+  useLayoutEffect(() => {
+    // Token portals acquire their real geometry at React commit, after the
+    // transaction's first scroll. Keep the same editor-owned caret visible.
+    if (!scrollAfterTokens.current) return;
+    scrollAfterTokens.current = false;
+    const editor = view.current;
+    if (editor?.hasFocus()) editor.dispatch(editor.state.tr.scrollIntoView());
+  });
+  return (
+    <>
+      {/* biome-ignore lint/a11y/useSemanticElements: ProseMirror owns this native editing surface. */}
+      <div
+        {...events}
+        ref={mount}
+        role="textbox"
+        aria-multiline="true"
+        aria-label={events["aria-label"] ?? placeholder}
+        aria-disabled={disabled || undefined}
+        tabIndex={disabled ? -1 : 0}
+        className={styles.input}
+        onKeyDown={(event) => {
+          if (
+            composing.current ||
+            event.nativeEvent.isComposing ||
+            event.nativeEvent.keyCode === 229
+          )
+            return;
+          events.onKeyDown?.(event as KeyboardEvent<ComposerInputElement>);
+          if (!event.defaultPrevented && event.key === "Enter") {
+            event.preventDefault();
+            ref.current?.insertLineBreak();
+          }
+        }}
+        onCompositionStart={(event) => {
+          composing.current = true;
+          events.onCompositionStart?.(event as never);
+        }}
+        onCompositionEnd={(event) => {
+          composing.current = false;
+          events.onCompositionEnd?.(event as never);
+        }}
+      />
+      {[...hosts.current].map(([element, host]) => {
+        const position = host.position();
+        const source =
+          position === undefined ? undefined : projection?.source(position);
+        const decoration = decorations.find(
+          (item) =>
+            item.start === source &&
+            item.end === (source ?? 0) + host.source.length,
+        );
+        return createPortal(decoration?.content ?? host.source, element);
+      })}
+    </>
+  );
+}

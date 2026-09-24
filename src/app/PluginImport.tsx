@@ -1,5 +1,12 @@
+import { Field } from "../shared/design-system/ui/Field";
+import { Input } from "../shared/design-system/ui/Input";
+import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
+import { Button } from "../shared/design-system/ui/Button";
 import { useEffect, useRef, useState } from "react";
-import { FolderOpen, GitBranch } from "lucide-react";
+import {
+  FolderOpenIcon,
+  GitBranchIcon,
+} from "../shared/design-system/icons/index";
 import type { PluginManager } from "../plugins/manager";
 import type { Catalog, ImportPreview } from "../plugins/types";
 
@@ -34,7 +41,7 @@ export function PluginImport({
 
   if (!imports)
     return (
-      <p className="mb-4 text-sm text-muted">
+      <p className="mb-4 text-body-sm text-muted">
         Open the desktop app to load plugins from a folder or Git repository.
       </p>
     );
@@ -82,23 +89,21 @@ export function PluginImport({
   return (
     <div className="mb-4">
       <div className="flex flex-wrap gap-2">
-        <button
+        <Button
           type="button"
           disabled={busy || loading}
-          className="flex items-center gap-2"
           onClick={() => void load(imports.folder)}
         >
-          <FolderOpen aria-hidden="true" size={17} /> Load from folder
-        </button>
-        <button
+          <FolderOpenIcon aria-hidden="true" size={17} /> Load from folder
+        </Button>
+        <Button
           type="button"
           disabled={busy || loading}
           aria-expanded={gitForm}
-          className="flex items-center gap-2"
           onClick={() => setGitForm(!gitForm)}
         >
-          <GitBranch aria-hidden="true" size={17} /> Load from Git
-        </button>
+          <GitBranchIcon aria-hidden="true" size={17} /> Load from Git
+        </Button>
       </div>
       {gitForm && (
         <form
@@ -109,40 +114,39 @@ export function PluginImport({
               void load(() => imports.git(repository, reference));
           }}
         >
-          <label className="grid gap-1 text-sm">
-            Git or GitHub repository
-            <input
+          <Field label="Git or GitHub repository">
+            <Input
               required
               value={repository}
               disabled={loading}
               placeholder="https://github.com/owner/repository"
               onChange={(event) => setRepository(event.target.value)}
             />
-          </label>
-          <label className="grid gap-1 text-sm">
-            Branch or tag (optional)
-            <input
+          </Field>
+          <Field label="Branch or tag (optional)">
+            <Input
               value={reference}
               disabled={loading}
               placeholder="Repository default"
               onChange={(event) => setReference(event.target.value)}
             />
-          </label>
-          <p className="m-0 text-xs text-muted">
+          </Field>
+          <p className="m-0 text-caption text-muted">
             HTTPS or SSH; GitHub owner/repository also works. SSH uses your
             agent and known hosts. Password prompts and credential helpers are
             not used.
           </p>
-          <button
-            type="submit"
-            className="justify-self-start"
-            disabled={busy || loading || !repository.trim()}
-          >
-            Find plugins
-          </button>
+          <div className="justify-self-start">
+            <Button
+              type="submit"
+              disabled={busy || loading || !repository.trim()}
+            >
+              Find plugins
+            </Button>
+          </div>
         </form>
       )}
-      <p className="mb-0 text-xs text-muted">
+      <p className="mb-0 text-caption text-muted">
         Choose built plugins with manifest.json and plugin.js. Buzz does not
         build source projects or run install scripts. Only load code you trust:
         plugins are not sandboxed.
@@ -163,10 +167,10 @@ export function PluginImport({
           aria-label="Plugin import preview"
           className="mt-4 grid gap-3 rounded-2xl border border-line bg-surface p-4"
         >
-          <div className="min-w-0 text-sm">
+          <div className="min-w-0 text-body-sm">
             <p className="m-0 break-all font-medium">{preview.source}</p>
             {preview.commit && (
-              <p className="m-0 break-all text-xs text-muted">
+              <p className="m-0 break-all text-caption text-muted">
                 Commit: {preview.commit}
               </p>
             )}
@@ -177,41 +181,34 @@ export function PluginImport({
               output folder, or use a repository that includes built artifacts.
             </p>
           ) : (
-            <fieldset className="m-0 grid min-w-0 gap-2 border-0 p-0">
-              <legend className="mb-2 text-sm font-medium">
-                Choose a plugin folder
-              </legend>
-              {preview.candidates.map((item) => (
-                <label
-                  key={item.path}
-                  className="flex cursor-pointer items-start gap-3 rounded-xl border border-line p-3 has-checked:bg-soft"
-                >
-                  <input
-                    type="radio"
-                    name="plugin-folder"
-                    className="mt-1"
+            <Field label="Choose a plugin folder">
+              <RadioGroup
+                name="plugin-folder"
+                value={selected}
+                disabled={busy}
+                onValueChange={(value) => {
+                  setSelected(value);
+                  setNotice(null);
+                }}
+              >
+                {preview.candidates.map((item) => (
+                  <Radio
+                    key={item.path}
                     value={item.path}
-                    checked={selected === item.path}
-                    disabled={busy}
-                    onChange={() => {
-                      setSelected(item.path);
-                      setNotice(null);
-                    }}
+                    variant="card"
+                    label={item.manifest.name}
+                    description={
+                      <span className="break-all">
+                        {item.path} · {item.manifest.id}
+                      </span>
+                    }
                   />
-                  <span className="min-w-0 text-sm">
-                    <span className="block font-medium">
-                      {item.manifest.name}
-                    </span>
-                    <span className="block break-all text-muted">
-                      {item.path} · {item.manifest.id}
-                    </span>
-                  </span>
-                </label>
-              ))}
-            </fieldset>
+                ))}
+              </RadioGroup>
+            </Field>
           )}
           {preview.warnings.length > 0 && (
-            <details className="text-sm text-muted">
+            <details className="text-body-sm text-muted">
               <summary>Folders skipped ({preview.warnings.length})</summary>
               <ul className="break-words">
                 {preview.warnings.map((warning) => (
@@ -221,7 +218,7 @@ export function PluginImport({
             </details>
           )}
           {candidate && (
-            <p className="m-0 text-sm">
+            <p className="m-0 text-body-sm">
               {existing
                 ? `This replaces ${existing.manifest.name} (${existing.manifest.id}). ${existing.enabled ? "It stays enabled and may run immediately unless this launch is in safe mode." : "It stays disabled."} Roll back remains available.`
                 : "This plugin will be installed disabled. Enable it in the list when you’re ready."}
@@ -229,7 +226,7 @@ export function PluginImport({
           )}
           <div className="flex flex-wrap gap-2">
             {candidate && (
-              <button
+              <Button
                 type="button"
                 disabled={busy || loading}
                 onClick={async () => {
@@ -245,15 +242,15 @@ export function PluginImport({
                 }}
               >
                 {existing ? "Update plugin" : "Install plugin"}
-              </button>
+              </Button>
             )}
-            <button
+            <Button
               type="button"
               disabled={busy || loading}
               onClick={() => void dismiss()}
             >
               Close preview
-            </button>
+            </Button>
           </div>
         </section>
       )}

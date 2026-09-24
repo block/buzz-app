@@ -2,7 +2,14 @@ import { afterEach, expect, it, vi } from "vitest";
 import { Context } from "@deepseek-ai/cordis";
 import { provideRelay } from "./service";
 import type { ReadTransport } from "./transport";
-import { flush } from "./testing";
+import {
+  flush,
+  keypair,
+  metadata,
+  roster,
+  bounds,
+  scriptedTransport,
+} from "./testing";
 
 const roots: Context[] = [];
 function root() {
@@ -47,6 +54,45 @@ it("shares a session above plugin lifetimes, rather than one store per consumer"
   expect(connect).toHaveBeenCalledTimes(1);
   expect(source.query).toHaveBeenCalledTimes(1);
 });
+it("keeps app startup demand-driven while retaining hover preparation and cached opening", async () => {
+  const viewer = keypair();
+  const relay = keypair();
+  const h = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const data = provideRelay(root(), async () => h.transport);
+  await flush();
+  const ids = Array.from({ length: 70 }, (_, index) => `channel-${index}`);
+  const discovery = ids.flatMap((id) => [
+    roster(relay, id, [viewer.pubkey]),
+    metadata(relay, id, id),
+  ]);
+  h.next().respond(discovery);
+  await flush();
+  const channels = data.snapshot().session.channels;
+  expect(channels.list().channels).toHaveLength(70);
+  expect(h.pending).toHaveLength(0);
+  channels.refreshList?.();
+  h.next().respond(discovery);
+  await flush();
+  expect(h.pending).toHaveLength(0);
+
+  channels.prepare?.("channel-69");
+  const preparation = h.next();
+  expect(preparation.filters[0]).toMatchObject({
+    "#h": ["channel-69"],
+    top_level: true,
+  });
+  preparation.respond([
+    bounds(relay, "channel-69", "head", {
+      has_more: false,
+      next_cursor: null,
+    }),
+  ]);
+  await flush();
+  channels.ensure("channel-69");
+  expect(channels.window("channel-69").status).toBe("ready");
+  expect(h.pending).toHaveLength(0);
+});
+
 it("rejects an old connection result after disconnect and replacement", async () => {
   const ctx = root();
   const pending: ((transport: ReadTransport) => void)[] = [];

@@ -1,0 +1,110 @@
+.root {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--space-6);
+  padding: var(--space-5);
+  min-width: 0;
+  background: var(--surface-panel);
+}
+.identity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  min-width: 0;
+}
+.withPortrait {
+  flex-direction: column;
+  align-items: stretch;
+}
+.portrait {
+  align-self: center;
+  width: min(100%, 16rem, 35vh);
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius-card);
+}
+.identity h2 {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.root p {
+  margin: 0;
+}
+.about {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.publicKey {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.keyHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+.keyHeading h3 {
+  margin: 0;
+  color: var(--text-subtle);
+}
+.publicKey code {
+  display: block;
+  overflow-wrap: anywhere;
+  user-select: text;
+  padding: var(--space-3);
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+}
+.feedback {
+  color: var(--text-subtle);
+}
+.feedback:empty {
+  display: none;
+}
+
+.tabContent {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+  padding-top: var(--space-4);
+  min-width: 0;
+}
+
+.channelList {
+  overflow: hidden;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-card);
+}
+.channelNote {
+  padding: var(--space-4);
+}
+.channelRow {
+  border-top: 1px solid var(--border-standard);
+}
+[data-profile-channel-link] {
+  display: flex;
+  width: 100%;
+  min-height: 3.5rem;
+  align-items: center;
+  justify-content: space-between;
+  text-align: left;
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared button label. */
+[data-profile-channel-link] :global(.buzz-button-label) {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+}
+/* biome-ignore lint/correctness/noUnknownPseudoClass: CSS Modules global selector targets the shared button label. */
+[data-profile-channel-link] :global(.buzz-button-label) span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

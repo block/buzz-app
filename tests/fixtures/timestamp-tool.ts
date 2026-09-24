@@ -1,4 +1,4 @@
-// Automated external-producer fixture only; never installed by Composer Lab.
+// Automated external-producer fixture only; separate from the consumer page.
 import type { Context, ComposerToolProps } from "@buzz/author";
 
 export const inject = ["react", "conversation"];

@@ -1,24 +1,38 @@
-import { test, expect } from "./fixture.mjs";
+import { test as base, expect } from "./fixture.mjs";
+import { streamEvidence } from "./stream-evidence.mjs";
 import { open } from "./timeline.mjs";
 
+// Preserve the failing handoff and capture original-reader delivery on Linux.
+const test = base.extend({
+  streamEvidence: [streamEvidence, { auto: true }],
+});
 test.use({
   productionBroker: true,
   readState: true,
   largeSidebar: true,
   sidebarUnread: true,
+  historyCounts: { alpha: 20, beta: 20 },
 });
 const sidebar = (page) =>
   page.getByRole("complementary", { name: "Channel sidebar", exact: true });
 const list = (page) =>
   page.getByRole("navigation", { name: "Subscribed channels" });
 const cue = (page, edge) =>
-  sidebar(page).getByRole("button", { name: `Unread ${edge}`, exact: true });
+  sidebar(page).locator(`button[data-edge="${edge}"]`);
 const row = (page, id) =>
   list(page).locator(`button[data-channel-id="${id.toLowerCase()}"]`);
 const scroll = (page, top) =>
   list(page).evaluate((el, top) => {
     el.scrollTop = top;
   }, top);
+const scrollRowAbove = (page, id) =>
+  row(page, id).evaluate((el) => {
+    const viewport = el.closest("nav");
+    if (!viewport) throw new Error("Channel row is outside the channel list");
+    const rowRect = el.getBoundingClientRect();
+    const viewportRect = viewport.getBoundingClientRect();
+    viewport.scrollTop += rowRect.bottom - viewportRect.top + 1;
+  });
 const inView = (page, id) =>
   row(page, id).evaluate((el) => {
     const rect = el.getBoundingClientRect();
@@ -34,14 +48,197 @@ const heads = (app) =>
     ({ filter }) => filter.kinds?.includes(9) && filter["#h"]?.length === 1,
   );
 
-test("edge pills follow scroll and reveal the nearest unread without selection or reads; focus retains existing preparation", async ({
+test("DM hide control removes a row and a new message restores it", async ({
   page,
   app,
 }, info) => {
   await open(page, app);
+  const dm = row(page, "dm-030");
+  await expect(dm).toBeVisible();
+  const badge = dm.locator("[data-channel-unread]");
+  await expect(badge).toBeVisible();
+  const badgePosition = () =>
+    dm.evaluate((button) => {
+      const badge = button.querySelector("[data-channel-unread]");
+      if (!badge) throw new Error("DM unread indicator is missing");
+      const row = button.getBoundingClientRect();
+      const marker = badge.getBoundingClientRect();
+      return { x: marker.x - row.x, y: marker.y - row.y };
+    });
+  const before = await badgePosition();
+  const container = dm.locator("..").locator("..");
+  await container.screenshot({ path: info.outputPath("dm-row-default.png") });
+  await dm.hover();
+  const hide = dm
+    .locator("..")
+    .locator("..")
+    .getByRole("button", {
+      name: /Remove .* from DMs/,
+    });
+  await expect(hide).toBeVisible();
+  await expect
+    .poll(() =>
+      hide.evaluate((button) => getComputedStyle(button.parentElement).opacity),
+    )
+    .toBe("1");
+  await container.screenshot({ path: info.outputPath("dm-row-hover.png") });
+  const after = await badgePosition();
+  expect(after.x).toBeCloseTo(before.x, 0);
+  expect(after.y).toBeCloseTo(before.y, 0);
+  const primary = await dm.evaluate((button) => getComputedStyle(button).color);
+  const secondary = await hide.evaluate(
+    (button) => getComputedStyle(button).color,
+  );
+  expect(secondary).not.toBe(primary);
+  await hide.hover();
+  await expect
+    .poll(() => hide.evaluate((button) => getComputedStyle(button).color))
+    .toBe(primary);
+  await hide.click();
+  await expect(dm).toHaveCount(0);
+  await expect(list(page).locator("button[data-channel-id]:focus")).toHaveCount(
+    1,
+  );
+  await page.reload();
+  await expect(row(page, "dm-031")).toBeVisible();
+  await expect(dm).toHaveCount(0);
+
+  app.append("primary", "dm-030", "A new live DM", true, false);
+  await expect(dm).toBeVisible();
+  await dm.hover();
+  await hide.click();
+  await expect(dm).toHaveCount(0);
+  app.append("primary", "dm-030", "A DM missed while closed", false, false);
+  await page.reload();
+  await expect(row(page, "dm-031")).toBeVisible();
+  await expect(dm).toBeVisible();
+});
+
+test("channel establishment preserves an in-flight unread batch and its sidebar badges", async ({
+  page,
+  app,
+}) => {
+  const alphaHeads = () =>
+    app.report.queries.filter(
+      ({ community, filter }) =>
+        community === "primary" &&
+        filter["#h"]?.[0] === "alpha" &&
+        filter.top_level === true &&
+        filter.until === undefined,
+    );
+  const evidence = () =>
+    app.report.queries.filter(
+      ({ community, filter }) =>
+        community === "primary" &&
+        filter.kinds?.includes(9) &&
+        filter.top_level === undefined &&
+        filter.depth_limit === undefined &&
+        filter.until === undefined,
+    );
+  app.relay.holdEose("alpha");
+  app.relay.holdUnread();
+  try {
+    await open(page, app);
+    await expect.poll(() => app.report.unreadHolds.length).toBe(1);
+    expect(evidence()[0].filter["#h"]).toContain("alpha");
+    expect(evidence()[0].filter["#h"]).toContain("dm-090");
+    expect(alphaHeads()).toHaveLength(1);
+    await expect(row(page, "dm-090").getByRole("img")).toHaveCount(0);
+
+    // Establish only after unread is in flight; observe the real finite catch-up
+    // before releasing evidence. No sleep or scheduler luck creates the overlap.
+    app.relay.releaseEose("alpha");
+    await expect.poll(() => alphaHeads().length).toBe(2);
+    expect(app.report.unreadHolds).toEqual([{ pending: true, aborted: false }]);
+    app.relay.releaseUnread();
+    await expect(row(page, "dm-030").getByRole("img")).toHaveCount(1);
+    await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
+    await expect(cue(page, "below")).toBeVisible();
+    await expect.poll(() => evidence().length).toBe(2); // 130 IDs, not retries.
+    expect(evidence().map(({ filter }) => filter["#h"].length)).toEqual([
+      128, 2,
+    ]);
+    expect(app.report.unreadHolds).toEqual([
+      { pending: false, aborted: false },
+    ]);
+    expect(app.report.readPublications).toEqual([]);
+  } finally {
+    app.relay.releaseEose("alpha");
+    app.relay.releaseUnread();
+  }
+});
+
+test("edge pills follow scroll and reveal the nearest unread without selection or reads; focus retains existing preparation", async ({
+  page,
+  app,
+}, info) => {
+  // Visible rows can precede the post-establishment catch-up. Force that late
+  // ordering, then account for its head read before measuring cue-triggered work.
+  app.relay.holdEose("alpha");
+  try {
+    await open(page, app);
+    const alphaHeads = () =>
+      heads(app).filter(
+        ({ community, filter }) =>
+          community === "primary" &&
+          filter["#h"][0] === "alpha" &&
+          filter.top_level === true &&
+          filter.until === undefined,
+      );
+    expect(alphaHeads()).toHaveLength(1);
+    app.relay.releaseEose("alpha");
+    await expect.poll(() => alphaHeads().length).toBe(2);
+  } finally {
+    app.relay.releaseEose("alpha");
+  }
+  const ordinary = row(page, "alpha");
+  const ordinaryState = ordinary.locator("[data-channel-unread]");
+  const directed = row(page, "dm-090").locator("[data-channel-priority]");
+  await expect(ordinaryState).toHaveAttribute("data-priority", "false");
+  await expect(ordinaryState).toHaveAttribute(
+    "aria-label",
+    /observed unread messages/,
+  );
+  await expect(ordinary.locator("[data-channel-priority]")).toHaveCount(0);
+  await expect(ordinary.getByText("Alpha", { exact: true })).toHaveCSS(
+    "font-weight",
+    "500",
+  );
+  await expect(directed).toBeVisible();
+  await expect(directed).toHaveCSS("width", "6px");
+  await expect(
+    row(page, "dm-090").locator("[data-channel-unread]"),
+  ).toHaveAttribute("data-priority", "true");
+  await expect(
+    row(page, "dm-090").locator("[data-channel-dm-avatar]"),
+  ).toHaveCount(0);
   await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
+  await page.evaluate(() => {
+    document.documentElement.dataset.colorMode = "dark";
+  });
+  await sidebar(page).screenshot({
+    path: info.outputPath("sidebar-unread-hierarchy.png"),
+  });
   await expect(cue(page, "below")).toBeVisible();
+  await expect(cue(page, "below")).toHaveText("Unread");
+  await expect(cue(page, "below")).toHaveAccessibleName("Unread below");
+  await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
+  const transitionProperties = await cue(page, "below").evaluate((el) =>
+    getComputedStyle(el).transitionProperty.split(", "),
+  );
+  expect(transitionProperties).toEqual(["background-color", "color"]);
   await expect(cue(page, "above")).toHaveCount(0);
+  // Keep actionable DMs below while moving only ordinary unread above: priority
+  // is derived from the destinations on each edge, not from the whole roster.
+  await scrollRowAbove(page, "alpha");
+  await expect.poll(() => inView(page, "alpha")).toBe(false);
+  await expect(cue(page, "above")).toBeVisible();
+  await expect(cue(page, "above")).toHaveText("Unread");
+  await expect(cue(page, "above")).toHaveAccessibleName("Unread above");
+  await expect(cue(page, "above")).toHaveAttribute("data-attention", "false");
+  await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
+  await scroll(page, 0);
+  await expect(cue(page, "below")).toHaveAttribute("data-attention", "true");
   await scroll(page, 1800);
   await expect(cue(page, "above")).toBeVisible();
   await expect(cue(page, "below")).toBeVisible();
@@ -55,8 +252,8 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect.poll(() => inView(page, "dm-030")).toBe(true);
   await expect(row(page, "dm-030")).toBeFocused();
   await expect(list(page).locator('[aria-current="page"]')).toHaveAttribute(
-    "title",
-    "Alpha",
+    "data-channel-id",
+    "alpha",
   );
   await cue(page, "below").focus();
   await cue(page, "below").press("Enter");
@@ -64,11 +261,12 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect(cue(page, "below")).toHaveCount(0);
   expect(await list(page).boundingBox()).toEqual(size); // Overlay never resizes the list.
   await page.waitForTimeout(1000);
-  expect(
-    heads(app)
-      .slice(before)
-      .every(({ filter }) => ["dm-030", "dm-090"].includes(filter["#h"][0])),
-  ).toBe(true); // Only existing focused-row preparation, never a roster fanout.
+  const warmed = heads(app)
+    .slice(before)
+    .map(({ filter }) => filter["#h"][0]);
+  // Background roster warmth reads each channel once, serially. Scroll and cue
+  // interactions never add a repeated read on top of it.
+  expect(new Set(warmed).size).toBe(warmed.length);
   expect(app.report.readPublications).toEqual([]);
   expect(
     await page.evaluate(
@@ -90,8 +288,8 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await page.mouse.wheel(0, -10000);
   await expect(cue(page, "above")).toHaveCount(0);
   await expect(cue(page, "below")).toBeVisible();
-  await page.getByRole("textbox", { name: "Search channels" }).focus();
-  await page.keyboard.press("Tab"); // Set keyboard modality from the visible search, not an offscreen row.
+  await page.getByRole("button", { name: "Search Buzz", exact: true }).focus();
+  await page.keyboard.press("Tab"); // Set keyboard modality from visible chrome, not an offscreen row.
   await cue(page, "below").focus();
   await expect(cue(page, "below")).toHaveCSS("outline-width", "2px");
   await cue(page, "below").press("Enter");
@@ -99,7 +297,15 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect(row(page, "dm-030")).toBeFocused();
   if (info.project.name === "chromium") {
     await page.keyboard.press("Tab");
+    const remove = row(page, "dm-030")
+      .locator("..")
+      .locator("..")
+      .getByRole("button", { name: /Remove .* from DMs/ });
+    await expect(remove).toBeFocused();
+    await page.keyboard.press("Tab");
     await expect(row(page, "dm-031")).toBeFocused();
+    await page.keyboard.press("Shift+Tab");
+    await expect(remove).toBeFocused();
     await page.keyboard.press("Shift+Tab");
     await expect(row(page, "dm-030")).toBeFocused();
   }
@@ -107,19 +313,12 @@ test("edge pills follow scroll and reveal the nearest unread without selection o
   await expect(row(page, "dm-030")).toHaveAttribute("aria-current", "page");
 });
 
-test("search, resizing, collapsed groups and new unread evidence update only the displayed roster", async ({
+test("resizing, collapsed groups and new unread evidence update only the displayed roster", async ({
   page,
   app,
 }) => {
   await open(page, app);
   await expect(row(page, "dm-090").getByRole("img")).toHaveCount(1);
-  const search = page.getByRole("textbox", { name: "Search channels" });
-  await search.fill("Alpha");
-  await expect(cue(page, "below")).toHaveCount(0);
-  await expect(cue(page, "above")).toHaveCount(0);
-  await search.fill("missing-channel");
-  await expect(cue(page, "below")).toHaveCount(0);
-  await search.fill("");
   await expect(cue(page, "below")).toBeVisible();
   // DMs are hidden behind a visible section summary: not below the scroll fold.
   await list(page).locator("summary").filter({ hasText: /^DMs$/ }).click();
@@ -151,12 +350,17 @@ test("search, resizing, collapsed groups and new unread evidence update only the
   app.append("primary", "dm-127", "New offscreen unread", false, false);
   // Non-active channels have no live content route. Discover the new evidence
   // through the existing bounded refresh, not by inventing a subscription.
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
   await page.getByText("Unread status", { exact: true }).click();
   await page
     .getByRole("button", { name: "Refresh unread observations", exact: true })
     .click();
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await expect(cue(page, "below")).toBeVisible();
   await cue(page, "below").click();
   await expect.poll(() => inView(page, "dm-127")).toBe(true);
@@ -165,7 +369,10 @@ test("search, resizing, collapsed groups and new unread evidence update only the
   await expect(
     page.getByText("New offscreen unread", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
+  await page.getByText("Diagnostics", { exact: true }).click();
   await page
     .getByRole("button", {
       name: "Mark read through loaded messages",
@@ -173,7 +380,9 @@ test("search, resizing, collapsed groups and new unread evidence update only the
     })
     .click();
   await expect(row(page, "dm-127").getByRole("img")).toHaveCount(0);
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await scroll(page, 2700);
   await expect(cue(page, "below")).toHaveCount(0);
 });
@@ -199,20 +408,22 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await open(page, app);
     await expect(cue(page, "below")).toBeVisible();
     await page
-      .getByRole("button", { name: "Switch community", exact: true })
-      .click();
-    await page
       .getByRole("button", { name: "Switch to Secondary", exact: true })
       .click();
     await expect(
       page.getByText(/secondary alpha message/).first(),
     ).toBeVisible();
     await expect(cue(page, "below")).toHaveCount(0);
-    await page.getByLabel("Conversation options", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
+    await page.getByText("Diagnostics", { exact: true }).click();
     await page
       .getByRole("button", { name: "Mark unread on this device", exact: true })
       .click();
-    await page.getByLabel("Conversation options", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
     await expect.poll(() => requested).toBe(true);
     await scroll(page, 1800);
     await expect(cue(page, "above")).toBeVisible();
@@ -227,13 +438,36 @@ test("session changes discard the previous sidebar targets and manual unread sti
     await cue(page, "above").click();
     await expect.poll(() => inView(page, "alpha")).toBe(true);
     await expect(
-      row(page, "alpha").getByRole("img", {
-        name: "Marked unread on this device only",
-        exact: true,
-      }),
-    ).toBeVisible();
+      row(page, "alpha").locator(
+        '[data-channel-unread][data-priority="false"]',
+      ),
+    ).toBeAttached();
   } finally {
     release();
     await page.unroute("**/api/relay/secondary/sidebar-preferences");
+  }
+});
+
+test("priority dots use semantic primary color in both modes", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const dot = row(page, "dm-030").locator("[data-channel-priority]");
+  await expect(dot).toBeAttached();
+  for (const mode of ["light", "dark"]) {
+    await page.evaluate((mode) => {
+      document.documentElement.dataset.colorMode = mode;
+    }, mode);
+    const primary = await page.evaluate(() => {
+      const root = getComputedStyle(document.documentElement);
+      const probe = document.createElement("span");
+      probe.style.backgroundColor = root.getPropertyValue("--primary");
+      document.body.append(probe);
+      const color = getComputedStyle(probe).backgroundColor;
+      probe.remove();
+      return color;
+    });
+    await expect(dot).toHaveCSS("background-color", primary);
   }
 });

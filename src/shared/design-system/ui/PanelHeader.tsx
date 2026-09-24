@@ -14,11 +14,11 @@ export function PanelHeader({
   variant?: "default" | "compact";
 }) {
   return (
-    <header className="panel-header" data-variant={variant}>
+    <header data-buzz-ui="" className="panel-header" data-variant={variant}>
       <div className="panel-header-title">
         {icon}
         {typeof title === "string" ? (
-          <h2 className="text-heading text-primary">{title}</h2>
+          <h2 className="text-label text-primary">{title}</h2>
         ) : (
           title
         )}

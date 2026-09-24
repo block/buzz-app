@@ -4,7 +4,7 @@ import { foldMessages } from "./fold";
 import type { OutgoingEvent } from "./outbox";
 import type { RelayProfiler } from "./profiling";
 
-const messageKind = (kind: number) => kind === 9 || kind === 40002;
+import { channelRowKind as messageKind } from "./membership";
 const order = (a: ChannelMessage, b: ChannelMessage) =>
   a.createdAt - b.createdAt || b.id.localeCompare(a.id);
 
@@ -19,6 +19,7 @@ export class MessageProjection {
     private channelId: string,
     private relayAuthor: string,
     private profiling: RelayProfiler,
+    private includeReplies: () => boolean = () => false,
   ) {}
   snapshot() {
     return this.rows;
@@ -57,6 +58,13 @@ export class MessageProjection {
         }
       }
     }
+    // A deletion of an edit/reaction changes its owning message, not a row
+    // whose ID is the overlay. Include removed inputs for failure rollback.
+    for (const id of [...affected]) {
+      const overlay = next.get(id) ?? this.inputs.get(id);
+      if (overlay && !messageKind(overlay.kind))
+        for (const target of targets(overlay)) affected.add(target);
+    }
     this.inputs = next;
     for (const [id, item] of deliveries) {
       const previous = this.deliveries.get(id);
@@ -81,12 +89,20 @@ export class MessageProjection {
             const event = next.get(id);
             const row =
               event && messageKind(event.kind)
-                ? foldMessages(this.channelId, this.relayAuthor, [
-                    event,
-                    ...[...(this.overlays.get(id) ?? [])].flatMap(
-                      (ref) => next.get(ref) ?? [],
-                    ),
-                  ])[0]
+                ? foldMessages(
+                    this.channelId,
+                    this.relayAuthor,
+                    [
+                      event,
+                      ...[...(this.overlays.get(id) ?? [])].flatMap((ref) => [
+                        ...[next.get(ref)].flatMap((event) => event ?? []),
+                        ...[...(this.overlays.get(ref) ?? [])].flatMap(
+                          (deletion) => next.get(deletion) ?? [],
+                        ),
+                      ]),
+                    ],
+                    { includeReplies: this.includeReplies() },
+                  )[0]
                 : undefined;
             if (row)
               this.messages.set(id, this.withDelivery(row, deliveries.get(id)));

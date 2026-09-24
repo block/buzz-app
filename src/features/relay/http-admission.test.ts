@@ -8,64 +8,61 @@ import {
 } from "./http-admission";
 
 afterEach(() => vi.useRealTimers());
-it("paces real starts, prioritizes foreground and never accumulates idle credits", async () => {
+it("starts six requests without advancing time and refills by foreground priority on completion", async () => {
   vi.useFakeTimers();
   const lane = createApiAdmission();
   const calls: string[] = [];
-  const work = (name: string) => async () => {
+  const release: Array<() => void> = [];
+  const work = (name: string) => () => {
     calls.push(name);
+    return new Promise<void>((resolve) => release.push(resolve));
   };
-  const a = lane.run(work("first"));
-  const b = lane.run(work("background"), undefined, "background");
-  const c = lane.run(work("send"));
-  await a;
-  expect(calls).toEqual(["first"]);
-  await vi.advanceTimersByTimeAsync(500);
-  await c;
-  expect(calls).toEqual(["first", "send"]);
-  await vi.advanceTimersByTimeAsync(500);
-  await b;
-  await vi.advanceTimersByTimeAsync(60000);
-  const d = lane.run(work("after idle"));
-  const e = lane.run(work("next"));
-  await d;
+  const active = Array.from({ length: 6 }, (_, i) => lane.run(work(`${i}`)));
+  expect(calls).toEqual(["0", "1", "2", "3", "4", "5"]);
+  const background = lane.run(work("background"), undefined, "background");
+  const foreground = lane.run(work("foreground"));
+  expect(calls).toHaveLength(6);
+  release.shift()?.();
+  await active[0];
+  await Promise.resolve();
+  expect(calls.at(-1)).toBe("foreground");
+  release.shift()?.();
+  await active[1];
+  await Promise.resolve();
+  expect(calls.at(-1)).toBe("background");
+  for (const finish of release) finish();
+  await Promise.all([...active, background, foreground]);
+  await lane.run(async () => calls.push("after idle"));
   expect(calls.at(-1)).toBe("after idle");
-  await vi.advanceTimersByTimeAsync(499);
-  expect(calls.at(-1)).toBe("after idle");
-  await vi.advanceTimersByTimeAsync(1);
-  await e;
+  expect(performance.now()).toBe(0);
   expect(vi.getTimerCount()).toBe(0);
 });
-it("pauses all queued consumers explicitly, honors cancellation, and never retries an admitted operation", async () => {
+it("pauses queued consumers, cancels before dispatch, and never retries admitted work", async () => {
   vi.useFakeTimers();
   const lane = createApiAdmission();
   let release!: () => void;
-  const work = vi.fn(
-    () =>
-      new Promise<void>((resolve) => {
-        release = resolve;
-      }),
-  );
-  const first = lane.run(work);
-  await Promise.resolve();
-  const queued = lane.run(work);
-  const refused = expect(queued).rejects.toBeInstanceOf(ApiPaused);
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const work = vi.fn(() => held);
+  const active = Array.from({ length: 6 }, () => lane.run(work));
+  const controller = new AbortController();
+  const cancelled = expect(
+    lane.run(work, controller.signal),
+  ).rejects.toMatchObject({ name: "AbortError" });
+  controller.abort();
+  await cancelled;
+  const refused = expect(lane.run(work)).rejects.toBeInstanceOf(ApiPaused);
   lane.pause(3000);
   await refused;
   await expect(lane.run(work)).rejects.toBeInstanceOf(ApiPaused);
   release();
-  await first;
-  await vi.advanceTimersByTimeAsync(3000);
-  const controller = new AbortController();
-  const once = lane.run(async () => {});
-  const cancelled = lane.run(work, controller.signal);
-  const rejects = expect(cancelled).rejects.toMatchObject({
-    name: "AbortError",
-  });
-  controller.abort();
-  await rejects;
-  await once;
-  expect(work).toHaveBeenCalledTimes(1);
+  await Promise.all(active);
+  await vi.advanceTimersByTimeAsync(2999);
+  await expect(lane.run(work)).rejects.toBeInstanceOf(ApiPaused);
+  await vi.advanceTimersByTimeAsync(1);
+  await lane.run(async () => {});
+  expect(work).toHaveBeenCalledTimes(6);
   expect(vi.getTimerCount()).toBe(0);
 });
 it("normalizes only upstream quota hints and bounds streaming error bodies", async () => {
@@ -176,4 +173,39 @@ it("a partial quota body retains its host owner until normalization installs coo
   expect(lane.idle()).toBe(false);
   await vi.advanceTimersByTimeAsync(3000);
   expect(lane.idle()).toBe(true);
+});
+
+it("presence starts alongside held ordinary work but retains its own flight, pacing and shared cooldown", async () => {
+  vi.useFakeTimers();
+  const lane = createApiAdmission();
+  let finish!: () => void;
+  const ordinary = lane.run(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    undefined,
+    "background",
+  );
+  const release = lane.tryPresence();
+  expect(release).toBeTypeOf("function");
+  expect(lane.tryPresence()).toBeUndefined();
+  release?.();
+  expect(lane.tryPresence()).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(4999);
+  expect(lane.tryPresence()).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  const next = lane.tryPresence();
+  expect(next).toBeTypeOf("function");
+  next?.();
+  lane.pause(6000);
+  expect(lane.tryPresence()).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(5999);
+  expect(lane.tryPresence()).toBeUndefined();
+  await vi.advanceTimersByTimeAsync(1);
+  const resumed = lane.tryPresence();
+  expect(resumed).toBeTypeOf("function");
+  resumed?.();
+  finish();
+  await ordinary;
 });

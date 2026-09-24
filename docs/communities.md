@@ -10,11 +10,11 @@ each community's queries, live subscriptions, projections and durable outbox.
 
 Configure `BUZZ_DEV_VIEWER` with your existing Buzz public key in `.env.local`
 ([setup and safety notes](../README.md#relay-channels)), then run
-`just web` and open http://localhost:1430, or use `just desktop` instead. The
-development broker requires macOS and refuses a Keychain identity that does not
-match your explicit public pin.
+`just web` and open the Local URL it prints, or use `just desktop` instead. The
+development broker runs on macOS and Linux and refuses an OS-store identity
+that does not match your explicit public pin.
 Click the avatar → **Settings → Profile** to edit and save a local default
-directly in the page, then **Switch community → Add a community** and type a **Relay URL**. There
+directly in the page, then use **Add a community** in the left rail and type a **Relay URL**. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
 Buzz-compatible community relays. No community is pre-joined.
@@ -42,8 +42,10 @@ completed community setup seeds the local default only when it is still empty.
 Picture setup currently accepts HTTPS URLs, not uploads; a protected media URL
 from one community is not a portable public avatar for another.
 
-Open **Switch community** at the top left and select a community to switch. Personal space
-clears selection without forgetting memberships. Messages shows an intentional
+Use the persistent left community rail to select a saved community or Personal
+space. Personal space
+clears selection without forgetting memberships. The rail’s Add control opens the
+existing join dialog; displaying saved communities reads relay metadata but does not open sessions for them. Messages shows an intentional
 empty state there. Try drafting in A, switching to B, then returning to A.
 Selected channels, drafts and reading offsets are partitioned by the canonical
 community origin and viewer; channel IDs alone are not sufficient keys.
@@ -99,7 +101,12 @@ without it unscoped relay operations fail explicitly. `/api/relay/identity` stay
 available independently. These settings do not join/select a community or send a
 request on startup. Both are public routing values, not credentials; alias mappings
 are embedded in the frontend. Restart/rebuild after changing them. Environment
-variables override `.env.local`; see `.env.example`. Session acquisition/retry registers again, including startup of a
+variables override `.env.local`; see `.env.example`. As a separate opt-in,
+`BUZZ_DEV_OPEN_RELAY=1` makes a live dev server save and select the canonical
+`BUZZ_RELAY_URL` origin for a viewer whose local client record is absent, labeled
+with the relay host. Only `1` enables it and it requires `BUZZ_RELAY_URL`; any
+saved record, including Personal space, wins; switching in the UI never writes
+configuration; production builds ignore it. Session acquisition/retry registers again, including startup of a
 saved custom community after broker restart. Query/sign/publish, policy/claim,
 metadata, protected media and live traffic stay bound to the captured destination.
 HTTP authority discovery and other upstream fetches reject redirects.

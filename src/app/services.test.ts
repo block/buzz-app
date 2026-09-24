@@ -32,12 +32,13 @@ const viewer = "a".repeat(64);
 const signals: AbortSignal[] = [];
 const streams: { url: string; close: ReturnType<typeof vi.fn> }[] = [];
 let storageReads: ReturnType<typeof vi.fn>;
+let values: Map<string, string>;
 
 beforeEach(() => {
   vi.useFakeTimers();
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
   plugin.cleanup.mockReset();
-  const values = new Map<string, string>();
+  values = new Map<string, string>();
   storageReads = vi.fn((key: string) => values.get(key) ?? null);
   vi.stubGlobal("localStorage", {
     getItem: storageReads,
@@ -121,8 +122,21 @@ async function openCommunities() {
 function expectHostStopped() {
   expect(signals.every((signal) => signal.aborted)).toBe(true);
   for (const stream of streams) expect(stream.close).toHaveBeenCalledTimes(1);
-  expect(document.addEventListener).toHaveBeenCalledTimes(3);
-  expect(document.removeEventListener).toHaveBeenCalledTimes(3);
+  const added = vi.mocked(document.addEventListener).mock.calls;
+  const removed = vi.mocked(document.removeEventListener).mock.calls;
+  expect(added).toHaveLength(10); // Host listeners plus capture-phase presence input.
+  expect(removed).toHaveLength(added.length);
+  const capture = (options?: boolean | EventListenerOptions) =>
+    typeof options === "boolean" ? options : !!options?.capture;
+  for (const [type, listener, options] of added)
+    expect(
+      removed.filter(
+        ([event, callback, removalOptions]) =>
+          event === type &&
+          callback === listener &&
+          capture(removalOptions) === capture(options),
+      ),
+    ).toHaveLength(1);
   expect(services.pages.snapshot()).toHaveLength(0);
 }
 
@@ -196,6 +210,27 @@ it("still cancels the host and reports an unexpected manager-disposal failure", 
   });
   await expect(services.dispose()).rejects.toThrow("Manager cleanup failed");
   expectHostStopped();
+});
+
+it("seeds and persists the configured relay through the real app composition", async () => {
+  await services.dispose();
+  vi.stubEnv("VITE_BUZZ_OPEN_RELAY", "https://third.example");
+  services = createServices();
+  await vi.advanceTimersByTimeAsync(0);
+  const membership = { id: "https://third.example", name: "third.example" };
+  expect(services.communities.snapshot()).toMatchObject({
+    status: "ready",
+    memberships: [membership],
+    selected: membership.id,
+  });
+  expect(vi.mocked(fetch).mock.calls.map(([url]) => url)).toContain(
+    "/api/relay/https%3A%2F%2Fthird.example/session",
+  );
+  expect(JSON.parse(values.get(`buzz-client.v1:${viewer}`) ?? "null")).toEqual({
+    profile: { name: "", picture: "" },
+    memberships: [membership],
+    selected: membership.id,
+  });
 });
 
 it("joins cleanup already started by disabling a plugin", async () => {

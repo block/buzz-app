@@ -22,7 +22,24 @@ builds still require the [Tauri prerequisites](https://v2.tauri.app/start/prereq
 See [contributing](docs/contributing.md) for exact pins, registry settings,
 and the pinned pnpm package's Intel Mac limitation.
 
-Run **one** of `just web` or `just desktop` at a time; both use port 1430.
+Both commands forward arguments to their development tool (Vite or Tauri).
+The default port is derived from the worktree's path, giving each checkout a
+stable default that normally avoids collisions between parallel worktrees;
+`just desktop` prints the URL it chose. Override it with `just web --port 1431`
+or `just desktop --port 1432`. Browser servers prefer the requested port and
+use the next open port automatically; desktop requires the exact port to be free and keeps
+Vite and the native window on the same URL. Use an explicit port if two paths
+collide, another process occupies the default, or you start a second instance
+from the same checkout:
+
+```sh
+just desktop
+# A second instance from the same checkout:
+just desktop --port 1431
+```
+
+Ports do not isolate account credentials or native plugin data. For separate
+plugin profiles, use the existing `BUZZODZ_PROFILE` setting described below.
 Without live opt-in they run the shell without relay identity access.
 `just iterate` applies formatting and runs fast checks plus the frontend build.
 `just scan` adds tests and native checks. [PR CI](.github/workflows/ci.yml) runs
@@ -30,10 +47,20 @@ those checks in cached, parallel jobs with sharded browser journeys.
 Install the fast staged-file pre-commit and related-test pre-push hooks once per worktree with
 `bin/pnpm hooks:install`; see [hook behavior and partial staging](docs/contributing.md#git-hooks).
 
+### Design system
+
+Run `just design` (or `bin/just design` without activation) to install locked
+dependencies, start the standalone design-system viewer, and open it in your
+browser. It uses port 1442 and does not start the desktop app or live relay broker.
+If that port is occupied, choose another with `just design --port 1444`.
+Press Ctrl+C to stop the server.
+
 ## Relay channels
 
-Live development currently requires **macOS and an existing Buzz account in the
-`buzz-desktop` / `secrets` Keychain entry**. This development broker is not native
+Live development currently requires **an existing Buzz account in the OS credential
+store**: the `buzz-desktop` / `secrets` Keychain entry on macOS, or the same entry in
+the freedesktop secret service on Linux (read with libsecret's `secret-tool`, so
+install `libsecret-tools` and run inside an unlocked desktop session). This development broker is not native
 sign-in and is not included in packaged builds. `just web` and `just desktop` run
 it automatically once `BUZZ_DEV_VIEWER` is configured; without that pin they start
 in the non-live shell/fixture state.
@@ -45,6 +72,8 @@ in the non-live shell/fixture state.
    BUZZ_DEV_VIEWER=npub1YOUR_PUBLIC_KEY
    # Optional default for unscoped development-broker requests:
    BUZZ_RELAY_URL=wss://relay.example.com
+   # Optional: on a fresh dev port, save and select BUZZ_RELAY_URL as a community.
+   BUZZ_DEV_OPEN_RELAY=1
    # Optional compatibility map for memberships saved with short aliases:
    BUZZ_COMMUNITY_ALIASES='{"example":"wss://relay.example.com"}'
    ```
@@ -52,13 +81,22 @@ in the non-live shell/fixture state.
    the account to use; it does not import or change a key. Relay URLs and aliases
    are public configuration, not secrets. With both relay settings unset, there is
    no default relay or alias map; Personal space and communities saved by canonical
-   URL remain usable. Configuration does not automatically join a community.
-3. Start **one** development target:
+   URL remain usable. Configuration does not automatically join a community:
+   `BUZZ_DEV_OPEN_RELAY=1` only saves and selects the default relay locally on a
+   dev port whose saved choice is absent. It does not implicitly join a community,
+   accept an invite, or publish a profile. Normal session traffic and presence still
+   apply.
+3. Start a development target:
    ```sh
    just web
    # Or, instead of web:
    just desktop
    ```
+
+   Open the Local URL printed by `just web`. Each worktree derives a stable
+   default port from its path, but two paths can still collide. If the default
+   is busy, use `just desktop --port 1431` (or another free port) instead of
+   stopping the other copy.
 
 The broker reads the existing Keychain credential only after validating the
 public pin, refuses mismatches and never falls back to another credential. If it
@@ -67,6 +105,35 @@ do not delete or replace its Keychain entry. Environment variables override
 `.env.local`. Restart the dev server after changing the configuration. Without
 an existing supported credential, live development is unavailable; shell and
 fixture tests still work.
+
+Media attachments in live development need `ffmpeg` on the server’s PATH for
+video, HEIC/HEIF, and the existing `voice-note-*.wav` exception (macOS:
+`brew install ffmpeg`; Linux: your distribution’s ffmpeg package). The broker
+prepares canonical H.264/AAC MP4 or single-frame JPEG before upload hashes/signs
+those exact bytes. Missing tools and unsupported codecs fail visibly. No generic
+audio conversion or recording UI is added.
+
+JPEG/PNG/WebP cleanup preserves orientation and alpha; GIF/APNG/WebP structural
+cleanup preserves animation. Animated images requiring ICC or EXIF orientation
+transforms reject rather than silently change appearance. Snapshot PNG manifests
+survive cleanup. A lazy, cancellable lossless WebP encoder covers still-image pixel
+cleanup on WebKit, which lacks a canvas WebP encoder.
+
+Final-file defaults match old Buzz: 50 MiB images, 10 MiB GIFs, 100 MiB generic
+files, 500 MiB videos. The relay remains authoritative and can enforce lower
+limits, 25-million-pixel images, and video codec/duration/resolution constraints.
+The client separately bounds source files at 500 MiB (voice notes: 128 MiB), ten
+files per draft, and 1,000 MiB retained sources per session. These source/batch
+safety budgets are not old-relay final-byte limits. Preparation can grow or shrink
+files. Browser Blobs still retain complete prepared payloads; only the broker's
+transfer buffers are streaming. Private spool files and conversion children are
+request-owned, cancelled on disconnect and cleaned before admission is released.
+
+Picker/paste/drop share the same tab-local draft. Files must finish uploading
+before Send; navigation pauses unfinished uploads for explicit Retry. Reload loses
+unsent files. Background Send, attachment-first new sessions and UX polish are
+separate work. Live uploads currently use the development broker, not a packaged
+native upload implementation.
 
 The broker supports reads, live traffic and basic message sending **as your real
 account**. Profile changes and invite admission can also write to real communities.
@@ -79,7 +146,7 @@ Messages, choose a channel, and click a GitHub reference. See
 [the channel extension contract and data budgets](docs/channels.md) for ownership,
 performance, validation, and limitations.
 
-Home, Channels, and GitHub can each be toggled independently in Settings.
+Messages is the landing page. Channels is required and cannot be disabled; optional plugins such as GitHub can be toggled in Settings.
 
 See [client and community ownership](docs/communities.md) for the minimal join/profile flow, session scopes, and switching checks.
 
@@ -130,9 +197,9 @@ Browser installation is not supported; the browser shows a desktop-only explanat
 
 Emoji is independently toggleable in Settings. Its picker and custom rendering
 plug into shared conversation surfaces; catalog, event tags and delivery stay
-session-owned. The independent Composer Lab example reuses those surfaces in a
-test page without adding tools to normal composers. Automated tests use a separate
-external-tool fixture to exercise contribution lifecycle.
+session-owned. The standard composer remains shared host UI, independent of any
+example plugin. Automated tests use source-only external consumer and tool fixtures
+to exercise component reuse and contribution lifecycle.
 
 ## Plugin contract
 
@@ -211,8 +278,9 @@ local macOS bundle with embedded frontend assets: `pnpm tauri build --debug --bu
 ### Agents compatibility preview
 
 In live development mode, Agents reads the **installed Buzz** library on this
-Mac (`~/Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json`)
-without changing it. The separate Buzz development-build library is not merged.
+machine (`~/Library/Application Support/xyz.block.buzz.app/agents/managed-agents.json`
+on macOS, `$XDG_DATA_HOME/xyz.block.buzz.app/agents/managed-agents.json` on Linux,
+defaulting to `~/.local/share`) without changing it. The separate Buzz development-build library is not merged.
 It shows selected definitions and linked public identities; Refresh reads changes
 made in Buzz. No creation, configuration, migration, member addition or runtime
 controls are included. Keep Buzz running for existing agents to answer selected

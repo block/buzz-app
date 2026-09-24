@@ -69,11 +69,17 @@ function setup({ supported = true, focused = true, settled = true } = {}) {
     },
   );
   const leases: {
+    view: ReturnType<typeof vi.fn>;
     observe: ReturnType<typeof vi.fn>;
     dispose: ReturnType<typeof vi.fn>;
   }[] = [];
+  let observe = async () => {};
   const reading = vi.fn(() => {
-    const lease = { observe: vi.fn(async () => {}), dispose: vi.fn() };
+    const lease = {
+      view: vi.fn(),
+      observe: vi.fn(() => observe()),
+      dispose: vi.fn(),
+    };
     leases.push(lease);
     return lease;
   });
@@ -100,6 +106,9 @@ function setup({ supported = true, focused = true, settled = true } = {}) {
     position,
     disconnected,
     mutation: () => mutation(),
+    setObserve: (next: typeof observe) => {
+      observe = next;
+    },
     setRows: (next: typeof rows) => {
       rows = next;
     },
@@ -127,8 +136,8 @@ it("reports only fully visible settled evidence after dwell, not mounted oversca
   vi.advanceTimersByTime(1);
   expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
 });
-it.each([{ supported: false }, { focused: false }, { settled: false }])(
-  "does not allocate reading from unsupported/background/unsettled views: %j",
+it.each([{ focused: false }, { settled: false }])(
+  "does not allocate reading from background/unsettled views: %j",
   (options) => {
     const h = setup(options);
     vi.advanceTimersByTime(1000);
@@ -164,10 +173,73 @@ it("scroll and content changes restart dwell; a row seen only at the end is not 
   vi.advanceTimersByTime(1);
   expect(h.leases[2]?.observe).not.toHaveBeenCalled();
 });
+it("active content reflow cannot revoke dwell already queued for durability", async () => {
+  const h = setup();
+  let release: (() => void) | undefined;
+  h.setObserve(
+    () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      }),
+  );
+  vi.advanceTimersByTime(750);
+  expect(h.leases[0]?.observe).toHaveBeenCalledExactlyOnceWith(["visible"]);
+
+  h.mutation();
+  expect(h.leases[0]?.dispose).not.toHaveBeenCalled();
+  h.doc.activeElement = new EventTarget();
+  h.element.dispatchEvent(
+    Object.assign(new Event("focusout"), { relatedTarget: null }),
+  );
+  expect(h.leases[0]?.dispose).toHaveBeenCalledTimes(1);
+  release?.();
+  await vi.runAllTimersAsync();
+  expect(h.leases[0]?.dispose).toHaveBeenCalledTimes(1);
+});
 it("focus leaving the reading surface cancels pending evidence", () => {
   const h = setup();
   h.doc.activeElement = new EventTarget();
-  h.element.dispatchEvent(new Event("focusout"));
+  h.element.dispatchEvent(
+    Object.assign(new Event("focusout"), { relatedTarget: null }),
+  );
   vi.advanceTimersByTime(1000);
   expect(h.leases[0]?.observe).not.toHaveBeenCalled();
+});
+
+it("reports qualified viewing even without read sync, but never publishes read intent", () => {
+  const h = setup({ supported: false });
+  expect(h.leases[0]?.view).toHaveBeenCalledExactlyOnceWith(
+    ["visible"],
+    expect.any(Function),
+  );
+  vi.advanceTimersByTime(1000);
+  expect(h.leases[0]?.observe).not.toHaveBeenCalled();
+});
+it("the viewing validity callback rechecks focus and settled positioning synchronously", () => {
+  const h = setup();
+  const visible = h.leases[0]?.view.mock.calls[0]?.[1];
+  expect(visible()).toBe(true);
+  h.position.current = false;
+  expect(visible()).toBe(false);
+  h.position.current = true;
+  h.doc.activeElement = new EventTarget();
+  expect(visible()).toBe(false);
+  h.unmount();
+  expect(visible()).toBe(false);
+});
+
+it("membership activity cannot abort acknowledgment of a visible message below it", () => {
+  const h = setup();
+  h.setRows([
+    {
+      ...row("membership", 10, 50),
+      dataset: { messageId: "membership", membershipRow: "" },
+    } as ReturnType<typeof row>,
+    row("conversation", 100, 200),
+  ]);
+  h.mutation();
+  vi.advanceTimersByTime(750);
+  expect(h.leases.at(-1)?.observe).toHaveBeenCalledExactlyOnceWith([
+    "conversation",
+  ]);
 });

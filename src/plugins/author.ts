@@ -1,8 +1,22 @@
 // FOUNDATION: Type-only author entry. Runtime capabilities come from injected ctx.
 export type { PluginManifest, PluginModule } from "./api";
+export type { SettingsCard, SettingsCards } from "../features/settings/service";
+export type {
+  TemplateDraft,
+  TemplateEditorProps,
+  GroupDefaultProps,
+  SaveTemplateProps,
+  TemplateProvider,
+  TemplateProviders,
+} from "../features/channel-templates/provider";
 export type { Context } from "@deepseek-ai/cordis";
 export type { Page, Pages } from "../features/pages/service";
-export type { Panel, Panels } from "../features/panels/service";
+export type {
+  Panel,
+  Panels,
+  ChannelPanelContext,
+  ChannelLauncherProps,
+} from "../features/panels/service";
 export type { Conversation } from "../features/conversation/service";
 export type {
   ComposerObservation,
@@ -13,11 +27,15 @@ export type {
   CompletionResult,
   ComposerCompletionProps,
   ComposerCompletion,
+  ComposerAccessory,
+  ComposerAccessoryProps,
   ComposerToolProps,
   ComposerTool,
   InlineContent,
   InlineRange,
   InlineRenderer,
+  LinkRenderer,
+  MessageRenderer,
 } from "../features/conversation/contracts";
 export type { RelayData, RelaySnapshot } from "../features/relay/service";
 
@@ -31,6 +49,8 @@ export type {
 export type {
   UnreadCapability,
   UnreadSnapshot,
+  ThreadActivityItem,
+  ThreadActivitySnapshot,
   ReadingHandle,
 } from "../features/relay/unread";
 export type { ReadTarget } from "../features/relay/read-state-model";
@@ -52,3 +72,20 @@ export type {
   JsonValue,
 } from "../features/navigation/targets";
 export type { PageNavigation } from "../features/navigation/service";
+
+export type {
+  Notifications,
+  NotificationInput,
+  NotificationCategoryDescriptor,
+} from "../features/notifications/service";
+
+export type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+  AgentEdit,
+  AgentAction,
+  ControlSnapshot,
+  AgentImportPreview,
+  ImportSource,
+} from "../features/agents/control";

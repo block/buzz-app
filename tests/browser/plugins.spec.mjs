@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 
-test.use({ pluginFixtures: true });
+test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const card = (page, name) =>
   page.getByRole("complementary", { name, exact: true });
@@ -38,7 +38,7 @@ test("a second plugin uses the same launcher slot without remounting a legacy pa
   await expect(draft).toHaveValue("Keep the page instance");
   await button(page, "Notes").click();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page.getByRole("switch", { name: "Enable Notes fixture" }).click();
   await expect(button(page, "Notes")).toHaveCount(0);

@@ -149,9 +149,13 @@ it("lazily refreshes dormant selectors and preserves identity when their value i
   const target = at(h.targets, 0);
   const before = h.unread.snapshot(target);
   at(h.stops, 0)();
-  h.owner.accept([message(h.viewer, "c0", "own message", 12)]);
+  const own = message(h.viewer, "c0", "own message", 12);
+  h.owner.accept([own]);
   expect(h.state).not.toHaveBeenCalled();
-  expect(h.unread.snapshot(target)).toBe(before);
+  const after = h.unread.snapshot(target);
+  expect(after).not.toBe(before);
+  expect(after.latestMessage).toEqual({ id: own.id, createdAt: 12 });
+  expect(h.unread.snapshot(target)).toBe(after);
   expect(h.state).toHaveBeenCalledTimes(1);
   h.reset();
   h.owner.accept([message(h.peer, "c0", "unread message", 13)]);
@@ -169,20 +173,41 @@ it("lazily refreshes dormant selectors and preserves identity when their value i
 it("keeps read-state and freshness invalidation global", async () => {
   const h = await setup();
   const before = h.targets.map(h.unread.snapshot);
+  const activity = h.unread.activity("c0");
+  const activityChanges = vi.fn();
+  h.unread.subscribeActivity("c0", activityChanges);
+  expect(activity).toMatchObject({
+    coverage: "observed",
+    freshness: "observed",
+    items: [],
+  });
+  h.reset();
   const readChanges = vi.fn();
   h.reads.subscribe(readChanges);
   await h.reads.markLocalUnread("c0", () => true);
   expect(readChanges).toHaveBeenCalled();
-  expect(h.state).toHaveBeenCalledTimes(3 * readChanges.mock.calls.length);
   expect(h.unread.snapshot(at(h.targets, 0)).manual).toBe("local-only");
   expect(h.unread.snapshot(at(h.targets, 1))).toBe(before[1]);
+  expect(h.unread.activity("c0")).toBe(activity);
+  expect(activityChanges).not.toHaveBeenCalled();
   h.owner.stale();
   expect(
     h.targets.map((target) => h.unread.snapshot(target).freshness),
   ).toEqual(["stale", "stale", "stale"]);
+  expect(h.unread.activity("c0")).toMatchObject({
+    freshness: "stale",
+    items: [],
+  });
+  expect(activityChanges).toHaveBeenCalledOnce();
+  const beforeFreshnessRecovery = h.listeners.map(
+    (listener) => listener.mock.calls.length,
+  );
   h.reset();
   h.owner.accept([message(h.peer, "c0", "fresh evidence", 12)]);
-  expect(h.state).toHaveBeenCalledTimes(3);
+  expect(h.listeners.map((listener) => listener.mock.calls.length)).toEqual(
+    beforeFreshnessRecovery.map((count) => count + 1),
+  );
+  expect(activityChanges).toHaveBeenCalledTimes(2);
   expect(
     h.targets.map((target) => h.unread.snapshot(target).freshness),
   ).toEqual(["observed", "observed", "observed"]);

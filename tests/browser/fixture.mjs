@@ -9,6 +9,7 @@ import {
   verifyEvent,
 } from "nostr-tools";
 import { writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
 import { platform, arch } from "node:os";
 import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
@@ -25,14 +26,25 @@ export const historySize = 640;
 // broker/subscriber and model only the upstream relay policy with ephemeral keys.
 export const test = base.extend({
   productionBroker: [false, { option: true }],
+  actionProfile: [false, { option: true }],
+  profilePicture: ["", { option: true }],
   readState: [false, { option: true }],
   threadUnread: [false, { option: true }],
+  presenceThreadAuthors: [0, { option: true }],
+  threadUnreadMentions: [false, { option: true }],
+  exactMessages: [false, { option: true }],
+  openSearch: [false, { option: true }],
+  sessionChannels: [[], { option: true }],
+  sessionParents: [{}, { option: true }],
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
+  iconCongestion: [false, { option: true }],
   dmLabels: [false, { option: true }],
   tallMessages: [false, { option: true }],
+  membershipActivity: [false, { option: true }],
+  historyCounts: [{ alpha: 1, beta: 1 }, { option: true }],
   developmentReact: [false, { option: true, scope: "worker" }],
   pluginFixtures: [false, { option: true, scope: "worker" }],
   compiledApp: [buildApp, { scope: "worker" }],
@@ -43,14 +55,25 @@ export const test = base.extend({
       browserName,
       browser,
       productionBroker,
+      actionProfile,
+      profilePicture,
       readState,
       threadUnread,
+      presenceThreadAuthors,
+      threadUnreadMentions,
+      exactMessages,
+      openSearch,
+      sessionChannels,
+      sessionParents,
       sidebarUnread,
       savedSidebar,
       expectedPageFailure,
       largeSidebar,
+      iconCongestion,
       dmLabels,
       tallMessages,
+      membershipActivity,
+      historyCounts,
       pluginFixtures,
       developmentReact,
       compiledApp,
@@ -58,10 +81,40 @@ export const test = base.extend({
     use,
     testInfo,
   ) => {
-    const relayKey = generateSecretKey();
-    const userKey = generateSecretKey();
+    const key = (seed) =>
+      actionProfile
+        ? Uint8Array.from({ length: 32 }, (_, i) => (i === 31 ? seed : 0))
+        : generateSecretKey();
+    const relayKey = key(1);
+    const typingKeys = [key(2), key(3)];
+    const userKey = key(4);
     const viewer = getPublicKey(userKey);
-    const peerKey = dmLabels || readState ? generateSecretKey() : undefined;
+    const membershipKeys = membershipActivity
+      ? [generateSecretKey(), generateSecretKey()]
+      : [];
+    const membershipEvent = (
+      type,
+      targetIndex,
+      time,
+      actorIndex = -1,
+      forged = false,
+    ) =>
+      sign(
+        40099,
+        [["h", "alpha"]],
+        JSON.stringify({
+          type,
+          actor:
+            actorIndex < 0 ? viewer : getPublicKey(membershipKeys[actorIndex]),
+          target: getPublicKey(membershipKeys[targetIndex]),
+        }),
+        forged ? userKey : relayKey,
+        time,
+      );
+    const peerKey =
+      dmLabels || readState || exactMessages || actionProfile
+        ? key(5)
+        : undefined;
     const communityIds = {
       primary: "01234567-89ab-cdef-0123-456789abcdef",
       secondary: "11234567-89ab-cdef-0123-456789abcdef",
@@ -92,7 +145,9 @@ export const test = base.extend({
       : dmLabels
         ? ["dm-peer"]
         : [];
-    const rosterIds = [...channels, ...dmIds];
+    const rosterIds = [
+      ...new Set([...channels, ...dmIds, ...Object.values(sessionParents)]),
+    ];
     if (savedSidebar) {
       const key = nip44.v2.utils.getConversationKey(userKey, viewer);
       for (const community of ["primary", "secondary"]) {
@@ -128,25 +183,102 @@ export const test = base.extend({
     }
     const hiddenChannels = new Set();
     const streams = new Map();
+    const streamOwners = new Map();
+    // Tall histories leave room above the older-page prefetch threshold, even
+    // with the compact message type and an extra upward resize-test gesture.
     const histories = new Map();
+    for (const community of ["primary", "secondary"])
+      for (const parent of Object.values(sessionParents))
+        histories.set(`${community}/${parent}`, []);
+    const historyStarted = performance.now();
     for (const community of ["primary", "secondary"])
       for (const channel of channels)
         histories.set(
           `${community}/${channel}`,
-          Array.from(
-            { length: channel === "alpha" ? historySize : 80 },
-            (_, i) =>
-              sign(
-                9,
-                [["h", channel]],
-                `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 3 : 1))}`,
-                readState ? peerKey : userKey,
-                1700000100 + i,
-              ),
+          Array.from({ length: historyCounts[channel] }, (_, i) =>
+            sign(
+              9,
+              [["h", channel]],
+              `${community} ${channel} message ${i}\n${"Mixed height message content. ".repeat((1 + (i % 7) * 3) * (tallMessages ? 4 : 1))}`,
+              readState ? peerKey : userKey,
+              1700000100 + i,
+            ),
           ),
         );
+    const historyDurationMs = performance.now() - historyStarted;
     for (const community of ["primary", "secondary"])
       for (const id of dmIds) histories.set(`${community}/${id}`, []);
+    const targetEvents = [];
+    let searchTarget;
+    if (openSearch) {
+      const root = sign(
+        9,
+        [["h", "open"]],
+        "Public conversation root",
+        userKey,
+        1699999000,
+      );
+      searchTarget = sign(
+        9,
+        [
+          ["h", "open"],
+          ["e", root.id, "", "reply"],
+        ],
+        "crew-search exact public reply",
+        userKey,
+        1699999001,
+      );
+      histories.set("primary/open", [root]);
+      targetEvents.push(searchTarget);
+    }
+    let exact;
+    if (exactMessages) {
+      const root = histories.get("primary/alpha")[2];
+      const replies = Array.from({ length: 80 }, (_, i) =>
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", root.id, "", "reply"],
+            ["p", getPublicKey(peerKey)],
+          ],
+          `Old thread reply ${i} · Hello @Alice Fixture`,
+          userKey,
+          root.created_at + i + 1,
+        ),
+      );
+      const target = replies.at(-1);
+      const edit = sign(
+        40003,
+        [["e", target.id]],
+        "**Exact reply edited** · Hello @Alice Fixture",
+        userKey,
+        target.created_at + 1,
+      );
+      const reaction = sign(
+        7,
+        [["e", target.id]],
+        "+",
+        userKey,
+        target.created_at + 2,
+      );
+      const deletion = sign(
+        5,
+        [["e", reaction.id]],
+        "",
+        userKey,
+        target.created_at + 3,
+      );
+      targetEvents.push(...replies, edit, reaction, deletion);
+      exact = { root, target, replies, edit, reaction, deletion };
+    }
+    if (membershipActivity) {
+      const history = histories.get("primary/alpha");
+      history.push(
+        membershipEvent("member_joined", 0, 1700000740),
+        membershipEvent("member_joined", 1, 1700000741),
+      );
+    }
     if (sidebarUnread) {
       for (const id of ["dm-030", "dm-090"])
         histories.set(`primary/${id}`, [
@@ -155,7 +287,13 @@ export const test = base.extend({
     }
     // Opt-in upstream thread evidence: no client cache/read-state injection.
     // Uppercase signed references exercise canonical thread/unread parity.
-    const threadReplies = new Map();
+    const threadReplies = new Map(
+      exact ? [[exact.root.id, exact.replies]] : [],
+    );
+    if (searchTarget)
+      threadReplies.set(searchTarget.tags.find(([key]) => key === "e")[1], [
+        searchTarget,
+      ]);
     const threadSummaries = [];
     if (threadUnread) {
       const history = histories.get("primary/alpha");
@@ -174,6 +312,7 @@ export const test = base.extend({
             [
               ["h", "alpha"],
               ["e", root.id.toUpperCase(), "", "reply"],
+              ...(threadUnreadMentions && index === 1 ? [["p", viewer]] : []),
             ],
             `Unread reply ${index}`,
             peerKey,
@@ -242,6 +381,58 @@ export const test = base.extend({
         ),
       );
     }
+    // Signed upstream-only stress data; production traversal and mounting stay real.
+    let presenceThread;
+    if (presenceThreadAuthors) {
+      const threadRoot = histories
+        .get("primary/alpha")
+        .find((event) => event.content === "Thread root 0");
+      if (!threadRoot) throw new Error("Presence thread requires threadUnread");
+      const replies = Array.from({ length: presenceThreadAuthors }, (_, i) =>
+        sign(
+          9,
+          [
+            ["h", "alpha"],
+            ["e", threadRoot.id, "", "reply"],
+          ],
+          `Distinct author reply ${i}`,
+          generateSecretKey(),
+          threadRoot.created_at + i + 20,
+        ),
+      );
+      threadReplies.set(threadRoot.id, replies);
+      // The ordinary unread fixture also broadcasts one reply into the timeline.
+      // This stress case owns exactly the distinct replies above, not that extra row.
+      histories.set(
+        "primary/alpha",
+        histories
+          .get("primary/alpha")
+          .filter(
+            (event) =>
+              !event.tags.some(
+                ([key, value]) =>
+                  key === "e" && value.toLowerCase() === threadRoot.id,
+              ),
+          ),
+      );
+      presenceThread = { root: threadRoot, replies };
+    }
+    if (actionProfile) {
+      const root = histories
+        .get("primary/alpha")
+        .find((row) => row.content === "Thread root 1");
+      targetEvents.push(
+        sign(
+          7,
+          [
+            ["h", "alpha"],
+            ["e", root.id],
+          ],
+          "👍",
+          peerKey,
+        ),
+      );
+    }
     const report = {
       state: {
         head: execFileSync("git", ["rev-parse", "HEAD"], {
@@ -259,6 +450,7 @@ export const test = base.extend({
           worker: testInfo.workerIndex,
           durationMs: compiledApp.durationMs,
         },
+        signedHistory: { counts: historyCounts, durationMs: historyDurationMs },
         largeSidebar,
         readState,
         sidebarUnread,
@@ -277,36 +469,59 @@ export const test = base.extend({
       readPublications: [],
       sessions: [],
       streamConnections: [],
+      streamInterests: [],
       errors: [],
       consoleErrors: [],
       unexpected: [],
       measurements: [],
     };
     const pending = [];
+    const retiredStreams = new Set();
+    const observerFailures = [];
+    const consoleLocations = new Map();
     const send = (response, body, status = 200) => {
       response.writeHead(status, { "Content-Type": "application/json" });
       response.end(JSON.stringify(body));
     };
     const answer = (community, filter) => {
+      if (filter.kinds?.includes(20001))
+        return filter.authors.map((author) =>
+          sign(20001, [["p", author]], "online"),
+        );
       if (filter.kinds?.includes(39002))
-        return rosterIds.map((id) =>
-          sign(39002, [
-            ["d", id],
-            ["p", viewer],
-            ...participants
-              .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
-              .map((pubkey) => ["p", pubkey]),
-          ]),
-        );
+        return rosterIds
+          .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+          .map((id) =>
+            sign(39002, [
+              ["d", id],
+              ["p", viewer],
+              ...participants
+                .slice(dmIds.indexOf(id) * 8, (dmIds.indexOf(id) + 1) * 8)
+                .map((pubkey) => ["p", pubkey]),
+            ]),
+          );
       if (filter.kinds?.includes(39000))
-        return rosterIds.map((id) =>
-          sign(39000, [
-            ["d", id],
-            ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
-            ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
-            ...(hiddenChannels.has(id) ? [["hidden"]] : []),
-          ]),
-        );
+        return [...rosterIds, ...(openSearch ? ["open"] : [])]
+          .filter((id) => !filter["#d"] || filter["#d"].includes(id))
+          .map((id) =>
+            sign(39000, [
+              ["d", id],
+              ["name", id === "alpha" ? "Alpha" : id === "beta" ? "Beta" : id],
+              ...(id === "open" ? [["public"], ["t", "stream"]] : []),
+              ...(dmIds.includes(id) ? [["t", "dm"], ["hidden"]] : []),
+              ...(sessionChannels.includes(id)
+                ? [
+                    ["t", "stream"],
+                    ["private"],
+                    [
+                      "about",
+                      `Buzz session (buzz.sessions/v1)${sessionParents[id] ? `\nparent:${sessionParents[id]}` : ""}`,
+                    ],
+                  ]
+                : []),
+              ...(hiddenChannels.has(id) ? [["hidden"]] : []),
+            ]),
+          );
       if (filter.kinds?.includes(30078)) {
         const events = [...readEvents.get(community).values()];
         if (readState && filter.read_state_snapshot === 1)
@@ -335,6 +550,19 @@ export const test = base.extend({
       if (filter.kinds?.includes(0))
         return [
           sign(0, [], JSON.stringify({ name: "Fixture Reader" }), userKey),
+          ...membershipKeys
+            .filter((key) => filter.authors?.includes(getPublicKey(key)))
+            .map((key) =>
+              sign(
+                0,
+                [],
+                JSON.stringify({
+                  name: key === membershipKeys[0] ? "Pinky" : "Brain",
+                  ...(key === membershipKeys[1] ? { is_agent: true } : {}),
+                }),
+                key,
+              ),
+            ),
           ...(peerKey && filter.authors?.includes(getPublicKey(peerKey))
             ? [
                 sign(
@@ -346,12 +574,69 @@ export const test = base.extend({
               ]
             : []),
         ];
-      if (threadUnread && filter.ids)
-        return [...histories.values()]
-          .flat()
-          .filter((event) => filter.ids.includes(event.id));
-      if (threadUnread && filter.depth_limit)
-        return (threadReplies.get(filter["#e"]?.[0]) ?? [])
+      if (filter.search !== undefined)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.content.toLowerCase().includes(filter.search.toLowerCase()),
+          )
+          .slice(0, filter.limit);
+      if (filter.ids)
+        return [...histories.entries()]
+          .filter(([key]) => key.startsWith(`${community}/`))
+          .flatMap(([, events]) => events)
+          .concat(community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.ids.includes(event.id) &&
+              (!filter["#h"] ||
+                event.tags.some(
+                  ([key, value]) => key === "h" && filter["#h"].includes(value),
+                )),
+          )
+          .slice(0, filter.limit);
+      if (
+        filter["#e"] &&
+        filter.kinds?.every((kind) => [5, 7, 9005, 39005, 40003].includes(kind))
+      )
+        return (community === "primary" ? targetEvents : [])
+          .filter(
+            (event) =>
+              filter.kinds.includes(event.kind) &&
+              event.tags.some(
+                ([key, value]) => key === "e" && filter["#e"].includes(value),
+              ),
+          )
+          .filter(
+            (event) =>
+              filter.until === undefined ||
+              event.created_at < filter.until ||
+              (event.created_at === filter.until &&
+                event.id > filter.before_id),
+          )
+          .toSorted(
+            (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+          )
+          .slice(0, filter.limit);
+      if (filter.depth_limit) {
+        const rootId = filter["#e"]?.[0];
+        const candidates = [
+          ...(community === "primary" ? (threadReplies.get(rootId) ?? []) : []),
+          ...(histories.get(`${community}/${filter["#h"]?.[0]}`) ?? []),
+        ].filter((event) => {
+          const refs = event.tags.filter(([key]) => key === "e");
+          const root =
+            refs.find((tag) => tag[3] === "root") ??
+            refs.find((tag) => tag[3] === "reply");
+          return root?.[1]?.toLowerCase() === rootId;
+        });
+        const rows = [
+          ...new Map(candidates.map((event) => [event.id, event])).values(),
+        ]
           .filter(
             (event) =>
               filter.thread_cursor === undefined ||
@@ -359,7 +644,29 @@ export const test = base.extend({
               (event.created_at === filter.thread_cursor &&
                 event.id > filter.thread_cursor_id),
           )
+          .toSorted(
+            (a, b) => a.created_at - b.created_at || a.id.localeCompare(b.id),
+          )
           .slice(0, filter.limit);
+        const ids = new Set(rows.map((event) => event.id));
+        const aux = [];
+        if (filter.include_aux && community === "primary")
+          for (let hop = 0; hop < 2; hop++)
+            for (const event of targetEvents) {
+              if (
+                ids.has(event.id) ||
+                ![5, 7, 9005, 39005, 40003].includes(event.kind)
+              )
+                continue;
+              if (
+                event.tags.some(([key, value]) => key === "e" && ids.has(value))
+              ) {
+                aux.push(event);
+                ids.add(event.id);
+              }
+            }
+        return [...rows, ...aux];
+      }
       // Unread evidence is not a top-level window, even for a one-ID final batch.
       if (
         filter.kinds?.includes(9) &&
@@ -373,6 +680,13 @@ export const test = base.extend({
               ? [...threadReplies.values()].flat()
               : []),
           ])
+          .filter(
+            (event) =>
+              filter.until === undefined ||
+              event.created_at < filter.until ||
+              (event.created_at === filter.until &&
+                event.id > filter.before_id),
+          )
           .toSorted(
             (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
           )
@@ -382,6 +696,7 @@ export const test = base.extend({
       if (!history)
         throw new Error(`Unexpected query: ${JSON.stringify(filter)}`);
       const candidates = history
+        .filter((event) => !filter.kinds || filter.kinds.includes(event.kind))
         .filter(
           (event) =>
             filter.until === undefined ||
@@ -401,6 +716,14 @@ export const test = base.extend({
       return filter.include_aux
         ? [
             ...events,
+            ...(actionProfile
+              ? targetEvents.filter((aux) =>
+                  aux.tags.some(
+                    ([k, id]) =>
+                      k === "e" && events.some((row) => row.id === id),
+                  ),
+                )
+              : []),
             ...threadSummaries.filter((summary) =>
               events.some((event) =>
                 summary.tags.some(
@@ -424,12 +747,99 @@ export const test = base.extend({
           ]
         : events;
     };
+    const acceptReadPublication = (community, event) => {
+      expect(verifyEvent(event)).toBe(true);
+      expect(event.pubkey).toBe(viewer);
+      if (event.kind === 9) {
+        report.publications.push({ community, event });
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        histories.get(`${community}/${channel}`).push(event);
+        relay.publish(community, event);
+        return;
+      }
+      if ([7, 5].includes(event.kind)) {
+        const channel = event.tags.find(([name]) => name === "h")?.[1];
+        const history = histories.get(`${community}/${channel}`);
+        expect(history).toBeDefined();
+        const ids = event.tags
+          .filter(([name]) => name === "e")
+          .map(([, id]) => id);
+        expect(ids.length).toBeGreaterThan(0);
+        for (const id of ids) {
+          const target = [
+            ...history,
+            ...[...threadReplies.values()].flat(),
+          ].find((row) => row.id === id);
+          expect(target).toBeDefined();
+          expect(target.tags).toContainEqual(["h", channel]);
+          if (event.kind === 7) expect(target.kind).toBe(9);
+          else {
+            expect(target.pubkey).toBe(viewer);
+            expect([7, 9]).toContain(target.kind);
+            expect(event.tags).toContainEqual(["k", String(target.kind)]);
+          }
+        }
+        if (event.kind === 7) expect(ids).toHaveLength(1);
+        if (!history.some((row) => row.id === event.id)) {
+          history.push(event);
+          targetEvents.push(event);
+        }
+        report.publications.push({ community, event });
+        relay.publish(community, event);
+        return;
+      }
+      expect(event.kind).toBe(30078);
+      expect(event.tags).toContainEqual(["t", "read-state"]);
+      const blob = JSON.parse(
+        nip44.v2.decrypt(
+          event.content,
+          nip44.v2.utils.getConversationKey(userKey, viewer),
+        ),
+      );
+      const coordinate = event.tags.find(([key]) => key === "d")?.[1];
+      expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
+      const previous = readEvents.get(community).get(coordinate);
+      if (
+        !previous ||
+        event.created_at > previous.created_at ||
+        (event.created_at === previous.created_at && event.id < previous.id)
+      )
+        readEvents.get(community).set(coordinate, event);
+      report.readPublications.push({ community, event, blob });
+    };
     const relay = productionBroker
       ? policyRelay({
           viewer,
+          relayAuthor: getPublicKey(relayKey),
           answer,
           report,
           pending,
+          ...(actionProfile
+            ? {
+                latencyMs: 40,
+                holdOlder: false,
+                acceptPublication: (community, event) => {
+                  expect(verifyEvent(event)).toBe(true);
+                  expect(event.pubkey).toBe(viewer);
+                  if (event.kind === 30078)
+                    return acceptReadPublication(community, event);
+                  expect([9, 7]).toContain(event.kind);
+                  const channel = event.tags.find(([k]) => k === "h")?.[1];
+                  const history = histories.get(`${community}/${channel}`);
+                  expect(history).toBeDefined();
+                  if (!history.some((row) => row.id === event.id))
+                    history.push(event);
+                  if (event.kind === 7) targetEvents.push(event);
+                  report.publications.push({
+                    community,
+                    event,
+                    at: performance.now(),
+                  });
+                  // No live echo in this measurement lane: observe the receipt
+                  // and finite-read reconciliation without echo cancellation.
+                },
+              }
+            : {}),
           ...(readState
             ? {
                 discovery: (community) => ({
@@ -441,31 +851,7 @@ export const test = base.extend({
                     max_bytes: 8388608,
                   },
                 }),
-                acceptPublication: (community, event) => {
-                  expect(verifyEvent(event)).toBe(true);
-                  expect(event.pubkey).toBe(viewer);
-                  expect(event.kind).toBe(30078);
-                  expect(event.tags).toContainEqual(["t", "read-state"]);
-                  const blob = JSON.parse(
-                    nip44.v2.decrypt(
-                      event.content,
-                      nip44.v2.utils.getConversationKey(userKey, viewer),
-                    ),
-                  );
-                  const coordinate = event.tags.find(
-                    ([key]) => key === "d",
-                  )?.[1];
-                  expect(coordinate).toMatch(/^read-state:[0-9a-f]{32}$/);
-                  const previous = readEvents.get(community).get(coordinate);
-                  if (
-                    !previous ||
-                    event.created_at > previous.created_at ||
-                    (event.created_at === previous.created_at &&
-                      event.id < previous.id)
-                  )
-                    readEvents.get(community).set(coordinate, event);
-                  report.readPublications.push({ community, event, blob });
-                },
+                acceptPublication: acceptReadPublication,
               }
             : {}),
         })
@@ -489,34 +875,80 @@ export const test = base.extend({
           throw new Error(`Unexpected community: ${request.url}`);
         if (route === "gif-info" && request.method === "GET")
           return send(response, {});
-        if (route === "info" && request.method === "GET")
+        if (
+          (route === "info" || route === "icon-info") &&
+          request.method === "GET"
+        )
           return send(response, { policy: null });
         if (route === "session") {
           report.sessions.push(community);
           return send(response, {
             viewer,
             relayAuthor: getPublicKey(relayKey),
-            writeKinds: [9],
+            writeKinds: sessionChannels.length ? [9, 9007] : [9],
             relayUrl: JSON.parse(fixtureAliases)[community],
             live: true,
           });
         }
+        if (sessionChannels.length && route === "sign") {
+          expect(body.kind).toBe(9);
+          return send(response, finalizeEvent(body, userKey));
+        }
+        if (sessionChannels.length && route === "publish") {
+          expect(verifyEvent(body)).toBe(true);
+          expect(body.pubkey).toBe(viewer);
+          expect(body.kind).toBe(9);
+          const channel = body.tags.find(([key]) => key === "h")?.[1];
+          expect(sessionChannels).toContain(channel);
+          histories.get(`${community}/${channel}`).push(body);
+          return send(response, { accepted: true, event_id: body.id });
+        }
+        if (
+          ["stream-interests", "stream-priority", "stream-observer"].includes(
+            route,
+          )
+        ) {
+          const owner = streamOwners.get(body.streamId);
+          expect(owner?.community).toBe(community);
+          if (route === "stream-interests") {
+            expect(body.interestRevision).toBeGreaterThan(
+              owner.interestRevision,
+            );
+            owner.channels = body.channels;
+            owner.interestRevision = body.interestRevision;
+            report.streamInterests.push({ community, channels: body.channels });
+            owner.state();
+          }
+          return send(response, {});
+        }
         if (route === "stream") {
           // Match the production broker: WebKit can buffer trailing HTTP chunks.
           // Close-delimited SSE must deliver each append without a later write.
+          const streamId = randomBytes(16).toString("hex");
           response.useChunkedEncodingByDefault = false;
           response.writeHead(200, {
+            "X-Buzz-Live-ID": streamId,
             "Content-Type": "text/event-stream",
             "Cache-Control": "no-store",
             Connection: "close",
           });
           response.flushHeaders();
-          response.write(
-            `event: state\ndata: ${JSON.stringify({ status: "connected", routes: body.channels.map((channelId) => ({ id: `channel:${channelId}`, channelId, status: "live", replay: "unknown" })) })}\n\n`,
-          );
+          const owner = {
+            community,
+            response,
+            channels: body.channels,
+            interestRevision: body.interestRevision,
+            state() {
+              response.write(
+                `event: state\ndata: ${JSON.stringify({ status: "connected", interestRevision: owner.interestRevision, routes: owner.channels.map((channelId) => ({ id: `channel:${channelId}`, channelId, status: "live", replay: "unknown" })) })}\n\n`,
+              );
+            },
+          };
+          streamOwners.set(streamId, owner);
+          owner.state();
           const clients = streams.get(community) ?? new Set();
           streams.set(community, clients);
-          clients.add(response);
+          clients.add(owner);
           report.streamConnections.push({ community, channels: body.channels });
           // The real broker pulses every 15s; the production reader expires
           // streams after 45s without bytes, even while history HTTP is active.
@@ -526,7 +958,8 @@ export const test = base.extend({
           );
           response.on("close", () => {
             clearInterval(heartbeat);
-            clients.delete(response);
+            clients.delete(owner);
+            streamOwners.delete(streamId);
           });
           return;
         }
@@ -534,11 +967,20 @@ export const test = base.extend({
           throw new Error(
             `Unexpected fixture request: ${request.method} ${request.url}`,
           );
-        expect(body).toHaveLength(1);
+        expect(body.length).toBeGreaterThan(0);
+        expect(body.length).toBeLessThanOrEqual(2);
         const filter = body[0];
-        report.queries.push({ community, filter });
-        const result = answer(community, filter);
-        if (filter.until !== undefined) {
+        const result = [
+          ...new Map(
+            body
+              .flatMap((filter) => {
+                report.queries.push({ community, filter });
+                return answer(community, filter);
+              })
+              .map((event) => [event.id, event]),
+          ).values(),
+        ];
+        if (filter.until !== undefined && filter["#h"]?.length) {
           pending.push({
             community,
             channel: filter["#h"][0],
@@ -552,6 +994,10 @@ export const test = base.extend({
         send(response, { error: String(error) }, 500);
       }
     };
+    const heldIcons = [];
+    const iconRequests = [];
+    const foregroundRequests = [];
+    let iconsReleased = false;
     let server;
     try {
       server = await preview({
@@ -560,13 +1006,32 @@ export const test = base.extend({
           {
             name: "fixture-relay",
             async configurePreviewServer(server) {
+              if (iconCongestion) {
+                server.middlewares.use((req, res, next) => {
+                  if (req.url?.includes("/icon-info")) {
+                    iconRequests.push(req.url);
+                    if (iconsReleased) return send(res, {});
+                    heldIcons.push(res);
+                    return;
+                  }
+                  if (req.url === "/foreground-probe") {
+                    foregroundRequests.push(req.url);
+                    return send(res, { reached: true });
+                  }
+                  next();
+                });
+              }
               if (relay) {
                 report.brokerRequests = [];
-                server.middlewares.use((req, _res, next) => {
+                server.middlewares.use((req, res, next) => {
                   if (req.url?.startsWith("/api/relay/"))
                     report.brokerRequests.push({
                       url: req.url,
                       at: performance.now(),
+                    });
+                  if (req.url?.endsWith("/stream"))
+                    res.once("close", () => {
+                      retiredStreams.add(res.getHeader("x-buzz-live-id"));
                     });
                   next();
                 });
@@ -574,6 +1039,7 @@ export const test = base.extend({
                   relayUrl: fixtureRelayUrl,
                   communityAliases: fixtureAliases,
                   identity: () => userKey.slice(),
+                  agentLibrary: () => ({ definitions: [], identities: [] }),
                   ...(readState
                     ? {}
                     : {
@@ -606,35 +1072,120 @@ export const test = base.extend({
       });
       page.on("pageerror", (error) => report.errors.push(error.message));
       page.on("console", (message) => {
-        if (message.type() === "error")
+        if (message.type() === "error") {
+          consoleLocations.set(
+            report.consoleErrors.length,
+            message.location().url,
+          );
           report.consoleErrors.push(message.text());
+        }
+      });
+      page.on("response", (response) => {
+        if (
+          response.url().endsWith("/stream-observer") &&
+          response.status() === 404
+        ) {
+          const { streamId } = response.request().postDataJSON();
+          observerFailures.push({
+            streamId,
+            url: response.url(),
+            retired: retiredStreams.has(streamId),
+          });
+        }
       });
       await page.addInitScript(
-        ({ viewer }) => {
+        ({ viewer, profilePicture, iconCongestion }) => {
           const key = `buzz-client.v1:${viewer}`;
           if (!localStorage.getItem(key))
             localStorage.setItem(
               key,
               JSON.stringify({
-                profile: { name: "Browser Fixture", picture: "" },
-                memberships: [
-                  { id: "primary", name: "Primary" },
-                  { id: "secondary", name: "Secondary" },
-                ],
+                profile: { name: "Browser Fixture", picture: profilePicture },
+                memberships: iconCongestion
+                  ? [
+                      { id: "primary", name: "Primary" },
+                      { id: "secondary", name: "Secondary" },
+                      ...Array.from({ length: 6 }, (_, index) => ({
+                        id: `https://saved-${index}.example`,
+                        name: `Saved ${index}`,
+                      })),
+                    ]
+                  : [
+                      { id: "primary", name: "Primary" },
+                      { id: "secondary", name: "Secondary" },
+                    ],
                 selected: "primary",
               }),
             );
         },
-        { viewer },
+        { viewer, profilePicture, iconCongestion },
       );
       await use({
         origin,
         report,
+        iconCongestion: iconCongestion
+          ? {
+              iconRequests,
+              foregroundRequests,
+              release() {
+                iconsReleased = true;
+                for (const response of heldIcons)
+                  if (!response.writableEnded) send(response, {});
+              },
+            }
+          : undefined,
         pending,
         histories,
+        presenceThread,
+        exact,
+        searchTarget,
+        membership(
+          type,
+          targetIndex,
+          actorIndex = -1,
+          forged = false,
+          deliver = true,
+        ) {
+          const history = histories.get("primary/alpha");
+          const event = membershipEvent(
+            type,
+            targetIndex,
+            history.at(-1).created_at + 1,
+            actorIndex,
+            forged,
+          );
+          history.push(event);
+          if (!deliver) return event;
+          if (relay) relay.publish("primary", event);
+          else
+            for (const client of streams.get("primary") ?? [])
+              if (client.channels.includes("alpha"))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
+          return event;
+        },
         participants,
         viewer,
         relay,
+        observer(raw, agentKey, community = "primary") {
+          const agent = getPublicKey(agentKey);
+          const plaintext = JSON.stringify(raw);
+          const event = sign(
+            24200,
+            [
+              ["p", viewer],
+              ["agent", agent],
+              ["frame", "telemetry"],
+            ],
+            nip44.v2.encrypt(
+              plaintext,
+              nip44.v2.utils.getConversationKey(agentKey, viewer),
+            ),
+            agentKey,
+            Math.floor(Date.now() / 1000),
+          );
+          relay.observer(community, event);
+          return { event, plaintext, agent };
+        },
         // Change only modeled relay state. The app must consume the next real
         // roster response; this does not call client purge/recovery internals.
         hideChannel(id) {
@@ -644,6 +1195,26 @@ export const test = base.extend({
         omitChannel(id) {
           expect(rosterIds).toContain(id);
           rosterIds.splice(rosterIds.indexOf(id), 1);
+        },
+        // Signed upstream-only simulations: never a browser publication or live relay.
+        activity({
+          channel = "alpha",
+          root,
+          author = 0,
+          kind = 20002,
+          age = 0,
+        } = {}) {
+          if (!relay)
+            throw new Error("Typing fixture requires production broker");
+          const event = sign(
+            kind,
+            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
+            kind === 20002 ? "" : "Fixture completion",
+            typingKeys[author],
+            Math.floor(Date.now() / 1000) - age,
+          );
+          relay.publish("primary", event);
+          return event;
         },
         edit(community, channel, target, content) {
           const event = sign(
@@ -666,11 +1237,26 @@ export const test = base.extend({
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);
             for (const client of streams.get(community))
-              client.write(`data: ${JSON.stringify(event)}\n\n`);
+              if (client.channels.includes(channel))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           }
           return event;
         },
-        reply(rootId, own = false) {
+        deleteTarget() {
+          const event = sign(
+            5,
+            [
+              ["h", "alpha"],
+              ["e", exact.target.id],
+            ],
+            "",
+            userKey,
+            exact.target.created_at + 100,
+          );
+          targetEvents.push(event);
+          relay.publish("primary", event);
+        },
+        reply(rootId, own = false, deliver = true) {
           const replies = threadReplies.get(rootId);
           if (!replies) throw new Error("Unknown fixture thread");
           const event = sign(
@@ -684,14 +1270,14 @@ export const test = base.extend({
             replies.at(-1).created_at + 1,
           );
           replies.push(event);
-          relay.publish("primary", event);
+          if (deliver) relay.publish("primary", event);
           return event;
         },
-        append(community, channel, content, deliver = true, own = true) {
+        append(community, channel, content, deliver = true, own = true, root) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
             9,
-            [["h", channel]],
+            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
             (history.at(-1)?.created_at ?? 1700000900) + 1,
@@ -702,15 +1288,36 @@ export const test = base.extend({
           else {
             expect(streams.get(community)?.size).toBeGreaterThan(0);
             for (const client of streams.get(community))
-              client.write(`data: ${JSON.stringify(event)}\n\n`);
+              if (client.channels.includes(channel))
+                client.response.write(`data: ${JSON.stringify(event)}\n\n`);
           }
           return event;
         },
       });
       expect(report.unexpected).toEqual([]);
+      // Aborted startup streams can race an already-dispatched observer control.
+      // Permit only 404s whose exact stream was already closed by the real host;
+      // a current/unknown stream failure still fails, and all errors stay recorded.
+      report.retiredObserverControls = [...observerFailures];
+      expect(observerFailures.every((failure) => failure.retired)).toBe(true);
+      const retiredConsole = (message, index) => {
+        if (
+          !/^Failed to load resource: the server responded with a status of 404/.test(
+            message,
+          )
+        )
+          return false;
+        const match = observerFailures.findIndex(
+          (failure) => failure.url === consoleLocations.get(index),
+        );
+        if (match < 0) return false;
+        observerFailures.splice(match, 1);
+        return true;
+      };
       expect(
         report.consoleErrors.filter(
-          (message) =>
+          (message, index) =>
+            !retiredConsole(message, index) &&
             !(
               expectedPageFailure &&
               message.includes("Fixture page render failure")
@@ -735,6 +1342,9 @@ export const test = base.extend({
         ),
       ).toEqual([]);
     } finally {
+      if (iconCongestion)
+        for (const response of heldIcons)
+          if (!response.writableEnded) send(response, {});
       await writeFile(
         testInfo.outputPath("evidence.json"),
         JSON.stringify(report, null, 2),
@@ -745,7 +1355,7 @@ export const test = base.extend({
       });
       await page.close();
       for (const clients of streams.values())
-        for (const response of clients) response.end();
+        for (const client of clients) client.response.end();
       if (server) {
         server.httpServer.closeAllConnections();
         await new Promise((resolve) => server.httpServer.close(resolve));

@@ -1,14 +1,16 @@
+import { observerFrame, observerGeneration } from "../agents/observer";
 import { eventDto } from "./events";
 import {
   liveChannels,
+  liveProvenance,
   type LiveCallbacks,
   type LiveSnapshot,
   type LiveSubscription,
 } from "./live";
 
 const MAX_FRAME = 1024 * 1024;
-/** A bounded POST body avoids URL/header limits and a second server-side interest registry.
- * A generation owns its fetch, parser, retry and heartbeat; replacing it fences all callbacks. */
+/** A generation owns its stream, parser, retry and heartbeat. Interest changes
+ * use the same host owner so they cannot interrupt pending publications. */
 export function subscribeBrokerTraffic(
   endpoint: string,
   callbacks: LiveCallbacks,
@@ -17,8 +19,26 @@ export function subscribeBrokerTraffic(
     generation = 0,
     attempts = 0;
   let channels: string[] = [];
+  let sentChannels: string[] = [];
+  // Only IDs in the last dispatched snapshot can have a host wire (at most 1024).
+  const removed = new Set<string>();
+  let interestRevision = 0;
+  const addedAt = new Map<string, number>();
+  const currentChannel = (id: string, revision: unknown) => {
+    const minimum = addedAt.get(id);
+    return (
+      minimum !== undefined &&
+      (revision === undefined ||
+        (Number.isSafeInteger(revision) &&
+          (revision as number) >= minimum &&
+          (revision as number) <= interestRevision))
+    );
+  };
   let priority: string[] = [];
   let priorityPending = false;
+  let interestsPending = false;
+  let observer: number | null = null;
+  let observerPending = false;
   let controller: AbortController | undefined;
   let streamId: string | undefined;
   let controlPending = false;
@@ -38,6 +58,8 @@ export function subscribeBrokerTraffic(
     streamId = undefined;
     controlPending = false;
     priorityPending = false;
+    interestsPending = false;
+    observerPending = false;
     receiving = true;
     controller?.abort();
     clearTimeout(retryTimer);
@@ -55,14 +77,23 @@ export function subscribeBrokerTraffic(
       );
     };
     pulse();
+    const startingInterests = interestRevision;
+    sentChannels = channels;
+    removed.clear();
     const startingPriority = JSON.stringify(priority);
+    const startingObserver = observer;
     void (async () => {
       try {
         const response = await fetch(`${endpoint}/stream`, {
           method: "POST",
           credentials: "same-origin",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ channels, priority }),
+          body: JSON.stringify({
+            channels,
+            priority,
+            observer,
+            interestRevision,
+          }),
           signal: owned.signal,
         });
         if (!valid()) return;
@@ -84,7 +115,9 @@ export function subscribeBrokerTraffic(
         if (identity !== null && !/^[0-9a-f]{32}$/.test(identity))
           throw new Error("Invalid live broker control identity");
         streamId = identity ?? undefined;
+        if (startingInterests !== interestRevision) sendInterests();
         if (startingPriority !== JSON.stringify(priority)) sendPriority();
+        if (startingObserver !== observer) sendObserver();
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
@@ -114,12 +147,52 @@ export function subscribeBrokerTraffic(
               const data: unknown = JSON.parse(lines.join("\n"));
               if (!valid()) return;
               if (kind === "message") callbacks.receive([eventDto(data)]);
-              else if (kind === "state") {
+              else if (kind === "traffic") {
+                if (
+                  !data ||
+                  typeof data !== "object" ||
+                  !("event" in data) ||
+                  !("provenance" in data)
+                )
+                  throw new Error("Invalid live traffic envelope");
+                const provenance = liveProvenance(data.provenance);
+                if (
+                  !provenance.channelId ||
+                  currentChannel(
+                    provenance.channelId,
+                    (data as { interestRevision?: unknown }).interestRevision,
+                  )
+                )
+                  callbacks.receive([eventDto(data.event)], provenance);
+              } else if (kind === "observer") {
+                const record = data as {
+                  frame?: unknown;
+                  generation?: unknown;
+                };
+                if (observer !== null && record.generation === observer)
+                  callbacks.observer?.(observerFrame(record.frame), observer);
+              } else if (kind === "state") {
                 const snapshot = liveSnapshot(data);
-                publish(snapshot);
+                const revision = (data as { interestRevision?: unknown })
+                  .interestRevision;
+                publish({
+                  ...snapshot,
+                  routes: snapshot.routes.filter(
+                    (route) =>
+                      !route.channelId ||
+                      currentChannel(route.channelId, revision),
+                  ),
+                });
               } else if (kind === "established") {
                 const id = channelField(data);
-                callbacks.established(id);
+                if (
+                  !id ||
+                  currentChannel(
+                    id,
+                    (data as { interestRevision?: unknown }).interestRevision,
+                  )
+                )
+                  callbacks.established(id);
               } else if (kind === "denied") {
                 const id = channelField(data);
                 if (
@@ -127,7 +200,13 @@ export function subscribeBrokerTraffic(
                   typeof (data as { reason?: unknown }).reason !== "string"
                 )
                   throw new Error("Invalid live denial");
-                callbacks.denied(id, (data as { reason: string }).reason);
+                if (
+                  currentChannel(
+                    id,
+                    (data as { interestRevision?: unknown }).interestRevision,
+                  )
+                )
+                  callbacks.denied(id, (data as { reason: string }).reason);
               }
               if (!valid()) return;
             }
@@ -161,6 +240,43 @@ export function subscribeBrokerTraffic(
       }
     })();
   }
+  function sendInterests() {
+    if (closed || !streamId || interestsPending) return;
+    const current = generation;
+    const sent = interestRevision;
+    interestsPending = true;
+    const body = JSON.stringify({
+      streamId,
+      channels,
+      removed: [...removed],
+      interestRevision,
+    });
+    sentChannels = channels;
+    removed.clear();
+    void fetch(`${endpoint}/stream-interests`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body,
+      signal: AbortSignal.any([
+        controller?.signal ?? new AbortController().signal,
+        AbortSignal.timeout(5000),
+      ]),
+    })
+      .then((response) => {
+        if (!response.ok) throw new Error("Live interests control failed");
+      })
+      .catch(() => {
+        // Unknown control outcome: bounded reconnect captures current intent.
+        if (!closed && current === generation)
+          controller?.abort(new Error("Live interests interrupted"));
+      })
+      .finally(() => {
+        if (current !== generation) return;
+        interestsPending = false;
+        if (sent !== interestRevision) sendInterests();
+      });
+  }
   function sendPriority() {
     if (closed || !streamId || priorityPending) return;
     const current = generation;
@@ -190,8 +306,66 @@ export function subscribeBrokerTraffic(
         if (sent !== JSON.stringify(priority)) sendPriority();
       });
   }
+  function sendObserver() {
+    if (closed || !streamId || observerPending) return;
+    const current = generation;
+    const sent = observer;
+    observerPending = true;
+    void fetch(`${endpoint}/stream-observer`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ streamId, observer: sent }),
+      signal: AbortSignal.any([
+        controller?.signal ?? new AbortController().signal,
+        AbortSignal.timeout(5000),
+      ]),
+    })
+      .then((response) => {
+        if (!response.ok)
+          throw new Error("Activity subscription control failed");
+      })
+      .catch(() => {
+        if (!closed && current === generation) {
+          // Unknown control outcome: fence this stream; normal bounded reconnect
+          // will capture the latest desired generation (never reset chat on toggle).
+          controller?.abort(new Error("Activity subscription interrupted"));
+        }
+      })
+      .finally(() => {
+        if (current !== generation) return;
+        observerPending = false;
+        if (sent !== observer) sendObserver();
+      });
+  }
   start();
   return {
+    async publishPresence(status, signal) {
+      if (closed || !streamId || !controller || latest.status !== "connected")
+        return null;
+      const current = generation;
+      const response = await fetch(`${endpoint}/stream-presence`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ streamId, status }),
+        signal: AbortSignal.any([
+          signal,
+          controller.signal,
+          AbortSignal.timeout(10000),
+        ]),
+      });
+      if (closed || current !== generation || !response.ok) return false;
+      const { accepted } = await response.json();
+      return accepted === null ? null : accepted === true;
+    },
+    identity: () => (closed ? undefined : streamId),
+    observe(value) {
+      const next = observerGeneration(value);
+      if (closed || observer === next) return;
+      observer = next; // Fence old SSE frames synchronously, before the POST completes.
+      sendObserver();
+    },
     prioritize(input) {
       liveChannels(input);
       const next = [...new Set(input)].slice(0, 64);
@@ -202,8 +376,16 @@ export function subscribeBrokerTraffic(
     update(input) {
       const next = liveChannels(input);
       if (closed || JSON.stringify(next) === JSON.stringify(channels)) return;
+      interestRevision++;
+      for (const id of channels)
+        if (!next.includes(id)) {
+          addedAt.delete(id);
+          if (sentChannels.includes(id)) removed.add(id);
+        }
+      for (const id of next)
+        if (!addedAt.has(id)) addedAt.set(id, interestRevision);
       channels = next;
-      start();
+      sendInterests();
     },
     retry() {
       if (closed || controlPending) return;
@@ -268,7 +450,8 @@ function liveSnapshot(value: unknown): LiveSnapshot {
       snapshot.status,
     ) ||
     !Array.isArray(snapshot.routes) ||
-    snapshot.routes.length > 1026 ||
+    // Keep limited channels visible alongside both globals and the optional observer.
+    snapshot.routes.length > 1027 ||
     (snapshot.error !== undefined && typeof snapshot.error !== "string")
   )
     throw new Error("Invalid live broker status");

@@ -1,6 +1,6 @@
 import { test, expect } from "./fixture.mjs";
 import { open } from "./timeline.mjs";
-test.use({ pluginFixtures: true });
+test.use({ pluginFixtures: true, historyCounts: { alpha: 1, beta: 0 } });
 
 // Regressions from the independent review, exercised through production composition.
 test("cold destination waits for its enabled provider to activate", async ({
@@ -8,7 +8,7 @@ test("cold destination waits for its enabled provider to activate", async ({
   app,
 }) => {
   await page.addInitScript(() => {
-    window.delayFixture = true;
+    window.delayFixture = { started: false };
   });
   const target = {
     version: 1,
@@ -16,25 +16,58 @@ test("cold destination waits for its enabled provider to activate", async ({
     pluginId: "fixture.delayed",
     pageId: "slow",
   };
-  await page.goto(
-    `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
-  );
-  await expect(
-    page.getByRole("button", { name: "Delayed fixture", exact: true }).first(),
-  ).toBeVisible();
-  await expect(
-    page.getByText("Delayed destination presented", { exact: true }),
-  ).toBeVisible();
-  expect(
-    await page.evaluate(() => window.fixtureNavigation.snapshot().status),
-  ).toBe("opened");
+  try {
+    await page.goto(
+      `${app.origin}/#buzz=${encodeURIComponent(JSON.stringify(target))}`,
+    );
+    await expect
+      .poll(() => page.evaluate(() => window.delayFixture.started))
+      .toBe(true);
+    await expect(page.getByRole("status")).toHaveText("Opening destination…");
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation?.snapshot().status),
+      )
+      .toBe("opening");
+    const launcher = page.getByRole("button", {
+      name: "Delayed fixture",
+      exact: true,
+    });
+    const destination = page.getByText("Delayed destination presented", {
+      exact: true,
+    });
+    await expect(launcher).toHaveCount(0);
+    await expect(destination).toHaveCount(0);
+    await page.evaluate(() => window.delayFixture.release());
+    await expect(launcher.first()).toBeVisible();
+    await expect(destination).toBeVisible();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+  } finally {
+    await page.evaluate(() => window.delayFixture?.release?.());
+  }
 });
 
 test("Messages default resolution returns opened to cold and warm callers without an extra visit", async ({
   page,
   app,
 }) => {
-  await page.goto(app.origin);
+  await page.goto(
+    `${app.origin}/#buzz=${encodeURIComponent(
+      JSON.stringify({
+        version: 1,
+        kind: "page",
+        pluginId: "buzz.projects",
+        pageId: "projects",
+      }),
+    )}`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "Messages", exact: true }).first(),
   ).toBeVisible();
@@ -58,19 +91,22 @@ test("Messages default resolution returns opened to cold and warm callers withou
     ).toBeVisible();
     await page.getByRole("button", { name: "Go back", exact: true }).click();
     await expect(
-      page.getByRole("heading", {
-        name: "Make yourself at home.",
-        exact: true,
-      }),
+      page.getByRole("heading", { name: "Projects", exact: true }),
     ).toBeVisible();
   }
 });
 
-test("Alt arrows preserve composer editing while deliberate history shortcuts still navigate", async ({
+test("native Alt arrows preserve composer editing; deliberate history shortcuts navigate", async ({
   page,
   app,
 }) => {
   await open(page, app);
+  const nav = page.getByRole("navigation", { name: "Pages", exact: true });
+  await nav.getByRole("button", { name: "Projects", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await nav.getByRole("button", { name: "Messages", exact: true }).click();
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -82,7 +118,7 @@ test("Alt arrows preserve composer editing while deliberate history shortcuts st
   for (const arrow of ["ArrowLeft", "ArrowRight"]) {
     await page.keyboard.press(`Alt+${arrow}`);
     await expect(composer).toBeFocused();
-    await expect(composer).toHaveValue("one two three");
+    await expect(composer).toHaveJSProperty("value", "one two three");
     expect(
       await page.evaluate(() => window.fixtureNavigation.snapshot().entry.id),
     ).toBe(visit);
@@ -93,5 +129,5 @@ test("Alt arrows preserve composer editing while deliberate history shortcuts st
   await page.keyboard.press(`${apple ? "Meta" : "Control"}+[`);
   await expect(composer).toHaveCount(0);
   await page.keyboard.press(`${apple ? "Meta" : "Control"}+]`);
-  await expect(composer).toHaveValue("one two three");
+  await expect(composer).toHaveJSProperty("value", "one two three");
 });

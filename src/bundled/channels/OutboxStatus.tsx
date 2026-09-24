@@ -1,3 +1,5 @@
+import { Button } from "../../shared/design-system/ui/Button";
+import { isWorkflowOperation } from "../../features/workflows/protocol";
 import { useState, useSyncExternalStore } from "react";
 import type { RelayProfiler } from "../../features/relay/profiling";
 import { RelayTimings } from "./RelayTimings";
@@ -32,7 +34,10 @@ export function OutboxStatus({
         {operations.map((item) => (
           <li key={item.event.id}>
             <span>
-              {item.event.content.slice(0, 100)} ·{" "}
+              {item.event.kind === 9000
+                ? `Add agent ${item.event.tags.find(([tag]) => tag === "p")?.[1]?.slice(0, 12) ?? ""}`
+                : item.event.content.slice(0, 100)}{" "}
+              ·{" "}
               {
                 {
                   sending: "Sending",
@@ -43,13 +48,17 @@ export function OutboxStatus({
                 }[item.delivery]
               }
             </span>{" "}
-            {(item.delivery === "failed" || item.delivery === "unknown") && (
-              <button type="button" onClick={() => outbox.retry(item.event.id)}>
-                Retry
-              </button>
-            )}{" "}
+            {!isWorkflowOperation(item.event) &&
+              (item.delivery === "failed" || item.delivery === "unknown") && (
+                <Button
+                  type="button"
+                  onClick={() => outbox.retry(item.event.id)}
+                >
+                  Retry
+                </Button>
+              )}{" "}
             {item.delivery !== "sending" && (
-              <button
+              <Button
                 type="button"
                 onClick={async () => {
                   try {
@@ -61,7 +70,7 @@ export function OutboxStatus({
                 }}
               >
                 Remove from outbox
-              </button>
+              </Button>
             )}
           </li>
         ))}

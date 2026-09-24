@@ -12,7 +12,7 @@
  *      and read as enterprise chrome, and tracking is corrected per ramp step.
  *   3. No size role paired with a leading utility. A role carries its own line
  *      height; overriding it is how two identical labels drift apart.
- *   4. No weight outside 400 and 600. `font-semibold` is bold.
+ *   4. No weight outside 400 and 500. `font-semibold` aliases Medium.
  *
  * What this guard is for: an agent building a screen has no reason to prefer
  * `font-medium` over `font-semibold`, so left unguided it picks either, and the
@@ -39,6 +39,9 @@ const VIEWER = fileURLToPath(
 
 /** Size roles a component may use. Kept in sync with typography.css. */
 const SIZE_ROLES = [
+  "label",
+  "label-sm",
+  "caption",
   "display",
   "title",
   "heading",
@@ -58,8 +61,6 @@ const SIZE_ROLES = [
  */
 const RETIRED_ROLES = new Map([
   ["subheading", "text-heading, or text-body-lg if it is prose"],
-  ["label", "text-body, or text-body-sm in dense chrome"],
-  ["caption", "text-body-sm"],
   ["meta", "text-body-sm"],
   ["code", "text-mono"],
 ]);
@@ -124,17 +125,12 @@ const RULES = [
   },
   {
     id: "off-ramp-weight",
-    // The system has two weights: 400 (content) and 600 (structure and
-    // emphasis). 500 was measured against 400 at body size and does not read as
-    // intent in a scanned list — it is heavy enough to muddy a column and too
-    // subtle to signal. 700 was rejected as louder than anything Buzz needs.
-    // The rest have never had a use.
-    //
-    // `font-semibold` and `font-normal` are absent from this list on purpose:
-    // they are the two legal weights.
-    pattern: /\bfont-(?:thin|extralight|light|medium|bold|extrabold|black)\b/g,
+    // Regular (400) is for content; Medium (500) is for labels and structure.
+    // font-normal, font-medium and the font-semibold compatibility alias are
+    // valid utilities for these two weights.
+    pattern: /\bfont-(?:thin|extralight|light|bold|extrabold|black)\b/g,
     message:
-      "off-ramp font weight — the system is 400 and 600. Bold is font-semibold. If a one-off genuinely needs another weight, add it to OVERRIDES with a reason.",
+      "off-ramp font weight — the system is 400 and 500. Emphasis is font-medium; legacy font-semibold resolves to 500. If a one-off genuinely needs another weight, add it to OVERRIDES with a reason.",
   },
   {
     id: "retired-role",

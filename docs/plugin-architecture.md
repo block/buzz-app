@@ -17,7 +17,7 @@ broader supported external reuse remains an [author-contract gate](status.md#ope
 
 **Rich conversation content.** An integration plugin recognizes a link to a GitHub pull request or a native Buzz object and supplies a panel showing that object. The Channels page decides where the panel appears. Another page can display the same content in a different arrangement.
 
-Both experiences use real session capabilities. As AI integrations become available, authors should be able to consume those capabilities without rebuilding authentication, execution, or state handling. The first [Agents slice](agents.md) shows the existing Buzz library read-only; mentions use current channel membership and existing runners.
+Both experiences use real session capabilities. As AI integrations become available, authors should be able to consume those capabilities without rebuilding authentication, execution, or state handling. The [Agents compatibility view](agents.md) shows the existing Buzz library read-only; mentions use current channel membership and existing runners. The connected [local controls checkpoint](agent-control.md) adds native settings and bundled process management through an injected app-owned capability. Execution and credential import stay blocked in the disposable editor; the normal management path requires its separately reviewed, attended handover.
 
 ## Ownership
 
@@ -26,7 +26,7 @@ Both experiences use real session capabilities. As AI integrations become availa
 | Application host | Startup, plugin installation and activation, page navigation, Settings, and recovery. |
 | Page plugin | Its complete React tree, local interaction state, internal navigation, and arrangement of panels. |
 | Panel plugin | Recognizing a supported target and implementing the content and interactions for that target. |
-| Shared capabilities | Session state, relay access, retained data, and eventually agent operations and external connections. |
+| Shared capabilities | Session state, relay access, retained data, local agent controls, and eventually external connections. |
 | Reusable UI components | Useful rendering and interaction behavior, configured through ordinary props. |
 | Cordis | Dependency availability and resource lifetime across plugin activation, replacement, and disposal. |
 
@@ -47,8 +47,8 @@ features/relay/         shared channel data, queries, profiles and durable deliv
 features/messages/      reusable timeline, message, thread and composer UI
 bundled/channels/       Channels navigation, sidebar, page layout and panel placement
 bundled/projects/       title-only Projects page scaffold
-bundled/agents/         read-only current-Buzz agent library page
-features/agents/        shared session-owned local library view
+bundled/agents/         local control UI and read-only current-Buzz library page
+features/agents/        app-owned control capability; separate session-owned library
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin companion panel and its snake launcher
 ```
@@ -75,8 +75,15 @@ contribution when its Cordis scope ends.
 
 A page calls `panels.resolve(target)` and renders `PanelView` with the resulting
 contribution, the target string, and a close callback. The first active matcher
-wins; a throwing matcher is skipped. Panels receive `{ target, close }`, without
-channel-specific props. A plugin that needs shared data declares `relay` in its
+wins; a throwing matcher is skipped. Panels receive `{ target, close }` plus
+optional host context. A conversation host may supply
+`context: { channelId, canOpen, open }` for contextual panel-to-panel actions.
+`canOpen` is advisory active-target availability; `open` re-resolves at click time
+and returns false after the originating opening, channel, session or host
+presentation retires. This is not a global navigation API or an access grant.
+Channel-header launchers use the separate public `channelContext` metadata
+contract described below; launcher/fallback panels need not have either context.
+A plugin that needs shared data declares `relay` in its
 injection list and passes those capabilities to its components using a closure,
 just as the bundled Channels page does. The conversation preview adds only the two demonstrated component surfaces.
 
@@ -85,12 +92,84 @@ render failures and remounts on target or revision changes. Unloading a plugin
 removes its contributions and closes its panel. Other pages can use these same
 contracts with their own layout and local navigation.
 
-The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji and Mentions. Projects
+The initial distribution contains Channels, Projects, Agents, GitHub, Bestie, Emoji, Mentions, Profiles, Terminal and Links. Projects
 is an enabled-by-default scaffold with only a centered title and no relay dependency.
 GitHub recognizes repository,
 pull request, issue, and commit URLs and loads public object details on demand.
 Unsupported URLs retain ordinary link behavior. Private GitHub connections and
-agent operations remain future shared capabilities.
+agent execution remain future shared capabilities.
+
+### Optional channel templates and Settings cards
+
+`ctx.settingsCards.register({ id, title, component })` contributes a card under
+Settings → Messages, not a new route. Cards receive `active()` and use ordinary
+session capabilities through injection. Host boundaries isolate rendering errors;
+exact registration identity and mounted lifetime revoke callbacks on removal.
+
+Templates & teams (`buzz.channel-templates`) is bundled **off by default** in both
+browser and desktop catalogs. Explicit saved overrides win. Enable it under
+Settings → Plugins, then manage recipes under Settings → Messages. Channels owns
+personal groups and the existing + creation buttons, independently of this plugin.
+
+`ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
+one optional composition provider. With zero or multiple active providers, no
+optional controls are selected. This host-matched preview is not a workflow API:
+Channels owns form/draft data and final dispatch; the session owns signing,
+membership, Canvas writes, exact receipts and partial-setup recovery. Settings and
+provider components must check `active()` before accepting delayed work or starting
+new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
+
+Disabling preserves saved group default references but does not apply them to new
+intent. Accepted drafts remain visibly summarized, with an explicit Clear action;
+re-enable does not overwrite edits or automatically apply an unresolved old default.
+Frozen setup stays visible/resumable without any template/agent catalog. Disabling
+is not cancellation of already accepted writes. Group-only and Canvas-only setup
+require no agent-library readiness; real agent selections still receive fresh host
+validation. Template-specific library demand belongs to mounted plugin controls;
+shared group/catalog storage remains session-owned.
+
+Colocated regressions cover app registration, exact-contribution revocation,
+accepted-draft retention and session/outbox recovery. They are not live cross-window
+or packaged/native acceptance; validation results and remaining gates belong in the
+pull request. Updating the native bundled catalog requires a desktop rebuild/restart;
+frontend hot reload alone cannot add the entry.
+
+### Composer accessories
+
+`ctx.conversation.registerAccessory({ id, title, order?, component })` contributes
+read-only contextual UI above the shared composer. The host passes
+`{ session, scope, channelId, threadRootId?, canOpen, open }`: no editor commands,
+new socket, or implied access grant. Channels supplies target resolution and panel
+placement; other composer consumers can omit navigation and return unavailable.
+The shared renderer owns deterministic order, error isolation and command
+revocation on removal/unmount. Composer destination keys fence session/channel/
+thread changes. The accessory remains usable on read-only connections.
+
+Agent Activity is the first consumer. Plugin activation owns its telemetry lease;
+multiple composers subscribe to the same session capability. No global selected
+channel or activity-specific dependency is added to reusable message components.
+Channels reads the same session activity snapshot for its quiet sidebar marker;
+it owns that page presentation, not capture or an additional activity lease.
+This is a host-matched preview addition, not cross-version capability negotiation.
+
+### Channel-header launchers
+
+A panel may additionally contribute `channelLauncher: ComponentType<ChannelLauncherProps>`.
+Channels renders these in its conversation header with public `context`, `pressed`,
+`available()` and `toggle(target)`. The page owns a single bottom drawer; a launcher
+selects its **exact active contribution**, not target matching. `available()` and
+`toggle()` are revoked when the mounted context or contribution is retired. Optional
+`PanelProps.channelContext` carries the current displayed public context to a channel
+panel; ordinary link/host panels do not supply it. It is presentation metadata, not
+signing authority. Plugins decide when to capture it into their own work.
+
+Channels keeps layout and channel/thread selection. The Terminal plugin binds its
+mounted launcher into the existing shortcut dispatcher, and owns sessions separately
+from drawer mounts. No global selected-channel store, extra shortcut listener or
+host companion change is required. Disabling/replacing a contribution closes its
+drawer, and re-enabling starts closed. See [Terminal](terminal.md) for native support,
+session behavior and validation limits. This is a host-matched preview addition,
+not cross-version capability negotiation.
 
 ### Top-bar launchers and the companion slot
 
@@ -110,7 +189,7 @@ focus to the launcher if available.
 Pages explicitly opt in with `companion: true` and receive `{ companion?: ReactNode }`,
 a ready-to-render card. They must place it in **every** state, including no relay,
 loading and empty data. Channels places its local target above this card in one
-right column. Non-opted/legacy pages and Home/Settings use the generic host fallback;
+right column. Non-opted/legacy pages and Settings use the generic host fallback;
 there is never a second simultaneous host dock. The fallback frame stays mounted
 while opening/closing to preserve page-local state. `PanelCard` and `PanelFrame`
 are ordinary shared components, not another registry.
@@ -123,6 +202,13 @@ enabled by the normal bundled policy; saved disabled flags still win.
 
 `main.tsx` creates the shared services once; `app/App.tsx` owns startup screens,
 navigation, and built-in Settings. `app/services.ts` composes the core services.
+`agentControl` is provided once on the root Cordis context and exported through
+the generated type-only author contract. Agents consumes it through injection;
+plugin disable/re-enable and community switches do not reconstruct it. Page
+unmount clears observation, not enabled intent. Root disposal fences only the
+TypeScript projection; the native app owns persistence, credential admission and
+process lifetime, and enforces launch/import gates even for direct IPC calls.
+
 Settings and Recovery subscribe directly to plugin management. Page render errors
 stay in the page boundary rather than being copied into plugin configuration.
 
@@ -144,7 +230,12 @@ folders. Choose one and explicitly install/update; the same preview can install
 another plugin without fetching again. New plugins stay disabled. Updates match
 **manifest ID**, even across repositories, and preserve the saved enabled state:
 an enabled update may activate immediately except in safe mode. The UI warns before
-that action. Installed artifacts do not watch/pull the source; import again to update.
+that action. Installed artifacts do not watch/pull the source. Plugins installed from
+a folder keep the selected folder path for Settings → Plugins → Reload while disabled;
+reloading reads the recorded candidate folder and requires the manifest ID to stay the
+same. Enabled plugins must be disabled before reload so memory-only plugin state, such
+as credentials, is not discarded by replacing the running module. Git installs and older
+installs without saved folder metadata must be imported again.
 
 The Rust manager owns acquisition and immutable preview artifacts, with a bounded
 single pending preview per native process. Replacing/closing a preview discards it;
@@ -210,6 +301,10 @@ writes use `session.outbox` or the `session.messages` convenience methods. Reads
 live traffic and local events share reconciliation, with no separately injected
 write service. Dispose owned views when their plugin or session scope ends.
 
+The [Profiles plugin](profiles.md) supplies read-only human/agent identity panels.
+Shared message UI opens exact public-key targets through ordinary page callbacks;
+no inline-renderer or panel contract extension is needed.
+
 ## Navigation targets and visits
 
 The host provides `ctx.navigation` to plugins declaring `navigation` in `inject`.
@@ -220,7 +315,7 @@ A visit has stable identity; retrying/reclicking preserves that visit and Forwar
 while a new destination truncates the forward branch. Leaving aborts the old
 attempt, and late completion cannot acknowledge a replacement attempt.
 
-Version-1 `OpenTarget` supports Home, Settings sections, contributed pages with
+Version-1 `OpenTarget` accepts legacy Home targets (resolved to Messages), Settings sections, contributed pages with
 optional versioned JSON routes, and account/community-bound conversations.
 The boundary copies, freezes and bounds route data; an address is never an access
 grant. Scoped targets require the original viewer and an already joined community.
@@ -231,7 +326,7 @@ for retry, rather than silently opening another page.
 Pages receive optional `navigation` in `PageProps`. Ordinary pages acknowledge a
 successful mount inside the render boundary. Pages declaring `handlesNavigation`
 acknowledge their domain presentation with `navigation.complete(...)`; Channels
-waits for its requested channel window. `navigation.resolve(target)` normalizes a
+waits for its requested channel window or exact-message reveal/focus. `navigation.resolve(target)` normalizes a
 pending default destination within the same visit, caller and original deadline;
 it does not start competing navigation. Normalization revokes the old request.
 
@@ -251,12 +346,17 @@ into versioned route parameters. These are host-matched preview types through
 
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 `targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
-sender's viewer; `bindSharedTarget` pins it for an admitted recipient. **This slice
-does not install native OS deep-link or notification-click ingress, migrate legacy
-Buzz links, or locate/reveal older messages and threads.** Message-addressed
-conversation targets explicitly fail as unsupported rather than claiming success
-at the channel head. Those ingresses/reveal adapters must use the same validated
-target and completion lifecycle when implemented.
+sender's viewer; `bindSharedTarget` pins it for an admitted recipient. Messages also
+recognize legacy `buzz://channel/<id>` and
+`buzz://message?channel=<id>&id=<event>&thread=<optional-root>` links. Legacy links
+use the receiving conversation's community and viewer; shared versioned links
+retain their community and use the recipient's viewer. Both pass through existing
+navigation admission and session ownership checks. Message targets open their
+verified thread, reveal the exact message after bounded history loading, and only
+then acknowledge navigation. Supplied root hints do not override verified events.
+Missing or unavailable messages report failure. Ingress adapters must reuse this
+validated target/completion lifecycle. Native OS deep-link and notification-click
+ingress remain outside this slice.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the
@@ -264,9 +364,67 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
+`registerMessage({ id, title, matches, component })` contributes an optional whole
+message body. Components receive `{ message: ChannelMessage }`; the first active
+match wins, throwing matchers are skipped, and render failure/removal restores the
+host body. Registration uses the same owned contribution lifetime as inline/link
+renderers. The host retains author/time chrome, actions, attachments and session
+ownership. `MessageRenderer` is a host-matched author-preview type, not event
+admission or cross-version capability negotiation.
+
+The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
+kind 40008. Shared history, live, thread and exact readers retain these messages
+independently of the plugin, preserving raw patches rather than interpreting them
+as Markdown images or links. The plugin supplies an inline preview and expanded
+Unified/Split dialog. Disabled/failed rendering, malformed/incomplete patches and
+patches over the display parsing budget retain escaped raw text. Unconsumed
+patch lines and unsupported binary payloads also fall back to the complete raw
+patch; metadata-only rename/mode/binary summaries retain rich presentation.
+Preview, file and raw scroll regions support native keyboard navigation. Diff
+messages are not editable, including through the composer's Up-arrow shortcut.
+Diff search remains deferred: the client accepts kind 40008 hits, but relays
+whose search index allowlist excludes that kind cannot return them. Metadata is
+untrusted presentation, not repository access authority. No sending, applying,
+repository fetching or sidebar panels are added.
+
+`registerLink({ id, title, matches, className?, component })` contributes optional
+presentation for links already recognized by messages. The host retains the anchor,
+destination, new-tab/modifier behavior and panel activation. Components receive
+`{ url }` and render non-interactive inline content inside that anchor. They must
+not nest links or buttons. The first active matching renderer wins; throwing
+matchers are skipped. A render failure or plugin removal restores the ordinary
+link, including its styling. Registration follows the existing plugin lifetime.
+
+The bundled Links plugin uses blue text, a blue fill only on hover, 2px padding
+4px corners, and service icons for GitHub, Google Drive, Figma, Notion, Slack,
+Dropbox, OneDrive, GitLab, YouTube, Loom, Zoom and Teams. Google Docs, Sheets and
+Slides use distinct file-type icons; unknown websites use a globe. Host matching
+does not fetch metadata or infer a service from names in paths or query strings.
+It does not fetch titles. Messages currently recognize
+credential-free HTTPS and supported Buzz links. Markdown labels preserve their
+formatting, escaped pasted wrappers are normalized outside code, and paired `<…>`
+autolink wrappers are hidden in display. Buzz links use known channel names with corresponding icons, falling back
+to Channel, Message or Thread when that name is unavailable in the current community;
+the full destination remains on the anchor. Buzz activation stays inside the host,
+including modifier/middle clicks, even when the optional Links plugin is disabled.
+Unsupported Buzz formats remain plain text. The host-matched author preview exports `LinkRenderer`; older hosts do not
+provide `registerLink`.
+
+Message hover/focus previews are host-owned. The entire card is a keyboard-accessible
+link to the same destination, routed through the same host navigation handler. Opening a preview allocates the current
+session's bounded thread reader; closing disposes it. The reader supplies verified
+message content, author and timestamp and preserves edit/deletion/access handling.
+Previewing never acknowledges reading or switches community. The host offers a
+resolved label to the bundled presentation via `LinkLabelContext`; no author API
+contract or relay protocol changes are required. Known channel references and
+unambiguous signed person/agent mentions share the inline hover styling. Names in
+ordinary prose never create notification intent or establish an identity.
+
 The conversation preview exposes top-level `registerTool`, `registerCompletion` and `registerInline`
 methods and stable `conversation.ui.Composer` / `.Message` components. Generated
-type-only `@buzz/author` declarations support the independent Composer Lab example.
+type-only `@buzz/author` declarations are exercised by a source-only external consumer
+fixture in `tests/fixtures/conversation-consumer`; it is built and installed only in
+the browser test's temporary profile.
 This remains a host-matched preview, not a stable cross-version SDK. Shared session
 ownership and trusted-plugin authority do not change.
 
@@ -279,7 +437,18 @@ chooser UI belongs in tool plugins: `bundled/emoji` and `bundled/mentions` use t
 same `registerTool` contract. No page imports their implementations. Optional numeric
 `order` (default zero, lower first; ties by contribution key) keeps visual and
 keyboard order stable across asynchronous activation and re-enable. Mentions uses
-`-10` to retain its position before default-order tools such as Emoji.
+`-10` to retain its position before default-order tools such as Emoji. The host groups
+negative-order tools with selected-recipient avatars, preserving DOM/keyboard order;
+this is host layout, not a new plugin contract. Inline identity chips remain in the draft.
+
+Links, channel references, selected mentions and custom emoji render through shared
+message components directly in the editable draft. Display tokens retain the exact authored source;
+copying and sending preserve that source. Arrow keys and deletion open adjacent
+links for ordinary text editing. Partially deleting a link keeps it plain during
+the editing session; double-click selects the link and triple-click selects its
+whole paragraph. The host owns source offsets, plain-text paste, composition, undo and
+selected recipient metadata. Token renderers are display-only while editing.
+Names pasted as text never create notification intent.
 
 Tools receive `insertText`, `insertMention({ pubkey, name })` and `focus` commands.
 Mention insertion atomically records visible text and exact notification intent;
@@ -291,10 +460,13 @@ presentation, never recipient resolution. Editing/pasting over an identity span
 removes its intent under the existing draft rules.
 
 **User intent outlives the tool that created it.** Disabling Mentions removes its
-chooser, not selected recipients, their visible disclosure/removal controls, scoped
-drafts or pending messages. The session still owns roster/profile data, membership
-checks, signing and publication/retry. Plugins remain trusted same-process code;
-revocable editor commands do not sandbox the session capabilities they receive.
+chooser, not selected recipients, their inline chips and avatar removal controls,
+scoped drafts or pending messages. Editing or deleting a selected mention removes
+its explicit mention intent. Removing an avatar clears that identity's explicit
+mention intent without changing the authored text. This does not suppress Sessions
+routing: the selected agent or sole session agent can still be addressed. The session
+still owns roster/profile data, membership checks, signing and publication/retry.
+Plugins remain trusted same-process code; revocable editor commands do not sandbox the session capabilities they receive.
 
 This preview is host-matched: a tool using `insertMention` needs a host providing
 that command. The generated type-only `@buzz/author` package and `apiVersion: 1`
@@ -310,6 +482,9 @@ win over an earlier multi-word mention query. Matchers
 must not depend on asynchronously arriving session data: the winning component owns
 reactive roster/profile/catalog filtering. Only that component mounts. An empty
 result without status/retry hides the menu while keeping the provider subscribed.
+Before the first publication the menu is also hidden: syntax matching is not evidence
+of loading. Providers must publish an explicit status for actual pending work. Escape
+still revokes unpublished work, without exposing ARIA controls for a missing listbox.
 
 Providers receive immutable observation/range evidence and `publish(result)`—not
 DOM, focus or replacement commands. Results contain stable IDs, labels, optional
@@ -366,6 +541,8 @@ export function apply(ctx: Context) {
     id: "show-details",
     title: "Show details",
     binding: { key: "k", mod: true, shift: true },
+    // Optional Settings presentation order within this plugin's category.
+    order: 10,
     when: () => detailsViewIsAvailable(),
     run: () => showDetails(),
   };
@@ -396,10 +573,62 @@ or a promise that every binding wins every current focus conflict. The host-only
 registration method is deliberately absent from the injected type contract; plugins
 remain trusted same-process code, not sandboxed adversaries.
 
+`order` is optional and defaults to `0`. It controls only the row order in Settings
+within this owner's category; lower values appear first. Every bundled plugin
+assigns deliberate values to its actions (for example, a primary action starts
+at `10`), leaving gaps for related actions to be added later. Equal orders use
+the stable namespaced contribution key (`pluginId/shortcutId`), then title, as
+presentation tie-breakers. The core Buzz host category uses the same metadata
+and a host-owned functional sequence: navigation, text sizing, search/settings,
+then development-only actions. Host rows use their bare IDs for tie-breaking.
+Presentation order does not affect dispatch precedence, and
+shortcuts with duplicate titles remain separate rows because registry keys—not
+titles—identify bindings and their overrides.
+
 See [`shortcut-counter`](../examples/plugins/shortcut-counter/README.md) for a
 self-contained external plugin using the real service without a DOM listener.
 The generated type-only `@buzz/author` exports `Shortcuts`, `Shortcut`, `KeyBinding`
 and `RegisteredShortcut`. This is a host-matched preview: older hosts without the
 `shortcuts` capability cannot activate such a plugin. `apiVersion: 1` alone is not
-runtime feature negotiation. Chords, user rebinding, conflict UI and command palettes
-are outside this initial contract.
+runtime feature negotiation. Multi-key chord sequences and command palettes are
+outside this initial contract.
+
+Users can rebind any registered shortcut in Settings → Shortcuts without plugin
+changes. The page lists host bindings and every active plugin contribution from the
+dispatcher's own `hostSnapshot`/`snapshot` registries, grouped by owner, so it
+cannot drift from what fires. Overrides live in the host-owned device-local
+`buzz-shortcut-bindings.v1` preference, keyed by the registry identity the
+dispatcher already uses: the bare id for host bindings and `pluginId/id` for plugin
+contributions. The dispatcher resolves the effective binding at match time, so a
+plugin keeps registering its default and never sees, stores or re-registers for
+an override; the override follows the plugin across disable, re-enable and
+replacement, and an override whose owner is no longer installed is ignored rather
+than deleted. Rebinding replaces an alias set with the single chosen chord; reset
+restores every alias. Host chords stay reserved: the page refuses to assign a chord
+that another listed shortcut already uses, host or plugin, refuses the copy, cut,
+paste and select-all chords (and close-window/quit in the desktop build) because a
+match would prevent their default everywhere, and warns when a chord is one the
+message editor handles locally. A conflict can still appear after capture, for
+example when a plugin that was disabled at the time is re-enabled with the same
+default or a new plugin ships one; the dispatcher then resolves it silently, so
+each affected row shows an "Also used by …" line naming the others. A malformed
+stored override falls back to the registered default rather than stopping
+dispatch. `formatBinding` in
+`features/shortcuts/format.ts` renders any `KeyBinding` for the current platform;
+plugins that print their own hint (the bundled terminal does) show their registered
+default because overrides are host state. Xterm is the intentional local-first
+exception: before translating a keydown into PTY input, it synchronously forwards
+the original event to this same dispatcher through a private DOM handoff. Eligible
+app shortcuts (including live rebinds) win there; unhandled keys stay with xterm.
+No plugin shortcut API or preference access is added. Ordinary editors continue
+to handle keys before the window's bubbling dispatcher.
+
+Known limitations. Capture and matching both use the logical `KeyboardEvent.key`.
+On macOS an Option chord reports the composed character, so Option+K is stored
+and shown as `⌥˚`, and Shift+digit chords store the punctuation (`!` rather than
+`1`). This is internally consistent, so the binding fires, but it depends on the
+active keyboard layout and the displayed chord can differ from the keys pressed.
+The intended fix is to match Alt/Option chords on the physical `event.code` in
+both the capture control and the dispatcher's `matches`, which is a coordinated
+change to the plugin-facing matching rules and is deliberately not part of the
+Settings page.

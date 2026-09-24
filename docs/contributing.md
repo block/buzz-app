@@ -44,8 +44,58 @@ The pinned pnpm Hermit package supports Apple Silicon macOS but marks Intel macO
 on an unsupported platform; resolve that tooling gap first. Other platforms still
 need their own validation.
 
-- `just web`: install locked dependencies and start Vite.
-- `just desktop`: install locked dependencies and start Tauri, which starts Vite.
+- `just web [args...]`: install locked dependencies and forward arguments to Vite,
+  e.g. `just web --port 1431 --host 127.0.0.1`. Vite uses the requested port
+  (default: derived from the worktree path) or the next available port, allowing
+  parallel browser development.
+  Use `just web profile` for opt-in Chromium and broker CPU profiles. Profiling
+  binds only `127.0.0.1`; wildcard, hostname, and IPv6 `--host` values are rejected
+  so the captured page and development broker have one unambiguous owner. Use
+  `just web profile --network` to additionally record sanitized browser network
+  metadata in `network.json`; payloads, cookies, authorization headers, query strings,
+  fragments, and WebSocket frame data are omitted. Use `just web profile --trace`
+  to record a Chromium DevTools Performance trace (`chromium-trace.json`, with
+  style/layout/paint events, React's performance tracks, and denser CPU samples)
+  in place of `chromium-renderer.cpuprofile`; traces are large, so keep traced
+  sessions short. Press Ctrl+C to finalize the capture; the command prints the
+  `.profiles/...-web` output directory. Load `.cpuprofile` and trace files in
+  Chromium DevTools (**Performance** > **Load profile**).
+- `just desktop [args...]`: install locked dependencies and forward arguments to
+  Tauri, e.g. `just desktop --port 1431 --no-watch`. Before launching, the adapter
+  builds the pinned agent runtime when missing/outdated, or verifies and reuses it.
+  A preparation failure stops launch; help does not prepare resources.
+  The desktop adapter consumes
+  `--port N` or `--port=N` to set both Vite's port and Tauri's development URL;
+  Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
+  the adapter derives a stable port from the worktree path (the same derivation
+  `just web` uses) and prints the chosen URL. Different paths can still collide.
+  Desktop requires the
+  exact port to be free; an occupied port fails rather than opening another copy's
+  server. Other arguments, including runner/application arguments after `--`, pass
+  through unchanged. Port configuration is prepended so Tauri parses it even with
+  implicit runner arguments. Explicit `--config` arguments merge afterward and can
+  override it; keep their development URL and frontend command consistent. Use `--`
+  before runner/application arguments if they contain their own `--port` flag.
+  On macOS, `just desktop profile` uses Instruments' Time Profiler to launch and
+  record only the Buzz native parent process, not every process on the desktop.
+  WebKit subprocesses and the Vite broker are outside this native trace; use web
+  profiling when renderer/broker CPU coverage is required. Native file watching is
+  disabled during capture. Press Ctrl+C to finalize and validate the trace; the
+  path, which opens in Instruments. Use `just profile-clean` to remove all generated
+  web and desktop captures.
+- `just design [args...]`: install locked dependencies, start the standalone
+  design-system viewer, and open it in your browser. Arguments pass through to
+  Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port
+  fails rather than switching automatically. This starts neither Tauri nor the
+  live relay broker. Press Ctrl+C to stop it.
+- To pause notifications in your local dev server, set `BUZZ_DEV_NOTIFICATIONS=0`
+  in `.env.local` and restart the server. Only `0` pauses alerts and permission
+  requests; removing the setting restores normal behavior. Saved preferences are
+  untouched and production builds ignore the variable.
+- To open the default relay's community on a fresh dev port, set
+  `BUZZ_DEV_OPEN_RELAY=1` alongside `BUZZ_RELAY_URL` in `.env.local` and restart
+  the server. Only `1` enables it; a viewer's existing saved choice on that port,
+  including Personal space, wins. Production builds ignore the variable.
 - `just fullstack`: reserved, exits unsuccessfully with an explanation. It will
   eventually start local Docker services including the Buzz relay backend.
 - `just iterate`: install locked dependencies, format Rust, apply Biome safe
@@ -57,17 +107,57 @@ need their own validation.
   This is broader validation, not a signed package or a cross-platform test.
 
 Before the first `scan`, install the pinned browser engines with
-`bin/pnpm test:browser:install`; missing engines fail rather than skip. See
+`bin/pnpm test:browser:install`; missing engines fail rather than skip. Linux native
+notification tests also require `dbus-daemon` (installed in CI). They start and stop
+isolated test buses, never use the desktop session bus or display real banners. See
 [browser regression coverage and measurement limits](browser-testing.md).
 
 Installs run on every invocation to account for branch and lockfile changes.
 pnpm reuses its shared package cache; no node_modules directory needs to be copied
 into a new worktree. Native dependencies are fetched by Cargo as needed. Initial
-downloads and native compilation can take time. Web and desktop dev use the same
-port; run them separately or open the browser at the desktop dev server URL.
+downloads and native compilation can take time. Parallel worktrees normally need
+no port flags: each derives a stable default from its path. Pass `--port` if paths
+collide, the default is occupied, or you run a second instance from one checkout;
+ports must be integers from 1 to 65535. Browser dev
+prints its selected URL and can use a later port when the requested port is
+occupied. Port selection does not isolate credentials or native plugin data;
+use the existing `BUZZODZ_PROFILE` setting for separate plugin profiles.
 Both run the development broker with your identity when the public
 `BUZZ_DEV_VIEWER` pin is configured in `.env.local`, and start without live
 identity otherwise; see [the setup and Keychain requirements](../README.md#relay-channels).
+
+After creating a worktree, bootstrap it from the checkout whose local development
+configuration it should inherit:
+
+```sh
+scripts/bootstrap-worktree.sh /absolute/path/to/source/checkout
+```
+
+The idempotent script copies the source checkout's git-ignored `.env.local`
+without overwriting an existing target, then uses the new worktree's Hermit proxy
+to run `bin/pnpm install --frozen-lockfile`. It rejects checkouts from another
+repository. Keychain credentials and pnpm's package cache remain machine-shared;
+do not copy private keys, `node_modules`, build output, `.npmrc`, or other ignored
+files. Install hooks separately as described below so existing custom hooks are
+never silently replaced.
+
+### Worktree Dock labels (macOS)
+
+`just desktop` adds the current branch suffix to the Dock icon in linked Git
+worktrees (for example, `person/my-feature` shows `my-feature`). Detached
+worktrees use the checkout directory name. Restart the desktop command after
+switching or renaming a branch; no Cargo clean is needed.
+
+The launcher reuses the existing badge design and generates an icon under the
+ignored `src-tauri/target/dev-icons/` directory. The generated bytes determine its
+filename, so changed labels, source artwork, or rendering update Tauri's embedded
+icon even with a warm build. Generation requires macOS Swift/AppKit and `iconutil`;
+if it fails, startup warns and continues with the ordinary icon. Explicit Tauri
+`--config` arguments still take precedence over the generated icon and port.
+
+Ordinary checkouts, non-macOS launches, and `pnpm tauri build` keep their existing
+icons. This does not change the app identifier, credentials, profiles, or
+notification settings.
 
 ## Interactive product iteration
 
@@ -91,12 +181,25 @@ While shaping the first version, default to **edit → human tries the running a
   builds, rather than merely refreshing the app. Local checkpoint commits use
   the existing staged-file hook; no hook bypass is needed.
 - When the human is happy with a coherent batch, finish its regression coverage,
-  self-review, obtain independent review where risk warrants, and run one
-  `just scan` before review/integration. Attribute validation to that snapshot;
-  subsequent edits require appropriate revalidation. Fix failures and rerun the
-  affected gate rather than repeating unchanged successful work just for a
-  handoff. **Validated** means the required checks passed, not merely that the
-  screen looked right.
+  self-review, and obtain independent review where risk warrants. Let mandatory
+  pre-commit/pre-push hooks own their checks; run focused behavior checks they do
+  not cover and use existing CI for broad validation. Do not duplicate hook or
+  CI suites locally by default. Run `just scan` only when explicitly requested or
+  needed to reproduce a broad integration failure, not for every review,
+  integration, or handoff. Attribute validation to the checked snapshot; later
+  edits require appropriate revalidation. Before delivery, compare the branch's
+  merge base with the fetched target branch: GitHub PR checks run the merged tree,
+  which can include tests absent from the feature branch. Inspect incoming changes
+  that overlap changed UI contracts (including accessible names), integrate them,
+  and run the affected test files rather than assuming branch-only passes cover them.
+  Shared access-gating changes also affect standalone composer/reaction fixtures,
+  broker filter models, and restored-navigation/unread journeys. Repair stale
+  fixtures without loosening authority, then finish those journeys: an early mock
+  failure can mask a later production lifecycle regression.
+  Fix failures and rerun the affected gate rather than repeating unchanged successful
+  work. **Validated** means the
+  required checks passed, not merely that the screen looked right; pending CI
+  and untested native/browser behavior remain explicit gaps.
 
 ### Performance is acceptance, not a follow-up
 
@@ -140,11 +243,13 @@ custom `check-staged` group to avoid Lefthook's automatic partial-file stashing.
 
 Pre-commit runs pinned Biome formatting and safe lint fixes on fully staged
 JS/TS/JSON/CSS files, and rustfmt on individual staged Rust files. Remaining
-warnings/errors block the commit; no unsafe lint fixes are applied. Deletions and
+warnings/errors block the commit; no unsafe lint fixes are applied. The staged
+icon check also rejects known alternate icon families, direct upstream imports
+outside the design-system gateway, and whole-catalog imports. Deletions and
 unsupported formats (including Markdown, HTML and YAML) are not formatted here.
 The hook does **not** run types, tests, builds, Clippy, or a whole-tree formatter.
-`just iterate` remains the fast whole-tree fix/build command; `just scan` remains
-the full validation gate. Both reject remaining Biome warnings.
+`just iterate` remains the optional whole-tree fix/build command; `just scan` is
+an opt-in broad diagnostic. Both reject remaining Biome warnings.
 
 Before writing, the hook refuses partially staged supported files, non-regular
 files, and differing/untracked formatter configuration in their ancestor paths.
@@ -152,8 +257,9 @@ Format and reselect partial hunks, or stage/restore configuration, then retry.
 Only checked paths are restaged after all checks succeed; a failed check can leave
 safe fixes visible for review but does not update the index. Unrelated changes and
 existing stashes are left alone. Do not edit/stage concurrently with a commit.
-This is a developer guardrail, not a security boundary or a substitute for the full
-scan; changes to tool/config dependencies still require broad validation.
+This is a developer guardrail, not a security boundary or a substitute for CI
+and risk-appropriate behavior checks. Tool/config dependency changes require
+relevant integration evidence, not an automatic local full scan.
 
 ### Fast pre-push feedback
 
@@ -165,14 +271,29 @@ changes, source deletions, or a missing base run the full Vitest suite instead.
 The selector explicitly includes theme tests for their directly read CSS/bootstrap
 inputs, and the app composition test for source edits that its Vite loader hides
 from the import graph.
-It never fetches, installs dependencies, formats, builds Rust, or starts browsers.
-Install dependencies when switching branches, not during a push.
+A separate **design-system** job runs `design:typecheck` and `design:check` after
+types/unit tests. The jobs are serialized because pinned Lefthook 2.1.12 shares
+a mutable stdin reader: parallel consumers can lose Git refs and silently skip
+checks. Source CSS/JS/TS, design viewer/guard files, shared
+configuration/dependencies and hook-runner changes select this job; a missing base
+runs it conservatively. Its selection is independent of the unit-test skip, so
+CSS-only and viewer-only errors still block a push. Documentation-only and
+native-only pushes skip both jobs. Both selected jobs must pass.
+On a busy machine, set `BUZZ_TEST_WORKERS=2 git push` to limit Vitest worker
+concurrency in the hook. The optional value must be a positive integer; leaving
+it unset preserves Vitest's default. This also applies to direct Vitest runs and
+does not change test selection, timeouts, assertions, or retries.
+
+Neither job fetches, installs dependencies, formats, builds Rust, or starts browsers.
+The design job disables pnpm dependency auto-repair. Install dependencies when
+switching branches, not during a push.
 
 This is advisory coverage of the current working tree, not a replacement for CI:
 uncommitted edits can affect results, dynamic dependencies may not be selected,
-and non-HEAD refs are explicitly left to CI. Type errors and test failures block
-the push. TypeScript uses the root `tsconfig.json`; it does not typecheck plain
-JavaScript browser tests or prove runtime service provisioning.
+and non-HEAD refs are explicitly left to CI. Type errors, design violations and test
+failures block the push. The type checks use `tsconfig.json` and
+`tsconfig.design.json`; they do not typecheck plain JavaScript browser tests or
+prove runtime service provisioning.
 Do not edit files concurrently with hooks. First-use Hermit tool downloads can
 add setup time; normal warm hooks use the pinned tools already installed.
 
@@ -198,16 +319,38 @@ the complete suite still runs with `pnpm test` / `just scan`:
   outside the browser subprocess timeout. No measurement is repeated on shards,
   and no retry hides a failure. Functional jobs also run when measurements fail:
   this spends more runner minutes for faster, independent feedback.
-- **CI required:** fails unless every lane and every browser shard succeeds,
+- **CI required:** fails unless every automatic Linux lane and every browser shard succeeds,
   including cancellation or an unexpectedly skipped lane. Configure this status
   as a required repository check; the workflow does not change branch protection.
 
 Actions and tool versions are pinned, installs use the frozen lockfile, and
 Hermit/pnpm/Cargo/browser caches avoid repeat downloads and cold compilation.
-Superseded PR runs are cancelled. CI uses disposable Ubuntu runners and no live
+Superseded PR runs are cancelled. Automatic CI uses disposable Ubuntu runners and no live
 Buzz identity or signing credentials. It is not native GUI acceptance, a signed
 package, or a cross-platform release gate. `just scan` remains available locally;
 CI does not add full scans to commit/push or ordinary interactive feedback rounds.
+
+### On-demand Windows validation
+
+Automatic PR/main CI is Linux-only. Run the existing workflow manually for native
+Windows changes or release validation:
+
+```sh
+gh workflow run ci.yml --ref <branch>
+```
+
+A manual dispatch runs only **Windows native validation**: the same pinned Rust,
+Clippy and complete Tauri-package tests, without repeating Linux/browser jobs.
+Windows failures do not block the automatic `CI required` check; a Linux pass
+is not Windows validation. The job does not exercise OS banner interaction or
+packaged-app acceptance.
+
+For MSVC, `src-tauri/build.rs` links `windows-app-manifest.xml` into both the app
+and library unit-test executables. The XML matches Tauri's default Common Controls
+v6 manifest; icons/version resources remain Tauri-owned. This addresses
+[Tauri's library-test manifest gap](https://github.com/tauri-apps/tauri/issues/13419)
+without disabling IPC tests or native UI features. Non-MSVC builds retain Tauri's
+default resource path. Keep the manifest aligned when upgrading Tauri.
 
 ## Test organization
 
@@ -230,6 +373,58 @@ rewrite just to move. `vitest.config.ts` discovers tests under `src/` and `dev/`
 then Playwright. Updating a test's location must also update discovery, imports,
 fixture URLs and root-path calculations; moving a file must not silently drop it
 from the gate.
+
+### Choosing a test layer
+
+Choose the cheapest layer that can observe the failure, not the tool used by the
+last test in the feature. Regression coverage is about behavior, not test counts
+or a coverage percentage. These rules apply to human and AI contributions alike.
+
+| Contract | Default layer |
+| --- | --- |
+| Parsing, policy, state machines, protocol handling, service coordination | Vitest in Node; use real collaborating services where the boundary matters |
+| Component state, effects, subscriptions, forms, semantic DOM and stale async results | React Testing Library in Vitest with jsdom |
+| Layout, virtualization, scrolling, native editing/focus interactions, real browser storage coordination | Playwright in both engines |
+| App composition across routing, plugins, transport and persistence | Representative Playwright journeys, with permutations in lower layers |
+
+Run JS tests with `bin/pnpm exec vitest run`, optionally followed by a test path.
+For mounted component tests, add `// @vitest-environment jsdom` at the top of the
+colocated test and import `@testing-library/jest-dom/vitest` for DOM assertions.
+Use real React (including StrictMode), role/label queries and `userEvent` for
+interactions. Use `fireEvent` for deliberately low-level events or bulk input
+whose keystrokes are not the contract. Unmount with RTL `cleanup` in `afterEach`;
+clear owned storage and restore spies. Fake external services, not React hooks.
+Keep snapshots stable until a service actually changes, and assert cleanup and
+late-result rejection through real mounting, rerendering and unmounting.
+See the [composer tests](../src/features/messages/MessageComposer.test.tsx).
+
+jsdom is the default DOM emulator, not a second browser gate. Its
+[standards-oriented implementation](https://github.com/jsdom/jsdom#readme) and
+compatibility with Testing Library favor behavioral fidelity over emulator-only
+speed claims. [Vitest supports Happy DOM too](https://vitest.dev/guide/environment),
+but introducing another emulator requires a demonstrated benefit on our actual
+component tests without per-environment workarounds. Neither proves rendering,
+native IME behavior or browser performance. Keep layout shims local and explicit;
+do not treat synthetic dimensions as acceptance evidence.
+
+Before accepting test changes, reviewers should verify:
+
+- Each added browser case identifies a browser-specific behavior or integration
+  boundary that a lower layer cannot establish. Keep failure/recovery coverage,
+  but avoid repeating the same state matrix through full app startup.
+- A moved assertion has a named replacement and evidence that a plausible defect
+  makes it fail. Similar test titles do not establish equivalent coverage.
+- Fixture data matches the test's needs. Share stateless servers/compiled assets,
+  not browser contexts or mutable state; keep scale tests representative.
+- Timing claims distinguish setup, execution, runner/engine and the checked
+  snapshot. Report added/removed cases and deferred checks. Do not impose a
+  flaky wall-clock threshold on ordinary correctness tests.
+
+Follow `AGENTS.md` to record those decisions in the PR description and enforce
+them during agent review. Request a lower-layer test when the browser justification
+is missing, rather than accept unbounded journey growth. Existing broad fixtures and hook-mocked tests are
+migration work, not patterns for new tests; convert them by owner without
+bundling unrelated product changes.
 
 ### Manual browser fixtures
 

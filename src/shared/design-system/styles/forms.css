@@ -1,0 +1,288 @@
+@layer components {
+  /* A reserved border fades at the field perimeter without changing its geometry.
+     Composite fields own one stroke around the input and its actions. */
+  .buzz-input,
+  .buzz-textarea,
+  .buzz-input-group {
+    --border: transparent;
+    transition: border-color var(--duration-field-focus) var(--easing-state);
+  }
+  .buzz-field {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .buzz-field-label,
+  .buzz-choice-label {
+    @apply text-label-sm;
+    color: var(--text-standard);
+  }
+  .buzz-field-description,
+  .buzz-choice-description {
+    @apply text-body-sm;
+    display: block;
+    color: var(--text-subtle);
+  }
+  .buzz-field-error {
+    @apply text-body-sm;
+    color: var(--text-danger);
+  }
+  .buzz-input,
+  .buzz-textarea {
+    @apply text-body;
+    width: 100%;
+    min-width: 0;
+    min-height: var(--size-control);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    padding: max(var(--space-1), calc((var(--size-control) - 1lh - 2px) / 2))
+      var(--space-control-inset);
+    background: var(--surface-inset);
+    color: var(--text-standard);
+  }
+  .buzz-textarea {
+    min-height: 6rem;
+    padding: var(--space-control-inset);
+    resize: vertical;
+  }
+  /* Restyle the native grip, retaining the browser's resize hit target. */
+  .buzz-textarea::-webkit-resizer {
+    background:
+      linear-gradient(
+        135deg,
+        transparent 45%,
+        var(--text-metadata) 45% 55%,
+        transparent 55% 70%,
+        var(--text-metadata) 70% 80%,
+        transparent 80%
+      )
+      right var(--space-1) bottom var(--space-1) / var(--space-2) var(--space-2)
+      no-repeat;
+  }
+  .buzz-textarea[data-variant="code"] {
+    @apply text-mono;
+  }
+  .buzz-input::placeholder,
+  .buzz-textarea::placeholder {
+    color: var(--text-metadata);
+  }
+  .buzz-input:is([data-invalid], [aria-invalid="true"]),
+  .buzz-textarea:is([data-invalid], [aria-invalid="true"]) {
+    --border: var(--border-danger);
+  }
+  .buzz-input:disabled,
+  .buzz-textarea:disabled {
+    color: var(--text-unavailable);
+    background: var(--affordance-disabled);
+    cursor: not-allowed;
+  }
+  .buzz-radio-group {
+    display: grid;
+    gap: var(--space-3);
+  }
+  .buzz-choice {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-height: var(--size-control);
+    cursor: pointer;
+  }
+  .buzz-choice[data-variant="card"] {
+    padding: var(--space-4);
+    border: 1px solid var(--border-standard);
+    border-radius: var(--radius-control);
+  }
+  .buzz-choice[data-variant="card"]:has([data-checked]) {
+    border-color: var(--border-prominent);
+    background: var(--affordance-selected);
+  }
+  .buzz-choice:has([data-disabled]) {
+    cursor: not-allowed;
+  }
+  .buzz-choice:has([data-disabled]) .buzz-choice-label {
+    color: var(--text-unavailable);
+  }
+  .buzz-radio,
+  .buzz-checkbox {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 1.25rem;
+    height: 1.25rem;
+    flex-shrink: 0;
+    border: 1px solid var(--border-prominent);
+    background: var(--surface-panel);
+    color: var(--text-inverse);
+  }
+  .buzz-radio {
+    border-radius: var(--radius-pill);
+  }
+  .buzz-checkbox {
+    border-radius: var(--space-1);
+  }
+  .buzz-radio[data-checked],
+  .buzz-checkbox:is([data-checked], [data-indeterminate]) {
+    background: var(--affordance-prominent);
+    border-color: var(--affordance-prominent);
+  }
+  .buzz-radio-indicator {
+    width: var(--space-2);
+    height: var(--space-2);
+    border-radius: var(--radius-pill);
+    background: var(--text-inverse);
+  }
+  .buzz-radio[data-disabled],
+  .buzz-checkbox[data-disabled] {
+    background: var(--affordance-disabled);
+    color: var(--text-unavailable);
+  }
+  html[data-keyboard-navigation]
+    :is(
+      .buzz-input,
+      .buzz-textarea,
+      .buzz-radio,
+      .buzz-checkbox
+    ):focus-visible {
+    outline: 2px solid var(--border-focus);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  .buzz-select[data-variant="field"] {
+    display: grid;
+    gap: var(--space-2);
+    min-width: 0;
+  }
+  .buzz-select-trigger {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    text-align: start;
+    cursor: pointer;
+  }
+  .buzz-select-value {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+  .buzz-select-trigger > :last-child {
+    display: flex;
+    flex-shrink: 0;
+  }
+  .buzz-dropdown-chevron {
+    transform: rotate(0deg);
+    transition: transform var(--duration-state) var(--easing-settle);
+  }
+  [aria-expanded="true"] .buzz-dropdown-chevron {
+    transform: rotate(180deg);
+  }
+  html[data-keyboard-navigation] .buzz-dropdown-chevron {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-dropdown-chevron {
+      transition: none;
+    }
+  }
+  .buzz-select-positioner {
+    z-index: var(--layer-popover);
+  }
+  .buzz-select-popup[data-variant="field"] {
+    width: var(--anchor-width);
+    overflow-wrap: anywhere;
+  }
+  .buzz-combobox-empty:not(:empty) {
+    padding: var(--space-2) var(--space-3);
+    color: var(--text-subtle);
+  }
+  .buzz-combobox-option {
+    align-items: start;
+  }
+  .buzz-combobox-item-content {
+    display: grid;
+    gap: var(--space-1);
+    flex: 1;
+    min-width: 0;
+  }
+  .buzz-combobox-indicator {
+    flex-shrink: 0;
+    padding-top: var(--space-1);
+  }
+  .buzz-combobox-indicator:not([data-selected]) {
+    visibility: hidden;
+  }
+  .buzz-select-option[data-disabled] {
+    color: var(--text-unavailable);
+    cursor: not-allowed;
+  }
+  .buzz-select-value[data-placeholder] {
+    color: var(--text-metadata);
+  }
+
+  .buzz-input-group {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+    width: 100%;
+    min-height: var(--size-control);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    padding-inline: var(--space-control-inset);
+    background: var(--surface-inset);
+    color: var(--text-subtle);
+  }
+  .buzz-input-group:has(.buzz-input-trailing) {
+    padding-inline-end: calc(var(--space-1) - 1px);
+  }
+  .buzz-input-group > .buzz-input {
+    flex: 1;
+    min-width: 0;
+    width: 0;
+    min-height: calc(var(--size-control) - 2px);
+    border: 0;
+    border-radius: 0;
+    padding-inline: 0;
+    background: transparent;
+  }
+  .buzz-input-leading {
+    display: flex;
+    flex-shrink: 0;
+  }
+  .buzz-input-trailing {
+    display: flex;
+    width: var(--size-control-sm);
+    flex-shrink: 0;
+  }
+  .buzz-input-group:has(input:is([data-invalid], [aria-invalid="true"])) {
+    --border: var(--border-danger);
+  }
+  .buzz-input-group:has(input:disabled) {
+    background: var(--affordance-disabled);
+    color: var(--text-unavailable);
+  }
+  .buzz-input-group input::-webkit-search-cancel-button {
+    display: none;
+  }
+  html[data-keyboard-navigation] .buzz-input-group > .buzz-input:focus-visible {
+    outline-offset: 0;
+  }
+
+  .buzz-input:where(:focus, [data-popup-open]),
+  .buzz-textarea:where(:focus),
+  .buzz-input-group:where(:focus-within) {
+    --border: var(--border-prominent);
+  }
+  html[data-keyboard-navigation]
+    :is(.buzz-input, .buzz-textarea, .buzz-input-group) {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-input,
+    .buzz-textarea,
+    .buzz-input-group {
+      transition: none;
+    }
+  }
+}

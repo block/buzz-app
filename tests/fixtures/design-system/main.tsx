@@ -15,6 +15,7 @@ import "./styles.css";
 import { useKeyboardFocusVisibility } from "../../../src/shared/design-system/useKeyboardFocusVisibility";
 import { applyStoredColorScheme } from "../../../src/shared/design-system/theme/useColorScheme";
 import { DesignSystemLayout } from "./ui/DesignSystemLayout";
+import { FormsPage } from "./ui/FormsPage";
 import { OverviewPage } from "./ui/OverviewPage";
 import { ComponentDetailPage } from "./ui/ComponentDetailPage";
 import { ComponentsPage } from "./ui/ComponentsPage";
@@ -23,12 +24,16 @@ import { ColorTablePage } from "./ui/ColorTablePage";
 import { TypographyPage } from "./ui/TypographyPage";
 import { SpacingPage } from "./ui/SpacingPage";
 import { RadiusPage } from "./ui/RadiusPage";
+import { IconsPage } from "./ui/IconsPage";
+import { FloatingSurfacesPage } from "./ui/FloatingSurfacesPage";
 import { ElevationPage } from "./ui/ElevationPage";
 import { GlassPage } from "./ui/GlassPage";
 import { MotionPage } from "./ui/MotionPage";
 import { BaseUiPage } from "./ui/BaseUiPage";
 import { SystemDocumentPage } from "./ui/SystemDocumentPage";
+import { MessagesPage } from "./ui/MessagesPage";
 import { MissingPage } from "./ui/MissingPage";
+import { FoundationAlignmentPage } from "./ui/FoundationAlignmentPage";
 
 // Explicit design-only routes: no import of the app route tree or native startup.
 // Hash history keeps deep links reloadable on a static file host.
@@ -47,6 +52,11 @@ const detail = createRoute({
 const pages = [
   createRoute({
     getParentRoute: () => design,
+    path: "forms",
+    component: FormsPage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
     path: "/",
     component: OverviewPage,
   }),
@@ -56,6 +66,11 @@ const pages = [
     component: ComponentsPage,
   }),
   detail,
+  createRoute({
+    getParentRoute: () => design,
+    path: "messages",
+    component: MessagesPage,
+  }),
   createRoute({
     getParentRoute: () => design,
     path: "components/base-ui",
@@ -70,6 +85,11 @@ const pages = [
     getParentRoute: () => design,
     path: "color/table",
     component: ColorTablePage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
+    path: "icons",
+    component: IconsPage,
   }),
   createRoute({
     getParentRoute: () => design,
@@ -93,6 +113,11 @@ const pages = [
   }),
   createRoute({
     getParentRoute: () => design,
+    path: "floating-surfaces",
+    component: FloatingSurfacesPage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
     path: "glass",
     component: GlassPage,
   }),
@@ -100,6 +125,11 @@ const pages = [
     getParentRoute: () => design,
     path: "motion",
     component: MotionPage,
+  }),
+  createRoute({
+    getParentRoute: () => design,
+    path: "foundation-alignment",
+    component: FoundationAlignmentPage,
   }),
   createRoute({
     getParentRoute: () => design,

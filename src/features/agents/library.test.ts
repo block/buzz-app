@@ -5,7 +5,7 @@ import {
   type AgentLibrary,
 } from "./library";
 import { createRelaySession } from "../relay/session";
-import { keypair } from "../relay/testing";
+import { keypair, metadata, roster } from "../relay/testing";
 const library: AgentLibrary = {
   definitions: [
     { id: "brain", name: "Brain" },
@@ -50,6 +50,7 @@ it("lazy fresh reads replace, fail visibly, retry, and fence late results", asyn
       }),
   );
   const pending = owner.queries.refresh();
+  expect(owner.queries.snapshot().identities).toEqual(library.identities);
   await Promise.resolve();
   owner.clear();
   release(library);
@@ -77,4 +78,105 @@ it("actual session wires the host library and clears/disposes it without relay d
   await owner.session.agentLibrary.refresh();
   owner.dispose();
   expect(owner.session.agentLibrary.snapshot().status).toBe("unavailable");
+});
+
+it.each([false, true])(
+  "session establishment reuses inventory with a pending read=%s and refreshes after disconnect",
+  async (pendingRead) => {
+    vi.useFakeTimers();
+    let live!: import("../relay/live").LiveCallbacks;
+    let release!: (value: AgentLibrary) => void;
+    const read = vi
+      .fn()
+      .mockImplementationOnce(
+        () =>
+          new Promise<AgentLibrary>((resolve) => {
+            release = resolve;
+          }),
+      )
+      .mockResolvedValue(library);
+    const viewer = keypair(),
+      relay = keypair();
+    const events = [
+      roster(relay, "channel", [viewer.pubkey]),
+      metadata(relay, "channel", "Channel"),
+    ];
+    const owner = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: relay.pubkey,
+      media: () => undefined,
+      query: async (filters) =>
+        events.filter((event) =>
+          filters.some((filter) => filter.kinds?.includes(event.kind)),
+        ),
+      readAgentLibrary: read,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, prioritize() {}, retry() {}, dispose() {} };
+      },
+    });
+    const stop = owner.session.agentLibrary.retain();
+    try {
+      const pending = owner.session.agentLibrary.refresh();
+      await Promise.resolve();
+      if (!pendingRead) {
+        release(library);
+        await pending;
+      }
+      live.state({ status: "connected", routes: [] });
+      live.established();
+      await vi.advanceTimersByTimeAsync(0);
+      if (pendingRead) {
+        release(library);
+        await pending;
+      }
+      expect(read).toHaveBeenCalledTimes(1);
+      expect(owner.session.agentLibrary.snapshot().status).toBe("ready");
+      expect(owner.session.channels.list().channels).toHaveLength(1);
+      // Signed channel access loss still removes the channel, not host-local names.
+      live.receive([roster(relay, "channel", [], 1_700_000_001)]);
+      expect(owner.session.channels.list().channels).toHaveLength(0);
+      expect(owner.session.agentLibrary.snapshot().identities).toEqual(
+        library.identities,
+      );
+      live.state({ status: "retrying", routes: [] });
+      expect(owner.session.agentLibrary.snapshot().status).toBe("idle");
+      live.state({ status: "connected", routes: [] });
+      live.established();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledTimes(2);
+      expect(owner.session.agentLibrary.snapshot().status).toBe("ready");
+      stop();
+      live.state({ status: "retrying", routes: [] });
+      live.state({ status: "connected", routes: [] });
+      live.established();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(read).toHaveBeenCalledTimes(2);
+    } finally {
+      release(library);
+      stop();
+      owner.dispose();
+      vi.useRealTimers();
+    }
+  },
+);
+
+it("establishment retries a failed retained read without turning idle inventory into demand", async () => {
+  const read = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("offline"))
+    .mockResolvedValue(library);
+  const owner = createAgentLibrary(read);
+  owner.reconnect();
+  await Promise.resolve();
+  expect(read).not.toHaveBeenCalled();
+  const stop = owner.queries.retain();
+  await owner.queries.refresh();
+  expect(owner.queries.snapshot().status).toBe("error");
+  owner.reconnect();
+  await owner.queries.refresh();
+  expect(read).toHaveBeenCalledTimes(2);
+  expect(owner.queries.snapshot().status).toBe("ready");
+  stop();
+  owner.dispose();
 });

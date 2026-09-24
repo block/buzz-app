@@ -1,11 +1,14 @@
 import { test, expect } from "./fixture.mjs";
 import { open, anchor, expectAnchor } from "./timeline.mjs";
 
+test.use({ historyCounts: { alpha: 20, beta: 1 } });
 const key = "buzz-appearance.v1";
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 async function settings(page) {
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  // Finish the menu-to-page focus handoff before testing keyboard controls.
+  await expect(page.getByRole("main")).toBeFocused();
   await button(page, "Appearance").click();
 }
 async function expectMode(page, mode) {
@@ -13,15 +16,22 @@ async function expectMode(page, mode) {
   await expect(page.locator("html")).toHaveCSS("color-scheme", mode);
   await expect(page.locator("html")).toHaveCSS(
     "background-color",
-    mode === "dark" ? "rgb(17, 24, 29)" : "rgb(231, 240, 239)",
+    mode === "dark" ? "rgb(0, 0, 0)" : "rgb(240, 240, 240)",
   );
   await expect(page.locator('meta[name="theme-color"]')).toHaveAttribute(
     "content",
-    mode === "dark" ? "#11181d" : "#e7f0ef",
+    mode === "dark" ? /^#(?:000|000000)$/ : /^#f0f0f0$/,
   );
+  await expect(page.locator(".shell-background")).toHaveCSS(
+    "background-image",
+    /linear-gradient/,
+  );
+  await expect(
+    page.getByRole("navigation", { name: "Pages", exact: true }),
+  ).toHaveCSS("backdrop-filter", /blur\(/);
 }
 
-test("Appearance changes and restores both modes, native keyboard controls, dialogs and narrow layout", async ({
+test("Appearance changes and restores both modes, shared keyboard controls, dialogs and narrow layout", async ({
   page,
   app,
 }, testInfo) => {
@@ -36,15 +46,15 @@ test("Appearance changes and restores both modes, native keyboard controls, dial
   await expect(dark).toBeChecked();
   await expect(dark).toBeFocused();
   await expectMode(page, "dark");
-  expect(
-    await page
-      .locator(".shell-tab")
-      .first()
-      .evaluate((el) => getComputedStyle(el).color),
-  ).toBe("rgb(230, 237, 240)");
+  await expect(
+    page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button")
+      .first(),
+  ).toHaveCSS("color", "rgb(255, 255, 255)");
   await expect(button(page, "Appearance")).toHaveCSS(
     "background-color",
-    "rgb(27, 37, 43)",
+    "rgb(51, 51, 51)",
   );
   expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
     "dark",
@@ -69,12 +79,12 @@ test("Appearance changes and restores both modes, native keyboard controls, dial
         path: testInfo.outputPath(`appearance-${mode}-${width}.png`),
       });
     }
-    await button(page, "Find a page").click();
-    const dialog = page.getByRole("dialog", { name: "Find a page" });
+    await button(page, "Search Buzz").click();
+    const dialog = page.getByRole("dialog", { name: "Search Buzz" });
     await expect(dialog).toBeVisible();
     await expect(dialog).toHaveCSS(
       "background-color",
-      mode === "dark" ? "rgb(27, 37, 43)" : "rgb(255, 255, 255)",
+      mode === "dark" ? "rgb(51, 51, 51)" : "rgb(255, 255, 255)",
     );
     await page.keyboard.press("Escape");
   }
@@ -83,6 +93,35 @@ test("Appearance changes and restores both modes, native keyboard controls, dial
   await expectMode(page, "dark");
   await settings(page);
   await expect(dark).toBeChecked();
+});
+
+test("System appearance follows computer changes and keeps the selected choice after reload", async ({
+  page,
+  app,
+}, testInfo) => {
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.goto(app.origin);
+  await settings(page);
+  const system = page.getByRole("radio", { name: "System", exact: true });
+  await system.check();
+  await expect(system).toBeChecked();
+  await expectMode(page, "light");
+  await page.screenshot({ path: testInfo.outputPath("system-light.png") });
+  expect(await page.evaluate((key) => localStorage.getItem(key), key)).toBe(
+    "system",
+  );
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expectMode(page, "dark");
+  await page.reload();
+  await expectMode(page, "dark");
+  await settings(page);
+  await expect(system).toBeChecked();
+  await page.screenshot({ path: testInfo.outputPath("system-dark.png") });
+  await page.emulateMedia({ colorScheme: "light" });
+  await expectMode(page, "light");
+  await page.getByRole("radio", { name: "Dark", exact: true }).check();
+  await page.emulateMedia({ colorScheme: "light" });
+  await expectMode(page, "dark");
 });
 
 test("storage denial is visible and retryable; another window updates a live conversation without remount", async ({
@@ -126,11 +165,35 @@ test("storage denial is visible and retryable; another window updates a live con
     }, key);
     await other.getByRole("radio", { name: "Dark", exact: true }).check();
     await expectMode(other, "dark");
-    await expect(other.getByRole("alert")).toContainText("could not be saved");
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toContainText("could not be saved");
     await expectMode(page, "light");
+    await button(other, "Notifications").click();
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await button(other, "Appearance").click();
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toHaveCount(1);
     await other.evaluate(() => window.restoreStorage());
     await button(other, "Retry saving appearance").click();
-    await expect(other.getByRole("alert")).toHaveCount(0);
+    await expect(
+      other.getByRole("dialog", {
+        name: "Appearance wasn’t saved",
+        exact: true,
+      }),
+    ).toHaveCount(0);
     await expectMode(page, "dark");
     await expect(page.locator("em-emoji-picker #root")).toHaveAttribute(
       "data-theme",
@@ -138,7 +201,7 @@ test("storage denial is visible and retryable; another window updates a live con
     );
     await expect(emojiSearch).toHaveValue("grinning");
     expect(await emojiNode.evaluate((el) => el.isConnected)).toBe(true);
-    await expect(composer).toHaveValue("Unsent appearance draft");
+    await expect(composer).toHaveJSProperty("value", "Unsent appearance draft");
     expect(await node.evaluate((el) => el.isConnected)).toBe(true);
     await expectAnchor(page, before);
     // The second window legitimately creates its own session; a mode change must not add a third.
@@ -162,16 +225,23 @@ test("saved dark document paints before the application module is allowed to exe
   page,
   app,
 }) => {
-  await page.goto(app.origin);
-  await page.evaluate((key) => localStorage.setItem(key, "dark"), key);
-  let release;
-  const held = new Promise((resolve) => {
-    release = resolve;
+  const relayRequests = [];
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname.startsWith("/api/relay/"))
+      relayRequests.push(request.url());
   });
-  await page.route(/\/assets\/.*\.js$/, async (route) => {
-    await held;
-    await route.continue();
-  });
+  // Seed only persisted input before the first document. Booting a live app
+  // just to save this preference races its pending relay reads against goto.
+  await page.addInitScript((key) => localStorage.setItem(key, "dark"), key);
+  // Completing a no-op module keeps React from executing without leaving a
+  // pending script request. WebKit stalls animation frames when that pending
+  // request coexists with @font-face rules, even after styles are computed.
+  await page.route(/\/assets\/.*\.js$/, (route) =>
+    route.fulfill({
+      contentType: "application/javascript",
+      body: "/* Application execution deliberately withheld. */",
+    }),
+  );
   try {
     await page.goto(app.origin, { waitUntil: "commit" });
     await expect(page.locator("html")).toHaveAttribute(
@@ -181,7 +251,7 @@ test("saved dark document paints before the application module is allowed to exe
     await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
     await expect(page.locator("html")).toHaveCSS(
       "background-color",
-      "rgb(17, 24, 29)",
+      "rgb(0, 0, 0)",
     );
     expect(await page.locator("#root").innerHTML()).toBe("");
     // Observe the painted document for two frames with the entire React bundle still withheld.
@@ -193,11 +263,121 @@ test("saved dark document paints before the application module is allowed to exe
     );
     await expect(page.locator("html")).toHaveCSS(
       "background-color",
-      "rgb(17, 24, 29)",
+      "rgb(0, 0, 0)",
     );
+    // Pre-paint coverage must never start (then tear down) a relay session.
+    expect(relayRequests).toEqual([]);
   } finally {
-    release();
     await page.unrouteAll({ behavior: "wait" });
   }
+  await page.reload();
+  await expect(button(page, "Your profile")).toBeVisible();
   await expectMode(page, "dark");
+});
+
+test("production startup owns keyboard modality", async ({
+  page,
+  app,
+  browserName,
+}) => {
+  await page.goto(app.origin);
+  await button(page, "Your profile").click();
+  await expect(page.locator("html")).not.toHaveAttribute(
+    "data-keyboard-navigation",
+  );
+  await page.keyboard.press(
+    browserName === "webkit" && process.platform === "darwin"
+      ? "Alt+Tab"
+      : "Tab",
+  );
+  await expect(page.locator("html")).toHaveAttribute(
+    "data-keyboard-navigation",
+    "",
+  );
+  await page.mouse.click(2, 2);
+  await expect(page.locator("html")).not.toHaveAttribute(
+    "data-keyboard-navigation",
+  );
+});
+
+test("compiled host preserves compatibility utility meanings", async ({
+  page,
+  app,
+}) => {
+  await page.goto(app.origin);
+  // Diagnostic nodes use the production stylesheet, not fixture-generated CSS.
+  // Opposing inherited color prevents a missing text utility from passing.
+  await page.evaluate(() => {
+    const probe = document.createElement("div");
+    probe.id = "style-contract";
+    probe.innerHTML = `<code id="old-code">Old code</code><span id="old-mono" class="font-mono">Old mono</span><div data-buzz-ui><code id="new-mono" class="font-mono">New mono</code><div class="text-secondary"><span id="primary-text" class="text-primary">Text</span></div><div id="primary-border" class="border border-primary">Border</div></div><button id="old-primary" class="bg-primary text-on-primary rounded-xl hover:bg-primary-hover">Old primary</button>`;
+    document.body.append(probe);
+  });
+  for (const mode of ["Light", "Dark"]) {
+    await settings(page);
+    await page.getByRole("radio", { name: mode, exact: true }).check();
+    await expect(page.locator("#primary-text")).toHaveCSS(
+      "color",
+      mode === "Light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
+    );
+    await expect(page.locator("#primary-border")).toHaveCSS(
+      "border-top-color",
+      mode === "Light" ? "rgb(232, 232, 232)" : "rgb(35, 35, 35)",
+    );
+    await expect(page.locator("#old-primary")).toHaveCSS(
+      "background-color",
+      mode === "Light" ? "rgb(0, 0, 0)" : "rgb(255, 255, 255)",
+    );
+    await expect(page.locator("#old-primary")).toHaveCSS(
+      "border-radius",
+      "12px",
+    );
+    for (const id of ["old-code", "old-mono"]) {
+      await expect(page.locator(`#${id}`)).toHaveCSS(
+        "font-family",
+        /ui-monospace/,
+      );
+      await expect(page.locator(`#${id}`)).toHaveCSS(
+        "font-family",
+        /JetBrains Mono/,
+      );
+    }
+    await expect(page.locator("#new-mono")).toHaveCSS(
+      "font-family",
+      /JetBrains Mono/,
+    );
+  }
+});
+
+test("shared type and spacing reach the real message timeline", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const history = page.getByRole("region", { name: "Channel message history" });
+  const message = history.locator("[data-message-id] p").first();
+  await expect(message).toHaveCSS("font-size", "14px");
+  // WebKit exposes the fractional product of the shared 14px × 1.42857 role.
+  await expect
+    .poll(async () =>
+      message.evaluate((element) =>
+        Number.parseFloat(getComputedStyle(element).lineHeight),
+      ),
+    )
+    .toBeCloseTo(20, 3);
+  await expect(history).toHaveCSS("padding-left", "24px");
+  const sidebar = page.getByRole("complementary", { name: "Channel sidebar" });
+  await expect(
+    sidebar.getByRole("button", { name: "Alpha", exact: true }),
+  ).toHaveCSS("font-size", "14px");
+  await expect(
+    sidebar.locator("..").getByRole("separator", {
+      name: "Resize channel sidebar",
+    }),
+  ).toHaveCSS("width", "16px");
+  const back = button(page, "Go back").locator("svg");
+  await expect(button(page, "Search Buzz").locator("svg")).toHaveCSS(
+    "width",
+    await back.evaluate((element) => getComputedStyle(element).width),
+  );
 });

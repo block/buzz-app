@@ -9,6 +9,7 @@ import type { InlineRenderer } from "./contracts";
 import type { Contribution } from "../../plugins/contributions";
 import * as emoji from "../../bundled/emoji";
 import * as mentions from "../../bundled/mentions";
+import * as links from "../../bundled/links";
 
 const Component = () => null;
 const cleanups: (() => Promise<unknown>)[] = [];
@@ -29,6 +30,7 @@ function harness(module: PluginModule) {
     source: "external" as const,
     revision: "one",
     previous: null,
+    reloadable: true,
     error: null,
   };
   return { service, runtime, plugin };
@@ -87,13 +89,16 @@ it("bundled Emoji really registers a picker and a renderer, including reaction m
   expect(inlineMatches(content, h.service.inline.snapshot())).toHaveLength(1);
   expect(
     inlineMatches(
-      { ...content, reaction: { content: ":party:" } },
+      { ...content, reaction: { content: ":party:", events: [] } },
       h.service.inline.snapshot(),
     ),
   ).toHaveLength(0);
   expect(
     inlineMatches(
-      { ...content, reaction: { content: ":party:", emoji: custom } },
+      {
+        ...content,
+        reaction: { content: ":party:", emoji: custom, events: [] },
+      },
       h.service.inline.snapshot(),
     ),
   ).toHaveLength(1);
@@ -166,6 +171,41 @@ it("bundled Mentions registers only a chooser and removal leaves the host UI ava
   expect(h.service.ui.Composer).toBe(composer);
 });
 
+it("bundled Links registers, withdraws, and restores a fresh renderer", async () => {
+  const h = harness(links);
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() => expect(h.service.links.snapshot()).toHaveLength(1));
+  const first = h.service.links.snapshot()[0];
+  expect(first?.matches("https://github.com/block/buzz")).toBe(true);
+  expect(first?.matches("javascript:alert(1)")).toBe(false);
+  h.runtime.reconcile([]);
+  await vi.waitFor(() => expect(h.service.links.snapshot()).toHaveLength(0));
+  h.runtime.reconcile([{ ...h.plugin, revision: "two" }]);
+  await vi.waitFor(() => expect(h.service.links.snapshot()).toHaveLength(1));
+  expect(h.service.links.snapshot()[0]).not.toBe(first);
+  expect(h.service.links.snapshot()[0]?.revision).toBe("two");
+});
+
+it("withdraws link presentation when plugin activation fails", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerLink({
+        id: "link",
+        title: "Link",
+        matches: () => true,
+        component: Component,
+      });
+      throw new Error("failed link plugin");
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.runtime.snapshot()[h.plugin.manifest.id]?.status).toBe("failed"),
+  );
+  expect(h.service.links.snapshot()).toHaveLength(0);
+});
+
 it("owns completion registration through disable, replacement and failed activation", async () => {
   const h = harness({
     inject: ["conversation"],
@@ -225,3 +265,48 @@ it.each([emoji, mentions])(
     );
   },
 );
+
+it("owns accessories through disable, replacement and failed activation", async () => {
+  const h = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerAccessory({
+        id: "status",
+        title: "Status",
+        component: Component,
+      });
+    },
+  });
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.accessories.snapshot()).toHaveLength(1),
+  );
+  const first = h.service.accessories.snapshot()[0];
+  h.runtime.reconcile([]);
+  await vi.waitFor(() =>
+    expect(h.service.accessories.snapshot()).toHaveLength(0),
+  );
+  h.runtime.reconcile([h.plugin]);
+  await vi.waitFor(() =>
+    expect(h.service.accessories.snapshot()).toHaveLength(1),
+  );
+  expect(h.service.accessories.snapshot()[0]).not.toBe(first);
+  const broken = harness({
+    inject: ["conversation"],
+    apply(ctx) {
+      ctx.conversation.registerAccessory({
+        id: "status",
+        title: "Status",
+        component: Component,
+      });
+      throw new Error("failed after registration");
+    },
+  });
+  broken.runtime.reconcile([broken.plugin]);
+  await vi.waitFor(() =>
+    expect(broken.runtime.snapshot()[broken.plugin.manifest.id]?.status).toBe(
+      "failed",
+    ),
+  );
+  expect(broken.service.accessories.snapshot()).toHaveLength(0);
+});

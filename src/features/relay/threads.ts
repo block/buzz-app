@@ -6,13 +6,15 @@ import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
 import { byteSize } from "./budget";
 import { foldMessages } from "./fold";
+import { shareMessageRows } from "./row-identity";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
 const PAGE_SIZE = 50;
 const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
-const contentKind = (event: EventData) => [9, 40002].includes(event.kind);
+const contentKind = (event: EventData) =>
+  [9, 40002, 40008].includes(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
 const compare = (a: EventData, b: EventData) =>
@@ -26,6 +28,9 @@ export type ThreadSnapshot = Readonly<{
   /** Continuation is possible, not a claim about total thread size or exhaustion. */
   canLoadMore: boolean;
   limited: boolean;
+  /** Exact navigation target, folded independently of bounded thread traversal. */
+  target?: ChannelMessage | undefined;
+  targetStatus?: "loading" | "ready" | "unavailable" | "error" | undefined;
 }>;
 export type ThreadView = {
   snapshot(): ThreadSnapshot;
@@ -46,6 +51,8 @@ export function createThreadView({
   canAccess,
   visible,
   notify,
+  exact = false,
+  admit = (events) => events,
 }: {
   channelId: string;
   messageId: string;
@@ -56,11 +63,20 @@ export function createThreadView({
   canAccess(): boolean;
   visible(events: readonly RelayEvent[]): readonly RelayEvent[];
   notify(listener: () => void): void;
+  exact?: boolean;
+  /** Exact finite reads enter session reconciliation only after a complete fold. */
+  admit?:
+    | ((events: readonly RelayEvent[]) => readonly RelayEvent[])
+    | undefined;
 }) {
   let disposed = false;
   let rootId: string | undefined;
   let rootUnavailable = false;
+  let targetStatus: ThreadSnapshot["targetStatus"] = exact
+    ? "loading"
+    : undefined;
   let remote: readonly RelayEvent[] = [];
+  let staged: readonly RelayEvent[] = [];
   let cursor: RelayEvent | undefined;
   let pages = 0;
   let controller: AbortController | undefined;
@@ -75,14 +91,19 @@ export function createThreadView({
   });
   const listeners = new Set<() => void>();
   function related<T extends EventData>(events: readonly T[]): T[] {
-    if (!rootId) return [];
+    if (!rootId && !exact) return [];
     const rows = events.filter(
       (event) =>
         !AUX.has(event.kind) &&
         inChannel(event, channelId) &&
-        (event.id === rootId || threadReference(event)?.rootId === rootId),
+        (event.id === rootId ||
+          (exact && event.id === messageId) ||
+          (!!rootId && threadReference(event)?.rootId === rootId)),
     );
-    const ids = new Set([...remote, ...rows].map((event) => event.id));
+    const ids = new Set([
+      ...(exact ? [messageId] : []),
+      ...[...remote, ...staged, ...rows].map((event) => event.id),
+    ]);
     const result = new Map(rows.map((event) => [event.id, event]));
     // Aux closure includes deletion of an auxiliary, not just direct row overlays.
     for (let hop = 0; hop < 2; hop++) {
@@ -105,6 +126,23 @@ export function createThreadView({
       ...new Map(batches.flat().map((event) => [event.id, event])).values(),
     ];
   }
+  function notifyListeners() {
+    for (const listener of listeners) notify(listener);
+  }
+  function publishStatus(patch: Partial<ThreadSnapshot>) {
+    if (disposed) return;
+    snapshot = Object.freeze({
+      ...snapshot,
+      ...patch,
+      ...(exact
+        ? {
+            target: targetStatus === "ready" ? snapshot.target : undefined,
+            targetStatus,
+          }
+        : {}),
+    });
+    notifyListeners();
+  }
   function publish(patch: Partial<ThreadSnapshot> = {}) {
     if (disposed) return;
     const operations = canAccess() ? (local?.snapshot() ?? []) : [];
@@ -120,44 +158,68 @@ export function createThreadView({
     ))
       inputs.set(event.id, event);
     const deliveries = new Map(operations.map((item) => [item.event.id, item]));
-    const rows = foldMessages(
-      channelId,
-      relayAuthor,
-      rootUnavailable ? [] : [...inputs.values()],
-      {
-        includeReplies: true,
-      },
-    ).map((row) => {
-      const item = deliveries.get(row.id);
-      return item
-        ? Object.freeze({
-            ...row,
-            delivery: item.delivery,
-            deliveryError: item.error,
-          })
-        : row;
-    });
+    const rows = shareMessageRows(
+      snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
+      foldMessages(
+        channelId,
+        relayAuthor,
+        rootUnavailable && !exact ? [] : [...inputs.values()],
+        {
+          includeReplies: true,
+        },
+      ).map((row) => {
+        const item = deliveries.get(row.id);
+        return item
+          ? Object.freeze({
+              ...row,
+              delivery: item.delivery,
+              deliveryError: item.error,
+            })
+          : row;
+      }),
+    );
     // Thread forward order differs from channel-history's descending-ID tiebreak.
-    const replies = rows
-      .filter((row) => row.id !== rootId)
+    const target =
+      targetStatus === "ready"
+        ? rows.find((row) => row.id === messageId)
+        : undefined;
+    if (targetStatus === "ready" && !target) targetStatus = "unavailable";
+    const readable = rows.filter(
+      (row) => !exact || row.id !== messageId || targetStatus === "ready",
+    );
+    const nextReplies = readable
+      .filter(
+        (row) =>
+          row.id !== rootId && (!rootUnavailable || row.id === messageId),
+      )
       .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+    const replies =
+      snapshot.replies.length === nextReplies.length &&
+      snapshot.replies.every((row, index) => row === nextReplies[index])
+        ? snapshot.replies
+        : Object.freeze(nextReplies);
     snapshot = Object.freeze({
       ...snapshot,
       ...patch,
-      root: rows.find((row) => row.id === rootId),
-      replies: Object.freeze(replies),
+      root: !rootUnavailable
+        ? readable.find((row) => row.id === rootId)
+        : undefined,
+      replies,
+      ...(exact ? { target, targetStatus } : {}),
     });
-    for (const listener of listeners) notify(listener);
+    notifyListeners();
   }
-  function retain(events: readonly RelayEvent[]) {
+  function retain(events: readonly RelayEvent[], commit = true) {
     if (events.length > MAX_EVENTS || byteSize(events) > MAX_BYTES) {
       // Never silently evict a deletion/ancestor then display resurrected content.
       controller?.abort();
       remote = [];
+      staged = [];
       rootId = undefined;
       cursor = undefined;
       pages = 0;
       again = false;
+      if (exact) targetStatus = "error";
       publish({
         status: "error",
         limited: true,
@@ -167,11 +229,11 @@ export function createThreadView({
       });
       return false;
     }
-    remote = events;
+    if (commit) remote = events;
     return true;
   }
   function receive(events: readonly RelayEvent[]) {
-    if (disposed || !canAccess() || !rootId) return;
+    if (disposed || !canAccess() || (!rootId && !exact)) return;
     const incoming = related(events);
     if (!incoming.length) return;
     if (retain(union(remote, incoming))) {
@@ -187,8 +249,11 @@ export function createThreadView({
     controller?.abort();
     controller = undefined;
     again = false;
+    staged = [];
+    if (exact) targetStatus = "loading";
     if (clear || !canAccess()) {
       remote = [];
+      staged = [];
       rootId = undefined;
       cursor = undefined;
       pages = 0;
@@ -221,8 +286,79 @@ export function createThreadView({
     let nextCursor = replace ? undefined : cursor;
     let nextPages = replace ? 0 : pages;
     let fetched: readonly RelayEvent[] = [];
-    publish({ status: "loading", error: undefined });
+    // Repair retains already-verified presentation; only a new/unavailable
+    // selection waits for its initial fold. Never unmount a reader on reconnect.
+    if (exact && replace && targetStatus !== "ready") targetStatus = "loading";
+    publishStatus({ status: "loading", error: undefined });
     try {
+      if (exact && replace) {
+        const response = await reader.read(
+          [{ ids: [messageId], "#h": [channelId], limit: 1 }],
+          { signal: owned.signal },
+        );
+        if (!active()) return;
+        // Admit the immutable selected content before retention, just as normal
+        // reads do. Only its separately fetched overlays wait for closure.
+        const selected = admit(response);
+        if (!active()) return;
+        const event = selected.find(
+          (event) =>
+            event.id === messageId &&
+            contentKind(event) &&
+            inChannel(event, channelId),
+        );
+        if (!event) {
+          targetStatus = "unavailable";
+          publish({ status: "ready", canLoadMore: false });
+          return;
+        }
+        rootId = threadReference(event)?.rootId ?? event.id;
+        if (!retain(union(remote, [event]))) return;
+        // ID reads do not expand overlays. Fold the selected row even when it
+        // lies beyond the thread's traversal cap; its ID never supplies a cursor.
+        const overlays = await reader.read(
+          [
+            {
+              kinds: [5, 7, 9005, 40003, 39005],
+              "#e": [messageId],
+              limit: 500,
+            },
+          ],
+          { signal: owned.signal },
+        );
+        if (!active()) return;
+        staged = related(overlays);
+        if (!retain(union(remote, staged), false)) return;
+        const ids = union(remote, staged)
+          .filter(
+            (event) =>
+              AUX.has(event.kind) &&
+              event.tags.some(
+                ([name, value]) => name === "e" && value === messageId,
+              ),
+          )
+          .map((event) => event.id);
+        if (ids.length) {
+          const tombstones = await reader.read(
+            [{ kinds: [5, 9005], "#e": ids, limit: 500 }],
+            { signal: owned.signal },
+          );
+          if (!active()) return;
+          staged = union(staged, related(tombstones));
+          if (!retain(union(remote, staged), false)) return;
+        }
+        // Keep incomplete finite overlays out of both our displayed fold and
+        // the shared observation path. Live evidence still reconciles immediately.
+        const accepted = admit([event, ...staged]);
+        if (!active() || !retain(union(remote, related(accepted)))) return;
+        staged = [];
+        targetStatus = "ready";
+        publish();
+        if (snapshot.targetStatus !== "ready") {
+          publish({ status: "ready", canLoadMore: false });
+          return;
+        }
+      }
       if (!rootId) {
         const selected = await reader.read(
           [{ ids: [messageId], "#h": [channelId], limit: 1 }],
@@ -240,11 +376,11 @@ export function createThreadView({
       }
       let more = false;
       for (let page = 0; page < targetPages; page++) {
-        const events = await reader.read(
+        const response = await reader.read(
           [
             { ids: [rootId], "#h": [channelId], limit: 1 },
             {
-              kinds: [9, 40002],
+              kinds: [9, 40002, 40008],
               "#h": [channelId],
               "#e": [rootId],
               depth_limit: 100,
@@ -260,6 +396,8 @@ export function createThreadView({
           ],
           { signal: owned.signal },
         );
+        if (!active()) return;
+        const events = admit(response);
         if (!active()) return;
         if (
           !events.some(
@@ -320,9 +458,13 @@ export function createThreadView({
         limited: more && pages >= MAX_PAGES,
       });
     } catch (error) {
-      if (active()) publish({ status: "error", error: String(error) });
+      if (active()) {
+        if (targetStatus === "loading") targetStatus = "error";
+        publishStatus({ status: "error", error: String(error) });
+      }
     } finally {
       if (controller === owned) {
+        staged = [];
         controller = undefined;
         if (again && !disposed) {
           again = false;
@@ -333,7 +475,10 @@ export function createThreadView({
   }
   return {
     channelId,
-    event: (id: string) => remote.find((event) => event.id === id),
+    // Staged verified IDs allow immediate live delete-of-overlay access checks,
+    // without publishing the incomplete finite overlay into any shared view.
+    event: (id: string) =>
+      [...remote, ...staged].find((event) => event.id === id),
     receive,
     purge,
     changed: () => publish(),

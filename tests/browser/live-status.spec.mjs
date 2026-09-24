@@ -1,5 +1,8 @@
 import { test, expect } from "./fixture.mjs";
-test.use({ productionBroker: true });
+test.use({
+  productionBroker: true,
+  historyCounts: { alpha: 1, beta: 1 },
+});
 test("clean pending setup stays in diagnostics and never flashes a warning during channel switches", async ({
   page,
   app,
@@ -9,8 +12,12 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
   await page.evaluate(() => {
     window.__bannerSeen = [];
     window.__bannerObserver = new MutationObserver(() => {
-      for (const status of document.querySelectorAll('[role="status"]')) {
-        if (status.textContent.includes("Retained messages remain readable."))
+      for (const status of document.querySelectorAll(".buzz-toast")) {
+        if (
+          status.textContent.includes(
+            "Only currently accessible messages remain readable.",
+          )
+        )
           window.__bannerSeen.push(status.textContent);
       }
     });
@@ -29,8 +36,8 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),
   ).toBeVisible();
   const warning = page
-    .getByRole("status")
-    .filter({ hasText: "Retained messages remain readable." });
+    .getByRole("dialog", { name: "Live updates need attention", exact: true })
+    .filter({ hasText: "Only currently accessible messages remain readable." });
   await expect.poll(() => app.relay.hasRoute("primary", "beta")).toBe(true);
   await expect(warning).toHaveCount(0);
   const streams = () =>
@@ -41,12 +48,16 @@ test("clean pending setup stays in diagnostics and never flashes a warning durin
     page.getByRole("textbox", { name: "Message #Beta", exact: true }),
   ).toBeVisible();
   await expect(warning).toHaveCount(0);
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   await page.getByText("Diagnostics", { exact: true }).click();
   await expect(
     page.getByText("Live updates: connecting", { exact: true }),
   ).toBeVisible();
-  await page.getByLabel("Conversation options", { exact: true }).click();
+  await page
+    .getByRole("button", { name: "Channel settings", exact: true })
+    .click();
   expect(app.relay.rejected).toHaveLength(0);
   expect(app.report.wireFrames.filter((f) => f[0] === "CLOSED")).toHaveLength(
     0,
@@ -78,7 +89,11 @@ for (const target of ["alpha", "profiles"]) {
   test(`quota recovery for ${target} stays quiet until attempts exhaust, and manual recovery waits for EOSE`, async ({
     page,
     app,
-  }) => {
+  }, testInfo) => {
+    if (target === "profiles")
+      await page.addInitScript(() =>
+        localStorage.setItem("buzz-appearance.v1", "dark"),
+      );
     await page.goto(app.origin);
     await page
       .getByRole("button", { name: "Messages", exact: true })
@@ -89,10 +104,14 @@ for (const target of ["alpha", "profiles"]) {
     ).toBeVisible();
     await expect.poll(() => app.relay.hasRoute("primary", target)).toBe(true);
     const warning = page
-      .getByRole("status")
-      .filter({ hasText: "Retained messages remain readable." });
+      .getByRole("dialog", { name: "Live updates need attention", exact: true })
+      .filter({
+        hasText: "Only currently accessible messages remain readable.",
+      });
     await expect(warning).toHaveCount(0);
-    await page.getByLabel("Conversation options", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
     await page.getByText("Diagnostics", { exact: true }).click();
     const recovery = page.getByText(
       "Live updates: recovering automatically after rate limiting; awaiting confirmation",
@@ -124,13 +143,37 @@ for (const target of ["alpha", "profiles"]) {
         await expect(warning).not.toContainText("retry in 0s");
       }
     }
+    // Persistent feedback must not block the header, composer, or narrow navigation.
+    for (const width of [390, 800, 1440]) {
+      await page.setViewportSize({ width, height: 950 });
+      await page
+        .getByRole("button", { name: "Close channel settings", exact: true })
+        .click();
+      await page
+        .getByRole("textbox", { name: "Message #Alpha", exact: true })
+        .fill("Unsent recovery draft");
+      await expect(warning).toHaveCount(1); // Diagnostics must not emit a second toast.
+      await expect(warning).toHaveCSS("opacity", "1");
+      await page.screenshot({
+        path: testInfo.outputPath(`toast-app-${target}-${width}.png`),
+      });
+      await page
+        .getByRole("button", { name: "Channel settings", exact: true })
+        .click();
+      await page.getByText("Diagnostics", { exact: true }).click();
+      await expect(warning).toHaveCount(1);
+    }
     const beforeManual = requests().length;
-    await page.getByLabel("Conversation options", { exact: true }).click();
+    await page
+      .getByRole("button", { name: "Close channel settings", exact: true })
+      .click();
     await page
       .getByRole("button", { name: "Retry live updates", exact: true })
       .click();
-    await page.getByLabel("Conversation options", { exact: true }).click();
-    // The inner Diagnostics details retains its open state when its parent closes.
+    await page
+      .getByRole("button", { name: "Channel settings", exact: true })
+      .click();
+    await page.getByText("Diagnostics", { exact: true }).click();
     await expect(recovery).toBeVisible();
     await expect(warning).toHaveCount(0);
     await expect.poll(() => requests().length).toBeGreaterThan(beforeManual);

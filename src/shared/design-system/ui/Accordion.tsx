@@ -1,5 +1,5 @@
 import { Accordion as BaseAccordion } from "@base-ui/react/accordion";
-import { IconChevronDown } from "@tabler/icons-react";
+import { CaretDownIcon } from "../icons/index";
 import type { ReactNode } from "react";
 
 /** Accessible disclosure groups. Base UI owns expansion and keyboard behavior. */
@@ -10,22 +10,27 @@ export function Accordion({
   onValueChange,
   variant = "default",
   headingLevel = 3,
+  keepMounted = false,
 }: {
   items: readonly { value: string; title: ReactNode; content: ReactNode }[];
   defaultValue?: string[];
   value?: string[];
   onValueChange?: (value: string[]) => void;
-  variant?: "default" | "navigation" | "activity";
+  variant?: "default" | "form" | "navigation" | "activity";
   headingLevel?: 2 | 3;
+  /** Preserve local form state while its panel is collapsed. */
+  keepMounted?: boolean;
 }) {
   return (
     <BaseAccordion.Root
+      data-buzz-ui=""
       className="buzz-accordion"
       data-variant={variant}
       defaultValue={defaultValue}
       value={value}
       onValueChange={onValueChange}
       multiple
+      keepMounted={keepMounted}
     >
       {items.map((item) => (
         <BaseAccordion.Item key={item.value} value={item.value}>
@@ -41,7 +46,7 @@ export function Accordion({
           >
             <BaseAccordion.Trigger className="buzz-accordion-trigger text-body">
               <span>{item.title}</span>
-              <IconChevronDown size={14} aria-hidden="true" />
+              <CaretDownIcon size={14} aria-hidden="true" />
             </BaseAccordion.Trigger>
           </BaseAccordion.Header>
           <BaseAccordion.Panel className="buzz-accordion-panel">

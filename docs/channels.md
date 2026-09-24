@@ -12,11 +12,20 @@ The panel reads GitHub's public API on demand. Private or unavailable objects an
 API limits show an explanation with a direct GitHub link. File and branch links
 continue to open normally. No GitHub account connection is configured yet.
 
+On desktop, an ordinary click on an unhandled HTTP(S) link with
+`target="_blank"` uses the native Tauri opener to launch the default browser,
+including attachments and **Open on GitHub**. A plugin that handles the click prevents that fallback; disabling
+GitHub restores it. The main-window capability allows only HTTP(S) URLs, not
+arbitrary file paths or application commands. Web keeps ordinary browser link
+behavior. Adding the native opener requires rebuilding/restarting desktop;
+frontend hot reload alone is not enough.
+
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
 Disabling Channels removes its page while the app-owned data survives.
 
-The broker uses the existing authorized Buzz identity in the macOS Keychain and
+The broker uses the existing authorized Buzz identity in the OS secret store (macOS
+Keychain, Linux secret service) and
 signs authenticated reads and channel messages in Node. No private key reaches browser JavaScript; there is
 a bounded message-signing and publishing endpoint. The broker is restricted to loopback hosts, same-origin
 POSTs, valid Nostr kinds/event IDs, and bounded filters. Without a configured `BUZZ_DEV_VIEWER` pin, the shell and Messages empty state remain available, while the live identity/join flow explains that it needs the development broker. Packaged builds do not include the development broker.
@@ -64,11 +73,91 @@ late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. There is no new disk cache or automatic cross-device sync.
 
-Search, collapsed section keys and sidebar scroll remain separate, scoped view
-intent. They are saved on page exit and restored before paint when the roster and
-groups are available; navigation history does not own them. The saved-groups
+Collapsed section keys and sidebar scroll remain separate, scoped view intent.
+They are saved on page exit and restored before paint when the roster and groups
+are available; navigation history does not own them. Search lives in the top-bar
+palette; legacy sidebar filters are ignored. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
+
+## Starting a direct message
+
+The **+** action in the DMs sidebar header opens **New message**, a routed empty
+conversation in Messages. The header remains available before the first DM exists. Its inline **To:**
+field owns a paginated people picker and up to eight recipient chips, excluding
+this viewer. Agent profiles are offered only when their exact public key appears
+in the ready native control snapshot for this community. Public profile hints and
+the compatibility library do not establish control; this filter also applies to
+searches and cached results. Selected agent chips are revalidated against the
+current ready control snapshot before a fresh open and again before enqueueing.
+Already queued messages retain exact-event recovery. Namesake identities show
+unambiguous shared public-key labels in their options and selected chips. Human profiles remain available while controls load
+or fail. The shared popover hugs shorter result lists up to ten rows (or available
+viewport space), then scrolls. Search placeholders retain the previous result count
+within that cap. An initial 15-profile preview paints first; bounded background batches
+continue without scrolling, including for searches. Pages containing only excluded
+agents keep loading; an empty result is shown only after all matching pages finish.
+Directory reads use the verified scheduler without
+admitting browse results into shared conversation profiles, so a large directory
+cannot evict sidebar names. Each incoming batch shares the mention pickers' name
+ranking, but new identities append so visible rows never reshuffle. This is not a
+globally alphabetical directory: the relay pages by profile update time. Completed
+pages and recent searches stay in memory for this account/community session, so
+returning or clearing a search resumes the same results. Typing immediately filters
+loaded names without replacing local matches with a loading placeholder. Once the
+browse directory is complete, searches stay local; while it is incomplete, remote
+matches can append in the background. A failed background read
+keeps existing people visible and offers retry. Mentions retain their conversation-specific
+eligibility. Before a DM exists, a composer-local `DraftMentionRoster` supplies
+only the selected recipient identities and names to both mention tools. Removing
+a selection updates both menus; an already-inserted mention still requires actual
+DM membership on Send. Mentioning never opens the DM early or adds recipients.
+The existing `MessageComposer` owns the draft and ordinary input behavior. Its placeholder is blank before selection and lists the selected names
+afterward. Disabled mention and emoji icons stay unfilled. No timeline is mounted before the first message is confirmed. DMs omit the date
+pill at the beginning of their complete history, while retaining message times
+and date separators between days.
+
+`features/direct-messages` owns selection, scoped view intent, and the isolated
+chip-removal effect. The five-frame effect lasts 400 ms (a gentler 180 ms fade
+with reduced motion); audio is best effort. The copied assets retain their MIT
+notice in `public/recipient-removal/LICENSE.txt`.
+
+The relay session exposes `directMessages` over its existing verified reader and
+outbox. People are kind-0 pages: a 15-profile browse preview (30 for search), followed by
+30-profile browse batches. Searches retain 30-profile pages because profile metadata
+can be large enough to exceed the read budget in larger batches. Remote name
+searches are debounced by 150 ms.
+Opening uses the development broker's purpose-bound `/direct-message` endpoint:
+it signs kind 41010 with one to eight distinct other participant keys, checks the
+exact command receipt, and returns the canonical channel ID. A unique client tag
+allows reissuing this participant-set command after a lost response without
+receiving a generic duplicate-event receipt. No private key or arbitrary signing
+capability is exposed to the page. Other host adapters report this capability as
+unavailable until they implement it.
+
+Before sending, the session requires signed DM metadata and an exact signed roster
+containing the viewer and selected people. The first kind-9 message then uses the
+normal durable outbox. Navigation waits for an accepted receipt or verified echo.
+A failure retains recipients and draft; an uncertain delivery retries its exact
+event ID. The outbox persists recovery metadata with the operation before publication and
+retains it through confirmed delivery until the composer durably acknowledges it.
+Hydration must finish before a fresh send; one recovery key prevents duplicate
+first sends. Definitively failed operations restore newer editable draft and recipient
+views; uncertain operations keep their durable recovery payload authoritative.
+Before acknowledgement retires recovery, saved views are removed and their absence
+is verified. Cleanup failure retains recovery for confirmation-only retry. A page
+reopened during acknowledgement resets its recovered editor when retirement finishes.
+Local storage is a convenience for editable drafts. Only a
+definitively failed recovery operation can be removed (including through
+Diagnostics), releasing the preserved draft for editing or a changed recipient set. A changed set also invalidates the prepared destination.
+Page exit cancels preparation and its delivery waiter, while the outbox retains
+ownership of already queued messages. Reopening recovers the pending event rather
+than enqueueing a duplicate.
+
+Focused coverage lives in `NewMessage.test.tsx`, `direct-messages.test.ts`,
+`relay-broker-api.test.mjs`, and the Chromium/WebKit `new-message.spec.mjs` journey.
+The browser journey uses the production app and broker with ephemeral identities
+and modeled upstream I/O; it does not send messages to a live community.
 
 ## Performance and correctness carried from Astra
 
@@ -89,7 +178,8 @@ The port retains the prepared-store implementation and its behavior tests:
   Selecting an already-queued catch-up promotes that existing read without adding
   a request or resetting its deadline.
 - 1,024 profile entries / 2 MiB signed-record budget, narrow row profile selectors,
-  and a bounded avatar preparation cache. Signature verification yields in batches.
+  and request-warmed avatars (fetched and decoded, nothing retained; disabled
+  under the Save-Data preference). Signature verification yields in batches.
 - Account/relay-scoped IndexedDB: 64 records / 8 MiB global disk budget, 24-hour
   expiry. Cached events are reverified only after fresh roster authorization.
 - A 60-second head freshness lease; warm revisits reuse heads without new reads.
@@ -125,6 +215,26 @@ recovery constraints, not a new shared-session API or a guarantee of general
 profile retry after every cache clear/network failure. See [browser coverage and
 limits](browser-testing.md#dm-label-recovery).
 
+## Membership activity
+
+Channel history and the existing live route include relay-signed kind-40099
+`member_joined`, `member_left` and `member_removed` summaries. Only recognized,
+channel-scoped payloads from the connected relay become activity rows; malformed,
+unknown and other authors' summaries are not rendered as JSON. These events do not
+grant/revoke access: the existing signed roster remains authoritative.
+
+The timeline groups adjacent arrivals/departures into compact avatar-and-text rows.
+Messages, local-day changes and gaps over an hour break groups; removals by different
+actors stay separate. Same-adder additions use “added by you” for the viewer;
+mixed arrivals do not invent an adder. Grouping is presentation-only: signed event
+IDs, pagination cursors and retention budgets remain per event. Profiles reuse the
+shared background directory/cache, and reading anchors can resolve a member of a
+group. Activity has no message actions, thread, unread evidence or chat preview.
+
+An already-running development broker needs a coordinated restart to load the
+expanded live filter; frontend hot reload alone changes only the history/rendering
+path. No native or relay changes are required.
+
 ## Viewing threads
 
 Click a message's reply count to open its root and replies in the right column.
@@ -149,7 +259,8 @@ The footer reuses `MessageComposer` and sends direct replies to the resolved roo
 through `session.messages.reply`. Channel and thread drafts are separate and survive
 reconnection; failed replies remain inline with the shared retry action. Read-only
 connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. There is no jump-to-specific-reply navigation yet.
+not expose a composer. Exact navigation can retain and focus a selected reply
+beyond the traversal range; it does not extend that range or promise complete history.
 
 Replies use ascending timestamp/event-ID order, including nested replies. Retry
 appears only after a failed read; there is no routine Refresh control. Names are
@@ -167,14 +278,19 @@ measurements](browser-testing.md). Reading intent includes a message anchor for
 cold/oversized geometry; legacy positions or anchors outside retained history fall
 back to an offset without a same-message guarantee.
 
-Channels supports basic text sending with a shared durable outbox and bounded history.
-Authenticated live traffic reconciles through that same session. Channel creation
-is not implemented; basic text thread composition is supported. Reply counts open a bounded thread
-view; attachments are links. Routine freshness labels are not shown; Conversation options → Diagnostics
+Channels supports plain-text Markdown authoring with a shared durable outbox and bounded history.
+Channel and thread messages render CommonMark plus GFM headings, emphasis, lists, quotes,
+tables, task lists, strikethrough and code, while preserving chat-style single line breaks.
+Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
+are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji
+remain event-local and are not substituted inside links or code. Authenticated live traffic
+reconciles through the same session. Channel creation and composer preview/toolbars are not
+implemented. Reply counts open a bounded thread view; attachments are links. Routine freshness
+labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
 GitHub actions remain on GitHub. A saved-groups/stars failure keeps its specific
-reason under **Conversation options → Diagnostics → Saved groups and stars**.
+reason under **Channel Settings → Diagnostics → Saved groups and stars**.
 `Preference query` includes reader queueing, transport and verification; use relay
 timings to separate those. `Preference decode` identifies the local decoder stage.
 The diagnostic does not trigger another request or change retry policy.
@@ -268,3 +384,41 @@ after dwell; no automatic channel-prefix advance hides unseen siblings. Conversa
 options exposes local-only manual unread, explicit mark-through and sync recovery.
 Older synchronized hints may expire under bounded retention. Synced manual-unread
 and OS notifications are not enabled by this feature.
+
+
+### Attachment layout and scrolling
+
+Image attachments reserve their preview geometry before loading and across virtualized
+row remounts. Valid `imeta dim` metadata supplies the aspect ratio, bounded to 360px wide
+and 320px tall without upscaling. Missing/invalid dimensions use a stable 360:320 frame
+that shrinks with the available width; the image is contained without cropping or
+upscaling. Unknown-size images may therefore have empty space in the frame. Loading,
+failure, or retry does not resize it or force an above-bottom reader to the newest row.
+Valid message-carried `imeta blurhash` is decoded locally into a 32×32 canvas in
+that same frame when it intersects the viewport. No thumbnail is fetched. The
+preview is removed entirely (including behind transparency) only after the lazy
+original decodes; failure retains the preview. Missing/invalid hashes or canvas
+failures keep the existing background. Syntax validation bounds hashes to 166
+base83 characters / 9×9 components; folding does no pixel work. Preview work is
+per-mounted-image and uncached, visibility-gated even in nonvirtualized threads.
+Without IntersectionObserver, only the ordinary placeholder/original is used.
+This favors bounded visible work over instant offscreen previews on scrolling.
+`tests/browser/image-scroll.spec.mjs` covers delayed/failed loads, actual remounts,
+bottom following, reading anchors and narrow layout in Chromium and WebKit.
+
+## Opening an exact message
+
+Message-addressed conversations reuse the normal timeline and thread panel. A
+verified, loaded top-level target is revealed in the timeline. An off-window
+message opens as the root in the existing thread panel; a reply opens there with
+its actual root and bounded surrounding replies. No around-message channel query
+or separate detail screen is added. The presentation choice stays fixed for that
+navigation attempt; exact reads do not insert isolated old rows into channel history.
+
+Navigation completes only after the exact folded target is visible and focused.
+Reclick/Back reveals again; live/profile updates do not steal focus. The shared
+rows preserve Markdown, profile links, composers and background enrichment.
+Opening never marks read directly: the ordinary focus/visibility/dwell hook applies.
+Missing/deleted targets, access loss and failed reads expose failure/retry instead
+of channel-head success. An accessible reply remains visible when its root is
+unavailable, without a thread composer. See [the evidence contract](relay-queries.md#exact-message-navigation).

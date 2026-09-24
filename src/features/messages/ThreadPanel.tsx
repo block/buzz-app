@@ -1,5 +1,9 @@
 // biome-ignore-all lint/a11y/noNoninteractiveTabindex: The thread region supports keyboard scrolling and Escape.
+import { Button } from "../../shared/design-system/ui/Button";
+import { PanelHeader } from "../../shared/design-system/ui/PanelHeader";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
+  useCallback,
   useEffect,
   useLayoutEffect,
   useMemo,
@@ -7,16 +11,23 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
-import { X } from "lucide-react";
+import { XIcon } from "../../shared/design-system/icons/index";
 import type { ConversationExtensions } from "../conversation/contracts";
+import type { ChannelMessage } from "../relay/contracts";
 import type { RelaySession } from "../relay/session";
 import type { ThreadView } from "../relay/threads";
 import { useRowProfiles } from "../relay/react";
 import { MessageRow } from "./MessageRow";
 import { MessageComposer } from "./MessageComposer";
 import styles from "./Messages.module.css";
+import { rejectUnhandledFileDrop } from "./use-file-drop";
 import { useReading } from "./use-reading";
+import { useMessageReveal } from "./use-message-reveal";
+import type { PageNavigation } from "../navigation/service";
 import { messageViewKey } from "./view-key";
+import type { MediaPlayback } from "./MediaAttachment";
+import { formatMediaTime } from "./media-timecode";
+import { useKnownAgentPubkeys } from "../agents/use-known";
 
 export type ThreadPanelProps = {
   extensions?: ConversationExtensions | undefined;
@@ -24,22 +35,67 @@ export type ThreadPanelProps = {
   scope: string;
   channelName: string;
   channelId: string;
+  sessionConversation?: boolean | undefined;
   messageId: string;
+  replyRequest?: number | undefined;
+  navigation?: PageNavigation | undefined;
   close(): void;
   onOpenLink(url: string): boolean;
+  onOpenMediaReview?(
+    messageId: string,
+    attachment: ChannelMessage["attachments"][number],
+    seconds: number,
+  ): void;
+  canOpenLink?: ((target: string) => boolean) | undefined;
 };
 
 /** Safe to retarget through ordinary props; callers do not own internal remount keys. */
 export function ThreadPanel(props: ThreadPanelProps) {
   return (
-    <OwnedThreadPanel
-      key={messageViewKey(
-        props.session,
-        props.scope,
-        props.channelId,
-        props.messageId,
-      )}
-      {...props}
+    <aside
+      className={styles.thread}
+      data-attachment-drop-zone=""
+      onDragOver={rejectUnhandledFileDrop}
+      onDrop={rejectUnhandledFileDrop}
+      aria-label="Thread"
+      onKeyDown={(event) => {
+        if (event.key === "Escape") {
+          event.stopPropagation();
+          props.close();
+        }
+      }}
+    >
+      <ThreadHeader close={props.close} />
+      <OwnedThreadPanel
+        key={messageViewKey(
+          props.session,
+          props.scope,
+          props.channelId,
+          props.messageId,
+        )}
+        {...props}
+      />
+    </aside>
+  );
+}
+function ThreadHeader({ close }: Pick<ThreadPanelProps, "close">) {
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    closeButton.current?.focus();
+  }, []);
+  return (
+    <PanelHeader
+      variant="compact"
+      title="Thread"
+      actions={
+        <IconButton
+          ref={closeButton}
+          size="toolbar"
+          aria-label="Close thread"
+          onClick={close}
+          icon={<XIcon size={18} aria-hidden="true" />}
+        />
+      }
     />
   );
 }
@@ -50,77 +106,71 @@ function OwnedThreadPanel({
   channelName,
   channelId,
   messageId,
-  close,
+  navigation,
   onOpenLink,
+  onOpenMediaReview,
+  canOpenLink,
+  sessionConversation,
+  replyRequest,
 }: ThreadPanelProps) {
   const [view, setView] = useState<ThreadView>();
   const [error, setError] = useState<string>();
   const [attempt, setAttempt] = useState(0);
-  const closeButton = useRef<HTMLButtonElement>(null);
-  useEffect(() => {
-    closeButton.current?.focus();
-  }, []);
   // Allocate in the effect, not render/useMemo: StrictMode must not leak owned views.
   // biome-ignore lint/correctness/useExhaustiveDependencies: attempt is explicit recovery after view allocation fails.
   useEffect(() => {
     try {
-      const owned = session.thread(channelId, messageId);
+      if (navigation?.signal.aborted) return;
+      const exact =
+        navigation?.target.kind === "conversation" &&
+        navigation.target.threadRootId !== messageId;
+      const owned = exact
+        ? session.thread(channelId, messageId, { exact: true })
+        : session.thread(channelId, messageId);
+      const cancel = () => {
+        owned.dispose();
+        setView(undefined);
+      };
       setError(undefined);
       setView(owned);
+      navigation?.signal.addEventListener("abort", cancel, { once: true });
       void owned.refresh();
-      return () => owned.dispose();
+      return () => {
+        navigation?.signal.removeEventListener("abort", cancel);
+        owned.dispose();
+      };
     } catch (error) {
       setError(String(error));
+      navigation?.complete({ status: "failed", reason: "unavailable" });
     }
-  }, [session, channelId, messageId, attempt]);
-  return (
-    <aside
-      className={styles.thread}
-      aria-label="Thread"
-      onKeyDown={(event) => {
-        if (event.key === "Escape") {
-          event.stopPropagation();
-          close();
-        }
-      }}
-    >
-      <header className={styles.heading}>
-        <strong>Thread</strong>
-        <button
-          ref={closeButton}
-          type="button"
-          aria-label="Close thread"
-          onClick={close}
-        >
-          <X size={18} aria-hidden="true" />
-        </button>
-      </header>
-      {error ? (
-        <div className={styles.empty} role="alert">
-          <p>{error}</p>
-          <button
-            type="button"
-            onClick={() => setAttempt((value) => value + 1)}
-          >
-            Retry thread
-          </button>
-        </div>
-      ) : view ? (
-        <ThreadMessages
-          extensions={extensions}
-          session={session}
-          scope={scope}
-          channelId={channelId}
-          channelName={channelName}
-          view={view}
-          onOpenLink={onOpenLink}
-        />
-      ) : (
-        <p className={styles.empty} role="status">
-          Loading thread…
-        </p>
-      )}
-    </aside>
+  }, [session, channelId, messageId, attempt, navigation]);
+  return error ? (
+    <div className={styles.empty} role="alert">
+      <p>{error}</p>
+      <Button type="button" onClick={() => setAttempt((value) => value + 1)}>
+        Retry thread
+      </Button>
+    </div>
+  ) : view ? (
+    <ThreadMessages
+      sessionConversation={sessionConversation}
+      extensions={extensions}
+      session={session}
+      scope={scope}
+      channelId={channelId}
+      channelName={channelName}
+      view={view}
+      navigation={navigation}
+      messageId={messageId}
+      replyRequest={replyRequest}
+      onOpenLink={onOpenLink}
+      onOpenMediaReview={onOpenMediaReview}
+      canOpenLink={canOpenLink}
+    />
+  ) : (
+    <p className={styles.empty} role="status">
+      Loading thread…
+    </p>
   );
 }
 function ThreadMessages({
@@ -129,16 +179,28 @@ function ThreadMessages({
   scope,
   channelId,
   channelName,
+  messageId,
   view,
+  navigation,
   onOpenLink,
+  onOpenMediaReview,
+  canOpenLink,
+  sessionConversation,
+  replyRequest,
 }: {
+  sessionConversation?: boolean | undefined;
   extensions?: ConversationExtensions | undefined;
   session: RelaySession;
   scope: string;
   channelId: string;
   channelName: string;
+  messageId: string;
   view: ThreadView;
+  replyRequest?: number | undefined;
+  navigation?: PageNavigation | undefined;
   onOpenLink(url: string): boolean;
+  onOpenMediaReview?: ThreadPanelProps["onOpenMediaReview"];
+  canOpenLink?: ((target: string) => boolean) | undefined;
 }) {
   const snapshot = useSyncExternalStore(
     view.subscribe,
@@ -150,7 +212,9 @@ function ThreadMessages({
       snapshot.root ? [snapshot.root, ...snapshot.replies] : snapshot.replies,
     [snapshot.root, snapshot.replies],
   );
-  const authors = [...new Set(rows.map((row) => row.authorId))]
+  const authors = [
+    ...new Set(rows.flatMap((row) => [row.authorId, ...row.mentions])),
+  ]
     .sort()
     .join(":");
   useEffect(() => {
@@ -160,11 +224,84 @@ function ThreadMessages({
         .catch(() => {});
   }, [session.profiles, authors]);
   const profiles = useRowProfiles(session.profiles, rows);
+  const agentPubkeys = useKnownAgentPubkeys(session, profiles);
   const scroller = useRef<HTMLElement>(null);
   const positioned = useRef(false);
   const follow = useRef(true);
+  const targetAnchor = useRef<number | undefined>(undefined);
+  const selectedRow = useCallback(
+    () =>
+      [
+        ...(scroller.current?.querySelectorAll<HTMLElement>(
+          "[data-message-id]",
+        ) ?? []),
+      ].find((row) => row.dataset.messageId === messageId),
+    [messageId],
+  );
+  const completeTarget = useCallback(() => {
+    // Exact lookup can finish before context. Preserve this row's reading
+    // position through prepended history without refocusing it after opening.
+    targetAnchor.current = selectedRow()?.offsetTop;
+    navigation?.complete({ status: "opened" });
+  }, [navigation, selectedRow]);
+  const prepareTarget = useCallback(() => {
+    follow.current = false;
+  }, []);
+  const rootTarget =
+    navigation?.target.kind === "conversation" &&
+    navigation.target.threadRootId === messageId;
+  const revealed = useMessageReveal({
+    scroller,
+    settled: positioned,
+    messageId,
+    signal: rootTarget ? undefined : navigation?.signal,
+    ready:
+      snapshot.targetStatus === "ready" && snapshot.target?.id === messageId,
+    complete: completeTarget,
+    prepare: prepareTarget,
+  });
+  useEffect(() => {
+    if (!navigation || navigation.signal.aborted) return;
+    if (rootTarget && snapshot.status === "error")
+      navigation.complete({ status: "failed", reason: "unavailable" });
+    else if (snapshot.targetStatus === "unavailable")
+      navigation.complete({ status: "failed", reason: "not-found" });
+    else if (snapshot.targetStatus === "error")
+      navigation.complete({ status: "failed", reason: "unavailable" });
+  }, [navigation, rootTarget, snapshot.status, snapshot.targetStatus]);
   useReading({ session, channelId, scroller, settled: positioned });
   const [sent, setSent] = useState<string>();
+  const [replyFocus, setReplyFocus] = useState(0);
+  const focusReply = useCallback(() => setReplyFocus((value) => value + 1), []);
+  useEffect(() => {
+    if (replyRequest) focusReply();
+  }, [replyRequest, focusReply]);
+  const [mediaPlayback, setMediaPlayback] = useState<MediaPlayback>();
+  const [mediaCommentTime, setMediaCommentTime] = useState<number>();
+  const [mediaSeek, setMediaSeek] = useState<{
+    seconds: number;
+    request: number;
+  }>();
+  const handleMediaTime = useCallback((seconds: number) => {
+    setMediaSeek((current) => ({
+      seconds,
+      request: (current?.request ?? 0) + 1,
+    }));
+  }, []);
+  const rootId = snapshot.root?.id;
+  const openRootMedia = useCallback(
+    (
+      _rowId: string,
+      attachment: ChannelMessage["attachments"][number],
+      seconds: number,
+    ) => {
+      if (rootId) onOpenMediaReview?.(_rowId, attachment, seconds);
+    },
+    [rootId, onOpenMediaReview],
+  );
+  const videoAttachment = snapshot.root?.attachments.find(
+    (item) => item.kind === "video",
+  );
   // The bridge walks oldest-first. Finish its bounded range automatically, rather
   // than exposing transport pagination as a conversation control.
   useEffect(() => {
@@ -174,18 +311,53 @@ function ThreadMessages({
   // biome-ignore lint/correctness/useExhaustiveDependencies: Rendered rows/profiles change scroll height; sending is explicit navigation intent.
   useLayoutEffect(() => {
     const element = scroller.current;
+    if (!element || navigation?.signal.aborted) return;
+    // A mounted ordinary thread acknowledges the visit before slow history can
+    // exhaust navigation's deadline. Positioning still waits for bounded loading.
     if (
-      !element ||
+      rootTarget &&
+      snapshot.status !== "error" &&
+      snapshot.root?.id === messageId &&
+      revealed.current !== navigation.signal
+    ) {
+      revealed.current = navigation.signal;
+      navigation.complete({ status: "opened" });
+    }
+    if (
+      (navigation && !rootTarget && revealed.current !== navigation.signal) ||
       (!positioned.current &&
         (snapshot.status !== "ready" || snapshot.canLoadMore))
     )
       return;
+    if (targetAnchor.current !== undefined) {
+      const row = selectedRow();
+      if (row) {
+        element.scrollTop += row.offsetTop - targetAnchor.current;
+        targetAnchor.current = row.offsetTop;
+        follow.current = false;
+      }
+      if (snapshot.status !== "loading" && !snapshot.canLoadMore)
+        targetAnchor.current = undefined;
+    }
     // Initial positioning waits for automatic history loading. User intent wins;
     // subsequent live changes follow only while the reader is at the bottom.
     if (follow.current) element.scrollTop = element.scrollHeight;
     positioned.current = true;
-  }, [snapshot.status, snapshot.canLoadMore, rows, profiles, sent]);
+  }, [
+    snapshot.status,
+    snapshot.canLoadMore,
+    snapshot.root,
+    messageId,
+    rows,
+    profiles,
+    sent,
+    navigation,
+    rootTarget,
+    revealed,
+    selectedRow,
+  ]);
   const keepReadingPosition = () => {
+    targetAnchor.current = undefined;
     if (positioned.current) return;
     positioned.current = true;
     follow.current = false;
@@ -223,17 +395,45 @@ function ThreadMessages({
         tabIndex={0}
       >
         {snapshot.root ? (
-          <MessageRow
-            extensions={extensions}
-            row={snapshot.root}
-            session={session}
-            scope={scope}
-            profile={profiles.get(snapshot.root.authorId)}
-            media={session.media}
-            onOpenLink={onOpenLink}
-            day={false}
-            retry={session.messages.retry}
-          />
+          <>
+            <MessageRow
+              extensions={extensions}
+              session={session}
+              scope={scope}
+              onReply={focusReply}
+              row={snapshot.root}
+              profile={profiles.get(snapshot.root.authorId)}
+              participantProfiles={profiles}
+              agentPubkeys={agentPubkeys}
+              media={session.media}
+              onOpenLink={onOpenLink}
+              canOpenLink={canOpenLink}
+              day={false}
+              retry={session.messages.retry}
+              mediaMode="thread"
+              {...(mediaSeek
+                ? {
+                    mediaSeekTo: mediaSeek.seconds,
+                    mediaSeekRequest: mediaSeek.request,
+                  }
+                : {})}
+              onMediaPlayback={setMediaPlayback}
+              {...(onOpenMediaReview
+                ? { onOpenMediaReview: openRootMedia }
+                : {})}
+            />
+            {videoAttachment && mediaPlayback && (
+              <span className={styles.mediaCommentAction}>
+                <Button
+                  size="sm"
+                  type="button"
+                  onClick={() => setMediaCommentTime(mediaPlayback.seconds)}
+                >
+                  Comment at {formatMediaTime(mediaPlayback.seconds)}
+                </Button>
+              </span>
+            )}
+          </>
         ) : (
           snapshot.status !== "loading" && (
             <p className={styles.empty}>Original message unavailable.</p>
@@ -248,14 +448,22 @@ function ThreadMessages({
             <li key={row.id}>
               <MessageRow
                 extensions={extensions}
-                row={row}
                 session={session}
                 scope={scope}
+                onReply={snapshot.root ? focusReply : undefined}
+                row={row}
                 profile={profiles.get(row.authorId)}
+                participantProfiles={profiles}
+                agentPubkeys={agentPubkeys}
                 media={session.media}
                 onOpenLink={onOpenLink}
+                canOpenLink={canOpenLink}
                 day={false}
                 retry={session.messages.retry}
+                {...(videoAttachment ? { onMediaTime: handleMediaTime } : {})}
+                {...(onOpenMediaReview && rootId
+                  ? { onOpenMediaReview: openRootMedia }
+                  : {})}
               />
             </li>
           ))}
@@ -264,20 +472,24 @@ function ThreadMessages({
           (snapshot.status === "ready" && snapshot.canLoadMore)) && (
           <p role="status">Loading thread…</p>
         )}
+        {snapshot.targetStatus === "unavailable" && (
+          <p role="status">Selected message unavailable.</p>
+        )}
         {snapshot.error && <p role="alert">{snapshot.error}</p>}
         {snapshot.limited && !snapshot.error && (
           <p className={styles.threadNote}>Thread history limit reached.</p>
         )}
-        {snapshot.error && (
+        {(snapshot.error || snapshot.targetStatus === "unavailable") && (
           <div className={styles.threadHistoryControls}>
-            <button type="button" onClick={() => void view.refresh()}>
+            <Button type="button" onClick={() => void view.refresh()}>
               Retry thread
-            </button>
+            </Button>
           </div>
         )}
       </section>
       {snapshot.root && (
         <MessageComposer
+          sessionConversation={sessionConversation}
           key={`${scope}:${channelId}:${snapshot.root.id}`}
           extensions={extensions}
           session={session}
@@ -285,7 +497,16 @@ function ThreadMessages({
           channelId={channelId}
           channelName={channelName}
           threadRootId={snapshot.root.id}
+          editMessages={rows}
+          focusRequest={replyFocus}
+          onOpenLink={onOpenLink}
+          canOpenLink={canOpenLink}
+          {...(videoAttachment && mediaCommentTime !== undefined
+            ? { mediaTimeSeconds: mediaCommentTime }
+            : {})}
+          clearMediaTime={() => setMediaCommentTime(undefined)}
           onSend={(id) => {
+            targetAnchor.current = undefined;
             positioned.current = true;
             follow.current = true;
             setSent(id);

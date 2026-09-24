@@ -1,0 +1,136 @@
+export const confirmations = {
+  channel: {
+    title: "Change channel?",
+    description:
+      "Unsaved draft changes will be discarded. Submitted operations remain with their original channel; switching does not cancel or repeat them.",
+    action: "Change channel",
+  },
+  leave: {
+    title: "Leave this draft?",
+    description:
+      "Unsaved draft changes will be discarded. Any submitted operation stays with the captured community session; leaving does not cancel or repeat it.",
+    action: "Leave draft",
+  },
+  delete: {
+    title: "Request deletion of this workflow?",
+    description:
+      "The existing backend may retain a visible saved configuration. An accepted request does not confirm runtime deletion or cancellation of work already running. Submit this deletion request?",
+    action: "Request deletion",
+  },
+  enable: {
+    title: "Save this workflow enabled?",
+    description:
+      "The relay may run this workflow automatically when its trigger matches. Saving does not prove a run succeeded.",
+    action: "Save enabled workflow",
+  },
+  dismiss: {
+    title: "Dismiss this notice?",
+    description:
+      "Dismissal only clears this notice and its editor lock. It does not undo, cancel or repeat a command, and it does not prove an unknown command failed. Review the saved configuration before saving again; a new run request may run the workflow again. Your unsaved draft is kept.",
+    action: "Dismiss notice and continue",
+  },
+};
+
+export const dialogs = [
+  {
+    id: "search",
+    name: "Search Buzz",
+    group: "Shared dialogs",
+    path: "App header → magnifying glass or ⌘K / Ctrl+K",
+    source: "src/app/shell/PageSearch.tsx",
+    frame: "Dialog",
+    note: "Page destinations in the shared search palette. Live conversation search requires a community and is not connected in this fixture.",
+  },
+  {
+    id: "join",
+    name: "Add a community",
+    group: "Shared dialogs",
+    path: "Community rail → Add a community",
+    source: "src/features/communities/CommunityDialog.tsx",
+    frame: "Dialog · 3 steps",
+    note: "Try wss://relay.example.test, then Continue through access and profile. Requests and publication are simulated locally.",
+  },
+  {
+    id: "create",
+    name: "Create agent",
+    group: "Agent dialogs",
+    path: "Agents → Add agent",
+    source: "src/bundled/agents/AgentCreateDialog.tsx",
+    frame: "Local Base UI frame",
+    note: "Wide form with advanced fields. Explicit Close can leave saving in progress; implicit dismissal protects dirty work.",
+  },
+  {
+    id: "edit",
+    name: "Edit agent",
+    group: "Agent dialogs",
+    path: "Agents → agent actions → Edit",
+    source: "src/bundled/agents/AgentEditor.tsx",
+    frame: "Local Base UI frame",
+    note: "Single-column editor with shared Runtime and Technical details disclosures. Local fixture changes reset on reopening.",
+  },
+  {
+    id: "channel",
+    name: "Change workflow channel",
+    group: "Workflow confirmations",
+    path: "Workflows → change channel with an unsaved draft",
+    source: "src/bundled/workflows/WorkflowsPage.tsx",
+    frame: "ConfirmAction → AlertDialog",
+    note: "Protects the current draft before navigating to another channel.",
+  },
+  {
+    id: "leave",
+    name: "Leave a workflow draft",
+    group: "Workflow confirmations",
+    path: "Workflows → select another workflow with an unsaved draft",
+    source: "src/bundled/workflows/WorkflowChannel.tsx",
+    frame: "ConfirmAction → AlertDialog",
+    note: "Protects unsaved edits when selecting a different configuration.",
+  },
+  {
+    id: "delete",
+    name: "Delete a workflow",
+    group: "Workflow confirmations",
+    path: "Workflows → saved workflow → Delete",
+    source: "src/bundled/workflows/WorkflowChannel.tsx",
+    frame: "ConfirmAction → AlertDialog",
+    note: "Current deletion confirmation uses a prominent neutral action. Backend uncertainty is part of its current copy.",
+  },
+  {
+    id: "enable",
+    name: "Enable a workflow",
+    group: "Workflow confirmations",
+    path: "Workflows → save a workflow enabled",
+    source: "src/bundled/workflows/WorkflowEditor.tsx",
+    frame: "ConfirmAction → AlertDialog",
+    note: "Copy changes for an unfiltered message trigger or a schedule. Select those variants in the inspector.",
+  },
+  {
+    id: "dismiss",
+    name: "Dismiss an operation notice",
+    group: "Workflow confirmations",
+    path: "Workflows → operation notice → Dismiss",
+    source: "src/bundled/workflows/WorkflowOperations.tsx",
+    frame: "ConfirmAction → AlertDialog",
+    note: "Longest confirmation copy. The inspector also exposes its pending and error states.",
+  },
+  {
+    id: "attachment",
+    name: "Attachment fullscreen",
+    group: "Media viewers",
+    path: "Attachment → fullscreen, when no review handler is supplied",
+    source: "src/features/messages/MediaAttachment.tsx",
+    frame: "Local media modal",
+    note: "Fallback image/video stage with an explicit close control and backdrop dismissal. Sample image shown.",
+  },
+  {
+    id: "review",
+    name: "Media review",
+    group: "Media viewers",
+    path: "Messages → open an attachment for review",
+    source: "src/features/messages/MediaReviewViewer.tsx",
+    frame: "Local review modal",
+    note: "Image gallery or video stage beside thread comments. Sample image and an in-memory conversation; no live relay.",
+  },
+] as const;
+
+export type DialogId = (typeof dialogs)[number]["id"];

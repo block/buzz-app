@@ -1,8 +1,16 @@
 import type { ComponentProps, ReactElement } from "react";
-import { Button } from "./Button";
+import { Button, type ButtonProps } from "./Button";
 
-type IconButtonVariant = "quiet" | "ghost" | "solid" | "tint" | "chrome";
-type IconButtonSize = "compact" | "toolbar" | "default" | "large";
+type IconButtonVariant =
+  | NonNullable<ButtonProps["variant"]>
+  | "solid"
+  | "tint"
+  | "chrome";
+type IconButtonSize =
+  | NonNullable<ButtonProps["size"]>
+  | "xs"
+  | "toolbar"
+  | "large";
 type IconButtonShape = "control" | "round";
 
 export type IconButtonProps = Omit<
@@ -19,14 +27,27 @@ export type IconButtonProps = Omit<
 export function IconButton({
   icon,
   variant = "ghost",
-  size = "default",
-  shape = "control",
+  size = "md",
+  shape = "round",
   ...props
 }: IconButtonProps) {
   return (
     <Button
       {...props}
-      variant="ghost"
+      variant={
+        variant === "solid"
+          ? "prominent"
+          : variant === "tint" || variant === "chrome"
+            ? "ghost"
+            : variant
+      }
+      size={
+        size === "xs" || size === "toolbar"
+          ? "sm"
+          : size === "large"
+            ? "lg"
+            : size
+      }
       data-icon-variant={variant}
       data-icon-size={size}
       data-icon-shape={shape}

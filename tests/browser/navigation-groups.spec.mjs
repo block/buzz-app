@@ -6,8 +6,9 @@ test.use({
   savedSidebar: true,
   largeSidebar: true,
   developmentReact: true,
+  historyCounts: { alpha: 1, beta: 1 },
 });
-test("Home → Messages keeps saved groups and scroll on every visible frame without re-decoding", async ({
+test("Projects → Messages keeps saved groups, selected channel, and scroll on every visible frame without re-decoding", async ({
   page,
   app,
 }) => {
@@ -19,12 +20,19 @@ test("Home → Messages keeps saved groups and scroll on every visible frame wit
   await expect(
     sidebar.locator("summary", { hasText: /Starred$/ }),
   ).toBeVisible();
+  await sidebar.locator('button[data-channel-id="beta"]').click();
+  await expect(
+    page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+  ).toBeVisible();
   const scroll = await sidebar.evaluate((element) => {
     element.scrollTop = 1000;
     return element.scrollTop;
   });
   expect(scroll).toBeGreaterThan(100);
-  await page.getByRole("button", { name: "Home", exact: true }).first().click();
+  await page
+    .getByRole("button", { name: "Projects", exact: true })
+    .first()
+    .click();
   await expect(sidebar).toHaveCount(0);
   let release;
   const held = new Promise((resolve) => {
@@ -60,7 +68,13 @@ test("Home → Messages keeps saved groups and scroll on every visible frame wit
       .first()
       .click();
     await expect(sidebar).toBeVisible();
-    await page.waitForTimeout(300); // Measure the held interval, not eventual success.
+    await expect(
+      page.getByRole("textbox", { name: "Message #Beta", exact: true }),
+    ).toBeVisible();
+    await page.waitForTimeout(300); // Keep the decode path held for the full interval.
+    // Wall time does not guarantee RAF callbacks on a busy runner. Wait for
+    // samples, not correct samples: every earlier frame stays in the assertion.
+    await page.waitForFunction(() => window.sidebarFrames.length > 3);
     const frames = await page.evaluate(() => {
       window.captureSidebar = false;
       return window.sidebarFrames;

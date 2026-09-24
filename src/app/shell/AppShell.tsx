@@ -1,15 +1,17 @@
+import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import type { ReactNode } from "react";
-import { House } from "lucide-react";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
-import { CommunitySwitcher } from "../../features/communities/CommunitySwitcher";
+import { CommunityRail } from "../../features/communities/CommunityRail";
 import { ProfileButton } from "./ProfileButton";
-import { PageSearch } from "./PageSearch";
+import { PageSearch, type SearchServices } from "./PageSearch";
 import { orderPages, pagePresentation } from "./presentation";
 import { PanelFrame } from "../../features/panels/PanelFrame";
+import { macTitleBarDragHandlers } from "./title-bar";
 
 const macDesktop = isTauri() && /Mac/i.test(navigator.platform);
+const titleBarDragProps = macDesktop ? macTitleBarDragHandlers : {};
 
 export function AppShell({
   pages,
@@ -18,6 +20,7 @@ export function AppShell({
   tone,
   workspace,
   communities,
+  searchServices,
   navigationControls,
   onCommunitySelect,
   launchers,
@@ -30,12 +33,14 @@ export function AppShell({
   tone: string;
   workspace?: boolean;
   communities: Communities;
+  searchServices?: SearchServices;
   navigationControls?: ReactNode;
   onCommunitySelect?: (id: string | null) => void;
   launchers?: ReactNode;
   companion?: ReactNode;
   children: ReactNode;
 }) {
+  const fillsWorkspace = workspace || selected === "settings";
   return (
     <div
       data-shell-tone={tone}
@@ -54,45 +59,45 @@ export function AppShell({
         Skip to content
       </a>
       <header
-        data-tauri-drag-region
+        data-tauri-drag-region={macDesktop ? undefined : true}
+        {...titleBarDragProps}
         className={`shell-header ${macDesktop ? "shell-header-mac" : ""}`}
       >
-        <div className="shell-communities" data-tauri-drag-region>
+        <div
+          className="shell-communities"
+          data-tauri-drag-region={macDesktop ? undefined : true}
+          {...titleBarDragProps}
+        >
           {navigationControls}
-          <CommunitySwitcher
-            communities={communities}
-            onSelect={onCommunitySelect}
-          />
         </div>
         <nav aria-label="Pages" className="shell-pages">
-          <button
-            type="button"
-            className="shell-tab"
-            aria-current={selected === "home" ? "page" : undefined}
-            onClick={() => onSelect("home")}
-          >
-            <House aria-hidden="true" size={15} strokeWidth={1.7} />
-            Home
-          </button>
           {orderPages(pages).map((page) => {
             const { label, icon: Icon } = pagePresentation(page);
             return (
-              <button
+              <NavigationItem
                 type="button"
                 key={page.key}
-                className="shell-tab"
+                variant="pill"
                 aria-current={selected === page.key ? "page" : undefined}
                 onClick={() => onSelect(page.key)}
-              >
-                <Icon aria-hidden="true" size={15} strokeWidth={1.7} />
-                {label}
-              </button>
+                selected={selected === page.key}
+                label={label}
+                icon={<Icon aria-hidden="true" size={15} />}
+              />
             );
           })}
         </nav>
-        <div className="shell-actions" data-tauri-drag-region>
+        <div
+          className="shell-actions"
+          data-tauri-drag-region={macDesktop ? undefined : true}
+          {...titleBarDragProps}
+        >
           {launchers}
-          <PageSearch pages={pages} onSelect={onSelect} />
+          <PageSearch
+            pages={pages}
+            onSelect={onSelect}
+            services={searchServices}
+          />
           <ProfileButton
             communities={communities}
             settingsSelected={selected === "settings"}
@@ -101,6 +106,7 @@ export function AppShell({
         </div>
       </header>
       <div className="flex min-h-0 flex-1">
+        <CommunityRail communities={communities} onSelect={onCommunitySelect} />
         <main
           id="main-content"
           tabIndex={-1}
@@ -109,14 +115,14 @@ export function AppShell({
           <PanelFrame companion={companion}>
             <div
               className={
-                workspace
+                fillsWorkspace
                   ? "h-full min-h-0"
                   : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
               }
             >
               <div
                 className={
-                  workspace ? "h-full min-h-0" : "mx-auto w-full max-w-4xl"
+                  fillsWorkspace ? "h-full min-h-0" : "mx-auto w-full max-w-4xl"
                 }
               >
                 {children}

@@ -1,5 +1,24 @@
 import { test, expect } from "./fixture.mjs";
-import { settle, upper, expectAnchor } from "./timeline.mjs";
+import { anchor, settle, upper, expectAnchor } from "./timeline.mjs";
+
+const scroll = test.extend({ historyCounts: { alpha: 20, beta: 1 } });
+// Resize tests must not enter the fixture’s deliberately held paging path.
+const readingTest = test.extend({
+  tallMessages: true,
+  // Keep the old restored row visible when wheel input selects another row.
+  historyCounts: { alpha: 24, beta: 1 },
+});
+async function expectNonPaging(page, app) {
+  expect(
+    await page
+      .getByRole("region", { name: "Channel message history" })
+      .evaluate((el) => el.scrollTop - Math.max(3000, el.clientHeight * 4)),
+    "resize reading position stays outside older-page prefetch",
+  ).toBeGreaterThan(0);
+  expect(
+    app.report.queries.filter(({ filter }) => filter.until !== undefined),
+  ).toHaveLength(0);
+}
 
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const box = async (locator) => {
@@ -34,7 +53,16 @@ async function link(page, app, target) {
     }),
   );
   app.append("primary", "alpha", `Please review ${target}`);
-  await page.getByRole("link", { name: target, exact: true }).click();
+  const trigger = page.getByRole("link", { name: target, exact: true });
+  await expect(trigger).toBeVisible();
+  await trigger.scrollIntoViewIfNeeded();
+  // Appending and bringing an offscreen link into view can both scroll Virtua.
+  // These are panel-layout checks, not clicks during an in-flight correction.
+  await settle(page);
+  await expect(
+    page.getByRole("region", { name: "Channel message history" }).locator("ol"),
+  ).toHaveCSS("pointer-events", "auto");
+  await trigger.click();
   await expect(
     panel(page).getByRole("heading", { name: "A useful change" }),
   ).toBeVisible();
@@ -45,17 +73,63 @@ async function shellFits(page, width) {
   );
   near(tabs.x + tabs.width / 2, width / 2);
   const actions = await box(page.locator(".shell-actions"));
-  const communities = await box(button(page, "Switch community"));
+  const communities = await box(
+    page.getByRole("navigation", { name: "Communities", exact: true }),
+  );
   expect(actions.x + actions.width).toBeLessThanOrEqual(width);
   expect(communities.x + communities.width).toBeLessThan(actions.x);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
-    width,
-  );
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.scrollWidth))
+    .toBe(width);
   if (width > 700) {
     expect(communities.x + communities.width).toBeLessThan(tabs.x);
     expect(tabs.x + tabs.width).toBeLessThan(actions.x);
   }
 }
+
+scroll(
+  "page overscroll is disabled while message history still scrolls",
+  async ({ page, app }) => {
+    await open(page, app);
+    // Headless wheel input does not reproduce macOS trackpad rubber-banding.
+    // Check the viewport policy as well as real panel scrolling and shell bounds.
+    await expect(page.locator("html")).toHaveCSS("overscroll-behavior", "none");
+    const shell = page.locator(".shell-background");
+    const bounds = await box(shell);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await settle(page);
+    const initialOffset = await history.evaluate((el) => el.scrollTop);
+    await history.hover();
+    await page.mouse.wheel(0, -300);
+    await expect
+      .poll(() => history.evaluate((el) => el.scrollTop))
+      .toBeLessThan(initialOffset - 100);
+    await settle(page);
+    expect(await box(shell)).toEqual(bounds);
+
+    // Projects has no overflowing content: gestures must leave the shell in place.
+    await page
+      .getByRole("navigation", { name: "Pages", exact: true })
+      .getByRole("button", { name: "Projects", exact: true })
+      .click();
+    await page.getByRole("heading", { name: "Projects", exact: true }).hover();
+    for (const [x, y] of [
+      [0, -600],
+      [0, 600],
+      [-600, 0],
+      [600, 0],
+    ]) {
+      await page.mouse.wheel(x, y);
+      await page.evaluate(() => new Promise(requestAnimationFrame));
+      expect(await box(shell)).toEqual(bounds);
+      expect(
+        await page.evaluate(() => [window.scrollX, window.scrollY]),
+      ).toEqual([0, 0]);
+    }
+  },
+);
 
 test("bento surfaces, centered tabs, real link panel and compact community navigation", async ({
   page,
@@ -72,23 +146,28 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
     exact: true,
   });
   const before = await box(conversation);
-  near(sidebar.x, 16);
-  near(before.x - sidebar.x - sidebar.width, 16);
+  const rail = await box(
+    page.getByRole("navigation", { name: "Communities", exact: true }),
+  );
+  near(rail.width, 56);
+  near(sidebar.x, rail.x + rail.width + 16);
+  near(before.x - sidebar.x - sidebar.width, 8);
   near(before.y, 56);
   near(before.height, 760);
   const background = await page
     .locator(".shell-background")
     .evaluate((el) => getComputedStyle(el).backgroundImage);
   expect(background).toContain("radial-gradient");
-  expect(background).toContain("/shell-gradient.png");
-  expect(
-    await page.evaluate(async () => {
-      const image = new Image();
-      image.src = "/shell-gradient.png";
-      await image.decode();
-      return [image.naturalWidth, image.naturalHeight];
-    }),
-  ).toEqual([564, 1002]);
+  // The full-bleed backdrop is now the shared gradient rather than a bitmap.
+  const gradient = await page.locator(".shell-background").evaluate((el) => {
+    const probe = document.createElement("span");
+    probe.style.backgroundImage = "var(--bg-app)";
+    el.append(probe);
+    const value = getComputedStyle(probe).backgroundImage;
+    probe.remove();
+    return value;
+  });
+  expect(background).toBe(gradient);
   const composer = page.getByRole("textbox", {
     name: "Message #Alpha",
     exact: true,
@@ -100,9 +179,9 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   const dock = await box(panel(page));
   near(dock.y, main.y);
   near(dock.height, main.height);
-  near(dock.x - main.x - main.width, 16);
+  near(dock.x - main.x - main.width, 8);
   near(dock.x + dock.width, 1264);
-  await expect(composer).toHaveValue("Layout draft");
+  await expect(composer).toHaveJSProperty("value", "Layout draft");
   await expect(composer).toBeInViewport();
   await page.screenshot({ path: testInfo.outputPath("bento-one-panel.png") });
   const timeline = page.getByRole("region", {
@@ -126,29 +205,28 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   await button(page, "Beta").click();
   await expect(panel(page)).toHaveCount(0);
   await button(page, "Alpha").click();
-  await expect(composer).toHaveValue("Layout draft");
-  await button(page, "Switch community").click();
+  await expect(composer).toHaveJSProperty("value", "Layout draft");
+  const railButtons = page.getByRole("navigation", {
+    name: "Communities",
+    exact: true,
+  });
   await expect(
-    page.getByRole("dialog", { name: "Communities", exact: true }),
+    railButtons.getByRole("button", { name: "Personal space" }),
   ).toBeVisible();
-  await expect(button(page, "Personal space")).toBeVisible();
-  await expect(button(page, "Add a community")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(button(page, "Switch community")).toBeFocused();
-  await button(page, "Switch community").click();
-  await button(page, "Add a community").click();
+  const add = railButtons.getByRole("button", { name: "Add a community" });
+  await add.click();
   await expect(
     page.getByRole("heading", { name: "Add a community", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(button(page, "Switch community")).toBeFocused();
-  await button(page, "Switch community").click();
-  await button(page, "Switch to Secondary").click();
-  await expect(composer).toHaveValue("");
-  await button(page, "Switch community").click();
-  await button(page, "Switch to Primary").click();
-  await expect(composer).toHaveValue("Layout draft");
+  await expect(add).toBeFocused();
+  await railButtons
+    .getByRole("button", { name: "Switch to Secondary" })
+    .click();
+  await expect(composer).toHaveJSProperty("value", "");
+  await railButtons.getByRole("button", { name: "Switch to Primary" }).click();
+  await expect(composer).toHaveJSProperty("value", "Layout draft");
   for (const [width, height] of [
     [1200, 800],
     [800, 600],
@@ -159,7 +237,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
     await shellFits(page, width);
     await expect(composer).toBeInViewport();
     await button(page, "Your profile").click();
-    await button(page, "Settings").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "Settings", exact: true }),
     ).toBeVisible();
@@ -167,109 +245,220 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
       .getByRole("navigation", { name: "Pages", exact: true })
       .getByRole("button", { name: "Messages" })
       .click();
-    await expect(composer).toHaveValue("Layout draft");
+    await expect(composer).toHaveJSProperty("value", "Layout draft");
     await expect(page.locator("[data-message-id]").last()).toBeInViewport();
   }
   await page.screenshot({ path: testInfo.outputPath("bento-narrow.png") });
   await link(page, app, "https://github.com/block/buzz/pull/3");
   await expect(button(page, "Close channel panel")).toBeInViewport();
   const narrow = await box(panel(page));
-  near(narrow.x, 8);
-  near(narrow.width, 374);
+  near(narrow.x, 8 + rail.width);
+  near(narrow.width, 374 - rail.width);
   await button(page, "Close channel panel").click();
   await expect(composer).toBeInViewport();
-  await button(page, "Find a page").click();
+  await button(page, "Search Buzz").click();
   await page
-    .getByRole("dialog", { name: "Find a page" })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("dialog", { name: "Search Buzz" })
+    .getByRole("option", { name: "Projects", exact: true })
     .click();
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Home" }),
+      .getByRole("button", { name: "Projects" }),
   ).toHaveAttribute("aria-current", "page");
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toHaveValue("Browser Fixture");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await button(page, "Plugins").click();
-  const channels = page.getByRole("switch", {
-    name: "Enable Channels",
+  // Channels has no off switch; use another page to exercise UI activation.
+  const projects = page.getByRole("switch", {
+    name: "Enable Projects",
     exact: true,
   });
-  await channels.click();
-  await expect(channels).toHaveAttribute("aria-checked", "false");
+  await projects.click();
+  await expect(projects).toHaveAttribute("aria-checked", "false");
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages" }),
+      .getByRole("button", { name: "Projects" }),
   ).toHaveCount(0);
-  await channels.click();
-  await expect(channels).toHaveAttribute("aria-checked", "true");
+  await projects.click();
+  await expect(projects).toHaveAttribute("aria-checked", "true");
   await expect(
     page
       .getByRole("navigation", { name: "Pages", exact: true })
-      .getByRole("button", { name: "Messages" }),
+      .getByRole("button", { name: "Projects" }),
   ).toBeVisible();
 });
 
-test("panel resizing preserves bottom follow and the visible reading anchor", async ({
+test("narrow link panels begin after the rendered sidebar", async ({
   page,
   app,
 }) => {
+  await page.setViewportSize({ width: 1280, height: 832 });
   await open(page, app);
-  await settle(page);
-  await link(page, app, "https://github.com/block/buzz/pull/4");
-  const history = page.getByRole("region", { name: "Channel message history" });
-  const expectBottom = () =>
-    expect
-      .poll(() =>
-        history.evaluate(
-          (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
-        ),
-      )
-      .toBeLessThan(4);
-  await settle(page);
-  await expectBottom();
-  const received = app.append("primary", "alpha");
-  await expect(
-    page.locator(`[data-message-id="${received.id}"]`),
-  ).toBeInViewport();
-  await button(page, "Close channel panel").click();
-  await settle(page);
-  await expectBottom();
-  // Late layout-only reflow must not need another message or viewport resize.
-  // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
-  // row layout, not scroll methods/metrics or the production observer callback.
-  await page.waitForTimeout(250);
-  const lateLayout = await page.addStyleTag({
-    content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
-  });
-  await settle(page);
-  await expectBottom();
-  await page.waitForTimeout(250);
-  await lateLayout.evaluate((element) => element.remove());
-  await settle(page);
-  await expectBottom();
-  // Reopen by keyboard without browser click-to-scroll changing the saved position.
-  const target = "https://github.com/block/buzz/pull/4";
-  const saved = await upper(page);
   await page
-    .getByRole("link", { name: target, exact: true })
-    .evaluate((el) => el.focus({ preventScroll: true }));
-  await page.keyboard.press("Enter");
-  await expect(panel(page)).toBeVisible();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await button(page, "Close channel panel").click();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await page.setViewportSize({ width: 1200, height: 700 });
-  await settle(page);
-  await expectAnchor(page, saved);
+    .getByRole("separator", { name: "Resize channel sidebar" })
+    .press("End");
+  await page.setViewportSize({ width: 800, height: 600 });
+  await link(page, app, "https://github.com/block/buzz/pull/7");
+
+  const sidebar = await box(
+    page.getByRole("complementary", { name: "Channel sidebar" }),
+  );
+  const conversation = await box(
+    page.getByRole("article", { name: "Conversation", exact: true }),
+  );
+  const dock = await box(panel(page));
+  near(conversation.x - sidebar.x - sidebar.width, 8);
+  near(dock.x, conversation.x);
+  expect(dock.x).toBeGreaterThanOrEqual(sidebar.x + sidebar.width);
+  expect(
+    await page
+      .getByRole("separator", { name: "Resize channel sidebar" })
+      .evaluate((element) => Number(getComputedStyle(element).zIndex)),
+  ).toBeLessThan(
+    await panel(page).evaluate((element) =>
+      Number(
+        getComputedStyle(element.closest('[class*="_panelStack_"]')).zIndex,
+      ),
+    ),
+  );
 });
+
+readingTest(
+  "panel resizing preserves bottom follow and the visible reading anchor",
+  async ({ page, app }) => {
+    await open(page, app);
+    await settle(page);
+    await link(page, app, "https://github.com/block/buzz/pull/4");
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    const expectBottom = () =>
+      expect
+        .poll(() =>
+          history.evaluate(
+            (el) => el.scrollHeight - el.scrollTop - el.clientHeight,
+          ),
+        )
+        .toBeLessThan(4);
+    await settle(page);
+    await expectBottom();
+    const received = app.append("primary", "alpha");
+    await expect(
+      page.locator(`[data-message-id="${received.id}"]`),
+    ).toBeInViewport();
+    await button(page, "Close channel panel").click();
+    await settle(page);
+    await expectBottom();
+    // Late layout-only reflow must not need another message or viewport resize.
+    // Let Virtua's 150ms imperative-scroll scheduler expire first. Change actual
+    // row layout, not scroll methods/metrics or the production observer callback.
+    await page.waitForTimeout(250);
+    const lateLayout = await page.addStyleTag({
+      content: `[data-message-id="${received.id}"] p { padding-bottom: 120px; }`,
+    });
+    await settle(page);
+    await expectBottom();
+    await page.waitForTimeout(250);
+    await lateLayout.evaluate((element) => element.remove());
+    await settle(page);
+    await expectBottom();
+    // Reopen by keyboard without browser click-to-scroll changing the saved position.
+    const target = "https://github.com/block/buzz/pull/4";
+    const saved = await upper(page);
+    await expectNonPaging(page, app);
+    await page
+      .getByRole("link", { name: target, exact: true })
+      .evaluate((el) => el.focus({ preventScroll: true }));
+    await page.keyboard.press("Enter");
+    await expect(panel(page)).toBeVisible();
+    await settle(page);
+    await expectAnchor(page, saved);
+    // A panel can return focus to a mounted but offscreen link. Observe the
+    // native focus call itself: eventual anchor recovery can hide a scroll jump.
+    await page
+      .getByRole("link", { name: target, exact: true })
+      .evaluate((el) => {
+        const focus = el.focus;
+        el.focus = function (options) {
+          const history = el.closest("[data-channel-timeline]");
+          const before = history.scrollTop;
+          focus.call(this, options);
+          window.panelFocusScrollDelta = history.scrollTop - before;
+        };
+      });
+    await button(page, "Close channel panel").focus();
+    await button(page, "Close channel panel").click();
+    const trigger = page.getByRole("link", { name: target, exact: true });
+    await settle(page);
+    await expect(trigger).toBeFocused();
+    expect(await page.evaluate(() => window.panelFocusScrollDelta)).toBe(0);
+    await expectAnchor(page, saved);
+    // Reflow can arrive after Virtua's 150ms imperative-scroll scheduler ends.
+    // Keep the selected reading anchor, not the partially clipped row above it.
+    await page.waitForTimeout(250);
+    const preceding = await history.evaluate((element, id) => {
+      const rows = [...element.querySelectorAll("[data-message-id]")];
+      const index = rows.findIndex((row) => row.dataset.messageId === id);
+      return rows[index - 1]?.dataset.messageId;
+    }, saved.id);
+    expect(preceding).toBeTruthy();
+    const delayedReflow = await page.addStyleTag({
+      content: `[data-message-id="${preceding}"] p { padding-bottom: 52px; }`,
+    });
+    await settle(page);
+    await expectAnchor(page, saved);
+    await delayedReflow.evaluate((element) => element.remove());
+    await settle(page);
+    await expectAnchor(page, saved);
+    await page.setViewportSize({ width: 1200, height: 700 });
+    await settle(page);
+    await expectAnchor(page, saved);
+    await expectNonPaging(page, app);
+  },
+);
+
+readingTest(
+  "a focused message stays mounted until focus leaves the timeline",
+  async ({ page, app }) => {
+    await open(page, app);
+    await settle(page);
+    const target = "https://example.com/focused-message";
+    const previous = await page
+      .locator("[data-message-id]")
+      .last()
+      .getAttribute("data-message-id");
+    const message = app.append("primary", "alpha", `Keep focus on ${target}`);
+    const trigger = page.getByRole("link", { name: target, exact: true });
+    await expect(trigger).toBeInViewport();
+    await settle(page);
+    await trigger.evaluate((el) => el.focus({ preventScroll: true }));
+    await expect(trigger).toBeFocused();
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await history.hover();
+    await page.mouse.wheel(0, -3500);
+    // The adjacent unpinned row proves that real virtualization has evicted this
+    // range; a timeout or a mocked virtualizer would not establish that boundary.
+    await expect(page.locator(`[data-message-id="${previous}"]`)).toHaveCount(
+      0,
+    );
+    await settle(page);
+    await expect(trigger).toBeFocused();
+    await expect(trigger).not.toBeInViewport();
+    await history.evaluate((el) => el.focus({ preventScroll: true }));
+    await expect(history).toBeFocused();
+    await expect(page.locator(`[data-message-id="${message.id}"]`)).toHaveCount(
+      0,
+    );
+  },
+);
 
 test("Bestie owns the launcher and the reusable companion card across pages and disable", async ({
   page,
@@ -297,7 +486,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(launch).toBeFocused();
   await launch.click();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await expect(bestie).toHaveCount(1);
   const enabled = page.getByRole("switch", {
@@ -333,7 +522,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
     main = await box(conversation);
   near(top.height, bottom.height);
   near(top.y, main.y);
-  near(bottom.y - top.y - top.height, 12);
+  near(bottom.y - top.y - top.height, 4);
   near(bottom.y + bottom.height, main.y + main.height);
   near(top.x, bottom.x);
   await page.screenshot({ path: testInfo.outputPath("bestie-two-panels.png") });
@@ -357,7 +546,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(launch).toBeVisible();
   await expect(bestie).toHaveCount(0);
   await launch.click();
-  await expect(composer).toHaveValue("Companion draft");
+  await expect(composer).toHaveJSProperty("value", "Companion draft");
   await button(page, "Close Bestie panel").click();
   near((await box(panel(page))).height, (await box(conversation)).height);
   await launch.click();
@@ -366,8 +555,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await button(page, "Beta").click();
   await expect(bestie).toHaveCount(1);
   await button(page, "Alpha").click();
-  await expect(composer).toHaveValue("Companion draft");
-  await button(page, "Switch community").click();
+  await expect(composer).toHaveJSProperty("value", "Companion draft");
   await button(page, "Personal space").click();
   await expect(
     page.getByRole("heading", { name: "Your channels, one conversation." }),
@@ -377,56 +565,134 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await launch.click();
   await expect(bestie).toHaveCount(1);
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
-  await page
-    .getByRole("switch", { name: "Enable Channels", exact: true })
-    .click();
   await expect(bestie).toHaveCount(1);
   for (const [width, height] of [
     [800, 600],
     [480, 400],
     [390, 844],
+    [390, 400],
   ]) {
     await page.setViewportSize({ width, height });
     await shellFits(page, width);
     await expect(button(page, "Close Bestie panel")).toBeInViewport();
   }
   await button(page, "Close Bestie panel").click();
-  await expect(enabled).toBeInViewport();
+  await expect(bestie).toHaveCount(0);
+  await expect(launch).toHaveAttribute("aria-expanded", "false");
+  await expect(launch).toBeFocused();
+
+  // Plugin catalogs can outgrow the viewport. Closing restores the launcher,
+  // not a Settings row: reach the toggle with real input, not scrollIntoView.
+  // Narrow Settings scrolls navigation and details together inside the container.
+  const settingsPage = page
+    .getByRole("region", { name: "Settings", exact: true })
+    .locator(":scope > div");
+  await expect(enabled).not.toBeInViewport();
+  const viewport = await box(settingsPage);
+  await page.mouse.move(
+    viewport.x + viewport.width / 2,
+    viewport.y + viewport.height / 2,
+  );
+  for (let gesture = 0; gesture < 4; gesture++) {
+    const toggle = await box(enabled);
+    if (
+      toggle.y >= viewport.y &&
+      toggle.y + toggle.height <= viewport.y + viewport.height
+    )
+      break;
+    const before = await settingsPage.evaluate((el) => el.scrollTop);
+    await page.mouse.wheel(0, viewport.height * 0.75);
+    await expect
+      .poll(() => settingsPage.evaluate((el) => el.scrollTop), {
+        message: "Settings wheel input makes progress toward the plugin toggle",
+      })
+      .toBeGreaterThan(before);
+  }
+  await expect(enabled).toBeInViewport({ ratio: 1 });
+  await enabled.click();
+  await expect(enabled).toHaveAttribute("aria-checked", "false");
+  await expect(enabled).toBeFocused();
+  await expect(launch).toHaveCount(0);
 });
 
-test("companion resize preserves the timeline anchor and both cards at narrow sizes", async ({
-  page,
-  app,
-}) => {
-  await open(page, app);
-  await settle(page);
-  const saved = await upper(page);
-  await button(page, "Bestie").click();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await button(page, "Close Bestie panel").click();
-  await settle(page);
-  await expectAnchor(page, saved);
-  await link(page, app, "https://github.com/block/buzz/pull/6");
-  await button(page, "Bestie").click();
-  for (const [width, height] of [
-    [800, 600],
-    [480, 400],
-    [390, 844],
-  ]) {
-    await page.setViewportSize({ width, height });
-    const top = await box(panel(page));
-    const bottom = await box(
-      page.getByRole("complementary", { name: "Bestie", exact: true }),
-    );
-    near(top.height, bottom.height);
-    near(bottom.y - top.y - top.height, 12);
-    await expect(button(page, "Close channel panel")).toBeInViewport();
-    await expect(button(page, "Close Bestie panel")).toBeInViewport();
-  }
-});
+readingTest(
+  "companion resize preserves the timeline anchor and both cards at narrow sizes",
+  async ({ page, app }) => {
+    await open(page, app);
+    await settle(page);
+    const saved = await upper(page);
+    await expectNonPaging(page, app);
+    await button(page, "Bestie").click();
+    await settle(page);
+    await expectAnchor(page, saved);
+    await button(page, "Close Bestie panel").click();
+    await settle(page);
+    await expectAnchor(page, saved);
+    await link(page, app, "https://github.com/block/buzz/pull/6");
+    await button(page, "Bestie").click();
+    for (const [width, height] of [
+      [800, 600],
+      [480, 400],
+      [390, 844],
+    ]) {
+      await page.setViewportSize({ width, height });
+      const top = await box(panel(page));
+      const bottom = await box(
+        page.getByRole("complementary", { name: "Bestie", exact: true }),
+      );
+      near(top.height, bottom.height);
+      near(bottom.y - top.y - top.height, 4);
+      await expect(button(page, "Close channel panel")).toBeInViewport();
+      await expect(button(page, "Close Bestie panel")).toBeInViewport();
+    }
+  },
+);
+
+readingTest(
+  "panel restoration yields to a new wheel reading position",
+  async ({ page, app }) => {
+    await open(page, app);
+    await settle(page);
+    const original = await upper(page);
+    await button(page, "Bestie").click();
+    await settle(page);
+    const history = page.getByRole("region", {
+      name: "Channel message history",
+    });
+    await history.hover();
+    // A tall row above the anchor can exceed one wheel step, and a tall
+    // paragraph need not fit wholly in the narrowed viewport. Keep making real
+    // progress until the visible reading row (including the production
+    // clipped-row fallback) belongs to another message; never repeat a read
+    // until an immobile timeline happens to pass.
+    let reading = original;
+    for (
+      let gesture = 0;
+      gesture < 6 && reading.id === original.id;
+      gesture++
+    ) {
+      const before = await history.evaluate((el) => el.scrollTop);
+      await page.mouse.wheel(0, -300);
+      await expect
+        .poll(() => history.evaluate((el) => el.scrollTop))
+        .toBeLessThan(before);
+      await settle(page);
+      reading = await anchor(page);
+    }
+    expect(reading.id).not.toBe(original.id);
+    // An offscreen restored row is ignored even if gesture() fails to clear it.
+    // Keep that row intersecting so the final assertion detects a stale anchor.
+    await expect(
+      history.locator(`[data-message-id="${original.id}"]`),
+    ).toBeInViewport();
+    await button(page, "Close Bestie panel").click();
+    await settle(page);
+    await expectAnchor(page, reading);
+    await expectNonPaging(page, app);
+  },
+);
 
 test("Projects stays centered and page navigation survives plugin re-enable order", async ({
   page,
@@ -435,7 +701,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   await page.setViewportSize({ width: 1280, height: 832 });
   await page.goto(app.origin);
   const nav = page.getByRole("navigation", { name: "Pages", exact: true });
-  const titles = ["Home", "Messages", "Projects", "Agents"];
+  const titles = ["Messages", "Projects", "Agents", "Sessions", "Workflows"];
   await expect(nav.getByRole("button")).toHaveText(titles);
   await nav.getByRole("button", { name: "Projects", exact: true }).click();
   const surface = page.getByRole("region", { name: "Projects", exact: true });
@@ -452,16 +718,22 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   ]) {
     await page.setViewportSize({ width, height });
     const bounds = await box(surface);
+    const workspace = await box(surface.locator("..").locator(".."));
     const heading = await box(title);
+    near(bounds.x, workspace.x);
+    near(bounds.y, workspace.y);
+    near(bounds.width, workspace.width);
+    near(bounds.height, workspace.height);
     near(heading.x + heading.width / 2, bounds.x + bounds.width / 2);
     near(heading.y + heading.height / 2, bounds.y + bounds.height / 2);
+    await expect(surface).toHaveCSS("overflow", "hidden");
     await shellFits(page, width);
     await page.screenshot({
       path: testInfo.outputPath(`projects-${width}.png`),
     });
   }
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   const projects = page.getByRole("switch", {
     name: "Enable Projects",
@@ -469,39 +741,23 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
   });
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText([
-    "Home",
     "Messages",
     "Agents",
+    "Sessions",
+    "Workflows",
   ]);
   await projects.click();
   await expect(nav.getByRole("button")).toHaveText(titles);
-  // Leave registration order reversed so every navigation surface must sort it.
-  const channels = page.getByRole("switch", {
-    name: "Enable Channels",
-    exact: true,
+  // Re-enabled Projects registered last; navigation surfaces must still sort it.
+  await button(page, "Search Buzz").click();
+  const search = page.getByRole("dialog", { name: "Search Buzz", exact: true });
+  const pageResults = search.locator("section").filter({
+    has: page.getByRole("heading", { name: "Pages", exact: true }),
   });
-  await channels.click();
-  await expect(nav.getByRole("button")).toHaveText([
-    "Home",
-    "Projects",
-    "Agents",
-  ]);
-  await channels.click();
-  await expect(nav.getByRole("button")).toHaveText(titles);
-  await nav.getByRole("button", { name: "Home", exact: true }).click();
-  await expect(page.getByRole("main").getByRole("button")).toHaveText([
-    "Messages",
-    "Projects",
-    "Agents",
-    "Make it yoursSettings",
-  ]);
-  await button(page, "Find a page").click();
-  const search = page.getByRole("dialog", { name: "Find a page", exact: true });
-  await expect(search.getByRole("button")).toHaveText([
-    "",
+  await expect(pageResults.getByRole("option")).toHaveText([
     ...titles,
     "Settings",
   ]);
-  await search.getByRole("button", { name: "Projects", exact: true }).click();
+  await search.getByRole("option", { name: "Projects", exact: true }).click();
   await expect(title).toBeVisible();
 });

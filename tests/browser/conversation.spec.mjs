@@ -19,7 +19,7 @@ test("independent packed author consumer and native-installed contribution survi
     run("pnpm", ["author:build", author]);
     run("pnpm", ["pack", "--pack-destination", temp], author);
     const source = join(temp, "consumer");
-    await cp(join(root, "examples/plugins/composer-lab"), source, {
+    await cp(join(root, "tests/fixtures/conversation-consumer"), source, {
       recursive: true,
     });
     run(
@@ -28,7 +28,7 @@ test("independent packed author consumer and native-installed contribution survi
       source,
     );
     run("pnpm", ["build"], source);
-    // The global producer is a separate test-only artifact, never part of Lab.
+    // The global producer is a separate test-only artifact, never part of the consumer.
     const toolSource = join(temp, "timestamp-tool");
     await cp(source, toolSource, { recursive: true });
     await cp(
@@ -71,10 +71,10 @@ test("independent packed author consumer and native-installed contribution survi
     const installed = native("install", join(source, "dist"));
     expect(
       installed.catalog.plugins.find(
-        (p) => p.manifest.id === "example.composer-lab",
+        (p) => p.manifest.id === "test.conversation-consumer",
       ).enabled,
     ).toBe(false);
-    native("change", "enable", "example.composer-lab");
+    native("change", "enable", "test.conversation-consumer");
     const id = "test.timestamp";
     const toolInstalled = native("install", join(toolSource, "dist"));
     const firstRevision = toolInstalled.catalog.plugins.find(
@@ -154,34 +154,37 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(
       page
         .getByRole("navigation", { name: "Proof pages" })
-        .getByRole("button", { name: "Composer Lab" }),
+        .getByRole("button", { name: "Test conversation consumer" }),
     ).toBeVisible();
     const editor = await draft.elementHandle();
     const tools = await page.evaluate(() => window.conversationFixture.tools());
-    expect(tools.some((tool) => tool.startsWith("example.composer-lab/"))).toBe(
-      false,
-    );
+    expect(
+      tools.some((tool) => tool.startsWith("test.conversation-consumer/")),
+    ).toBe(false);
     await expect(
       page.getByRole("button", { name: "Insert timestamp", exact: true }),
     ).toHaveCount(0);
     await page.evaluate(() =>
-      window.conversationFixture.change("disable", "example.composer-lab"),
+      window.conversationFixture.change(
+        "disable",
+        "test.conversation-consumer",
+      ),
     );
     await expect(
       page
         .getByRole("navigation", { name: "Proof pages" })
-        .getByRole("button", { name: "Composer Lab" }),
+        .getByRole("button", { name: "Test conversation consumer" }),
     ).toHaveCount(0);
     expect(
       await page.evaluate(() => window.conversationFixture.tools()),
     ).toEqual(tools);
     await page.evaluate(() =>
-      window.conversationFixture.change("enable", "example.composer-lab"),
+      window.conversationFixture.change("enable", "test.conversation-consumer"),
     );
     await expect(
       page
         .getByRole("navigation", { name: "Proof pages" })
-        .getByRole("button", { name: "Composer Lab" }),
+        .getByRole("button", { name: "Test conversation consumer" }),
     ).toBeVisible();
     expect(
       await page.evaluate(() => window.conversationFixture.tools()),
@@ -199,25 +202,46 @@ test("independent packed author consumer and native-installed contribution survi
     await page
       .getByRole("button", { name: "Insert timestamp", exact: true })
       .click();
-    await expect(draft).toHaveValue(/T.*Z/);
+    await expect
+      .poll(() => draft.evaluate((element) => element.value))
+      .toMatch(/T.*Z/);
     await draft.fill("base");
     await draft.evaluate((el) => el.setSelectionRange(1, 3));
     await page
       .getByRole("button", { name: "Insert twice", exact: true })
       .click();
-    await expect(draft).toHaveValue("bONETWOe");
+    await expect(draft).toHaveJSProperty("value", "bONETWOe");
     await expect(draft).toBeFocused();
     expect(await draft.evaluate((el) => el.selectionStart)).toBe(7);
     await draft.fill("");
     await page
       .getByRole("button", { name: "Insert mixed", exact: true })
       .click();
-    await expect(draft).toHaveValue("Hi @Member and @Member ");
-    await expect(
-      page
-        .getByRole("region", { name: "Notification recipients" })
-        .getByRole("button"),
-    ).toHaveCount(2);
+    await expect(draft).toHaveJSProperty("value", "Hi @Member and @Member ");
+    // Two authored spans preserve one exact notification identity.
+    const member = await page.evaluate(() => window.conversationFixture.member);
+    await expect(draft.locator(".inline-chip")).toHaveCount(2);
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          JSON.parse(
+            localStorage.getItem('buzz-view.v1:["a","draft:general"]'),
+          ),
+        ),
+      )
+      .toEqual({
+        // The editor now persists its versioned document alongside the exact
+        // text/recipient projection consumed by independently built plugins.
+        document: {
+          version: 1,
+          content: expect.objectContaining({ type: "doc" }),
+        },
+        text: "Hi @Member and @Member ",
+        recipients: [
+          { pubkey: member, name: "Member", start: 3, end: 10 },
+          { pubkey: member, name: "Member", start: 15, end: 22 },
+        ],
+      });
     await page.evaluate(() => window.conversationFixture.saveEdit());
     await page.evaluate(() => window.conversationFixture.removeProbe());
     expect(
@@ -228,7 +252,7 @@ test("independent packed author consumer and native-installed contribution survi
         window.conversationFixture.removedMentionResult(),
       ),
     ).toBe(false);
-    await expect(draft).toHaveValue("Hi @Member and @Member ");
+    await expect(draft).toHaveJSProperty("value", "Hi @Member and @Member ");
     await page.evaluate(() => window.conversationFixture.enableProbe());
     await expect(
       page.getByRole("button", { name: "Insert twice", exact: true }),
@@ -242,25 +266,22 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.fill("Channels draft");
     await page
       .getByRole("navigation", { name: "Proof pages" })
-      .getByRole("button", { name: "Composer Lab" })
+      .getByRole("button", { name: "Test conversation consumer" })
       .click();
     await expect(
-      page.getByRole("heading", { name: "Composer Lab" }),
+      page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
-    await expect(draft).toHaveValue("Channels draft");
+    await expect(draft).toHaveJSProperty("value", "Channels draft");
     // The independently built page consumes the host's registered Mentions tool.
     await page
       .getByRole("button", { name: "Mention a member", exact: true })
       .click();
-    const member = await page.evaluate(() => window.conversationFixture.member);
     await page
       .getByRole("button", { name: `Member ${member}`, exact: true })
       .click();
-    const recipients = page.getByRole("region", {
-      name: "Notification recipients",
-    });
-    await expect(recipients.getByRole("button")).toHaveCount(1);
-    const withMention = await draft.inputValue();
+    const recipients = draft.locator(".inline-chip");
+    await expect(recipients).toHaveCount(1);
+    const withMention = await draft.evaluate((element) => element.value);
     const textarea = await draft.elementHandle();
     await page.evaluate(() =>
       window.conversationFixture.change("disable", "buzz.mentions"),
@@ -268,12 +289,20 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(
       page.getByRole("button", { name: "Mention a member", exact: true }),
     ).toHaveCount(0);
-    await expect(draft).toHaveValue(withMention);
-    await expect(recipients.getByRole("button")).toHaveCount(1);
+    await expect(draft).toHaveJSProperty("value", withMention);
+    await expect(recipients).toHaveCount(1);
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
-    await recipients.getByRole("button").click();
+    await draft.focus();
+    await draft.evaluate((element) => {
+      const start = element.value.indexOf("@Member");
+      element.setSelectionRange(start, start + "@Member".length);
+    });
+    await draft.press("Backspace");
     await expect(recipients).toHaveCount(0);
-    await expect(draft).toHaveValue(withMention);
+    await expect(draft).toHaveJSProperty(
+      "value",
+      withMention.replace("@Member", ""),
+    );
     await page.evaluate(() =>
       window.conversationFixture.change("enable", "buzz.mentions"),
     );
@@ -285,10 +314,10 @@ test("independent packed author consumer and native-installed contribution survi
     await draft.evaluate((el) => el.setSelectionRange(2, 5));
     // Programmatic click avoids intentionally moving focus away from the editor.
     await page
-      .getByRole("button", { name: "Rerender Lab 0" })
+      .getByRole("button", { name: "Rerender consumer 0" })
       .evaluate((el) => el.click());
     await expect(
-      page.getByRole("button", { name: "Rerender Lab 1" }),
+      page.getByRole("button", { name: "Rerender consumer 1" }),
     ).toBeVisible();
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
     await expect(draft).toBeFocused();
@@ -302,10 +331,10 @@ test("independent packed author consumer and native-installed contribution survi
     await search.fill("party");
     const picker = await page.locator("em-emoji-picker").elementHandle();
     await page
-      .getByRole("button", { name: "Rerender Lab 1" })
+      .getByRole("button", { name: "Rerender consumer 1" })
       .evaluate((el) => el.click());
     await expect(
-      page.getByRole("button", { name: "Rerender Lab 2" }),
+      page.getByRole("button", { name: "Rerender consumer 2" }),
     ).toBeVisible();
     expect(await picker.evaluate((el) => el.isConnected)).toBe(true);
     await expect(search).toHaveValue("party");
@@ -325,7 +354,7 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByText("History :party:", { exact: true }),
     ).toBeVisible();
     expect(await textarea.evaluate((el) => el.isConnected)).toBe(true);
-    await expect(draft).toHaveValue("Channels draft");
+    await expect(draft).toHaveJSProperty("value", "Channels draft");
     // Plugin-independent recovery when the catalog is unavailable.
     await page.evaluate(() => window.conversationFixture.fail(true));
     await draft.fill(":party:");
@@ -340,7 +369,7 @@ test("independent packed author consumer and native-installed contribution survi
     await expect(
       page.getByRole("button", { name: "Retry message preparation" }),
     ).toHaveCount(0);
-    await expect(draft).toHaveValue(":party:");
+    await expect(draft).toHaveJSProperty("value", ":party:");
     await draft.press("Enter");
     await expect
       .poll(() =>
@@ -388,7 +417,7 @@ test("independent packed author consumer and native-installed contribution survi
     await search.fill("party");
     await page.evaluate(() => window.conversationFixture.saveEdit());
     await page.evaluate(() => window.conversationFixture.switch());
-    await expect(draft).toHaveValue("");
+    await expect(draft).toHaveJSProperty("value", "");
     await expect(page.locator("em-emoji-picker")).toHaveCount(0);
     await draft.fill("B draft");
     expect(
@@ -397,7 +426,7 @@ test("independent packed author consumer and native-installed contribution survi
     expect(
       await page.evaluate(() => window.conversationFixture.callSavedMention()),
     ).toBe(false);
-    await expect(draft).toHaveValue("B draft");
+    await expect(draft).toHaveJSProperty("value", "B draft");
     await page.evaluate(() => window.conversationFixture.update());
     await expect(
       page.getByRole("button", {
@@ -405,7 +434,7 @@ test("independent packed author consumer and native-installed contribution survi
         exact: true,
       }),
     ).toHaveCount(1);
-    await expect(draft).toHaveValue("B draft");
+    await expect(draft).toHaveJSProperty("value", "B draft");
     const updated = native("catalog").catalog.plugins.find(
       (p) => p.manifest.id === id,
     );
@@ -423,7 +452,7 @@ test("independent packed author consumer and native-installed contribution survi
         exact: true,
       }),
     ).toHaveCount(0);
-    await expect(draft).toHaveValue("B draft");
+    await expect(draft).toHaveJSProperty("value", "B draft");
     await page.evaluate(() =>
       window.conversationFixture.change("disable", "test.timestamp"),
     );
@@ -431,19 +460,22 @@ test("independent packed author consumer and native-installed contribution survi
       page.getByRole("button", { name: "Insert timestamp", exact: true }),
     ).toHaveCount(0);
     await expect(
-      page.getByRole("heading", { name: "Composer Lab" }),
+      page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toBeVisible();
     await page.evaluate(() =>
-      window.conversationFixture.change("disable", "example.composer-lab"),
+      window.conversationFixture.change(
+        "disable",
+        "test.conversation-consumer",
+      ),
     );
     await expect(
-      page.getByRole("heading", { name: "Composer Lab" }),
+      page.getByRole("heading", { name: "Test conversation consumer" }),
     ).toHaveCount(0);
     await page
       .getByRole("navigation", { name: "Proof pages" })
       .getByRole("button", { name: "Channels" })
       .click();
-    await expect(draft).toHaveValue("B draft");
+    await expect(draft).toHaveJSProperty("value", "B draft");
     expect(errors).toEqual([]);
     await writeFile(
       test.info().outputPath("boundary-proof.json"),

@@ -1,3 +1,4 @@
+import { rowProfileIds } from "./membership";
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import type { ChannelMessage, ChannelQueries } from "./contracts";
 import type { ProfileQueries } from "./profile-directory";
@@ -27,18 +28,10 @@ export function useRowProfiles(
   queries: ProfileQueries,
   rows: readonly ChannelMessage[],
 ) {
+  const ids = [...new Set(rows.flatMap(rowProfileIds))].sort().join(":");
   const selection = useMemo(
-    () =>
-      selectProfiles(queries, [
-        ...new Set(
-          rows.flatMap((row) => [
-            row.authorId,
-            ...row.mentions,
-            ...row.participants,
-          ]),
-        ),
-      ]),
-    [queries, rows],
+    () => selectProfiles(queries, ids ? ids.split(":") : []),
+    [queries, ids],
   );
   return useSyncExternalStore(
     selection.subscribe,

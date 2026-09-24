@@ -273,31 +273,323 @@ export const RAMPS: Ramp[] = [
    PUBLIC ROLES
    ============================================================ */
 
-/**
- * There is no identity-group generator any more, and that is the point.
- *
- * A helper here built five roles from one line of a hue lookup — `bg-accent`,
- * `bg-accent-tint`, `text-accent`, and so on — which is exactly how twenty status
- * roles came to exist without anyone designing them. Every one of those roles
- * held the same palette step in both modes, so each was a name in front of a
- * number.
- *
- * Screens now write the step: `bg-purple-9`, `bg-purple-3`, `text-purple-12`.
- * Safe here and not in Tailwind because **every step is authored per mode**, so a
- * class still behaves in light and dark. The step-to-role mapping in DESIGN.md
- * survives as guidance for *which* step to reach for; it is no longer a
- * generator.
- *
- * A name comes back when a repeated accent PATTERN appears — a tinted callout on
- * four screens — and it will be named for the pattern, not the colour.
- */
-
+/** Semantic roles name color jobs; the palette remains an implementation detail. */
 export const ROLE_GROUPS: RoleGroup[] = [
+  {
+    id: "semantic-surface",
+    name: "Surface",
+    description: "Shared surface roles, with values for both themes.",
+    roles: [
+      {
+        token: "bg-surface-base",
+        variable: "--surface-base",
+        pointsAt: "neutral-2 light / neutral-1 dark",
+        use: "The plain background behind panels.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-panel",
+        variable: "--surface-panel",
+        pointsAt: "neutral-1 light / neutral-3 dark",
+        use: "A content panel or card.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-popover",
+        variable: "--surface-popover",
+        pointsAt: "neutral-1 light / neutral-5 dark",
+        use: "A menu, dialog or other raised surface.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-inverse",
+        variable: "--surface-inverse",
+        pointsAt: "neutral-11 light / neutral-11 dark",
+        use: "Image and video stages; pair labels with text-inverse.",
+        status: "core",
+      },
+      {
+        token: "bg-surface-inset",
+        variable: "--surface-inset",
+        pointsAt: "neutral-2 light / neutral-2 dark",
+        use: "A recessed region inside a panel.",
+        status: "core",
+      },
+    ],
+  },
+  {
+    id: "semantic-text",
+    name: "Text",
+    description: "Shared text roles, with values for both themes.",
+    roles: [
+      {
+        token: "text-standard",
+        variable: "--text-standard",
+        pointsAt: "neutral-12 light / neutral-12 dark",
+        use: "Normal reading text.",
+        status: "core",
+      },
+      {
+        token: "text-subtle",
+        variable: "--text-subtle",
+        pointsAt: "neutral-10 light / neutral-11 dark",
+        use: "Supporting text that must remain readable.",
+        status: "core",
+      },
+      {
+        token: "text-metadata",
+        variable: "--text-metadata",
+        pointsAt: "neutral-9 light / neutral-10 dark",
+        use: "Nonessential metadata.",
+        status: "core",
+      },
+      {
+        token: "text-inverse",
+        variable: "--text-inverse",
+        pointsAt: "neutral-1 light / neutral-1 dark",
+        use: "Text on prominent actions and inverse media surfaces.",
+        status: "core",
+      },
+      {
+        token: "text-unavailable",
+        variable: "--text-unavailable",
+        pointsAt: "neutral-7 light / neutral-7 dark",
+        use: "Unavailable controls only.",
+        status: "core",
+      },
+      {
+        token: "text-danger",
+        variable: "--text-danger",
+        pointsAt: "red-12 light / red-12 dark",
+        use: "Error text and destructive action labels.",
+        status: "core",
+      },
+      {
+        token: "text-warning",
+        variable: "--text-warning",
+        pointsAt: "amber-12 light / amber-12 dark",
+        use: "Warning text.",
+        status: "core",
+      },
+      {
+        token: "text-success",
+        variable: "--text-success",
+        pointsAt: "green-12 light / green-12 dark",
+        use: "Success text.",
+        status: "core",
+      },
+      {
+        token: "text-link",
+        variable: "--text-link",
+        pointsAt: "blue-12 light / blue-12 dark",
+        use: "Inline links and mentions in prose.",
+        status: "core",
+      },
+      {
+        token: "text-accent",
+        variable: "--text-accent",
+        pointsAt: "purple-12 light / purple-12 dark",
+        use: "Linked or selected identity text.",
+        status: "core",
+      },
+    ],
+  },
+  {
+    id: "semantic-border",
+    name: "Border",
+    description: "Shared border roles, with values for both themes.",
+    roles: [
+      {
+        token: "border-standard",
+        variable: "--border-standard",
+        pointsAt: "neutral-3 light / neutral-4 dark",
+        use: "A quiet separator or panel edge.",
+        status: "core",
+      },
+      {
+        token: "border-prominent",
+        variable: "--border-prominent",
+        pointsAt: "neutral-8 light / neutral-8 dark",
+        use: "A visible input or choice boundary.",
+        status: "core",
+      },
+      {
+        token: "border-focus",
+        variable: "--border-focus",
+        pointsAt: "neutral-12 light / neutral-12 dark",
+        use: "Keyboard focus.",
+        status: "core",
+      },
+      {
+        token: "border-danger",
+        variable: "--border-danger",
+        pointsAt: "red-9 light / red-9 dark",
+        use: "Invalid field boundary.",
+        status: "core",
+      },
+      {
+        token: "border-warning",
+        variable: "--border-warning",
+        pointsAt: "amber-11 light / amber-9 dark",
+        use: "Warning boundary.",
+        status: "core",
+      },
+      {
+        token: "border-accent",
+        variable: "--border-accent",
+        pointsAt: "purple-8 light / purple-8 dark",
+        use: "An identity accent boundary.",
+        status: "core",
+      },
+    ],
+  },
+  {
+    id: "semantic-affordance",
+    name: "Affordance",
+    description: "Shared affordance roles, with values for both themes.",
+    roles: [
+      {
+        token: "bg-affordance-prominent",
+        variable: "--affordance-prominent",
+        pointsAt: "neutral-12 light / neutral-12 dark",
+        use: "The main action fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-prominent-hover",
+        variable: "--affordance-prominent-hover",
+        pointsAt: "neutral-11 light / neutral-11 dark",
+        use: "The main action under a pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-prominent-pressed",
+        variable: "--affordance-prominent-pressed",
+        pointsAt: "neutral-action-pressed",
+        use: "The main action while pressed.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-subtle",
+        variable: "--affordance-subtle",
+        pointsAt: "neutral-2 light / neutral-5 dark",
+        use: "A secondary action fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-subtle-hover",
+        variable: "--affordance-subtle-hover",
+        pointsAt: "neutral-3 light / neutral-6 dark",
+        use: "A secondary action under a pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-subtle-pressed",
+        variable: "--affordance-subtle-pressed",
+        pointsAt: "neutral-4 light / neutral-7 dark",
+        use: "A secondary action while pressed.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-panel-hover",
+        variable: "--affordance-panel-hover",
+        pointsAt: "neutral 3 light / neutral 4 dark",
+        use: "Quiet hover for navigation items on a panel. Unlike subtle controls, a panel row starts unfilled; keep its hover distinct from persistent selection.",
+        status: "proposed",
+        owner: "Morgan",
+      },
+      {
+        token: "bg-affordance-selected",
+        variable: "--affordance-selected",
+        pointsAt: "neutral-3 light / neutral-5 dark",
+        use: "A persistently selected item.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-disabled",
+        variable: "--affordance-disabled",
+        pointsAt: "neutral-3 light / neutral-3 dark",
+        use: "An unavailable control fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-danger",
+        variable: "--affordance-danger",
+        pointsAt: "red-3 light / red-3 dark",
+        use: "A destructive action or error fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-danger-hover",
+        variable: "--affordance-danger-hover",
+        pointsAt: "red-4 light / red-4 dark",
+        use: "A destructive action under a pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-danger-pressed",
+        variable: "--affordance-danger-pressed",
+        pointsAt: "red-5 light / red-5 dark",
+        use: "A destructive action while pressed.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-warning",
+        variable: "--affordance-warning",
+        pointsAt: "amber-3 light / amber-3 dark",
+        use: "A warning fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-success",
+        variable: "--affordance-success",
+        pointsAt: "green-3 light / green-3 dark",
+        use: "A success fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-link-hover",
+        variable: "--affordance-link-hover",
+        pointsAt: "blue-4 light / blue-4 dark",
+        use: "An inline link under a pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-accent",
+        variable: "--affordance-accent",
+        pointsAt: "purple-3 light / purple-3 dark",
+        use: "A quiet identity or selection fill.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-accent-hover",
+        variable: "--affordance-accent-hover",
+        pointsAt: "purple-4 light / purple-4 dark",
+        use: "A quiet identity fill under a pointer.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-accent-prominent",
+        variable: "--affordance-accent-prominent",
+        pointsAt: "purple-9 light / purple-9 dark",
+        use: "An identity accent fill paired with text-on-accent.",
+        status: "core",
+      },
+      {
+        token: "bg-affordance-accent-prominent-hover",
+        variable: "--affordance-accent-prominent-hover",
+        pointsAt: "purple-10 light / purple-10 dark",
+        use: "An identity accent fill under a pointer.",
+        status: "core",
+      },
+    ],
+  },
+
   {
     id: "surfaces",
     name: "Structural surfaces",
     description:
-      "The roles that exist because a ramp step cannot say them: each takes a different step in light and dark, so no single class like `bg-neutral-1` is correct in both. That is the whole test for whether a colour earns a name. Ask one question: is it behind, on, above, or in? (`bg-hover` was here and is now written as `bg-neutral-4` \u2014 it was the same step in both modes. Hover is a *relationship*, one step more contrast than whatever is underneath, which no single token could express anyway.)",
+      "Compatibility aliases forward to semantic surface roles. New screens use surface-base, surface-panel and surface-popover directly.",
     roles: [
       {
         token: "bg-app",
@@ -414,7 +706,10 @@ export const VOCABULARY: Array<{ group: string; words: string[] }> = [
   { group: "property", words: ["bg", "text", "border", "ring"] },
   { group: "region", words: ["app", "panel", "float", "chrome", "inset"] },
   { group: "emphasis", words: ["primary", "secondary", "tertiary", "default"] },
-  { group: "state", words: ["hover", "selected", "disabled"] },
+  {
+    group: "state",
+    words: ["hover", "pressed", "selected", "disabled", "loading"],
+  },
   { group: "material", words: ["glass"] },
   { group: "modifier", words: ["tint"] },
   { group: "identity", words: ["accent", "inverse"] },
@@ -425,11 +720,12 @@ export const VOCABULARY: Array<{ group: string; words: string[] }> = [
   { group: "paired", words: ["on-accent", "on-inverse"] },
 ];
 
-export const GRAMMAR = "<property>-<role>[-<modifier>][-<material>][-<state>]";
+export const GRAMMAR =
+  "color / <surface | text | border | affordance> / <purpose> [/ state]";
 
 /** Fixed order, so there is only one correct spelling. */
 export const GRAMMAR_EXAMPLES = {
-  legal: ["bg-accent-tint-hover", "text-primary", "bg-chrome-selected"],
+  legal: ["bg-surface-panel", "text-standard", "bg-affordance-subtle-hover"],
   illegal: ["bg-chrome-hover-glass", "bg-hover-chrome"],
 };
 
@@ -453,7 +749,7 @@ export const GROWTH_PROCEDURE = [
 export interface TypeRole {
   /** The Tailwind class, e.g. `text-body`. */
   token: string;
-  /** Step on the size ramp this points at, for display. */
+  /** Semantic role represented by this utility. */
   pointsAt: string;
   /** Rendered size at the default preference and zoom, for display only —
    *  never a value a component may use. */
@@ -472,160 +768,246 @@ export interface TypeRole {
 export const TYPE_ROLES: TypeRole[] = [
   {
     token: "text-display",
-    pointsAt: "size 8",
-    size: "32px",
-    lineHeight: "1.2",
-    tracking: "-0.024em",
+    pointsAt: "display/hero",
+    size: "56px",
+    lineHeight: "56px",
+    tracking: "-0.04em",
     weight: "400",
-    use: "Onboarding and empty states — a screen with nothing on it yet, or one asking a single question. Most screens have none.",
+    use: "Expressive welcome or hero.",
     status: "core",
   },
   {
     token: "text-title",
-    pointsAt: "size 7",
-    size: "24px",
-    lineHeight: "1.2",
-    tracking: "-0.019em",
-    weight: "400",
-    use: "The headline inside content: a feed card, a thread topic. At this size the size carries it, which is why the weight stays at 400.",
+    pointsAt: "display/page-title",
+    size: "32px",
+    lineHeight: "32px",
+    tracking: "-0.015em",
+    weight: "500",
+    use: "Screen title.",
     status: "core",
   },
   {
     token: "text-heading",
-    pointsAt: "size 6",
-    size: "16px",
-    lineHeight: "1.35",
-    tracking: "-0.011em",
-    weight: "600",
-    use: "The name of the thing you are looking at: a channel, a panel, a section. Same size as body-lg, separated from it by weight alone.",
+    pointsAt: "display/section-title",
+    size: "24px",
+    lineHeight: "24px",
+    tracking: "-0.0075em",
+    weight: "500",
+    use: "Content section title.",
     status: "core",
   },
   {
     token: "text-body-lg",
-    pointsAt: "size 6",
-    size: "16px",
-    lineHeight: "1.6",
-    tracking: "-0.011em",
+    pointsAt: "body/body-large",
+    size: "20px",
+    lineHeight: "28px",
+    tracking: "-0.01em",
     weight: "400",
-    use: "Reading columns and introductions, where a paragraph is the point rather than a description of something else.",
+    use: "Lead paragraph.",
     status: "core",
   },
   {
     token: "text-body",
-    pointsAt: "size 4",
+    pointsAt: "body/body-medium (Buzz 14px override)",
     size: "14px",
-    lineHeight: "1.5",
-    tracking: "-0.006em",
+    lineHeight: "20px",
+    tracking: "-0.005em",
     weight: "400",
-    use: "The default, and 90% of the product. If you are unsure, this is it.",
+    use: "Reading text and messages.",
     status: "core",
   },
   {
     token: "text-body-sm",
-    pointsAt: "size 2",
-    size: "12px",
-    lineHeight: "1.5",
-    tracking: "0em",
+    pointsAt: "body/body-small",
+    size: "14px",
+    lineHeight: "20px",
+    tracking: "-0.0025em",
     weight: "400",
-    use: "Secondary text: descriptions, timestamps, chip and tab labels, help text under a control. The smallest text in the product.",
+    use: "Supporting or dense reading text.",
+    status: "core",
+  },
+  {
+    token: "text-label",
+    pointsAt: "body/label-medium",
+    size: "16px",
+    lineHeight: "24px",
+    tracking: "0em",
+    weight: "500",
+    use: "Controls and panel titles.",
+    status: "core",
+  },
+  {
+    token: "text-label-sm",
+    pointsAt: "body/label-small",
+    size: "14px",
+    lineHeight: "20px",
+    tracking: "0.0025em",
+    weight: "500",
+    use: "Compact controls and row labels.",
+    status: "core",
+  },
+  {
+    token: "text-caption",
+    pointsAt: "detail/caption",
+    size: "12px",
+    lineHeight: "16px",
+    tracking: "0.0133em",
+    weight: "400",
+    use: "Timestamps and metadata.",
     status: "core",
   },
   {
     token: "text-mono-lg",
-    pointsAt: "size 5",
-    size: "15px",
-    lineHeight: "1.5",
-    tracking: "-0.009em",
+    pointsAt: "detail/body-xsmall",
+    size: "12px",
+    lineHeight: "16px",
+    tracking: "0.03em",
     weight: "400",
-    use: "Codes and keys a person has to transcribe or read aloud. Paired with body-lg.",
+    use: "Compatibility alias for text-mono; use text-mono in new code.",
     status: "core",
     mono: true,
   },
   {
     token: "text-mono",
-    pointsAt: "size 3",
-    size: "13px",
-    lineHeight: "1.5",
-    tracking: "-0.003em",
+    pointsAt: "detail/body-xsmall",
+    size: "12px",
+    lineHeight: "16px",
+    tracking: "0.03em",
     weight: "400",
-    use: "Inline code, pubkeys, paths, branch names, hex values — anything where the characters matter individually. Paired with body.",
+    use: "Code and identifiers.",
     status: "core",
     mono: true,
   },
   {
     token: "text-mono-sm",
-    pointsAt: "size 1",
-    size: "11px",
-    lineHeight: "1",
-    tracking: "0.005em",
+    pointsAt: "detail/body-xsmall",
+    size: "12px",
+    lineHeight: "16px",
+    tracking: "0.03em",
     weight: "400",
-    use: "Terminal tabs, code-block headers, dense chrome. Nothing read in quantity. Paired with body-sm.",
+    use: "Compatibility alias for text-mono; use text-mono in new code.",
     status: "core",
     mono: true,
   },
 ];
 
-/** The two faces. Both already shipped in every current Buzz client. */
+/** Font families used by the type roles. */
 export const TYPE_FAMILIES = [
   {
     token: "font-sans",
     name: "Inter Variable",
-    use: "Everything. Drawn for interface text at small sizes, and already the sans in desktop, web, and mobile.",
+    use: "Interface, labels and reading text.",
   },
   {
     token: "font-mono",
     name: "JetBrains Mono",
-    use: "Code, keys, and identifiers. Already the mono in the existing client's terminal.",
+    use: "Code, keys and identifiers, set in the xsmall detail role at 12/16.",
   },
 ];
 
-/** The private ramps a type role points at. Components never reference these. */
+/** Source for the primitive ladder and resolved roles displayed below. */
+export const TYPE_SOURCE =
+  "https://github.com/squareup/design-blockinterface/blob/eff766161ba8aaee3258ca107f0d904dd542c708/blockUI/docs/type.resolution.draft.json";
+
+/** Active size primitives, with xsmall sharing the 12px step. */
 export const TYPE_RAMPS = [
   {
     id: "size",
     name: "Size",
     description:
-      "Eight steps, sized from the product rather than composed. Across 73 real Buzz screens, 90% of all text is one size and two sizes cover 93%; 16/18/20/22 together were 1.5%, scattered and inconsistent. So the ramp is deliberately short and the gap between 16 and 24 is deliberately empty — an app does not have a document outline. Mono sits one step below its sans partner throughout. Every value derives from a virtual rem, so the whole ramp follows the person's font-size preference and keyboard zoom.",
+      "Thirteen size steps. Caption and xsmall detail both use 12px, with separate semantic tokens so each can evolve independently. Values shown at 100% text size.",
     steps: [
-      { step: 1, job: "mono small", value: "11px" },
-      { step: 2, job: "body small", value: "12px" },
-      { step: 3, job: "mono", value: "13px" },
-      { step: 4, job: "body — the default", value: "14px" },
-      { step: 5, job: "mono large", value: "15px" },
-      { step: 6, job: "body large, heading", value: "16px" },
-      { step: 7, job: "title", value: "24px" },
-      { step: 8, job: "display", value: "32px" },
-    ],
-  },
-  {
-    id: "tracking",
-    name: "Tracking",
-    description:
-      "An optical correction, not a style. Inter needs progressively tighter spacing as it grows — tracking that looks correct at 14px looks loose at 32px — so the ramp is named per size step rather than per role, and the correction follows the size it corrects. Two roles at 16px therefore get the same tracking by construction. It turns slightly positive at the smallest step, where letters need air to stay legible.",
-    steps: [
-      { step: 8, job: "32px", value: "-0.024em" },
-      { step: 7, job: "24px", value: "-0.019em" },
-      { step: 6, job: "16px", value: "-0.011em" },
-      { step: 5, job: "15px", value: "-0.009em" },
-      { step: 4, job: "14px", value: "-0.006em" },
-      { step: 3, job: "13px", value: "-0.003em" },
-      { step: 2, job: "12px", value: "0em" },
-      { step: 1, job: "11px", value: "0.005em" },
+      {
+        step: 12,
+        value: "12px",
+        job: "caption and xsmall detail",
+      },
+      {
+        step: 14,
+        value: "14px",
+        job: "small body and labels",
+      },
+      {
+        step: 16,
+        value: "16px",
+        job: "body and labels",
+      },
+      {
+        step: 18,
+        value: "18px",
+        job: "Primitive only; no role assigned.",
+      },
+      {
+        step: 20,
+        value: "20px",
+        job: "large body",
+      },
+      {
+        step: 24,
+        value: "24px",
+        job: "section title",
+      },
+      {
+        step: 28,
+        value: "28px",
+        job: "Primitive only; no role assigned.",
+      },
+      {
+        step: 32,
+        value: "32px",
+        job: "page title",
+      },
+      {
+        step: 36,
+        value: "36px",
+        job: "Primitive only; no role assigned.",
+      },
+      {
+        step: 44,
+        value: "44px",
+        job: "Primitive only; no role assigned.",
+      },
+      {
+        step: 56,
+        value: "56px",
+        job: "hero",
+      },
+      {
+        step: 72,
+        value: "72px",
+        job: "Primitive only; no role assigned.",
+      },
+      {
+        step: 96,
+        value: "96px",
+        job: "Primitive only; no role assigned.",
+      },
     ],
   },
   {
     id: "weight",
     name: "Weight",
-    description:
-      "Two values with two jobs, not a ramp. 400 is content — everything read. 600 is structure and emphasis: the thing that names what you are looking at, or the words a sentence leans on. 500 was rendered as the marker for a selected channel, an active tab, and an unread row, and does not read as intent in a scanned list — a sub-pixel stem difference at body size, yet heavy enough to muddy a column. 700 is louder than this product needs. State is said with colour, a fill, or a dot.",
+    description: "400 for reading, 500 for labels and structure.",
     steps: [
-      { step: 400, job: "content", value: "400" },
-      { step: 600, job: "structure and emphasis", value: "600" },
+      { step: 400, job: "reading", value: "400" },
+      { step: 500, job: "structure", value: "500" },
     ],
   },
 ];
 
 export const SPACE = [
+  {
+    step: 0.5,
+    variable: "--space-half",
+    value: "2px",
+    use: "Compact control inset.",
+  },
+  {
+    step: 1.5,
+    variable: "--space-1h",
+    value: "6px",
+    use: "Compact control gap.",
+  },
   {
     step: 1,
     variable: "--space-1",
@@ -662,9 +1044,17 @@ export const SPACE = [
     value: "24px",
     use: "Separation between distinct content groups.",
   },
+  { step: 8, variable: "--space-8", value: "32px", use: "Content groups." },
+  { step: 16, variable: "--space-16", value: "64px", use: "Page sections." },
 ];
 
 export const SPACE_ROLES = [
+  {
+    token: "space-page-section-gap",
+    variable: "--space-page-section-gap",
+    pointsAt: "space 16",
+    use: "Separation between page sections.",
+  },
   {
     token: "space-workspace-inset",
     variable: "--space-workspace-inset",
@@ -680,13 +1070,13 @@ export const SPACE_ROLES = [
   {
     token: "space-panel-inset",
     variable: "--space-panel-inset",
-    pointsAt: "space 5",
+    pointsAt: "space 6",
     use: "The horizontal inset inside a full panel.",
   },
   {
     token: "space-control-inset",
     variable: "--space-control-inset",
-    pointsAt: "space 3",
+    pointsAt: "space 4",
     use: "The horizontal inset inside controls and navigation rows.",
   },
   {
@@ -698,7 +1088,7 @@ export const SPACE_ROLES = [
   {
     token: "space-section-gap",
     variable: "--space-section-gap",
-    pointsAt: "space 4",
+    pointsAt: "space 8",
     use: "The gap between adjacent navigator sections. Larger than the 1px between rows inside one, because that difference is the only thing saying where a group ends.",
   },
 ];
@@ -714,7 +1104,7 @@ export const RADII = [
     token: "radius-control",
     variable: "--radius-control",
     value: "12px",
-    use: "Inputs, buttons, tabs, and header actions.",
+    use: "Inputs and compact icon controls. Text buttons use radius-pill.",
   },
   {
     token: "radius-panel",

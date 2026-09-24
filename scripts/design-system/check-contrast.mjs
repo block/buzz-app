@@ -10,9 +10,8 @@
  * drift from the system it audits: resolve each role through its `var()` chain
  * to a literal, per mode, then measure every pairing the roles allow.
  *
- * Judged with APCA, per DESIGN.md § Contrast. The WCAG 2 ratio is reported for
- * context and never decides — it is the standard that calls #8f8f8f on #1c1c1c
- * a pass at 5.27:1 while APCA scores it Lc 40.
+ * Text uses APCA, per DESIGN.md § Contrast. Control/state boundaries use the
+ * separate WCAG 3:1 non-text target on their supported opaque surfaces.
  */
 
 import { readFileSync } from "node:fs";
@@ -48,7 +47,7 @@ const EXCEPTIONS = new Map([
 ]);
 
 /** Roles measured at the meta target rather than the body target. */
-const META_ROLES = new Set(["--text-tertiary"]);
+const META_ROLES = new Set(["--text-tertiary", "--text-metadata"]);
 
 /**
  * Neutral surfaces any text may sit on.
@@ -57,7 +56,15 @@ const META_ROLES = new Set(["--text-tertiary"]);
  * its step here. It still belongs in this list: a row under the cursor is a
  * surface text sits on, whatever it is called.
  */
-const SURFACES = ["--bg-panel", "--bg-float", "--neutral-2", "--neutral-4"];
+const SURFACES = [
+  "--surface-base",
+  "--surface-panel",
+  "--surface-popover",
+  "--surface-inset",
+  "--affordance-subtle",
+  "--affordance-selected",
+  "--neutral-4",
+];
 
 /**
  * Text that must be readable on every neutral surface.
@@ -74,12 +81,22 @@ const SURFACES = ["--bg-panel", "--bg-float", "--neutral-2", "--neutral-4"];
  * does — and it is the step that fails, at 59.7 on a dark panel.
  */
 const TEXT_ROLES = [
+  "--text-standard",
+  "--text-subtle",
+  "--text-metadata",
+  "--text-danger",
+  "--text-warning",
+  "--text-success",
+  "--text-accent",
+  "--text-link",
   "--text-primary",
   "--text-secondary",
   "--text-tertiary",
   "--text-disabled",
   "--purple-12", // accent text: links, active nav, chip labels
   "--red-12", // error text: failed session start, rejected form
+  "--amber-12", // warning text in delivery notices and dialogs
+  "--green-12", // completion text in the foundation alignment proposal
 ];
 
 /**
@@ -92,12 +109,27 @@ const TEXT_ROLES = [
  * every fill it can actually sit on, and hover is one of them.
  */
 const PAIRS = [
+  ["--text-inverse", "--surface-inverse"],
+  ["--text-link", "--affordance-link-hover"],
+  ...["subtle", "subtle-hover", "subtle-pressed"].map((state) => [
+    "--text-standard",
+    `--affordance-${state}`,
+  ]),
+  ...["prominent", "prominent-hover", "prominent-pressed"].map((state) => [
+    "--text-inverse",
+    `--affordance-${state}`,
+  ]),
+  ...["danger", "danger-hover", "danger-pressed"].map((state) => [
+    "--text-danger",
+    `--affordance-${state}`,
+  ]),
   ["--text-on-accent", "--purple-9"],
   ["--text-on-accent", "--purple-10"],
   // `bg-neutral-11` with `text-neutral-1` — the inverse pair, written as steps
   // now that the roles are gone. Still measured as a pair, because the text
   // follows the fill: move the fill and this has to be re-measured.
   ["--neutral-1", "--neutral-11"],
+  ["--neutral-1", "--neutral-12"],
 ];
 
 /**
@@ -107,7 +139,23 @@ const PAIRS = [
  * and its hover are both real surfaces — a chip at rest and a chip under the
  * cursor — and the hover is the harder one, which is where the gap was.
  */
+const BOUNDARY_SURFACES = [
+  "--surface-base",
+  "--surface-panel",
+  "--surface-inset",
+  "--surface-popover",
+];
+const BOUNDARY_ROLES = ["--border-danger", "--border-warning"];
+
 const TINT_PAIRS = [
+  ["--text-warning", "--affordance-warning"],
+  ["--text-success", "--affordance-success"],
+  ["--text-accent", "--affordance-accent"],
+  ["--text-accent", "--affordance-accent-hover"],
+  ["--text-on-accent", "--affordance-accent-prominent"],
+  ["--text-on-accent", "--affordance-accent-prominent-hover"],
+  ["--amber-12", "--amber-3"],
+  ["--green-12", "--green-3"],
   ["--purple-12", "--purple-3"],
   ["--purple-12", "--purple-4"],
 ];
@@ -151,6 +199,7 @@ function resolve(map, name, depth = 0) {
 
 const modes = declarationsByMode();
 const failures = [];
+const boundaryFailures = [];
 const skipped = [];
 /**
  * Pairing-scoped exceptions this run actually needed. An exception nobody hits
@@ -195,6 +244,20 @@ for (const [mode, map] of Object.entries(modes)) {
   }
   for (const [role, fill] of PAIRS) check(role, fill);
   for (const [text, tint] of TINT_PAIRS) check(text, tint);
+  for (const role of BOUNDARY_ROLES) {
+    for (const surface of BOUNDARY_SURFACES) {
+      const borderColor = resolve(map, role);
+      const surfaceColor = resolve(map, surface);
+      const ratio =
+        borderColor && surfaceColor
+          ? wcagRatio(borderColor, surfaceColor)
+          : null;
+      if (ratio === null || ratio < 3)
+        boundaryFailures.push(
+          `${mode}: ${role} on ${surface} — ${ratio === null ? "unresolved color" : `${ratio.toFixed(3)}:1`}, needs 3:1`,
+        );
+    }
+  }
 }
 
 // Guard the maths itself: if these drift, every verdict above is wrong.
@@ -218,6 +281,12 @@ if (skipped.length > 0) {
   for (const s of skipped) console.log(`    ${s}`);
 }
 
+if (boundaryFailures.length > 0) {
+  console.error(
+    `\n✗ Control/state boundaries:\n  ${boundaryFailures.join("\n  ")}`,
+  );
+}
+
 if (failures.length > 0) {
   console.error(
     `\n✗ Contrast: ${failures.length} pairing(s) below their APCA target\n`,
@@ -236,7 +305,10 @@ if (failures.length > 0) {
   process.exit(1);
 }
 
-console.log("✓ Contrast: every text role clears its APCA target in both modes");
+if (boundaryFailures.length > 0) process.exit(1);
+console.log(
+  "✓ Contrast: text and control/state boundaries clear their targets in both modes",
+);
 for (const [role, why] of EXCEPTIONS) {
   console.log(`  (exception) ${role} — ${why.split(";")[0]}`);
 }

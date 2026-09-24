@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-test.use({ pluginFixtures: true });
+test.use({ pluginFixtures: true, historyCounts: { alpha: 0, beta: 0 } });
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 
 test("Local Settings retain plugin recovery without blocking Profile and Appearance", async ({
@@ -11,7 +11,7 @@ test("Local Settings retain plugin recovery without blocking Profile and Appeara
   );
   await page.goto(app.origin);
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toBeVisible();
@@ -24,7 +24,7 @@ test("Local Settings retain plugin recovery without blocking Profile and Appeara
   await expect(button(page, "Back up & reset settings")).toBeVisible();
   await button(page, "Back up & reset settings").click();
   await expect(
-    page.getByRole("switch", { name: "Enable Channels" }),
+    page.getByRole("switch", { name: "Enable Projects" }),
   ).toBeVisible();
 });
 

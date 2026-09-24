@@ -1,3 +1,9 @@
+import { brokerUpload, type AttachmentUpload } from "./attachments";
+import type { ChannelKitHost } from "../channel-templates/host";
+import type { KitRecord } from "../channel-templates/model";
+import { workflowHost } from "../workflows/http";
+import type { WorkflowHost } from "../workflows/host";
+import { readReceiptText } from "./receipt";
 import type { ReadStateHost, ReadStateSigning } from "./read-state-host";
 import {
   parseReadSnapshot,
@@ -13,6 +19,8 @@ import {
   ApiPaused,
   ApiNotSent,
   readApiFailure,
+  presenceFilter,
+  presenceText,
 } from "./http-admission";
 import { yieldToHost } from "./yield";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
@@ -25,26 +33,54 @@ import { subscribeBrokerTraffic } from "./broker-live";
 import { PublishRejected } from "./outbox";
 import { httpReadError, ReadError } from "./errors";
 import type { EventTemplate, VerifiedEvent } from "nostr-tools";
-import { eventDto, type ReadFilter, type RelayEvent } from "./events";
+import {
+  createEventVerifier,
+  eventDto,
+  type ReadFilter,
+  type RelayEvent,
+} from "./events";
 
 /** Relay connection. Implementations verify signatures; callers never see raw JSON. */
 export interface RelayWriter {
   readonly kinds?: readonly number[];
   sign(event: EventTemplate, signal: AbortSignal): Promise<RelayEvent>;
-  publish(event: RelayEvent, signal: AbortSignal): Promise<void>;
+  /** Accepted receipt text is ephemeral; callers must never journal it. */
+  publish(
+    event: RelayEvent,
+    signal: AbortSignal,
+  ): Promise<string> | Promise<void>;
 }
 export interface ReadTransport {
+  readonly uploadAttachment?: AttachmentUpload;
+  /** Host-owned idempotent DM opening. The session verifies membership before use. */
+  readonly openDirectMessage?: (
+    pubkeys: readonly string[],
+    signal: AbortSignal,
+  ) => Promise<string>;
+  readonly workflows?: WorkflowHost;
+  /** Purpose-bound observer decoding on the shared host live stream. */
+  readonly agentActivity?: boolean;
+  /** Explicit relay-advertised session command support. */
   /** Host-projected local library; display only, never relay authority. */
   readonly readAgentLibrary?: AgentLibraryReader;
   /** Host-only decoder of the viewer's two signed sidebar preference coordinates. */
   readonly decodeSidebarPreferences?: SidebarDecoder;
   readonly readState?: ReadStateHost;
+  readonly channelKit?: ChannelKitHost;
   /** Strictly validated atomic writer snapshot; never an ordinary event-array query. */
   readStateSnapshot?(
     signal: AbortSignal,
     requestId: string,
     priority: "foreground" | "background",
   ): Promise<RelayEvent[]>;
+  /** Broker-only, complete bounded presence read. null is a local admission skip. */
+  presenceSnapshot?(
+    authors: readonly string[],
+    signal: AbortSignal,
+  ): Promise<ReadonlyMap<
+    string,
+    "online" | "away" | "offline" | "unknown"
+  > | null>;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -65,15 +101,22 @@ export interface ReadTransport {
     priority?: "foreground" | "background",
   ): Promise<RelayEvent[]>;
   /** Display URL for a media URL, or undefined when this transport cannot fetch it. */
-  media(url: string): string | undefined;
+  media(url: string, size?: "small"): string | undefined;
 }
 /** Third-party https images load directly; relay-hosted media needs a signed read. */
 export function mediaUrl(
   url: string,
   relayProxy: ((url: string) => string) | undefined,
   relayOrigin: string | undefined,
+  size?: "small",
 ): string | undefined {
-  if (url.startsWith(`${relayOrigin}/media/`)) return relayProxy?.(url);
+  if (url.startsWith(`${relayOrigin}/media/`)) {
+    const media =
+      size === "small"
+        ? url.replace(/\/([0-9a-f]{64})(?:\.[a-z0-9]{1,8})?$/, "/$1.thumb.jpg")
+        : url;
+    return relayProxy?.(media);
+  }
   return /^https:\/\//.test(url) ? url : undefined;
 }
 export interface Signer {
@@ -83,6 +126,7 @@ export interface Signer {
 
 async function parseEvents(
   raw: unknown,
+  verify: (value: unknown) => RelayEvent,
   signal?: AbortSignal,
 ): Promise<RelayEvent[]> {
   if (!Array.isArray(raw))
@@ -95,10 +139,55 @@ async function parseEvents(
   // head/profile responses cannot monopolize input and foreground rendering.
   for (let index = 0; index < raw.length; index += 12) {
     if (signal?.aborted) throw new DOMException("Read cancelled", "AbortError");
-    events.push(...raw.slice(index, index + 12).map(eventDto));
+    events.push(...raw.slice(index, index + 12).map(verify));
     if (index + 12 < raw.length) await yieldToHost();
   }
   return events;
+}
+
+async function parsePresence(
+  raw: unknown,
+  authors: readonly string[],
+  relay: string,
+  signal: AbortSignal,
+) {
+  if (!Array.isArray(raw) || raw.length > authors.length)
+    throw new Error("Invalid presence snapshot");
+  const values = new Map<string, "online" | "away" | "offline" | "unknown">();
+  for (const event of await parseEvents(raw, eventDto, signal)) {
+    const subjects = event.tags.filter(([tag]) => tag === "p");
+    const subject = subjects[0]?.[1];
+    let status: unknown = event.content;
+    if (event.content.startsWith("{")) {
+      try {
+        status = JSON.parse(event.content).status;
+      } catch {
+        status = undefined;
+      }
+    }
+    if (
+      event.kind !== 20001 ||
+      event.pubkey !== relay ||
+      subjects.length !== 1 ||
+      subjects[0]?.length !== 2 ||
+      !subject ||
+      !authors.includes(subject) ||
+      values.has(subject)
+    )
+      throw new Error("Untrusted presence snapshot");
+    // The relay permits extensible status strings. An unsupported value is
+    // Unknown for this subject, not a trust failure for unrelated peers.
+    values.set(
+      subject,
+      status === "online" || status === "away" || status === "offline"
+        ? status
+        : "unknown",
+    );
+  }
+  signal.throwIfAborted();
+  for (const author of authors)
+    if (!values.has(author)) values.set(author, "offline");
+  return values;
 }
 
 /** Register trusted-app-origin intent before contacting a new destination. No remote join. */
@@ -131,6 +220,7 @@ export async function connectBrokerTransport(
   if (community) await registerBrokerCommunity(community, signal, base);
   const endpoint = `${base}/api/relay${community ? `/${encodeURIComponent(community)}` : ""}`;
   const profiling = createRelayProfiler();
+  const verify = createEventVerifier();
   const response = await fetch(`${endpoint}/session`, {
     credentials: "same-origin",
     signal: signal ?? null,
@@ -141,10 +231,16 @@ export async function connectBrokerTransport(
     relayAuthor?: unknown;
     archiveAuthority?: unknown;
     writeKinds?: number[];
+    workflowReads?: boolean;
+    attachmentUploads?: boolean;
+    directMessages?: boolean;
     relayUrl?: string;
     live?: boolean;
+    presence?: boolean;
     sidebarPreferences?: boolean;
+    channelKit?: boolean;
     agentLibrary?: boolean;
+    agentActivity?: boolean;
     readState?: boolean;
     readStateCommunity?: string;
   };
@@ -160,19 +256,112 @@ export async function connectBrokerTransport(
       "invalid-response",
       "Relay broker session is malformed",
     );
+  let traffic: LiveSubscription | undefined;
+  const publicationHeaders = () => ({
+    "Content-Type": "application/json",
+    // Matched development frontend/host: publication requires the existing owner.
+    "X-Buzz-Live-ID": traffic?.identity?.() ?? "",
+  });
   return {
     profiling,
+    ...(session.attachmentUploads === true && session.relayUrl
+      ? { uploadAttachment: brokerUpload(endpoint, session.relayUrl) }
+      : {}),
+    ...(session.presence && session.live
+      ? {
+          async presenceSnapshot(
+            authors: readonly string[],
+            signal: AbortSignal,
+          ) {
+            const filters = [
+              { kinds: [20001], authors, limit: authors.length },
+            ];
+            if (!presenceFilter(filters))
+              throw new Error("Invalid presence demand");
+            const bounded = AbortSignal.any([
+              signal,
+              AbortSignal.timeout(10000),
+            ]);
+            const result = await fetch(`${endpoint}/presence-snapshot`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(filters),
+              signal: bounded,
+            });
+            if (result.status === 204) return null;
+            if (!result.ok) {
+              const failure = await readApiFailure(result);
+              throw new ReadError(
+                "unavailable",
+                failure.error,
+                result.status,
+                failure.retryAfterMs,
+              );
+            }
+            return parsePresence(
+              JSON.parse(await presenceText(result)),
+              authors,
+              session.relayAuthor as string,
+              bounded,
+            );
+          },
+        }
+      : {}),
+    agentActivity: session.agentActivity === true && session.live === true,
     ...(session.live
       ? {
-          subscribe: (callbacks: LiveCallbacks) =>
-            subscribeBrokerTraffic(endpoint, callbacks),
+          subscribe: (callbacks: LiveCallbacks) => {
+            traffic = subscribeBrokerTraffic(endpoint, callbacks);
+            return traffic;
+          },
         }
       : {}),
     ...(session.relayUrl ? { scope: session.relayUrl } : {}),
+    ...(session.directMessages === true
+      ? {
+          async openDirectMessage(
+            pubkeys: readonly string[],
+            signal: AbortSignal,
+          ) {
+            const result = await fetch(`${endpoint}/direct-message`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pubkeys }),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+            });
+            if (!result.ok)
+              throw new Error("Could not open the direct message. Try again.");
+            const value = await result.json();
+            if (
+              typeof value?.channelId !== "string" ||
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                value.channelId,
+              )
+            )
+              throw new Error("The relay returned an invalid direct message.");
+            return value.channelId;
+          },
+        }
+      : {}),
     viewer: session.viewer,
     relayAuthor: session.relayAuthor,
     ...(typeof session.archiveAuthority === "string"
       ? { archiveAuthority: session.archiveAuthority }
+      : {}),
+    ...(session.workflowReads === true
+      ? {
+          workflows: workflowHost((route, body, signal) =>
+            fetch(`${endpoint}/${route}`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify(body),
+              signal,
+            }),
+          ),
+        }
       : {}),
     ...(session.agentLibrary
       ? {
@@ -202,6 +391,44 @@ export async function connectBrokerTransport(
             if (!result.ok)
               throw new Error(`Local decoder failed (HTTP ${result.status})`);
             return result.json();
+          },
+        }
+      : {}),
+    ...(session.channelKit
+      ? {
+          channelKit: {
+            async prepare(record: KitRecord, signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/channel-kit-prepare`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(record),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(
+                  `Recipe preparation failed (${response.status})`,
+                );
+              const result = await response.json();
+              if (
+                typeof result.content !== "string" ||
+                result.content.length > 24 * 1024
+              )
+                throw new Error("Invalid encrypted recipe");
+              return result.content as string;
+            },
+            async decode(events: readonly RelayEvent[], signal: AbortSignal) {
+              const response = await fetch(`${endpoint}/channel-kit-decode`, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(events),
+                signal,
+              });
+              if (!response.ok)
+                throw new Error(`Recipe decode failed (${response.status})`);
+              return response.json();
+            },
           },
         }
       : {}),
@@ -243,7 +470,7 @@ export async function connectBrokerTransport(
               const response = await fetch(`${endpoint}/read-state-publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: publicationHeaders(),
                 body: JSON.stringify(event),
                 signal,
               });
@@ -307,21 +534,22 @@ export async function connectBrokerTransport(
               const result = await fetch(`${endpoint}/publish`, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: { "Content-Type": "application/json" },
+                headers: publicationHeaders(),
                 body: JSON.stringify(event),
                 signal,
               });
               recordServerTiming(result, profiling, event.id);
-              await acceptPublish(result, event.id);
+              return acceptPublish(result, event.id);
             },
           },
         }
       : {}),
-    media: (url) =>
+    media: (url, size) =>
       mediaUrl(
         url,
         (target) => `${endpoint}/media?url=${encodeURIComponent(target)}`,
         session.relayUrl,
+        size,
       ),
     async query(filters, signal, requestId = "read", priority = "foreground") {
       const result = await fetch(`${endpoint}/query`, {
@@ -347,7 +575,7 @@ export async function connectBrokerTransport(
       }
       recordServerTiming(result, profiling, requestId);
       return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), signal),
+        parseEvents(await result.json(), verify, signal),
       );
     },
   };
@@ -368,6 +596,7 @@ export async function connectSignedTransport(
   httpOrigin = relayOrigin(httpOrigin);
   const principal = () => signedAdmissions(httpOrigin, viewer);
   const profiling = createRelayProfiler();
+  const verify = createEventVerifier();
   return {
     profiling,
     subscribe: (callbacks) => {
@@ -401,7 +630,7 @@ export async function connectSignedTransport(
     scope: httpOrigin,
     viewer,
     relayAuthor,
-    media: (url) => mediaUrl(url, undefined, httpOrigin),
+    media: (url, size) => mediaUrl(url, undefined, httpOrigin, size),
     writer: {
       sign: (event) => signer.signEvent(event),
       async publish(event, signal) {
@@ -447,7 +676,7 @@ export async function connectSignedTransport(
       }
       recordServerTiming(result, profiling, requestId);
       return profiling.measureAsync("read.verify", requestId, async () =>
-        parseEvents(await result.json(), signal),
+        parseEvents(await result.json(), verify, signal),
       );
     },
   };
@@ -484,8 +713,8 @@ async function signedPost(
       }),
     );
     if (signal?.aborted) throw signal.reason;
-    // Preparation retains this principal. Only actual fetch starts consume pacing
-    // credit, and admission rechecks any pause learned during asynchronous signing.
+    // Preparation retains this principal. Dispatch rechecks capacity and any
+    // server pause learned during asynchronous signing.
     const queued = profiling.start("http.admission", id);
     try {
       return await admittedApiRequest(
@@ -533,7 +762,8 @@ async function acceptPublish(response: Response, id: string) {
       `Relay delivery could not be confirmed (${response.status})`,
     );
   }
-  const result = (await response.json()) as {
+  const text = await readReceiptText(response);
+  const result = JSON.parse(text) as {
     accepted?: unknown;
     event_id?: unknown;
     message?: unknown;
@@ -546,6 +776,7 @@ async function acceptPublish(response: Response, id: string) {
         ? result.message
         : "Relay rejected the message",
     );
+  return typeof result.message === "string" ? result.message : "";
 }
 
 function recordServerTiming(

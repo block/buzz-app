@@ -15,6 +15,7 @@ function plugin(id = "example.page", revision = "one", enabled = true) {
     revision,
     enabled,
     previous: null,
+    reloadable: true,
     error: null,
   };
 }

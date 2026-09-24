@@ -6,6 +6,7 @@ import {
   bounds,
   flush,
   keypair,
+  message,
   metadata,
   roster,
   scriptedTransport,
@@ -225,3 +226,80 @@ it("long API pause keeps lightweight catch-up obligations; retry does not drain 
     owner.dispose();
   }
 });
+
+it.each([1, 2, 130])(
+  "catch-up preserves unread evidence for a %s-channel roster",
+  async (count) => {
+    const relay = keypair(),
+      viewer = keypair(),
+      peer = keypair();
+    const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+    let live!: LiveCallbacks;
+    const owner = createRelaySession({
+      ...wire.transport,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
+    try {
+      const ids = Array.from(
+        { length: count },
+        (_, i) => `room-${i.toString().padStart(3, "0")}`,
+      );
+      const first = ids[0];
+      assert.exists(first);
+      live.receive(ids.map((id) => roster(relay, id, [viewer.pubkey])));
+      owner.session.channels.ensure(first);
+      const oldHead = wire.next();
+      const repair = owner.session.unread.ensure();
+      await flush();
+      const evidence = wire.next();
+      expect(evidence.filters[0]?.["#h"]).toEqual(ids.slice(0, 128));
+      // Force the production race: both the old head and unread batch are still
+      // in flight when the live route establishes. Only the old head is obsolete.
+      live.state({ status: "connected", routes: [] });
+      live.established(first);
+      await flush();
+      const head = wire.next();
+      expect(head.filters[0]).toMatchObject({ "#h": [first], top_level: true });
+      expect(oldHead.signal?.aborted).toBe(true);
+      expect(evidence.signal?.aborted).toBe(false);
+      head.respond([
+        bounds(relay, first, "head", { has_more: false, next_cursor: null }),
+      ]);
+      for (let offset = 0; offset < ids.length; offset += 128) {
+        const batch = offset === 0 ? evidence : wire.next();
+        const batchIds = ids.slice(offset, offset + 128);
+        expect(batch.filters[0]?.["#h"]).toEqual(batchIds);
+        batch.respond(
+          batchIds.map((id) =>
+            message(peer, id, "unread evidence", 1700000900),
+          ),
+        );
+        await flush();
+      }
+      await repair;
+      expect(wire.pending).toHaveLength(0);
+      for (const channelId of ids) {
+        const snapshot = owner.session.unread.snapshot({
+          kind: "channel",
+          channelId,
+        });
+        expect(snapshot).toMatchObject({
+          observedCount: 1,
+          freshness: "observed",
+        });
+        expect(snapshot.error).toBeUndefined();
+      }
+      // Evidence repair must not populate timeline windows or undo catch-up.
+      expect(owner.session.channels.window(first).rows).toEqual([]);
+      expect(
+        owner.session.live.snapshot().heads.find((h) => h.channelId === first)
+          ?.state,
+      ).toBe("verified");
+    } finally {
+      owner.dispose();
+    }
+  },
+);

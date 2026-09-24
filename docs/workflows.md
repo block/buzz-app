@@ -9,8 +9,9 @@ See the [capability contract](../src/features/workflows/types.ts).
 ## Scope
 
 - Channel-scoped saved configurations; new drafts start disabled.
-- Form editing for message/reaction triggers and Send Message/Delay actions.
-  Other definitions stay in YAML; opening them does not rewrite their contents.
+- Form editing for message/reaction/diff triggers and Send Message/Delay
+  actions. Other definitions stay in YAML; opening them does not rewrite their
+  contents.
 - Save with the original owner/channel/UUID and signed `expected-revision`.
   Warn on broad message or schedule activation, not ordinary enabled edits.
 - Confirmed deletion request, manual run, and on-demand run/trace history in

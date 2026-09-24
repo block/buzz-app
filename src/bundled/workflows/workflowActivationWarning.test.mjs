@@ -49,4 +49,9 @@ test("returns no warning for malformed or unrelated definitions", () => {
     getWorkflowActivationWarning(workflowYaml("  on: reaction_added")),
     null,
   );
+  // Matches the reference: only unfiltered message_posted triggers warn.
+  assert.equal(
+    getWorkflowActivationWarning(workflowYaml("  on: diff_posted")),
+    null,
+  );
 });

@@ -40,6 +40,8 @@ function sendMessageState(overrides) {
 const acceptedFixtures = [
   `name: Notify\ntrigger: { on: message_posted }\nsteps: [{ id: notify_1, action: send_message, text: hello }]\n`,
   `name: React\ndescription: Reply to a reaction\nenabled: false\ntrigger: { on: reaction_added, emoji: eyes, filter: 'trigger_message_id == "abc123"' }\nsteps: [{ id: reply, name: Reply, timeout_secs: 30, action: send_message, text: hi, channel: channel-id, reply_in_thread: true }, { id: wait, action: delay, duration: 5m }]\n`,
+  `name: Diff\ntrigger: { on: diff_posted }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
+  `name: Diff review\ntrigger: { on: diff_posted, filter: 'str_contains(trigger_text, "src/")' }\nsteps: [{ id: s1, action: send_message, text: reviewing, reply_in_thread: true }, { id: wait, action: delay, duration: 1m }]\n`,
 ];
 
 test("accepted Form fixtures survive a semantic YAML round trip", () => {
@@ -57,6 +59,7 @@ test("recognized nodes with unknown fields are refused without touching YAML", (
     `name: Test\nunknown: true\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
     `name: Test\ntrigger: { on: message_posted, future_filter: x }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
     `name: Test\ntrigger: { on: message_posted }\nsteps: [{ id: s1, action: send_message, text: hi, retry: 3 }]\n`,
+    `name: Test\ntrigger: { on: diff_posted, cron: '0 9 * * *' }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
   ];
 
   for (const yaml of fixtures) {
@@ -65,6 +68,44 @@ test("recognized nodes with unknown fields are refused without touching YAML", (
     assert.equal(result.ok, false);
     assert.match(result.error, /YAML editor/);
     assert.equal(yaml, original);
+  }
+});
+
+test("diff_posted accepts only a filter and never emits emoji", () => {
+  const withEmoji = yamlToFormState(
+    `name: Test\ntrigger: { on: diff_posted, emoji: eyes }\nsteps: [{ id: s1, action: send_message, text: hi }]\n`,
+  );
+  assert.equal(withEmoji.ok, false);
+  assert.match(
+    withEmoji.error,
+    /Unsupported diff_posted trigger field "emoji" — use the YAML editor/,
+  );
+
+  const generated = parseYaml(
+    formStateToYaml({
+      ...DEFAULT_FORM_STATE,
+      name: "Diff",
+      trigger: {
+        on: "diff_posted",
+        emoji: "eyes",
+        filter: 'trigger_text != ""',
+      },
+      steps: [{ id: "s1", action: "send_message", text: "hi" }],
+    }),
+  );
+  assert.deepEqual(generated.trigger, {
+    on: "diff_posted",
+    filter: 'trigger_text != ""',
+  });
+});
+
+test("reply_in_thread is accepted on every message-bearing trigger", () => {
+  for (const trigger of ["message_posted", "reaction_added", "diff_posted"]) {
+    const yaml = `name: Reply\ntrigger: { on: ${trigger} }\nsteps: [{ id: s1, action: send_message, text: hi, reply_in_thread: true }]\n`;
+    const state = accepted(yaml);
+    assert.equal(state.trigger.on, trigger);
+    assert.equal(state.steps[0].replyInThread, true);
+    assert.match(formStateToYaml(state), /reply_in_thread: true/);
   }
 });
 
@@ -212,7 +253,7 @@ test("new workflow drafts start explicitly disabled", () => {
 });
 
 test("unsupported legacy triggers and actions remain YAML-only without parsing into form state", () => {
-  for (const trigger of ["diff_posted", "webhook", "schedule"]) {
+  for (const trigger of ["webhook", "schedule"]) {
     const yaml = `# retained\nname: Advanced\ntrigger: { on: ${trigger}, cron: '0 9 * * *' }\nsteps: [{id: s1, action: send_message, text: hi}]\n`;
     const result = yamlToFormState(yaml);
     assert.equal(result.ok, false);

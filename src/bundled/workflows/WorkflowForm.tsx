@@ -7,6 +7,7 @@ import { Switch } from "../../shared/design-system/ui/Switch";
 import { formWithStep } from "./editor-model";
 import {
   ACTION_LABELS,
+  isTriggerType,
   nextStepId,
   type WorkflowFormState,
 } from "./workflowFormTypes";
@@ -40,14 +41,12 @@ export function WorkflowForm({
             options: [
               { value: "message_posted", label: "Message posted" },
               { value: "reaction_added", label: "Reaction added" },
+              { value: "diff_posted", label: "Diff posted" },
             ],
           },
         ]}
         onValueChange={(value) => {
-          if (
-            !disabled &&
-            (value === "message_posted" || value === "reaction_added")
-          )
+          if (!disabled && isTriggerType(value))
             onChange({ ...state, trigger: { on: value } });
         }}
       />

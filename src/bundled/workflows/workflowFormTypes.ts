@@ -6,8 +6,16 @@ import {
   parseDurationSeconds,
 } from "./workflowDuration";
 
-export const TRIGGER_TYPES = ["message_posted", "reaction_added"] as const;
+export const TRIGGER_TYPES = [
+  "message_posted",
+  "reaction_added",
+  "diff_posted",
+] as const;
 export type TriggerType = (typeof TRIGGER_TYPES)[number];
+
+export function isTriggerType(value: string): value is TriggerType {
+  return (TRIGGER_TYPES as readonly string[]).includes(value);
+}
 
 export const ACTION_TYPES = ["delay", "send_message"] as const;
 export type ActionType = (typeof ACTION_TYPES)[number];
@@ -125,6 +133,7 @@ const TOP_LEVEL_KEYS = new Set([
 const TRIGGER_KEYS: Record<TriggerType, ReadonlySet<string>> = {
   message_posted: new Set(["on", "filter"]),
   reaction_added: new Set(["on", "emoji", "filter"]),
+  diff_posted: new Set(["on", "filter"]),
 };
 const COMMON_STEP_KEYS = ["id", "name", "action", "if", "timeout_secs"];
 const ACTION_STEP_KEYS: Record<ActionType, ReadonlySet<string>> = {
@@ -227,13 +236,13 @@ export function yamlToFormState(
     if (!rawTrigger || typeof rawTrigger.on !== "string") {
       return { ok: false, error: "trigger.on is required" };
     }
-    if (!TRIGGER_TYPES.includes(rawTrigger.on as TriggerType)) {
+    if (!isTriggerType(rawTrigger.on)) {
       return {
         ok: false,
         error: `Unsupported trigger type "${rawTrigger.on}" — use the YAML editor`,
       };
     }
-    const triggerOn = rawTrigger.on as TriggerType;
+    const triggerOn = rawTrigger.on;
     const triggerUnknown = unknownKey(rawTrigger, TRIGGER_KEYS[triggerOn]);
     if (triggerUnknown) {
       return {
@@ -341,6 +350,9 @@ export function yamlToFormState(
         );
         if (error) return { ok: false, error };
       }
+      // The relay schema accepts reply_in_thread only on message-bearing
+      // triggers (message_posted, reaction_added, diff_posted). Every trigger
+      // Form mode supports today qualifies, so no trigger-based refusal yet.
       if (step.reply_in_thread !== undefined) {
         if (typeof step.reply_in_thread !== "boolean") {
           return {

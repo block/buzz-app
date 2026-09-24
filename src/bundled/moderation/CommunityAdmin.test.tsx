@@ -304,3 +304,100 @@ it("recovers from an initial read failure on retry", async () => {
   ).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
 });
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+
+it("disables an open confirmation when a pending refresh fails", async () => {
+  const user = userEvent.setup();
+  const calls = broker({
+    member: () => Response.json({ accepted: true, message: "" }),
+  });
+  const { relay: data, read } = relay(owner);
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  const menus = await screen.findAllByRole("button", { name: /^Actions for / });
+  await user.click(menus[1] as HTMLElement);
+  await user.click(await screen.findByRole("menuitem", { name: "Remove" }));
+  const dialog = await screen.findByRole("alertdialog");
+  const confirm = within(dialog).getByRole("button", { name: "Remove" });
+  expect(confirm).toBeEnabled();
+  const held = deferred<ReturnType<typeof snapshot>[]>();
+  read.mockReturnValueOnce(held.promise);
+  // Refresh stays reachable behind the modal in the browser; drive it directly.
+  screen.getByRole("button", { name: "Refresh", hidden: true }).click();
+  await waitFor(() => expect(confirm).toBeDisabled());
+  held.reject(new Error("relay unavailable"));
+  expect(
+    await within(dialog).findByText(
+      "The member list is out of date. Retry before making changes.",
+    ),
+  ).toBeVisible();
+  expect(confirm).toBeDisabled();
+  confirm.click();
+  await Promise.resolve();
+  expect(calls.filter((c) => c.route === "member")).toHaveLength(0);
+  await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+  await user.click(screen.getByRole("button", { name: "Retry" }));
+  await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  expect(calls.filter((c) => c.route === "member")).toHaveLength(0);
+});
+
+it("locks an open invite dialog after an accepted add whose refresh fails", async () => {
+  const user = userEvent.setup();
+  const calls = broker({
+    member: () => Response.json({ accepted: true, message: "" }),
+    invite: () =>
+      Response.json({
+        code: "abc",
+        url: "https://primary.example/invite/abc",
+        expires_at: 1700003600,
+        max_uses: null,
+        uses_remaining: null,
+      }),
+  });
+  const { relay: data, read } = relay(owner);
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Invite to community" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  read.mockRejectedValueOnce(new Error("relay unavailable"));
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Public key" }),
+    "3".repeat(64),
+  );
+  await user.click(within(dialog).getByRole("button", { name: "Add member" }));
+  expect(await within(dialog).findByText("Member added.")).toBeVisible();
+  expect(
+    await within(dialog).findByText(
+      "The member list is out of date. Retry before making changes.",
+    ),
+  ).toBeVisible();
+  await user.type(
+    within(dialog).getByRole("textbox", { name: "Public key" }),
+    "4".repeat(64),
+  );
+  expect(
+    within(dialog).getByRole("button", { name: "Add member" }),
+  ).toBeDisabled();
+  expect(
+    within(dialog).getByRole("button", { name: "Create invite link" }),
+  ).toBeDisabled();
+  expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
+  expect(calls.filter((c) => c.route === "invite")).toHaveLength(0);
+  // Read-only recovery behind the modal re-enables new writes.
+  screen.getByRole("button", { name: "Retry", hidden: true }).click();
+  await waitFor(() =>
+    expect(
+      within(dialog).getByRole("button", { name: "Add member" }),
+    ).toBeEnabled(),
+  );
+  expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
+});

@@ -54,6 +54,7 @@ const USES = [
 ];
 const message = (reason: unknown) =>
   reason instanceof Error ? reason.message : String(reason);
+const STALE = "The member list is out of date. Retry before making changes.";
 
 export function CommunityAdmin({
   relay,
@@ -152,11 +153,17 @@ function Members({
   const role = members?.find((m) => m.pubkey === viewer)?.role;
   const manager = role === "owner" || role === "admin";
   const stale = !!readError;
+  // No new command may start from a roster that is stale or being re-read.
+  const locked = stale || refreshing;
   const name = (pubkey: string) =>
     profiles.get(pubkey)?.name || formatPublicKey(pubkey) || pubkey;
   /** Sends one command. Rejects only when the write itself is not confirmed. */
   async function apply(change: MemberChange) {
     if (!active()) return;
+    if (locked) {
+      setError(STALE);
+      throw new Error(STALE);
+    }
     setBusy(true);
     setError("");
     setNotice("");
@@ -227,6 +234,17 @@ function Members({
           ["owner", "admin", "member"].indexOf(b.role) ||
         name(a.pubkey).localeCompare(name(b.pubkey)),
     );
+  // Revalidate the captured intent against the current roster on every render.
+  const target = pending
+    ? members.find((m) => m.pubkey === pending.member.pubkey)
+    : undefined;
+  const confirmable =
+    !!pending &&
+    !!target &&
+    !locked &&
+    allowedActions(role, target, target.pubkey === viewer).includes(
+      pending.action,
+    );
   const verb = {
     promote: "Make admin",
     demote: "Make member",
@@ -287,7 +305,7 @@ function Members({
                         <IconButton
                           aria-label={`Actions for ${label}`}
                           icon={<DotsThreeIcon />}
-                          disabled={busy}
+                          disabled={busy || refreshing}
                         />
                       }
                     />
@@ -317,11 +335,13 @@ function Members({
         <AlertDialog
           title={`${verb[pending.action]}: ${name(pending.member.pubkey)}?`}
           description={
-            pending.action === "remove"
-              ? "They lose access to this community until they are invited again."
-              : pending.action === "promote"
-                ? "Admins can invite people and remove members."
-                : "They will no longer be able to invite people or manage members."
+            stale
+              ? STALE
+              : pending.action === "remove"
+                ? "They lose access to this community until they are invited again."
+                : pending.action === "promote"
+                  ? "Admins can invite people and remove members."
+                  : "They will no longer be able to invite people or manage members."
           }
           pending={busy}
           onClose={() => setPending(null)}
@@ -335,6 +355,7 @@ function Members({
                   pending.action === "remove" ? "destructive" : "primary"
                 }
                 loading={busy}
+                disabled={busy || !confirmable}
                 onClick={() =>
                   void apply(
                     pending.action === "remove"
@@ -361,6 +382,8 @@ function Members({
         close={() => setInviting(false)}
         community={community}
         owner={role === "owner"}
+        stale={stale}
+        refreshing={refreshing}
         active={active}
         add={(pubkey, next) => apply({ action: "add", pubkey, role: next })}
       />
@@ -385,6 +408,8 @@ function InviteDialog({
   close,
   community,
   owner,
+  stale,
+  refreshing,
   active,
   add,
 }: {
@@ -392,6 +417,8 @@ function InviteDialog({
   close(): void;
   community: string;
   owner: boolean;
+  stale: boolean;
+  refreshing: boolean;
   active(): boolean;
   add(pubkey: string, role: "admin" | "member"): Promise<void>;
 }) {
@@ -403,8 +430,9 @@ function InviteDialog({
   const [busy, setBusy] = useState<"" | "mint" | "add">("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const locked = stale || refreshing;
   async function run(kind: "mint" | "add", work: () => Promise<void>) {
-    if (!active()) return;
+    if (!active() || locked) return;
     setBusy(kind);
     setError("");
     setNotice("");
@@ -470,7 +498,7 @@ function InviteDialog({
           <Button
             type="submit"
             loading={busy === "add"}
-            disabled={!key.trim() || !!busy}
+            disabled={!key.trim() || !!busy || locked}
           >
             Add member
           </Button>
@@ -494,7 +522,7 @@ function InviteDialog({
         </div>
         <Button
           loading={busy === "mint"}
-          disabled={!!busy}
+          disabled={!!busy || locked}
           onClick={() =>
             void run("mint", async () => {
               setInvite(null);
@@ -536,6 +564,11 @@ function InviteDialog({
         {error && (
           <p role="alert" className="m-0 text-body-sm">
             {error}
+          </p>
+        )}
+        {stale && !busy && (
+          <p role="alert" className="m-0 text-body-sm">
+            {STALE}
           </p>
         )}
         {notice && (

@@ -20,6 +20,7 @@ import type { AgentLibraryReader } from "../agents/library";
 import {
   projectSidebarPreferences,
   type SidebarSortMutator,
+  type SidebarMuteMutator,
   type SidebarDecoder,
   type SidebarPreferences,
 } from "./sidebar-preferences";
@@ -95,6 +96,7 @@ export interface ReadTransport {
     string,
     "online" | "away" | "offline" | "unknown"
   > | null>;
+  readonly writeSidebarMute?: SidebarMuteMutator;
   readonly profiling?: RelayProfiler;
   /** Verified incoming traffic. The session owns this subscription and fences late delivery. */
   subscribe?(callbacks: LiveCallbacks): LiveSubscription;
@@ -260,6 +262,7 @@ export async function connectBrokerTransport(
     sidebarPreferences?: boolean;
     sidebarSortWrites?: boolean;
     channelActivity?: boolean;
+    sidebarMuteWrites?: boolean;
     channelKit?: boolean;
     agentLibrary?: boolean;
     agentMemories?: boolean;
@@ -595,6 +598,7 @@ export async function connectBrokerTransport(
               projectSidebarPreferences(
                 undefined,
                 undefined,
+                undefined,
                 {
                   version: 1,
                   groups: value.groups,
@@ -602,6 +606,26 @@ export async function connectBrokerTransport(
                 sectionIds,
               ).sort ?? {}
             );
+          },
+        }
+      : {}),
+    ...(session.sidebarMuteWrites
+      ? {
+          async writeSidebarMute(intent, signal) {
+            const result = await fetch(`${endpoint}/sidebar-mute`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: publicationHeaders(),
+              body: JSON.stringify(intent),
+              signal,
+            });
+            if (!result.ok)
+              throw new Error((await readApiFailure(result)).error);
+            return projectSidebarPreferences(
+              undefined,
+              undefined,
+              await result.json(),
+            ).muted;
           },
         }
       : {}),

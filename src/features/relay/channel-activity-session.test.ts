@@ -37,6 +37,7 @@ function setup() {
       sections: [],
       assignments: {},
       starred: [],
+      muted: [],
       sort: {},
     }),
     writeSidebarSort: async (group, mode) => {

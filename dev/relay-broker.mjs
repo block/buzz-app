@@ -1,5 +1,9 @@
 import { memoryFilter, decodeAgentMemory } from "./agent-memory.mjs";
 import { memoryResponseText } from "../src/features/agents/memory.ts";
+import {
+  assertSidebarMuteIntent,
+  mutateSidebarMute,
+} from "./sidebar-mutes.mjs";
 import { prepareMedia } from "./media-preparation.mjs";
 import { assertSidebarSortIntent, mutateSidebarSort } from "./sidebar-sort.mjs";
 import { readProjectGit } from "./project-git.mjs";
@@ -450,7 +454,7 @@ export function relayBrokerPlugin({
       const upstream = createUpstream();
       // Injected fixtures bypass the pool; the live relay always uses the warm agent.
       const fetchUpstream = upstreamFetch ?? upstream.fetch;
-      const readSidebarHead = async (response, label = "group") => {
+      const readSidebarHead = async (response, label = "preference") => {
         if (!response.body)
           throw new Error(`Sidebar ${label} response missing`);
         const reader = response.body.getReader();
@@ -471,6 +475,7 @@ export function relayBrokerPlugin({
           reader.releaseLock();
         }
       };
+
       // Discovery is lazy and independent for each community; unavailable relays never block startup.
       const registered = new Map(Object.entries(aliases));
       const authorities = new Map();
@@ -896,6 +901,126 @@ export function relayBrokerPlugin({
                 sidebarMutations.delete(relay);
             }
           }
+          if (route === "/api/relay/sidebar-mute" && req.method === "POST") {
+            let raw = "";
+            for await (const part of req) {
+              raw += part;
+              if (Buffer.byteLength(raw) > 2048)
+                return json(res, 413, {
+                  error: `Sidebar preference intent is too large`,
+                });
+            }
+            let intent;
+            try {
+              intent = JSON.parse(raw);
+              assertSidebarMuteIntent(intent);
+            } catch {
+              return json(res, 400, {
+                error: `Invalid sidebar preference intent`,
+              });
+            }
+            const stream = streams.get(req.headers["x-buzz-live-id"]);
+            if (!stream || stream.relay !== relay)
+              return json(res, 503, {
+                error: "Publication socket unavailable",
+                sent: false,
+              });
+            const request = new AbortController();
+            const close = () => request.abort();
+            res.once("close", close);
+            const previous = sidebarMutations.get(relay) ?? Promise.resolve();
+            const mutation = previous
+              .catch(() => {})
+              .then(async () => {
+                request.signal.throwIfAborted();
+                const filter = [
+                  {
+                    kinds: [30078],
+                    authors: [viewer],
+                    "#d": ["channel-mutes"],
+                    limit: 1,
+                  },
+                ];
+                const lane = admissions(relay, viewer).api;
+                const requestSignal = AbortSignal.any([
+                  request.signal,
+                  AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+                ]);
+                const dispatch = (path, body) =>
+                  admittedApiRequest(
+                    lane,
+                    () => {
+                      requestSignal.throwIfAborted();
+                      const value = JSON.stringify(body);
+                      const auth = finalizeEvent(
+                        {
+                          kind: 27235,
+                          created_at: Math.floor(Date.now() / 1000),
+                          content: "",
+                          tags: [
+                            ["u", `${relay}${path}`],
+                            ["method", "POST"],
+                            [
+                              "payload",
+                              createHash("sha256").update(value).digest("hex"),
+                            ],
+                            ["nonce", randomBytes(16).toString("hex")],
+                          ],
+                        },
+                        key,
+                      );
+                      return fetchUpstream(`${relay}${path}`, {
+                        method: "POST",
+                        headers: {
+                          "Content-Type": "application/json",
+                          Authorization:
+                            "Nostr " +
+                            Buffer.from(JSON.stringify(auth)).toString(
+                              "base64",
+                            ),
+                        },
+                        body: value,
+                        redirect: "error",
+                        signal: requestSignal,
+                      });
+                    },
+                    requestSignal,
+                  );
+                const readHead = async () => {
+                  const response = await dispatch("/query", filter);
+                  if (!response.ok)
+                    throw new Error(
+                      `Sidebar preference query failed (${response.status})`,
+                    );
+                  return readSidebarHead(response);
+                };
+                const publishEvent = (event) =>
+                  stream.traffic.publish(event, requestSignal);
+                return mutateSidebarMute(intent, key, readHead, publishEvent);
+              });
+            sidebarMutations.set(relay, mutation);
+            try {
+              return json(res, 200, await mutation);
+            } catch (error) {
+              if (error instanceof ApiPaused)
+                return json(res, 429, {
+                  error: error.message,
+                  sent: false,
+                  paused: true,
+                  retryAfterMs: error.retryAfterMs,
+                });
+              return json(res, 502, {
+                error:
+                  error instanceof Error
+                    ? error.message
+                    : `Sidebar preference failed`,
+              });
+            } finally {
+              res.off("close", close);
+              if (sidebarMutations.get(relay) === mutation)
+                sidebarMutations.delete(relay);
+            }
+          }
           if (route === "/api/relay/agent-library" && req.method === "GET") {
             try {
               // Share concurrent reads, never retain the local snapshot after completion.
@@ -934,6 +1059,7 @@ export function relayBrokerPlugin({
               sidebarPreferences: true,
               sidebarSortWrites: true,
               channelActivity: true,
+              sidebarMuteWrites: true,
               channelKit: true,
               readState: true,
               agentLibrary: true,

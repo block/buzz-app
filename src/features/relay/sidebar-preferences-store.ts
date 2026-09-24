@@ -2,6 +2,7 @@ import type {
   SidebarPreferences,
   SidebarSortMode,
   SidebarSortMutator,
+  SidebarMuteMutator,
 } from "./sidebar-preferences";
 
 type SortFailure = Readonly<{
@@ -21,6 +22,7 @@ export function createSidebarPreferencesStore(
   read: (signal?: AbortSignal) => Promise<SidebarPreferences>,
   available: boolean,
   notify = (listener: () => void) => listener(),
+  writeMute?: SidebarMuteMutator,
   writeSort?: SidebarSortMutator,
 ) {
   const listeners = new Set<() => void>();
@@ -68,6 +70,7 @@ export function createSidebarPreferencesStore(
       ),
       assignments: Object.freeze({ ...data.assignments }),
       starred: Object.freeze([...data.starred]),
+      muted: Object.freeze([...data.muted]),
       ...(data.sort ? { sort: Object.freeze({ ...data.sort }) } : {}),
     });
   const publish = (next: Snapshot) => {
@@ -83,8 +86,8 @@ export function createSidebarPreferencesStore(
   function refresh(): Promise<void> {
     if (closed || !available) return Promise.resolve();
     if (active) return active.promise;
-    const refreshMutation = mutation;
     const controller = new AbortController();
+    const refreshMutation = mutation;
     const job = { controller, promise: Promise.resolve() };
     active = job;
     job.promise = Promise.resolve().then(async () => {
@@ -162,6 +165,7 @@ export function createSidebarPreferencesStore(
           sections: [],
           assignments: {},
           starred: [],
+          muted: [],
         };
         publish({
           status: "ready",
@@ -223,6 +227,46 @@ export function createSidebarPreferencesStore(
         );
         return run;
       },
+      muteWritable: !!writeMute,
+      setMute(channelId: string, muted: boolean, signal?: AbortSignal) {
+        if (closed || !writeMute || !snapshot.data)
+          return Promise.reject(
+            new Error("Sidebar mutes are unavailable in this host"),
+          );
+        const writeGeneration = generation;
+        const writeSignal = AbortSignal.any([
+          writeLifetime.signal,
+          ...(signal ? [signal] : []),
+        ]);
+        const run = writeQueue
+          .catch(() => {})
+          .then(async () => {
+            if (closed || generation !== writeGeneration)
+              throw new Error("Sidebar mutes are unavailable");
+            writeSignal.throwIfAborted();
+            const mutes = await writeMute({ channelId, muted }, writeSignal);
+            if (closed || generation !== writeGeneration)
+              throw new Error("Sidebar mutes are unavailable");
+            writeSignal.throwIfAborted();
+            const current = snapshot.data;
+            if (!current) throw new Error("Sidebar mutes are unavailable");
+            mutation++;
+            publish({
+              status: "ready",
+              data: Object.freeze({
+                ...current,
+                muted: Object.freeze([...mutes]),
+              }),
+            });
+            return mutes;
+          });
+        writeQueue = run.then(
+          () => undefined,
+          () => undefined,
+        );
+        return run;
+      },
+
       // Keep explicit one-shot reads compatible; views use the retained snapshot.
       read,
       snapshot: () => snapshot,

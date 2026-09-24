@@ -70,14 +70,48 @@ connection generation. This resets their session-owned state on switching or
 reconnecting, not unrelated page drafts;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
-Saved sidebar groups, ordering, assignments and stars live in the session's
-`sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
+Saved sidebar groups, ordering, assignments, stars, mutes and sorting live in the
+session's `sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
 one initial read; `refresh()` explicitly reloads/retries while retaining the last
 good snapshot through loading/errors. Page exits neither restart nor cancel that
 read. Cache clearing and session disposal cancel it and discard decoded data;
 late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. There is no new disk cache or automatic cross-device sync.
+
+The browser/development host exposes one narrow **Mute/Unmute** command. It
+re-reads the viewer's signed encrypted `channel-mutes` coordinate, changes only the
+requested entry, publishes through existing relay admission, and confirms via
+readback. Publication uses the existing authenticated live socket, scoped to the
+requesting session/community; a missing or disconnected owner fails without HTTP
+fallback or automatic replay. Unrelated fields and explicit unmute tombstones
+survive. Invalid, unreadable, or over-budget heads fail closed; only a successful absent-head read
+can seed a record. Same-host writes serialize per relay. This is confirmed
+whole-record replacement, not atomic cross-device merging or a durable outbox;
+simultaneous writers on different hosts can still race. Failure requires explicit
+retry. No group/star mutation or alternate menu implementation is included;
+[section sorting](#sidebar-sort-persistence) uses its separate preference coordinate.
+
+Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
+Context Menu key. They extend the persistent sidebar’s existing menu after
+**New session**, separated from session entry; DM removal stays separate.
+Mute closes immediately and optimistically changes the next menu action, not
+unread truth or notification policy before confirmation. Failure rolls back to
+confirmed state and shows an app notification with Retry (same intent) and Dismiss.
+Newer clicks supersede older completion UI; session-owned writes and sidebar
+pending/error presentation survive page switches. Session replacement discards
+that presentation. Cache clear/disposal abort
+pending work but cannot retract an accepted relay publication.
+
+Mark as Read delegates to the [durable unread owner](unread.md), without selecting
+the row, and closes after the local transaction commits. Observed unread or a
+manual mark offers **Mark as Read**; otherwise the menu offers **Mark as Unread**
+with its device-only tooltip. An open menu subscribes to the shared projection,
+without fetching history or inventing exact counts. Read errors remain in-menu
+for explicit retry. Focus resolves the current row by identity even if saved
+preferences relocated it during the transaction. Read actions require
+`frontier-sync`; hosts lacking mute writes keep read-only preference projection.
+Packaged hosts gain no speculative native preference writer.
 
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
 They survive page switches in the same mounted sidebar, are saved when that

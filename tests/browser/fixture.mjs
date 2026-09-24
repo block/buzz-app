@@ -874,6 +874,25 @@ export const test = base.extend({
         return;
       }
       expect(event.kind).toBe(30078);
+      const sidebarCoordinate = event.tags.find(([name]) => name === "d")?.[1];
+      if (sidebarCoordinate === "channel-mutes") {
+        expect(event.tags).toContainEqual(["t", sidebarCoordinate]);
+        const blob = JSON.parse(
+          nip44.v2.decrypt(
+            event.content,
+            nip44.v2.utils.getConversationKey(userKey, viewer),
+          ),
+        );
+        readEvents.get(community).set(sidebarCoordinate, event);
+        report.sidebarPublications ??= [];
+        report.sidebarPublications.push({
+          community,
+          coordinate: sidebarCoordinate,
+          event,
+          blob,
+        });
+        return;
+      }
       expect(event.tags).toContainEqual(["t", "read-state"]);
       const blob = JSON.parse(
         nip44.v2.decrypt(
@@ -1443,6 +1462,7 @@ export const test = base.extend({
       // each exact URL once, not every 502 or every console error in the test.
       const sidebarFailures = [
         ...(report.sidebarSortFailures ?? []),
+        ...(report.sidebarMuteFailures ?? []),
         ...(report.sidebarActivityFailures ?? []),
       ];
       const injectedSidebarFailure = (message, index) => {

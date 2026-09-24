@@ -122,6 +122,18 @@ test("section sort applies immediately, rolls back on failure, and persists retr
     blob: { groups: { channels: "recent" } },
   });
   const recentOrder = await order();
+  // The row menu and section sort share one session preference owner. A mute
+  // confirmation must not drop Recent, and later sorting must not drop mute.
+  const cedar = channels.locator('[data-channel-id="cedar"]');
+  await cedar.click({ button: "right" });
+  const rowMenu = page.getByRole("menu", { name: "Actions for Cedar" });
+  const muted = page.waitForResponse("**/sidebar-mute");
+  await rowMenu.getByRole("menuitem", { name: "Mute", exact: true }).click();
+  expect((await muted).ok()).toBe(true);
+  await (await muted).finished();
+  await expect(rowMenu).toHaveCount(0);
+  await expect(cedar).toBeFocused();
+  await expect.poll(order).toEqual(recentOrder);
   await openSort();
   await expect(
     menu.getByRole("menuitemradio", { name: "Recent" }),
@@ -210,6 +222,27 @@ test("section sort applies immediately, rolls back on failure, and persists retr
   expect(app.report.sidebarPublications.at(-1).blob.groups).toEqual({
     "section:work": "recent",
   });
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Messages", exact: true })
+    .first()
+    .click();
+  await expect.poll(order).toEqual(alphaOrder);
+  await cedar.click({ button: "right" });
+  await expect(
+    rowMenu.getByRole("menuitem", { name: "Unmute", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(cedar).toBeFocused();
+  await work.getByRole("button", { name: "More actions for Work" }).click();
+  await page
+    .getByRole("menu", { name: "More actions for Work", exact: true })
+    .getByRole("menuitem", { name: "Sort", exact: true })
+    .focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(
+    menu.getByRole("menuitemradio", { name: "Recent" }),
+  ).toHaveAttribute("aria-checked", "true");
   expect(app.report.unexpected).toEqual([]);
 });
 

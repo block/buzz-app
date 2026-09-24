@@ -59,6 +59,7 @@ const preferences = {
     sections: [],
     assignments: {},
     starred: [],
+    muted: [],
     sort: { channels: "recent" },
   },
 } as const;

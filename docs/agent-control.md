@@ -113,6 +113,15 @@ retire late starts; Save during a credential wait requires an explicit retry.
 Synthetic native tests inject rejecting or in-memory credentials and runtime
 resources. Production has no disposable storage override or preview launch mode.
 
+On Unix, an execed supervisor in the same app binary owns each agent's shared
+identity lock, isolated listener session, and temporary runtime directory. App
+Stop/Quit and kernel EOF on forced app death both trigger the existing whole-session
+teardown; ownership is released only after listener and workers have exited.
+Unconfirmed teardown keeps the lock and private directory, and normal Quit remains
+fail-closed. This does not clean up listeners orphaned before this fix, does not
+contain a worker that deliberately escapes its session, and does not add process
+containment on non-Unix platforms.
+
 ## Ownership and handoff
 
 - `features/agents/control.ts`: camelCase DTOs and app-owned observable projection.

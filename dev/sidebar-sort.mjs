@@ -58,7 +58,13 @@ function parseSortEvent(events, secret, sectionIds) {
     if (Buffer.byteLength(plaintext) > 128 * 1024)
       throw new Error("Sidebar plaintext budget exceeded");
     const blob = JSON.parse(plaintext);
-    projectSidebarPreferences(undefined, undefined, blob, sectionIds);
+    projectSidebarPreferences(
+      undefined,
+      undefined,
+      undefined,
+      blob,
+      sectionIds,
+    );
     return { blob, createdAt: event.created_at };
   } finally {
     key.fill(0);
@@ -75,6 +81,7 @@ export function prepareSidebarSort(events, intent, secret, now = Date.now()) {
   else groups[intent.group] = intent.mode;
   const projected =
     projectSidebarPreferences(
+      undefined,
       undefined,
       undefined,
       { ...current.blob, groups },

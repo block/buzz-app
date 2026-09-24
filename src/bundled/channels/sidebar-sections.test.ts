@@ -34,6 +34,7 @@ it("intersects groups/stars with active authorized streams, keeping forums and D
       "group-dm": "channels",
       other: "missing",
     },
+    muted: [],
     starred: [
       "star",
       "archived",
@@ -105,6 +106,7 @@ it("sorts every section independently with deterministic inactive and tie fallba
       "quiet-a": "work",
     },
     starred: [],
+    muted: [],
     sort: { "section:work": "recent" as const, forums: "alpha" as const },
   };
   expect(
@@ -128,6 +130,7 @@ it("Star projection is exclusive and retains empty saved groups", () => {
     sections: [{ id: "work", name: "Work", order: 0 }],
     assignments: { beta: "work" },
     starred: ["alpha", "beta"],
+    muted: [],
   };
   const placements = (starred: string[]) =>
     sidebarSections(channels, { ...saved, starred }).map((section) => [
@@ -177,6 +180,7 @@ it.each(["starred", "section:work", "channels", "forums", "dms"])(
       sections: [{ id: "work", name: "Work", order: 0 }],
       assignments: { "a-1": "work", "z-1": "work" },
       starred: ["a-0", "z-0"],
+      muted: [],
       sort: { [key]: "recent" },
     });
     expect(

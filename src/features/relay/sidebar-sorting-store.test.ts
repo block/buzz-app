@@ -11,6 +11,7 @@ const data: SidebarPreferences = {
   sections: [{ id: "work", name: "Work", order: 0 }],
   assignments: { alpha: "work" },
   starred: ["beta"],
+  muted: [],
 };
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -29,7 +30,13 @@ function setup() {
     pending.push(job);
     return job.promise;
   });
-  const owner = createSidebarPreferencesStore(read, true, undefined, sort);
+  const owner = createSidebarPreferencesStore(
+    read,
+    true,
+    undefined,
+    undefined,
+    sort,
+  );
   return { owner, preferences: owner.queries, pending, read, sort };
 }
 

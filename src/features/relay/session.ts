@@ -899,6 +899,20 @@ export function createRelaySession(
     !!transport?.decodeSidebarPreferences,
     notify,
     (() => {
+      const write = transport?.writeSidebarMute;
+      return write
+        ? (intent, signal) =>
+            write(
+              intent,
+              AbortSignal.any([
+                lifetime.signal,
+                AbortSignal.timeout(20_000),
+                signal,
+              ]),
+            )
+        : undefined;
+    })(),
+    (() => {
       const write = transport?.writeSidebarSort;
       return write
         ? (group, mode, sectionIds, signal) =>

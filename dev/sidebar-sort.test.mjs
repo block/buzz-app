@@ -187,6 +187,7 @@ it("projection accepts full-length section keys, rejects over-budget data, and i
     projectSidebarPreferences(
       undefined,
       undefined,
+      undefined,
       {
         version: 1,
         groups: {
@@ -200,7 +201,7 @@ it("projection accepts full-length section keys, rejects over-budget data, and i
     ).sort,
   ).toEqual({ [`section:${id}`]: "recent", channels: "recent" });
   expect(() =>
-    projectSidebarPreferences(undefined, undefined, {
+    projectSidebarPreferences(undefined, undefined, undefined, {
       version: 1,
       groups: Object.fromEntries(
         Array.from({ length: 105 }, (_, i) => [`section:${i}`, "recent"]),

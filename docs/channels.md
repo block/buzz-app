@@ -228,11 +228,12 @@ and modeled upstream I/O; it does not send messages to a live community.
 ## Channel lifecycle
 
 Lifecycle actions extend the persistent sidebar’s existing context popup after
-New session, using shared leading icons and a separator only when lifecycle items
-resolve. Right-click and keyboard access reuse the existing row trigger; no ⋮
-control or second popup is added. Session creation and child-session navigation
-keep their existing owners; sessions do not receive lifecycle actions. This slice adds no
-Move/Star/grouping, mute, read controls, or shared-menu restyling.
+New session and the mute/read group. Lifecycle items use shared leading icons and
+a separator only when they resolve and earlier actions exist. Right-click
+and keyboard access reuse the existing row trigger; no ⋮ control or second popup
+is added. Session creation, attention actions and child-session navigation keep
+their existing owners; sessions do not receive lifecycle actions. This slice adds
+no Move/Star/grouping controls or shared-menu restyling.
 
 The row menu resolves fresh relay-authored metadata (`39000`), administrators
 (`39001`) and membership (`39002`) at exact channel coordinates before offering

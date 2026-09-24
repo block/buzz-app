@@ -75,8 +75,14 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
     await page.keyboard.press("Shift+F10");
     await seen;
     await expect(menu).toBeVisible();
-    await expect(menu.getByRole("separator")).toHaveCount(0);
-    await expect(menu.getByRole("menuitem")).toHaveText(["New session"]);
+    // Attention actions remain usable while lifecycle permissions are held;
+    // the only separator belongs to that existing group, not pending lifecycle.
+    await expect(menu.getByRole("separator")).toHaveCount(1);
+    await expect(menu.getByRole("menuitem")).toHaveText([
+      "New session",
+      "Mute",
+      "Mark as Unread",
+    ]);
     await expect(menu.getByRole("menuitemradio")).toHaveCount(0);
   } finally {
     release();
@@ -84,9 +90,11 @@ test("archive confirmation returns focus on cancel and navigates after confirmed
   await expect(
     menu.getByRole("menuitem", { name: "Archive channel", exact: true }),
   ).toBeVisible();
-  await expect(menu.getByRole("separator")).toHaveCount(1);
+  await expect(menu.getByRole("separator")).toHaveCount(2);
   await expect(menu.getByRole("menuitem")).toHaveText([
     "New session",
+    "Mute",
+    "Mark as Unread",
     "Archive channel",
     "Delete channel",
   ]);

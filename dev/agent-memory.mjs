@@ -4,6 +4,7 @@ import { getPublicKey, nip44 } from "nostr-tools";
 import { eventDto } from "../src/features/relay/events.ts";
 import {
   memoryAgent,
+  memorySlug,
   MEMORY_EVENT_LIMIT,
   MEMORY_TEXT_BYTES,
 } from "../src/features/agents/memory.ts";
@@ -90,15 +91,7 @@ export async function decodeAgentMemory(events, secret, viewer, agent, signal) {
           throw new Error("Noncanonical memory plaintext");
         body = uniqueJson(text);
         const slug = body?.slug;
-        if (
-          typeof slug !== "string" ||
-          slug.length > 255 ||
-          (slug !== "core" &&
-            !/^mem\/[a-z0-9][a-z0-9_-]{0,63}(\/[a-z0-9][a-z0-9_-]{0,63})*$/.test(
-              slug,
-            ))
-        )
-          throw new Error("Invalid memory slug");
+        if (!memorySlug(slug)) throw new Error("Invalid memory slug");
         const expected = createHmac("sha256", key)
           .update("agent-memory/v1/d-tag\0")
           .update(slug)

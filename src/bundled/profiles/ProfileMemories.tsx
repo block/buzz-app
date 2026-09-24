@@ -73,6 +73,12 @@ export function ProfileMemories({
         </p>
       ) : snapshot.status === "denied" ? (
         <p role="alert">You don’t have access to these memories.</p>
+      ) : snapshot.status === "blocked" ? (
+        <p role="status">
+          Memory reads are paused while live updates are disconnected or session
+          data is being cleared. Retry after live updates reconnect or clearing
+          finishes.
+        </p>
       ) : snapshot.status === "error" ? (
         <p role="alert">
           Couldn’t load memories. Check your connection and try again.
@@ -115,7 +121,9 @@ export function ProfileMemories({
           disabled={loading}
           onClick={() => state?.refresh()}
         >
-          {snapshot?.status === "error" || snapshot?.status === "denied"
+          {snapshot?.status === "error" ||
+          snapshot?.status === "denied" ||
+          snapshot?.status === "blocked"
             ? "Retry memories"
             : "Refresh memories"}
         </Button>

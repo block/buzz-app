@@ -38,7 +38,11 @@ A session owns each explicitly opened view; its consumer releases it on unmount.
 Refresh drops the previous plaintext rather than displaying stale contents during
 errors. Access purge, disconnect, cache clear and disposal clear snapshots and
 abort/fence pending work. Reconnection does not automatically reload sensitive data.
-Read failure, denied access, unsupported host/target, partial result and successful
+For hosts with a live stream, connected live updates are an intentional revocation
+fence even though the memory read uses HTTP. Reads before connection or during
+reconnection/cache clearing report blocked, not a failed HTTP request. Manual
+retry after recovery is required; reconnecting never reloads plaintext automatically.
+Read failure, blocked admission, denied access, unsupported host/target, partial result and successful
 empty remain distinct. Session copies are RAM only; trusted plugin copies cannot
 be revoked or zeroized. The host zeroes its derived conversation-key byte array,
 not JavaScript strings. No secret key enters renderer/plugin JavaScript.

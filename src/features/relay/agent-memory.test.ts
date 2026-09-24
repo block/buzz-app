@@ -2,6 +2,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "./session";
 import { keypair, roster, scriptedTransport } from "./testing";
 import type { LiveCallbacks } from "./live";
+import { memorySlug } from "../agents/memory";
 import type { MemoryListing, MemoryReader } from "../agents/memory";
 const viewer = keypair(),
   relay = keypair(),
@@ -104,7 +105,7 @@ it("does not leak across relay/viewer sessions and does not refresh while discon
   expect(b.snapshot().listing).toBeUndefined();
   second.live.state({ status: "error", routes: [] });
   await b.refresh();
-  expect(b.snapshot().status).toBe("error");
+  expect(b.snapshot().status).toBe("blocked");
   expect(read).toHaveBeenCalledTimes(1);
 });
 it("reports denied/error separately, retries, rejects malformed host output and bounds simultaneous views", async () => {
@@ -148,7 +149,7 @@ it("disconnect subscribers cannot reenter with stale connected authority", async
   });
   h.live.state({ status: "error", routes: [] });
   stop();
-  expect(view.snapshot()).toEqual({ status: "error" });
+  expect(view.snapshot()).toEqual({ status: "blocked" });
   expect(read).toHaveBeenCalledTimes(1);
 });
 
@@ -211,4 +212,24 @@ it("cache clear blocks subscriber reentry and new views until all purges settle"
     for (const release of releases) release();
     await Promise.all([first, second, pending]);
   }
+});
+
+it("shares the bounded NIP-AE slug grammar", () => {
+  const segment = "a".repeat(63);
+  const max = `mem/${[segment, segment, segment, "a".repeat(59)].join("/")}`;
+  expect(max.length).toBe(255);
+  for (const slug of ["core", "mem/a", "mem/a-b/c_d", max])
+    expect(memorySlug(slug)).toBe(true);
+  for (const slug of [
+    null,
+    "",
+    "Core",
+    "mem/",
+    "mem/A",
+    "mem/a/",
+    "mem//a",
+    `mem/${"a".repeat(65)}`,
+    `${max}a`,
+  ])
+    expect(memorySlug(slug)).toBe(false);
 });

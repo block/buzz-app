@@ -17,7 +17,14 @@ export type MemoryReader = (
   signal: AbortSignal,
 ) => Promise<MemoryListing>;
 export type MemorySnapshot = Readonly<{
-  status: "idle" | "loading" | "ready" | "error" | "denied" | "unavailable";
+  status:
+    | "idle"
+    | "blocked"
+    | "loading"
+    | "ready"
+    | "error"
+    | "denied"
+    | "unavailable";
   listing?: MemoryListing;
 }>;
 export function memoryAgent(agent: unknown, viewer: string): agent is string {
@@ -25,6 +32,15 @@ export function memoryAgent(agent: unknown, viewer: string): agent is string {
     typeof agent === "string" &&
     /^[0-9a-f]{64}$/.test(agent) &&
     agent !== viewer
+  );
+}
+/** NIP-AE address grammar, shared by host evidence and renderer DTO validation. */
+export function memorySlug(slug: unknown): slug is string {
+  return (
+    typeof slug === "string" &&
+    slug.length <= 255 &&
+    (slug === "core" ||
+      /^mem\/[a-z0-9][a-z0-9_-]{0,63}(\/[a-z0-9][a-z0-9_-]{0,63})*$/.test(slug))
   );
 }
 /** Bound bytes before parsing ciphertext or plaintext responses. */
@@ -64,12 +80,7 @@ export function memoryListing(input: unknown): MemoryListing {
   const entries = value.entries.map((entry) => {
     if (
       !entry ||
-      typeof entry.slug !== "string" ||
-      entry.slug.length > 255 ||
-      (entry.slug !== "core" &&
-        !/^mem\/[a-z0-9][a-z0-9_-]{0,63}(\/[a-z0-9][a-z0-9_-]{0,63})*$/.test(
-          entry.slug,
-        )) ||
+      !memorySlug(entry.slug) ||
       typeof entry.body !== "string" ||
       !/^[0-9a-f]{64}$/.test(entry.eventId) ||
       !Number.isSafeInteger(entry.createdAt) ||
@@ -136,7 +147,7 @@ export function createAgentMemories(
       async refresh() {
         if (disposed || closed || !read || !eligible || controller) return;
         if (!available()) {
-          publish({ status: "error" });
+          publish({ status: "blocked" });
           return;
         }
         const owned = new AbortController();
@@ -152,7 +163,9 @@ export function createAgentMemories(
           signal.throwIfAborted();
           if (!owned.signal.aborted)
             publish(
-              available() ? { status: "ready", listing } : { status: "error" },
+              available()
+                ? { status: "ready", listing }
+                : { status: "blocked" },
             );
         } catch (error) {
           if (!owned.signal.aborted)

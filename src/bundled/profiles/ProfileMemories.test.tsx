@@ -4,6 +4,7 @@ import { StrictMode } from "react";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
+import type { LiveCallbacks } from "../../features/relay/live";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { MemoryReader, MemoryListing } from "../../features/agents/memory";
@@ -235,4 +236,65 @@ it("equal-generation scope/viewer changes reset tab intent and clear old output"
     "true",
   );
   expect(screen.queryByText("Core memory")).toBeNull();
+});
+
+it("explains live admission before connection and during retry without claiming HTTP failure", async () => {
+  let live!: LiveCallbacks;
+  const read = vi.fn<MemoryReader>().mockResolvedValue(listing);
+  const h = createRelaySession({
+    viewer: viewer.pubkey,
+    relayAuthor: viewer.pubkey,
+    media: () => undefined,
+    query: async () => [],
+    readAgentMemories: read,
+    subscribe(callbacks) {
+      live = callbacks;
+      return { update() {}, retry() {}, dispose() {} };
+    },
+  });
+  owners.push(h);
+  const snapshot: RelaySnapshot = {
+    status: "ready",
+    generation: 1,
+    viewer: viewer.pubkey,
+    scope: `https://one.example:${viewer.pubkey}`,
+    session: h.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => snapshot,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: h.clearCache,
+  };
+  const user = userEvent.setup();
+  render(
+    <ProfilePanel
+      relay={relay}
+      target={profileTarget(agent.pubkey) ?? ""}
+      close={() => {}}
+    />,
+  );
+  await user.click(screen.getByRole("tab", { name: "Memories" }));
+  expect(await screen.findByRole("status")).toHaveTextContent(
+    "Memory reads are paused",
+  );
+  expect(screen.queryByRole("alert")).toBeNull();
+  expect(read).not.toHaveBeenCalled();
+  act(() => live.state({ status: "connected", routes: [] }));
+  expect(read).not.toHaveBeenCalled();
+  await user.click(screen.getByRole("button", { name: "Retry memories" }));
+  await screen.findByText("Core memory");
+  act(() => live.state({ status: "retrying", routes: [] }));
+  expect(screen.queryByText(memoryBody)).toBeNull();
+  await user.click(screen.getByRole("button", { name: "Refresh memories" }));
+  expect(screen.getByRole("status")).toHaveTextContent(
+    "Memory reads are paused",
+  );
+  expect(read).toHaveBeenCalledTimes(1);
+  act(() => live.state({ status: "connected", routes: [] }));
+  expect(read).toHaveBeenCalledTimes(1);
+  await user.click(screen.getByRole("button", { name: "Retry memories" }));
+  await screen.findByText("Core memory");
+  expect(read).toHaveBeenCalledTimes(2);
 });

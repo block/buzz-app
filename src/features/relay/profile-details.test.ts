@@ -101,9 +101,10 @@ it.each([
       expect(selectedChanged).toHaveBeenCalledTimes(1);
 
       // A newer event with identical display values must still preserve identity.
+      // The directory still notifies: its winning signed event changed.
       directory.accept([profile(user, { name: "Mic", [field]: true }, 3)]);
       expect(selection.snapshot()).toBe(added);
-      expect(directoryChanged).toHaveBeenCalledTimes(1);
+      expect(directoryChanged).toHaveBeenCalledTimes(2);
       expect(selectedChanged).toHaveBeenCalledTimes(1);
 
       directory.accept([profile(user, { name: "Mic", ...removal }, 4)]);
@@ -113,7 +114,7 @@ it.each([
         directory.queries.snapshot().get(user.pubkey),
       );
       expect(removed.get(user.pubkey)).toEqual({ name: "Mic" });
-      expect(directoryChanged).toHaveBeenCalledTimes(2);
+      expect(directoryChanged).toHaveBeenCalledTimes(3);
       expect(selectedChanged).toHaveBeenCalledTimes(2);
     } finally {
       unsubscribeSelection();

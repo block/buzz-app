@@ -15,9 +15,16 @@ import {
   createRelaySession,
   type RelaySession,
 } from "../../features/relay/session";
+import type {
+  HeadPersistence,
+  SavedHead,
+} from "../../features/relay/persistence";
 import {
+  bounds,
   keypair,
   type Key,
+  message,
+  metadata,
   profile,
   roster,
   signed,
@@ -551,3 +558,165 @@ it("stays unknown without a relay view even when the directory holds a head", as
     screen.getByRole("button", { name: "Retry agent details" }),
   ).toBeInTheDocument();
 });
+
+it("follows an auth-only head restored from disk while the pane is mounted", async () => {
+  const agent = keypair();
+  const a = keypair();
+  const viewer = keypair();
+  const attested = timedProfile(agent, [auth(agent, a)], 100);
+  const removed = timedProfile(agent, [], 101);
+  let releaseDisk!: (records: SavedHead[]) => void;
+  const disk = new Promise<SavedHead[]>((resolve) => {
+    releaseDisk = resolve;
+  });
+  let readStarted!: () => void;
+  const reading = new Promise<void>((resolve) => {
+    readStarted = resolve;
+  });
+  const persistence: HeadPersistence = {
+    read: () => {
+      readStarted();
+      return disk;
+    },
+    write: async () => {},
+    retain: async () => {},
+    remove: async () => {},
+    clear: async () => {},
+    close() {},
+  };
+  const owner = createRelaySession(
+    {
+      viewer: viewer.pubkey,
+      relayAuthor: relayKey.pubkey,
+      scope: "wss://relay.example.test",
+      // The relay keeps serving the older, owner-attested profile.
+      query: async (filters: readonly ReadFilter[]) =>
+        filters.some((filter) => filter.kinds?.includes(39002))
+          ? [
+              roster(relayKey, "a", [viewer.pubkey]),
+              metadata(relayKey, "a", "A"),
+            ]
+          : filters.some(
+                (filter) =>
+                  kind0(filter) && filter.authors?.includes(agent.pubkey),
+              )
+            ? [attested]
+            : [],
+      media: () => undefined,
+      subscribe: () => ({ update() {}, retry() {}, dispose() {} }),
+    },
+    { prepared: true, persistence },
+  );
+  owners.push(owner);
+  const connection = {
+    status: "ready" as const,
+    generation: 1,
+    session: owner.session,
+  };
+  const relay: RelayData = {
+    snapshot: () => connection,
+    subscribe: () => () => {},
+    retry() {},
+    disconnect() {},
+    clearCache: async () => {},
+  };
+  owner.session.channels.ensureList();
+  await reading;
+  render(
+    <ProfilePanel
+      relay={relay}
+      target={profileTarget(agent.pubkey) ?? ""}
+      close={() => {}}
+      context={{ channelId: "a", canOpen: () => true, open: () => true }}
+    />,
+  );
+  await screen.findByRole("button", ownerButton(a));
+  releaseDisk([
+    {
+      channelId: "a",
+      savedAt: Date.now(),
+      events: [
+        message(agent, "a", "hi", 90),
+        bounds(relayKey, "a", "head", { has_more: false, next_cursor: null }),
+      ],
+      profiles: [removed],
+    },
+  ]);
+  const identity = screen.getByRole("region", { name: "Agent identity" });
+  await waitFor(() =>
+    expect(identity).toHaveTextContent(
+      "Not verified — no valid owner attestation.",
+    ),
+  );
+  expect(owner.session.profiles.event?.(agent.pubkey)?.id).toBe(removed.id);
+  expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
+});
+
+it.each(["remove", "replace", "equal-time removal"])(
+  "stays unknown at the real view cap through an auth-only %s, then Retry recovers",
+  async (mode) => {
+    const agent = keypair();
+    const a = keypair();
+    const b = keypair();
+    const first = timedProfile(agent, [auth(agent, a)], 100);
+    let next = timedProfile(
+      agent,
+      mode === "replace" ? [auth(agent, b)] : [],
+      101,
+    );
+    if (mode === "equal-time removal")
+      for (
+        let nonce = 0;
+        next.created_at !== 100 || next.id > first.id;
+        nonce++
+      )
+        next = timedProfile(agent, [["nonce", String(nonce)]], 100);
+    const h = live(agent, first);
+    await screen.findByRole("button", ownerButton(a));
+    h.close();
+    const fillers: ReturnType<RelaySession["observe"]>[] = [];
+    try {
+      for (;;) fillers.push(h.session.observe([{ kinds: [1], limit: 1 }]));
+    } catch {}
+    try {
+      h.open();
+      const identity = await screen.findByRole("region", {
+        name: "Agent identity",
+      });
+      const unknown = async () => {
+        await waitFor(() =>
+          expect(identity).toHaveTextContent(
+            "Unknown — could not read this profile's attestation.",
+          ),
+        );
+        expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
+      };
+      await unknown();
+      // The relay keeps serving the older attested head; live delivers the change.
+      await h.receive(next);
+      expect(h.session.profiles.event?.(agent.pubkey)?.id).toBe(next.id);
+      await unknown();
+      const retry = () =>
+        userEvent
+          .setup()
+          .click(screen.getByRole("button", { name: "Retry agent details" }));
+      await retry();
+      await unknown();
+      fillers.pop()?.dispose();
+      await retry();
+      if (mode === "replace") await screen.findByRole("button", ownerButton(b));
+      else
+        await waitFor(() =>
+          expect(identity).toHaveTextContent("Not verified — no valid owner"),
+        );
+      expect(screen.queryByRole("button", ownerButton(a))).toBeNull();
+      // The recovered view keeps following later auth-only changes.
+      await h.receive(timedProfile(agent, [], 102));
+      await waitFor(() =>
+        expect(identity).toHaveTextContent("Not verified — no valid owner"),
+      );
+    } finally {
+      for (const filler of fillers) filler.dispose();
+    }
+  },
+);

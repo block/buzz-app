@@ -38,9 +38,10 @@ export function createProfileDirectory(
       events.set(event.pubkey, event);
       changed = true;
     }
-    if (changed) publish();
+    if (changed) publish(true);
   }
-  function publish() {
+  /** Notifies on display changes, and on winning-event changes for `event()` readers. */
+  function publish(headChanged = false) {
     const next = foldProfiles([
       ...events.keys().flatMap((id) => {
         const event = events.peek(id);
@@ -63,11 +64,11 @@ export function createProfileDirectory(
         next.set(id, old);
     }
     if (
-      next.size === snapshot.size &&
-      [...next].every(([id, value]) => snapshot.get(id) === value)
+      next.size !== snapshot.size ||
+      [...next].some(([id, value]) => snapshot.get(id) !== value)
     )
-      return;
-    snapshot = next;
+      snapshot = next;
+    else if (!headChanged) return;
     for (const listener of listeners) notify(listener);
   }
   async function ensure(

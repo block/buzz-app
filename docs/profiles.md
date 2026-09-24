@@ -56,7 +56,9 @@ section. It shows only claims backed by verifiable relay evidence:
   events, refreshes on reconnect and resets on purge. While that view is live,
   the profile directory's retained signed head also seeds that choice, so
   reopening the pane after cache eviction never accepts an older response than
-  the profile the session already shows. Verification is bound
+  the profile the session already shows. The directory notifies subscribers
+  when that head changes even if display fields do not, so a head restored
+  from disk also updates the pane. Verification is bound
   to that exact event id, so an auth-only change or a lagging older read
   never keeps or restores a previous owner. It requires exactly one tag,
   owner ≠ agent, conditions evaluated against the event, and a valid BIP-340

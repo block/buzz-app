@@ -313,6 +313,23 @@ test("nested replies send, collapse, and reveal through links at readable panel 
   await expect(
     panel.getByText("Own reply after root collapse", { exact: true }),
   ).toBeInViewport();
+  // The optimistic row is visible before relay acceptance. Keep the production
+  // subscription alive until publication and delivery settle, then end the test.
+  await expect
+    .poll(() =>
+      app.report.publications.some(
+        ({ event }) => event?.content === "Own reply after root collapse",
+      ),
+    )
+    .toBe(true);
+  const finalReply = app.report.publications.find(
+    ({ event }) => event?.content === "Own reply after root collapse",
+  ).event;
+  await expect(
+    panel
+      .locator(`[data-message-id="${finalReply.id}"]`)
+      .getByRole("button", { name: "Reply", exact: true }),
+  ).toBeEnabled();
 });
 
 test("an exact linked reply stays readable when its parent is outside loaded history", async ({

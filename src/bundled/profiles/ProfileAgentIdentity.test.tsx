@@ -192,14 +192,21 @@ it("does not trust a well-formed attestation with an invalid signature", async (
   expect(screen.queryByRole("button", { name: /owner profile/ })).toBeNull();
 });
 
-it("adds no agent section or reads for a profile without an agent hint", async () => {
+it("adds no agent section or owner reads for a profile without an agent hint", async () => {
   const person = keypair();
   const { query } = mount(person, (filter) =>
     kind0(filter) ? [profile(person, { name: "Person" })] : [],
   );
   await screen.findByRole("heading", { name: "Person" });
   expect(screen.queryByRole("region", { name: "Agent identity" })).toBeNull();
-  expect(agentReads(query)).toBe(1);
+  const reads = query.mock.calls.flatMap(([filters]) => filters);
+  expect(reads).toHaveLength(2);
+  expect(reads).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ authors: [person.pubkey], kinds: [0] }),
+      expect.objectContaining({ authors: [person.pubkey], kinds: [30315] }),
+    ]),
+  );
 });
 
 function timedProfile(

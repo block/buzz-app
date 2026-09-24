@@ -33,10 +33,10 @@ test("DM identity cues remain exactly 22px at normal and narrow sidebar widths",
     path: info.outputPath("dm-identities-normal.png"),
   });
   await page.evaluate(() => {
-    const board = document.querySelector("[style*='--channel-sidebar-width']");
-    if (!(board instanceof HTMLElement))
-      throw new Error("Missing channel board");
-    board.style.setProperty("--channel-sidebar-width", "124px");
+    const sidebar = document.querySelector(".shell-sidebar");
+    if (!(sidebar instanceof HTMLElement))
+      throw new Error("Missing channel sidebar");
+    sidebar.style.width = "124px";
   });
   await assertIdentitySize(oneToOne);
   await assertIdentitySize(group);

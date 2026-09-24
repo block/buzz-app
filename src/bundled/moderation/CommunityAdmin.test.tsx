@@ -81,6 +81,11 @@ function relay(viewer: string, events = [snapshot(roster)]) {
   const profiles = new Map();
   const session = {
     read,
+    viewer,
+    media: () => undefined,
+    directMessages: {
+      people: async () => ({ people: [], hasMore: false }),
+    },
     profiles: {
       subscribe: () => () => {},
       snapshot: () => profiles,
@@ -168,27 +173,42 @@ it("mints a bounded invite and surfaces relay refusals", async () => {
   await user.click(
     await screen.findByRole("button", { name: "Invite to community" }),
   );
-  // Admins cannot grant admin, so no role choice is offered.
-  expect(screen.queryByRole("combobox", { name: "Role" })).toBeNull();
-  await user.click(screen.getByRole("button", { name: "Create invite link" }));
+  // Opening the dialog creates the link with the default settings.
   expect(
     await screen.findByDisplayValue("https://primary.example/invite/abc"),
   ).toBeVisible();
-  expect(calls.find((c) => c.route === "invite")?.body).toEqual({
-    ttl_secs: 3 * 24 * 60 * 60,
-    max_uses: null,
-  });
-  expect(screen.getByText(/No use limit/)).toBeVisible();
+  expect(calls.filter((c) => c.route === "invite")).toEqual([
+    { route: "invite", body: { ttl_secs: 3 * 24 * 60 * 60, max_uses: null } },
+  ]);
+  // Admins cannot grant admin, so a selected person has no role choice.
+  await user.type(
+    screen.getByRole("combobox", { name: "Search people or paste an npub" }),
+    "3".repeat(64),
+  );
+  await user.click(await screen.findByRole("option", { name: /Public key/ }));
+  expect(screen.getByRole("button", { name: "Invite" })).toBeEnabled();
+  expect(
+    screen.queryByRole("button", { name: "Choose member role" }),
+  ).toBeNull();
   refuse = true;
-  await user.click(screen.getByRole("button", { name: "Create another link" }));
+  await user.click(
+    screen.getByRole("button", { name: "Choose maximum invite uses" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "1 use" }));
+  expect(screen.queryByRole("menuitemradio")).toBeNull();
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent(
       "only relay owners and admins can create invites",
     ),
   );
+  expect(calls.filter((c) => c.route === "invite").at(-1)?.body).toEqual({
+    ttl_secs: 3 * 24 * 60 * 60,
+    max_uses: 1,
+  });
   expect(
     screen.queryByDisplayValue("https://primary.example/invite/abc"),
   ).toBeNull();
+  expect(screen.getByRole("button", { name: "Retry" })).toBeEnabled();
 });
 
 it("confirms member removal and shows the relay's refusal", async () => {
@@ -368,36 +388,38 @@ it("locks an open invite dialog after an accepted add whose refresh fails", asyn
     await screen.findByRole("button", { name: "Invite to community" }),
   );
   const dialog = await screen.findByRole("dialog");
+  await within(dialog).findByDisplayValue("https://primary.example/invite/abc");
   read.mockRejectedValueOnce(new Error("relay unavailable"));
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Public key" }),
-    "3".repeat(64),
-  );
-  await user.click(within(dialog).getByRole("button", { name: "Add member" }));
+  // Selecting a person replaces the search field, so look it up each time.
+  const search = () =>
+    within(dialog).getByRole("combobox", {
+      name: "Search people or paste an npub",
+    });
+  await user.type(search(), "3".repeat(64));
+  await user.click(await screen.findByRole("option", { name: /Public key/ }));
+  await user.click(within(dialog).getByRole("button", { name: "Invite" }));
   expect(await within(dialog).findByText("Member added.")).toBeVisible();
   expect(
     await within(dialog).findByText(
       "The member list is out of date. Retry before making changes.",
     ),
   ).toBeVisible();
-  await user.type(
-    within(dialog).getByRole("textbox", { name: "Public key" }),
-    "4".repeat(64),
-  );
+  await user.type(search(), "4".repeat(64));
+  await user.click(await screen.findByRole("option", { name: /Public key/ }));
+  expect(within(dialog).getByRole("button", { name: "Invite" })).toBeDisabled();
   expect(
-    within(dialog).getByRole("button", { name: "Add member" }),
-  ).toBeDisabled();
-  expect(
-    within(dialog).getByRole("button", { name: "Create invite link" }),
+    within(dialog).getByRole("button", { name: "Choose maximum invite uses" }),
   ).toBeDisabled();
   expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
-  expect(calls.filter((c) => c.route === "invite")).toHaveLength(0);
+  expect(calls.filter((c) => c.route === "invite")).toHaveLength(1);
   // Read-only recovery behind the modal re-enables new writes.
   screen.getByRole("button", { name: "Retry", hidden: true }).click();
   await waitFor(() =>
     expect(
-      within(dialog).getByRole("button", { name: "Add member" }),
+      within(dialog).getByRole("button", { name: "Invite" }),
     ).toBeEnabled(),
   );
   expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
+  // Recovery keeps the existing link rather than minting another.
+  expect(calls.filter((c) => c.route === "invite")).toHaveLength(1);
 });

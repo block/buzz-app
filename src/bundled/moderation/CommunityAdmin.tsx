@@ -11,22 +11,34 @@ import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
 import { formatPublicKey } from "../../shared/identity/public-key";
-import { DotsThreeIcon } from "../../shared/design-system/icons/index";
+import { Combobox as BaseCombobox } from "@base-ui/react/combobox";
+import {
+  usePeople,
+  type Recipient,
+} from "../../features/direct-messages/usePeople";
+import {
+  CaretDownIcon,
+  DotsThreeIcon,
+  MagnifyingGlassIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
 import { AlertDialog } from "../../shared/design-system/ui/AlertDialog";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { Button } from "../../shared/design-system/ui/Button";
+import { Combobox } from "../../shared/design-system/ui/Combobox";
 import { Dialog } from "../../shared/design-system/ui/Dialog";
-import { Field } from "../../shared/design-system/ui/Field";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Input } from "../../shared/design-system/ui/Input";
+import { InputGroup } from "../../shared/design-system/ui/InputGroup";
 import {
   MenuItem,
   MenuPopup,
+  MenuRadioGroup,
+  MenuRadioItem,
   MenuRoot,
   MenuTrigger,
 } from "../../shared/design-system/ui/Menu";
 import { SearchField } from "../../shared/design-system/ui/SearchField";
-import { Select } from "../../shared/design-system/ui/Select";
 import {
   allowedActions,
   changeMember,
@@ -35,7 +47,6 @@ import {
   mintInvite,
   relayAuthor,
   type Action,
-  type Invite,
   type Member,
   type MemberChange,
 } from "./api";
@@ -380,7 +391,9 @@ function Members({
       <InviteDialog
         open={inviting}
         close={() => setInviting(false)}
+        session={session}
         community={community}
+        members={members}
         owner={role === "owner"}
         stale={stale}
         refreshing={refreshing}
@@ -403,10 +416,204 @@ function publicKey(input: string) {
   throw new Error("Enter an npub or 64-character hex public key.");
 }
 
+/** Label-left, value-right choice row control, as in the Buzz desktop dialog. */
+function Choice({
+  label,
+  value,
+  options,
+  onChange,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  options: readonly { value: string; label: string }[];
+  onChange(value: string): void;
+  disabled?: boolean;
+}) {
+  return (
+    <MenuRoot>
+      <MenuTrigger
+        disabled={disabled}
+        render={
+          <Button variant="ghost" size="sm" aria-label={label}>
+            {options.find((option) => option.value === value)?.label}
+            <CaretDownIcon
+              size={14}
+              className="buzz-dropdown-chevron"
+              aria-hidden="true"
+            />
+          </Button>
+        }
+      />
+      <MenuPopup align="end">
+        <MenuRadioGroup
+          value={value}
+          onValueChange={(next) => onChange(String(next))}
+        >
+          {options.map((option) => (
+            <MenuRadioItem key={option.value} value={option.value} closeOnClick>
+              {option.label}
+            </MenuRadioItem>
+          ))}
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>
+  );
+}
+
+const ROLES_OFFERED = [
+  { value: "member", label: "Member" },
+  { value: "admin", label: "Admin" },
+];
+
+type Directory = { people: Recipient[]; loading: boolean };
+const NO_PEOPLE: Directory = { people: [], loading: false };
+
+function PeopleFeed({
+  session,
+  query,
+  onResult,
+}: {
+  session: RelaySession;
+  query: string;
+  onResult(directory: Directory): void;
+}) {
+  const { people, loading } = usePeople(session, query);
+  useEffect(() => onResult({ people, loading }), [people, loading, onResult]);
+  return null;
+}
+
+/** One field: search the directory or paste an npub/hex key. */
+function PersonSearch({
+  session,
+  members,
+  disabled,
+  onSelect,
+}: {
+  session: RelaySession;
+  members: readonly Member[];
+  disabled: boolean;
+  onSelect(person: Recipient): void;
+}) {
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [directory, setDirectory] = useState<Directory>(NO_PEOPLE);
+  const isMember = (pubkey: string) => members.some((m) => m.pubkey === pubkey);
+  let direct: string | null = null;
+  try {
+    direct = query.trim() ? publicKey(query) : null;
+  } catch {
+    // Not a key; search by name only.
+  }
+  const found = query.trim()
+    ? directory.people.filter(
+        (person) =>
+          person.pubkey !== session.viewer && !isMember(person.pubkey),
+      )
+    : [];
+  const people: Recipient[] =
+    direct && !isMember(direct) && !found.some((p) => p.pubkey === direct)
+      ? [{ pubkey: direct, name: "" }, ...found]
+      : found;
+  return (
+    <>
+      {/* Only search while there is text; browsing would page the whole directory. */}
+      {query.trim() && (
+        <PeopleFeed
+          session={session}
+          query={query.trim()}
+          onResult={setDirectory}
+        />
+      )}
+      <BaseCombobox.Root<Recipient>
+        items={people}
+        filter={null}
+        value={null}
+        inputValue={query}
+        open={open && !!query.trim()}
+        onOpenChange={setOpen}
+        onInputValueChange={(value, details) => {
+          if (
+            details.reason === "input-change" ||
+            details.reason === "input-clear"
+          ) {
+            setQuery(value);
+            setOpen(true);
+          }
+        }}
+        onValueChange={(person) => {
+          if (!person) return;
+          setQuery("");
+          onSelect(person);
+        }}
+        itemToStringLabel={(person) =>
+          person.name || formatPublicKey(person.pubkey) || person.pubkey
+        }
+        isItemEqualToValue={(a, b) => a.pubkey === b.pubkey}
+        disabled={disabled}
+      >
+        <BaseCombobox.InputGroup
+          render={
+            <InputGroup
+              leading={<MagnifyingGlassIcon size={16} aria-hidden="true" />}
+            />
+          }
+        >
+          <BaseCombobox.Input
+            data-buzz-ui=""
+            className="buzz-input"
+            aria-label="Search people or paste an npub"
+            placeholder="Search people or paste an npub"
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </BaseCombobox.InputGroup>
+        <Combobox.Popup
+          empty={
+            directory.loading
+              ? "Searching…"
+              : "No people found. Paste a full npub or hex public key to add someone directly."
+          }
+        >
+          <Combobox.List>
+            {(person: Recipient) => (
+              <Combobox.Item
+                key={person.pubkey}
+                value={person}
+                description={person.name ? undefined : "Public key"}
+              >
+                <span className="flex items-center gap-3">
+                  <Avatar
+                    src={session.media(person.picture ?? "", "small")}
+                    alt=""
+                    fallback={person.name || person.pubkey}
+                    size="small"
+                    shape={person.isAgent ? "squircle" : "circle"}
+                  />
+                  <span className="truncate">
+                    {person.name || formatPublicKey(person.pubkey)}
+                  </span>
+                </span>
+              </Combobox.Item>
+            )}
+          </Combobox.List>
+        </Combobox.Popup>
+      </BaseCombobox.Root>
+      {direct && isMember(direct) && (
+        <p role="alert" className="m-0 text-body-sm">
+          This person is already a community member.
+        </p>
+      )}
+    </>
+  );
+}
+
 function InviteDialog({
   open,
   close,
+  session,
   community,
+  members,
   owner,
   stale,
   refreshing,
@@ -415,7 +622,9 @@ function InviteDialog({
 }: {
   open: boolean;
   close(): void;
+  session: RelaySession;
   community: string;
+  members: readonly Member[];
   owner: boolean;
   stale: boolean;
   refreshing: boolean;
@@ -424,24 +633,66 @@ function InviteDialog({
 }) {
   const [ttl, setTtl] = useState(String(3 * DAY));
   const [uses, setUses] = useState("");
-  const [invite, setInvite] = useState<Invite | null>(null);
-  const [key, setKey] = useState("");
+  const [person, setPerson] = useState<Recipient | null>(null);
   const [role, setRole] = useState<"admin" | "member">("member");
-  const [busy, setBusy] = useState<"" | "mint" | "add">("");
+  const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [copied, setCopied] = useState(false);
+  // One minted link per settings; a missing entry for these settings mints.
+  const settings = `${ttl}:${uses}`;
+  const [link, setLink] = useState<{
+    settings: string;
+    url?: string;
+    failed?: boolean;
+  } | null>(null);
+  const minting = useRef(0);
+  // StrictMode replays effects; never mint twice for the same settings.
+  const requested = useRef("");
+  const current = link?.settings === settings ? link : null;
   const locked = stale || refreshing;
-  async function run(kind: "mint" | "add", work: () => Promise<void>) {
-    if (!active() || locked) return;
-    setBusy(kind);
+  useEffect(() => {
+    // Opening the dialog, or changing its settings, creates the link to share.
+    if (!open || locked || current || requested.current === settings) return;
+    if (!active()) return;
+    requested.current = settings;
+    const request = ++minting.current;
+    setLink({ settings });
+    setCopied(false);
+    setError("");
+    mintInvite(community, Number(ttl), uses ? Number(uses) : null).then(
+      (invite) => {
+        if (minting.current === request) setLink({ settings, url: invite.url });
+      },
+      (reason) => {
+        if (minting.current !== request) return;
+        requested.current = "";
+        setLink({ settings, failed: true });
+        setError(message(reason));
+      },
+    );
+  }, [open, locked, current, active, community, settings, ttl, uses]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = setTimeout(() => setCopied(false), 2000);
+    return () => clearTimeout(timer);
+  }, [copied]);
+  const url = current?.url;
+  const pending = !!current && !url && !current.failed;
+  async function invite() {
+    if (!person || !active() || locked || adding) return;
+    setAdding(true);
     setError("");
     setNotice("");
     try {
-      await work();
+      await add(person.pubkey, owner ? role : "member");
+      setPerson(null);
+      setRole("member");
+      setNotice("Member added.");
     } catch (reason) {
       setError(message(reason));
     } finally {
-      setBusy("");
+      setAdding(false);
     }
   }
   return (
@@ -449,124 +700,149 @@ function InviteDialog({
       open={open}
       onOpenChange={(next) => {
         if (next) return;
-        setInvite(null);
+        minting.current++;
+        requested.current = "";
+        setLink(null);
+        setTtl(String(3 * DAY));
+        setUses("");
+        setPerson(null);
+        setRole("member");
         setError("");
         setNotice("");
         close();
       }}
-      preventClose={!!busy}
+      preventClose={adding}
       title="Invite to community"
-      description="Add someone directly or create a link they can use to join."
+      description="Add someone directly or share a link they can use to join."
     >
       <div className="flex flex-col gap-4">
         <form
-          className="flex flex-col gap-3"
+          className="flex gap-2"
           onSubmit={(event) => {
             event.preventDefault();
-            void run("add", async () => {
-              await add(publicKey(key), owner ? role : "member");
-              setKey("");
-              setNotice("Member added.");
-            });
+            void invite();
           }}
         >
-          <Field label="Public key">
-            <Input
-              value={key}
-              placeholder="npub1…"
-              onValueChange={setKey}
-              disabled={!!busy}
-            />
-          </Field>
-          {owner && (
-            <Select
-              variant="field"
-              label="Role"
-              value={role}
-              onValueChange={(value) => setRole(value as "admin" | "member")}
-              groups={[
-                {
-                  label: "Role",
-                  options: [
-                    { value: "member", label: "Member" },
-                    { value: "admin", label: "Admin" },
-                  ],
-                },
-              ]}
-            />
-          )}
-          <Button
-            type="submit"
-            loading={busy === "add"}
-            disabled={!key.trim() || !!busy || locked}
-          >
-            Add member
-          </Button>
-        </form>
-        <hr className="m-0 border-default" />
-        <div className="flex flex-wrap gap-3">
-          <Select
-            variant="field"
-            label="Expires after"
-            value={ttl}
-            onValueChange={setTtl}
-            groups={[{ label: "Expires after", options: EXPIRY }]}
-          />
-          <Select
-            variant="field"
-            label="Maximum uses"
-            value={uses}
-            onValueChange={setUses}
-            groups={[{ label: "Maximum uses", options: USES }]}
-          />
-        </div>
-        <Button
-          loading={busy === "mint"}
-          disabled={!!busy || locked}
-          onClick={() =>
-            void run("mint", async () => {
-              setInvite(null);
-              setInvite(
-                await mintInvite(
-                  community,
-                  Number(ttl),
-                  uses ? Number(uses) : null,
-                ),
-              );
-            })
-          }
-        >
-          {invite ? "Create another link" : "Create invite link"}
-        </Button>
-        {invite && (
-          <div className="flex flex-col gap-2">
-            <Field label="Invite link">
-              <Input value={invite.url} readOnly />
-            </Field>
-            <p className="m-0 text-body-sm text-muted">
-              Expires {new Date(invite.expires_at * 1000).toLocaleString()} ·{" "}
-              {invite.max_uses === null
-                ? "No use limit"
-                : `${invite.uses_remaining ?? invite.max_uses} of ${invite.max_uses} uses left`}
-            </p>
-            <Button
-              onClick={() =>
-                navigator.clipboard
-                  .writeText(invite.url)
-                  .then(() => setNotice("Invite link copied."))
-                  .catch(() => setError("Could not copy the invite link."))
-              }
-            >
-              Copy link
-            </Button>
+          <div className="flex min-w-0 flex-1 flex-col gap-2">
+            {person ? (
+              <InputGroup>
+                <span className="flex min-w-0 flex-1 items-center gap-2">
+                  <Avatar
+                    src={session.media(person.picture ?? "", "small")}
+                    alt=""
+                    fallback={person.name || person.pubkey}
+                    size="small"
+                    shape={person.isAgent ? "squircle" : "circle"}
+                  />
+                  <span className="truncate text-body">
+                    {person.name || formatPublicKey(person.pubkey)}
+                  </span>
+                  <IconButton
+                    aria-label={`Remove ${person.name || formatPublicKey(person.pubkey)}`}
+                    size="sm"
+                    icon={<XIcon size={12} aria-hidden="true" />}
+                    disabled={adding}
+                    onClick={() => setPerson(null)}
+                  />
+                </span>
+                {owner && (
+                  <Choice
+                    label="Choose member role"
+                    value={role}
+                    options={ROLES_OFFERED}
+                    onChange={(value) => setRole(value as "admin" | "member")}
+                    disabled={adding}
+                  />
+                )}
+              </InputGroup>
+            ) : (
+              <PersonSearch
+                session={session}
+                members={members}
+                disabled={adding}
+                onSelect={setPerson}
+              />
+            )}
           </div>
-        )}
+          {person && (
+            <Button
+              type="submit"
+              variant="primary"
+              loading={adding}
+              disabled={adding || locked}
+            >
+              Invite
+            </Button>
+          )}
+        </form>
+        <div className="flex items-center gap-3 text-body-sm text-muted">
+          <hr className="m-0 flex-1 border-default" />
+          Or, copy a link
+          <hr className="m-0 flex-1 border-default" />
+        </div>
+        <InputGroup>
+          <Input
+            aria-label="Community invite link"
+            readOnly
+            value={url ?? ""}
+            placeholder={
+              current?.failed
+                ? "Couldn’t create invite link"
+                : locked && !current
+                  ? "Retry the member list to create a link"
+                  : "Creating invite link…"
+            }
+          />
+          <Button
+            size="sm"
+            loading={pending}
+            disabled={current?.failed ? locked : !url}
+            onClick={() => {
+              if (current?.failed) {
+                setLink(null);
+                return;
+              }
+              if (!url) return;
+              navigator.clipboard
+                .writeText(url)
+                .then(() => {
+                  setCopied(true);
+                  setNotice("Invite link copied.");
+                })
+                .catch(() => setError("Could not copy the invite link."));
+            }}
+          >
+            {current?.failed ? "Retry" : copied ? "Copied" : "Copy link"}
+          </Button>
+        </InputGroup>
+        <div className="flex flex-col gap-1">
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-label-sm">Expires after</span>
+            <Choice
+              label="Choose invite expiry"
+              value={ttl}
+              options={EXPIRY}
+              onChange={setTtl}
+              disabled={pending || locked}
+            />
+          </div>
+          <div className="flex items-center justify-between gap-4">
+            <span className="text-label-sm">Limit number of uses</span>
+            <Choice
+              label="Choose maximum invite uses"
+              value={uses}
+              options={USES}
+              onChange={setUses}
+              disabled={pending || locked}
+            />
+          </div>
+        </div>
         {error && (
           <p role="alert" className="m-0 text-body-sm">
             {error}
           </p>
         )}
-        {stale && !busy && (
+        {stale && !adding && (
           <p role="alert" className="m-0 text-body-sm">
             {STALE}
           </p>

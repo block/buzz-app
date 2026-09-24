@@ -591,12 +591,15 @@ it("bridges the Tauri shell with raw strings only and detaches its ping channel 
 
 it("drains URLs arriving between startup take and deferred native watch registration", async () => {
   native.value = true;
-  const registration = Promise.withResolvers<void>();
+  let registered!: () => void;
+  const registration = new Promise<void>((resolve) => {
+    registered = resolve;
+  });
   const queue: string[] = [];
   const take = vi.fn(() => queue.splice(0));
   invoked.fn.mockImplementation(async (command) => {
     if (command === "deep_link_take") return take();
-    if (command === "deep_link_watch") return registration.promise;
+    if (command === "deep_link_watch") return registration;
     throw new Error(`Unexpected native command: ${command}`);
   });
   const controller = createNavigationController(createMemoryHistory());
@@ -614,20 +617,23 @@ it("drains URLs arriving between startup take and deferred native watch registra
     // No native watcher exists yet, so this arrival cannot ping the webview.
     queue.push("buzz://join?relay=example");
     expect(host.fail).not.toHaveBeenCalled();
-    registration.resolve();
+    registered();
     await vi.waitFor(() => expect(take).toHaveBeenCalledTimes(2));
     expect(host.fail).toHaveBeenCalledWith("invalid-target", undefined);
     expect(queue).toEqual([]);
   } finally {
-    registration.resolve();
+    registered();
     stop();
     controller.dispose();
   }
 });
 it("does not revive a disposed bridge when native registration finishes", async () => {
   native.value = true;
-  const registration = Promise.withResolvers<void>();
-  invoked.fn.mockImplementation(async () => registration.promise);
+  let registered!: () => void;
+  const registration = new Promise<void>((resolve) => {
+    registered = resolve;
+  });
+  invoked.fn.mockImplementation(async () => registration);
   const shell = createDeepLinkShell();
   const listener = vi.fn();
   const stop = shell?.watch(listener);
@@ -636,7 +642,7 @@ it("does not revive a disposed bridge when native registration finishes", async 
     expect.any(Object),
   );
   stop?.();
-  registration.resolve();
+  registered();
   await invoked.fn.mock.results[0]?.value;
   expect(listener).not.toHaveBeenCalled();
 });

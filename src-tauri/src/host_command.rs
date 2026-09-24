@@ -28,7 +28,7 @@ mod windows_job {
                 return None;
             }
             let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
-            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            let mut limits = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
             let configured = unsafe {
                 SetInformationJobObject(

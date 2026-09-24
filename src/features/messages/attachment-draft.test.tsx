@@ -150,6 +150,59 @@ it("reuses successful descriptors after a partial upload failure", async () => {
   });
 });
 
+it("recovers a send abort that settles before cancellation without re-uploading ready files", async () => {
+  const h = fixture();
+  const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));
+  act(() =>
+    draft.result.current.store.add([file("ready.txt"), file("paused.txt")]),
+  );
+  const send = new AbortController();
+  let work: Promise<readonly UploadedAttachment[]>;
+  await act(async () => {
+    work = draft.result.current.store.prepareForSend(send.signal);
+  });
+  await act(async () => {
+    h.calls[0]?.result.resolve(uploaded("ready.txt"));
+  });
+  expect(h.calls).toHaveLength(2);
+  expect(h.calls[1]?.file.name).toBe("paused.txt");
+
+  send.abort();
+  await act(async () => {
+    await expect(work).rejects.toThrow();
+  });
+  expect(draft.result.current.items.map((item) => item.status)).toEqual([
+    "ready",
+    "uploading",
+  ]);
+
+  act(() => draft.result.current.store.cancel());
+  expect(draft.result.current.items.map((item) => item.status)).toEqual([
+    "ready",
+    "error",
+  ]);
+  expect(draft.result.current.blocked).toBe(true);
+
+  act(() =>
+    draft.result.current.store.retry(draft.result.current.items[1]?.id ?? ""),
+  );
+  expect(draft.result.current.blocked).toBe(false);
+  const retry = new AbortController();
+  let retryWork: Promise<readonly UploadedAttachment[]>;
+  await act(async () => {
+    retryWork = draft.result.current.store.prepareForSend(retry.signal);
+  });
+  expect(h.calls).toHaveLength(3);
+  expect(h.calls[2]?.file.name).toBe("paused.txt");
+  await act(async () => {
+    h.calls[2]?.result.resolve(uploaded("paused.txt"));
+    expect(await retryWork).toEqual([
+      uploaded("ready.txt"),
+      uploaded("paused.txt"),
+    ]);
+  });
+});
+
 it("removal and cancellation abort in-flight send preparation", async () => {
   const h = fixture();
   const draft = renderHook(() => useAttachmentDraft(h.session, "one", "one"));

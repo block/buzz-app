@@ -705,6 +705,74 @@ it("retains successful attachment uploads after a later file fails and retries o
   expect(h.publish.mock.calls[0]?.[0].content).toContain("[retry.txt](<");
 });
 
+it("recovers disabled mid-upload attachments and retries without re-uploading ready files", async () => {
+  const h = await mountUploadComposer();
+  const scope = `https://relay.example.test:${h.owner.session.viewer}`;
+  attachByPaste(h.input(), attachmentFile("ready.txt"));
+  attachByPaste(h.input(), attachmentFile("paused.txt"));
+  await waitFor(() =>
+    expect(within(h.form()).getAllByText(/\.txt$/)).toHaveLength(2),
+  );
+  await userEvent.type(h.input(), "caption");
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(1));
+  await act(async () => {
+    h.uploadCalls[0]?.result.resolve(uploadDescriptor("ready.txt"));
+  });
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(2));
+  expect(h.uploadCalls[1]?.file.name).toBe("paused.txt");
+
+  try {
+    h.rerender(
+      <MessageComposer
+        session={h.owner.session}
+        scope={scope}
+        channelId="channel"
+        channelName="General"
+        disabled
+      />,
+    );
+    expect(h.uploadCalls[1]?.signal.aborted).toBe(true);
+    await waitFor(() =>
+      expect(
+        screen.getByText("Upload paused. Retry to continue."),
+      ).toBeVisible(),
+    );
+    expect(screen.getByText(/Upload failed/)).toBeVisible();
+    expect(screen.getByRole("button", { name: "Retry" })).toBeDisabled();
+    expect(h.publish).not.toHaveBeenCalled();
+    expect(h.sign).not.toHaveBeenCalled();
+  } finally {
+    await act(async () => {
+      h.uploadCalls[1]?.result.resolve(uploadDescriptor("paused.txt"));
+    });
+  }
+
+  h.rerender(
+    <MessageComposer
+      session={h.owner.session}
+      scope={scope}
+      channelId="channel"
+      channelName="General"
+    />,
+  );
+  const retry = await screen.findByRole("button", { name: "Retry" });
+  expect(retry).toBeEnabled();
+  await userEvent.click(retry);
+  await waitFor(() => expect(h.send()).toBeEnabled());
+  fireEvent.click(h.send());
+  await waitFor(() => expect(h.uploadCalls).toHaveLength(3));
+  expect(h.uploadCalls[2]?.file.name).toBe("paused.txt");
+  await act(async () => {
+    h.uploadCalls[2]?.result.resolve(uploadDescriptor("paused.txt"));
+  });
+  await waitFor(() => expect(h.publish).toHaveBeenCalledTimes(1));
+  expect(h.sign).toHaveBeenCalledTimes(1);
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("caption");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[ready.txt](<");
+  expect(h.publish.mock.calls[0]?.[0].content).toContain("[paused.txt](<");
+});
+
 it("cancels an in-flight attachment send when the composer destination changes", async () => {
   const h = await mountUploadComposer({ threadRootId: "b".repeat(64) });
   attachByPaste(h.input(), attachmentFile());

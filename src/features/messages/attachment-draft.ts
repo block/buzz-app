@@ -55,11 +55,10 @@ function attachmentDraft(
     emit();
   };
   function cancelActive() {
-    const paused = new Set(active.keys());
     for (const controller of active.values()) controller.abort();
     active.clear();
     items = items.map((item) =>
-      paused.has(item.id)
+      item.status === "preparing" || item.status === "uploading"
         ? {
             ...item,
             status: "error",

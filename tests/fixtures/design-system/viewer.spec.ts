@@ -74,13 +74,25 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
             offline: "rgb(164, 164, 164)",
           },
     )) {
-      await expect(
-        page
-          .locator(
-            `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
-          )
-          .first(),
-      ).toHaveCSS("background-color", color);
+      const dot = page
+        .locator(
+          `.buzz-avatar-status[data-status="${status}"] .buzz-avatar-status-dot`,
+        )
+        .first();
+      if (status === "online") {
+        await expect(dot).toHaveCSS("background-color", color);
+        await expect(dot).toHaveCSS("background-image", "none");
+      } else {
+        await expect(dot).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+        await expect(dot).toHaveCSS("box-shadow", /inset/);
+        expect(
+          await dot.evaluate((element) => getComputedStyle(element).boxShadow),
+        ).toContain(color);
+        await expect(dot).toHaveCSS(
+          "background-image",
+          status === "away" ? /linear-gradient/ : "none",
+        );
+      }
     }
     const box = await large.boundingBox();
     if (!box) throw new Error("Large status avatar is not visible");

@@ -60,7 +60,8 @@ available space. Shape clips the artwork, never the interactive focus target.
 Circular avatars can add `statusBadge="online" | "away" | "offline"`. The dot
 uses a semantic green, yellow, or grey role with light and dark values. Its inset
 cutout and dot scale with the existing avatar size; the dot is separate from the
-clipped artwork, and avatars without a badge retain their full circle.
+clipped artwork, and avatars without a badge retain their full circle. Online is
+filled, Away is half-filled, and Offline is a ring so color is not the only cue.
 
 ## Public identity text
 

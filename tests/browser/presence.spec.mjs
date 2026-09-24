@@ -409,6 +409,7 @@ test("avatar choices publish through the existing socket and persist across relo
     name: "Your profile",
     exact: true,
   });
+  const badge = avatar.locator(".buzz-avatar-status-dot");
   const account = page.getByRole("menu", { name: "Your account" });
   const published = (status) =>
     app.report.presencePublications.filter(
@@ -417,6 +418,26 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect(
     page.getByRole("img", { name: "Your status: Active" }),
   ).toBeVisible();
+  await expect
+    .poll(() =>
+      avatar.locator(".buzz-avatar").evaluate(async (element) => {
+        const mask = getComputedStyle(element).maskImage;
+        const image = new Image();
+        image.src = mask.slice(4, -1).replace(/^["']|["']$/g, "");
+        try {
+          await image.decode();
+          return image.naturalWidth > 0;
+        } catch {
+          return false;
+        }
+      }),
+    )
+    .toBe(true);
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", "none");
+  await avatar.screenshot({
+    path: test.info().outputPath("avatar-online.png"),
+  });
   await avatar.click();
   await account
     .getByRole("menuitemradio", { name: "Away", exact: true })
@@ -424,6 +445,9 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect(
     page.getByRole("img", { name: "Your status: Away" }),
   ).toBeVisible();
+  await expect(badge).toHaveCSS("background-image", /linear-gradient/);
+  await expect(badge).toHaveCSS("box-shadow", /inset/);
+  await avatar.screenshot({ path: test.info().outputPath("avatar-away.png") });
   await expect.poll(() => published("away")).toBeGreaterThan(0);
   const editor = page.getByRole("textbox", {
     name: "Message #Alpha",
@@ -443,6 +467,12 @@ test("avatar choices publish through the existing socket and persist across relo
   await expect(
     page.getByRole("img", { name: "Your status: Offline" }),
   ).toBeVisible();
+  await expect(badge).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(badge).toHaveCSS("background-image", "none");
+  await expect(badge).toHaveCSS("box-shadow", /inset/);
+  await avatar.screenshot({
+    path: test.info().outputPath("avatar-offline.png"),
+  });
   await avatar.click();
   await expect(
     account.getByRole("menuitemradio", { name: "Appear offline", exact: true }),

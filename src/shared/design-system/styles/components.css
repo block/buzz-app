@@ -321,10 +321,6 @@
     height: 100%;
   }
 
-  .buzz-avatar-status > .buzz-avatar {
-    mask: url("./avatar-status-cutout.svg") center / 100% 100% no-repeat;
-  }
-
   .buzz-avatar-status-dot {
     position: absolute;
     top: 85%;
@@ -338,11 +334,13 @@
   }
 
   .buzz-avatar-status[data-status="away"] .buzz-avatar-status-dot {
-    background: var(--status-away);
+    background: linear-gradient(90deg, var(--status-away) 50%, transparent 50%);
+    box-shadow: inset 0 0 0 1.5px var(--status-away);
   }
 
   .buzz-avatar-status[data-status="offline"] .buzz-avatar-status-dot {
-    background: var(--status-offline);
+    background: transparent;
+    box-shadow: inset 0 0 0 1.5px var(--status-offline);
   }
 
   /* A panel is the default opaque reading surface over the atmospheric

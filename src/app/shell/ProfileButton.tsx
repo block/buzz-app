@@ -50,6 +50,7 @@ export function ProfileButton({
         }
         alt=""
         fallback={profile.name || "?"}
+        fallbackContent={profile.name ? undefined : <UserIcon size={19} />}
         size="fill"
         {...(viewer ? { statusBadge: presence.status } : {})}
       />

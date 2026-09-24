@@ -89,6 +89,10 @@ export function ChannelLifecycleDialog({
       className={styles.dialog}
       aria-labelledby="channel-lifecycle-title"
       aria-describedby="channel-lifecycle-description"
+      onKeyDown={(event) => {
+        // Keep the navigation disclosure open; native cancel still owns Escape.
+        if (event.key === "Escape") event.stopPropagation();
+      }}
       onCancel={(event) => {
         event.preventDefault();
         if (!busy) close();

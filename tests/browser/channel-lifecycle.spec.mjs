@@ -345,3 +345,98 @@ for (const action of ["archive", "hide"]) {
     });
   });
 }
+
+// Native Escape dispatch precedes cancel and bubbles through the navigation
+// disclosure. A DOM emulator cannot prove visibility or modal inertness here.
+test("pending modal Escape on narrow Settings preserves visible recovery after uncertainty", async ({
+  page,
+  app,
+}) => {
+  await page.setViewportSize({ width: 600, height: 800 });
+  await openLifecycle(page, app);
+  await page.getByRole("button", { name: "Your profile", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Show navigation", exact: true })
+    .click();
+  const row = page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "Lifecycle channel", exact: true });
+  await row.click({ button: "right" });
+  await page
+    .getByRole("menuitem", { name: "Archive channel", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "Archive channel: Lifecycle channel",
+  });
+  const { promise: held, resolve: release } = Promise.withResolvers();
+  const { promise: seen, resolve: intercepted } = Promise.withResolvers();
+  await page.route(
+    "**/api/relay/**/channel-lifecycle-publish",
+    async (route) => {
+      intercepted();
+      await held;
+      // An unbound receipt is uncertain. Do not publish to the fixture relay.
+      await route.fulfill({
+        json: { accepted: true, event_id: "wrong-event" },
+      });
+    },
+  );
+  try {
+    await dialog
+      .getByRole("button", { name: "Archive channel", exact: true })
+      .click();
+    await seen;
+    await expect(
+      dialog.getByRole("button", { name: "Cancel", exact: true }),
+    ).toBeDisabled();
+    // Disabled submit controls can drop focus to body. Clicking the modal's
+    // explanation restores native dialog focus and exercises ancestor bubbling.
+    await dialog
+      .getByText("Archive this channel for everyone", { exact: false })
+      .click();
+    expect(
+      await dialog.evaluate((element) =>
+        element.contains(document.activeElement),
+      ),
+    ).toBe(true);
+    await page.keyboard.press("Escape");
+    await expect(dialog).toBeVisible();
+    await expect(page.locator("#shell-navigation")).toHaveAttribute(
+      "data-expanded",
+      "true",
+    );
+    expect(await dialog.evaluate((element) => element.matches(":modal"))).toBe(
+      true,
+    );
+  } finally {
+    release();
+  }
+  await expect(dialog.getByRole("alert")).toContainText(
+    "The request may have taken effect.",
+  );
+  await expect(
+    dialog.getByRole("button", { name: "Archive channel", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    dialog.getByRole("button", { name: "Cancel", exact: true }),
+  ).toBeEnabled();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+  await expect(row).toBeFocused();
+  // Recovery must leave the page usable, not silently inert under a hidden modal.
+  await page
+    .getByRole("button", { name: "Hide navigation", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Show navigation", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Settings", exact: true }),
+  ).toBeVisible();
+  expect(app.report.lifecyclePublications ?? []).toHaveLength(0);
+  expect(app.report.unexpected).toEqual([]);
+});

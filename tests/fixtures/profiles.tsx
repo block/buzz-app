@@ -46,7 +46,9 @@ const reply = message(viewer, "one", "Thread @Pinky", 12, [
   ["p", pinky.pubkey],
 ]);
 const picture = "https://images.test/avatar.png";
+const pinkyPicture = "https://images.test/pinky-animated.gif";
 const pictureFixture = "/tests/fixtures/design-system/assets/avatar.png";
+const pinkyPictureFixture = "/tests/fixtures/design-system/assets/avatar.png";
 const report = {
   profileReads: [] as string[][],
   media: [] as [string, "small" | undefined][],
@@ -60,7 +62,7 @@ const data = [
     name: "Pinky",
     about: "Agent profile",
     is_agent: true,
-    picture,
+    picture: pinkyPicture,
   }),
 ];
 function session() {
@@ -69,7 +71,11 @@ function session() {
     relayAuthor: authority.pubkey,
     media: (url, size) => {
       report.media.push([url, size]);
-      return url === picture ? pictureFixture : url;
+      return url === picture
+        ? pictureFixture
+        : url === pinkyPicture
+          ? pinkyPictureFixture
+          : url;
     },
     async query(filters) {
       return filters.flatMap((filter) => {

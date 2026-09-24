@@ -367,7 +367,7 @@ it("keeps exact forward page cursors separate from concurrent live rows and auxi
   expect(page.filters).toEqual([
     { ids: [root.id], "#h": ["a"], limit: 1 },
     {
-      kinds: [40002, 9],
+      kinds: [40002, 40008, 9],
       "#h": ["a"],
       "#e": [root.id],
       depth_limit: 100,

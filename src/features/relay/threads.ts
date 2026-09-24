@@ -13,7 +13,8 @@ const PAGE_SIZE = 50;
 const MAX_PAGES = 10;
 const MAX_EVENTS = 2000;
 const MAX_BYTES = 4 * 1024 * 1024;
-const contentKind = (event: EventData) => [9, 40002].includes(event.kind);
+const contentKind = (event: EventData) =>
+  [9, 40002, 40008].includes(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
 const compare = (a: EventData, b: EventData) =>
@@ -379,7 +380,7 @@ export function createThreadView({
           [
             { ids: [rootId], "#h": [channelId], limit: 1 },
             {
-              kinds: [9, 40002],
+              kinds: [9, 40002, 40008],
               "#h": [channelId],
               "#e": [rootId],
               depth_limit: 100,

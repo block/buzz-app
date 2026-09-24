@@ -149,7 +149,8 @@ export function createTyping(
     // At capacity, drop new scopes rather than evict that evidence.
     expireSilence(now);
     for (const event of events) {
-      if (event.kind === 9 || event.kind === 40002) receive(event, now);
+      if (event.kind === 9 || event.kind === 40002 || event.kind === 40008)
+        receive(event, now);
     }
     // Completion wins even when activity came first in the batch.
     if (live) {

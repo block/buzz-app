@@ -1136,3 +1136,14 @@ button.mediaPreview {
     pointer-events: auto;
   }
 }
+
+.rawDiff {
+  max-height: 25rem;
+  overflow: auto;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: var(--text-mono);
+  line-height: var(--text-mono--line-height);
+  letter-spacing: var(--text-mono--letter-spacing);
+  font-weight: var(--text-mono--font-weight);
+}

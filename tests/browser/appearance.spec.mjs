@@ -318,18 +318,10 @@ test("compiled host preserves compatibility utility meanings", async ({
   }
 });
 
-test("shared type and spacing reach Home and the real message timeline", async ({
+test("shared type and spacing reach the real message timeline", async ({
   page,
   app,
 }) => {
-  await page.goto(app.origin);
-  await button(page, "Home").click();
-  await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
-  ).toHaveCSS("font-size", "56px");
-  await expect(
-    page.getByRole("heading", { name: "Make yourself at home." }),
-  ).toHaveCSS("line-height", "56px");
   await open(page, app);
   const history = page.getByRole("region", { name: "Channel message history" });
   const message = history.locator("[data-message-id] p").first();

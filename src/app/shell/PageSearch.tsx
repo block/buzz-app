@@ -82,7 +82,6 @@ export function PageSearch({
     services?.shortcutBindings.snapshot ?? noOverrides,
   );
   const destinations: SearchDestination[] = [
-    { key: "home", ...shellPresentation.home },
     ...orderPages(pages).map((page) => ({
       key: page.key,
       ...pagePresentation(page),

@@ -219,8 +219,10 @@ function ChannelWorkspace({
   const templateProvider =
     templateProviders.length === 1 ? templateProviders[0] : undefined;
   useEffect(() => {
-    queries.channelKit.ensure();
-  }, [queries]);
+    // Initial channel discovery cancels in-flight reads as it settles access.
+    // Start the optional catalog afterward so opening Messages cannot strand it.
+    if (list.status === "ready") queries.channelKit.ensure();
+  }, [queries, list.status]);
   const groupEntry = personalGroups(kitState.entries);
   const personal =
     groupEntry?.record.value.type === "groups"

@@ -146,7 +146,7 @@ Messages, choose a channel, and click a GitHub reference. See
 [the channel extension contract and data budgets](docs/channels.md) for ownership,
 performance, validation, and limitations.
 
-Home, Channels, and GitHub can each be toggled independently in Settings.
+Messages is the landing page. Channels is required and cannot be disabled; optional plugins such as GitHub can be toggled in Settings.
 
 See [client and community ownership](docs/communities.md) for the minimal join/profile flow, session scopes, and switching checks.
 

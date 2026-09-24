@@ -3,7 +3,11 @@ import { Field } from "../shared/design-system/ui/Field";
 import { Radio, RadioGroup } from "../shared/design-system/ui/RadioGroup";
 import { Button } from "../shared/design-system/ui/Button";
 import { useSyncExternalStore } from "react";
-import { MoonIcon, SunIcon } from "../shared/design-system/icons/index";
+import {
+  MonitorIcon,
+  MoonIcon,
+  SunIcon,
+} from "../shared/design-system/icons/index";
 import type { Appearance } from "../shared/theme/service";
 
 /** Shared radios provide one Tab stop and standard arrow-key selection. */
@@ -14,7 +18,7 @@ export function AppearanceSettings({
   appearance: Appearance;
   active?: boolean;
 }) {
-  const { mode, error, fontScale, fontError } = useSyncExternalStore(
+  const { preference, error, fontScale, fontError } = useSyncExternalStore(
     appearance.subscribe,
     appearance.snapshot,
   );
@@ -24,19 +28,17 @@ export function AppearanceSettings({
         Appearance
       </h2>
       <div>
-        <Field
-          label="Color mode"
-          description="Choose how Buzz looks on this device. Your choice is saved automatically."
-        >
+        <Field label="Color mode">
           <RadioGroup
             name="color-mode"
-            value={mode}
+            value={preference}
             onValueChange={(value) => appearance.setMode(value)}
           >
             {(
               [
                 ["light", "Light", SunIcon],
                 ["dark", "Dark", MoonIcon],
+                ["system", "System", MonitorIcon],
               ] as const
             ).map(([value, label, Icon]) => (
               <Radio
@@ -99,7 +101,7 @@ export function AppearanceSettings({
             <Button
               type="button"
               size="sm"
-              onClick={() => appearance.setMode(mode)}
+              onClick={() => appearance.setMode(preference)}
             >
               Retry saving appearance
             </Button>

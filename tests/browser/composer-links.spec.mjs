@@ -111,9 +111,11 @@ test("editable composer renders links and mentions while preserving source and n
     }
     await page.keyboard.press("ArrowRight");
     const drag = await input.evaluate((el) => {
-      const text = el.querySelector("[data-editor-text]");
       const range = document.createRange();
-      range.selectNodeContents(text);
+      // The editor now contains block paragraphs. Selecting the outer editor
+      // measures their full width, not the painted text; WebKit will not start
+      // a text drag at that outside edge. Use the actual paragraph contents.
+      range.selectNodeContents(el.querySelector("p"));
       const end = range.getBoundingClientRect();
       return {
         start: el.getBoundingClientRect().left,
@@ -168,7 +170,21 @@ test("editable composer renders links and mentions while preserving source and n
       } else await input.focus();
       await expect(input).toHaveJSProperty("value", "");
       const emptyCaret = await input.evaluate((el) => {
-        const caret = getSelection().getRangeAt(0).getBoundingClientRect();
+        const selection = getSelection().getRangeAt(0);
+        // ProseMirror uses an empty paragraph + BR, not a zero-width source
+        // character. A collapsed element Range has no rect in Chromium; its
+        // BR supplies the same native caret line box.
+        const caretRange = selection.cloneRange();
+        if (
+          !caretRange.getBoundingClientRect().height &&
+          selection.startContainer instanceof Element &&
+          selection.startContainer.childNodes[selection.startOffset]
+            ?.nodeName === "BR"
+        )
+          caretRange.selectNode(
+            selection.startContainer.childNodes[selection.startOffset],
+          );
+        const caret = caretRange.getBoundingClientRect();
         const box = el.getBoundingClientRect();
         return {
           height: caret.height,
@@ -198,7 +214,16 @@ test("editable composer renders links and mentions while preserving source and n
     const linkSource = "See https://github.com/block/buzz-app";
     await input.fill(linkSource);
     const caretBox = await input.evaluate((el) => {
-      const caret = getSelection().getRangeAt(0).getBoundingClientRect();
+      const range = getSelection().getRangeAt(0).cloneRange();
+      if (
+        !range.getBoundingClientRect().height &&
+        range.startContainer instanceof Element
+      ) {
+        const child = range.startContainer.childNodes[range.startOffset];
+        const boundary = child?.nodeName === "IMG" ? child.nextSibling : child;
+        if (boundary?.nodeName === "BR") range.selectNode(boundary);
+      }
+      const caret = range.getBoundingClientRect();
       const link = el.querySelector("[data-source]").getBoundingClientRect();
       return {
         x: caret.x,
@@ -293,6 +318,7 @@ test("editable composer renders links and mentions while preserving source and n
     for (const source of [pastedUrl, `[${pastedUrl}](${pastedUrl})`]) {
       for (const restoredInsideLabel of [false, true]) {
         await input.fill("");
+        await expect(input).toHaveJSProperty("value", "");
         await input.evaluate((el, source) => {
           const clipboardData = new DataTransfer();
           clipboardData.setData("text/plain", source);
@@ -363,6 +389,7 @@ test("editable composer renders links and mentions while preserving source and n
       },
     ]) {
       await input.fill(initial);
+      await expect(input).toHaveJSProperty("value", initial);
       await input.evaluate(
         (el, { source, caret }) => {
           el.setSelectionRange(caret, caret);

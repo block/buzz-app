@@ -112,3 +112,10 @@
   overflow: auto;
   white-space: pre;
 }
+
+html[data-keyboard-navigation] .preview:focus-visible,
+html[data-keyboard-navigation] .file:focus-visible,
+html[data-keyboard-navigation] .raw:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: -2px;
+}

@@ -54,6 +54,11 @@ export interface RelayWriter {
 export interface ReadTransport {
   readonly projectGit?: ProjectGit;
   readonly uploadAttachment?: AttachmentUpload;
+  /** Host-owned idempotent DM opening. The session verifies membership before use. */
+  readonly openDirectMessage?: (
+    pubkeys: readonly string[],
+    signal: AbortSignal,
+  ) => Promise<string>;
   readonly workflows?: WorkflowHost;
   /** Purpose-bound observer decoding on the shared host live stream. */
   readonly agentActivity?: boolean;
@@ -231,6 +236,7 @@ export async function connectBrokerTransport(
     workflowReads?: boolean;
     projectGit?: boolean;
     attachmentUploads?: boolean;
+    directMessages?: boolean;
     relayUrl?: string;
     live?: boolean;
     presence?: boolean;
@@ -315,6 +321,33 @@ export async function connectBrokerTransport(
         }
       : {}),
     ...(session.relayUrl ? { scope: session.relayUrl } : {}),
+    ...(session.directMessages === true
+      ? {
+          async openDirectMessage(
+            pubkeys: readonly string[],
+            signal: AbortSignal,
+          ) {
+            const result = await fetch(`${endpoint}/direct-message`, {
+              method: "POST",
+              credentials: "same-origin",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ pubkeys }),
+              signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]),
+            });
+            if (!result.ok)
+              throw new Error("Could not open the direct message. Try again.");
+            const value = await result.json();
+            if (
+              typeof value?.channelId !== "string" ||
+              !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(
+                value.channelId,
+              )
+            )
+              throw new Error("The relay returned an invalid direct message.");
+            return value.channelId;
+          },
+        }
+      : {}),
     viewer: session.viewer,
     relayAuthor: session.relayAuthor,
     ...(typeof session.archiveAuthority === "string"

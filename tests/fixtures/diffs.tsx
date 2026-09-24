@@ -17,6 +17,7 @@ import {
   bounds,
 } from "../../src/features/relay/testing";
 import type { RelayEvent } from "../../src/features/relay/events";
+import { useKeyboardFocusVisibility } from "../../src/shared/design-system/useKeyboardFocusVisibility";
 import { Button } from "../../src/shared/design-system/ui/Button";
 import "../../src/shared/styles/globals.css";
 
@@ -102,6 +103,7 @@ const owner = createRelaySession({
 owner.session.channels.ensureList();
 owner.session.channels.ensure("diffs");
 function Preview() {
+  useKeyboardFocusVisibility();
   const [enabled, setEnabled] = useState(true);
   const [thread, setThread] = useState(false);
   const [dark, setDark] = useState(false);
@@ -145,6 +147,19 @@ function Preview() {
           }}
         >
           Receive live diff
+        </Button>
+        <Button
+          onClick={() => {
+            const e = diff(
+              events.length + 1,
+              [],
+              `diff --git a/long.ts b/long.ts\n--- a/long.ts\n+++ b/long.ts\n@@ -1,40 +1,40 @@\n${Array.from({ length: 40 }, (_, i) => ` line ${i}`).join("\n")}\n`,
+            );
+            events.push(e);
+            receive([e]);
+          }}
+        >
+          Receive long diff
         </Button>
         <Button
           onClick={() => {

@@ -54,8 +54,8 @@
   --text-body-lg--line-height: 1.4;
   --text-body-lg--letter-spacing: -0.01em;
   --text-body-lg--font-weight: var(--type-weight-normal);
-  --text-body: var(--type-size-16);
-  --text-body--line-height: 1.5;
+  --text-body: var(--type-size-14);
+  --text-body--line-height: 1.4285714285714286;
   --text-body--letter-spacing: -0.005em;
   --text-body--font-weight: var(--type-weight-normal);
   --text-body-sm: var(--type-size-14);

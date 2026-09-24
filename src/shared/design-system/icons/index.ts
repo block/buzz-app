@@ -121,6 +121,8 @@ import { MinusIcon as PhosphorMinusIcon } from "@phosphor-icons/react/dist/csr/M
 export const MinusIcon = defineIcon("phosphor", PhosphorMinusIcon);
 import { MoonIcon as PhosphorMoonIcon } from "@phosphor-icons/react/dist/csr/Moon";
 export const MoonIcon = defineIcon("phosphor", PhosphorMoonIcon);
+import { MonitorIcon as PhosphorMonitorIcon } from "@phosphor-icons/react/dist/csr/Monitor";
+export const MonitorIcon = defineIcon("phosphor", PhosphorMonitorIcon);
 import { NotionLogoIcon as PhosphorNotionLogoIcon } from "@phosphor-icons/react/dist/csr/NotionLogo";
 export const NotionLogoIcon = defineIcon("phosphor", PhosphorNotionLogoIcon);
 import { PaletteIcon as PhosphorPaletteIcon } from "@phosphor-icons/react/dist/csr/Palette";
@@ -202,6 +204,39 @@ export const GitHubIssueIcon = defineIcon("custom", GitHubIssueArtwork, {
 
 import { CircleNotchIcon as PhosphorCircleNotchIcon } from "@phosphor-icons/react/dist/csr/CircleNotch";
 export const CircleNotchIcon = defineIcon("phosphor", PhosphorCircleNotchIcon);
+
+import { TextAaIcon as PhosphorTextAaIcon } from "@phosphor-icons/react/dist/csr/TextAa";
+export const TextAaIcon = defineIcon("phosphor", PhosphorTextAaIcon);
+
+import { TextBIcon as PhosphorTextBIcon } from "@phosphor-icons/react/dist/csr/TextB";
+export const TextBIcon = defineIcon("phosphor", PhosphorTextBIcon);
+
+import { TextItalicIcon as PhosphorTextItalicIcon } from "@phosphor-icons/react/dist/csr/TextItalic";
+export const TextItalicIcon = defineIcon("phosphor", PhosphorTextItalicIcon);
+
+import { TextStrikethroughIcon as PhosphorTextStrikethroughIcon } from "@phosphor-icons/react/dist/csr/TextStrikethrough";
+export const TextStrikethroughIcon = defineIcon(
+  "phosphor",
+  PhosphorTextStrikethroughIcon,
+);
+
+import { CodeIcon as PhosphorCodeIcon } from "@phosphor-icons/react/dist/csr/Code";
+export const CodeIcon = defineIcon("phosphor", PhosphorCodeIcon);
+
+import { CodeBlockIcon as PhosphorCodeBlockIcon } from "@phosphor-icons/react/dist/csr/CodeBlock";
+export const CodeBlockIcon = defineIcon("phosphor", PhosphorCodeBlockIcon);
+
+import { ListBulletsIcon as PhosphorListBulletsIcon } from "@phosphor-icons/react/dist/csr/ListBullets";
+export const ListBulletsIcon = defineIcon("phosphor", PhosphorListBulletsIcon);
+
+import { ListNumbersIcon as PhosphorListNumbersIcon } from "@phosphor-icons/react/dist/csr/ListNumbers";
+export const ListNumbersIcon = defineIcon("phosphor", PhosphorListNumbersIcon);
+
+import { QuotesIcon as PhosphorQuotesIcon } from "@phosphor-icons/react/dist/csr/Quotes";
+export const QuotesIcon = defineIcon("phosphor", PhosphorQuotesIcon);
+
+import { DetectiveIcon as PhosphorDetectiveIcon } from "@phosphor-icons/react/dist/csr/Detective";
+export const DetectiveIcon = defineIcon("phosphor", PhosphorDetectiveIcon);
 
 import { PencilSimpleIcon as PhosphorPencilSimpleIcon } from "@phosphor-icons/react/dist/csr/PencilSimple";
 export const PencilSimpleIcon = defineIcon(

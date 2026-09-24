@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot } from "../relay/threads";
@@ -10,7 +10,8 @@ import type { PageNavigation } from "../navigation/service";
 import { SessionMessageTarget } from "./SessionMessageTarget";
 
 beforeEach(() => {
-  // Resize observation is a browser boundary; layout/focus is tested in Playwright.
+  // Browser-only APIs are fixture boundaries; actual layout is tested in Playwright.
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -22,6 +23,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
 });
 function setup() {
   const views: ReturnType<typeof makeView>[] = [];
@@ -193,7 +195,12 @@ it("keeps a verified exact target readable if unrelated thread context fails", a
       },
     }),
   );
-  expect(screen.getByText("Selected reply")).toBeVisible();
+  const selected = screen.getByText("Selected reply");
+  expect(selected).toBeVisible();
+  // Let reveal run before teardown; rendering text alone can outrun its frame.
+  await waitFor(() =>
+    expect(selected.closest("[data-message-id]")).toHaveFocus(),
+  );
   expect(navigation.complete).not.toHaveBeenCalled();
   await userEvent
     .setup()

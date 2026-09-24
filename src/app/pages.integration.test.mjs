@@ -313,9 +313,28 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
     assert.equal(projects.id, "projects");
     assert.equal(projects.title, "Projects");
     assert.equal(projects.layout, "workspace");
+    assert.equal(projects.handlesNavigation, true);
+    assert.equal(projects.route.version, 1);
+    assert.equal(
+      projects.route.validate({
+        type: "repo",
+        owner: "a".repeat(64),
+        dtag: "repo",
+      }),
+      true,
+    );
+    assert.equal(
+      projects.route.validate({
+        type: "repo",
+        owner: "a".repeat(64),
+        dtag: "repo",
+        arbitrary: true,
+      }),
+      false,
+    );
     assert.match(
       renderToStaticMarkup(createElement(projects.component)),
-      /^<div class="[^"]*"><section aria-label="Projects" data-buzz-surface="" class="panel"><div[^>]*><h1[^>]*>Projects<\/h1><\/div><\/section><\/div>$/,
+      /Select a community to browse projects/,
     );
     await services.plugins.change("disable", "buzz.projects");
     assert.deepEqual(

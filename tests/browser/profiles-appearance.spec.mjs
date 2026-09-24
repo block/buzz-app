@@ -109,12 +109,29 @@ for (const mode of ["light", "dark"]) {
     for (const width of [1280, 900, 390]) {
       await page.setViewportSize({ width, height: 800 });
       await expect(key).toBeVisible();
+      const bounds = await region.boundingBox();
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(width);
       expect(
         await region.evaluate((el) => el.scrollWidth > el.clientWidth),
       ).toBe(false);
       expect(await key.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(
         false,
       );
+      // A narrow page scrolls its tab strip, not the profile's content column.
+      const tabs = region.getByRole("tablist", { name: "Profile sections" });
+      const infoTab = tabs.getByRole("tab", { name: "Info", exact: true });
+      const memories = tabs.getByRole("tab", { name: "Memories", exact: true });
+      await infoTab.focus();
+      await infoTab.press("End");
+      await expect(memories).toBeFocused();
+      await expect(memories).toBeInViewport({ ratio: 1 });
+      await memories.press("Enter");
+      await expect(memories).toHaveAttribute("aria-selected", "true");
+      await memories.press("Home");
+      await infoTab.press("Enter");
+      await expect(infoTab).toHaveAttribute("aria-selected", "true");
+      await copy.scrollIntoViewIfNeeded();
+      await expect(copy).toBeInViewport({ ratio: 1 });
       await panel.screenshot({
         path: info.outputPath(`profile-${mode}-${width}.png`),
       });

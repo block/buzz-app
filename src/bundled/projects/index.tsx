@@ -1,24 +1,20 @@
 import type { PluginModule } from "../../plugins/api";
-import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { parseEntityRoute } from "../../features/projects/routes";
+import { ProjectsPage } from "./ProjectsPage";
 
-export const inject = ["pages"];
+export const inject = ["pages", "relay", "navigation"];
 export const apply: PluginModule["apply"] = (ctx) => {
   ctx.pages.register({
     id: "projects",
     title: "Projects",
     layout: "workspace",
-    component: ProjectsPage,
+    handlesNavigation: true,
+    route: {
+      version: 1,
+      validate: (params) => parseEntityRoute(params) !== null,
+    },
+    component: (props) => (
+      <ProjectsPage {...props} relay={ctx.relay} open={ctx.navigation.open} />
+    ),
   });
 };
-
-function ProjectsPage() {
-  return (
-    <div className="h-full min-h-0">
-      <FullPageSurface aria-label="Projects">
-        <div className="flex h-full min-h-0 items-center justify-center overflow-auto p-6 text-center">
-          <h1 className="m-0 text-title font-medium">Projects</h1>
-        </div>
-      </FullPageSurface>
-    </div>
-  );
-}

@@ -60,7 +60,8 @@ export function channelForLink(
   const target =
     parsed?.format === "legacy"
       ? parsed
-      : parsed?.target.kind === "conversation" &&
+      : parsed?.format === "shared" &&
+          parsed.target.kind === "conversation" &&
           parsed.target.scope.communityOrigin === scope?.slice(0, -65)
         ? parsed.target
         : undefined;
@@ -77,7 +78,7 @@ export function channelLinkLabel(
   const target =
     parsed?.format === "legacy"
       ? parsed
-      : parsed?.target.kind === "conversation"
+      : parsed?.format === "shared" && parsed.target.kind === "conversation"
         ? parsed.target
         : undefined;
   return channel

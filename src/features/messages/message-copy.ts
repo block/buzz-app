@@ -1,6 +1,6 @@
 import type { ChannelMessage } from "../relay/contracts";
 import { scanMarkdown, MAX_MARKDOWN_LENGTH } from "../relay/message-content";
-import { targetLink } from "../navigation/targets";
+import { parseOpenTarget } from "../navigation/targets";
 import { profileMentionParts } from "./profile-mentions";
 import { isLiteralMarkdownContext } from "./markdown-preparation";
 
@@ -54,7 +54,7 @@ export function messageCopyLink(
   if (!scope || (row.delivery && !["accepted", "seen"].includes(row.delivery)))
     return undefined;
   try {
-    return targetLink({
+    const target = parseOpenTarget({
       version: 1,
       kind: "conversation",
       scope: { communityOrigin: scope.slice(0, -65), viewer: scope.slice(-64) },
@@ -62,6 +62,15 @@ export function messageCopyLink(
       messageId: row.id,
       ...(row.threadRootId ? { threadRootId: row.threadRootId } : {}),
     });
+    if (target.kind !== "conversation" || !target.messageId) return undefined;
+    // Public Buzz links bind to the recipient's selected community. Scoped
+    // buzz://open locators remain supported in-app, but cannot be shared to Buzz.
+    const params = new URLSearchParams({
+      channel: target.channelId,
+      id: target.messageId,
+      ...(target.threadRootId ? { thread: target.threadRootId } : {}),
+    });
+    return `buzz://message?${params}`;
   } catch {
     return undefined;
   }

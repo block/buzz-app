@@ -2,6 +2,8 @@
 import { createMemberAdditions } from "../channel-members/operations";
 import { addChannelMember, startAddedAgent } from "../channel-members/members";
 import type { AgentControl } from "../agents/control";
+import type { GitRead } from "../projects/git";
+import { projectDestinations } from "../projects/destinations";
 import { createAgentChoices, templateAgentChoices } from "../agents/choices";
 import { parseLineup } from "../channel-templates/model";
 import { createChannelKit } from "../channel-templates/capability";
@@ -561,6 +563,14 @@ export function createRelaySession(
   );
   canAccess = channels.canAccess;
   retainedChannelEvent = channels.retainedEvent;
+  const projects = projectDestinations(async (filters, signal) => {
+    const bound = AbortSignal.any([signal, lifetime.signal]);
+    bound.throwIfAborted();
+    const events = await requests.reader.read(filters, { signal: bound });
+    bound.throwIfAborted();
+    // NIP-34/NIP-MP metadata is global; channel tags are associations, not ACLs.
+    return events;
+  });
   const workflows = createWorkflows({
     reader: transport ? verified : undefined,
     viewer: transport?.viewer ?? "",
@@ -1258,6 +1268,20 @@ export function createRelaySession(
     agentLibrary: agentLibrary.queries,
     agentChoices,
     workflows: workflows.capability,
+    projects,
+    projectGit: transport?.projectGit
+      ? {
+          async read(input: GitRead, signal: AbortSignal) {
+            const bound = AbortSignal.any([signal, lifetime.signal]);
+            bound.throwIfAborted();
+            const host = transport.projectGit;
+            if (!host) throw new Error("Repository reads unavailable");
+            const result = await host.read(input, bound);
+            bound.throwIfAborted();
+            return result;
+          },
+        }
+      : undefined,
     agentActivity: activity.queries,
     agentMemories: memories.capability,
     archives: archives.queries,

@@ -13,11 +13,10 @@ import {
 } from "../../src/features/panels/service";
 import { PagesService } from "../../src/features/pages/service";
 import { TemplateProvidersService } from "../../src/features/channel-templates/provider";
-import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
+import { ChannelWorkspaceFixture } from "./channel-workspace";
 import { createRelaySession } from "../../src/features/relay/session";
 import { createAgentControl } from "../../src/features/agents/control";
-import { createNavigationController } from "../../src/features/navigation/controller";
-import { createMemoryHistory } from "../../src/features/navigation/history";
+import { provideNavigation } from "../../src/features/navigation/service";
 import type {
   RelayData,
   RelaySnapshot,
@@ -204,9 +203,7 @@ const relay: RelayData = {
 };
 const context = new Context();
 context.provide("relay", relay);
-const navigationHost = createNavigationController(createMemoryHistory());
-context.provide("navigation", navigationHost.navigation);
-context.effect(() => () => navigationHost.dispose());
+const navigationHost = provideNavigation(context, undefined);
 const native = controlFixture();
 native.agent.pubkey = mic.pubkey;
 native.agent.status = "stopped";
@@ -323,7 +320,8 @@ function Fixture() {
         Toggle appearance
       </button>
       <div style={{ height: "calc(100vh - 50px)", padding: 16 }}>
-        <ChannelsPage
+        <ChannelWorkspaceFixture
+          host={navigationHost}
           relay={relay}
           panels={panels}
           pages={pages}

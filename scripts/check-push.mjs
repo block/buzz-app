@@ -4,6 +4,14 @@ import { resolve } from "node:path";
 
 const git = (...args) => execFileSync("git", args, { encoding: "utf8" }).trim();
 process.chdir(git("rev-parse", "--show-toplevel"));
+const gitLocalEnv = new Set(
+  git("rev-parse", "--local-env-vars").split("\n").filter(Boolean),
+);
+const childEnv = (extra = {}) => {
+  const env = { ...process.env, ...extra };
+  for (const key of gitLocalEnv) delete env[key];
+  return env;
+};
 const head = git("rev-parse", "HEAD");
 const design = process.argv.includes("--design");
 const refs = readFileSync(0, "utf8")
@@ -97,7 +105,7 @@ if (design) {
   ]) {
     const result = spawnSync(command, args, {
       stdio: "inherit",
-      env: { ...process.env, pnpm_config_verify_deps_before_run: "false" },
+      env: childEnv({ pnpm_config_verify_deps_before_run: "false" }),
     });
     if (result.error) console.error(result.error.message);
     if (result.status !== 0) process.exit(result.status ?? 1);
@@ -110,14 +118,14 @@ console.log(
 const types = spawnSync(
   process.execPath,
   [resolve("node_modules/typescript/bin/tsc"), "--noEmit"],
-  { stdio: "inherit" },
+  { stdio: "inherit", env: childEnv() },
 );
 if (types.error) console.error(types.error.message);
 if (types.status !== 0) process.exit(types.status ?? 1);
 const result = spawnSync(
   process.execPath,
   [resolve("node_modules/vitest/vitest.mjs"), ...args],
-  { stdio: "inherit" },
+  { stdio: "inherit", env: childEnv() },
 );
 if (result.error) console.error(result.error.message);
 process.exit(result.status ?? 1);

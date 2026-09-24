@@ -44,7 +44,7 @@ function waitForAddition(outbox: LocalEvents, id: string, signal: AbortSignal) {
       );
     const inspect = () => {
       const item = outbox.snapshot().find((entry) => entry.event.id === id);
-      // A confirmed echo leaves the outstanding journal. Always verify the roster next.
+      // Delivery alone is not membership confirmation. Always verify the roster next.
       if (!item || item.delivery === "accepted" || item.delivery === "seen")
         finish();
       else if (item.delivery !== "sending")
@@ -95,6 +95,8 @@ export async function addChannelMember(
   check();
   const outbox = session.outbox;
   if (!outbox) throw new Error("Member additions are unavailable.");
+  await outbox.ready();
+  check();
   // This existing session operation verifies the connected relay's signed roster.
   await session.workSessions.refreshMembership(channelId);
   check();
@@ -107,10 +109,11 @@ export async function addChannelMember(
     ? undefined
     : journal
         .snapshot()
-        .find(({ event }) =>
+        .find(({ event, acknowledged }) =>
           intent.id
             ? event.id === intent.id
-            : event.kind === 9000 &&
+            : !acknowledged &&
+              event.kind === 9000 &&
               event.tags.some(
                 ([tag, value]) => tag === "h" && value === channelId,
               ) &&
@@ -121,8 +124,14 @@ export async function addChannelMember(
                 ([tag, value]) => tag === "role" && value !== "bot",
               ),
         );
+  const recovery = { key: `member-add:${channelId}:${pubkey}`, value: "1" };
+  if (pending && !pending.acknowledged)
+    await outbox.recover(pending.event.id, recovery);
+  check();
   if (channel()?.members?.includes(pubkey)) {
     if (!intent.id && pending) intent.id = pending.event.id;
+    if (pending) await outbox.acknowledge(pending.event.id);
+    check();
     intent.confirmed = true;
     return;
   }
@@ -144,15 +153,18 @@ export async function addChannelMember(
     session.profiles.snapshot().get(pubkey)?.isAgent;
   const id =
     pending?.event.id ??
-    outbox.send({
-      kind: 9000,
-      content: "",
-      tags: [
-        ["h", channelId],
-        ["p", pubkey],
-        ...(isAgent ? [["role", "bot"]] : []),
-      ],
-    });
+    outbox.send(
+      {
+        kind: 9000,
+        content: "",
+        tags: [
+          ["h", channelId],
+          ["p", pubkey],
+          ...(isAgent ? [["role", "bot"]] : []),
+        ],
+      },
+      recovery,
+    );
   if (pending?.delivery === "failed" || pending?.delivery === "unknown")
     outbox.retry(id);
   intent.id = id;
@@ -166,6 +178,8 @@ export async function addChannelMember(
     throw new Error(
       "Addition is not confirmed in the member list yet. Retry to check again.",
     );
+  await outbox.acknowledge(id);
+  check();
   intent.confirmed = true;
 }
 

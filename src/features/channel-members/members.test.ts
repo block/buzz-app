@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
-import { PublishRejected } from "../relay/outbox";
+import { PublishRejected, type OutgoingEvent } from "../relay/outbox";
 import { matchesEvent } from "../relay/projection";
 import { keypair, roster, signed } from "../relay/testing";
 import type { RelayEvent } from "../relay/events";
@@ -25,6 +25,7 @@ function setup(type = "stream") {
   let echo = false;
   let failRoster = false;
   let failSave = false;
+  let failAcknowledgement = false;
   const published: RelayEvent[] = [];
   const publish = vi.fn(async (event: RelayEvent) => {
     if (fail) throw unknown ? new Error(fail) : new PublishRejected(fail);
@@ -33,54 +34,78 @@ function setup(type = "stream") {
     published.push(event);
     return event;
   });
-  const owner = createRelaySession(
-    {
-      viewer: viewer.pubkey,
-      relayAuthor: relay.pubkey,
-      media: () => undefined,
-      readAgentLibrary: async () => ({
-        definitions: [],
-        identities: agent ? [{ pubkey: person.pubkey, name: "Agent" }] : [],
-      }),
-      writer: {
-        kinds: [9, 9000],
-        sign: async (template) => signed(viewer, template),
-        publish: async (event) => {
-          await publish(event);
+  let records: readonly OutgoingEvent[] = [];
+  const create = () =>
+    createRelaySession(
+      {
+        viewer: viewer.pubkey,
+        relayAuthor: relay.pubkey,
+        media: () => undefined,
+        readAgentLibrary: async () => ({
+          definitions: [],
+          identities: agent ? [{ pubkey: person.pubkey, name: "Agent" }] : [],
+        }),
+        writer: {
+          kinds: [9, 9000],
+          sign: async (template) => signed(viewer, template),
+          publish: async (event) => {
+            await publish(event);
+          },
+        },
+        query: async (filters) => {
+          if (
+            failRoster &&
+            published.length &&
+            filters.some((filter) => filter.kinds?.includes(39002))
+          )
+            throw new Error("Roster unavailable");
+          return [
+            ...(echo ? published : []),
+            signed(relay, {
+              kind: 39000,
+              content: "",
+              tags: [["d", id], ["t", type], ["private"], ["name", "Design"]],
+            }),
+            roster(foreign ? person : relay, id, members, clock),
+          ].filter((event) =>
+            filters.some((filter) => matchesEvent(event, filter)),
+          );
         },
       },
-      query: async (filters) => {
-        if (
-          failRoster &&
-          published.length &&
-          filters.some((filter) => filter.kinds?.includes(39002))
-        )
-          throw new Error("Roster unavailable");
-        return [
-          ...(echo ? published : []),
-          signed(relay, {
-            kind: 39000,
-            content: "",
-            tags: [["d", id], ["t", type], ["private"], ["name", "Design"]],
-          }),
-          roster(foreign ? person : relay, id, members, clock),
-        ].filter((event) =>
-          filters.some((filter) => matchesEvent(event, filter)),
-        );
-      },
-    },
-    {
-      outboxStorage: {
-        load: () => [],
-        save: () => {
-          if (failSave) throw new Error("Storage unavailable");
+      {
+        outboxStorage: {
+          load: () => structuredClone(records),
+          save: (next) => {
+            if (
+              failSave ||
+              (failAcknowledgement && next.some((item) => item.acknowledged))
+            )
+              throw new Error("Storage unavailable");
+            records = structuredClone(next);
+          },
         },
       },
-    },
-  );
-  cleanups.push(owner.dispose);
+    );
+  let owner = create();
+  cleanups.push(() => owner.dispose());
   return {
-    ...owner,
+    get session() {
+      return owner.session;
+    },
+    dispose: () => owner.dispose(),
+    records: () => records,
+    legacy: () => {
+      records = records.map(
+        ({ recovery: _recovery, acknowledged: _acknowledged, ...item }) => item,
+      );
+    },
+    setAcknowledgementFailure: (value: boolean) => {
+      failAcknowledgement = value;
+    },
+    restart: () => {
+      owner.dispose();
+      owner = create();
+    },
     id,
     person,
     viewer,
@@ -218,7 +243,9 @@ it.each([false, true])(
     t.setApply(false);
     t.setRosterFailure(readFails);
     await expect(t.managedAdd()).rejects.toThrow();
-    await vi.waitFor(() => expect(t.session.outbox?.snapshot()).toEqual([]));
+    await vi.waitFor(() =>
+      expect(t.session.outbox?.snapshot()[0]?.delivery).toBe("seen"),
+    );
     t.setRosterFailure(false);
     await expect(t.managedAdd()).rejects.toThrow(
       /not confirmed in the member list/,
@@ -236,7 +263,7 @@ it.each(["rejected", "unknown", "unconfirmed"])(
     await t.ready();
     await t.managedAdd();
     const first = t.publish.mock.calls[0]?.[0].id;
-    expect(t.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
+    expect(t.session.outbox?.snapshot()).toEqual([]);
     expect(t.session.memberAdditions.snapshot()).toEqual([]);
     t.removePerson();
     await t.session.workSessions.refreshMembership(t.id);
@@ -288,18 +315,20 @@ it("allows a new explicit addition after an expired failed request is dismissed"
   expect(t.publish.mock.calls[1]?.[0].id).not.toBe(first);
 });
 
-it("does not replace an unconfirmed echoed request when its receipt disappears", async () => {
+it("protects an unconfirmed echoed request from dismissal", async () => {
   const t = setup();
   await t.ready();
   t.setEcho();
   t.setApply(false);
   await expect(t.managedAdd()).rejects.toThrow();
-  await vi.waitFor(() => expect(t.session.outbox?.snapshot()).toEqual([]));
+  await vi.waitFor(() =>
+    expect(t.session.outbox?.snapshot()[0]?.delivery).toBe("seen"),
+  );
   const first = t.publish.mock.calls[0]?.[0].id;
   if (!first) throw new Error("Expected invitation");
-  await t.session.outbox?.dismiss(first);
+  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
   await expect(t.managedAdd()).rejects.toThrow(
-    /original addition receipt is unavailable/,
+    /not confirmed in the member list/,
   );
   expect(t.publish).toHaveBeenCalledOnce();
 });
@@ -335,10 +364,12 @@ it("does not mistake external retry and echo removal for dismissal of a failed a
   t.setApply(false);
   t.setEcho();
   t.session.outbox?.retry(first);
-  await vi.waitFor(() => expect(t.session.outbox?.snapshot()).toEqual([]));
-  await t.session.outbox?.dismiss(first);
+  await vi.waitFor(() =>
+    expect(t.session.outbox?.snapshot()[0]?.delivery).toBe("seen"),
+  );
+  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
   await expect(t.managedAdd()).rejects.toThrow(
-    /original addition receipt is unavailable/,
+    /not confirmed in the member list/,
   );
   expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
     first,
@@ -363,4 +394,153 @@ it("does not reuse an older accepted request after dismissing a rejected re-add"
   expect(third).toBeDefined();
   expect(third).not.toBe(first);
   expect(third).not.toBe(second);
+});
+
+it.each([false, true])(
+  "re-adds after confirmed removal across session recreation (echo: %s)",
+  async (echo) => {
+    const t = setup();
+    await t.ready();
+    if (echo) t.setEcho();
+    await t.managedAdd();
+    const first = t.publish.mock.calls[0]?.[0].id;
+    t.removePerson();
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+    expect(t.publish.mock.calls[1]?.[0].id).not.toBe(first);
+  },
+);
+it("retains echoed unconfirmed intent across recreation until signed membership confirms it", async () => {
+  const t = setup();
+  await t.ready();
+  t.setEcho();
+  t.setApply(false);
+  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("seen"));
+  t.restart();
+  await t.ready();
+  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.confirmPerson();
+  await t.managedAdd();
+  expect(t.records()[0]).toMatchObject({ acknowledged: true });
+  t.removePerson();
+  t.setApply(true);
+  t.restart();
+  await t.ready();
+  await t.managedAdd();
+  expect(t.publish).toHaveBeenCalledTimes(2);
+});
+it.each(["unknown", "accepted"])(
+  "protects %s additions from dismissal and recovers the same ID after restart",
+  async (delivery) => {
+    const t = setup();
+    await t.ready();
+    t.setApply(false);
+    if (delivery === "unknown") t.setFail("Receipt lost", true);
+    await expect(t.managedAdd()).rejects.toThrow();
+    const first = t.publish.mock.calls[0]?.[0].id;
+    if (!first) throw new Error("Expected invitation");
+    await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
+    await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe(delivery));
+    t.restart();
+    await t.ready();
+    await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
+    t.setFail("");
+    t.setApply(true);
+    await t.managedAdd();
+    expect(t.publish.mock.calls.map(([event]) => event.id)).toEqual([
+      first,
+      first,
+    ]);
+  },
+);
+
+it.each([false, true])(
+  "finishes restored uncertain delivery from roster proof without resending (legacy: %s)",
+  async (legacy) => {
+    const t = setup();
+    await t.ready();
+    t.setFail("Receipt lost", true);
+    await expect(t.managedAdd()).rejects.toThrow();
+    await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("unknown"));
+    if (legacy) t.legacy();
+    t.confirmPerson();
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledOnce();
+    expect(t.records()[0]).toMatchObject({
+      delivery: "unknown",
+      acknowledged: true,
+    });
+    t.removePerson();
+    t.setFail("");
+    t.restart();
+    await t.ready();
+    await t.managedAdd();
+    expect(t.publish).toHaveBeenCalledTimes(2);
+  },
+);
+it("protects a legacy echoed invitation until roster confirmation, including across restart", async () => {
+  const t = setup();
+  await t.ready();
+  t.setEcho();
+  t.setApply(false);
+  await expect(t.managedAdd()).rejects.toThrow();
+  await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("seen"));
+  const first = t.records()[0]?.event.id;
+  if (!first) throw new Error("Expected invitation");
+  t.legacy();
+  t.restart();
+  await t.ready();
+  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  await expect(t.session.outbox?.dismiss(first)).rejects.toThrow(/Confirm/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.confirmPerson();
+  await t.managedAdd();
+  expect(t.records()[0]?.acknowledged).toBe(true);
+  t.removePerson();
+  t.setApply(true);
+  t.restart();
+  await t.ready();
+  await t.managedAdd();
+  expect(t.publish).toHaveBeenCalledTimes(2);
+});
+it("does not supersede an invitation when saving roster confirmation failed before restart", async () => {
+  const t = setup();
+  await t.ready();
+  t.setEcho();
+  t.setAcknowledgementFailure(true);
+  await expect(t.managedAdd()).rejects.toThrow(/Storage unavailable/);
+  await vi.waitFor(() => expect(t.records()[0]?.delivery).toBe("seen"));
+  expect(t.records()[0]?.recovery).toBeDefined();
+  expect(t.records()[0]?.acknowledged).toBeUndefined();
+  t.removePerson();
+  t.setAcknowledgementFailure(false);
+  t.restart();
+  await t.ready();
+  await expect(t.managedAdd()).rejects.toThrow(/not confirmed/);
+  expect(t.publish).toHaveBeenCalledOnce();
+  t.confirmPerson();
+  await t.managedAdd();
+  expect(t.records()[0]?.acknowledged).toBe(true);
+});
+it("does not revive a completed receipt after failed re-add dismissal and restart", async () => {
+  const t = setup();
+  await t.ready();
+  await t.managedAdd();
+  t.removePerson();
+  t.setFail("Rejected");
+  await expect(t.managedAdd()).rejects.toThrow(/Rejected/);
+  const second = t.publish.mock.calls[1]?.[0].id;
+  if (!second) throw new Error("Expected invitation");
+  await t.session.outbox?.dismiss(second);
+  t.restart();
+  await t.ready();
+  t.setFail("");
+  await t.managedAdd();
+  expect(new Set(t.publish.mock.calls.map(([event]) => event.id)).size).toBe(3);
 });

@@ -108,6 +108,7 @@ it("removal validates every loaded author and conversation before queuing one de
   const messages = createMessages(
     {
       ready: async () => {},
+      recover: async () => {},
       acknowledge: async () => {},
       supports: () => true,
       send,

@@ -561,6 +561,7 @@ function setup(
   const outbox: Outbox = {
     observeSend: () => () => {},
     ready: async () => {},
+    recover: async () => {},
     acknowledge: async () => {},
     snapshot: () => [],
     subscribe: receipts.subscribe,
@@ -802,6 +803,7 @@ it.each([true, false])(
       const outbox: Outbox = {
         observeSend: () => () => {},
         ready: async () => {},
+        recover: async () => {},
         acknowledge: async () => {},
         supports: () => true,
         send: vi.fn(),

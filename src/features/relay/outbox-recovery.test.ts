@@ -171,3 +171,127 @@ it("keeps the latest delivery evidence and recovery key if acknowledgement persi
   expect(store.load()[0]?.recovery).toBeUndefined();
   expect(() => h.outbox.send(input, recovery)).not.toThrow();
 });
+
+it("adopts a retained legacy echo durably before allowing recovery", async () => {
+  const store = memory();
+  const h = setup(store);
+  await h.outbox.ready();
+  const id = h.outbox.send(input);
+  await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("accepted"));
+  const operation = h.outbox.snapshot()[0];
+  assert.exists(operation);
+  const event = signed(viewer, operation.event);
+  h.observe([event]);
+  expect(h.outbox.snapshot()).toEqual([]);
+  await h.outbox.recover(id, recovery);
+  expect(store.load()[0]).toMatchObject({ recovery, delivery: "seen" });
+  await expect(h.outbox.dismiss(id)).rejects.toThrow("Confirm this message");
+  h.dispose();
+  const restored = setup(store);
+  await restored.outbox.ready();
+  expect(restored.outbox.snapshot()[0]).toMatchObject({
+    recovery,
+    event: { id },
+  });
+  await restored.outbox.acknowledge(id);
+  expect(store.load()[0]).toMatchObject({ acknowledged: true });
+  expect(restored.outbox.snapshot()).toEqual([]);
+  restored.dispose();
+  const completed = setup(store);
+  await completed.outbox.ready();
+  expect(completed.outbox.snapshot()).toEqual([]);
+  expect(completed.local.snapshot()[0]).toMatchObject({ acknowledged: true });
+});
+
+it("keeps failed adoption protected and persists again before a later recovery", async () => {
+  const store = memory();
+  const save = vi.fn(async (records: readonly OutgoingEvent[]) =>
+    store.save(records),
+  );
+  const h = setup({ ...store, save });
+  await h.outbox.ready();
+  const id = h.outbox.send(input);
+  await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("accepted"));
+  save.mockRejectedValue(new Error("Disk full"));
+  await expect(h.outbox.recover(id, recovery)).rejects.toThrow("Disk full");
+  await expect(h.outbox.dismiss(id)).rejects.toThrow("Confirm this message");
+  expect(store.load()[0]?.recovery).toBeUndefined();
+  save.mockImplementation(async (records) => store.save(records));
+  await h.outbox.recover(id, recovery);
+  expect(store.load()[0]?.recovery).toEqual(recovery);
+  await expect(
+    h.outbox.recover(id, { ...recovery, value: "other" }),
+  ).rejects.toThrow("Recover the earlier");
+  const second = h.outbox.send(input);
+  await expect(h.outbox.recover(second, recovery)).rejects.toThrow(
+    "Recover the earlier",
+  );
+  await expect(h.outbox.recover("missing", recovery)).rejects.toThrow(
+    "unavailable",
+  );
+});
+
+it("retains acknowledgement through a late echo and restores only literal true", async () => {
+  const store = memory();
+  const h = setup(store);
+  await h.outbox.ready();
+  const id = h.outbox.send(input, recovery);
+  await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("accepted"));
+  const operation = h.outbox.snapshot()[0];
+  assert.exists(operation);
+  const event = signed(viewer, operation.event);
+  await h.outbox.acknowledge(id);
+  h.observe([event]);
+  expect(h.local.snapshot()[0]?.acknowledged).toBe(true);
+  h.dispose();
+  const restored = setup(store);
+  await restored.outbox.ready();
+  expect(restored.outbox.snapshot()).toEqual([]);
+  expect(restored.local.snapshot()[0]?.acknowledged).toBe(true);
+  const invalid = setup({
+    ...store,
+    load: () =>
+      JSON.parse(
+        JSON.stringify(store.load()).replace(
+          '"acknowledged":true',
+          '"acknowledged":"true"',
+        ),
+      ),
+  });
+  await invalid.outbox.ready();
+  expect(invalid.local.snapshot()[0]?.acknowledged).toBeUndefined();
+});
+
+it("retires roster-confirmed member recovery without inventing a delivery receipt or retrying it", async () => {
+  const store = memory();
+  const h = setup(
+    store,
+    vi.fn(async () => {
+      throw new Error("Receipt lost");
+    }),
+  );
+  await h.outbox.ready();
+  const id = h.outbox.send(
+    { ...input, kind: 9000 },
+    { key: "member-add:channel:person", value: "1" },
+  );
+  await vi.waitFor(() => expect(store.load()[0]?.delivery).toBe("unknown"));
+  await h.outbox.acknowledge(id);
+  expect(h.local.snapshot()[0]).toMatchObject({
+    acknowledged: true,
+    delivery: "unknown",
+  });
+  expect(h.outbox.snapshot()).toEqual([]);
+  h.outbox.retry(id);
+  h.dispose();
+  const restored = setup(store);
+  await restored.outbox.ready();
+  restored.outbox.retry(id);
+  expect(restored.outbox.snapshot()).toEqual([]);
+  expect(restored.local.snapshot()[0]).toMatchObject({
+    acknowledged: true,
+    delivery: "unknown",
+  });
+  expect(h.publish).toHaveBeenCalledOnce();
+  expect(restored.publish).not.toHaveBeenCalled();
+});

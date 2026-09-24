@@ -10,6 +10,7 @@ import {
   waitFor,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { composerDOMFixture } from "../messages/composer-testing";
 import type { OutgoingEvent } from "../relay/outbox";
 import { publicKeyLabels } from "../../shared/identity/public-key";
 import type { RelaySession } from "../relay/session";
@@ -20,6 +21,8 @@ import type {
   AgentControlState,
   AgentView,
 } from "../agents/control";
+
+composerDOMFixture();
 
 const scope = `https://relay.example:${"f".repeat(64)}`;
 

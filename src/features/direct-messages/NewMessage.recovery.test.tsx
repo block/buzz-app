@@ -10,6 +10,7 @@ import {
   within,
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { composerDOMFixture } from "../messages/composer-testing";
 import { createRelaySession } from "../relay/session";
 import { keypair, profile, roster, signed } from "../relay/testing";
 import {
@@ -37,6 +38,8 @@ const viewer = keypair(),
   another = keypair(),
   relay = keypair();
 const channel = "11111111-1111-4111-8111-111111111111";
+composerDOMFixture();
+
 const scope = `https://relay.example:${viewer.pubkey}`;
 const owners: ReturnType<typeof createRelaySession>[] = [];
 beforeEach(() => {
@@ -571,8 +574,7 @@ it.each(["picker", "completion"])(
     expect(
       second.queryByRole(choiceRole, { name: new RegExp(another.pubkey) }),
     ).not.toBeInTheDocument();
-    if (path === "picker") await t.user.keyboard("{Escape}");
-    else await t.user.type(composer(), " ");
+    await t.user.keyboard("{Escape}");
     expect(t.openDirectMessage).not.toHaveBeenCalled();
     await t.user.click(send());
     expect(await screen.findByRole("alert")).toHaveTextContent(

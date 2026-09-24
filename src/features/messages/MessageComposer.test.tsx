@@ -548,6 +548,7 @@ it("prefixes thread replies with the selected media time and clears it after sen
     "root",
     "⏱ 1:12 — trim this",
     [],
+    [],
   );
   expect(clearMediaTime).toHaveBeenCalledOnce();
   expect(h.input()).toHaveValue("");
@@ -583,6 +584,7 @@ it("hides the media time indicator while keeping the send prefix", async () => {
     "channel",
     "root",
     "⏱ 0:12 — hidden frame",
+    [],
     [],
   );
   expect(clearMediaTime).toHaveBeenCalledOnce();

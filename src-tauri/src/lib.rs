@@ -7,8 +7,8 @@ use browser::{
 };
 mod agent_models;
 mod agents;
-mod deep_links;
 mod builderlab;
+mod deep_links;
 mod dock;
 mod notifications;
 mod terminal;

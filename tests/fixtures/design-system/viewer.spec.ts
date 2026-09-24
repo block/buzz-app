@@ -8,7 +8,9 @@ test("status badges keep avatar sizes and show a clear cutout in both modes", as
   page,
 }) => {
   await page.goto(`${viewer}#/design/components/avatar`);
-  const badges = page.locator('.buzz-avatar-status[data-shape="circle"]');
+  const badges = page.locator(
+    '.buzz-avatar-status[data-shape="circle"][data-status]',
+  );
   await expect(badges).toHaveCount(5);
   await expect(
     page.getByRole("img", { name: "Morgan Martin, online" }),
@@ -141,7 +143,9 @@ test("agent status badges follow the squircle while keeping the artwork size", a
   page,
 }) => {
   await page.goto(`${viewer}#/design/components/avatar`);
-  const badges = page.locator('.buzz-avatar-status[data-shape="squircle"]');
+  const badges = page.locator(
+    '.buzz-avatar-status[data-shape="squircle"][data-status]',
+  );
   await expect(badges).toHaveCount(5);
   for (const [index, size] of [24, 32, 40].entries()) {
     const avatar = badges.nth(index).locator(".buzz-avatar");
@@ -174,6 +178,37 @@ test("agent status badges follow the squircle while keeping the artwork size", a
       .locator(".buzz-avatar")
       .evaluate((element) => getComputedStyle(element).maskImage),
   );
+});
+
+test("loaded avatar artwork stays mounted through status changes", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/avatar`);
+  const group = page.locator(".component-specimen-group").filter({
+    has: page.getByRole("heading", { name: "Status transitions" }),
+  });
+  const artwork = group.locator(".buzz-avatar img");
+  await expect(artwork).toHaveAttribute("data-loaded", "true");
+  await expect(artwork).toHaveCSS("opacity", "1");
+  await artwork.evaluate((image) =>
+    image.setAttribute("data-test-instance", "retained"),
+  );
+  for (const status of ["online", "away", "offline"] as const) {
+    await group.getByRole("button", { name: `Set ${status}` }).click();
+    await expect(
+      group.getByRole("img", { name: `Live agent artwork, ${status}` }),
+    ).toBeVisible();
+    await expect(artwork).toHaveAttribute("data-test-instance", "retained");
+    await expect(artwork).toHaveAttribute("data-loaded", "true");
+    await expect(artwork).toHaveCSS("opacity", "1");
+  }
+  await group.getByRole("button", { name: "Clear status" }).click();
+  await expect(
+    group.getByRole("img", { name: "Live agent artwork", exact: true }),
+  ).toBeVisible();
+  await expect(artwork).toHaveAttribute("data-test-instance", "retained");
+  await expect(artwork).toHaveAttribute("data-loaded", "true");
+  await expect(artwork).toHaveCSS("opacity", "1");
 });
 
 test("built viewer loads every specimen and foundation without app connections", async ({

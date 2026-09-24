@@ -1,6 +1,12 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
 import { afterEach, expect, it } from "vitest";
 import type { RelaySession } from "../../features/relay/session";
 import type { PresenceStatus } from "../../features/presence/presence";
@@ -25,13 +31,20 @@ it("badges a single agent only while live presence is known", () => {
   render(
     <AgentCard
       name="Agent"
+      avatar="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl5qV8AAAAASUVORK5CYII="
       identities={[{ pubkey, name: "Agent" }]}
       session={session}
     />,
   );
   const artwork = screen.getByRole("img", { name: "Agent" });
   expect(artwork).toHaveAttribute("data-avatar-shape", "squircle");
-  expect(artwork.closest(".buzz-avatar-status")).toBeNull();
+  const image = artwork.querySelector("img");
+  expect(image).toBeTruthy();
+  fireEvent.load(image as HTMLImageElement);
+  expect(image).toHaveAttribute("data-loaded", "true");
+  expect(artwork.closest(".buzz-avatar-status")).not.toHaveAttribute(
+    "data-status",
+  );
   for (const next of ["online", "away", "offline", "unknown"] as const) {
     act(() => {
       status = next;
@@ -41,7 +54,14 @@ it("badges a single agent only while live presence is known", () => {
       name: next === "unknown" ? "Agent" : `Agent, ${next}`,
     });
     const badge = updated.closest(".buzz-avatar-status");
-    if (next === "unknown") expect(badge).toBeNull();
-    else expect(badge).toHaveAttribute("data-status", next);
+    expect(updated).toBe(artwork);
+    expect(updated.querySelector("img")).toBe(image);
+    expect(image).toHaveAttribute("data-loaded", "true");
+    if (next === "unknown") {
+      expect(badge).not.toHaveAttribute("data-status");
+      expect(badge?.querySelector(".buzz-avatar-status-dot")).toBeNull();
+    } else {
+      expect(badge).toHaveAttribute("data-status", next);
+    }
   }
 });

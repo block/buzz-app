@@ -79,7 +79,6 @@ export function ActivityAccessory({
           const unknown = active.length - working;
           const isWorking =
             working > 0 || typing.some((entry) => entry.agent === agent);
-          const Icon = isWorking ? DotsThreeIcon : QuestionIcon;
           const picture = identities.get(agent)?.picture;
           return (
             <Tooltip
@@ -109,33 +108,14 @@ export function ActivityAccessory({
                 </>
               }
             >
-              <NavigationItem
-                aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
-                onClick={() => open(target)}
-                icon={
-                  <ActivityAvatar
-                    session={session}
-                    pubkey={agent}
-                    src={picture ? (session.media(picture) ?? null) : null}
-                    name={name}
-                  />
-                }
-                label={
-                  <>
-                    <span className={styles.name}>{name}</span>
-                    {" · "}
-                    <span className={styles.status}>
-                      {isWorking ? "working" : "status unknown"}
-                    </span>
-                  </>
-                }
-                trailing={
-                  <Icon
-                    className={styles.indicator}
-                    data-working={isWorking || undefined}
-                    size={18}
-                  />
-                }
+              <ActivityEntry
+                session={session}
+                agent={agent}
+                src={picture ? (session.media(picture) ?? null) : null}
+                name={name}
+                isWorking={isWorking}
+                target={target}
+                open={open}
               />
             </Tooltip>
           );
@@ -145,26 +125,58 @@ export function ActivityAccessory({
   );
 }
 
-function ActivityAvatar({
+function ActivityEntry({
   session,
-  pubkey,
+  agent,
   src,
   name,
+  isWorking,
+  target,
+  open,
 }: {
   session: ComposerAccessoryProps["session"];
-  pubkey: string;
+  agent: string;
   src: string | null;
   name: string;
+  isWorking: boolean;
+  target: ReturnType<typeof activityTarget>;
+  open: ComposerAccessoryProps["open"];
 }) {
-  const presence = usePresenceStatus(session.presence, pubkey);
+  const presence = usePresenceStatus(session.presence, agent);
+  const Icon = isWorking ? DotsThreeIcon : QuestionIcon;
   return (
-    <Avatar
-      src={src}
-      alt=""
-      fallback={name}
-      size="small"
-      shape="squircle"
-      statusBadge={presence === "unknown" ? undefined : presence}
+    <NavigationItem
+      aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
+      aria-description={
+        presence === "unknown" ? undefined : `Presence: ${presence}`
+      }
+      onClick={() => open(target)}
+      icon={
+        <Avatar
+          src={src}
+          alt=""
+          fallback={name}
+          size="small"
+          shape="squircle"
+          statusBadge={presence === "unknown" ? undefined : presence}
+        />
+      }
+      label={
+        <>
+          <span className={styles.name}>{name}</span>
+          {" · "}
+          <span className={styles.status}>
+            {isWorking ? "working" : "status unknown"}
+          </span>
+        </>
+      }
+      trailing={
+        <Icon
+          className={styles.indicator}
+          data-working={isWorking || undefined}
+          size={18}
+        />
+      }
     />
   );
 }

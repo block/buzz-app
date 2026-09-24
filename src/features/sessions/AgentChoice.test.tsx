@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createAgentChoices } from "../agents/choices";
 import { createAgentLibrary } from "../agents/library";
 import type { RelaySession } from "../relay/session";
+import type { PresenceStatus } from "../presence/presence";
 import { AgentChoice, agentAdmission } from "./AgentChoice";
 
 afterEach(cleanup);
@@ -75,6 +76,56 @@ it("opens the avatar menu and changes the chosen agent without submitting", asyn
   expect(onChange).toHaveBeenCalledWith(pubkey, expect.anything());
   expect(onSubmit).not.toHaveBeenCalled();
   expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+  library.dispose();
+});
+
+it("names known agent presence on the selected trigger and choices", async () => {
+  const user = userEvent.setup();
+  const pubkey = "a".repeat(64);
+  let status: PresenceStatus = "unknown";
+  const listeners = new Set<() => void>();
+  const library = createAgentLibrary(async () => ({
+    definitions: [],
+    identities: [{ pubkey, name: "Fizz" }],
+  }));
+  const session = {
+    agentChoices: createAgentChoices({
+      scope: "test",
+      library: library.queries,
+      signal: new AbortController().signal,
+    }),
+    presence: {
+      status: () => status,
+      limited: () => false,
+      subscribe: (_key: string, listener: () => void) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      },
+    },
+  } as unknown as RelaySession;
+  render(<AgentChoice session={session} value={pubkey} onChange={vi.fn()} />);
+  expect(
+    await screen.findByRole("button", { name: "Change agent: Fizz" }),
+  ).toBeTruthy();
+  act(() => {
+    status = "away";
+    for (const listener of listeners) listener();
+  });
+  const trigger = screen.getByRole("button", {
+    name: "Change agent: Fizz, away",
+  });
+  await user.click(trigger);
+  expect(
+    screen.getByRole("menuitemradio", { name: "Fizz, away" }),
+  ).toBeTruthy();
+  act(() => {
+    status = "unknown";
+    for (const listener of listeners) listener();
+  });
+  expect(
+    screen.getByRole("button", { name: "Change agent: Fizz" }),
+  ).toBeTruthy();
+  expect(screen.getByRole("menuitemradio", { name: "Fizz" })).toBeTruthy();
   library.dispose();
 });
 

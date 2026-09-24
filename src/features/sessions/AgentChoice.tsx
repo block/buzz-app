@@ -11,6 +11,7 @@ import type { RelaySession } from "../relay/session";
 import { Avatar } from "../../shared/Avatar";
 import { avatarSource } from "../../shared/avatar-source";
 import { usePresenceStatus } from "../presence/react";
+import type { PresenceStatus } from "../presence/presence";
 import completion from "../conversation/Completions.module.css";
 import styles from "./Sessions.module.css";
 
@@ -31,17 +32,14 @@ export function agentAdmission(
 }
 
 function AgentStatusAvatar({
-  session,
-  pubkey,
   name,
   src,
+  presence,
 }: {
-  session: RelaySession;
-  pubkey: string;
   name: string;
   src: string | undefined;
+  presence: PresenceStatus;
 }) {
-  const presence = usePresenceStatus(session.presence, pubkey);
   return (
     <Avatar
       name={name}
@@ -50,6 +48,49 @@ function AgentStatusAvatar({
       shape="squircle"
       statusBadge={presence === "unknown" ? undefined : presence}
     />
+  );
+}
+
+function AgentChoiceOption({
+  session,
+  agent,
+  src,
+  admission,
+}: {
+  session: RelaySession;
+  agent: { pubkey: string; name: string };
+  src: string | undefined;
+  admission: ReturnType<typeof agentAdmission>;
+}) {
+  const presence = usePresenceStatus(session.presence, agent.pubkey);
+  const admissionLabel =
+    admission === "channel"
+      ? " — adds to channel"
+      : admission === "session-and-channel"
+        ? " — adds to session and channel"
+        : admission === "session"
+          ? " — adds to session"
+          : "";
+  return (
+    <Menu.RadioItem
+      value={agent.pubkey}
+      closeOnClick
+      className={`${completion.option} ${styles.agentOption}`}
+      aria-label={
+        presence === "unknown"
+          ? undefined
+          : `${agent.name}, ${presence}${admissionLabel}`
+      }
+    >
+      <AgentStatusAvatar name={agent.name} src={src} presence={presence} />
+      <span>
+        {agent.name}
+        {admissionLabel}
+      </span>
+      <Menu.RadioItemIndicator className={styles.agentCheck}>
+        <CheckIcon size={14} />
+      </Menu.RadioItemIndicator>
+    </Menu.RadioItem>
   );
 }
 
@@ -85,6 +126,10 @@ export function AgentChoice({
     name: resolveName(agent.pubkey, agent.name, candidates),
   }));
   const selected = identities.find((agent) => agent.pubkey === value);
+  const selectedPresence = usePresenceStatus(
+    session.presence,
+    selected?.pubkey,
+  );
   function picture(avatar?: string) {
     const source = avatarSource(avatar);
     return source?.startsWith("data:")
@@ -98,6 +143,8 @@ export function AgentChoice({
     : value
       ? "Change selected agent"
       : "Choose an agent";
+  const accessibleLabel =
+    selectedPresence === "unknown" ? label : `${label}, ${selectedPresence}`;
   return (
     <Menu.Root>
       <span className={styles.agentTrigger}>
@@ -106,10 +153,9 @@ export function AgentChoice({
             <Button variant="outline" size="sm" style={{ maxWidth: "100%" }}>
               {selected ? (
                 <AgentStatusAvatar
-                  session={session}
-                  pubkey={selected.pubkey}
                   name={selected.name}
                   src={picture(selected.avatar)}
+                  presence={selectedPresence}
                 />
               ) : (
                 <RobotIcon size={20} aria-hidden="true" />
@@ -120,7 +166,7 @@ export function AgentChoice({
               <CaretUpIcon size={12} aria-hidden="true" />
             </Button>
           }
-          aria-label={label}
+          aria-label={accessibleLabel}
           title={label}
           disabled={disabled}
         />
@@ -166,32 +212,13 @@ export function AgentChoice({
                   parentMembers,
                 );
                 return (
-                  <Menu.RadioItem
+                  <AgentChoiceOption
                     key={agent.pubkey}
-                    value={agent.pubkey}
-                    closeOnClick
-                    className={`${completion.option} ${styles.agentOption}`}
-                  >
-                    <AgentStatusAvatar
-                      session={session}
-                      pubkey={agent.pubkey}
-                      name={agent.name}
-                      src={picture(agent.avatar)}
-                    />
-                    <span>
-                      {agent.name}
-                      {admission === "channel"
-                        ? " — adds to channel"
-                        : admission === "session-and-channel"
-                          ? " — adds to session and channel"
-                          : admission === "session"
-                            ? " — adds to session"
-                            : ""}
-                    </span>
-                    <Menu.RadioItemIndicator className={styles.agentCheck}>
-                      <CheckIcon size={14} />
-                    </Menu.RadioItemIndicator>
-                  </Menu.RadioItem>
+                    session={session}
+                    agent={agent}
+                    src={picture(agent.avatar)}
+                    admission={admission}
+                  />
                 );
               })}
             </Menu.RadioGroup>

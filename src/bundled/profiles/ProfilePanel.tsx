@@ -147,11 +147,7 @@ function ProfileDetails({
             fallback={name}
             size={picture ? "fill" : "large"}
             shape={agentPubkeys.has(pubkey) ? "squircle" : "circle"}
-            statusBadge={
-              agentPubkeys.has(pubkey) && presence !== "unknown"
-                ? presence
-                : undefined
-            }
+            statusBadge={presence === "unknown" ? undefined : presence}
           />
         </div>
         <h2 className="text-heading">{name}</h2>

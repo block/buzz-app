@@ -51,6 +51,7 @@ it("updates a mounted profile from the shared name view without replacing its id
     clearCache: async () => {},
   };
   try {
+    vi.spyOn(owner.session.presence, "status").mockReturnValue("online");
     render(
       <ProfilePanel
         relay={relay}
@@ -59,6 +60,9 @@ it("updates a mounted profile from the shared name view without replacing its id
       />,
     );
     expect(await screen.findByRole("heading", { name })).toBeTruthy();
+    expect(
+      screen.getByRole("img", { name: `${name} avatar, online` }),
+    ).toBeTruthy();
     act(() => {
       name = "Edited name";
       notify();

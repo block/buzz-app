@@ -208,6 +208,11 @@ export const MessageRow = memo(function MessageRow({
             size="default"
             shape="round"
             aria-label={`View ${name} profile`}
+            aria-description={
+              agentPresence === "unknown"
+                ? undefined
+                : `Presence: ${agentPresence}`
+            }
             onClick={(event) => {
               event.currentTarget.focus();
               onOpenLink(target);
@@ -228,7 +233,7 @@ export const MessageRow = memo(function MessageRow({
         ) : (
           <Avatar
             src={picture}
-            alt=""
+            alt={agentPresence === "unknown" ? "" : "Agent"}
             fallback={name}
             size="large"
             shape={avatarShape}

@@ -244,6 +244,7 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <LiveAvatarStatusSpecimen />
       {/* No `src`, so the fallback initial shows. Same three sizes, because a
           fallback has to hold the ramp as well as an image does. */}
       <SpecimenGroup label="Fallback, with no src">
@@ -297,6 +298,34 @@ function AvatarSpecimen() {
         </div>
       </SpecimenGroup>
     </div>
+  );
+}
+
+function LiveAvatarStatusSpecimen() {
+  const [status, setStatus] = useState<
+    "online" | "away" | "offline" | undefined
+  >();
+  return (
+    <SpecimenGroup label="Status transitions">
+      <div className="component-specimen-row">
+        <Avatar
+          src={avatarUrl}
+          alt="Live agent artwork"
+          fallback="Agent"
+          shape="squircle"
+          size="large"
+          statusBadge={status}
+        />
+        {(["online", "away", "offline"] as const).map((next) => (
+          <Button key={next} size="compact" onClick={() => setStatus(next)}>
+            Set {next}
+          </Button>
+        ))}
+        <Button size="compact" onClick={() => setStatus(undefined)}>
+          Clear status
+        </Button>
+      </div>
+    </SpecimenGroup>
   );
 }
 function FullPageSurfaceSpecimen() {

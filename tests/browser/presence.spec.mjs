@@ -68,6 +68,9 @@ test("profile snapshot and same-socket renewal coexist with real chat while opti
     await expect(
       profile.getByRole("img", { name: "Presence: Active" }),
     ).toBeVisible();
+    await expect(
+      profile.getByRole("img", { name: "Alice Fixture avatar, online" }),
+    ).toBeVisible();
     // Startup may skip busy setup. Keep real time: advancing only browser time
     // would expire its SSE heartbeat without advancing the broker's keepalive.
     await expect
@@ -203,7 +206,7 @@ test("foreground send and cold channel entry remain available during a profile s
   }
 });
 
-test.describe("conversation presence is not rendered or queried", () => {
+test.describe("human byline presence is not rendered or queried", () => {
   test.use({ threadUnread: true, historyCounts: { alpha: 20, beta: 20 } });
   test("timeline and thread bylines do not acquire presence; an explicit profile does", async ({
     page,

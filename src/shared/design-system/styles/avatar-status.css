@@ -1,8 +1,8 @@
-.buzz-avatar-status[data-shape="circle"] > .buzz-avatar {
+.buzz-avatar-status[data-status][data-shape="circle"] > .buzz-avatar {
   mask: url("./avatar-status-cutout.svg") center / 100% 100% no-repeat;
 }
 
-.buzz-avatar-status[data-shape="squircle"] > .buzz-avatar {
+.buzz-avatar-status[data-status][data-shape="squircle"] > .buzz-avatar {
   mask: url("./avatar-status-squircle-cutout.svg") center / 100% 100% no-repeat;
 }
 

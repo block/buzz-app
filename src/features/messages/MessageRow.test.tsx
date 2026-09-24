@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -14,6 +15,7 @@ import { keypair, message, signed } from "../relay/testing";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
+import type { RelaySession } from "../relay/session";
 import { LinkLabel } from "../../bundled/links/InlineLink";
 
 const row: ChannelMessage = {
@@ -28,6 +30,71 @@ const row: ChannelMessage = {
   reactions: [],
   replyCount: 23,
 };
+
+it("badges agent bylines with known presence and leaves human bylines undemanded", () => {
+  const agentRow = { ...row, authorId: "a".repeat(64) };
+  const subscribe = vi.fn(() => () => {});
+  const status = vi.fn(() => "online" as const);
+  const channels = { channels: [], status: "ready" };
+  const session = {
+    presence: { subscribe, status, limited: () => false },
+    channels: {
+      subscribeList: () => () => {},
+      list: () => channels,
+    },
+  } as unknown as RelaySession;
+  const show = (agent: boolean) =>
+    renderToStaticMarkup(
+      <MessageRow
+        row={agentRow}
+        agentPubkeys={agent ? new Set([agentRow.authorId]) : undefined}
+        session={session}
+        profile={undefined}
+        media={() => undefined}
+        onOpenLink={() => false}
+        day={false}
+        retry={undefined}
+      />,
+    );
+  const agent = show(true);
+  expect(agent).toContain('data-status="online"');
+  expect(agent).toContain('aria-label="Agent, online"');
+  const human = show(false);
+  expect(human).not.toContain('data-status="online"');
+  expect(status).toHaveBeenCalledTimes(1);
+  const props = {
+    row: agentRow,
+    session,
+    profile: undefined,
+    media: () => undefined,
+    onOpenLink: () => false,
+    day: false,
+    retry: undefined,
+  };
+  const mounted = renderDom(
+    <MessageRow {...props} agentPubkeys={new Set([agentRow.authorId])} />,
+  );
+  expect(subscribe).toHaveBeenCalledWith(
+    agentRow.authorId,
+    expect.any(Function),
+    false,
+  );
+  mounted.rerender(
+    <MessageRow
+      {...props}
+      agentPubkeys={new Set([agentRow.authorId])}
+      canOpenLink={() => true}
+    />,
+  );
+  expect(
+    screen.getByRole("button", { name: "View aaaaaaaaaa profile" }),
+  ).toHaveAttribute("aria-description", "Presence: online");
+  mounted.unmount();
+  subscribe.mockClear();
+  renderDom(<MessageRow {...props} />);
+  expect(subscribe).not.toHaveBeenCalled();
+  cleanup();
+});
 it.each(["bare", "angle", "markdown", "escaped"] as const)(
   "renders link contributions inside message prose, preserving punctuation and plain-link fallback (%s)",
   (format) => {

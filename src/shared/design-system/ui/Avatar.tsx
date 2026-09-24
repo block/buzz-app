@@ -58,26 +58,6 @@ export function Avatar({
 }) {
   const initial = Array.from(fallback.trim())[0]?.toUpperCase() || "?";
   const content = fallbackContent ?? initial;
-  const artwork = (
-    <BaseAvatar.Root
-      data-buzz-ui=""
-      className="buzz-avatar"
-      data-size={size}
-      data-avatar-shape={shape}
-      role={alt ? "img" : undefined}
-      aria-label={
-        alt ? `${alt}${statusBadge ? `, ${statusBadge}` : ""}` : undefined
-      }
-      aria-hidden={!alt || undefined}
-    >
-      {src ? (
-        <AvatarArtwork key={src} src={src} fallback={content} />
-      ) : (
-        <span aria-hidden="true">{content}</span>
-      )}
-    </BaseAvatar.Root>
-  );
-  if (!statusBadge) return artwork;
   return (
     <span
       className="buzz-avatar-status"
@@ -85,8 +65,26 @@ export function Avatar({
       data-shape={shape}
       data-status={statusBadge}
     >
-      {artwork}
-      <span className="buzz-avatar-status-dot" aria-hidden="true" />
+      <BaseAvatar.Root
+        data-buzz-ui=""
+        className="buzz-avatar"
+        data-size={size}
+        data-avatar-shape={shape}
+        role={alt ? "img" : undefined}
+        aria-label={
+          alt ? `${alt}${statusBadge ? `, ${statusBadge}` : ""}` : undefined
+        }
+        aria-hidden={!alt || undefined}
+      >
+        {src ? (
+          <AvatarArtwork key={src} src={src} fallback={content} />
+        ) : (
+          <span aria-hidden="true">{content}</span>
+        )}
+      </BaseAvatar.Root>
+      {statusBadge && (
+        <span className="buzz-avatar-status-dot" aria-hidden="true" />
+      )}
     </span>
   );
 }

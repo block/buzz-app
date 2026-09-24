@@ -42,6 +42,8 @@ export interface ControlSnapshot {
   harnessOptions?: {
     command: string;
     label: string;
+    available?: boolean;
+    defaultArgs?: string[];
     providers: { value: string; label: string }[];
   }[];
   /** False while native credential/import acceptance is outstanding. */

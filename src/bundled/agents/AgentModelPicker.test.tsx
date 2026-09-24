@@ -10,6 +10,76 @@ import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
 
 afterEach(cleanup);
+
+it("Goose Databricks v2 browses live IDs and flags an unlisted short name", async () => {
+  const f = controlFixture();
+  const run = vi.fn(async () => ({
+    host: "",
+    models: [
+      {
+        id: "data_workflow_tools.goose.goose-glm-5-3",
+        name: "data_workflow_tools.goose.goose-glm-5-3",
+      },
+    ],
+    modelOverridden: false,
+    disconnected: false,
+  }));
+  f.host.models = {
+    begin: async () => 1,
+    run,
+    cancel: async () => {},
+  };
+  const control = createAgentControl(f.host);
+  const user = userEvent.setup();
+  function Editor() {
+    const [draft, setDraft] = useState({
+      ...agentDraft(f.agent),
+      command: "/usr/local/bin/goose",
+      provider: "databricks_v2",
+      model: "goose-glm-5-3",
+    });
+    return (
+      <AgentModelPicker
+        draft={draft}
+        control={control}
+        defaults={{ host: "", filter: "" }}
+        onChange={(patch) => setDraft((current) => ({ ...current, ...patch }))}
+      />
+    );
+  }
+  const view = render(<Editor />);
+  try {
+    await user.click(screen.getByRole("button", { name: "Browse models" }));
+    await screen.findByText(/not in Goose’s current Databricks v2 list/);
+    expect(run).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        host: "",
+        filter: "",
+        action: "connect",
+      }),
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await user.click(
+      screen.getByRole("option", {
+        name: /data_workflow_tools\.goose\.goose-glm-5-3/,
+      }),
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "data_workflow_tools.goose.goose-glm-5-3",
+    );
+    expect(
+      screen.queryByText(/not in Goose’s current Databricks v2 list/),
+    ).not.toBeInTheDocument();
+  } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
 for (const opening of ["typing", "ArrowDown", "closed"] as const) {
   it(`${opening}: only explicit Browse or Retry may connect the actual combobox`, async () => {
     const f = controlFixture();

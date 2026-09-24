@@ -75,6 +75,32 @@ test("short narrow Settings keeps full plugin rows usable at 200% text size", as
   await expect(button(page, "Profile")).toBeInViewport({ ratio: 1 });
   await button(page, "Profile").click();
   await expect(button(page, "Profile")).toHaveAttribute("aria-current", "page");
+
+  // Narrow Settings has the full content width, but the same navigation remains
+  // reachable by disclosure and keyboard. Desktop keeps it permanently visible.
+  const pages = page.getByRole("navigation", { name: "Pages" });
+  await expect(pages).toBeHidden();
+  const showNavigation = button(page, "Show navigation");
+  await expect(showNavigation).toHaveAttribute("aria-expanded", "false");
+  await showNavigation.click();
+  await expect(pages).toBeVisible();
+  const messages = pages.getByRole("button", { name: "Messages", exact: true });
+  await messages.focus();
+  await page.keyboard.press("Escape");
+  await expect(pages).toBeHidden();
+  await expect(showNavigation).toBeFocused();
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await expect(pages).toBeVisible();
+  await expect(showNavigation).toBeHidden();
+  await page.setViewportSize({ width: 480, height: 400 });
+  await expect(pages).toBeHidden();
+  await showNavigation.click();
+  await messages.click();
+  await expect(page.getByRole("main")).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "Channels", exact: true }),
+  ).toBeVisible();
+  await expect(pages).toBeVisible();
 });
 
 test("avatar Settings access dismisses cleanly and exposes Profile and Plugins", async ({
@@ -117,7 +143,11 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await avatar.click();
     await expect(account).toBeHidden();
     await avatar.click();
-    await page.getByRole("main").click({ position: { x: 5, y: 5 } });
+    // The account popup may cover main’s top-left on narrow layouts.
+    // Click the lower content area, genuinely outside the popup.
+    const main = page.getByRole("main");
+    const bounds = await main.boundingBox();
+    await main.click({ position: { x: 5, y: bounds.height - 5 } });
     await expect(account).toBeHidden();
     await avatar.focus();
     await page.keyboard.press("Enter");

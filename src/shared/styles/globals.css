@@ -185,8 +185,7 @@
   }
 
   .shell-header {
-    @apply grid h-14 shrink-0 items-center gap-3 px-4;
-    grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
+    @apply flex h-14 shrink-0 items-center justify-between gap-3 px-4;
   }
   .shell-communities {
     @apply flex min-w-0 items-center justify-start;
@@ -198,22 +197,70 @@
     padding-left: var(--space-16);
   }
   .shell-pages {
-    @apply glass-primary flex min-w-0 items-center gap-1 overflow-x-auto rounded-full p-1;
-    max-width: min(calc(100vw - 400px), 640px);
+    @apply flex min-h-0 min-w-0 flex-col gap-1 overflow-y-auto;
+    max-height: 40dvh;
+  }
+  .shell-page-navigation-slot {
+    @apply flex min-h-0 shrink-0 flex-col mb-4;
+    max-height: 40%;
+  }
+  .shell-navigation {
+    display: contents;
+  }
+  .shell-navigation-toggle {
+    display: none;
+  }
+  .shell-body {
+    @apply relative flex min-h-0 min-w-0 flex-1 px-2 pb-2 sm:px-4 sm:pb-4;
+  }
+  .shell-sidebar,
+  .shell-sidebar-default {
+    @apply flex min-h-0 shrink-0;
+    width: 260px;
+    max-width: max(124px, calc(100% - 336px));
+  }
+  .shell-sidebar-default {
+    margin-right: var(--space-panel-gap);
+  }
+  .shell-sidebar > *,
+  .shell-sidebar-default > * {
+    @apply min-w-0 flex-1;
   }
   .shell-actions {
     @apply flex items-center justify-end gap-2;
   }
   @media (max-width: 700px) {
     .shell-header {
-      @apply h-auto gap-x-2 gap-y-1 px-2 pb-2 pt-2;
-      grid-template-columns: minmax(0, 1fr) auto;
+      @apply gap-2 px-2;
     }
-    .shell-pages {
-      grid-column: 1 / -1;
-      grid-row: 2;
-      justify-self: center;
+  }
+  @media (max-width: 650px) {
+    .shell-sidebar,
+    .shell-sidebar-default {
+      width: 124px;
+      max-width: 124px;
+    }
+    .shell-sidebar-default {
+      margin-right: var(--space-1);
+    }
+    .shell-navigation-toggle {
+      display: inline-flex;
+    }
+    .shell-body-settings .shell-navigation {
+      display: none;
+    }
+    .shell-body-settings .shell-navigation[data-expanded="true"] {
+      @apply absolute inset-y-0 left-2 z-20 flex pb-2;
+      max-width: calc(100% - 16px);
+    }
+    .shell-body-settings .shell-navigation .shell-sidebar,
+    .shell-body-settings .shell-navigation .shell-sidebar-default {
+      width: 260px;
       max-width: 100%;
+      margin-right: 0;
+    }
+    .shell-body-settings .shell-navigation > hr {
+      display: none;
     }
   }
   .muted {

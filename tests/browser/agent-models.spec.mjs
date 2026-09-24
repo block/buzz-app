@@ -15,6 +15,8 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
   const errors = [];
   page.on("pageerror", (error) => errors.push(String(error)));
   try {
+    // Install before page timers exist; pause at a fixed later instant below.
+    await page.clock.install({ time: new Date("2026-01-01T00:00:00Z") });
     await page.goto(
       `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/agent-control.html`,
     );
@@ -53,8 +55,8 @@ test("on-demand model search preserves custom drafts and fences cancellation/con
     // Escape as soon as Browse exposes the list, even before its pending frame.
     // Base UI defers pointer opening to rAF; a second, immediate open owner can
     // expose the list early and let that stale frame reopen it after Escape.
-    await page.clock.install();
-    await page.clock.pauseAt(new Date());
+    // The fixed pause point is beyond this test's timeout, never runner "now".
+    await page.clock.pauseAt(new Date("2026-01-01T01:00:00Z"));
     try {
       await browse.click();
       if ((await search.getAttribute("aria-expanded")) === "false")

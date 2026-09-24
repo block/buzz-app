@@ -56,9 +56,8 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   ]);
   await row.getByRole("button", { name: "Copy link", exact: true }).click();
   await expect(row.getByRole("status")).toHaveText("Link copied");
-  expect(await page.evaluate(() => window.copiedMessages.at(-1))).toContain(
-    "buzz://open?target=",
-  );
+  const copiedLink = await page.evaluate(() => window.copiedMessages.at(-1));
+  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
   await row.getByRole("button", { name: "Reply", exact: true }).click();
   const panel = page.getByRole("complementary", {
     name: "Thread",
@@ -161,6 +160,52 @@ test("message actions reveal, copy, restore focus and reply across responsive la
   await page.screenshot({
     path: test.info().outputPath("message-actions-narrow.png"),
   });
+});
+
+// Browser-only: clipboard -> rendered Markdown -> cross-conversation navigation
+// must finish with the actual virtual row visible and focused.
+test("copied Buzz links and the desktop alias reveal their destination from a conversation", async ({
+  page,
+  app,
+}) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          window.copiedMessageLink = text;
+        },
+      },
+    });
+  });
+  await open(page, app);
+  const event = app.append("primary", "alpha", "Shared destination");
+  const row = page.locator(
+    `[data-channel-timeline] [data-message-id="${event.id}"]`,
+  );
+  await row.hover();
+  await row.getByRole("button", { name: "Copy link", exact: true }).click();
+  await expect(row.getByRole("status")).toHaveText("Link copied");
+  const copiedLink = await page.evaluate(() => window.copiedMessageLink);
+  expect(copiedLink).toBe(`buzz://message?channel=alpha&id=${event.id}`);
+  const sharedConversation = page
+    .getByRole("navigation", { name: "Subscribed channels" })
+    .getByRole("button", { name: "Alice Fixture", exact: true });
+  await sharedConversation.click();
+  const sharedChannel = await page
+    .locator("[data-channel-timeline]")
+    .getAttribute("data-channel-timeline");
+  app.append(
+    "primary",
+    sharedChannel,
+    `${copiedLink}\n\n[Desktop alias](buzz://channel/alpha/${event.id})`,
+  );
+  for (const href of [copiedLink, `buzz://channel/alpha/${event.id}`]) {
+    await sharedConversation.click();
+    await page.locator(`[data-channel-timeline] a[href="${href}"]`).click();
+    await expect(row).toBeVisible();
+    await expect(row).toBeFocused();
+  }
 });
 
 test("DM actions open the correct reply thread", async ({ page, app }) => {

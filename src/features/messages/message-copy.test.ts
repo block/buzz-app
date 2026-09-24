@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 import type { ChannelMessage } from "../relay/contracts";
-import { parseTargetLink } from "../navigation/targets";
+import { deepLinkStep } from "../navigation/deep-links";
 import { profileTarget } from "../profiles/target";
 import { messageCopyText, messageCopyLink } from "./message-copy";
 const person = "a".repeat(64);
@@ -61,21 +61,29 @@ it("does not guess edited, stripped, unsigned, or ambiguous mentions", () => {
     ),
   ).toBe(row.content);
 });
-it("copies a scoped channel or DM message link with its thread hint but no viewer identity", () => {
+it("copies an original-Buzz message link that opens with the recipient's community and thread hint", () => {
   const link = messageCopyLink(
     { ...row, threadRootId: "d".repeat(64) },
     `https://relay.test:${person}`,
   );
   if (!link) throw new Error("Expected a message link");
-  expect(parseTargetLink(link)).toEqual({
-    version: 1,
-    kind: "conversation",
-    scope: { communityOrigin: "https://relay.test" },
-    channelId: "general",
-    messageId: row.id,
-    threadRootId: "d".repeat(64),
+  expect(link).toBe(
+    `buzz://message?channel=general&id=${row.id}&thread=${"d".repeat(64)}`,
+  );
+  expect(
+    deepLinkStep(link, { viewer: person, selected: "https://recipient.test" }),
+  ).toEqual({
+    open: {
+      version: 1,
+      kind: "conversation",
+      scope: { communityOrigin: "https://recipient.test", viewer: person },
+      channelId: "general",
+      messageId: row.id,
+      threadRootId: "d".repeat(64),
+    },
   });
   expect(link).not.toContain(person);
+  expect(link).not.toContain("relay.test");
 });
 it("does not create links for pending, failed, unavailable or malformed targets", () => {
   for (const delivery of ["unknown", "failed", "sending"] as const)

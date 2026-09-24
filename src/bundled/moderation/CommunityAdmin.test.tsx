@@ -252,6 +252,9 @@ it("keeps an accepted removal when the refresh fails and retries read-only", asy
   expect(screen.queryAllByRole("button", { name: /^Actions for / })).toEqual(
     [],
   );
+  expect(
+    screen.queryByRole("button", { name: "Invite to community" }),
+  ).toBeNull();
   read.mockResolvedValueOnce([
     snapshot([
       ["member", owner, "owner"],

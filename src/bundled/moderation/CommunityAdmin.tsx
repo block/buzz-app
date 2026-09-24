@@ -236,9 +236,12 @@ function Members({
     <>
       <div className="mt-4 flex justify-end gap-2">
         {refreshButton}
-        <Button variant="primary" onClick={() => setInviting(true)}>
-          Invite to community
-        </Button>
+        {/* A stale roster cannot prove the viewer still manages this community. */}
+        {!stale && (
+          <Button variant="primary" onClick={() => setInviting(true)}>
+            Invite to community
+          </Button>
+        )}
       </div>
       {status}
       {error && (

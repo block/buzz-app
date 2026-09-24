@@ -245,8 +245,11 @@ Installation uses the exact captured bytes and retains the existing artifact has
 profile locking, rollback, recovery and safe-mode behavior. An uncertain write retains
 the preview identity for same-artifact retry; it does not refetch or rebuild.
 
-Local discovery skips symlink directories, `node_modules`, `.git` and `target`, and
-uses `cap-std` directory-relative reads to confine descendant path resolution. Files
+Local discovery skips symlink directories, `node_modules`, `target` and dot-prefixed
+directories such as `.git` and `.claude` (Claude Code worktrees) below the selected
+folder; select such a folder itself to import from it. Git discovery does not skip
+dot-prefixed directories. Local discovery uses `cap-std` directory-relative reads to
+confine descendant path resolution. Files
 must be regular, non-symlink UTF-8 text; candidate folder names must be UTF-8 and are
 not lossily normalized. Discovery never evaluates modules. Git is a required local
 tool: a shallow no-checkout clone reads committed blobs, without hooks, filters,

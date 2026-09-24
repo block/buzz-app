@@ -580,5 +580,5 @@ html[data-keyboard-navigation]
   color: var(--text-subtle);
   font-size: var(--text-caption);
   line-height: var(--text-caption--line-height);
-  font-weight: 600;
+  letter-spacing: var(--text-caption--letter-spacing);
 }

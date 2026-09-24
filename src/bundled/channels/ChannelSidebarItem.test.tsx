@@ -111,7 +111,12 @@ it("keeps live unread updates and uses replacement session callbacks across row 
 });
 
 it("renders one-to-one DM avatars from supplied profiles only, through the media sanitizer", () => {
-  const session = owner().session;
+  const session = {
+    ...owner().session,
+    media: vi.fn((url: string) =>
+      url.startsWith("https://") ? `/media?url=${url}` : undefined,
+    ),
+  };
   // Any new row-owned profile/presence subscription fails this test.
   Object.defineProperties(session, {
     profiles: {
@@ -125,9 +130,6 @@ it("renders one-to-one DM avatars from supplied profiles only, through the media
       },
     },
   });
-  session.media = vi.fn((url) =>
-    url.startsWith("https://") ? `/media?url=${url}` : undefined,
-  );
   const props = {
     channel: {
       id: "dm",
@@ -149,7 +151,7 @@ it("renders one-to-one DM avatars from supplied profiles only, through the media
     onOpenThread: vi.fn(),
   };
   const view = render(<ChannelSidebarItem {...props} />);
-  const row = screen.getByRole("button", { name: "Alice", exact: true });
+  const row = screen.getByRole("button", { name: /^Alice$/ });
   expect(row.querySelector(".buzz-avatar")).toHaveTextContent("A");
   view.rerender(
     <ChannelSidebarItem

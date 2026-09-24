@@ -3,7 +3,7 @@ import { open } from "./timeline.mjs";
 
 // Real layout, pointer hover and portaled-menu geometry cannot be proven in jsdom.
 // Keep this fixture small; the existing sidebar-unread journeys own overflow scale.
-test("compact sidenav keeps its geometry and remains usable on placeholder destinations", async ({
+test("compact sidenav keeps its geometry across persistent page navigation", async ({
   page,
   app,
 }, info) => {
@@ -64,10 +64,10 @@ test("compact sidenav keeps its geometry and remains usable on placeholder desti
   };
   await assertRowFillRounded();
   await page.evaluate(() => {
-    const board = document.querySelector("[style*='--channel-sidebar-width']");
-    if (!(board instanceof HTMLElement))
-      throw new Error("Missing channel board");
-    board.style.setProperty("--channel-sidebar-width", "124px");
+    const sidebar = document.querySelector(".shell-sidebar");
+    if (!(sidebar instanceof HTMLElement))
+      throw new Error("Missing channel sidebar");
+    sidebar.style.width = "124px";
   });
   await expect
     .poll(() =>
@@ -83,10 +83,10 @@ test("compact sidenav keeps its geometry and remains usable on placeholder desti
   );
   await assertRowFillRounded();
   await page.evaluate(() => {
-    const board = document.querySelector("[style*='--channel-sidebar-width']");
-    if (!(board instanceof HTMLElement))
-      throw new Error("Missing channel board");
-    board.style.setProperty("--channel-sidebar-width", "260px");
+    const sidebar = document.querySelector(".shell-sidebar");
+    if (!(sidebar instanceof HTMLElement))
+      throw new Error("Missing channel sidebar");
+    sidebar.style.width = "260px";
   });
   await expect
     .poll(() => alpha.evaluate((row) => row.getBoundingClientRect().width))
@@ -111,18 +111,16 @@ test("compact sidenav keeps its geometry and remains usable on placeholder desti
   await expect(menu).toHaveCount(0);
   await expect(alpha).toBeFocused();
   const node = await sidebar.elementHandle();
-  for (const title of ["Inbox", "Bestie"]) {
-    await sidebar.getByRole("button", { name: title, exact: true }).click();
-    await expect(page.getByRole("article", { name: title })).toHaveText(
-      `${title}Content coming soon`,
-    );
-    await expect(sidebar).toBeVisible();
-    expect(await node.evaluate((element) => element.isConnected)).toBe(true);
-    await expect(alpha).toBeVisible();
-    await expect(sidebar.locator('[aria-current="page"]')).toHaveAccessibleName(
-      title,
-    );
-  }
+  await page
+    .getByRole("navigation", { name: "Pages" })
+    .getByRole("button", { name: "Projects", exact: true })
+    .click();
+  await expect(
+    page.getByRole("heading", { name: "Projects", exact: true }),
+  ).toBeVisible();
+  await expect(sidebar).toBeVisible();
+  expect(await node.evaluate((element) => element.isConnected)).toBe(true);
+  await expect(alpha).toBeVisible();
   await alpha.click();
   await expect(
     page.getByRole("textbox", { name: "Message #Alpha", exact: true }),

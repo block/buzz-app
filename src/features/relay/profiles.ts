@@ -14,14 +14,15 @@ export function foldProfiles(
   }
   const profiles = new Map<string, Profile>();
   for (const [pubkey, event] of latest) {
-    const agent = event.tags.some(
+    const auth = event.tags.find(
       (tag) =>
         tag.length === 4 &&
         tag[0] === "auth" &&
         /^[0-9a-f]{64}$/.test(tag[1] ?? "") &&
         /^[0-9a-f]{128}$/.test(tag[3] ?? ""),
-    )
-      ? { isAgent: true as const }
+    );
+    const agent = auth
+      ? { isAgent: true as const, ownerPubkey: auth[1] as string }
       : {};
     try {
       const body = JSON.parse(event.content) as {

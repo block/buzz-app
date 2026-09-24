@@ -199,7 +199,11 @@ fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
     let a = agent(dir.path());
     let runtime = bundle(tools.path());
     let command = runtime
-        .command(&a, &Secret::parse(KEY, PUB).unwrap())
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
         .unwrap();
     let env: BTreeMap<_, _> = command
         .get_envs()
@@ -387,7 +391,11 @@ fn explicit_provider_environment_wins_and_blank_selectors_do_not_erase_it() {
             a.environment
                 .insert(model_key.into(), "fixture-model".into());
             let command = runtime
-                .command(&a, &Secret::parse(KEY, PUB).unwrap())
+                .command_with_defaults(
+                    &a,
+                    &Secret::parse(KEY, PUB).unwrap(),
+                    &crate::BuildDefaults::default(),
+                )
                 .unwrap();
             let env: BTreeMap<_, _> = command
                 .get_envs()
@@ -417,7 +425,11 @@ fn blank_selectors_without_overrides_leave_harness_defaults_intact() {
     a.harness.provider.clear();
     a.harness.model.clear();
     let command = runtime
-        .command(&a, &Secret::parse(KEY, PUB).unwrap())
+        .command_with_defaults(
+            &a,
+            &Secret::parse(KEY, PUB).unwrap(),
+            &crate::BuildDefaults::default(),
+        )
         .unwrap();
     let env: BTreeMap<_, _> = command.get_envs().collect();
     for key in ["BUZZ_AGENT_PROVIDER", "BUZZ_AGENT_MODEL", "BUZZ_ACP_MODEL"] {
@@ -796,4 +808,82 @@ fn external_harnesses_never_receive_buzz_agent_build_defaults() {
     assert!(harness.provider.is_empty());
     assert!(harness.model.is_empty());
     assert!(harness.databricks.is_none());
+}
+
+#[test]
+#[cfg(unix)]
+fn goose_model_context_uses_effective_draft_provider_without_projecting_secrets() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let goose = dir.path().join("goose");
+    fs::write(&goose, "#!/bin/sh\nexit 0\n").unwrap();
+    fs::set_permissions(&goose, fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = |override_provider: Option<&str>| AgentEdit {
+        name: "Goose".into(),
+        system_prompt: String::new(),
+        workspace: dir.path().display().to_string(),
+        harness: HarnessEdit {
+            command: goose.display().to_string(),
+            args: vec!["acp".into()],
+            model: "short-name".into(),
+            provider: "databricks_v2".into(),
+            databricks: None,
+        },
+        environment: BTreeMap::from([
+            (
+                "DATABRICKS_HOST".into(),
+                Some("https://workspace.example".into()),
+            ),
+            ("GOOSE_MODEL".into(), Some("effective-model".into())),
+            (
+                "GOOSE_PROVIDER".into(),
+                override_provider.map(str::to_owned),
+            ),
+        ]),
+    };
+    let context = Controller::draft_goose_model_context(edit(None)).unwrap();
+    assert_eq!(context.command, goose);
+    assert!(context.model_overridden);
+    assert_eq!(
+        context.environment["DATABRICKS_HOST"],
+        "https://workspace.example"
+    );
+    assert!(!context.environment.contains_key("GOOSE_PROVIDER"));
+    assert!(Controller::draft_goose_model_context(edit(Some("openai"))).is_err());
+}
+
+#[test]
+fn discovery_accepts_only_v2_from_saved_environment_or_build_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    for provider in ["databricks_v2", "databricks-v2", "databricks"] {
+        for source in ["saved", "environment", "build"] {
+            let mut agent = agent(dir.path());
+            let mut defaults = deployment_defaults();
+            agent.harness.provider.clear();
+            match source {
+                "saved" => agent.harness.provider = provider.into(),
+                "environment" => {
+                    agent
+                        .environment
+                        .insert("BUZZ_AGENT_PROVIDER".into(), provider.into());
+                }
+                _ => defaults.provider = provider.into(),
+            }
+            let context =
+                model_context_with_defaults(&agent.harness, &agent.environment, &defaults);
+            assert_eq!(
+                context.is_ok(),
+                provider != "databricks",
+                "{source}: {provider}"
+            );
+            // Legacy manual selection still resolves the same OAuth workspace for Start.
+            assert_eq!(
+                databricks_with_defaults(&agent, &defaults)
+                    .unwrap()
+                    .unwrap()
+                    .host,
+                defaults.host
+            );
+        }
+    }
 }

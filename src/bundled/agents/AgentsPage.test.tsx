@@ -1,3 +1,5 @@
+import { bindNames } from "../../features/identity-names/service";
+import { createAgentDirectory } from "../../features/identity-names/testing";
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
@@ -96,6 +98,12 @@ function setup(
   };
   const control = createAgentControl(mode === "browser" ? null : f.host);
   disposals.push(() => control.dispose());
+  const names = bindNames(session, {
+    snapshot: () => [createAgentDirectory(control)],
+    subscribe: () => () => {},
+  });
+  snapshot = { ...snapshot, session: { ...session, names } };
+  disposals.push(() => names.dispose());
   render(<AgentsPage relay={relay} control={control} />);
   return {
     f,
@@ -355,6 +363,257 @@ it("shows Harness, Provider and Model in that order when adding an agent", async
   expect(within(dialog).getByLabelText("Workspace")).not.toBeVisible();
   fireEvent.click(within(dialog).getByRole("button", { name: "Cancel" }));
   expect(f.calls.every((call) => call.action === "snapshot")).toBe(true);
+});
+
+it("selects installed Goose with ACP arguments and saves its provider and model", async () => {
+  const { f } = setup("ready", (fixture) => {
+    fixture.data.harnessOptions?.push({
+      command: "/Users/test/.local/bin/goose",
+      label: "Goose",
+      available: true,
+      defaultArgs: ["acp"],
+      providers: [
+        { value: "anthropic", label: "Anthropic" },
+        { value: "openrouter", label: "OpenRouter" },
+      ],
+    });
+  });
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  await userEvent.click(
+    within(dialog).getByRole("combobox", { name: "Harness" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: "Goose" }));
+  expect(within(dialog).getByLabelText("LLM Provider")).toBeVisible();
+  expect(within(dialog).getByLabelText("Model")).toHaveValue("");
+  await userEvent.click(
+    within(dialog).getByRole("combobox", { name: "LLM Provider" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: "OpenRouter" }),
+  );
+  fireEvent.change(within(dialog).getByLabelText("Model"), {
+    target: { value: "anthropic/claude-sonnet-4" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Save changes" }));
+  await within(dialog).findByText("Saved. Running work was not restarted.");
+  expect(f.calls.find((call) => call.action === "save")?.payload).toMatchObject(
+    {
+      edit: {
+        harness: {
+          command: "/Users/test/.local/bin/goose",
+          args: ["acp"],
+          provider: "openrouter",
+          model: "anthropic/claude-sonnet-4",
+        },
+      },
+    },
+  );
+});
+
+for (const source of ["saved", "draft"] as const) {
+  for (const provider of ["", "openai"] as const) {
+    it(`browses Goose models with a ${source} Databricks override and ${provider || "blank"} selector`, async () => {
+      const run = vi.fn(async () => ({
+        host: "",
+        models: [{ id: "catalog.schema.model", name: "catalog.schema.model" }],
+        modelOverridden: false,
+        disconnected: false,
+      }));
+      setup("ready", (fixture) => {
+        Object.assign(fixture.agent.harness, {
+          command: "/fixture/bin/goose",
+          args: ["acp"],
+          provider,
+          environmentKeys: source === "saved" ? ["GOOSE_PROVIDER"] : [],
+        });
+        fixture.data.harnessOptions?.push({
+          command: "/fixture/bin/goose",
+          label: "Goose",
+          available: true,
+          defaultArgs: ["acp"],
+          providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+        });
+        fixture.host.models = {
+          begin: async () => 1,
+          cancel: async () => {},
+          run,
+        };
+      });
+      const [card] = await screen.findAllByRole("article", {
+        name: "Agent Fixture agent",
+      });
+      if (!card) throw Error("Missing managed card");
+      fireEvent.click(
+        within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+      );
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+      const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+      if (source === "draft") {
+        expect(
+          within(dialog).queryByRole("button", { name: "Browse models" }),
+        ).not.toBeInTheDocument();
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Environment" }),
+        );
+        fireEvent.change(within(dialog).getByLabelText("Variable name"), {
+          target: { value: "GOOSE_PROVIDER" },
+        });
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Add variable" }),
+        );
+        fireEvent.change(
+          within(dialog).getByLabelText("Replacement for GOOSE_PROVIDER"),
+          { target: { value: "databricks_v2" } },
+        );
+      }
+      expect(
+        within(dialog).queryByRole("button", { name: "Refresh models" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Browse models" }),
+      );
+      await waitFor(() =>
+        expect(run).toHaveBeenCalledWith(
+          1,
+          expect.objectContaining({
+            action: "connect",
+            edit: expect.objectContaining({
+              harness: expect.objectContaining({ provider }),
+              environment:
+                source === "saved" ? {} : { GOOSE_PROVIDER: "databricks_v2" },
+            }),
+          }),
+        ),
+      );
+    });
+  }
+}
+
+it("uses a draft Goose provider override before the Databricks selector", async () => {
+  setup("ready", (fixture) => {
+    Object.assign(fixture.agent.harness, {
+      command: "/fixture/bin/goose",
+      args: ["acp"],
+      provider: "databricks_v2",
+      environmentKeys: [],
+    });
+  });
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  expect(
+    within(dialog).getByRole("button", { name: "Browse models" }),
+  ).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Environment" }));
+  fireEvent.change(within(dialog).getByLabelText("Variable name"), {
+    target: { value: "GOOSE_PROVIDER" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Add variable" }));
+  fireEvent.change(
+    within(dialog).getByLabelText("Replacement for GOOSE_PROVIDER"),
+    { target: { value: "openai" } },
+  );
+  expect(
+    within(dialog).queryByRole("button", { name: "Browse models" }),
+  ).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Model")).toBeVisible();
+});
+
+it("creates a stopped Goose agent with the selected provider", async () => {
+  vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
+  const commit = vi.fn();
+  setup("connected", (fixture) => {
+    fixture.data.createAvailable = true;
+    fixture.data.defaultWorkspace = "/fixture/workspace";
+    fixture.data.harnessOptions?.push({
+      command: "/Users/test/.local/bin/goose",
+      label: "Goose",
+      available: true,
+      defaultArgs: ["acp"],
+      providers: [{ value: "openrouter", label: "OpenRouter" }],
+    });
+    fixture.host.prepareCreate = async () => ({
+      id: "created-goose",
+      pubkey: "cd".repeat(32),
+    });
+    fixture.host.commitCreate = commit.mockImplementation(async (_id, edit) => {
+      fixture.data.agents.push({
+        ...structuredClone(fixture.agent),
+        id: "created-goose",
+        name: edit.name,
+        harness: { ...edit.harness, environmentKeys: [] },
+        enabled: false,
+        status: "stopped",
+        runningRevision: null,
+      });
+      return structuredClone(fixture.data);
+    });
+    fixture.host.publishProfile = async () => structuredClone(fixture.data);
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  fireEvent.change(within(dialog).getByLabelText("Name"), {
+    target: { value: "Goose helper" },
+  });
+  await userEvent.click(
+    within(dialog).getByRole("combobox", { name: "Harness" }),
+  );
+  await userEvent.click(await screen.findByRole("option", { name: "Goose" }));
+  await userEvent.click(
+    within(dialog).getByRole("combobox", { name: "LLM Provider" }),
+  );
+  await userEvent.click(
+    await screen.findByRole("option", { name: "OpenRouter" }),
+  );
+  fireEvent.change(within(dialog).getByLabelText("Model"), {
+    target: { value: "anthropic/claude-sonnet-4" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Create agent" }));
+  await waitFor(() => expect(commit).toHaveBeenCalledOnce());
+  expect(commit.mock.calls[0]?.[1].harness).toMatchObject({
+    command: "/Users/test/.local/bin/goose",
+    args: ["acp"],
+    provider: "openrouter",
+    model: "anthropic/claude-sonnet-4",
+  });
+  expect(
+    screen.getByRole("article", { name: "Agent Goose helper" }),
+  ).toHaveTextContent("Process stopped");
+});
+
+it("shows an unavailable Goose harness without allowing selection", async () => {
+  setup("ready", (fixture) => {
+    fixture.data.harnessOptions?.push({
+      command: "goose",
+      label: "Goose",
+      available: false,
+      defaultArgs: ["acp"],
+      providers: [{ value: "anthropic", label: "Anthropic" }],
+    });
+  });
+  fireEvent.click(await screen.findByRole("button", { name: "Add agent" }));
+  const dialog = screen.getByRole("dialog", { name: "Create agent" });
+  await userEvent.click(
+    within(dialog).getByRole("combobox", { name: "Harness" }),
+  );
+  expect(
+    await screen.findByRole("option", { name: "Goose (install first)" }),
+  ).toHaveAttribute("aria-disabled", "true");
+  expect(within(dialog).getByText(/Install the Goose CLI/)).toBeVisible();
 });
 
 it("shows Harness, Provider and Model in order while preserving settings on Save", async () => {
@@ -893,3 +1152,104 @@ for (const mode of ["edit", "create"] as const) {
     expect(edit.harness.databricks).toBeUndefined();
   });
 }
+it("qualifies management identities while keeping configured names and edit targets exact", async () => {
+  const { f } = setup("ready", (fixture) => {
+    fixture.data.agents.push({
+      ...structuredClone(fixture.agent),
+      id: "namesake",
+      pubkey: "bb".repeat(32),
+    });
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("article", { name: /^Agent Fixture agent · / }),
+    ).toHaveLength(3),
+  );
+  const cards = screen.getAllByRole("article", {
+    name: /^Agent Fixture agent · /,
+  });
+  expect(cards).toHaveLength(3);
+  // The complete public key remains in technical details, not the display heading.
+  expect(
+    new Set(cards.map((entry) => entry.getAttribute("aria-label"))).size,
+  ).toBe(2);
+  const user = userEvent.setup();
+  const firstCard = cards[0];
+  if (!firstCard) throw Error("Missing managed card");
+  await user.click(
+    within(firstCard).getByRole("button", {
+      name: /^Actions for Fixture agent · /,
+    }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByText(/^Fixture agent · /)).toBeVisible();
+  expect(within(dialog).getByLabelText("Name")).toHaveValue(f.agent.name);
+});
+
+it("keeps collisions across different cross-community aliases and edits the exact configuration", async () => {
+  const { f } = setup("ready", (fixture) => {
+    fixture.agent.name = "Honey";
+    fixture.data.agents.push(
+      {
+        ...structuredClone(fixture.agent),
+        id: "namesake",
+        pubkey: "bb".repeat(32),
+      },
+      {
+        ...structuredClone(fixture.agent),
+        id: "alias-a",
+        name: "Juniper",
+        relayUrl: "wss://aliases.example",
+      },
+      {
+        ...structuredClone(fixture.agent),
+        id: "alias-b",
+        pubkey: "bb".repeat(32),
+        name: "Juniper",
+        relayUrl: "wss://aliases.example",
+      },
+    );
+  });
+  await waitFor(() =>
+    expect(
+      screen.getAllByRole("article", { name: /^Agent Honey · / }),
+    ).toHaveLength(3),
+  );
+  const honey = screen.getAllByRole("article", { name: /^Agent Honey · / });
+  const juniper = screen.getAllByRole("article", { name: /^Agent Juniper · / });
+  expect(juniper).toHaveLength(2);
+  expect(
+    new Set(honey.map((card) => card.getAttribute("aria-label"))).size,
+  ).toBe(2);
+  expect(
+    new Set(juniper.map((card) => card.getAttribute("aria-label"))).size,
+  ).toBe(2);
+  const user = userEvent.setup();
+  const aliasCard = juniper[0];
+  if (!aliasCard) throw Error("Missing alias card");
+  await user.click(
+    within(aliasCard).getByRole("button", {
+      name: /^Actions for Juniper · /,
+    }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog");
+  expect(within(dialog).getByLabelText("Name")).toHaveValue("Juniper");
+  await user.clear(within(dialog).getByLabelText("Name"));
+  await user.type(within(dialog).getByLabelText("Name"), "Updated alias");
+  await user.click(
+    within(dialog).getByRole("button", { name: "Save changes" }),
+  );
+  await waitFor(() =>
+    expect(f.calls).toContainEqual(
+      expect.objectContaining({
+        action: "save",
+        payload: expect.objectContaining({
+          id: "alias-a",
+          edit: expect.objectContaining({ name: "Updated alias" }),
+        }),
+      }),
+    ),
+  );
+});

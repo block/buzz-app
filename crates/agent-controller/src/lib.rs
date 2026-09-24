@@ -19,7 +19,7 @@ pub use create::{CreationProfile, NewAgent};
 pub use credentials::PlatformCredentials;
 pub use defaults::{build_defaults, BuildDefaults};
 pub use import::{CredentialedImport, ImportPreview, Imports, LegacySource, PreparedImport};
-pub use runtime::{Action, Controller, ModelContext};
+pub use runtime::{Action, Controller, GooseModelContext, ModelContext};
 pub use secret::{Credentials, Secret};
 pub use store::Store;
 type Result<T> = std::result::Result<T, String>;

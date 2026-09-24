@@ -15,7 +15,13 @@ test("Cargo rebuilds the real controller's nonsecret defaults from local config 
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const crate = path.join(directory, "crates/agent-controller");
   mkdirSync(crate, { recursive: true });
-  for (const entry of ["Cargo.toml", "build.rs", "build_config.rs", "src"])
+  for (const entry of [
+    "Cargo.toml",
+    "build.rs",
+    "build_config.rs",
+    "src",
+    "tests",
+  ])
     cpSync(
       path.join(root, "crates/agent-controller", entry),
       path.join(crate, entry),
@@ -68,7 +74,7 @@ test("Cargo rebuilds the real controller's nonsecret defaults from local config 
   const writeDefaults = (host) =>
     writeFileSync(
       local,
-      `BUZZ_BUILD_AGENT_ENV='DATABRICKS_HOST=https://${host}.example.com\nDATABRICKS_MODEL=build-model\nDATABRICKS_MODEL_FILTER=team-*'\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=false\nUNRELATED_SECRET=NEVER_PRINT_SECRET\n`,
+      `UNRELATED=bar baz\nBUZZ_BUILD_AGENT_ENV='DATABRICKS_HOST=https://${host}.example.com\nDATABRICKS_MODEL=build-model\nDATABRICKS_MODEL_FILTER=team-*'\nBUZZ_BUILD_BUZZ_AGENT_PROVIDER=databricks_v2\nBUZZ_BUILD_AGENT_ACCESS_OWNER_ONLY=false\nUNRELATED_SECRET=NEVER_PRINT_SECRET\n`,
     );
   writeDefaults("first");
   const expected = {
@@ -79,6 +85,20 @@ test("Cargo rebuilds the real controller's nonsecret defaults from local config 
     ownerOnly: true,
   };
   assert.deepEqual(run(), expected);
+  // The entire controller suite must also work with documented file defaults,
+  // rather than assuming developers build with an empty native configuration.
+  const tests = spawnSync(
+    path.join(root, "bin/cargo"),
+    ["test", "--quiet", "--offline"],
+    {
+      cwd: directory,
+      env,
+      encoding: "utf8",
+      timeout: 300_000,
+    },
+  );
+  assert.ifError(tests.error);
+  assert.equal(tests.status, 0, tests.stdout + tests.stderr);
   writeDefaults("changed");
   expected.host = "https://changed.example.com";
   assert.deepEqual(

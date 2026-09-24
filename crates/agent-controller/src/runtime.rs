@@ -281,6 +281,12 @@ pub struct ModelContext {
     pub filter: Option<String>,
     pub model_overridden: bool,
 }
+/// Native-only Goose catalog context; environment values never enter a snapshot.
+pub struct GooseModelContext {
+    pub command: PathBuf,
+    pub environment: BTreeMap<String, String>,
+    pub model_overridden: bool,
+}
 pub struct Controller {
     pub(crate) store: Store,
     credentials: Arc<dyn Credentials>,
@@ -339,6 +345,19 @@ impl Controller {
     /// lend runtime credentials to model discovery. Resolve an unsaved edit on a
     /// clone using the same validation and precedence as Save/runtime.
     pub fn model_context(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<ModelContext> {
+        let agent = self.edited_model_agent(id, revision, edit)?;
+        model_context(&agent.harness, &agent.environment)
+    }
+    pub fn goose_model_context(
+        &self,
+        id: &str,
+        revision: u64,
+        edit: AgentEdit,
+    ) -> Result<GooseModelContext> {
+        let agent = self.edited_model_agent(id, revision, edit)?;
+        goose_model_context(&agent.harness, &agent.environment)
+    }
+    fn edited_model_agent(&self, id: &str, revision: u64, edit: AgentEdit) -> Result<Agent> {
         let mut agent = self
             .store
             .agents()?
@@ -351,7 +370,15 @@ impl Controller {
             );
         }
         agent.apply(edit)?;
-        model_context(&agent.harness, &agent.environment)
+        Ok(agent)
+    }
+    pub fn draft_goose_model_context(edit: AgentEdit) -> Result<GooseModelContext> {
+        let environment = edit
+            .environment
+            .into_iter()
+            .filter_map(|(key, value)| value.map(|value| (key, value)))
+            .collect();
+        goose_model_context(&edit.harness, &environment)
     }
     pub fn draft_model_context(edit: AgentEdit) -> Result<ModelContext> {
         let environment = edit
@@ -623,10 +650,7 @@ fn model_context_with_defaults(
     let provider = environment
         .get("BUZZ_AGENT_PROVIDER")
         .unwrap_or(&harness.provider);
-    if !matches!(
-        provider.as_str(),
-        "databricks_v2" | "databricks-v2" | "databricks"
-    ) {
+    if !matches!(provider.as_str(), "databricks_v2" | "databricks-v2") {
         return Err(
             "Effective provider is not Databricks v2; check the provider and environment overrides"
                 .into(),
@@ -645,5 +669,31 @@ fn model_context_with_defaults(
             .cloned()
             .or_else(|| harness.databricks.as_ref().map(|s| s.filter.clone())),
         model_overridden: environment.contains_key("BUZZ_AGENT_MODEL"),
+    })
+}
+
+fn goose_model_context(
+    harness: &crate::HarnessEdit,
+    environment: &BTreeMap<String, String>,
+) -> Result<GooseModelContext> {
+    crate::config::validate_environment(environment)?;
+    let command = PathBuf::from(&harness.command);
+    if command.file_name().and_then(|s| s.to_str()) != Some("goose") || !command.is_absolute() {
+        return Err("Model discovery requires an absolute Goose executable path".into());
+    }
+    executable(&command)?;
+    if environment
+        .get("GOOSE_PROVIDER")
+        .unwrap_or(&harness.provider)
+        != "databricks_v2"
+    {
+        return Err(
+            "Effective Goose provider is not Databricks v2; check environment overrides".into(),
+        );
+    }
+    Ok(GooseModelContext {
+        command,
+        environment: environment.clone(),
+        model_overridden: environment.contains_key("GOOSE_MODEL"),
     })
 }

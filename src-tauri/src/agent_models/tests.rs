@@ -87,7 +87,53 @@ impl Connection for Arc<Fake> {
 }
 fn request(dir: &std::path::Path, id: &str, action: &str) -> Value {
     json!({"id":id,"expectedRevision":1,"host":"https://workspace.example.com","filter":"", "action":action,
-    "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2"},"environment":{}}})
+    "edit":{"name":"Sample","systemPrompt":"Original","workspace":dir.to_str().unwrap(),"harness":{"command":"buzz-agent","args":[],"model":"custom-unchanged","provider":"databricks_v2","databricks":{"host":"https://workspace.example.com","filter":""}},"environment":{}}})
+}
+
+#[test]
+#[cfg(unix)]
+fn goose_databricks_models_load_through_native_ipc_for_an_unsaved_agent() {
+    use std::os::unix::fs::PermissionsExt;
+    let (dir, _, _app, view) = fixture();
+    let goose = dir.path().join("goose");
+    let invoked = dir.path().join("invoked");
+    std::fs::write(
+        &goose,
+        format!(
+            "#!/bin/sh\n: > '{}'\nread request\nprintf '%s\\n' '{{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{{\"providerId\":\"databricks_v2\",\"models\":[\"catalog.schema.goose-glm-5-3\"]}}}}'\n",
+            invoked.display()
+        ),
+    )
+    .unwrap();
+    std::fs::set_permissions(&goose, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let edit = json!({"name":"Goose","systemPrompt":"","workspace":dir.path(),
+        "harness":{"command":goose,"args":["acp"],"provider":"databricks_v2","model":""},
+        "environment":{}});
+    let refresh_ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    assert!(invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":refresh_ticket,"request":{
+            "host":"", "filter":"", "action":"refresh", "edit":edit
+        }})
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("explicit Browse or Retry"));
+    assert!(!invoked.exists());
+    let ticket = invoke(&view, "agent_models_begin", json!({})).unwrap();
+    let result = invoke(
+        &view,
+        "agent_models_run",
+        json!({"ticket":ticket,"request":{
+            "host":"", "filter":"", "action":"connect",
+            "edit":edit
+        }}),
+    )
+    .unwrap();
+    assert!(invoked.exists());
+    assert_eq!(result["models"][0]["id"], "catalog.schema.goose-glm-5-3");
+    assert_eq!(result["host"], "");
 }
 #[test]
 fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
@@ -120,6 +166,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     assert!(!result.to_string().contains("DO_NOT_PROJECT"));
     let mut filtered = req.clone();
     filtered["filter"] = json!("endpoint-*");
+    filtered["edit"]["harness"]["databricks"]["filter"] = filtered["filter"].clone();
     let filtered_result = call(filtered).unwrap();
     assert_eq!(
         filtered_result["models"],
@@ -152,6 +199,7 @@ fn real_ipc_explicit_only_projection_overrides_retry_disconnect_and_gates() {
     fake.failure.store(0, Ordering::SeqCst);
     let mut other = req.clone();
     other["host"] = json!("https://other.example.com");
+    other["edit"]["harness"]["databricks"]["host"] = other["host"].clone();
     call(other).unwrap();
     assert_eq!(fake.opened.lock().unwrap().last().unwrap().1, first_cache);
     let count = fake.opened.lock().unwrap().len();

@@ -188,14 +188,24 @@ resources. Production has no disposable storage override or preview launch mode.
   harness choice, not a new installation/catalog system. The host must validate
   launch configuration and unsupported imported semantics before execution.
 - Harness and Provider choices come from native `harnessOptions` through the
-  injected Core snapshot: Buzz Agent (`buzz-agent`) and Databricks v2
-  (`databricks_v2`). These are editing suggestions, not installation or execution
-  evidence. There is no copied settings subsystem. Custom
-  command/provider values remain editable, including absolute paths; model entry
-  remains editable alongside on-demand Databricks browsing. Selecting a choice changes only its field, not arguments,
-  model/provider defaults or write-only environment overrides. Advanced arguments
-  remain a literal JSON array. Old native hosts without this metadata fall back
-  to custom entry.
+  injected Core snapshot. Buzz Agent offers Databricks v2. Goose appears with an
+  absolute executable path when the local CLI is installed, and offers common
+  Goose providers plus a custom ID. A missing CLI leaves Goose disabled until
+  installation and desktop restart. Switching into or out of Goose supplies ACP
+  arguments and clears the previous provider/model; selecting a Goose provider clears the
+  previous model. For Goose with Databricks v2, an explicit Browse asks Goose ACP
+  for its live supported-model list and searches it in the existing picker. The
+  exact returned ID is saved; an unlisted ID remains possible but is flagged
+  after discovery. Saved write-only `GOOSE_PROVIDER` overrides keep Browse
+  reachable; native checks the effective provider before asking Goose. Goose
+  has no separate Refresh action because its catalog lookup can start OAuth.
+  Other Goose providers retain manual model entry. Existing Goose credentials
+  are reused; providers without local setup need `goose configure` before Start. Executable detection
+  is not a sign-in or ACP readiness check. Custom command/provider values remain
+  editable, including absolute paths. Buzz Agent retains on-demand Databricks
+  model browsing. A Goose catalog entry does not establish caller EXECUTE permission
+  or successful inference. Advanced arguments remain a literal JSON array. Old native hosts
+  without this metadata fall back to custom entry.
 - Environment values never arrive in snapshots. Inputs are masked write-only
   patches: missing key preserves; string replaces (including empty); null removes.
   Undo omits a patch again. Successful save clears entered values from UI state.

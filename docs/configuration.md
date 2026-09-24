@@ -52,6 +52,9 @@ copied here.
 | CI version/tag metadata, artifact paths/upload controls, signing teams/profiles, Apple/App Store/Artifactory/Play credentials, Android signer roles/sockets, SDK/JDK/toolchain settings, Tauri bundle/config arguments | Release infrastructure and packaging controls, not product defaults. No new build-variable forwarding API. |
 
 Ignored `.env.local` can contain unrelated development settings, but only the
-three allowlisted native keys are compiled. Unknown keys **inside**
+three allowlisted native keys are compiled. Unrelated syntax is ignored; quoted
+multiline records are skipped as a whole, including the rest of the file when
+an unrelated quote is unclosed. Selected, non-overridden build assignments still
+require valid dotenv syntax. Unknown keys **inside**
 `BUZZ_BUILD_AGENT_ENV` fail closed instead of silently implying support. Do not
 use any build input for private keys, tokens or raw agent configuration.

@@ -19,17 +19,69 @@ pub fn load(
     if values.len() == KEYS.len() {
         return Ok(values);
     }
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(values),
         Err(_) => return Err("Could not read native build .env.local"),
     };
     let mut local = BTreeMap::new();
-    for entry in dotenvy::from_read_iter(file) {
-        let (key, value) = entry.map_err(|_| "Invalid native build .env.local")?;
-        if KEYS.contains(&key.as_str()) {
-            local.insert(key, value);
+    let mut rest = text.trim_start_matches('\u{feff}');
+    while !rest.is_empty() {
+        let line_end = rest.find('\n').map_or(rest.len(), |end| end + 1);
+        let line = rest[..line_end].trim_start();
+        if line.is_empty() || line.starts_with('#') {
+            rest = &rest[line_end..];
+            continue;
         }
+        let assignment = line
+            .strip_prefix("export")
+            .filter(|tail| tail.starts_with(char::is_whitespace))
+            .unwrap_or(line)
+            .trim_start();
+        let key = assignment
+            .split(|c: char| c == '=' || c.is_whitespace())
+            .next()
+            .unwrap_or("");
+        let selected = KEYS.contains(&key) && !values.contains_key(key);
+        let mut end = line_end;
+        // Skip whole quoted records, including unrelated multiline values. A
+        // build-looking line inside another value must never become a setting.
+        if let Some((_, value)) = rest[..line_end].split_once('=') {
+            let value = value.trim_start();
+            if let Some(quote @ ('\'' | '"' | '`')) = value.chars().next() {
+                let offset = rest[..line_end].len() - value.len();
+                let mut escaped = false;
+                let close = rest[offset + 1..].char_indices().find_map(|(i, c)| {
+                    if escaped {
+                        escaped = false;
+                        return None;
+                    }
+                    if c == '\\' {
+                        escaped = true;
+                        return None;
+                    }
+                    (c == quote).then_some(offset + 1 + i)
+                });
+                if let Some(close) = close {
+                    end = rest[close..]
+                        .find('\n')
+                        .map_or(rest.len(), |i| close + i + 1);
+                } else if selected {
+                    return Err("Invalid native build .env.local");
+                } else {
+                    end = rest.len();
+                }
+            }
+        }
+        if selected {
+            for entry in dotenvy::from_read_iter(rest[..end].as_bytes()) {
+                let (key, value) = entry.map_err(|_| "Invalid native build .env.local")?;
+                if KEYS.contains(&key.as_str()) {
+                    local.insert(key, value);
+                }
+            }
+        }
+        rest = &rest[end..];
     }
     for (key, value) in local {
         values.entry(key).or_insert(value);

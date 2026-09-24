@@ -206,12 +206,30 @@ test("the app runtime exposes ready bundled pages and removes them on disable", 
       false,
     );
     assert.equal(services.relay.snapshot().session, session);
+    const nameFacts = [
+      { pubkey: "a".repeat(64), name: "Alex" },
+      { pubkey: "b".repeat(64), name: "Alex" },
+    ];
+    const named = () =>
+      session.names.resolve(
+        nameFacts[0].pubkey,
+        "Unknown",
+        nameFacts.map((row) => row.pubkey),
+        nameFacts,
+      );
+    const qualified = named();
+    assert.match(qualified, /^Alex · /);
     await services.plugins.change("disable", "buzz.agents");
     assert.equal(
       services.pages.snapshot().some((page) => page.pluginId === "buzz.agents"),
       false,
     );
     assert.equal(services.relay.snapshot().session, session);
+    assert.equal(named(), qualified, "Agents does not own naming policy");
+    await services.plugins.change("disable", "buzz.identity-naming");
+    assert.equal(named(), "Unknown");
+    await services.plugins.change("enable", "buzz.identity-naming");
+    await vi.waitFor(() => assert.equal(named(), qualified));
     assert.equal(services.agentControl, localControl);
     await services.plugins.change("enable", "buzz.agents");
     await vi.waitFor(() =>

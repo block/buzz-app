@@ -58,7 +58,8 @@ Press Ctrl+C to stop the server.
 ### OS deep links
 
 Desktop builds register `buzz://` with the OS, the scheme in-app links already use, so
-opening a `buzz://message?channel=…&id=…` or `buzz://channel/<id>` link outside the
+opening a `buzz://message?channel=…&id=…`, `buzz://channel/<id>`, or
+`buzz://channel/<id>/<event>` link outside the
 app focuses it and opens that conversation, on a cold start too. `just desktop`
 registers the same scheme; on a machine that also has the released Buzz installed,
 pass `--scheme <value>` to claim one of your own for test links. macOS only routes a

@@ -14,8 +14,9 @@ The OS ingress accepts the Buzz link forms and nothing else:
 
 - `buzz://message?channel=<id>&id=<event>[&thread=<root>]`
 - `buzz://channel/<id>`
+- `buzz://channel/<id>/<event>` (the original desktop message alias)
 
-Neither carries a community, so both bind to the currently selected community and
+None carries a community, so each binds to the currently selected community and
 viewer, and fail `unavailable` when no community is selected or no identity is
 known. Every other link, including `buzz://open?target=…`, `buzz://join`,
 `buzz://pr`, unknown hosts, case variants of the scheme and oversize links, fails as
@@ -28,6 +29,13 @@ you cannot read still fails `denied`.
 Links that arrive before the client is ready are held rather than lost, then opened
 in arrival order once the communities service has loaded. A link delivered at cold
 start therefore opens Home first and its destination after.
+
+**Copy link** emits `buzz://message`, including a reply's thread root when known.
+This deliberately omits the sender's community and identity: recipients must select
+the correct community before opening it. Original mobile Buzz requires a UUID
+channel identifier; named development channels are supported here but do not imply
+mobile compatibility. Existing `buzz://open` locators still preserve community
+context for in-app use and remain unsupported at the OS boundary.
 
 ## Testing locally
 
@@ -78,9 +86,6 @@ xdg-open "buzz://channel/general"
   `--scheme <value>` to `just desktop` or `just desktop-bundle` to claim another
   scheme for that build and write test links under it; a link copied from the app
   then needs its prefix replaced by hand.
-- **Copy link** still produces `buzz://open?target=…`, this app's in-app locator
-  rather than a Buzz link. Opened outside the app it ends in the failure notice;
-  only `buzz://message` and `buzz://channel` links open from the OS.
 - Every local bundle keeps the same application identifier, so they share app data
   and Launch Services lists several bundles under one identifier.
 - Invite links (`buzz://join`, `https://<relay>/invite/<code>`), entity links

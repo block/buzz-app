@@ -347,7 +347,7 @@ into versioned route parameters. These are host-matched preview types through
 Browser `#buzz=` addresses and session history support reload and Back/Forward.
 `targetLink`/`parseTargetLink` define a `buzz://open` locator codec that omits the
 sender's viewer; `bindSharedTarget` pins it for an admitted recipient. Messages also
-recognize the Buzz link forms `buzz://channel/<id>` and
+recognize the Buzz link forms `buzz://channel/<id>`, `buzz://channel/<id>/<event>` and
 `buzz://message?channel=<id>&id=<event>&thread=<optional-root>`. Buzz links use the
 receiving conversation's community and viewer; `buzz://open` locators retain their
 community and use the recipient's viewer. Both pass through existing navigation

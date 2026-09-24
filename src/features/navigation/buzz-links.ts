@@ -44,10 +44,19 @@ export function parseBuzzLink(href: string): BuzzLink | null {
     const channelPattern = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,255}$/;
     const eventPattern = /^[a-f0-9]{64}$/i;
     if (url.hostname === "channel" && !url.search) {
-      const channelId = decodeURIComponent(url.pathname.slice(1));
-      return channelPattern.test(channelId)
-        ? { format: "legacy", channelId }
-        : null;
+      const parts = url.pathname.slice(1).split("/").map(decodeURIComponent);
+      const [channelId = "", messageId] = parts;
+      if (
+        parts.length > 2 ||
+        !channelPattern.test(channelId) ||
+        (messageId !== undefined && !eventPattern.test(messageId))
+      )
+        return null;
+      return {
+        format: "legacy",
+        channelId,
+        ...(messageId ? { messageId: messageId.toLowerCase() } : {}),
+      };
     }
     if (url.hostname !== "message" || url.pathname) return null;
     const keys = [...url.searchParams.keys()];

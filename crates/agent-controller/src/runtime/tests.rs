@@ -1,5 +1,6 @@
 use super::*;
 use crate::config::{agent_id, HarnessEdit};
+use crate::process::Process;
 use crate::Secret;
 use serde_json::json;
 use std::fs;
@@ -191,6 +192,57 @@ fn actual_spawn_save_restart_stop_and_restore_contract() {
     assert!(!restored.agents[0].enabled);
     assert!(controller.running.is_empty());
 }
+#[test]
+#[cfg(unix)]
+fn failed_temp_cleanup_reports_error_and_allows_explicit_retry() {
+    let dir = tempfile::tempdir().unwrap();
+    let tools = tempfile::tempdir().unwrap();
+    let a = agent(dir.path());
+    let mut store = Store::open(dir.path().join("config")).unwrap();
+    store.insert(vec![a.clone()]).unwrap();
+    let mut controller = Controller::new(
+        store,
+        Arc::new(Memory),
+        Ok(bundle(tools.path())),
+        dir.path().join("ownership"),
+    );
+    let key = Secret::parse(KEY, PUB).unwrap();
+    for action in [Action::Stop, Action::Restart] {
+        assert!(matches!(
+            controller.action(&a.id, Action::Start).unwrap().agents[0].status,
+            ProcessStatus::Running
+        ));
+        let temp = controller.running[&a.id]
+            .temporary
+            .as_ref()
+            .unwrap()
+            .clone();
+        let moved = temp.with_extension("moved");
+        fs::rename(&temp, &moved).unwrap();
+        fs::write(&temp, b"block directory removal").unwrap();
+        let stopped = if matches!(action, Action::Restart) {
+            controller
+                .action_with_key(&a.id, action, 1, &key, None)
+                .unwrap()
+        } else {
+            controller.action(&a.id, action).unwrap()
+        };
+        let error = "Agent stopped, but its private runtime directory could not be removed";
+        assert!(matches!(stopped.agents[0].status, ProcessStatus::Failed));
+        assert_eq!(stopped.agents[0].error.as_deref(), Some(error));
+        assert_eq!(
+            controller.snapshot().unwrap().agents[0].error.as_deref(),
+            Some(error)
+        );
+        assert!(controller.running.is_empty());
+        fs::remove_file(temp).unwrap();
+        let retry = controller.action(&a.id, Action::Start).unwrap();
+        assert!(matches!(retry.agents[0].status, ProcessStatus::Running));
+        controller.action(&a.id, Action::Stop).unwrap();
+        fs::remove_dir_all(moved).unwrap();
+    }
+}
+
 #[test]
 #[cfg(unix)]
 fn exact_command_has_no_ambient_identity_and_launch_failure_is_truthful() {
@@ -480,7 +532,7 @@ fn shared_cache_spawn_capture_disconnect_snapshot_and_private_temp_cleanup() {
     assert!(env[5].starts_with(tools.path().to_str().unwrap()));
     let run = &controller.running[&a.id];
     assert_eq!(run.databricks_host.as_deref(), Some("https://example.com"));
-    let temp = run.temporary.as_ref().unwrap().path().to_owned();
+    let temp = run.temporary.as_ref().unwrap().to_owned();
     assert!(temp.starts_with(config.join("runs")));
     assert_eq!(env[4], temp.to_str().unwrap());
     let cache = config.join("buzz-agent/oauth/databricks");
@@ -619,7 +671,6 @@ fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
         .temporary
         .as_ref()
         .unwrap()
-        .path()
         .to_owned();
     assert!(temp.exists());
     controller.action(&a.id, Action::Stop).unwrap();
@@ -630,7 +681,6 @@ fn actual_bundled_acp_lazy_listener_start_restart_stop_and_quit_cleanup() {
         .temporary
         .as_ref()
         .unwrap()
-        .path()
         .to_owned();
     controller.shutdown().unwrap();
     assert!(!temp.exists());

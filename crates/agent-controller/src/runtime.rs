@@ -1,6 +1,9 @@
 use crate::bundle::RuntimeBundle;
 use crate::config::Agent;
+#[cfg(not(unix))]
 use crate::process::Process;
+#[cfg(unix)]
+use crate::supervisor::Supervised;
 use crate::{AgentEdit, ControlSnapshot, Credentials, ProcessStatus, Result, Store};
 use serde::Deserialize;
 use std::collections::BTreeMap;
@@ -235,21 +238,22 @@ pub enum Action {
     Restart,
 }
 struct Running {
+    #[cfg(unix)]
+    process: Supervised,
+    #[cfg(not(unix))]
     process: Process,
     revision: u64,
     databricks_host: Option<String>,
-    temporary: Option<tempfile::TempDir>,
+    #[cfg(all(test, unix))]
+    temporary: Option<PathBuf>,
+    #[cfg(not(unix))]
+    _temporary: Option<tempfile::TempDir>,
+    #[cfg(not(unix))]
     _ownership: crate::ownership::Ownership,
 }
 impl Drop for Running {
     fn drop(&mut self) {
-        if self.process.stop().is_err() {
-            // Never delete temporary signing material out from under an unconfirmed
-            // descendant. Retain the private directory for explicit recovery.
-            if let Some(directory) = self.temporary.take() {
-                let _ = directory.keep();
-            }
-        }
+        let _ = self.process.stop();
     }
 }
 /// Deliberately not serializable: only the native connection owner consumes it.
@@ -301,10 +305,9 @@ impl Controller {
                     }
                     Ok(false) => {
                         self.running.remove(&agent.id);
-                        self.errors.insert(
-                            agent.id.clone(),
-                            "Agent listener exited; restart to retry".into(),
-                        );
+                        self.errors
+                            .entry(agent.id.clone())
+                            .or_insert_with(|| "Agent listener exited; restart to retry".into());
                     }
                     Err(error) => {
                         self.errors.insert(agent.id.clone(), error);
@@ -402,10 +405,8 @@ impl Controller {
                 // Stop the process even if durable disable fails; report failure
                 // instead of claiming it will remain stopped on next launch.
                 let stopped = self.stop(id);
-                let saved = self.store.enabled(id, false);
-                stopped?;
-                saved?;
-                Ok(())
+                self.store.enabled(id, false)?;
+                stopped
             }
             Action::Start => self.store.enabled(id, true).and_then(|_| self.start(id)),
             Action::Restart => self
@@ -456,7 +457,10 @@ impl Controller {
         }
         self.store.enabled(id, true)?;
         if matches!(action, Action::Restart) {
-            self.stop(id)?;
+            if let Err(error) = self.stop(id) {
+                self.errors.insert(id.into(), error);
+                return self.snapshot();
+            }
         }
         match self.start_with_key(id, Some(key), replay_floor) {
             Ok(()) => {
@@ -505,6 +509,7 @@ impl Controller {
             return Err("Agent is disabled".into());
         }
         let bundle = self.bundle.as_ref().map_err(Clone::clone)?;
+        #[cfg(not(unix))]
         let ownership = crate::ownership::Ownership::acquire(&self.ownership_root, &agent.id)?;
         let stored;
         let key = match supplied {
@@ -544,6 +549,13 @@ impl Controller {
                 .env("DATABRICKS_MODEL_FILTER", &settings.filter)
                 .env_remove("DATABRICKS_TOKEN");
         }
+        // Disarm app-side deletion before a child can use this directory. The
+        // supervisor deletes it only after confirmed whole-session teardown.
+        #[cfg(unix)]
+        let temporary = temporary.keep();
+        #[cfg(unix)]
+        let process = Supervised::spawn(&command, &self.ownership_root, &agent.id, &temporary)?;
+        #[cfg(not(unix))]
         let process = Process::spawn(&mut command)?;
         self.running.insert(
             id.into(),
@@ -551,7 +563,11 @@ impl Controller {
                 process,
                 revision: agent.revision,
                 databricks_host: settings.map(|s| s.host),
+                #[cfg(all(test, unix))]
                 temporary: Some(temporary),
+                #[cfg(not(unix))]
+                _temporary: Some(temporary),
+                #[cfg(not(unix))]
                 _ownership: ownership,
             },
         );

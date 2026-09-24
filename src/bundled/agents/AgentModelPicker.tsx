@@ -10,7 +10,6 @@ import type {
 import type { ModelCatalog } from "../../features/agents/models";
 import { CircleNotchIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
-import { CircleNotchIcon } from "../../shared/design-system/icons";
 import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
 
 const VISIBLE_MODEL_LIMIT = 10;

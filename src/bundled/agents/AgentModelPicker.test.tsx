@@ -8,6 +8,7 @@ import { AgentModelPicker } from "./AgentModelPicker";
 import { agentDraft } from "./agent-edit";
 import { createAgentControl } from "../../features/agents/control";
 import { controlFixture } from "../../features/agents/control-testing";
+import type { ModelCatalog } from "../../features/agents/models";
 
 afterEach(cleanup);
 
@@ -134,6 +135,71 @@ it("shows ten Goose models at a time and searches the full provider catalog", as
     await user.click(await screen.findByRole("option", { name: /model-25/ }));
     expect(input).toHaveValue("model-25");
   } finally {
+    view.unmount();
+    control.dispose();
+  }
+});
+
+it("shows a loading row while Goose fetches models for the selected provider", async () => {
+  const f = controlFixture();
+  let finish: (catalog: ModelCatalog) => void = () => {};
+  const run = vi.fn(
+    () =>
+      new Promise<ModelCatalog>((resolve) => {
+        finish = resolve;
+      }),
+  );
+  f.host.models = { begin: async () => 1, run, cancel: async () => {} };
+  const control = createAgentControl(f.host);
+  const draft = {
+    ...agentDraft(f.agent),
+    command: "/usr/local/bin/goose",
+    provider: "anthropic",
+    model: "previous-model",
+  };
+  const view = render(
+    <AgentModelPicker
+      draft={draft}
+      control={control}
+      defaults={{ host: "", filter: "" }}
+      onChange={() => {}}
+    />,
+  );
+  try {
+    await userEvent.click(
+      screen.getByRole("button", { name: "Browse models" }),
+    );
+    await waitFor(() => expect(run).toHaveBeenCalledOnce());
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+      "aria-busy",
+      "true",
+    );
+    expect(screen.getByRole("combobox", { name: "Model" })).toHaveValue(
+      "previous-model",
+    );
+    expect(screen.getByText("Loading Goose models…")).toBeVisible();
+    expect(screen.queryByRole("option", { name: /previous-model/ })).toBeNull();
+    finish({
+      host: "",
+      models: [{ id: "claude-model", name: "claude-model" }],
+      modelOverridden: false,
+      disconnected: false,
+    });
+    expect(
+      await screen.findByRole("option", { name: /^claude-model$/ }),
+    ).toBeVisible();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("combobox", { name: "Model" }),
+      ).not.toHaveAttribute("aria-busy"),
+    );
+  } finally {
+    finish({
+      host: "",
+      models: [],
+      modelOverridden: false,
+      disconnected: false,
+    });
     view.unmount();
     control.dispose();
   }

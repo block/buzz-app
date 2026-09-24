@@ -10,6 +10,7 @@ import type {
 import type { ModelCatalog } from "../../features/agents/models";
 import { CircleNotchIcon } from "../../shared/design-system/icons";
 import { Button } from "../../shared/design-system/ui/Button";
+import { CircleNotchIcon } from "../../shared/design-system/icons";
 import { agentEdit, isGoose, type AgentDraft } from "./agent-edit";
 
 const VISIBLE_MODEL_LIMIT = 10;
@@ -211,11 +212,13 @@ export function AgentModelPicker({
         <div>
           <Combobox.Root<ModelCatalog["models"][number]>
             disabled={disabled}
-            items={items}
+            items={goose && busy ? [] : items}
             filteredItems={
-              goose
-                ? matchingItems.slice(0, VISIBLE_MODEL_LIMIT)
-                : matchingItems
+              goose && busy
+                ? []
+                : goose
+                  ? matchingItems.slice(0, VISIBLE_MODEL_LIMIT)
+                  : matchingItems
             }
             value={selected}
             inputValue={query ?? selected?.name ?? ""}
@@ -338,8 +341,15 @@ export function AgentModelPicker({
           <p
             id={statusId}
             role="status"
-            className="text-body-sm text-secondary"
+            className={`text-body-sm ${busy && goose ? "flex items-center gap-2 text-primary" : "text-secondary"}`}
           >
+            {busy && goose && (
+              <CircleNotchIcon
+                size={16}
+                className="motion-safe:animate-spin"
+                aria-hidden="true"
+              />
+            )}
             {status}
           </p>
         )}

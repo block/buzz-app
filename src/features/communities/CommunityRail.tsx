@@ -34,19 +34,27 @@ export function CommunityRail({
   useEffect(() => {
     if (client.status !== "ready") return;
     const controller = new AbortController();
-    for (const id of membershipIds.split("\n").filter(Boolean)) {
-      void fetchCommunityIcon(id, controller.signal)
-        .then((icon) => {
-          if (!controller.signal.aborted)
-            setIcons((previous) => {
-              if (icon === undefined) return previous;
-              return { ...previous, [id]: icon };
-            });
-        })
-        .catch(() => {
-          /* Unreachable relay: retain saved icon or initials. */
-        });
-    }
+    // Icon discovery is optional. Reserve browser connections for foreground work
+    // even when saved relays hold their NIP-11 responses indefinitely.
+    const ids = membershipIds.split("\n").filter(Boolean);
+    let next = 0;
+    const workers = Array.from(
+      { length: Math.min(2, ids.length) },
+      async () => {
+        while (next < ids.length && !controller.signal.aborted) {
+          const id = ids[next++];
+          if (id === undefined) break;
+          try {
+            const icon = await fetchCommunityIcon(id, controller.signal);
+            if (icon !== undefined && !controller.signal.aborted)
+              setIcons((previous) => ({ ...previous, [id]: icon }));
+          } catch {
+            // Unreachable relay: retain saved icon or initials.
+          }
+        }
+      },
+    );
+    void Promise.all(workers);
     return () => controller.abort();
   }, [client.status, membershipIds]);
   const select = (id: string | null) => {

@@ -91,8 +91,9 @@ page scaffold with only a centered title; Apps waits for a functional destinatio
 beside page content; it only delegates selection to the existing membership owner.
 The rail's Add control opens the existing join dialog and returns focus to its
 trigger. The former header picker is not mounted; the rail is the sole selector.
-The rail reads each saved community's icon from its relay's NIP-11 info via the
-same-origin broker, including inactive communities without opening a session.
+The rail reads saved-community NIP-11 icons through the same-origin broker with at
+most two concurrent optional reads, including inactive communities without
+opening sessions; slow icon responses cannot occupy all foreground connections.
 Unavailable or unsupported images fall back to a saved icon or name initial.
 The rail does not acquire inactive sessions or claim an unread total: the unread
 capability provides bounded observed evidence, not exact community totals

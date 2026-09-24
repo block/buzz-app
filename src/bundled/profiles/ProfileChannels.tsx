@@ -79,7 +79,7 @@ export function ProfileChannels({
           </p>
         )}
         {!!channels.length && (
-          <ul className="m-0 list-none p-0">
+          <ul className="m-0 list-none p-2">
             {channels.map((channel) => (
               <li key={channel.id} className={styles.channelRow}>
                 {communityOrigin && navigation && viewer ? (

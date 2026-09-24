@@ -190,7 +190,7 @@ export function AgentModelPicker({
     custom &&
     !items.some((model) => model.id === custom || model.name === custom)
   )
-    items.unshift({ id: custom, name: custom });
+    items.push({ id: custom, name: custom });
   const matchingItems =
     query === null
       ? items

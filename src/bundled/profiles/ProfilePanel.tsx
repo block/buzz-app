@@ -156,14 +156,27 @@ function ProfileDetails({
   const picture = profile?.picture
     ? (session.media(profile.picture) ?? null)
     : null;
+  // As in New message, a known agent needs this community's ready native control.
+  const messageable = () =>
+    !agentPubkeys.has(pubkey) ||
+    session.agentChoices
+      .snapshot()
+      .identities.some((agent) => agent.managed && agent.pubkey === pubkey);
   const canMessage =
     session.directMessages.available &&
     !!navigation &&
     !!viewer &&
     !!communityOrigin &&
-    viewer !== pubkey;
+    viewer !== pubkey &&
+    messageable();
   async function openMessage() {
-    if (messageAttempt.current || !navigation || !viewer || !communityOrigin)
+    if (
+      messageAttempt.current ||
+      !navigation ||
+      !viewer ||
+      !communityOrigin ||
+      !messageable()
+    )
       return;
     const controller = new AbortController();
     messageAttempt.current = controller;

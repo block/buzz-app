@@ -77,8 +77,9 @@ Remove from outbox does not revoke an invitation already dispatched to the relay
 
 Avatar, name, about, self-declared NIP-05 (not DNS-verified), exact copyable
 npub, and an optional compact activity preview/action. **Message** is offered for a
-foreign profile when the session can start direct messages. It opens (or
-reopens) the one-to-one DM through the session's direct-message operation and
+foreign profile when the session can start direct messages; as in New message,
+a known agent qualifies only while this community's ready native control manages
+it, rechecked on click. It opens (or reopens) the one-to-one DM through the session's direct-message operation and
 navigates to the relay-confirmed channel in the scope captured at click time. A
 confirmed open also clears that DM's local sidebar hide. The person's
 self-published NIP-38 `general` status (kind 30315, emoji tag plus text) is read

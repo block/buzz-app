@@ -34,7 +34,7 @@ test("mention completion distinguishes exact agent identity without reshaping a 
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
-  const picker = page.getByRole("region", {
+  const picker = page.getByRole("dialog", {
     name: "Mention a member or agent",
   });
   await expectAvatarShape(

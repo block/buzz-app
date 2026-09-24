@@ -15,6 +15,7 @@ export type MenuPosition = Pick<
   | "align"
   | "alignOffset"
   | "anchor"
+  | "collisionPadding"
   | "collisionAvoidance"
   | "side"
   | "sideOffset"
@@ -24,6 +25,8 @@ export type MenuPosition = Pick<
 type PopupProps = Omit<ComponentProps<typeof BaseMenu.Popup>, "className"> &
   MenuPosition & {
     children: ReactNode;
+    /** Compact is for short action lists; larger choices retain panel corners. */
+    size?: "compact" | "default" | "wide";
   };
 
 function PositionedPopup({
@@ -32,6 +35,8 @@ function PositionedPopup({
   anchor,
   children,
   collisionAvoidance,
+  collisionPadding = 8,
+  size = "default",
   side = "bottom",
   sideOffset = 4,
   sticky,
@@ -45,6 +50,7 @@ function PositionedPopup({
         alignOffset={alignOffset}
         anchor={anchor}
         collisionAvoidance={collisionAvoidance}
+        collisionPadding={collisionPadding}
         side={side}
         sideOffset={sideOffset}
         sticky={sticky}
@@ -52,6 +58,7 @@ function PositionedPopup({
         <BaseMenu.Popup
           {...props}
           data-buzz-ui=""
+          data-size={size}
           className="buzz-menu-popup text-body-sm"
         >
           {children}
@@ -74,10 +81,14 @@ export function MenuSubmenuPopup(props: PopupProps) {
   return <PositionedPopup side="right" align="start" {...props} />;
 }
 
-type ItemProps = Omit<ComponentProps<typeof BaseMenu.Item>, "className">;
+type ItemProps = Omit<ComponentProps<typeof BaseMenu.Item>, "className"> & {
+  tone?: "default" | "danger";
+};
 
-export function MenuItem(props: ItemProps) {
-  return <BaseMenu.Item {...props} className="buzz-menu-item" />;
+export function MenuItem({ tone = "default", ...props }: ItemProps) {
+  return (
+    <BaseMenu.Item {...props} data-tone={tone} className="buzz-menu-item" />
+  );
 }
 
 type LinkItemProps = Omit<
@@ -118,13 +129,13 @@ type CheckboxItemProps = Omit<
 export function MenuCheckboxItem({ children, ...props }: CheckboxItemProps) {
   return (
     <BaseMenu.CheckboxItem {...props} className="buzz-menu-item">
+      <span className="buzz-menu-choice-label">{children}</span>
       <BaseMenu.CheckboxItemIndicator
         className="buzz-menu-item-indicator"
         keepMounted
       >
-        <CheckIcon size={14} aria-hidden="true" />
+        <CheckIcon size={16} aria-hidden="true" />
       </BaseMenu.CheckboxItemIndicator>
-      <span className="buzz-menu-choice-label">{children}</span>
     </BaseMenu.CheckboxItem>
   );
 }
@@ -137,13 +148,13 @@ type RadioItemProps = Omit<
 export function MenuRadioItem({ children, ...props }: RadioItemProps) {
   return (
     <BaseMenu.RadioItem {...props} className="buzz-menu-item">
+      <span className="buzz-menu-choice-label">{children}</span>
       <BaseMenu.RadioItemIndicator
         className="buzz-menu-item-indicator"
         keepMounted
       >
-        <span className="buzz-menu-radio-dot" />
+        <CheckIcon size={16} aria-hidden="true" />
       </BaseMenu.RadioItemIndicator>
-      <span className="buzz-menu-choice-label">{children}</span>
     </BaseMenu.RadioItem>
   );
 }
@@ -170,4 +181,9 @@ export function MenuIcon({ children }: { children: ReactNode }) {
 
 export function MenuTrailing({ children }: { children: ReactNode }) {
   return <span className="buzz-menu-trailing">{children}</span>;
+}
+
+/** Supporting context and status text, outside the menu's keyboard item list. */
+export function MenuNote(props: Omit<ComponentProps<"p">, "className">) {
+  return <p {...props} className="buzz-menu-note text-body-sm" />;
 }

@@ -1569,3 +1569,273 @@ test("form choice popups settle, retain exit presence, and respect immediate mot
     await finish();
   }
 });
+
+// Native portal focus and dismissal cannot be established by a DOM emulator.
+test("popovers return focus and nested popovers close before their dialog", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/popover`);
+  const trigger = page.getByRole("button", {
+    name: "Edit workspace name",
+    exact: true,
+  });
+  await expect(trigger).toBeVisible();
+  await page.keyboard.press("Tab");
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const popup = page.getByRole("dialog", {
+    name: "Edit workspace",
+    exact: true,
+  });
+  const input = popup.getByRole("textbox", { name: "Workspace name" });
+  await expect(input).toBeFocused();
+  await expect(popup).toHaveCSS("transition-duration", "0s");
+  await input.fill("Research studio");
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(page.getByRole("status")).toHaveText("Workspace: Design studio");
+  await trigger.click();
+  await expect(input).toHaveValue("Design studio");
+  await input.fill("Research studio");
+  await popup.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "Workspace: Research studio",
+  );
+  const activityTrigger = page.getByRole("button", {
+    name: "Recent activity",
+    exact: true,
+  });
+  await activityTrigger.hover();
+  const activity = page.getByRole("dialog", {
+    name: "Recent activity",
+    exact: true,
+  });
+  await expect(activity).toBeVisible();
+  await activity.hover();
+  await expect(activity).toBeVisible();
+  await activity.getByRole("button", { name: /Alex Morgan/ }).click();
+  await expect(activity).toHaveCount(0);
+  await page.getByRole("button", { name: "Open popover dialog" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Workspace details",
+    exact: true,
+  });
+  const nestedTrigger = dialog.getByRole("button", {
+    name: "View access details",
+  });
+  await nestedTrigger.click();
+  const nested = page.getByRole("dialog", { name: "Invite only", exact: true });
+  await expect(nested.getByRole("button", { name: "Done" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(nested).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(nestedTrigger).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+// Popup collision geometry, scrolling and text scaling need a layout engine.
+test("popover placements and rich choices fit narrow screens and enlarged text", async ({
+  page,
+}) => {
+  for (const mode of ["light", "dark"]) {
+    await page.goto(`${viewer}#/design/components/popover`);
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    await page.setViewportSize({ width: 390, height: 850 });
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    for (const side of ["top", "right", "bottom", "left"]) {
+      await page.getByRole("button", { name: side, exact: true }).click();
+      const popup = page.getByRole("dialog", {
+        name: `Anchored ${side}`,
+        exact: true,
+      });
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transform", "none");
+      const box = await popup.boundingBox();
+      if (!box) throw new Error("Popover has no visible bounds");
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(390);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height).toBeLessThanOrEqual(850);
+      await expect
+        .poll(() => popup.evaluate((e) => e.scrollWidth <= e.clientWidth))
+        .toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+    }
+    await page.goto(`${viewer}#/design/components/menu`);
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    await page
+      .getByRole("button", { name: "Choose an agent", exact: true })
+      .click();
+    const menu = page.getByRole("menu", {
+      name: "Choose an agent",
+      exact: true,
+    });
+    await expect(menu).toHaveCSS("transform", "none");
+    await expect
+      .poll(() => menu.evaluate((e) => e.scrollWidth <= e.clientWidth))
+      .toBe(true);
+    const disabled = page.getByRole("menuitemradio", {
+      name: "Archive assistant Unavailable on this connection",
+    });
+    await expect(disabled.locator(".buzz-choice-row-label")).toHaveCSS(
+      "color",
+      await disabled.evaluate((e) => getComputedStyle(e).color),
+    );
+    await page.keyboard.press("Escape");
+    await page
+      .getByRole("button", { name: "Choose workspace", exact: true })
+      .click();
+    const list = page.getByRole("menu", {
+      name: "Choose workspace",
+      exact: true,
+    });
+    await expect(list).toHaveCSS("transform", "none");
+    await expect
+      .poll(() => list.evaluate((e) => e.scrollHeight > e.clientHeight))
+      .toBe(true);
+    await page.keyboard.press("End");
+    const last = page.getByRole("menuitemradio", {
+      name: "Workspace 24",
+      exact: true,
+    });
+    await expect(last).toBeFocused();
+    const listBox = await list.boundingBox();
+    const rowBox = await last.boundingBox();
+    if (!listBox || !rowBox)
+      throw new Error("Menu or last row has no visible bounds");
+    expect(rowBox.y).toBeGreaterThanOrEqual(listBox.y);
+    expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(
+      listBox.y + listBox.height,
+    );
+    await page.keyboard.press("Enter");
+    await expect(list).toHaveCount(0);
+  }
+});
+
+// Reduced-motion preference must suppress popup animation in the browser.
+test("popover reduced motion and outside dismissal remain immediate", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(`${viewer}#/design/components/popover`);
+  await page.getByRole("button", { name: "Open popover", exact: true }).click();
+  const popup = page.getByRole("dialog", {
+    name: "Workspace access",
+    exact: true,
+  });
+  await expect(popup).toBeVisible();
+  await expect(popup).toHaveCSS("transition-duration", "0s");
+  await page.getByRole("heading", { name: "Popover", exact: true }).click();
+  await expect(popup).toHaveCount(0);
+});
+
+// Hold real CSS transitions to inspect entry/exit frames and Base UI presence.
+test("menus and popovers reuse the dropdown unblur and placement offset", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.matches(".buzz-menu-popup, .buzz-popover-popup")
+        )
+          return;
+        for (const animation of event.target.getAnimations()) animation.pause();
+      },
+      true,
+    );
+  });
+  const finish = () =>
+    page.evaluate(() => {
+      for (const animation of document.getAnimations()) animation.finish();
+    });
+  for (const example of [
+    { page: "menu", trigger: "Open menu", selector: ".buzz-menu-popup" },
+    { page: "popover", trigger: "top", selector: ".buzz-popover-popup" },
+    { page: "popover", trigger: "right", selector: ".buzz-popover-popup" },
+  ]) {
+    await page.goto(`${viewer}#/design/components/${example.page}`);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const trigger = page.getByRole("button", {
+      name: example.trigger,
+      exact: true,
+    });
+    const popup = page.locator(example.selector);
+    const paused = () =>
+      expect
+        .poll(() =>
+          popup.evaluate((el) =>
+            el
+              .getAnimations()
+              .some((animation) => animation.playState === "paused"),
+          ),
+        )
+        .toBe(true);
+    try {
+      await trigger.click();
+      await paused();
+      await expect(popup).toHaveCSS(
+        "transition-duration",
+        "0.075s, 0.075s, 0.075s",
+      );
+      const side = await popup.getAttribute("data-side");
+      const offset =
+        side === "top"
+          ? "translateY(2px)"
+          : side === "right"
+            ? "translateX(-2px)"
+            : side === "left"
+              ? "translateX(2px)"
+              : "translateY(-2px)";
+      const frames = await popup.evaluate((el) =>
+        el
+          .getAnimations()
+          .flatMap((animation) =>
+            (animation.effect as KeyframeEffect).getKeyframes(),
+          ),
+      );
+      expect(frames.some((frame) => frame.filter === "blur(2px)")).toBe(true);
+      expect(frames.some((frame) => frame.transform === offset)).toBe(true);
+      await finish();
+      await expect(popup).toHaveCSS("filter", "blur(0px)");
+      await expect(popup).toHaveCSS("transform", "none");
+      await trigger.click();
+      await expect(popup).toHaveAttribute("data-ending-style", "");
+      await paused();
+      await expect(popup).toHaveCSS("transition-duration", "0.06s");
+      await finish();
+      await expect(popup).toHaveCount(0);
+
+      await page.keyboard.press("Tab");
+      await trigger.focus();
+      await trigger.press("Enter");
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await expect(popup).toHaveCSS("transform", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await trigger.click();
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await expect(popup).toHaveCSS("transform", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+    } finally {
+      await finish();
+    }
+  }
+});

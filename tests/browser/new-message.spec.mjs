@@ -507,7 +507,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await page
     .getByRole("button", { name: "Mention a member", exact: true })
     .click();
-  const mentions = page.getByRole("region", {
+  const mentions = page.getByRole("dialog", {
     name: "Mention a member or agent",
   });
   const averyMention = mentions.getByRole("button", { name: /^Avery Chen / });

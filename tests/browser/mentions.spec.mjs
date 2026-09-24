@@ -34,13 +34,35 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
       await page
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
-      const picker = page.getByRole("region", {
+      const picker = page.getByRole("dialog", {
         name: "Mention a member or agent",
       });
       await expect(
         picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
-      await picker.getByRole("button", { name: new RegExp(key) }).click();
+      const search = picker.getByRole("searchbox");
+      await expect(search).toBeFocused();
+      await expect(picker).toHaveCSS("width", "380px");
+      expect((await picker.boundingBox()).height).toBeLessThanOrEqual(360);
+      await search.fill("");
+      const choice = picker.getByRole("button", {
+        name: new RegExp(key),
+      });
+      const index = await choice.evaluate((node) =>
+        [
+          ...node.parentElement.querySelectorAll("[data-mention-choice]"),
+        ].indexOf(node),
+      );
+      await search.press("ArrowDown");
+      for (let step = 0; step < index; step++)
+        await page.keyboard.press("ArrowDown");
+      await expect(choice).toBeFocused();
+      await expect(choice).toHaveCSS("padding", "8px");
+      await expect(choice.locator(".buzz-avatar")).toHaveCSS("width", "40px");
+      await choice.press("ArrowUp");
+      await page.keyboard.press("ArrowDown");
+      await expect(choice).toBeFocused();
+      await choice.press("Enter");
     };
     const order = () =>
       page
@@ -364,7 +386,7 @@ test("selected mentions inside code remain visible through draft restore and cha
           .getByRole("button", { name: "Mention a member", exact: true })
           .click();
         await page
-          .getByRole("region", { name: "Mention a member or agent" })
+          .getByRole("dialog", { name: "Mention a member or agent" })
           .getByRole("button", { name: new RegExp(key) })
           .click();
       }
@@ -452,7 +474,7 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
         .getByRole("button", { name: "Mention a member", exact: true })
         .tap();
       await page
-        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("dialog", { name: "Mention a member or agent" })
         .getByRole("button", { name: new RegExp(key) })
         .tap();
     };

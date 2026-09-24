@@ -1,5 +1,5 @@
 import { test, expect } from "./fixture.mjs";
-import { open } from "./timeline.mjs";
+import { open, settle } from "./timeline.mjs";
 import { npubEncode } from "nostr-tools/nip19";
 import { finalizeEvent, generateSecretKey, getPublicKey } from "nostr-tools";
 test.use({
@@ -416,7 +416,9 @@ test("profile activity opens the exact agent and originating channel before its 
   await expect(row).toBeVisible();
   await expect(panel.getByText("1 observed working turn(s).")).toBeVisible();
   await expect(
-    panel.getByRole("button", { name: /acp_read|acp_write|session_resolved/ }),
+    panel.getByRole("button", {
+      name: /acp_read|acp_write|session_resolved/,
+    }),
   ).toHaveCount(0);
   await row.click();
   await expect(panel.locator("pre code")).toHaveText(expected.plaintext);
@@ -552,6 +554,21 @@ test("profile activity opens the exact agent and originating channel before its 
   await expect(
     profile.getByRole("button", { name: "View activity", exact: true }),
   ).toHaveCount(0);
+  // Finish the reopened profile's focus handoff and timeline layout before
+  // starting read dwell; visible profile content alone proves neither.
+  await expect(
+    profile.getByRole("region", { name: "Profile details" }),
+  ).toBeFocused();
+  await settle(page);
+  const history = page.getByRole("region", {
+    name: "Channel message history",
+  });
+  await history.focus();
+  await expect(history).toBeFocused();
+  // Complete ordinary read dwell and publication before fixture teardown.
+  await expect
+    .poll(() => app.report.readPublications.length)
+    .toBeGreaterThan(1);
 });
 
 test.describe("thread activity", () => {

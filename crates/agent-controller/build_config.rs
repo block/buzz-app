@@ -74,7 +74,7 @@ pub fn load(
             }
         }
         if selected {
-            for entry in dotenvy::from_read_iter(rest[..end].as_bytes()) {
+            for entry in dotenvy::from_read_iter(&rest.as_bytes()[..end]) {
                 let (key, value) = entry.map_err(|_| "Invalid native build .env.local")?;
                 if KEYS.contains(&key.as_str()) {
                     local.insert(key, value);

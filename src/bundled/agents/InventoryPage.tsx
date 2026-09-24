@@ -1,0 +1,203 @@
+import type { CommunityReader } from "../../features/communities/service";
+import { UnifiedInventory } from "./UnifiedInventory";
+import { useIdentityNames } from "../../features/identity-names/react";
+import { useSyncExternalStore } from "react";
+import type {
+  AgentControl,
+  AgentControlState,
+  AgentView,
+} from "../../features/agents/control";
+import type { RelayData, RelaySnapshot } from "../../features/relay/service";
+import { relayOrigin } from "../../features/communities/destination";
+import { useRelayConnection } from "../../features/relay/react";
+import { FullPageSurface } from "../../shared/design-system/ui/FullPageSurface";
+import { LegacyAgentLibrary } from "./LegacyAgentLibrary";
+import { Button } from "../../shared/design-system/ui/Button";
+import { InventoryCard } from "./InventoryCard";
+import { InventoryControlPanel } from "./InventoryControlPanel";
+import { InventoryAgentActions } from "./InventoryAgentActions";
+
+const noCommunities = { subscribe: () => () => {}, snapshot: () => undefined };
+
+export function InventoryPage({
+  relay,
+  control,
+  communities,
+}: {
+  relay: RelayData;
+  control?: AgentControl;
+  communities?: CommunityReader;
+}) {
+  const connection = useRelayConnection(relay);
+  const resolveName = useIdentityNames(connection.session.names);
+  const reader = communities ?? noCommunities;
+  const client = useSyncExternalStore(
+    reader.subscribe,
+    reader.snapshot,
+    reader.snapshot,
+  );
+  let importDestination = "";
+  if (
+    connection.viewer &&
+    connection.scope?.endsWith(`:${connection.viewer}`)
+  ) {
+    try {
+      importDestination = relayOrigin(
+        connection.scope.slice(0, -(connection.viewer.length + 1)),
+      );
+    } catch {
+      // A non-URL fixture or unavailable connection needs an explicit destination.
+    }
+  }
+  const library =
+    connection.status === "ready" ? (
+      <LegacyAgentLibrary
+        key={`${connection.scope}:${connection.generation}`}
+        session={connection.session}
+      />
+    ) : (
+      <div>
+        <p>Connect to a community to browse the old library.</p>
+        {connection.status === "error" && (
+          <Button onClick={() => relay.retry()}>Retry connection</Button>
+        )}
+      </div>
+    );
+  return (
+    <div className="h-full min-h-0">
+      <FullPageSurface aria-label="Agents">
+        <div className="h-full min-h-0 overflow-auto p-panel-inset text-body">
+          <div className="mx-auto flex max-w-6xl flex-col gap-panel-gap">
+            {!control && (
+              <h1 className="m-0 text-title text-primary">Agents</h1>
+            )}
+            {control ? (
+              <InventoryControlPanel
+                control={control}
+                resolveName={resolveName}
+                importDestination={importDestination}
+                createOwner={
+                  connection.status === "ready" ? connection.viewer : undefined
+                }
+              >
+                {(state, edit, importedId, label, onUseHere, onImport) =>
+                  state.status === "unavailable" ? (
+                    library
+                  ) : state.data?.parked !== undefined ? (
+                    <UnifiedInventory
+                      key={connection.viewer ?? "offline"}
+                      state={state}
+                      edit={edit}
+                      importedId={importedId}
+                      control={control}
+                      connection={connection}
+                      client={client}
+                      onUseHere={onUseHere}
+                      onImport={onImport}
+                    />
+                  ) : (
+                    <ManagedAgents
+                      key={`${connection.scope}:${connection.generation}`}
+                      state={state}
+                      label={label}
+                      edit={edit}
+                      importedId={importedId}
+                      control={control}
+                      connection={connection}
+                      destination={importDestination}
+                    />
+                  )
+                }
+              </InventoryControlPanel>
+            ) : (
+              <>
+                <p className="text-secondary">
+                  Open the desktop app to import and run agents. You can still
+                  mention existing channel members.
+                </p>
+                {library}
+              </>
+            )}
+          </div>
+        </div>
+      </FullPageSurface>
+    </div>
+  );
+}
+function ManagedAgents({
+  state,
+  edit,
+  importedId,
+  control,
+  connection,
+  label,
+  destination,
+}: {
+  label(agent: AgentView): string;
+  state: AgentControlState;
+  edit(agent: AgentView, avatar?: string): void;
+  importedId: string | null;
+  control: AgentControl;
+  connection: RelaySnapshot;
+  destination: string;
+}) {
+  const library = connection.session.agentLibrary;
+  const snapshot = useSyncExternalStore(
+    library.subscribe,
+    library.snapshot,
+    library.snapshot,
+  );
+  return (
+    <section aria-label="My agents" className="flex flex-col gap-4">
+      <h2 className="sr-only">My agents</h2>
+      <p className="m-0 text-body-sm text-secondary">
+        Set up an imported agent with Use here, then start it separately. Before
+        starting the same identity here, stop the old agent and disable its
+        automatic startup in the old app.
+      </p>
+      {state.data?.agents.length === 0 && (
+        <p>No agents yet. Create an agent or import one from old Buzz below.</p>
+      )}
+      <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,280px),1fr))] gap-4">
+        {state.data?.agents.map((agent) => {
+          const identity = snapshot.identities.find(
+            (entry) => entry.pubkey === agent.pubkey,
+          );
+          const avatar =
+            identity?.avatar ??
+            snapshot.definitions.find(
+              (entry) => entry.id === identity?.definitionId,
+            )?.avatar;
+          return (
+            <InventoryCard
+              key={agent.id}
+              name={label(agent)}
+              avatar={avatar}
+              identities={[agent]}
+              session={connection.session}
+              editable={[agent]}
+              onEdit={edit}
+            >
+              <InventoryAgentActions
+                agent={agent}
+                state={state}
+                control={control}
+                imported={agent.id === importedId}
+                destination={destination}
+                owner={
+                  connection.status === "ready" ? (connection.viewer ?? "") : ""
+                }
+              />
+            </InventoryCard>
+          );
+        })}
+      </div>
+      {connection.status === "ready" && (
+        <LegacyAgentLibrary
+          session={connection.session}
+          managedKeys={state.data?.agents.map((agent) => agent.pubkey) ?? []}
+        />
+      )}
+    </section>
+  );
+}

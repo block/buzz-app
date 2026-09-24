@@ -150,11 +150,13 @@ export function AgentEditor({
                               {agentProcessLabel(agent)}
                             </p>
                             <p className="text-body-sm text-subtle">
-                              {agent.enabled
-                                ? state.data?.runtimeAvailable
-                                  ? "Enabled · starts with buzz-app"
-                                  : "Enabled intent saved · execution unavailable"
-                                : "Stopped · a later sent mention can start this agent"}
+                              {agent.configured === false
+                                ? "Imported · close the editor and choose Use here before starting"
+                                : agent.enabled
+                                  ? state.data?.runtimeAvailable
+                                    ? "Enabled · starts with buzz-app"
+                                    : "Enabled intent saved · execution unavailable"
+                                  : "Stopped · a later sent mention can start this agent"}
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
@@ -183,8 +185,8 @@ export function AgentEditor({
                             Saved revision {agent.revision} · Running revision{" "}
                             {agent.runningRevision ?? "none"}.
                             {unapplied && " Saved changes are not running yet."}{" "}
-                            Stop ends current work; a later sent mention can
-                            start it again.
+                            Stop ends current work. After setup, a later sent
+                            mention can start it again.
                           </p>
                         </div>
                       ),

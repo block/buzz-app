@@ -5,6 +5,8 @@ import { eventDto, type EventData, type RelayEvent } from "./events";
 import type { RelayWriter } from "./transport";
 import { ByteLru, byteSize, OUTBOX_INPUT_MAX_BYTES } from "./budget";
 import { createRelayProfiler, type RelayProfiler } from "./profiling";
+import { channelRowKind } from "./membership";
+import { nextMessageMs } from "./message-order";
 
 export type Delivery = "sending" | "accepted" | "unknown" | "failed" | "seen";
 /** Durable, caller-owned recovery state committed with the operation. */
@@ -652,13 +654,20 @@ export function createOutbox(
         throw new Error(
           "Too many outstanding operations; resolve or dismiss a pending operation",
         );
+      // Rendered messages carry send order within their second; the optimistic
+      // row and the signed event share this exact ms and created_at.
+      const channelId = channelRowKind(input.kind)
+        ? input.tags.find(([name]) => name === "h")?.[1]
+        : undefined;
+      const ms = channelId ? nextMessageMs(channelId) : Date.now();
       const template = {
         ...input,
         pubkey: viewer,
-        created_at: Math.floor(Date.now() / 1000),
+        created_at: Math.floor(ms / 1000),
         tags: [
           ...input.tags.map((tag) => [...tag]),
           ["client-id", crypto.randomUUID()],
+          ...(channelId ? [["ms", String(ms)]] : []),
         ],
       };
       const event = Object.freeze({

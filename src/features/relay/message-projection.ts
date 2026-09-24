@@ -5,8 +5,7 @@ import type { OutgoingEvent } from "./outbox";
 import type { RelayProfiler } from "./profiling";
 
 import { channelRowKind as messageKind } from "./membership";
-const order = (a: ChannelMessage, b: ChannelMessage) =>
-  a.createdAt - b.createdAt || b.id.localeCompare(a.id);
+import { compareMessages, eventMs, observeMessageMs } from "./message-order";
 const PARENT_OVERLAY_DEPTH = 2;
 const CHILD_OVERLAY_DEPTH = 1;
 
@@ -51,6 +50,8 @@ export class MessageProjection {
     for (const [id, event] of next) {
       // Stable event IDs identify immutable payloads, including unsigned local intent.
       if (this.inputs.has(id)) continue;
+      if (messageKind(event.kind))
+        observeMessageMs(this.channelId, eventMs(event));
       for (const target of targets(event)) {
         affected.add(target);
         if (!messageKind(event.kind)) {
@@ -116,7 +117,9 @@ export class MessageProjection {
               this.messages.set(id, this.withDelivery(row, deliveries.get(id)));
             else this.messages.delete(id);
           }
-          this.rows = Object.freeze([...this.messages.values()].sort(order));
+          this.rows = Object.freeze(
+            [...this.messages.values()].sort(compareMessages),
+          );
         },
         affected.size,
       );

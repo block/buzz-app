@@ -6,6 +6,7 @@ import type { LocalEvents } from "./outbox";
 import type { RelayReader } from "./reader";
 import { byteSize } from "./budget";
 import { foldMessages } from "./fold";
+import { compareMessages, observeMessageMs } from "./message-order";
 import { shareMessageRows } from "./row-identity";
 
 const AUX = new Set([5, 7, 9005, 40003, 39005, 39006]);
@@ -17,6 +18,7 @@ const contentKind = (event: EventData) =>
   [9, 40002, 40008].includes(event.kind);
 const inChannel = (event: EventData, channelId: string) =>
   event.tags.some(([name, value]) => name === "h" && value === channelId);
+/** Relay thread-cursor order (seconds, id); rendered order is `compareMessages`. */
 const compare = (a: EventData, b: EventData) =>
   a.created_at - b.created_at || a.id.localeCompare(b.id);
 
@@ -178,7 +180,6 @@ export function createThreadView({
           : row;
       }),
     );
-    // Thread forward order differs from channel-history's descending-ID tiebreak.
     const target =
       targetStatus === "ready"
         ? rows.find((row) => row.id === messageId)
@@ -192,7 +193,9 @@ export function createThreadView({
         (row) =>
           row.id !== rootId && (!rootUnavailable || row.id === messageId),
       )
-      .sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id));
+      .sort(compareMessages);
+    for (const row of nextReplies)
+      observeMessageMs(channelId, row.createdAtMs ?? row.createdAt * 1000);
     const replies =
       snapshot.replies.length === nextReplies.length &&
       snapshot.replies.every((row, index) => row === nextReplies[index])

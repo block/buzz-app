@@ -11,6 +11,7 @@ import type { LiveCallbacks } from "../../features/relay/live";
 import { createRelaySession } from "../../features/relay/session";
 import type { RelayData, RelaySnapshot } from "../../features/relay/service";
 import type { MemoryReader, MemoryListing } from "../../features/agents/memory";
+import { attestedOwner } from "../../features/agents/owner-attestation";
 import { keypair, profile, signed } from "../../features/relay/testing";
 import { profileTarget } from "../../features/profiles/target";
 import { ProfilePanel } from "./ProfilePanel";
@@ -119,16 +120,27 @@ it("mounts lazily through the actual profile tab, displays plain text and releas
 it("hides memories for humans, unowned agents and forged ownership without reading", async () => {
   const stranger = keypair();
   const human = profile(agent, { name: "Person" });
+  const foreignSignature = bytesToHex(
+    schnorr.sign(
+      new Uint8Array(
+        createHash("sha256")
+          .update(`nostr:agent-auth:${agent.pubkey}:`)
+          .digest(),
+      ),
+      stranger.secret,
+    ),
+  );
   const foreignAgent = signed(agent, {
     kind: 0,
     content: JSON.stringify({ name: "Foreign", is_agent: true }),
-    tags: [["auth", stranger.pubkey, "", "a".repeat(128)]],
+    tags: [["auth", stranger.pubkey, "", foreignSignature]],
   });
   const forgedAgent = signed(agent, {
     kind: 0,
     content: JSON.stringify({ name: "Forged", is_agent: true }),
     tags: [["auth", viewer.pubkey, "", "a".repeat(128)]],
   });
+  expect(await attestedOwner(foreignAgent)).toBe(stranger.pubkey);
   for (const head of [human, foreignAgent, forgedAgent]) {
     const read = vi.fn<MemoryReader>().mockResolvedValue(listing);
     const h = createRelaySession({
@@ -176,6 +188,95 @@ it("hides memories for humans, unowned agents and forged ownership without readi
     page.unmount();
   }
 });
+
+it.each(["held", "plaintext"] as const)(
+  "removes an open %s memories view when a newer live profile drops ownership",
+  async (mode) => {
+    let live!: LiveCallbacks;
+    const pending: {
+      resolve(value: MemoryListing): void;
+      signal: AbortSignal;
+    }[] = [];
+    const read = vi.fn<MemoryReader>((_agent, signal) =>
+      mode === "plaintext"
+        ? Promise.resolve(listing)
+        : new Promise((resolve) => pending.push({ resolve, signal })),
+    );
+    const h = createRelaySession({
+      viewer: viewer.pubkey,
+      relayAuthor: viewer.pubkey,
+      media: () => undefined,
+      query: async (filters) =>
+        filters.some((filter) => filter.kinds?.includes(0)) ? [agentHead] : [],
+      readAgentMemories: read,
+      subscribe(callbacks) {
+        live = callbacks;
+        return { update() {}, retry() {}, dispose() {} };
+      },
+    });
+    owners.push(h);
+    const snapshot: RelaySnapshot = {
+      status: "ready",
+      generation: 1,
+      viewer: viewer.pubkey,
+      session: h.session,
+    };
+    const relay: RelayData = {
+      snapshot: () => snapshot,
+      subscribe: () => () => {},
+      retry() {},
+      disconnect() {},
+      clearCache: h.clearCache,
+    };
+    const user = userEvent.setup();
+    render(
+      <ProfilePanel
+        relay={relay}
+        target={profileTarget(agent.pubkey) ?? ""}
+        close={() => {}}
+      />,
+    );
+    await user.click(await screen.findByRole("tab", { name: "Memories" }));
+    // The live connection must admit the read; explicit retry starts it.
+    act(() => live.state({ status: "connected", routes: [] }));
+    await user.click(
+      await screen.findByRole("button", { name: "Retry memories" }),
+    );
+    if (mode === "held") {
+      await waitFor(() => expect(pending).toHaveLength(1));
+      expect(screen.getByRole("status")).toHaveTextContent("Loading memories");
+    } else {
+      await screen.findByText("Core memory");
+      await user.click(screen.getByText("Core memory"));
+      expect(screen.getByText(memoryBody)).toBeVisible();
+    }
+    expect(
+      screen.getByRole("region", { name: "Agent memories" }),
+    ).toBeVisible();
+
+    const revoked = signed(agent, {
+      kind: 0,
+      content: JSON.stringify({ name: "Agent", is_agent: true }),
+      tags: [],
+      created_at: agentHead.created_at + 1,
+    });
+    await act(async () => live.receive([revoked]));
+    await waitFor(() =>
+      expect(h.session.profiles.event?.(agent.pubkey)?.id).toBe(revoked.id),
+    );
+    if (mode === "held")
+      await waitFor(() => expect(pending[0]?.signal.aborted).toBe(true));
+    expect(screen.queryByRole("tab", { name: "Memories" })).toBeNull();
+    expect(screen.getByRole("tab", { name: "Info" })).toHaveAttribute(
+      "aria-selected",
+      "true",
+    );
+    expect(screen.queryByRole("region", { name: "Agent memories" })).toBeNull();
+    if (mode === "held") await act(async () => pending[0]?.resolve(listing));
+    expect(screen.queryByText(memoryBody)).toBeNull();
+    expect(read).toHaveBeenCalledTimes(1);
+  },
+);
 
 it("held reads show loading, reject late completions after target/session switches and unmount", async () => {
   const pending: {

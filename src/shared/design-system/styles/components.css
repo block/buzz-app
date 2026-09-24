@@ -1159,6 +1159,34 @@
     outline: 2px solid var(--text-standard);
     outline-offset: 2px;
   }
+
+  .buzz-preference-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-4);
+    min-width: 0;
+    padding: var(--space-3) 0;
+  }
+  .buzz-preference-row-content {
+    display: grid;
+    gap: var(--space-1);
+    min-width: 0;
+  }
+  .buzz-preference-row-label {
+    @apply text-label-sm;
+    color: var(--text-standard);
+    cursor: pointer;
+  }
+  .buzz-preference-row-description {
+    @apply text-body-sm;
+    color: var(--text-subtle);
+  }
+  .buzz-preference-row:has(.buzz-switch-control[data-disabled])
+    :is(.buzz-preference-row-label, .buzz-preference-row-description) {
+    color: var(--text-unavailable);
+    cursor: not-allowed;
+  }
 }
 
 @layer components {

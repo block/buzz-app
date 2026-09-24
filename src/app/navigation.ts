@@ -88,7 +88,8 @@ export function useAppNavigation(services: AppServices) {
       "plugins",
       "appearance",
       "shortcuts",
-      "messages",
+      "agents",
+      "channels",
       "notifications",
     ].includes(target.section) &&
     !(developerMode && target.section === "developer")

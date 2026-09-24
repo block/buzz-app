@@ -210,6 +210,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     name: "Profile",
     exact: true,
   });
+  const channels = sections.getByRole("button", {
+    name: "Channels",
+    exact: true,
+  });
   const plugins = sections.getByRole("button", {
     name: "Plugins",
     exact: true,
@@ -226,12 +230,12 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await expect(profileContent).toBeVisible();
   await expect(pluginContent).toHaveCount(0);
   // Exercise the real shell's destination allowlist, not just the settings component.
-  const messages = sections.getByRole("button", {
-    name: "Messages",
+  const agents = sections.getByRole("button", {
+    name: "Agents",
     exact: true,
   });
-  await messages.click();
-  await expect(messages).toHaveAttribute("aria-current", "page");
+  await agents.click();
+  await expect(agents).toHaveAttribute("aria-current", "page");
   const remember = page.getByRole("switch", {
     name: "Remember mentioned agents",
   });
@@ -239,14 +243,17 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await remember.click();
   await expect(remember).not.toBeChecked();
   await profile.click();
-  await messages.click();
+  await agents.click();
   await expect(remember).not.toBeChecked();
   await profile.click();
   for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     await profile.focus();
     await tab();
-    await expect(plugins).toBeFocused();
+    await expect(
+      sections.getByRole("button", { name: "Appearance", exact: true }),
+    ).toBeFocused();
+    await plugins.focus();
     await page.keyboard.press("Enter");
     await expect(plugins).toHaveAttribute("aria-current", "page");
     await expect(profile).not.toHaveAttribute("aria-current");
@@ -283,27 +290,30 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await page.screenshot({
       path: testInfo.outputPath(`settings-${width}.png`),
     });
-    await tab(true);
+    await profile.focus();
     await expect(profile).toBeFocused();
     await page.keyboard.press("Enter");
     await expect(profile).toHaveAttribute("aria-current", "page");
     await expect(profileContent).toBeVisible();
     await expect(pluginContent).toHaveCount(0);
     await tab();
-    await tab();
     await expect(
       sections.getByRole("button", { name: "Appearance", exact: true }),
+    ).toBeFocused();
+    await tab();
+    await expect(
+      sections.getByRole("button", { name: "Notifications", exact: true }),
     ).toBeFocused();
     await tab();
     await expect(
       sections.getByRole("button", { name: "Shortcuts", exact: true }),
     ).toBeFocused();
     await tab();
-    await expect(messages).toBeFocused();
+    await expect(agents).toBeFocused();
     await tab();
-    await expect(
-      sections.getByRole("button", { name: "Notifications", exact: true }),
-    ).toBeFocused();
+    await expect(channels).toBeFocused();
+    await tab();
+    await expect(plugins).toBeFocused();
     await tab();
     await expect(
       sections.getByRole("button", { name: "Hosted communities", exact: true }),
@@ -375,10 +385,8 @@ test("Settings edits the local profile inline without publishing to a community"
   await save.click();
   await expect(name).toHaveValue("Updated local profile");
   await expect(
-    page
-      .getByRole("region", { name: "Profile", exact: true })
-      .getByRole("status"),
-  ).toHaveText("Profile updated.");
+    page.getByRole("dialog", { name: "Profile updated" }),
+  ).toBeVisible();
   await button(page, "Your profile").hover();
   await expect(page.getByRole("tooltip")).toHaveText("Updated local profile");
   await expect(button(page, "Your profile")).toHaveAccessibleDescription(

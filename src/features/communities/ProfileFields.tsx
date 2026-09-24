@@ -4,11 +4,18 @@ import type { PersonalProfile } from "./service";
 import { PROFILE_ABOUT_MAX_LENGTH } from "./service";
 import { Textarea } from "../../shared/design-system/ui/Textarea";
 
+function validPicture(value: string) {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 export function canSaveProfile(profile: PersonalProfile) {
-  return (
-    !!profile.name.trim() &&
-    (!profile.picture || profile.picture.startsWith("https://"))
-  );
+  return !!profile.name.trim() && validPicture(profile.picture);
 }
 
 export function ProfileFields({
@@ -48,7 +55,15 @@ export function ProfileFields({
           }
         />
       </Field>
-      <Field label="Picture URL (optional)">
+      <Field
+        label="Picture URL (optional)"
+        description="Buzz centers and crops the image to fit each avatar."
+        error={
+          profile.picture && !validPicture(profile.picture)
+            ? "Enter an HTTPS image URL without embedded credentials."
+            : undefined
+        }
+      >
         <Input
           type="url"
           placeholder="https://…"

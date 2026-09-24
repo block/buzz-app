@@ -12,6 +12,7 @@ import {
   UserIcon,
   PaletteIcon,
   BellIcon,
+  RobotIcon,
   ChatCircleIcon,
   KeyboardIcon,
   WrenchIcon,
@@ -29,20 +30,35 @@ import type { ShortcutsService } from "../features/shortcuts/service";
 import type { ShortcutBindings } from "../features/shortcuts/preferences";
 import { ShortcutSettings } from "./ShortcutSettings";
 import { DeveloperSettings } from "./DeveloperSettings";
-import { MessageSettings } from "./MessageSettings";
+import { AgentSettings } from "./AgentSettings";
 import type { SettingsCards } from "../features/settings/service";
 import { OwnedContribution } from "../plugins/OwnedContribution";
 
 type Section = { id: string; label: string; icon: typeof UserIcon };
 
-const baseSections: Section[] = [
-  { id: "profile", label: "Profile", icon: UserIcon },
-  { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
-  { id: "appearance", label: "Appearance", icon: PaletteIcon },
-  { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
-  { id: "messages", label: "Messages", icon: ChatCircleIcon },
-  { id: "notifications", label: "Notifications", icon: BellIcon },
+const sectionGroups: ReadonlyArray<{
+  label: string;
+  sections: readonly Section[];
+}> = [
+  {
+    label: "Personal",
+    sections: [
+      { id: "profile", label: "Profile", icon: UserIcon },
+      { id: "appearance", label: "Appearance", icon: PaletteIcon },
+      { id: "notifications", label: "Notifications", icon: BellIcon },
+      { id: "shortcuts", label: "Shortcuts", icon: KeyboardIcon },
+    ],
+  },
+  {
+    label: "App",
+    sections: [
+      { id: "agents", label: "Agents", icon: RobotIcon },
+      { id: "channels", label: "Channels", icon: ChatCircleIcon },
+      { id: "plugins", label: "Plugins", icon: SquaresFourIcon },
+    ],
+  },
 ];
+const baseSections = sectionGroups.flatMap((group) => group.sections);
 
 // DEV alone is not enough: packaged desktop builds load a production bundle
 // from tauri://localhost, so the hostname check excludes them too.
@@ -78,20 +94,8 @@ export function Settings({
   onSection?: (section: string) => void;
 }) {
   const contributed = useSyncExternalStore(cards.subscribe, cards.snapshot);
-  const messageCards = contributed.filter((card) => !card.group);
-  const groups = [
-    ...new Set(contributed.flatMap((card) => card.group ?? [])),
-  ].map((label) => ({
-    label,
-    cards: contributed.filter((card) => card.group === label),
-  }));
-  const [chosen, setSelected] = useState("profile");
-  // A grouped card's section is its contribution key; it closes with its plugin.
-  const selected =
-    sections.some((section) => section.id === chosen) ||
-    contributed.some((card) => card.group && card.key === chosen)
-      ? chosen
-      : "profile";
+  const [selected, setSelected] =
+    useState<(typeof sections)[number]["id"]>("profile");
   const requestedSection =
     navigation?.target.kind === "settings"
       ? (navigation.target.section ?? "profile")
@@ -99,15 +103,10 @@ export function Settings({
   useEffect(() => {
     if (
       requestedSection &&
-      (sections.some((section) => section.id === requestedSection) ||
-        contributed.some((card) => card.group && card.key === requestedSection))
+      sections.some((section) => section.id === requestedSection)
     )
-      setSelected(requestedSection);
-  }, [requestedSection, contributed]);
-  const choose = (id: string) => {
-    if (onSection) onSection(id);
-    else setSelected(id);
-  };
+      setSelected(requestedSection as typeof selected);
+  }, [requestedSection]);
   useEffect(() => {
     if (requestedSection === selected)
       navigation?.complete({ status: "opened" });
@@ -122,41 +121,47 @@ export function Settings({
       <Panel aria-labelledby="settings-title">
         <div className={styles.layout}>
           <aside className={styles.sidebar}>
-            <h1 id="settings-title" className="m-0 px-3 py-4 text-label">
-              Settings
-            </h1>
+            <div className={styles.sidebarHeader}>
+              <h1 id="settings-title" className="m-0 text-label">
+                Settings
+              </h1>
+            </div>
             <nav aria-label="Settings sections" className={styles.navigation}>
-              {sections.map(({ id, label, icon: Icon }) => (
-                <NavigationItem
-                  label={label}
-                  icon={<Icon aria-hidden="true" size={18} />}
-                  selected={selected === id}
-                  type="button"
-                  key={id}
-                  aria-current={selected === id ? "page" : undefined}
-                  onClick={(event) => {
-                    event.currentTarget.focus();
-                    choose(id);
-                  }}
-                />
-              ))}
-              {groups.map((group) => (
+              {sectionGroups.map((group) => (
                 <NavigationSection key={group.label} label={group.label}>
-                  {group.cards.map((card) => (
+                  {group.sections.map(({ id, label, icon: Icon }) => (
                     <NavigationItem
-                      label={card.title}
-                      selected={selected === card.key}
+                      label={label}
+                      icon={<Icon aria-hidden="true" size={18} />}
+                      selected={selected === id}
                       type="button"
-                      key={card.key}
-                      aria-current={selected === card.key ? "page" : undefined}
+                      key={id}
+                      aria-current={selected === id ? "page" : undefined}
                       onClick={(event) => {
                         event.currentTarget.focus();
-                        choose(card.key);
+                        if (onSection) onSection(id);
+                        else setSelected(id);
                       }}
                     />
                   ))}
                 </NavigationSection>
               ))}
+              {developerMode && (
+                <NavigationSection label="Development">
+                  <NavigationItem
+                    label="Developer"
+                    icon={<WrenchIcon aria-hidden="true" size={18} />}
+                    selected={selected === "developer"}
+                    type="button"
+                    aria-current={selected === "developer" ? "page" : undefined}
+                    onClick={(event) => {
+                      event.currentTarget.focus();
+                      if (onSection) onSection("developer");
+                      else setSelected("developer");
+                    }}
+                  />
+                </NavigationSection>
+              )}
             </nav>
           </aside>
           <div className={styles.detail}>
@@ -179,10 +184,12 @@ export function Settings({
                 plugins={plugins}
               />
             </div>
-            <div hidden={selected !== "messages"}>
-              <MessageSettings active={selected === "messages"} />
-              {selected === "messages" &&
-                messageCards.map((card) => (
+            <div hidden={selected !== "agents"}>
+              <AgentSettings active={selected === "agents"} />
+            </div>
+            <div hidden={selected !== "channels"}>
+              {selected === "channels" &&
+                contributed.map((card) => (
                   <OwnedContribution
                     key={card.key}
                     entry={card}
@@ -195,22 +202,6 @@ export function Settings({
                   </OwnedContribution>
                 ))}
             </div>
-            {contributed.map(
-              (card) =>
-                card.group &&
-                selected === card.key && (
-                  <OwnedContribution
-                    key={card.key}
-                    entry={card}
-                    registry={cards}
-                  >
-                    {(entry, active) => {
-                      const Card = entry.component;
-                      return <Card active={active} />;
-                    }}
-                  </OwnedContribution>
-                ),
-            )}
             <div hidden={selected !== "profile"}>
               <ProfileSettings communities={communities} />
             </div>

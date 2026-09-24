@@ -1,7 +1,11 @@
+import { Avatar } from "../shared/design-system/ui/Avatar";
 import { Button } from "../shared/design-system/ui/Button";
 import { Input } from "../shared/design-system/ui/Input";
+import { ToastNotice } from "../shared/design-system/ui/Toast";
+import { avatarSource } from "../shared/avatar-source";
 import { npubEncode } from "nostr-tools/nip19";
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
+import styles from "./ProfileSettings.module.css";
 import type {
   Communities,
   PersonalProfile,
@@ -19,7 +23,11 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
   const [draft, setDraft] = useState<PersonalProfile | null>(null);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState("");
-  const [copyStatus, setCopyStatus] = useState("");
+  const [copyStatus, setCopyStatus] = useState<{
+    message: string;
+    failed: boolean;
+  } | null>(null);
+  const copyAttempt = useRef(0);
   const profile = draft ?? client.profile;
   const hasChanges =
     draft !== null &&
@@ -28,14 +36,18 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
       (draft.about ?? "") !== (client.profile.about ?? ""));
   const npub = client.viewer ? npubEncode(client.viewer) : "";
   async function copyIdentity(value: string, label: string) {
-    setCopyStatus("");
+    const attempt = ++copyAttempt.current;
+    setCopyStatus(null);
     try {
       await navigator.clipboard.writeText(value);
-      setCopyStatus(`${label} copied.`);
+      if (attempt === copyAttempt.current)
+        setCopyStatus({ message: `${label} copied.`, failed: false });
     } catch {
-      setCopyStatus(
-        `Couldn’t copy ${label.toLowerCase()}. Select it and copy manually.`,
-      );
+      if (attempt === copyAttempt.current)
+        setCopyStatus({
+          message: `Couldn’t copy ${label.toLowerCase()}. Select it and copy manually.`,
+          failed: true,
+        });
     }
   }
   return (
@@ -45,8 +57,8 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
       </h2>
       <div>
         <p className="mt-0 text-body-sm text-muted">
-          Your local default for new communities. Saving here does not change
-          your existing community profiles.
+          Set your profile details. Any existing community profiles won’t be
+          changed.
         </p>
         {client.status !== "ready" ? (
           <p role="status">
@@ -56,6 +68,24 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
           </p>
         ) : (
           <>
+            <section aria-label="Profile preview" className={styles.preview}>
+              <div className={styles.avatar}>
+                <Avatar
+                  src={avatarSource(profile.picture)}
+                  alt=""
+                  fallback={profile.name || "Your profile"}
+                  size="fill"
+                />
+              </div>
+              <h3 className="text-label">
+                {profile.name.trim() || "Your profile"}
+              </h3>
+              {profile.about?.trim() ? (
+                <p className={`${styles.about} text-body-sm text-muted`}>
+                  {profile.about.trim()}
+                </p>
+              ) : null}
+            </section>
             <form
               onSubmit={(event) => {
                 event.preventDefault();
@@ -109,10 +139,15 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
                 >
                   Cancel
                 </Button>
-                <p role="status" className="m-0 text-body-sm text-muted">
-                  {saved ? "Profile updated." : ""}
-                </p>
               </div>
+              {saved && (
+                <ToastNotice
+                  title="Profile updated"
+                  tone="success"
+                  timeout={5000}
+                  onDismiss={() => setSaved(false)}
+                />
+              )}
             </form>
             <section aria-labelledby="identity-settings-title" className="mt-8">
               <h3 id="identity-settings-title" className="m-0 text-label-sm">
@@ -142,7 +177,7 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
                   <label className="mb-2 block text-label-sm" htmlFor={id}>
                     {label}
                   </label>
-                  <div className="flex min-w-0 flex-wrap items-center gap-3">
+                  <div className={styles.identityRow}>
                     <Input
                       id={id}
                       readOnly
@@ -159,9 +194,19 @@ export function ProfileSettings({ communities }: { communities: Communities }) {
                 </div>
               ))}
               {copyStatus && (
-                <p role="status" className="m-0 text-body-sm text-muted">
-                  {copyStatus}
-                </p>
+                <ToastNotice
+                  title={
+                    copyStatus.failed
+                      ? "Identity wasn’t copied"
+                      : copyStatus.message
+                  }
+                  {...(copyStatus.failed
+                    ? { description: copyStatus.message }
+                    : {})}
+                  tone={copyStatus.failed ? "error" : "success"}
+                  timeout={copyStatus.failed ? 0 : 5000}
+                  onDismiss={() => setCopyStatus(null)}
+                />
               )}
             </section>
           </>

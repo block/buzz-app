@@ -45,6 +45,7 @@ import {
 import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
+import { PreferenceRow } from "../../../../src/shared/design-system/ui/PreferenceRow";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
 
 import { Avatar } from "../../../../src/shared/design-system/ui/Avatar";
@@ -745,6 +746,16 @@ function SwitchSpecimen() {
   const [busyChecked, setBusyChecked] = useState(true);
   return (
     <div className="component-specimen-stack">
+      <div className="divide-y divide-line">
+        <PreferenceRow
+          label="Desktop alerts"
+          description="Show notifications for new activity."
+          checked={checked}
+          onCheckedChange={setChecked}
+        />
+        <PreferenceRow label="Sound" checked />
+        <PreferenceRow label="Unavailable preference" disabled />
+      </div>
       <Switch
         checked={checked}
         onCheckedChange={setChecked}
@@ -918,6 +929,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   select: SelectExamples,
   combobox: ComboboxExamples,
   switch: SwitchSpecimen,
+  "preference-row": SwitchSpecimen,
   accordion: () => (
     <>
       <Accordion

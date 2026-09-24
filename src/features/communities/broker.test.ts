@@ -171,6 +171,14 @@ it("routes reads, profile publication, invite claims and delayed writes to their
       ).status,
     ).toBe(400);
     expect(
+      (
+        await post("primary", "profile", {
+          name: "Rejected",
+          picture: "https://user:secret@example.test/profile.png",
+        })
+      ).status,
+    ).toBe(400);
+    expect(
       (await post("primary", "sign", { kind: 0, content: "{}", tags: [] }))
         .status,
     ).toBe(400);

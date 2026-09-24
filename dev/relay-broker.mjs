@@ -97,6 +97,16 @@ import { finalizeEvent, getPublicKey, nip19, verifyEvent } from "nostr-tools";
 import { Agent, fetch as upstreamHttp, interceptors } from "undici";
 import { schnorr } from "@noble/curves/secp256k1.js";
 
+function validProfilePicture(value) {
+  if (!value) return true;
+  try {
+    const url = new URL(value);
+    return url.protocol === "https:" && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
 const MAX_FILTERS = 4,
   MAX_LIMIT = 500,
   MAX_INFLIGHT = 6,
@@ -1717,7 +1727,7 @@ export function relayBrokerPlugin({
               filters.name.length > 100 ||
               typeof filters?.picture !== "string" ||
               filters.picture.length > 2048 ||
-              (filters.picture && !/^https:\/\//.test(filters.picture)) ||
+              !validProfilePicture(filters.picture) ||
               (filters.about !== undefined &&
                 (typeof filters.about !== "string" ||
                   filters.about.length > 500))

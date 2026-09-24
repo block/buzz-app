@@ -368,7 +368,7 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   const beforeReopen = directoryReads();
   await page
     .getByRole("navigation", { name: "Pages" })
-    .getByRole("button", { name: "Home", exact: true })
+    .getByRole("button", { name: "Projects", exact: true })
     .click();
   await page
     .getByRole("navigation", { name: "Pages" })

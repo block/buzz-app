@@ -38,6 +38,7 @@ import {
   readSnapshotCommunity,
 } from "../src/features/relay/read-state-snapshot.ts";
 import { readAgentLibrary } from "./agent-library.mjs";
+import { createBuilderlab } from "./builderlab.mjs";
 import {
   decodeSidebarPreferences,
   SIDEBAR_REQUEST_BYTES,
@@ -410,6 +411,7 @@ export function relayBrokerPlugin({
   upstreamFetch,
   socketFactory,
   agentLibrary = readAgentLibrary,
+  builderlab: builderlabOptions = {},
 } = {}) {
   const aliases = parseCommunityAliases(communityAliases);
   const defaultRelay = relayUrl?.trim() ? relayOrigin(relayUrl) : undefined;
@@ -468,6 +470,10 @@ export function relayBrokerPlugin({
       let libraryRead;
       const streams = new Map();
       const admissions = createHostAdmission();
+      const builderlab = createBuilderlab({
+        key: () => key,
+        ...builderlabOptions,
+      });
       server.httpServer?.once("close", () => {
         for (const { close } of streams.values()) close();
         key.fill(0);
@@ -478,7 +484,11 @@ export function relayBrokerPlugin({
         `[relay-broker] signing as ${viewer.slice(0, 8)}… for explicitly selected communities (lazy, scoped connections)`,
       );
       server.middlewares.use(async (req, res, next) => {
-        if (!req.url?.startsWith("/api/relay/")) return next();
+        if (
+          !req.url?.startsWith("/api/relay/") &&
+          !req.url?.startsWith("/api/builderlab/")
+        )
+          return next();
         const startedAt = Date.now();
         const route = new URL(req.url, "http://localhost").pathname;
         res.on("finish", () => {
@@ -509,6 +519,44 @@ export function relayBrokerPlugin({
         res.once("close", release);
         if (res.destroyed) release();
         try {
+          if (url.pathname.startsWith("/api/builderlab/")) {
+            // Hosted communities plugin only; the session credential never leaves Node.
+            const action = url.pathname.slice("/api/builderlab/".length);
+            try {
+              if (action === "auth" && req.method === "GET")
+                return json(res, 200, { auth: await builderlab.auth() });
+              if (req.method !== "POST")
+                return json(res, 404, { error: "Unknown Builderlab route" });
+              let raw = "";
+              for await (const part of req) {
+                raw += part;
+                if (raw.length > 4096)
+                  return json(res, 413, { error: "Request too large" });
+              }
+              if (action === "login")
+                return json(res, 200, {
+                  auth: await builderlab.login(cancel.signal),
+                });
+              if (action === "sign-out") {
+                builderlab.signOut();
+                return json(res, 200, {});
+              }
+              if (action === "bind")
+                return json(res, 200, await builderlab.bind());
+              const result = await builderlab.call(
+                action,
+                raw ? JSON.parse(raw) : {},
+              );
+              return result
+                ? json(res, 200, result)
+                : json(res, 404, { error: "Unknown Builderlab route" });
+            } catch (error) {
+              return json(res, 502, {
+                error:
+                  error instanceof Error ? error.message : "Builderlab failed",
+              });
+            }
+          }
           if (url.pathname === "/api/relay/register" && req.method === "POST") {
             let raw = "";
             for await (const part of req) {

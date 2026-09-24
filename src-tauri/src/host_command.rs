@@ -9,6 +9,49 @@ use std::time::Duration;
 use tokio::io::AsyncReadExt;
 use tokio::process::Command;
 
+#[cfg(windows)]
+mod windows_job {
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use tokio::process::Child;
+    use windows_sys::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JobObjectExtendedLimitInformation,
+        SetInformationJobObject, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+    };
+
+    pub(super) struct WindowsJob(OwnedHandle);
+
+    impl WindowsJob {
+        pub(super) fn new() -> Option<Self> {
+            let handle = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
+            if handle.is_null() {
+                return None;
+            }
+            let job = Self(unsafe { OwnedHandle::from_raw_handle(handle) });
+            let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
+            limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            let configured = unsafe {
+                SetInformationJobObject(
+                    job.0.as_raw_handle(),
+                    JobObjectExtendedLimitInformation,
+                    (&limits as *const JOBOBJECT_EXTENDED_LIMIT_INFORMATION).cast(),
+                    std::mem::size_of_val(&limits) as u32,
+                )
+            };
+            if configured == 0 {
+                return None;
+            }
+            Some(job)
+        }
+
+        pub(super) fn assign(&self, child: &Child) -> bool {
+            child.raw_handle().is_some_and(|handle| unsafe {
+                AssignProcessToJobObject(self.0.as_raw_handle(), handle) != 0
+            })
+        }
+    }
+}
+
 const MAX_OUTPUT_BYTES: u64 = 4096;
 const DEADLINE: Duration = Duration::from_secs(5);
 
@@ -133,7 +176,13 @@ async fn run(
     #[cfg(unix)]
     command.as_std_mut().process_group(0);
 
+    #[cfg(windows)]
+    let _job = windows_job::WindowsJob::new()?;
     let mut child = command.spawn().ok()?;
+    #[cfg(windows)]
+    if !_job.assign(&child) {
+        return None;
+    }
     #[cfg(unix)]
     let mut process_group = ProcessGroupGuard {
         process_id: child.id()? as i32,
@@ -346,5 +395,116 @@ mod tests {
             unsafe { libc::kill(process_id, libc::SIGKILL) };
         }
         assert!(exited.is_ok(), "aborted command left a descendant running");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::{effective_path, run};
+    use std::fs;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+    use windows_sys::Win32::Foundation::{ERROR_INVALID_PARAMETER, WAIT_OBJECT_0};
+    use windows_sys::Win32::System::Threading::{
+        OpenProcess, TerminateProcess, WaitForSingleObject, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+    };
+
+    fn command_script(directory: &Path) -> (PathBuf, PathBuf) {
+        let script = directory.join("spawn-child.ps1");
+        let marker = directory.join("child.pid");
+        let marker_literal = marker.to_string_lossy().replace('\'', "''");
+        fs::write(
+            &script,
+            format!(
+                "$child = Start-Process -FilePath ping.exe -ArgumentList '-n 30 127.0.0.1' -PassThru -WindowStyle Hidden\n[System.IO.File]::WriteAllText('{marker_literal}', [string]$child.Id)\n$child.WaitForExit()\n"
+            ),
+        )
+        .unwrap();
+        (script, marker)
+    }
+
+    async fn descendant_id(marker: &Path) -> u32 {
+        tokio::time::timeout(Duration::from_secs(8), async {
+            loop {
+                if let Ok(process_id) = fs::read_to_string(marker) {
+                    if let Ok(process_id) = process_id.parse::<u32>() {
+                        break process_id;
+                    }
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("descendant did not start")
+    }
+
+    fn assert_descendant_exited(process_id: u32) {
+        let handle = unsafe { OpenProcess(PROCESS_SYNCHRONIZE | PROCESS_TERMINATE, 0, process_id) };
+        if handle.is_null() {
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(ERROR_INVALID_PARAMETER as i32),
+                "failed to inspect descendant"
+            );
+            return;
+        }
+        let process = unsafe { OwnedHandle::from_raw_handle(handle) };
+        let result = unsafe { WaitForSingleObject(process.as_raw_handle(), 3_000) };
+        if result != WAIT_OBJECT_0 {
+            unsafe { TerminateProcess(process.as_raw_handle(), 1) };
+        }
+        assert_eq!(result, WAIT_OBJECT_0, "command left a descendant running");
+    }
+
+    #[tokio::test]
+    async fn cancellation_kills_descendants() {
+        let directory = tempfile::tempdir().unwrap();
+        let (script, marker) = command_script(directory.path());
+        let reader = tokio::spawn(async move {
+            run(
+                Path::new("powershell.exe"),
+                &[
+                    "-NoProfile".into(),
+                    "-NonInteractive".into(),
+                    "-ExecutionPolicy".into(),
+                    "Bypass".into(),
+                    "-File".into(),
+                    script.to_string_lossy().into_owned(),
+                ],
+                Duration::from_secs(10),
+                &effective_path(),
+            )
+            .await
+        });
+        let process_id = descendant_id(&marker).await;
+        reader.abort();
+        assert!(reader.await.unwrap_err().is_cancelled());
+        assert_descendant_exited(process_id);
+    }
+
+    #[tokio::test]
+    async fn timeout_kills_descendants() {
+        let directory = tempfile::tempdir().unwrap();
+        let (script, marker) = command_script(directory.path());
+        let reader = tokio::spawn(async move {
+            run(
+                Path::new("powershell.exe"),
+                &[
+                    "-NoProfile".into(),
+                    "-NonInteractive".into(),
+                    "-ExecutionPolicy".into(),
+                    "Bypass".into(),
+                    "-File".into(),
+                    script.to_string_lossy().into_owned(),
+                ],
+                Duration::from_secs(5),
+                &effective_path(),
+            )
+            .await
+        });
+        let process_id = descendant_id(&marker).await;
+        assert_eq!(reader.await.unwrap(), None);
+        assert_descendant_exited(process_id);
     }
 }

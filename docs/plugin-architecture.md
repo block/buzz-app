@@ -311,7 +311,8 @@ Plugins declaring `host` in `inject` use `ctx.host.runCommand(id)` and
 ID; the program and arguments come only from the installed manifest. Native
 execution uses no shell or stdin, discards stderr, and returns at most 4 KiB of
 UTF-8 stdout. The direct command invocation has a five-second deadline;
-cancellation or timeout kills its process group. Failure returns `null`. The app
+cancellation or timeout kills its process group on Unix or its job process tree
+on Windows. Failure returns `null`. The app
 also searches standard Homebrew binary directories when a macOS GUI launch has a
 limited PATH and passes that search path to the command.
 Plugins parse and retain their own credentials; the host has no provider registry

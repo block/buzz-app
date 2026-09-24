@@ -1,12 +1,13 @@
 import {
   projectComposerDocument,
   readComposerSnapshot,
-  type ComposerSnapshot,
 } from "./composer-document";
 
 export type MentionRecipient = Readonly<{ pubkey: string; name: string }>;
 export type DraftRecipient = MentionRecipient &
   Readonly<{ start: number; end: number }>;
+// Serializable draft metadata must not expose editor implementation types to plugins.
+export type ComposerSnapshot = { version: 1; content: unknown };
 export type MentionDraft = {
   text: string;
   recipients: readonly DraftRecipient[];

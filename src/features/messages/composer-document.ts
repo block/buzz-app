@@ -394,7 +394,6 @@ export function composerMarkdownContext(
 }
 
 /** Local persistence envelope. The schema, not parallel mark ranges, owns shape. */
-export type ComposerSnapshot = { version: 1; content: unknown };
 export function readComposerSnapshot(value: unknown): EditorNode | undefined {
   if (
     !value ||

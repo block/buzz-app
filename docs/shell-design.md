@@ -83,7 +83,8 @@ provides Automatic, Away and Appear offline choices: arrow keys move focus, and
 Enter/Space selects without closing the menu. See
 [presence ownership and limitations](presence.md). Escape, outside click and Tab
 leaving dismiss the menu; Escape returns focus to the avatar. Selecting Settings
-focuses the main region after the menu finishes closing.
+focuses the main region after the menu finishes closing, unless focus has already
+moved into the page.
 The avatar does not display the selected community's profile. It uses a configured
 HTTPS picture directly, with the name's first letter on a missing/failed picture
 or a person icon when unnamed. No sample person's photo is used as the user's

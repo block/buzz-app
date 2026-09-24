@@ -255,3 +255,16 @@ it.each([true, false])(
     expect(!!item.querySelector("strong")).toBe(enabled);
   },
 );
+
+it("retains the native caret after replacing text with an unchanged suffix", async () => {
+  const h = mount(":unknown:");
+  act(() => {
+    const text = h.input.querySelector("p")?.firstChild;
+    if (!(text instanceof Text)) throw new Error("Missing native text node");
+    text.data = ":nosource:";
+    document.getSelection()?.collapse(text, text.length);
+  });
+  await waitFor(() => expect(h.input).toHaveValue(":nosource:"));
+  expect(h.input.selectionStart).toBe(10);
+  expect(h.input.selectionEnd).toBe(10);
+});

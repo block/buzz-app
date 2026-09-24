@@ -12,6 +12,10 @@
   cursor: text;
   outline: none;
 }
+html[data-keyboard-navigation] .input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
 .input [data-placeholder]::before {
   content: attr(data-placeholder);
   color: var(--text-subtle);

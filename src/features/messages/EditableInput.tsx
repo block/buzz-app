@@ -131,7 +131,8 @@ export function EditableInput({
   const hosts = useRef(
     new Map<HTMLElement, { source: string; position(): number | undefined }>(),
   );
-  const [revision, refresh] = useState(0);
+  const [, refresh] = useState(0);
+  const scrollAfterTokens = useRef(false);
   const composing = useRef(false);
   const plain = useRef<PlainLink[]>([]);
   const locked = useRef(false);
@@ -706,14 +707,19 @@ export function EditableInput({
         anchor !== head &&
         Math.min(anchor, head) <= Selection.atStart(doc).from &&
         Math.max(anchor, head) >= Selection.atEnd(doc).to;
-      const next = all
-        ? new AllSelection(doc)
-        : TextSelection.between(doc.resolve(anchor), doc.resolve(head));
+      const text = TextSelection.between(
+        doc.resolve(anchor),
+        doc.resolve(head),
+      );
+      // A Shift+Arrow range covering all inline content still has a direction.
+      // Do not turn an already-synchronized editor range into AllSelection.
+      if (text.eq(editor.state.selection)) return;
+      const next = all ? new AllSelection(doc) : text;
       if (!next.eq(editor.state.selection))
         editor.dispatch(editor.state.tr.setSelection(next));
     };
     const adjacent = (backward: boolean, arrow: boolean, extend: boolean) => {
-      const { from, to, empty } = editor.state.selection;
+      const { from, to, head, anchor, empty } = editor.state.selection;
       if (!empty) {
         if (arrow && !extend) {
           editor.dispatch(
@@ -726,11 +732,11 @@ export function EditableInput({
           );
           return true;
         }
-        return false;
+        if (!arrow || !extend) return false;
       }
       const source = projection();
       const token = source.tokens.find(
-        (token) => from === (backward ? token.to : token.from),
+        (token) => head === (backward ? token.to : token.from),
       );
       if (!token) return false;
       if (!token.editAsText) {
@@ -738,13 +744,14 @@ export function EditableInput({
           editor.state.tr.setSelection(
             TextSelection.create(
               editor.state.doc,
-              arrow && !extend ? (backward ? token.from : token.to) : from,
+              arrow && !extend ? (backward ? token.from : token.to) : anchor,
               backward ? token.from : token.to,
             ),
           ),
         );
         return arrow;
       }
+      if (!empty) return false;
       plain.current.push({ start: token.start, end: token.end });
       const tr = editor.state.tr.replaceWith(
         token.from,
@@ -817,6 +824,8 @@ export function EditableInput({
           }
           editor.updateState(next);
           if (tr.docChanged) {
+            scrollAfterTokens.current ||=
+              tr.scrolledIntoView && hosts.current.size > 0;
             emitted.current = projection().draft;
             current.current.onDraftChange(emitted.current);
             tokenViews();
@@ -842,7 +851,7 @@ export function EditableInput({
             };
           },
         },
-        handleTextInput(_view, from, to, text) {
+        handleTextInput(_view, from, to, text, defaultTransaction) {
           // Provenance is not an inheritable formatting mark. Replacing text,
           // including an identical string, revokes the identity it touches.
           const source = projection();
@@ -863,8 +872,10 @@ export function EditableInput({
           ).filter((mark) => mark.type !== composerSchema.marks.recipient);
           if (text) tr.replaceWith(from, to, composerSchema.text(text, marks));
           else tr.delete(from, to);
+          // DOM reconciliation may describe only the changed middle of a native
+          // replacement. The browser selection can be after an unchanged suffix.
           tr.setSelection(
-            Selection.near(tr.doc.resolve(tr.mapping.map(to, 1)), -1),
+            Selection.fromJSON(tr.doc, defaultTransaction().selection.toJSON()),
           );
           // Only an explicit code toggle persists at the edge; merely moving there
           // or deleting a span must not switch the next text back into code.
@@ -1293,7 +1304,14 @@ export function EditableInput({
           .setMeta("addToHistory", false),
       );
   }, [decorationRanges]);
-  void revision;
+  useLayoutEffect(() => {
+    // Token portals acquire their real geometry at React commit, after the
+    // transaction's first scroll. Keep the same editor-owned caret visible.
+    if (!scrollAfterTokens.current) return;
+    scrollAfterTokens.current = false;
+    const editor = view.current;
+    if (editor?.hasFocus()) editor.dispatch(editor.state.tr.scrollIntoView());
+  });
   return (
     <>
       {/* biome-ignore lint/a11y/useSemanticElements: ProseMirror owns this native editing surface. */}

@@ -432,46 +432,50 @@ test.describe("touch branch controls", () => {
 });
 
 // Real pointer hit testing and focus cannot be verified in jsdom.
-test("crowded capped branches own distinct collapse controls", async ({
-  page,
-  app,
-}) => {
-  const root = app.histories
-    .get("primary/alpha")
-    .find((e) => e.content === "Thread root 0");
-  let parent = root.id;
-  const ids = [];
-  for (let i = 0; i < 13; i++) {
-    parent = app.append(
-      "primary",
-      "alpha",
-      `Crowded reply ${i}`,
-      false,
-      i < 9 ? i % 2 === 0 : true,
-      root.id,
-      parent,
-    ).id;
-    ids.push(parent);
-  }
-  await open(page, app);
-  await page
-    .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
-    .getByRole("button", { name: /^View thread:/ })
-    .click();
-  const panel = page.getByRole("complementary", {
-    name: "Thread",
-    exact: true,
-  });
-  const branchFor = (id) =>
-    panel.locator(`[data-message-id="${id}"]`).locator("../..");
-  const expandAll = async () => {
-    for (const id of ids.slice(0, -1)) {
-      const branch = branchFor(id);
-      if ((await branch.getAttribute("data-open")) === "false")
-        await branch.locator(":scope > div").nth(1).getByRole("button").click();
+for (const width of [1492, 1280, 1024])
+  test(`crowded capped branches own distinct collapse controls at ${width}`, async ({
+    page,
+    app,
+  }) => {
+    const root = app.histories
+      .get("primary/alpha")
+      .find((e) => e.content === "Thread root 0");
+    let parent = root.id;
+    const ids = [];
+    for (let i = 0; i < 13; i++) {
+      parent = app.append(
+        "primary",
+        "alpha",
+        `Crowded reply ${i}`,
+        false,
+        i < 9 ? i % 2 === 0 : true,
+        root.id,
+        parent,
+      ).id;
+      ids.push(parent);
     }
-  };
-  for (const width of [1492, 1280, 1024]) {
+    await open(page, app);
+    await page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ })
+      .click();
+    const panel = page.getByRole("complementary", {
+      name: "Thread",
+      exact: true,
+    });
+    const branchFor = (id) =>
+      panel.locator(`[data-message-id="${id}"]`).locator("../..");
+    const expandAll = async () => {
+      for (const id of ids.slice(0, -1)) {
+        const branch = branchFor(id);
+        if ((await branch.getAttribute("data-open")) === "false")
+          await branch
+            .locator(":scope > div")
+            .nth(1)
+            .getByRole("button")
+            .click();
+      }
+    };
     await page.setViewportSize({ width, height: 950 });
     await expandAll();
     for (const id of ids.slice(0, -1)) {
@@ -576,5 +580,4 @@ test("crowded capped branches own distinct collapse controls", async ({
     await panel.screenshot({
       path: test.info().outputPath(`crowded-${width}.png`),
     });
-  }
-});
+  });

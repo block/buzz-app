@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
-import { Button } from "../../shared/design-system/ui/Button";
+import { PreviewCard } from "../../shared/design-system/ui/PreviewCard";
 import { ReactionDelivery, ReactionTool } from "../conversation/ReactionTool";
 import { InlineText } from "../conversation/InlineText";
 import type {
@@ -8,11 +8,17 @@ import type {
   ContributionReader,
   InlineRenderer,
 } from "../conversation/contracts";
-import type { ChannelMessage, MessageReaction } from "../relay/contracts";
+import type {
+  ChannelMessage,
+  MessageReaction,
+  Profile,
+} from "../relay/contracts";
 import type { CustomEmoji } from "../relay/emoji";
 import type { RelaySession } from "../relay/session";
 import type { OutgoingEvent } from "../relay/outbox";
 import { recordReaction, useQuickReactions } from "./quick-reactions";
+import { AnimatedReactionCount } from "./AnimatedReactionCount";
+import styles from "./Messages.module.css";
 
 type Props = {
   row: ChannelMessage;
@@ -160,46 +166,223 @@ export function MessageReactionControls(props: Props) {
   );
 }
 
-/** Always mounted under the message so failed add/remove operations stay recoverable. */
-export function MessageReactions(
-  props: Props & { onFocusedRemoval?: () => void },
-) {
-  const { row, session, inline } = props;
-  const action = useReactionAction(props);
+function ReactionGlyph({
+  reaction,
+  session,
+}: {
+  reaction: MessageReaction;
+  session: RelaySession;
+}) {
+  const source = reaction.emoji
+    ? session.media(reaction.emoji.url, "small")
+    : undefined;
+  const [failed, setFailed] = useState<string>();
+  return source && source !== failed ? (
+    <img
+      className={styles.reactionCustomEmoji}
+      src={source}
+      alt=""
+      draggable={false}
+      onError={() => setFailed(source)}
+    />
+  ) : (
+    <span className={styles.reactionNativeEmoji} aria-hidden="true">
+      {reaction.emoji ? "?" : reaction.content}
+    </span>
+  );
+}
+
+function ReactionPill({
+  reaction,
+  session,
+  profiles,
+  disabled,
+  toggle,
+  onFocusedRemoval,
+  previewDelay,
+  previewSlide,
+  previewOpen,
+  onPreviewChange,
+}: {
+  reaction: MessageReaction;
+  session: RelaySession;
+  profiles?: ReadonlyMap<string, Profile> | undefined;
+  disabled: boolean;
+  toggle(content: string, emoji?: CustomEmoji): boolean;
+  onFocusedRemoval?: (() => void) | undefined;
+  previewDelay: number;
+  previewSlide: "left" | "right" | undefined;
+  previewOpen: boolean;
+  onPreviewChange(open: boolean): void;
+}) {
+  const [name, setName] = useState(reaction.content);
+  const authors = [...new Set(reaction.events.map((event) => event.authorId))];
+  const mine = authors.includes(session.viewer ?? "");
+  const users = [
+    ...(mine ? ["You"] : []),
+    ...authors
+      .filter((author) => author !== session.viewer)
+      .map((author) => profiles?.get(author)?.name ?? author.slice(0, 10)),
+  ];
+  const revealName = () => {
+    void session.profiles.ensure(authors, "background").catch(() => {});
+    if (reaction.emoji) return;
+    void import("./reaction-name").then(({ reactionName }) =>
+      setName(reactionName(reaction.content)),
+    );
+  };
   return (
-    <>
-      {row.reactions.map((reaction) => {
-        const authors = new Set(reaction.events.map((event) => event.authorId));
-        const mine = authors.has(session.viewer ?? "");
-        return (
-          <Button
-            key={JSON.stringify([reaction.content, reaction.emoji?.url])}
-            size="sm"
-            variant={mine ? "subtle" : "ghost"}
-            disabled={action.disabled}
+    <span className={styles.reactionPillWrap}>
+      <PreviewCard
+        side="top"
+        open={previewOpen}
+        delay={previewDelay}
+        className={[
+          styles.reactionPreview,
+          previewSlide === "left" && styles.reactionPreviewSlideLeft,
+          previewSlide === "right" && styles.reactionPreviewSlideRight,
+        ]
+          .filter(Boolean)
+          .join(" ")}
+        onOpenChange={onPreviewChange}
+        trigger={
+          <button
+            type="button"
+            className={styles.reactionChip}
+            data-reaction={reaction.content}
+            aria-label={`${reaction.content}: ${authors.length} ${authors.length === 1 ? "person" : "people"}${mine ? ", including you" : ""}`}
             aria-pressed={mine}
-            aria-label={`${reaction.content}: ${authors.size} ${authors.size === 1 ? "person" : "people"}${mine ? ", including you" : ""}`}
+            disabled={disabled}
+            onMouseEnter={revealName}
+            onFocus={revealName}
             onClick={(event) => {
               const losesFocus =
                 mine &&
-                authors.size === 1 &&
+                authors.length === 1 &&
                 event.currentTarget === document.activeElement;
-              if (action.toggle(reaction.content, reaction.emoji) && losesFocus)
-                props.onFocusedRemoval?.();
+              if (toggle(reaction.content, reaction.emoji) && losesFocus)
+                onFocusedRemoval?.();
             }}
           >
-            <ReactionLabel
-              reaction={reaction}
-              row={row}
-              inline={inline}
-              session={session}
-            />{" "}
-            {authors.size}
-          </Button>
+            <ReactionGlyph reaction={reaction} session={session} />
+            <AnimatedReactionCount value={authors.length} />
+          </button>
+        }
+      >
+        <span className={styles.reactionPreviewEmoji}>
+          <ReactionGlyph reaction={reaction} session={session} />
+          <span className={styles.reactionPreviewName}>{name}</span>
+        </span>
+        <span className={styles.reactionPreviewNames}>{users.join(", ")}</span>
+      </PreviewCard>
+    </span>
+  );
+}
+
+/** Always mounted under the message so failed add/remove operations stay recoverable. */
+export function MessageReactions(
+  props: Props & {
+    onFocusedRemoval?: () => void;
+    profiles?: ReadonlyMap<string, Profile>;
+  },
+) {
+  const { row, session, scope, tools } = props;
+  const action = useReactionAction(props);
+  const catalog = useSyncExternalStore(
+    session.emoji.subscribe,
+    session.emoji.snapshot,
+    session.emoji.snapshot,
+  );
+  const [pointerInRow, setPointerInRow] = useState(false);
+  const [preview, setPreview] = useState<{
+    key: string | null;
+    index: number;
+    fromIndex: number | undefined;
+  }>();
+  const select = (content: string) => {
+    const existing = row.reactions.find(
+      (reaction) => reaction.content.toLowerCase() === content.toLowerCase(),
+    );
+    return action.toggle(
+      content,
+      existing?.emoji ??
+        catalog.entries.find(
+          (entry) => `:${entry.shortcode}:` === content.toLowerCase(),
+        ),
+    );
+  };
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: This groups reactions, not form fields.
+    <div
+      className={styles.reactions}
+      data-testid="reaction-row"
+      role="group"
+      aria-label="Reactions"
+      onMouseEnter={() => setPointerInRow(true)}
+      onMouseLeave={() => {
+        setPointerInRow(false);
+        setPreview(undefined);
+      }}
+    >
+      {row.reactions.map((reaction, index) => {
+        const key = JSON.stringify([reaction.content, reaction.emoji?.url]);
+        const slideFrom =
+          preview?.key === key ? preview.fromIndex : preview?.index;
+        const previewSlide =
+          pointerInRow && slideFrom !== undefined && slideFrom !== index
+            ? index > slideFrom
+              ? "right"
+              : "left"
+            : undefined;
+        return (
+          <ReactionPill
+            key={key}
+            reaction={reaction}
+            session={session}
+            profiles={props.profiles}
+            disabled={props.disabled}
+            toggle={action.toggle}
+            onFocusedRemoval={props.onFocusedRemoval}
+            previewDelay={pointerInRow && preview ? 0 : 1200}
+            previewOpen={preview?.key === key}
+            previewSlide={previewSlide}
+            onPreviewChange={(open) =>
+              setPreview((current) =>
+                open
+                  ? {
+                      key,
+                      index,
+                      fromIndex:
+                        current?.key === key
+                          ? current.fromIndex
+                          : current?.index,
+                    }
+                  : current?.key === key
+                    ? { ...current, key: null }
+                    : current,
+              )
+            }
+          />
         );
       })}
+      {row.reactions.length > 0 && !props.disabled && (
+        <span
+          className={styles.inlineReactionTool}
+          data-testid="inline-add-reaction"
+        >
+          <ReactionTool
+            registry={tools}
+            session={session}
+            scope={scope}
+            messageId={row.id}
+            disabled={action.disabled}
+            select={select}
+            showDelivery={false}
+          />
+        </span>
+      )}
       {action.error && <span role="alert">{action.error}</span>}
       <ReactionDelivery session={session} messageId={row.id} />
-    </>
+    </div>
   );
 }

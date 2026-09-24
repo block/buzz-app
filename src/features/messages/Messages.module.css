@@ -121,22 +121,193 @@
   text-decoration: underline;
 }
 .reactions {
+  min-inline-size: 0;
+  border: 0;
+  padding: 0;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: var(--space-1);
-  margin-top: var(--space-1h);
+  gap: var(--space-1h);
+  margin: var(--space-1h) 0 0;
 }
 .reactions:empty {
   margin-top: 0;
 }
-.reactions > span:not([role]) {
+.reactionFallback > span:not([role]) {
   background: var(--affordance-subtle);
   border-radius: var(--radius-chip);
   padding: var(--space-half) var(--space-1h);
   max-width: 160px;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+.reactionPillWrap {
+  position: relative;
+  display: inline-flex;
+}
+.reactionChip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-1h);
+  min-width: 48px;
+  height: 28px;
+  border: 1px solid var(--border);
+  background: var(--surface-control);
+  border-radius: var(--radius-pill);
+  padding: 0 var(--space-2);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.reactionChip:hover {
+  background: var(--surface-hover);
+}
+.reactionChip:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+.reactionChip[aria-pressed="true"] {
+  border-color: color-mix(in srgb, var(--primary) 40%, var(--border));
+  background: color-mix(in srgb, var(--primary) 12%, var(--surface));
+  color: var(--primary);
+}
+.reactionChip:disabled {
+  cursor: default;
+}
+.reactionNativeEmoji {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+  font-size: var(--text-caption);
+  line-height: 1;
+}
+.reactionCustomEmoji {
+  display: block;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+.reactionCount {
+  display: inline-flex;
+  font-size: var(--text-caption);
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.reactionCountMotion {
+  display: block;
+  height: 14px;
+  overflow: hidden;
+}
+.reactionCountRoll {
+  display: flex;
+  flex-direction: column;
+  animation-duration: 260ms;
+  animation-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
+  animation-fill-mode: both;
+}
+.reactionCountRoll[data-direction="up"] {
+  animation-name: reactionCountUp;
+}
+.reactionCountRoll[data-direction="down"] {
+  animation-name: reactionCountDown;
+}
+@keyframes reactionCountUp {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+@keyframes reactionCountDown {
+  from {
+    transform: translateY(-50%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reactionCountRoll {
+    animation: none;
+  }
+  .reactionCountRoll[data-direction="up"] {
+    transform: translateY(-50%);
+  }
+  .reactionCountRoll[data-direction="down"] {
+    transform: translateY(0);
+  }
+}
+.visuallyHidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+.reactionPreviewEmoji {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  height: 16px;
+}
+.reactionPreviewName {
+  @apply text-caption text-tertiary;
+}
+.reactionPreviewNames {
+  @apply text-label-sm;
+  max-width: 14rem;
+  overflow-wrap: anywhere;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reactionPreview.reactionPreview {
+    transition: none;
+  }
+  .reactionPreview.reactionPreview[data-starting-style],
+  .reactionPreview.reactionPreview[data-ending-style] {
+    transform: none;
+  }
+}
+@media (hover: hover) and (pointer: fine) and (
+    prefers-reduced-motion: no-preference
+  ) {
+  .reactionPreviewSlideLeft,
+  .reactionPreviewSlideRight {
+    transition-duration: 160ms;
+  }
+  .reactionPreviewSlideLeft.reactionPreviewSlideLeft[data-starting-style] {
+    transform: translateX(12px) scale(0.98);
+  }
+  .reactionPreviewSlideRight.reactionPreviewSlideRight[data-starting-style] {
+    transform: translateX(-12px) scale(0.98);
+  }
+  .reactionPreviewSlideLeft[data-ending-style],
+  .reactionPreviewSlideRight[data-ending-style] {
+    transition-duration: 0ms;
+  }
+}
+.inlineReactionTool {
+  display: inline-flex;
+  align-items: center;
+  width: 28px;
+  height: 28px;
+}
+.inlineReactionTool [data-icon-variant] {
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.inlineReactionTool
+  [data-icon-variant]:is(:hover, :focus-visible, [aria-expanded="true"]) {
+  border-color: var(--border);
+  background: var(--surface-control);
+  color: var(--text-standard);
 }
 .attachment {
   display: inline-block;
@@ -276,6 +447,52 @@
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--text-standard);
+}
+.messageBody [data-thread-summary] {
+  margin-top: var(--space-1);
+  padding: var(--space-1);
+  padding-right: var(--space-1h);
+}
+.messageBody [data-thread-summary][data-first-participant-shape="squircle"] {
+  border-radius: calc(var(--radius-row) + var(--space-1))
+    calc(var(--size-control-sm) * 0.5) calc(var(--size-control-sm) * 0.5)
+    calc(var(--radius-row) + var(--space-1));
+  isolation: isolate;
+  background: transparent;
+}
+.messageBody
+  [data-thread-summary][data-first-participant-shape="squircle"]::before {
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  content: "";
+  pointer-events: none;
+  mask-image:
+    url("../../shared/design-system/styles/avatar-squircle.svg"),
+    linear-gradient(currentColor 0 0),
+    radial-gradient(circle closest-side, currentColor 99%, transparent 100%);
+  mask-size:
+    var(--size-control-sm) var(--size-control-sm),
+    calc(100% - var(--size-control-sm)) 100%,
+    var(--size-control-sm) var(--size-control-sm);
+  mask-position:
+    left center,
+    center center,
+    right center;
+  mask-repeat: no-repeat;
+}
+@media (hover: hover) and (pointer: fine) {
+  .messageBody
+    [data-thread-summary][data-first-participant-shape="squircle"]:hover::before {
+    background: var(--affordance-subtle-hover);
+  }
+}
+.messageBody
+  [data-thread-summary][data-first-participant-shape="squircle"]:is(
+    :active,
+    [aria-expanded="true"]
+  )::before {
+  background: var(--affordance-subtle-pressed);
 }
 .threadHistory {
   flex: 1;

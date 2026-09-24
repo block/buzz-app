@@ -196,7 +196,11 @@ it("forwards the contributed picker into true toggles and releases confirmed wri
   ]);
   const h = harness([react()], undefined, pickerTools);
   render(<h.Controls />);
-  fireEvent.click(screen.getByRole("button", { name: "Choose from picker" }));
+  const picker = screen.getAllByRole("button", {
+    name: "Choose from picker",
+  })[0];
+  if (!picker) throw new Error("Picker control missing");
+  fireEvent.click(picker);
   expect(h.session.outbox?.snapshot()[0]?.event.kind).toBe(5);
   await act(async () => {
     await flush();
@@ -204,7 +208,7 @@ it("forwards the contributed picker into true toggles and releases confirmed wri
   });
   expect(h.session.outbox?.snapshot()[0]?.delivery).toBe("accepted");
   expect(screen.queryByRole("button", { name: /👍: 1/ })).toBeNull();
-  fireEvent.click(screen.getByRole("button", { name: "Choose from picker" }));
+  fireEvent.click(picker);
   expect(h.session.outbox?.snapshot().map((item) => item.event.kind)).toEqual([
     5, 7,
   ]);

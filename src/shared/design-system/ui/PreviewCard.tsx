@@ -9,6 +9,7 @@ export type PreviewCardProps = {
   open?: boolean;
   onOpenChange?: BasePreviewCard.Root.Props["onOpenChange"];
   side?: BasePreviewCard.Positioner.Props["side"];
+  delay?: number;
   className?: string;
   "aria-label"?: string;
   /** Optional anchor that makes the whole card open the trigger's destination. */
@@ -28,6 +29,7 @@ export function PreviewCard({
   open,
   onOpenChange,
   side = "bottom",
+  delay = 250,
   className,
   link,
   "aria-label": label,
@@ -38,7 +40,7 @@ export function PreviewCard({
     <BasePreviewCard.Root open={open} onOpenChange={onOpenChange}>
       <BasePreviewCard.Trigger
         render={trigger}
-        delay={250}
+        delay={delay}
         closeDelay={150}
         ref={triggerRef}
         onKeyDown={(event) => {

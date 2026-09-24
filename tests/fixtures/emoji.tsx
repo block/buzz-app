@@ -38,6 +38,11 @@ window.addEventListener("pagehide", () => {
 const viewer = keypair(),
   relay = keypair(),
   member = keypair();
+const wrap = new URLSearchParams(location.search).has("wrap");
+const participantProfiles = new Map([
+  [viewer.pubkey, { name: "Fixture Reader" }],
+  [member.pubkey, { name: "Fixture Member" }],
+]);
 const report = {
   publications: [] as { community: string; event: RelayEvent }[],
   reads: [] as string[],
@@ -46,7 +51,8 @@ const sessions = ["a", "b"].map((community) => {
   const origin = `https://${community}.test`;
   let time = 1,
     fail = false,
-    rejectReaction = false;
+    rejectReaction = false,
+    delayNextReaction: string | null = null;
   let live!: LiveCallbacks;
   let catalogRead: Promise<void> | undefined;
   let releaseCatalogRead: (() => void) | undefined;
@@ -123,6 +129,10 @@ const sessions = ["a", "b"].map((community) => {
           return signed(viewer, template);
         },
         async publish(event) {
+          if (delayNextReaction === event.content) {
+            delayNextReaction = null;
+            await new Promise((resolve) => setTimeout(resolve, 800));
+          }
           if ([5, 7].includes(event.kind) && rejectReaction) {
             rejectReaction = false;
             throw new PublishRejected("Fixture reaction rejected");
@@ -145,10 +155,36 @@ const sessions = ["a", "b"].map((community) => {
   const reaction = signed(member, {
     kind: 7,
     content: ":party:",
+    created_at: 2,
     tags: [
       ["e", root.id],
       ["emoji", "party", `${origin}/media/reaction.png`],
     ],
+  });
+  const wrapReactions = [
+    "👍",
+    "❤️",
+    "😂",
+    "🎉",
+    "👀",
+    "🔥",
+    "🙌",
+    "😮",
+    "🤔",
+    "👏",
+  ].map((content, index) =>
+    signed(member, {
+      kind: 7,
+      content,
+      created_at: 5 + index,
+      tags: [["e", root.id]],
+    }),
+  );
+  const ownReaction = signed(viewer, {
+    kind: 7,
+    content: "✅",
+    created_at: 15,
+    tags: [["e", root.id]],
   });
   const broken = message(viewer, "c", "Broken :missing:", 2, [
     ["emoji", "missing", "javascript:bad"],
@@ -175,7 +211,7 @@ const sessions = ["a", "b"].map((community) => {
   );
   owner.session.channels.ensure("c");
   live.receive([root, broken, unloaded, single, table, blocks]);
-  live.receive([reaction]);
+  live.receive([reaction, ...(wrap ? [...wrapReactions, ownReaction] : [])]);
   return {
     ...owner,
     community,
@@ -183,6 +219,7 @@ const sessions = ["a", "b"].map((community) => {
     rows: foldMessages("c", relay.pubkey, [
       root,
       reaction,
+      ...(wrap ? [...wrapReactions, ownReaction] : []),
       broken,
       unloaded,
       single,
@@ -210,6 +247,9 @@ const sessions = ["a", "b"].map((community) => {
     },
     rejectReaction() {
       rejectReaction = true;
+    },
+    delayNextReaction(content: string) {
+      delayNextReaction = content;
     },
     archive(value: boolean) {
       live.receive([
@@ -239,6 +279,8 @@ Object.assign(window, {
     remove: () => sessions[0]?.replace(true),
     fail: (value: boolean) => sessions[0]?.fail(value),
     rejectReaction: () => sessions[0]?.rejectReaction(),
+    delayNextReaction: (content: string) =>
+      sessions[0]?.delayNextReaction(content),
     refresh: () => sessions[0]?.session.emoji.refresh(),
     holdCatalog: () => sessions[0]?.holdCatalog(),
     releaseCatalog: () => sessions[0]?.releaseCatalog(),
@@ -295,6 +337,7 @@ function Fixture() {
             session={item.session}
             scope={item.community}
             profile={{ name: "Fixture Reader" }}
+            participantProfiles={participantProfiles}
             media={item.session.media}
             onOpenLink={() => false}
             day={false}

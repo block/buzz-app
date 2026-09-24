@@ -10,7 +10,10 @@ import { communityFromScope } from "../../features/relay/gifs";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { formatPublicKey } from "../../shared/identity/public-key";
+import {
+  formatPublicKey,
+  publicKeyLabels,
+} from "../../shared/identity/public-key";
 import { Combobox as BaseCombobox } from "@base-ui/react/combobox";
 import {
   usePeople,
@@ -168,8 +171,26 @@ function Members({
   const stale = !!readError;
   // No new command may start from a roster that is stale or being re-read.
   const locked = stale || refreshing;
-  const name = (pubkey: string) =>
+  const baseName = (pubkey: string) =>
     profiles.get(pubkey)?.name || formatPublicKey(pubkey) || pubkey;
+  // Namesakes get a key qualifier so privileged actions name one identity.
+  const namesakes = new Map<string, string[]>();
+  for (const { pubkey } of members ?? [])
+    namesakes.set(baseName(pubkey), [
+      ...(namesakes.get(baseName(pubkey)) ?? []),
+      pubkey,
+    ]);
+  const qualifiers = new Map<string, string>();
+  for (const keys of namesakes.values())
+    if (keys.length > 1)
+      for (const [key, value] of publicKeyLabels(keys))
+        qualifiers.set(key, value);
+  const name = (pubkey: string) => {
+    const base = baseName(pubkey);
+    const qualifier = qualifiers.get(pubkey);
+    if (!qualifier) return base;
+    return profiles.get(pubkey)?.name ? `${base} · ${qualifier}` : qualifier;
+  };
   /** Sends one command. Rejects only when the write itself is not confirmed. */
   async function apply(change: MemberChange) {
     if (!active()) return;
@@ -408,6 +429,7 @@ function Members({
         stale={stale}
         refreshing={refreshing}
         active={active}
+        retry={() => void refresh()}
         add={(pubkey, next) => apply({ action: "add", pubkey, role: next })}
       />
     </>
@@ -503,7 +525,7 @@ function PersonSearch({
   session: RelaySession;
   members: readonly Member[];
   disabled: boolean;
-  onSelect(person: Recipient): void;
+  onSelect(person: Recipient, label: string): void;
 }) {
   const [query, setQuery] = useState("");
   const [open, setOpen] = useState(false);
@@ -525,6 +547,12 @@ function PersonSearch({
     direct && !isMember(direct) && !found.some((p) => p.pubkey === direct)
       ? [{ pubkey: direct, name: "" }, ...found]
       : found;
+  // Names are self-declared; every choice shows a key label unique among them.
+  const keys = publicKeyLabels(people.map((person) => person.pubkey));
+  const label = (person: Recipient) => {
+    const key = keys.get(person.pubkey) ?? person.pubkey;
+    return person.name ? `${person.name} · ${key}` : key;
+  };
   return (
     <>
       {/* Only search while there is text; browsing would page the whole directory. */}
@@ -554,11 +582,9 @@ function PersonSearch({
         onValueChange={(person) => {
           if (!person) return;
           setQuery("");
-          onSelect(person);
+          onSelect(person, label(person));
         }}
-        itemToStringLabel={(person) =>
-          person.name || formatPublicKey(person.pubkey) || person.pubkey
-        }
+        itemToStringLabel={label}
         isItemEqualToValue={(a, b) => a.pubkey === b.pubkey}
         disabled={disabled}
       >
@@ -600,9 +626,7 @@ function PersonSearch({
                     size="small"
                     shape={person.isAgent ? "squircle" : "circle"}
                   />
-                  <span className="truncate">
-                    {person.name || formatPublicKey(person.pubkey)}
-                  </span>
+                  <span className="truncate">{label(person)}</span>
                 </span>
               </Combobox.Item>
             )}
@@ -628,6 +652,7 @@ function InviteDialog({
   stale,
   refreshing,
   active,
+  retry,
   add,
 }: {
   open: boolean;
@@ -639,11 +664,14 @@ function InviteDialog({
   stale: boolean;
   refreshing: boolean;
   active(): boolean;
+  retry(): void;
   add(pubkey: string, role: "admin" | "member"): Promise<void>;
 }) {
   const [ttl, setTtl] = useState(String(3 * DAY));
   const [uses, setUses] = useState("");
-  const [person, setPerson] = useState<Recipient | null>(null);
+  const [person, setPerson] = useState<(Recipient & { label: string }) | null>(
+    null,
+  );
   const [role, setRole] = useState<"admin" | "member">("member");
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState("");
@@ -740,15 +768,13 @@ function InviteDialog({
                   <Avatar
                     src={session.media(person.picture ?? "", "small")}
                     alt=""
-                    fallback={person.name || person.pubkey}
+                    fallback={person.label}
                     size="small"
                     shape={person.isAgent ? "squircle" : "circle"}
                   />
-                  <span className="truncate text-body">
-                    {person.name || formatPublicKey(person.pubkey)}
-                  </span>
+                  <span className="truncate text-body">{person.label}</span>
                   <IconButton
-                    aria-label={`Remove ${person.name || formatPublicKey(person.pubkey)}`}
+                    aria-label={`Remove ${person.label}`}
                     size="sm"
                     icon={<XIcon size={12} aria-hidden="true" />}
                     disabled={adding}
@@ -770,7 +796,7 @@ function InviteDialog({
                 session={session}
                 members={members}
                 disabled={adding}
-                onSelect={setPerson}
+                onSelect={(chosen, label) => setPerson({ ...chosen, label })}
               />
             )}
           </div>
@@ -853,9 +879,19 @@ function InviteDialog({
           </p>
         )}
         {stale && !adding && (
-          <p role="alert" className="m-0 text-body-sm">
-            {STALE}
-          </p>
+          <div className="flex items-center justify-between gap-3">
+            <p role="alert" className="m-0 text-body-sm">
+              {STALE}
+            </p>
+            <Button
+              size="sm"
+              loading={refreshing}
+              disabled={refreshing}
+              onClick={retry}
+            >
+              Retry
+            </Button>
+          </div>
         )}
         {notice && (
           <p role="status" className="m-0 text-body-sm">

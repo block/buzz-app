@@ -10,6 +10,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import type { RelayData } from "../../features/relay/service";
+import { publicKeyLabels } from "../../shared/identity/public-key";
 import { allowedActions, membersFromSnapshot } from "./api";
 import { CommunityAdmin } from "./CommunityAdmin";
 
@@ -76,15 +77,19 @@ it("offers only actions the relay permission matrix allows", () => {
   expect(allowedActions(undefined, m("member"), false)).toEqual([]);
 });
 
-function relay(viewer: string, events = [snapshot(roster)]) {
+function relay(
+  viewer: string,
+  events = [snapshot(roster)],
+  profiles = new Map<string, { name: string }>(),
+  people: { pubkey: string; name: string }[] = [],
+) {
   const read = vi.fn(async () => events);
-  const profiles = new Map();
   const session = {
     read,
     viewer,
     media: () => undefined,
     directMessages: {
-      people: async () => ({ people: [], hasMore: false }),
+      people: async () => ({ people, hasMore: false }),
     },
     profiles: {
       subscribe: () => () => {},
@@ -412,8 +417,8 @@ it("locks an open invite dialog after an accepted add whose refresh fails", asyn
   ).toBeDisabled();
   expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
   expect(calls.filter((c) => c.route === "invite")).toHaveLength(1);
-  // Read-only recovery behind the modal re-enables new writes.
-  screen.getByRole("button", { name: "Retry", hidden: true }).click();
+  // Read-only recovery inside the modal re-enables new writes.
+  await user.click(within(dialog).getByRole("button", { name: "Retry" }));
   await waitFor(() =>
     expect(
       within(dialog).getByRole("button", { name: "Invite" }),
@@ -422,4 +427,103 @@ it("locks an open invite dialog after an accepted add whose refresh fails", asyn
   expect(calls.filter((c) => c.route === "member")).toHaveLength(1);
   // Recovery keeps the existing link rather than minting another.
   expect(calls.filter((c) => c.route === "invite")).toHaveLength(1);
+});
+
+it("qualifies namesakes through roster actions, confirmation and the write", async () => {
+  const user = userEvent.setup();
+  const bobA = "a".repeat(64);
+  const bobB = "b".repeat(64);
+  const calls = broker({
+    member: () => Response.json({ accepted: true, message: "" }),
+  });
+  const { relay: data } = relay(
+    owner,
+    [
+      snapshot([
+        ["member", owner, "owner"],
+        ["member", bobA, "member"],
+        ["member", bobB, "member"],
+      ]),
+    ],
+    new Map([
+      [bobA, { name: "Bob" }],
+      [bobB, { name: "Bob" }],
+    ]),
+  );
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  const keys = publicKeyLabels([bobA, bobB]);
+  const labelB = `Bob · ${keys.get(bobB)}`;
+  expect(keys.get(bobA)).not.toBe(keys.get(bobB));
+  expect(
+    await screen.findByRole("button", {
+      name: `Actions for Bob · ${keys.get(bobA)}`,
+    }),
+  ).toBeVisible();
+  await user.click(
+    screen.getByRole("button", { name: `Actions for ${labelB}` }),
+  );
+  await user.click(await screen.findByRole("menuitem", { name: "Make admin" }));
+  const dialog = await screen.findByRole("alertdialog");
+  expect(dialog).toHaveTextContent(`Make admin: ${labelB}?`);
+  await user.click(within(dialog).getByRole("button", { name: "Make admin" }));
+  await waitFor(() =>
+    expect(calls.find((c) => c.route === "member")?.body).toEqual({
+      action: "role",
+      pubkey: bobB,
+      role: "admin",
+    }),
+  );
+});
+
+it("shows a distinguishing key for every invite choice and the selected chip", async () => {
+  const user = userEvent.setup();
+  const carolA = "c".repeat(64);
+  const carolB = "d".repeat(64);
+  const calls = broker({
+    member: () => Response.json({ accepted: true, message: "" }),
+    invite: () =>
+      Response.json({
+        code: "abc",
+        url: "https://primary.example/invite/abc",
+        expires_at: 1700003600,
+        max_uses: null,
+        uses_remaining: null,
+      }),
+  });
+  const { relay: data } = relay(owner, undefined, new Map(), [
+    { pubkey: carolA, name: "Carol" },
+    { pubkey: carolB, name: "Carol" },
+  ]);
+  render(<CommunityAdmin relay={data} active={() => true} />);
+  await user.click(
+    await screen.findByRole("button", { name: "Invite to community" }),
+  );
+  const dialog = await screen.findByRole("dialog");
+  await user.type(
+    within(dialog).getByRole("combobox", {
+      name: "Search people or paste an npub",
+    }),
+    "Carol",
+  );
+  const keys = publicKeyLabels([carolA, carolB]);
+  const labelA = `Carol · ${keys.get(carolA)}`;
+  expect(
+    await screen.findByRole("option", { name: `Carol · ${keys.get(carolB)}` }),
+  ).toBeVisible();
+  await user.click(screen.getByRole("option", { name: labelA }));
+  expect(
+    within(dialog).getByRole("button", { name: `Remove ${labelA}` }),
+  ).toBeVisible();
+  await user.click(
+    within(dialog).getByRole("button", { name: "Choose member role" }),
+  );
+  await user.click(await screen.findByRole("menuitemradio", { name: "Admin" }));
+  await user.click(within(dialog).getByRole("button", { name: "Invite" }));
+  await waitFor(() =>
+    expect(calls.find((c) => c.route === "member")?.body).toEqual({
+      action: "add",
+      pubkey: carolA,
+      role: "admin",
+    }),
+  );
 });

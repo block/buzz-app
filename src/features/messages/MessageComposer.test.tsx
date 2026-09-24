@@ -1985,6 +1985,7 @@ it.each([
     expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
       "c".repeat(64),
       markdown,
+      "c".repeat(64),
     );
     expect(h.messages.send).not.toHaveBeenCalled();
     expect(readView("scope", "draft:channel", "")).toBe("");
@@ -2019,6 +2020,7 @@ it("saves only once, locks until delivery, and restores the new-message composer
   expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
     row.id,
     "Revised message",
+    row.id,
   );
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(h.input()).toHaveAttribute("contenteditable", "false");
@@ -2148,6 +2150,7 @@ it("inserts mention links without new notification recipients during edits", () 
   expect(h.messages.edit).toHaveBeenCalledWith(
     "c".repeat(64),
     expect.stringContaining("nostr:npub"),
+    "c".repeat(64),
   );
   expect(h.messages.send).not.toHaveBeenCalled();
 });

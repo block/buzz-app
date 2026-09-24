@@ -254,9 +254,9 @@ export function foldMessages(
       const body = objectBody(content);
       if (typeof body?.content === "string") content = body.content;
     }
-    const attachmentEvent = edits[0]?.tags.some(([name]) => name === "imeta")
-      ? edits[0]
-      : event;
+    const attachmentEvent =
+      edits.find((edit) => edit.tags.some(([name]) => name === "imeta")) ??
+      event;
     const imetaUrls = imetaAttachmentUrls(attachmentEvent);
     // Every CommonMark image begins with `![`, and every attachment title link
     // needs an imeta URL match; avoid parsing ordinary messages.
@@ -308,6 +308,9 @@ export function foldMessages(
             ),
           ),
         ]),
+        ...(attachmentEvent !== event
+          ? { attachmentSourceId: attachmentEvent.id }
+          : {}),
         attachments: Object.freeze(
           parseAttachments(attachmentEvent, projected.urls, attachmentNames),
         ),

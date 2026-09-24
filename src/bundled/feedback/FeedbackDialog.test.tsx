@@ -19,14 +19,21 @@ const pending = (
     delivery,
   }) as OutgoingEvent;
 function fixture(
-  entries: readonly OutgoingEvent[] = [],
+  initialEntries: readonly OutgoingEvent[] = [],
   status: "ready" | "disconnected" = "ready",
 ) {
   const send = vi.fn();
   const retry = vi.fn();
   const dismiss = vi.fn(async () => {});
+  let entries = initialEntries;
+  const listeners = new Set<() => void>();
   const outbox = {
-    subscribe,
+    subscribe(listener: () => void) {
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    },
     snapshot: () => entries,
     ready: async () => {},
     supports: () => true,
@@ -39,11 +46,11 @@ function fixture(
     status: "ready" | "disconnected";
     session: { outbox?: typeof outbox };
   } = { generation: 0, status, session: { outbox } };
-  const listeners = new Set<() => void>();
+  const relayListeners = new Set<() => void>();
   const relay = {
     subscribe(listener: () => void) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
+      relayListeners.add(listener);
+      return () => relayListeners.delete(listener);
     },
     snapshot: () => snapshot,
   } as unknown as RelayData;
@@ -52,9 +59,13 @@ function fixture(
     send,
     retry,
     dismiss,
+    setEntries(next: readonly OutgoingEvent[]) {
+      entries = next;
+      for (const listener of listeners) listener();
+    },
     switchTo(next: typeof snapshot) {
       snapshot = next;
-      for (const listener of listeners) listener();
+      for (const listener of relayListeners) listener();
     },
   };
 }
@@ -88,6 +99,50 @@ it("restores outstanding intent and retries only its event id", async () => {
   await user.click(screen.getByRole("button", { name: "Retry same feedback" }));
   expect(h.retry).toHaveBeenCalledWith(pending("unknown").event.id);
   expect(h.send).not.toHaveBeenCalled();
+});
+
+it("allows confirmed local discard after an unknown retry is rejected", async () => {
+  const user = userEvent.setup();
+  const saved = pending("unknown");
+  const h = fixture([saved]);
+  const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+  try {
+    const view = render(
+      <FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Retry same feedback" }),
+    );
+    expect(h.retry).toHaveBeenCalledWith(saved.event.id);
+    act(() =>
+      h.setEntries([{ ...saved, delivery: "failed", error: "expired" }]),
+    );
+    await user.click(screen.getByRole("button", { name: "Discard locally" }));
+    expect(h.dismiss).not.toHaveBeenCalled();
+    confirm.mockReturnValue(true);
+    h.dismiss.mockImplementationOnce(async () => {
+      act(() => h.setEntries([]));
+    });
+    await user.click(screen.getByRole("button", { name: "Discard locally" }));
+    await waitFor(() => expect(h.dismiss).toHaveBeenCalledWith(saved.event.id));
+    expect(confirm).toHaveBeenCalledWith(
+      expect.stringContaining("may already have been delivered"),
+    );
+    view.unmount();
+    render(<FeedbackDialog open onOpenChange={() => {}} relay={h.relay} />);
+    await user.type(
+      screen.getByRole("textbox", { name: "Your feedback" }),
+      "New feedback",
+    );
+    await user.click(screen.getByRole("button", { name: "Send feedback" }));
+    expect(h.send).toHaveBeenCalledWith({
+      kind: 42000,
+      content: "New feedback",
+      tags: [],
+    });
+  } finally {
+    confirm.mockRestore();
+  }
 });
 
 it("keeps accepted intent on close and clears it only after explicit Done", async () => {

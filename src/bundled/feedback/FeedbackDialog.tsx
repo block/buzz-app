@@ -132,7 +132,7 @@ function FeedbackForConnection({
       );
     }
   }
-  async function finish() {
+  async function clearPending() {
     if (!outbox || !pending || busy) return;
     setBusy(true);
     const epoch = dialogEpoch.current;
@@ -148,14 +148,23 @@ function FeedbackForConnection({
       if (!active.current || !isCurrent() || epoch !== dialogEpoch.current)
         return;
       setError(
-        reason instanceof Error
-          ? reason.message
-          : "Could not clear delivered feedback.",
+        reason instanceof Error ? reason.message : "Could not clear feedback.",
       );
     } finally {
       if (active.current && isCurrent() && epoch === dialogEpoch.current)
         setBusy(false);
     }
+  }
+  function discard() {
+    if (
+      !pending ||
+      (pending.delivery !== "failed" && pending.delivery !== "unknown") ||
+      !window.confirm(
+        "Discard this saved feedback locally? It may already have been delivered. Discarding will not undo delivery or delete uploaded attachments.",
+      )
+    )
+      return;
+    void clearPending();
   }
   function retry() {
     if (!outbox || !pending || !available || busy) return;
@@ -186,19 +195,24 @@ function FeedbackForConnection({
             <Button
               variant="prominent"
               disabled={busy}
-              onClick={() => void finish()}
+              onClick={() => void clearPending()}
             >
               Done
             </Button>
           ) : pending?.delivery === "failed" ||
             pending?.delivery === "unknown" ? (
-            <Button
-              variant="prominent"
-              disabled={!available || busy}
-              onClick={retry}
-            >
-              Retry same feedback
-            </Button>
+            <>
+              <Button disabled={busy} onClick={discard}>
+                Discard locally
+              </Button>
+              <Button
+                variant="prominent"
+                disabled={!available || busy}
+                onClick={retry}
+              >
+                Retry same feedback
+              </Button>
+            </>
           ) : !pending ? (
             <Button
               variant="prominent"

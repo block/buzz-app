@@ -19,24 +19,26 @@ export function PresenceIndicator({
     () => `${presence.status(pubkey)}:${presence.limited(pubkey)}`,
   );
   const status = state.split(":")[0] as ReturnType<Presence["status"]>;
-  const labels = {
-    online: "● Online",
-    away: "◐ Away",
-    offline: "○ Offline",
-    unknown: "? Unknown",
-  };
+  // Missing or stale evidence is not proof that someone is offline.
+  if (status === "unknown") return null;
+  const label = {
+    online: "Active",
+    away: "Away",
+    offline: "Offline",
+  }[status];
+  const symbol = { online: "●", away: "◐", offline: "○" }[status];
   return (
     <span
       role="img"
       className="text-body-sm text-secondary"
-      aria-label={`Presence: ${status}`}
+      aria-label={`Presence: ${label}`}
       title={
         presence.limited(pubkey)
           ? "Presence demand limit reached"
           : "Recent Buzz session status in this community; periodically refreshed"
       }
     >
-      {labels[status]}
+      {symbol} {label}
     </span>
   );
 }

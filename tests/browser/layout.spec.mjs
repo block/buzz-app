@@ -237,7 +237,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
     await shellFits(page, width);
     await expect(composer).toBeInViewport();
     await button(page, "Your profile").click();
-    await button(page, "Settings").click();
+    await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
     await expect(
       page.getByRole("heading", { name: "Settings", exact: true }),
     ).toBeVisible();
@@ -267,7 +267,7 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
       .getByRole("button", { name: "Home" }),
   ).toHaveAttribute("aria-current", "page");
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
   ).toHaveValue("Browser Fixture");
@@ -485,7 +485,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(launch).toBeFocused();
   await launch.click();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await expect(bestie).toHaveCount(1);
   const enabled = page.getByRole("switch", {
@@ -564,7 +564,7 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await launch.click();
   await expect(bestie).toHaveCount(1);
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   await page
     .getByRole("switch", { name: "Enable Channels", exact: true })
@@ -742,7 +742,7 @@ test("Projects stays centered and page navigation survives plugin re-enable orde
     });
   }
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await button(page, "Plugins").click();
   const projects = page.getByRole("switch", {
     name: "Enable Projects",

@@ -35,7 +35,7 @@ test("channel visits, toolbar, browser traversal and Settings sections share one
   await page.goForward();
   await expect(composer(page, "Beta")).toBeVisible();
   await button(page, "Your profile").click();
-  await button(page, "Settings").click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   const sections = page.getByRole("navigation", { name: "Settings sections" });
   await expect(
     sections.getByRole("button", { name: "Profile", exact: true }),

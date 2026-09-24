@@ -382,7 +382,7 @@ export function policyRelay({
               expect(verifyEvent(id)).toBe(true);
               expect(id.pubkey).toBe(viewer);
               expect(id.kind).toBe(20001);
-              expect(["online", "away"]).toContain(id.content);
+              expect(["online", "away", "offline"]).toContain(id.content);
               expect(id.tags).toEqual([]);
               report.presencePublications.push({
                 community: this.community,

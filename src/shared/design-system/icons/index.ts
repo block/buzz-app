@@ -4,6 +4,8 @@ import { OneDriveLogoArtwork } from "./OneDriveLogo";
 // Phosphor only. Add individual exports as needed; all native weights remain available.
 import { BrowserIcon as PhosphorBrowserIcon } from "@phosphor-icons/react/dist/csr/Browser";
 export const BrowserIcon = defineIcon("phosphor", PhosphorBrowserIcon);
+import { CalendarIcon as PhosphorCalendarIcon } from "@phosphor-icons/react/dist/csr/Calendar";
+export const CalendarIcon = defineIcon("phosphor", PhosphorCalendarIcon);
 import { ArrowDownIcon as PhosphorArrowDownIcon } from "@phosphor-icons/react/dist/csr/ArrowDown";
 export const ArrowDownIcon = defineIcon("phosphor", PhosphorArrowDownIcon);
 import { ArrowLeftIcon as PhosphorArrowLeftIcon } from "@phosphor-icons/react/dist/csr/ArrowLeft";
@@ -105,6 +107,8 @@ import { KeyboardIcon as PhosphorKeyboardIcon } from "@phosphor-icons/react/dist
 export const KeyboardIcon = defineIcon("phosphor", PhosphorKeyboardIcon);
 import { LinkIcon as PhosphorLinkIcon } from "@phosphor-icons/react/dist/csr/Link";
 export const LinkIcon = defineIcon("phosphor", PhosphorLinkIcon);
+import { LightningIcon as PhosphorLightningIcon } from "@phosphor-icons/react/dist/csr/Lightning";
+export const LightningIcon = defineIcon("phosphor", PhosphorLightningIcon);
 import { LockIcon as PhosphorLockIcon } from "@phosphor-icons/react/dist/csr/Lock";
 export const LockIcon = defineIcon("phosphor", PhosphorLockIcon);
 import { MagnifyingGlassIcon as PhosphorMagnifyingGlassIcon } from "@phosphor-icons/react/dist/csr/MagnifyingGlass";
@@ -161,6 +165,8 @@ import { SunIcon as PhosphorSunIcon } from "@phosphor-icons/react/dist/csr/Sun";
 export const SunIcon = defineIcon("phosphor", PhosphorSunIcon);
 import { TableIcon as PhosphorTableIcon } from "@phosphor-icons/react/dist/csr/Table";
 export const TableIcon = defineIcon("phosphor", PhosphorTableIcon);
+import { TimerIcon as PhosphorTimerIcon } from "@phosphor-icons/react/dist/csr/Timer";
+export const TimerIcon = defineIcon("phosphor", PhosphorTimerIcon);
 import { TerminalWindowIcon as PhosphorTerminalWindowIcon } from "@phosphor-icons/react/dist/csr/TerminalWindow";
 export const TerminalWindowIcon = defineIcon(
   "phosphor",
@@ -176,6 +182,11 @@ import { VideoConferenceIcon as PhosphorVideoConferenceIcon } from "@phosphor-ic
 export const VideoConferenceIcon = defineIcon(
   "phosphor",
   PhosphorVideoConferenceIcon,
+);
+import { WebhooksLogoIcon as PhosphorWebhooksLogoIcon } from "@phosphor-icons/react/dist/csr/WebhooksLogo";
+export const WebhooksLogoIcon = defineIcon(
+  "phosphor",
+  PhosphorWebhooksLogoIcon,
 );
 import { WrenchIcon as PhosphorWrenchIcon } from "@phosphor-icons/react/dist/csr/Wrench";
 export const WrenchIcon = defineIcon("phosphor", PhosphorWrenchIcon);

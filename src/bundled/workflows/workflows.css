@@ -4,6 +4,172 @@
   padding: var(--space-6);
   color: var(--text-standard);
 }
+.workflow-page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-4);
+  max-width: 72rem;
+  margin-inline: auto;
+}
+.workflow-page-header p,
+.workflow-page-state p,
+.workflow-state-card p {
+  margin: var(--space-2) 0 0;
+}
+.workflow-page-action {
+  flex: 0 0 auto;
+}
+.workflow-page-filter,
+.workflow-page-state,
+.workflow-card-grid,
+.workflows-page > section {
+  width: 100%;
+  max-width: 72rem;
+  margin-inline: auto;
+}
+.workflow-page-filter {
+  margin-block: var(--space-6);
+}
+.workflow-page-state {
+  padding-block: var(--space-8);
+}
+.workflow-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: var(--space-3);
+  margin-top: var(--space-8);
+}
+.buzz-button[data-workflow-create-card] {
+  width: 100%;
+  min-height: 15rem;
+  border: 1px dashed var(--border-prominent);
+  border-radius: var(--radius-control);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.workflow-card,
+.workflow-state-card {
+  position: relative;
+  min-width: 0;
+  min-height: 15rem;
+  overflow: hidden;
+  border-radius: var(--radius-control);
+  background: var(--surface-inset);
+  box-shadow: var(--shadow-xs);
+}
+.workflow-state-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: var(--space-4);
+  padding: var(--space-5);
+}
+.buzz-button[data-workflow-card-open] {
+  position: absolute;
+  z-index: 0;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  padding: 0;
+}
+.buzz-button[data-workflow-card-open] .buzz-button-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.workflow-card-content {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  min-height: 15rem;
+  flex-direction: column;
+  padding: var(--space-5);
+  pointer-events: none;
+}
+.workflow-card-topline,
+.workflow-card-meta,
+.workflow-card-flow,
+.workflow-card-identity {
+  display: flex;
+}
+.workflow-card-topline,
+.workflow-card-meta {
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.workflow-card-flow {
+  min-width: 0;
+  align-items: center;
+  gap: var(--space-2);
+}
+.workflow-card-icon {
+  display: grid;
+  width: 2.25rem;
+  height: 2.25rem;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--border-standard);
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+  color: var(--text-standard);
+  box-shadow: var(--shadow-xs);
+}
+.workflow-card-emoji {
+  line-height: 1;
+}
+.workflow-card-arrow {
+  flex: 0 0 auto;
+  color: var(--text-subtle);
+}
+.workflow-card-action-stack {
+  display: flex;
+  align-items: center;
+}
+.workflow-card-action + .workflow-card-action {
+  margin-left: calc(var(--space-2) * -1);
+}
+.workflow-card-action[data-index="1"] {
+  color: var(--text-secondary);
+}
+.workflow-card-action[data-index="2"] {
+  color: var(--text-subtle);
+}
+.workflow-card-switch {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+.workflow-card-description {
+  max-width: 24rem;
+  margin: var(--space-5) 0;
+  font-weight: var(--type-weight-medium);
+  overflow-wrap: anywhere;
+}
+.workflow-card-meta {
+  align-items: flex-end;
+  margin-top: auto;
+}
+.workflow-card-identity {
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--space-half);
+}
+.workflow-card-identity > * {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.workflow-card-meta time {
+  flex: 0 0 auto;
+}
 .workflows-page h1,
 .workflows-page h2,
 .workflows-page h3 {
@@ -212,5 +378,14 @@ html[data-keyboard-navigation]
 @media (max-width: 640px) {
   .workflows-page {
     padding: var(--space-4);
+  }
+  .workflow-page-header {
+    align-items: center;
+  }
+  .workflow-page-action .buzz-button:not([data-icon-variant]) {
+    padding-inline: var(--space-3);
+  }
+  .workflow-card-grid {
+    margin-top: var(--space-6);
   }
 }

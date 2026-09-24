@@ -346,6 +346,22 @@ test("real session page under StrictMode fences community changes, warns for dir
     await page.getByRole("combobox", { name: "Channel", exact: true }).click();
     await page.getByRole("option", { name, exact: true }).click();
   };
+  await expect(
+    page.getByText("Automations that keep your community moving.", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(button("New workflow")).toBeDisabled();
+  await expect(button("Open Fixture A helper")).toBeVisible();
+  await expect(
+    page.getByRole("switch", { name: "Enable Fixture A helper", exact: true }),
+  ).toBeDisabled();
+  await button("Open Fixture A helper").click();
+  await expect(
+    page.getByRole("region", { name: "Workflow editor" }),
+  ).toBeVisible();
+  await button("Close editor").click();
+  await expect(button("Open Fixture A helper")).toBeVisible();
   await choose("First channel");
   await expect(button("New workflow")).toBeDisabled();
   await expect(
@@ -404,6 +420,197 @@ test("real session page under StrictMode fences community changes, warns for dir
     "Revoked private text",
   );
   expect(errors).toEqual([]);
+});
+
+test("landing bounds workflow reads across more than sixteen channels", async ({
+  page,
+}) => {
+  const errors = [];
+  page.on("pageerror", (error) => errors.push(String(error)));
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?many"));
+  await expect(
+    page.getByRole("button", { name: "Open Fixture A helper", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.definitionQueries()),
+    )
+    .toBeGreaterThanOrEqual(17);
+  expect(errors).toEqual([]);
+});
+
+test("landing scan survives channel presentation churn without restarting", async ({
+  page,
+}) => {
+  await page.goto(
+    url.replace("/fixture.html", "/session-fixture.html?many&hold"),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.definitionReadHeld()),
+    )
+    .toBe(true);
+  const startedReads = await page.evaluate(() =>
+    window.workflowSessionFixture.definitionQueries(),
+  );
+  await page.evaluate(async () => {
+    for (let index = 0; index < 8; index++) {
+      window.workflowSessionFixture.renameFirstChannel();
+      await new Promise((resolve) => setTimeout(resolve, 15));
+    }
+  });
+  await expect(
+    page.getByText("#First channel 8", { exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.workflowSessionFixture.definitionQueries(),
+    ),
+  ).toBe(startedReads);
+  await page.evaluate(() =>
+    window.workflowSessionFixture.releaseDefinitionRead(),
+  );
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.workflowSessionFixture.definitionChannelCount(),
+      ),
+    )
+    .toBe(17);
+});
+
+test("clearing the session cache purges landing workflow definitions", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
+  const open = page.getByRole("button", {
+    name: "Open Fixture A helper",
+    exact: true,
+  });
+  await expect(open).toBeVisible();
+  await page
+    .getByRole("button", { name: "Clear session cache", exact: true })
+    .click();
+  await expect(open).toHaveCount(0);
+  expect(await page.locator("body").innerText()).not.toContain(
+    "Fixture A helper",
+  );
+});
+
+test("landing discards an opened definition when channel access is revoked", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html"));
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Open Fixture A helper").click();
+  await page
+    .getByLabel("Workflow name", { exact: true })
+    .fill("Revoked landing draft");
+  await button("Revoke selected channel").click();
+  await expect(
+    page.getByRole("region", { name: "Workflow editor" }),
+  ).toHaveCount(0);
+  expect(await page.locator("body").innerText()).not.toContain(
+    "Revoked landing draft",
+  );
+  await page.evaluate(() => window.workflowSessionFixture.restoreAccess());
+  await expect(button("Open Fixture A helper")).toBeVisible();
+  await button("Open Fixture A helper").click();
+  await expect(page.getByLabel("Workflow name", { exact: true })).toHaveValue(
+    "Fixture A helper",
+  );
+});
+
+test("landing activation confirms once and locks while delivery is unresolved", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const enable = page.getByRole("switch", {
+    name: "Enable Fixture A helper",
+    exact: true,
+  });
+  await enable.click();
+  await expect(
+    page.getByRole("alertdialog", { name: "This workflow may run often" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Turn on", exact: true }).click();
+  try {
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.workflowSessionFixture.publications()),
+      )
+      .toBe(1);
+    await expect(enable).toBeDisabled();
+  } finally {
+    await page.evaluate(() => window.workflowSessionFixture.reject());
+  }
+  await expect(enable).toBeEnabled();
+  expect(
+    await page.evaluate(() => window.workflowSessionFixture.publications()),
+  ).toBe(1);
+});
+
+test("landing keeps a succeeded toggle locked until its exact revision is read back", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const enable = page.getByRole("switch", {
+    name: "Enable Fixture A helper",
+    exact: true,
+  });
+  await enable.click();
+  await page.getByRole("button", { name: "Turn on", exact: true }).click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(1);
+  await page.evaluate(() => window.workflowSessionFixture.settle());
+  await expect(enable).toBeDisabled();
+  await page.evaluate(() => window.workflowSessionFixture.readback());
+  await page
+    .getByRole("button", { name: "Refresh workflows", exact: true })
+    .click();
+  await expect(
+    page.getByRole("switch", {
+      name: "Disable Fixture A helper",
+      exact: true,
+    }),
+  ).toBeEnabled();
+});
+
+test("landing keeps a workflow locked while deletion remains undismissed", async ({
+  page,
+}) => {
+  await page.goto(url.replace("/fixture.html", "/session-fixture.html?writes"));
+  const button = (name) => page.getByRole("button", { name, exact: true });
+  await button("Open Fixture A helper").click();
+  await button("Delete workflow").click();
+  await button("Request deletion").click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.publications()),
+    )
+    .toBe(1);
+  await button("Close editor").click();
+  await button("Leave draft").click();
+  const enable = page.getByRole("switch", {
+    name: "Enable Fixture A helper",
+    exact: true,
+  });
+  await expect(enable).toBeDisabled();
+  await page.evaluate(() => window.workflowSessionFixture.settleDelete());
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => window.workflowSessionFixture.operations().at(-1)?.outcome,
+      ),
+    )
+    .toBe("succeeded");
+  await expect(enable).toBeDisabled();
+  expect(
+    await page.evaluate(() => window.workflowSessionFixture.publications()),
+  ).toBe(1);
 });
 
 test("a lost save response can be checked and adopted without resubmitting", async ({

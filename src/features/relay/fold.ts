@@ -258,7 +258,7 @@ export function foldMessages(
     // Every CommonMark image begins with `![`, and every attachment title link
     // needs an imeta URL match; avoid parsing ordinary messages.
     const projected =
-      content.includes("![") || imetaUrls.size
+      event.kind !== 40008 && (content.includes("![") || imetaUrls.size)
         ? projectMarkdownAttachments(content, imetaUrls)
         : {
             content,
@@ -277,6 +277,21 @@ export function foldMessages(
         createdAt: event.created_at,
         content: projected.content,
         ...(event.kind === 40002 ? { agentEnvelope: true as const } : {}),
+        ...(event.kind === 40008
+          ? {
+              diff: Object.freeze({
+                filePath: event.tags.find(([name]) => name === "file")?.[1],
+                repoUrl: event.tags.find(([name]) => name === "repo")?.[1],
+                commitSha: event.tags.find(([name]) => name === "commit")?.[1],
+                description: event.tags.find(
+                  ([name]) => name === "description",
+                )?.[1],
+                truncated: event.tags.some(
+                  ([name, value]) => name === "truncated" && value === "true",
+                ),
+              }),
+            }
+          : {}),
         ...(edits.length ? { edited: true as const } : {}),
         ...(projected.content !== content &&
         projected.content !== content.trimEnd()

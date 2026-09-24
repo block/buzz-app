@@ -364,6 +364,23 @@ mounted page; see [sidebar ownership](channels.md#ownership).
 
 ## Conversation contributions
 
+`registerMessage({ id, title, matches, component })` contributes an optional whole
+message body. Components receive `{ message: ChannelMessage }`; the first active
+match wins, throwing matchers are skipped, and render failure/removal restores the
+host body. Registration uses the same owned contribution lifetime as inline/link
+renderers. The host retains author/time chrome, actions, attachments and session
+ownership. `MessageRenderer` is a host-matched author-preview type, not event
+admission or cross-version capability negotiation.
+
+The bundled **Diff viewer** (`buzz.diffs`) handles `ChannelMessage.diff` from legacy
+kind 40008. Shared history, live, thread and exact readers retain these messages
+independently of the plugin, preserving raw patches rather than interpreting them
+as Markdown images or links. The plugin supplies an inline preview and expanded
+Unified/Split dialog. Disabled/failed rendering, malformed/incomplete patches and
+patches over the display parsing budget retain escaped raw text. Metadata is
+untrusted presentation, not repository access authority. No sending, applying,
+repository fetching or sidebar panels are added.
+
 `registerLink({ id, title, matches, className?, component })` contributes optional
 presentation for links already recognized by messages. The host retains the anchor,
 destination, new-tab/modifier behavior and panel activation. Components receive

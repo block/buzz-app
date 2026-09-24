@@ -42,6 +42,7 @@ const nonIconDependencies = new Set([
   "nostr-tools",
   "postcss",
   "react",
+  "react-diff-view", // Patch tables/parser, not an icon library.
   "react-dom",
   "react-markdown",
   "remark-breaks",

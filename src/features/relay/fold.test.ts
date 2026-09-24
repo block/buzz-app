@@ -19,6 +19,44 @@ const relay = keypair(),
 const channel = "chan-1";
 
 describe("message fold", () => {
+  it("preserves diff patch bytes and signed metadata without Markdown attachment projection", () => {
+    const content =
+      "@@ -1 +1 @@\n-![old](https://example.com/old.png)\n+<script>alert(1)</script>  \n";
+    const event = signed(alice, {
+      kind: 40008,
+      content,
+      tags: [
+        ["h", channel],
+        ["file", "README.md"],
+        ["repo", "javascript:alert(1)"],
+        ["commit", "abcdef0"],
+        ["description", "Raw <code>"],
+        ["truncated", "true"],
+      ],
+    });
+    const [row] = foldMessages(channel, relay.pubkey, [event]);
+    expect(row).toMatchObject({
+      content,
+      attachments: [],
+      diff: {
+        filePath: "README.md",
+        repoUrl: "javascript:alert(1)",
+        commitSha: "abcdef0",
+        description: "Raw <code>",
+        truncated: true,
+      },
+    });
+    expect(row?.attachmentContentRemoved).toBeUndefined();
+    expect(Object.isFrozen(row?.diff)).toBe(true);
+    const untagged = signed(alice, {
+      kind: 40008,
+      content,
+      tags: [["h", channel]],
+    });
+    expect(
+      foldMessages(channel, relay.pubkey, [untagged])[0]?.diff,
+    ).toMatchObject({ truncated: false });
+  });
   it("orders rows chronologically with id tiebreak and excludes other channels and non-broadcast replies", () => {
     const a = message(alice, channel, "a", 20),
       b = message(bob, channel, "b", 10),

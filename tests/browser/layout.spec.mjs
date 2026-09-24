@@ -304,7 +304,7 @@ test("bento surfaces, sidebar pages, real link panel and compact community navig
   await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await expect(
     page.getByRole("textbox", { name: "Display name", exact: true }),
-  ).toHaveValue("Browser Fixture");
+  ).toHaveValue("Fixture Reader");
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await button(page, "Plugins").click();
   // Channels has no off switch; use another page to exercise UI activation.

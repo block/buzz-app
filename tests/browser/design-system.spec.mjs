@@ -108,8 +108,8 @@ test("shared tokens reach app controls without history or chip overrides", async
       ]) {
         await expect(control).toHaveCSS("background-color", "rgb(12, 34, 56)");
         await expect(control).toHaveCSS("color", "rgb(10, 20, 30)");
-        await expect(control).toHaveCSS("padding-left", "29px");
-        await expect(control).toHaveCSS("font-size", "19px");
+        await expect(control).toHaveCSS("padding-left", "16px");
+        await expect(control).toHaveCSS("font-size", "14px");
       }
       await expect(page.locator("#probe-chip")).toHaveCSS(
         "background-color",

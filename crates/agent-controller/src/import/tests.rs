@@ -634,3 +634,87 @@ fn duplicate_keys_ignore_pin_differences_and_source_pin_changes_still_invalidate
     assert!(keys.keys.lock().unwrap().is_empty());
     assert!(store.agents().unwrap().is_empty());
 }
+
+#[test]
+fn import_excludes_overlapping_destinations_before_credentials_through_commit() {
+    let old = tempfile::tempdir().unwrap();
+    let dest = tempfile::tempdir().unwrap();
+    source(old.path());
+    let keys = Memory::default();
+    let mut store = Store::open(dest.path().into()).unwrap();
+    let mut first = Imports::default();
+    let preview = first
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "wss://first.example",
+        )
+        .unwrap();
+    let mut second = Imports::default();
+    let other = second
+        .preview(
+            LegacySource::Installed,
+            old.path().into(),
+            dest.path().into(),
+            "wss://second.example",
+        )
+        .unwrap();
+    let ids = [preview.candidates[0].id.clone()];
+    let other_ids = [other.candidates[0].id.clone()];
+    let prepared = first.prepare(&preview.token, &ids, &store).unwrap();
+    // Separate preview owners still share the same store reservation.
+    assert!(second
+        .prepare(&other.token, &other_ids, &store)
+        .err()
+        .unwrap()
+        .contains("import is in progress"));
+    assert!(keys.keys.lock().unwrap().is_empty());
+    // Cancellation before credential access releases the reservation.
+    drop(prepared);
+    let prepared = first.prepare(&preview.token, &ids, &store).unwrap();
+    let unavailable = Memory {
+        fail: true,
+        ..Default::default()
+    };
+    assert!(prepared.acquire(&unavailable).is_err());
+    // Credential failure releases it too, so the same preview can be retried.
+    let pending = first
+        .prepare(&preview.token, &ids, &store)
+        .unwrap()
+        .acquire(&keys)
+        .unwrap();
+    let reads = keys.reads.load(Ordering::SeqCst);
+    assert!(second
+        .commit(&other.token, &other_ids, &mut store, &keys)
+        .unwrap_err()
+        .contains("import is in progress"));
+    assert_eq!(keys.reads.load(Ordering::SeqCst), reads);
+    assert_eq!(
+        keys.keys
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ids
+    );
+    pending.commit(&mut store).unwrap();
+    let before = fs::read(dest.path().join("agents.json")).unwrap();
+    assert!(second
+        .commit(&other.token, &other_ids, &mut store, &keys)
+        .unwrap_err()
+        .contains("already imported"));
+    assert_eq!(keys.reads.load(Ordering::SeqCst), reads);
+    assert_eq!(
+        keys.keys
+            .lock()
+            .unwrap()
+            .keys()
+            .cloned()
+            .collect::<Vec<_>>(),
+        ids
+    );
+    assert_eq!(fs::read(dest.path().join("agents.json")).unwrap(), before);
+    assert_eq!(store.agents().unwrap().len(), 1);
+}

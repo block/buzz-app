@@ -67,8 +67,14 @@ export function AgentImport({
       generation.current++;
     };
   }, [initialDestination, load]);
+  // Native import rejects any key already held locally, in any community.
+  const managedKeys = new Set(
+    managedAgents.map((agent) => agent.pubkey.toLowerCase()),
+  );
   const candidates = preview?.candidates.filter(
-    (candidate) => !managedAgents.some((agent) => agent.id === candidate.id),
+    (candidate) =>
+      !managedAgents.some((agent) => agent.id === candidate.id) &&
+      !managedKeys.has(candidate.pubkey.toLowerCase()),
   );
   return (
     <section

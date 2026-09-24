@@ -252,6 +252,8 @@ it("does not classify hidden, archived or DM memberships in a ready empty list",
       viewer={viewer}
       communityOrigin="https://relay.example.test"
       navigation={f.navigation}
+      control={undefined}
+      scope={undefined}
     />,
   );
   f.update({

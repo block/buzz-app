@@ -652,9 +652,12 @@ export function createOutbox(
         return Promise.reject(
           new Error("Confirm this message in New message before removing it"),
         );
-      const work = persist(id, "dismiss").then(() => {
-        admissionGates.delete(id);
-      }).finally(() => dismissing.delete(id));      dismissing.set(id, work);
+      const work = persist(id, "dismiss")
+        .then(() => {
+          admissionGates.delete(id);
+        })
+        .finally(() => dismissing.delete(id));
+      dismissing.set(id, work);
       return work;
     },
   });

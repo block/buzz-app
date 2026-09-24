@@ -28,7 +28,10 @@ import { selectProfiles } from "../../features/relay/profile-selection";
 import { useRelayConnection } from "../../features/relay/react";
 import type { RelayData } from "../../features/relay/service";
 import type { RelaySession } from "../../features/relay/session";
-import { ProfileAgentIdentity } from "./ProfileAgentIdentity";
+import {
+  ProfileAgentIdentity,
+  useVerifiedAgentOwner,
+} from "./ProfileAgentIdentity";
 import styles from "./Profiles.module.css";
 
 export function ProfilePanel({
@@ -153,6 +156,17 @@ function ProfileDetails({
     return () => controller.abort();
   }, [session, pubkey]);
   const agentPubkeys = useKnownAgentPubkeys(session, profiles);
+  const knownAgent = agentPubkeys.has(pubkey);
+  const verifiedOwner = useVerifiedAgentOwner(
+    session,
+    knownAgent ? pubkey : undefined,
+  );
+  const canViewMemories = knownAgent && !!viewer && verifiedOwner === viewer;
+  const selectedTab = tab === "memories" && !canViewMemories ? "info" : tab;
+  useEffect(() => {
+    if (!canViewMemories)
+      setTab((current) => (current === "memories" ? "info" : current));
+  }, [canViewMemories]);
   let communityOrigin: string | undefined;
   if (scope && viewer && scope.endsWith(`:${viewer}`)) {
     try {
@@ -240,12 +254,14 @@ function ProfileDetails({
         <h2 className="text-heading">{name}</h2>
       </div>
       <Tabs
-        value={tab}
+        value={selectedTab}
         onValueChange={setTab}
         items={[
           { value: "info", label: "Info" },
           { value: "channels", label: "Channels" },
-          { value: "memories", label: "Memories" },
+          ...(canViewMemories
+            ? [{ value: "memories" as const, label: "Memories" }]
+            : []),
         ]}
         label="Profile sections"
         variant="panel"
@@ -294,10 +310,10 @@ function ProfileDetails({
                   />
                 )}
                 {children}
-                {agentPubkeys.has(pubkey) && (
+                {knownAgent && verifiedOwner && (
                   <ProfileAgentIdentity
                     session={session}
-                    pubkey={pubkey}
+                    owner={verifiedOwner}
                     viewer={viewer}
                     context={context}
                   />
@@ -367,7 +383,7 @@ function ProfileDetails({
                     </>
                   ))}
               </>
-            ) : selected === "memories" ? (
+            ) : selected === "memories" && canViewMemories ? (
               <ProfileMemories session={session} pubkey={pubkey} />
             ) : (
               <ProfileChannels

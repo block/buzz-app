@@ -271,7 +271,7 @@ mod tests {
     use std::sync::Mutex;
     use std::time::Duration;
 
-    const BASE: &str = "https://app.builderlab.xyz/";
+    const BASE: &str = "https://app.builderlab.xyz";
     const TEST_CREDENTIAL: &str = "a234567890123456789012345678901234567890";
 
     #[derive(Default)]

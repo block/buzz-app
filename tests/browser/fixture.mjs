@@ -39,6 +39,7 @@ export const test = base.extend({
   sidebarUnread: [false, { option: true }],
   savedSidebar: [false, { option: true }],
   channelLifecycle: [false, { option: true }],
+  lifecycleVisibility: [{ archived: [], hidden: [] }, { option: true }],
   expectedPageFailure: [false, { option: true }],
   largeSidebar: [false, { option: true }],
   iconCongestion: [false, { option: true }],
@@ -69,6 +70,7 @@ export const test = base.extend({
       sidebarUnread,
       savedSidebar,
       channelLifecycle,
+      lifecycleVisibility,
       expectedPageFailure,
       largeSidebar,
       iconCongestion,
@@ -161,8 +163,8 @@ export const test = base.extend({
           },
         ]
       : [];
-    const archivedIds = new Set();
-    const hiddenDmIds = new Set();
+    const archivedIds = new Set(lifecycleVisibility.archived);
+    const hiddenDmIds = new Set(lifecycleVisibility.hidden);
     let lifecycleTime = 1700000001;
     const rosterIds = [
       ...new Set([

@@ -302,13 +302,20 @@ function ChannelWorkspace({
     !joinedRequest &&
     !!queries.channels.resolve &&
     resolved?.request !== navigation;
-  const current = requestedChannel
-    ? (channels.find((channel) => channel.id === requestedChannel) ??
-      (resolved?.request === navigation && resolved?.available
-        ? queries.channels.get?.(requestedChannel)
-        : undefined))
-    : (channels.find((channel) => channel.id === selected) ??
-      channels.find((item) => item.channelType !== "session"));
+  // Lifecycle completion must not reopen retained archived/hidden membership
+  // through the mounted workspace's saved selection or first-channel fallback.
+  const emptyDestination =
+    navigation?.target.kind === "page" &&
+    navigation.target.route?.params === "empty";
+  const current = emptyDestination
+    ? undefined
+    : requestedChannel
+      ? (channels.find((channel) => channel.id === requestedChannel) ??
+        (resolved?.request === navigation && resolved?.available
+          ? queries.channels.get?.(requestedChannel)
+          : undefined))
+      : (channels.find((channel) => channel.id === selected) ??
+        channels.find((item) => item.channelType !== "session"));
   // Sidebar routing can update the same mounted page. Keep its saved default
   // aligned with the resolved conversation, not only page-local clicks.
   useEffect(() => {

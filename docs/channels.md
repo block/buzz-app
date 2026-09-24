@@ -274,7 +274,11 @@ taken effect, disables blind resubmission and asks the user to close and refresh
 channels. Cancellation/cache clear/session replacement fence late results but cannot
 retract a request already sent. Cancellation returns focus to the originating row;
 confirmed removal moves an active conversation to another available destination
-(or the neutral Messages page) with a visible sidebar-row focus fallback.
+(or the neutral Messages page) with a visible sidebar-row focus fallback. Last-row
+completion uses the explicit version-1 Channels route `"empty"`, which bypasses
+saved/default conversation selection, including after reload. Retained archived or
+hidden membership cannot reopen itself through that destination; intentional exact
+navigation to a hidden DM remains supported.
 
 ## Performance and correctness carried from Astra
 

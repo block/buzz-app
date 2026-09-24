@@ -276,3 +276,72 @@ test("typed delete confirmation purges the selected channel and survives reload"
   ]);
   expect(app.report.unexpected).toEqual([]);
 });
+
+// Last-row removal crosses sidebar/page ownership. Keep retained membership in
+// the fixture so an ordinary saved/first-channel fallback cannot look correct.
+for (const action of ["archive", "hide"]) {
+  test.describe(`last visible row: ${action}`, () => {
+    const channel = "11111111-1111-4111-8111-111111111111";
+    const dm = "22222222-2222-4222-8222-222222222222";
+    const id = action === "archive" ? channel : dm;
+    const label =
+      action === "archive" ? "Archive channel" : "Hide conversation";
+    test.use({
+      lifecycleVisibility: {
+        archived: ["alpha", "beta", ...(action === "hide" ? [channel] : [])],
+        hidden: action === "archive" ? [dm] : [],
+      },
+    });
+    test("completion stays neutral with archived and hidden membership, including reload", async ({
+      page,
+      app,
+    }) => {
+      await page.goto(app.origin);
+      await page
+        .getByRole("button", { name: "Messages", exact: true })
+        .first()
+        .click();
+      const sidebar = page.getByRole("navigation", {
+        name: "Subscribed channels",
+      });
+      const rows = sidebar.locator("button[data-channel-id]");
+      await expect(rows).toHaveCount(1);
+      const row = sidebar.locator(`button[data-channel-id="${id}"]`);
+      await row.click();
+      const composer = page.getByRole("textbox", { name: /^Message #/ });
+      await expect(composer).toBeVisible();
+      const composerName = await composer.getAttribute("aria-label");
+      const exactUrl = page.url();
+      await row.click({ button: "right" });
+      await page.getByRole("menuitem", { name: label, exact: true }).click();
+      await page
+        .getByRole("dialog")
+        .getByRole("button", { name: label, exact: true })
+        .click();
+      await expect(page.getByRole("dialog")).toHaveCount(0);
+      await expect(
+        page.getByText("Select a channel to read it.", { exact: true }),
+      ).toBeVisible();
+      await expect(rows).toHaveCount(0);
+      await expect(composer).toHaveCount(0);
+      await page.reload();
+      await expect(
+        page.getByText("Select a channel to read it.", { exact: true }),
+      ).toBeVisible();
+      await expect(rows).toHaveCount(0);
+      await expect(composer).toHaveCount(0);
+      expect(
+        app.report.lifecyclePublications.map((event) => event.kind),
+      ).toEqual([action === "archive" ? 9002 : 41012]);
+      if (action === "hide") {
+        // Empty intent must not turn visibility into an access restriction.
+        await page.goto(exactUrl);
+        await expect(
+          page.getByRole("textbox", { name: composerName, exact: true }),
+        ).toBeVisible();
+        await expect(rows).toHaveCount(0);
+      }
+      expect(app.report.unexpected).toEqual([]);
+    });
+  });
+}

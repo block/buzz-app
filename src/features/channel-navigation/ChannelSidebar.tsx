@@ -532,6 +532,7 @@ function ReadySidebar({
                   kind: "page",
                   pluginId: "buzz.channels",
                   pageId: "channels",
+                  route: { version: 1, params: "empty" },
                 });
               }
             }

@@ -16,6 +16,9 @@ vi.mock("../bundled", async () => ({
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  Channel: class {
+    constructor(public onmessage: (response: unknown) => void) {}
+  },
 }));
 let services: AppServices;
 let enabled: boolean;
@@ -28,6 +31,9 @@ beforeEach(() => {
   vi.mocked(invoke)
     .mockReset()
     .mockImplementation(async (cmd, args) => {
+      // Desktop startup drains OS deep links; none arrive in this fixture.
+      if (cmd === "deep_link_take") return [];
+      if (cmd === "deep_link_watch") return undefined;
       if (cmd === "agent_control_snapshot" || cmd === "agent_control_action")
         return { agents: [], runtimeAvailable: false, importAvailable: false };
       if (cmd === "plugin_change")

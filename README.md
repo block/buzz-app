@@ -55,6 +55,16 @@ browser. It uses port 1442 and does not start the desktop app or live relay brok
 If that port is occupied, choose another with `just design --port 1444`.
 Press Ctrl+C to stop the server.
 
+### OS deep links
+
+Desktop builds register the `buzz://` scheme. Opening a copied
+`buzz://open?target=…` link or a legacy `buzz://message?channel=…&id=…` link
+outside the app focuses Buzz and opens that conversation, on a cold start too.
+macOS only routes the scheme to a bundled app, so test with
+`bin/pnpm tauri build --debug --bundles app`; Windows and Linux dev builds register
+themselves at launch. See [OS deep links](docs/deep-links.md) for per-platform steps
+and limits.
+
 ## Relay channels
 
 Live development currently requires **an existing Buzz account in the OS credential

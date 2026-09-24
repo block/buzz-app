@@ -355,8 +355,11 @@ navigation admission and session ownership checks. Message targets open their
 verified thread, reveal the exact message after bounded history loading, and only
 then acknowledge navigation. Supplied root hints do not override verified events.
 Missing or unavailable messages report failure. Ingress adapters must reuse this
-validated target/completion lifecycle. Native OS deep-link and notification-click
-ingress remain outside this slice.
+validated target/completion lifecycle; notification clicks
+([notifications](notifications.md)) and OS-delivered `buzz://` links on desktop
+([OS deep links](deep-links.md)) do. Legacy OS links bind to the selected
+community; an OS link that does not parse fails `invalid-target` through the same
+failure notice rather than being dropped.
 
 Drafts, reading geometry and sidebar view intent remain domain-owned, outside
 visit history. Saved sidebar preferences live in the relay session, not in the

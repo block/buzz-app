@@ -281,6 +281,15 @@ export function createNavigationController(
         effects.push(() => operation.controller.abort());
       });
     },
+    /** Record a host ingress that produced no destination, such as an OS link that
+     * does not parse. Nothing is pushed: the current visit is kept and Retry re-runs it. */
+    fail(reason: OpenFailure) {
+      transaction(() => {
+        if (disposed) return;
+        void start();
+        finish(active, { status: "failed", reason });
+      });
+    },
     dispose() {
       transaction(() => {
         if (disposed) return;

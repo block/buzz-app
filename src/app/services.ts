@@ -6,6 +6,7 @@ import { bindAgentMentions } from "../features/agents/mention-wake";
 import { provideAgentControl } from "../features/agents/control-service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
+import { bindDeepLinks } from "../features/navigation/deep-links";
 import { NotificationsService } from "../features/notifications/service";
 import {
   bindMessageNotifications,
@@ -57,6 +58,8 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
+  // OS buzz:// links; a no-op in the browser build.
+  ctx.effect(() => bindDeepLinks(navigationHost, communities));
   if (notifications.indicator.available)
     ctx.effect(() =>
       bindUnreadIndicator(communities, notifications.indicator.setUnread),

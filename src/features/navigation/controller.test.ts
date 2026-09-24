@@ -107,6 +107,44 @@ describe("navigation attempts over one history driver", () => {
     expect(nav.snapshot()).toBe(before);
     expect(before.attempt.signal.aborted).toBe(false);
   });
+  it("records a host ingress failure against the current visit without moving or inventing one", async () => {
+    const { host, navigation: nav } = setup();
+    const opened = nav.open(settings);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(opened).resolves.toEqual({ status: "opened" });
+    const entry = nav.snapshot().entry;
+    const listener = vi.fn();
+    nav.subscribe(listener);
+    host.fail("invalid-target");
+    expect(nav.snapshot()).toMatchObject({
+      status: "failed",
+      reason: "invalid-target",
+      entry,
+      canGoBack: true,
+    });
+    expect(nav.snapshot().attempt.signal.aborted).toBe(true);
+    expect(listener).toHaveBeenCalled();
+    // Retry re-runs the kept visit; the failure does not linger on it.
+    const retry = nav.retry();
+    expect(nav.snapshot().status).toBe("opening");
+    expect(nav.snapshot().reason).toBeUndefined();
+    expect(nav.snapshot().entry).toBe(entry);
+    host.complete(nav.snapshot().attempt, { status: "opened" });
+    await expect(retry).resolves.toEqual({ status: "opened" });
+    // A failure while another open is pending supersedes it like any new intent.
+    const pending = nav.open(page);
+    host.fail("unavailable");
+    await expect(pending).resolves.toEqual({ status: "superseded" });
+    expect(nav.snapshot()).toMatchObject({
+      status: "failed",
+      reason: "unavailable",
+    });
+    expect(nav.snapshot().entry.target).toEqual(page);
+    const settled = nav.snapshot();
+    host.dispose();
+    host.fail("unavailable");
+    expect(nav.snapshot()).toBe(settled);
+  });
   it("keeps separate visit identities for the same destination; replace doesn't push", () => {
     const { navigation: nav } = setup();
     void nav.open(settings);

@@ -1,5 +1,6 @@
 mod agent_models;
 mod agents;
+mod deep_links;
 mod dock;
 mod notifications;
 mod terminal;
@@ -13,6 +14,7 @@ use buzzodz_plugins::{
     imports::{prepare_folder, prepare_git, PreparedImport, Preview},
     Catalog, InstallationResult, Manager,
 };
+use deep_links::{deep_link_take, deep_link_watch, DeepLinks};
 use dock::{dock_permission, unread_indicator_set};
 use notifications::{notification_show, Notifications};
 #[cfg(target_os = "macos")]
@@ -345,6 +347,8 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
         agent_models_run,
         title_bar_double_click,
         notification_show,
+        deep_link_take,
+        deep_link_watch,
         dock_permission,
         unread_indicator_set,
         terminal_create_owner,
@@ -359,9 +363,17 @@ fn commands<R: tauri::Runtime>() -> impl Fn(tauri::ipc::Invoke<R>) -> bool + Sen
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = tauri::Builder::default()
+        // Single instance comes first, as its documentation requires. Its deep-link
+        // feature forwards a second launch's buzz:// argument to the running app
+        // through the deep-link plugin; this callback only foregrounds the window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            deep_links::focus_main(app);
+        }))
+        .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
+            deep_links::setup(app.handle());
             // Only app-owned storage is created. Preview uses the OS-resolved legacy
             // parent, never a browser-supplied path or a different environment source.
             let paths = (|| {
@@ -401,6 +413,7 @@ pub fn run() {
         .manage(Imports::default())
         .manage(Terminals::default())
         .manage(Notifications::default())
+        .manage(DeepLinks::default())
         .manage(PluginManager(Manager::from_env()))
         .invoke_handler(commands())
         .build(tauri::generate_context!())

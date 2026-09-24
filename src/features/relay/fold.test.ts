@@ -95,6 +95,12 @@ describe("message fold", () => {
     expect(rows.find((row) => row.id === broadcast.id)?.threadRootId).toBe(
       a.id,
     );
+    expect(rows.find((row) => row.id === broadcast.id)?.replyParentId).toBe(
+      a.id,
+    );
+    expect(
+      rows.find((row) => row.id === rootOnly.id)?.replyParentId,
+    ).toBeUndefined();
     expect(rows.find((row) => row.id === a.id)?.threadRootId).toBeUndefined();
     expect(
       rows.find((row) => row.id === rootOnly.id)?.threadRootId,

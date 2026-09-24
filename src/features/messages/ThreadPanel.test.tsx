@@ -492,6 +492,7 @@ function messagesHarness(
   hooks.states = [];
   let scrollTop = 0;
   const element = {
+    querySelectorAll: () => [],
     clientHeight: 600,
     scrollHeight: 4000,
     get scrollTop() {

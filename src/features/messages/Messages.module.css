@@ -2,6 +2,7 @@
 
 /* Reusable conversation components; plugins own placement and surrounding layout. */
 .thread {
+  container-type: inline-size;
   min-width: 0;
   min-height: 0;
   overflow: hidden;
@@ -1301,4 +1302,70 @@ button.mediaPreview {
 html[data-keyboard-navigation] .rawDiff:focus-visible {
   outline: 2px solid var(--border-focus);
   outline-offset: -2px;
+}
+
+.replyBranchPanel {
+  position: relative;
+  margin-inline-start: var(--space-3);
+  padding-inline-start: var(--space-8);
+  border-inline-start: 1px solid var(--border-standard);
+}
+.replyBranchRail {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: calc(-1 * var(--space-3));
+  width: var(--space-6);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.replyBranchPanel:has(> .replyBranchRail:hover),
+.replyBranchPanel:has(> .replyBranchRail:focus-visible) {
+  border-color: var(--border-prominent);
+}
+.replyBranchPanel:has(> .replyBranchRail:active) {
+  border-color: var(--border-focus);
+}
+.replyBranch[data-depth="6"] > .replyBranchPanel {
+  margin-inline-start: 0;
+  padding-inline-start: 0;
+}
+.replyBranch[data-depth="6"] > .replyBranchPanel > .replyBranchRail {
+  display: none;
+}
+.replyContext {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--text-standard);
+  background: var(--surface-inset);
+  border-radius: var(--radius-control);
+  font-size: var(--text-caption);
+  line-height: var(--text-caption--line-height);
+  letter-spacing: var(--text-caption--letter-spacing);
+}
+.replyContext > div {
+  min-width: 0;
+  flex: 1;
+}
+.replyContext p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-subtle);
+}
+@container (max-width: 480px) {
+  .replyBranchPanel {
+    padding-inline-start: var(--space-4);
+  }
+  .replyBranch[data-depth="3"] .replyBranchPanel {
+    margin-inline-start: 0;
+    padding-inline-start: 0;
+  }
+  .replyBranch[data-depth="3"] .replyBranchRail {
+    display: none;
+  }
 }

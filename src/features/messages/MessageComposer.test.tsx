@@ -2372,3 +2372,21 @@ it("uses the full channel choice set for one selected chip and follows membershi
   h.unmount();
   names.dispose();
 });
+
+it("retargets within a thread without losing its draft and sends the selected parent", () => {
+  const h = mount({ threadRootId: "root" });
+  h.fill("keep this draft");
+  const input = h.input();
+  h.retarget({ threadRootId: "root", replyParentId: "parent" });
+  expect(h.input()).toBe(input);
+  expect(h.input()).toHaveValue("keep this draft");
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.messages.reply).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "root",
+    "keep this draft",
+    [],
+    [],
+    "parent",
+  );
+});

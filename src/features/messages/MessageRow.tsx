@@ -58,7 +58,7 @@ export type MessageRowProps = {
   onOpenThread?:
     | ((messageId: string, threadRootId: string, intent?: "reply") => void)
     | undefined;
-  onReply?: (() => void) | undefined;
+  onReply?: ((messageId: string) => void) | undefined;
   quickControls?: ReactNode;
   overflowItems?: ReactNode;
   mediaMode?: "inline" | "thread";
@@ -233,7 +233,7 @@ export const MessageRow = memo(function MessageRow({
               menuTriggerRef={menuTrigger}
               messageId={row.id}
               onReply={
-                onReply ??
+                (onReply ? () => onReply(row.id) : undefined) ??
                 (onOpenThread
                   ? () =>
                       onOpenThread(

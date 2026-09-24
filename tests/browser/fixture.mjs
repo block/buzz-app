@@ -1453,7 +1453,17 @@ export const test = base.extend({
             throw new Error("Typing fixture requires production broker");
           const event = sign(
             kind,
-            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
+            [
+              ["h", channel],
+              ...(root
+                ? parent && parent !== root
+                  ? [
+                      ["e", root, "", "root"],
+                      ["e", parent, "", "reply"],
+                    ]
+                  : [["e", root, "", "reply"]]
+                : []),
+            ],
             kind === 20002 ? "" : "Fixture completion",
             typingKeys[author],
             Math.floor(Date.now() / 1000) - age,
@@ -1518,11 +1528,29 @@ export const test = base.extend({
           if (deliver) relay.publish("primary", event);
           return event;
         },
-        append(community, channel, content, deliver = true, own = true, root) {
+        append(
+          community,
+          channel,
+          content,
+          deliver = true,
+          own = true,
+          root,
+          parent,
+        ) {
           const history = histories.get(`${community}/${channel}`);
           const event = sign(
             9,
-            [["h", channel], ...(root ? [["e", root, "", "reply"]] : [])],
+            [
+              ["h", channel],
+              ...(root
+                ? parent && parent !== root
+                  ? [
+                      ["e", root, "", "root"],
+                      ["e", parent, "", "reply"],
+                    ]
+                  : [["e", root, "", "reply"]]
+                : []),
+            ],
             content ?? `Live append ${history.length}`,
             own ? userKey : peerKey,
             (history.at(-1)?.created_at ?? 1700000900) + 1,

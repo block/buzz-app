@@ -65,17 +65,21 @@ export function createMessages(
       content: string,
       mentions: readonly string[] = [],
       attachments: readonly UploadedAttachment[] = [],
+      parentId: string = rootId,
     ) {
       if (!channelId) throw new Error("A channel is required");
       if (!/^[0-9a-f]{64}$/.test(rootId))
         throw new Error("A valid thread root is required");
+      if (!/^[0-9a-f]{64}$/.test(parentId))
+        throw new Error("A valid reply parent is required");
       const message = attachmentMessage(content, attachments, relayOrigin);
       return writer(9, channelId).send({
         kind: 9,
         content: text(message.content),
         tags: [
           ["h", channelId],
-          ["e", rootId, "", "reply"],
+          ...(parentId === rootId ? [] : [["e", rootId, "", "root"]]),
+          ["e", parentId, "", "reply"],
           ...mentionTags(channelId, mentions),
           ...emojiTags(content),
           ...message.tags,

@@ -87,7 +87,7 @@ for (const scope of ["channel", "thread"]) {
         .getByRole("button", { name: /^View thread:/ })
         .click();
       await expect(
-        page.getByText("28 replies shown", { exact: true }),
+        page.getByText("28 replies loaded", { exact: true }),
       ).toBeVisible();
     } else {
       await end(page);

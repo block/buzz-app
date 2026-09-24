@@ -276,6 +276,7 @@ export function foldMessages(
         id: event.id,
         channelId,
         threadRootId: threadReference(event)?.rootId,
+        replyParentId: threadReference(event)?.parentId,
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: projected.content,

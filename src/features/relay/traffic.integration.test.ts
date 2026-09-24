@@ -643,58 +643,81 @@ it("reconnect cancels stalled reads before refreshing owned views and ignores th
   );
 });
 
-it("reuses the durable outbox for immediate thread replies, failed-row retry and same-ID echo without leaking into the channel", async () => {
-  const root = message(other, "c", "root", 1);
-  const h = fixture([root]);
-  await h.open();
-  const thread = h.session.thread("c", root.id);
-  const id = h.session.messages.reply("c", root.id, "  reply  ");
-  expect(thread.snapshot().replies).toMatchObject([
-    { id, content: "reply", delivery: "sending" },
-  ]);
-  expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
-    root.id,
-  ]);
-  const event = await h.sign();
-  expect(event.tags).toEqual([
-    ["h", "c"],
-    ["e", root.id, "", "reply"],
-    ["client-id", expect.any(String)],
-  ]);
-  const publication = h.publications.shift();
-  assert.exists(publication);
-  publication.result.reject(new PublishRejected("denied"));
-  await flush();
-  expect(thread.snapshot().replies).toMatchObject([
-    { id, delivery: "failed", deliveryError: "denied" },
-  ]);
-  h.session.messages.retry(id);
-  expect(thread.snapshot().replies).toMatchObject([
-    { id, delivery: "sending" },
-  ]);
-  await flush();
-  expect(h.signings).toHaveLength(0); // Retry reuses the persisted signature.
-  expect(h.publications[0]?.event).toEqual(event);
-  h.emit([event]);
-  expect(thread.snapshot().replies).toHaveLength(1);
-  expect(thread.snapshot().replies[0]?.id).toBe(id);
-  expect(h.session.outbox?.snapshot()).toHaveLength(0);
-  expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
-    root.id,
-  ]);
-  h.publications.shift()?.result.resolve();
-  await flush();
-  const editId = h.session.messages.edit(id, "edited", id);
-  expect(thread.snapshot().replies[0]?.content).toBe("edited");
-  await h.sign();
-  const edit = h.publications.shift();
-  assert.exists(edit);
-  edit.result.reject(new PublishRejected("edit denied"));
-  await flush();
-  expect(
-    h.session.outbox?.snapshot().find((item) => item.event.id === editId)
-      ?.delivery,
-  ).toBe("failed");
-  expect(thread.snapshot().replies[0]?.content).toBe("reply");
-  thread.dispose();
-});
+it.each([false, true])(
+  "reuses the durable outbox for reply ancestry, retry and echo without channel leaks (nested=%s)",
+  async (nested) => {
+    const root = message(other, "c", "root", 1);
+    const h = fixture([root]);
+    await h.open();
+    const thread = h.session.thread("c", root.id);
+    const parentId = nested ? "a".repeat(64) : root.id;
+    // A parent outside recent history must not prevent a valid targeted send.
+    const id = h.session.messages.reply(
+      "c",
+      root.id,
+      "  reply  ",
+      [],
+      [],
+      parentId,
+    );
+    expect(thread.snapshot().replies).toMatchObject([
+      {
+        id,
+        content: "reply",
+        delivery: "sending",
+        threadRootId: root.id,
+        replyParentId: parentId,
+      },
+    ]);
+    expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
+      root.id,
+    ]);
+    const event = await h.sign();
+    expect(event.tags).toEqual([
+      ["h", "c"],
+      ...(nested ? [["e", root.id, "", "root"]] : []),
+      ["e", parentId, "", "reply"],
+      ["client-id", expect.any(String)],
+    ]);
+    const publication = h.publications.shift();
+    assert.exists(publication);
+    publication.result.reject(new PublishRejected("denied"));
+    await flush();
+    expect(thread.snapshot().replies).toMatchObject([
+      { id, delivery: "failed", deliveryError: "denied" },
+    ]);
+    h.session.messages.retry(id);
+    expect(thread.snapshot().replies).toMatchObject([
+      { id, delivery: "sending" },
+    ]);
+    await flush();
+    expect(h.signings).toHaveLength(0); // Retry reuses the persisted signature.
+    expect(h.publications[0]?.event).toEqual(event);
+    h.emit([event]);
+    expect(thread.snapshot().replies).toHaveLength(1);
+    expect(thread.snapshot().replies[0]?.id).toBe(id);
+    expect(h.session.outbox?.snapshot()).toHaveLength(0);
+    expect(h.session.channels.window("c").rows.map((row) => row.id)).toEqual([
+      root.id,
+    ]);
+    h.publications.shift()?.result.resolve();
+    await flush();
+    const editId = h.session.messages.edit(id, "edited", id);
+    expect(thread.snapshot().replies[0]).toMatchObject({
+      content: "edited",
+      threadRootId: root.id,
+      replyParentId: parentId,
+    });
+    await h.sign();
+    const edit = h.publications.shift();
+    assert.exists(edit);
+    edit.result.reject(new PublishRejected("edit denied"));
+    await flush();
+    expect(
+      h.session.outbox?.snapshot().find((item) => item.event.id === editId)
+        ?.delivery,
+    ).toBe("failed");
+    expect(thread.snapshot().replies[0]?.content).toBe("reply");
+    thread.dispose();
+  },
+);

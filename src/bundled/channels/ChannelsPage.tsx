@@ -1,5 +1,7 @@
+import type { AgentControl } from "../../features/agents/control";
 import { useChannelNavigation } from "../../features/channel-navigation/ChannelNavigationState";
 import { newSessionParent } from "../../features/channel-navigation/routes";
+import { ChannelMembersButton } from "./ChannelMembersDialog";
 import { personalGroups } from "../../features/channel-templates/setup";
 import type { TemplateProviders } from "../../features/channel-templates/provider";
 import { OwnedContribution } from "../../plugins/OwnedContribution";
@@ -71,6 +73,7 @@ import { useSidebarPreferences } from "./useSidebarPreferences";
 import styles from "./Channels.module.css";
 
 export function ChannelsPage({
+  agentControl,
   providers,
   extensions,
   relay,
@@ -80,6 +83,7 @@ export function ChannelsPage({
   navigation,
   navigator,
 }: {
+  agentControl?: AgentControl | undefined;
   providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   relay: RelayData;
@@ -124,6 +128,7 @@ export function ChannelsPage({
         </PanelFrame>
       ) : (
         <ChannelWorkspace
+          agentControl={agentControl}
           providers={providers}
           extensions={extensions}
           key={`${session.scope ?? "disconnected"}:${session.generation}`}
@@ -143,6 +148,7 @@ export function ChannelsPage({
 }
 
 function ChannelWorkspace({
+  agentControl,
   providers,
   extensions,
   queries,
@@ -155,6 +161,7 @@ function ChannelWorkspace({
   navigator,
   viewer,
 }: {
+  agentControl?: AgentControl | undefined;
   providers: TemplateProviders;
   extensions?: ConversationExtensions | undefined;
   companion?: ReactNode;
@@ -872,6 +879,14 @@ function ChannelWorkspace({
                   }
                   actions={
                     <>
+                      {current && (
+                        <ChannelMembersButton
+                          key={current.id}
+                          session={queries}
+                          channelId={current.id}
+                          control={agentControl}
+                        />
+                      )}
                       {drawer.launchers}
                       <IconButton
                         ref={settingsTrigger}

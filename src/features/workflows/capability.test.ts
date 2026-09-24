@@ -380,6 +380,66 @@ it("fresh saved configuration never resolves an unknown manual run", async () =>
   expect(h.capability.operations.snapshot()[0]?.outcome).toBe("unknown");
 });
 
+it("a configuration command invalidates the overview, and an older in-flight read cannot repopulate it", async () => {
+  const h = setup();
+  const view = h.capability.definitions([channelId]);
+  await view.refresh();
+  expect(h.capability.definitions([channelId]).snapshot().status).toBe("ready");
+  let finish!: (events: RelayEvent[]) => void;
+  h.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve;
+      }),
+  );
+  const oldRead = view.refresh();
+  await flush();
+  h.capability.save({ channelId, yaml, existing: h.definition });
+  await flush();
+  expect(h.capability.definitions([channelId]).snapshot().status).toBe("idle");
+  finish([]);
+  await oldRead;
+  expect(h.capability.definitions([channelId]).snapshot().status).toBe("idle");
+  await view.refresh();
+  expect(h.capability.definitions([channelId]).snapshot().status).toBe("ready");
+  h.settle(`response:${JSON.stringify({ workflow_id: id })}`);
+  await flush();
+  expect(h.capability.definitions([channelId]).snapshot().status).toBe("idle");
+});
+
+it("post-save refresh replaces a pre-save read instead of keeping the editor on an old revision", async () => {
+  const h = setup();
+  let finishOld!: (events: RelayEvent[]) => void;
+  h.read.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finishOld = resolve;
+      }),
+  );
+  const view = h.capability.definitions(channelId);
+  const oldRead = view.refresh();
+  await flush();
+  const operation = h.capability.save({
+    channelId,
+    yaml,
+    existing: h.definition,
+  });
+  await flush();
+  const event = h.publish.mock.calls[0]?.[0];
+  if (!event) throw new Error("missing publication");
+  h.settle(`response:${JSON.stringify({ workflow_id: id })}`);
+  await flush();
+  h.read.mockResolvedValue([event]);
+  await view.refresh();
+  finishOld([{ ...event, id: h.definition.revision }]);
+  await oldRead;
+  expect(h.read).toHaveBeenCalledTimes(2);
+  expect(view.snapshot()).toMatchObject({
+    status: "ready",
+    data: { items: [{ revision: operation }] },
+  });
+});
+
 it("dismissal cannot unlock an active echoed command", async () => {
   const h = setup();
   const operation = h.capability.trigger(h.definition);

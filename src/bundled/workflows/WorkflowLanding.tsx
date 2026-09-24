@@ -49,11 +49,6 @@ const ICONS: Record<WorkflowCardIcon, typeof LightningIcon> = {
   workflow: LightningIcon,
 };
 
-const EMPTY_DEFINITIONS: WorkflowDefinitions = Object.freeze({
-  items: Object.freeze([]),
-  partial: false,
-});
-
 type DefinitionsSnapshot = ReturnType<
   WorkflowView<WorkflowDefinitions>["snapshot"]
 >;
@@ -93,119 +88,28 @@ function useLandingDefinitions(
   refreshRequest: number,
   operationRefreshKey: string,
 ) {
-  const [snapshots, setSnapshots] = useState<
-    Readonly<Record<string, DefinitionsSnapshot>>
-  >({});
-  const channelIdsKey = channels.map((channel) => channel.id).join(":");
+  const channelIdsKey = channels
+    .map((channel) => channel.id)
+    .sort()
+    .join(":");
   const channelIds = useMemo(
     () => (channelIdsKey ? channelIdsKey.split(":") : []),
     [channelIdsKey],
   );
-  const anchorChannelId = channelIds[0] ?? "";
-  const { snapshot: anchorSnapshot, refresh: refreshAnchor } = useWorkflowView(
+  const view = useWorkflowView(
     useCallback(
-      () => capability.definitions(anchorChannelId),
-      [anchorChannelId, capability],
+      () => capability.definitions(channelIds),
+      [channelIds, capability],
     ),
   );
-  const readEpoch = useRef(0);
-
+  const refreshKey = `${refreshRequest}:${operationRefreshKey}`;
+  const previousRefreshKey = useRef(refreshKey);
   useEffect(() => {
-    if (
-      anchorSnapshot?.status !== "idle" &&
-      anchorSnapshot?.status !== "unavailable"
-    )
-      return;
-    readEpoch.current++;
-    setSnapshots({});
-  }, [anchorSnapshot?.status]);
-
-  useEffect(() => {
-    void refreshRequest;
-    void operationRefreshKey;
-    const epoch = ++readEpoch.current;
-    let cancelled = false;
-    let activeView: WorkflowView<WorkflowDefinitions> | undefined;
-    const remainingChannelIds = channelIds.slice(1);
-    const activeIds = new Set(remainingChannelIds);
-    setSnapshots((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([channelId]) =>
-          activeIds.has(channelId),
-        ),
-      ),
-    );
-    void refreshAnchor();
-
-    const read = async () => {
-      for (const channelId of remainingChannelIds) {
-        if (cancelled || readEpoch.current !== epoch) return;
-        setSnapshots((current) =>
-          current[channelId]
-            ? current
-            : {
-                ...current,
-                [channelId]: {
-                  status: "loading",
-                  data: EMPTY_DEFINITIONS,
-                },
-              },
-        );
-        let view: WorkflowView<WorkflowDefinitions> | undefined;
-        try {
-          view = capability.definitions(channelId);
-          activeView = view;
-          await view.refresh();
-          if (cancelled || readEpoch.current !== epoch) return;
-          const snapshot = view.snapshot();
-          setSnapshots((current) => ({
-            ...current,
-            [channelId]: snapshot,
-          }));
-        } catch {
-          if (cancelled || readEpoch.current !== epoch) return;
-          setSnapshots((current) => ({
-            ...current,
-            [channelId]: {
-              status: "error",
-              data: EMPTY_DEFINITIONS,
-              error:
-                "Workflow read unavailable. Retry; this is not proof of deletion.",
-            },
-          }));
-        } finally {
-          view?.dispose();
-          if (activeView === view) activeView = undefined;
-        }
-      }
-    };
-    void read();
-    return () => {
-      cancelled = true;
-      readEpoch.current++;
-      activeView?.dispose();
-    };
-  }, [
-    capability,
-    channelIds,
-    operationRefreshKey,
-    refreshAnchor,
-    refreshRequest,
-  ]);
-
-  if (
-    anchorSnapshot?.status === "idle" ||
-    anchorSnapshot?.status === "unavailable"
-  )
-    return Object.fromEntries(
-      channelIds.map((channelId) => [
-        channelId,
-        { status: anchorSnapshot.status, data: EMPTY_DEFINITIONS },
-      ]),
-    );
-  return anchorSnapshot
-    ? { ...snapshots, [anchorChannelId]: anchorSnapshot }
-    : snapshots;
+    if (previousRefreshKey.current === refreshKey) return;
+    previousRefreshKey.current = refreshKey;
+    void view.refresh();
+  }, [refreshKey, view.refresh]);
+  return view;
 }
 
 function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
@@ -379,7 +283,6 @@ function WorkflowChannelCards({
   snapshot,
   viewer,
   onOpen,
-  onRetry,
 }: {
   capability: WorkflowCapability;
   channel: ChannelSummary;
@@ -387,34 +290,10 @@ function WorkflowChannelCards({
   snapshot: DefinitionsSnapshot | undefined;
   viewer: string;
   onOpen: (definition: WorkflowDefinition, channel: ChannelSummary) => void;
-  onRetry: () => void;
 }) {
   const [error, setError] = useState<string | null>(null);
 
-  if (!snapshot || snapshot.status === "loading") {
-    return (
-      <div
-        className="workflow-state-card text-body-sm text-secondary"
-        role="status"
-      >
-        Reading workflows in #{channel.name}…
-      </div>
-    );
-  }
-  if (snapshot.status === "error") {
-    return (
-      <div className="workflow-state-card">
-        <p className="text-body-sm text-danger">
-          {snapshot.error ?? `Workflows in #${channel.name} could not be read.`}
-        </p>
-        <Button size="sm" onClick={onRetry}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
-  if (snapshot.status === "idle" || snapshot.status === "unavailable")
-    return null;
+  if (!snapshot) return null;
 
   return (
     <>
@@ -426,26 +305,23 @@ function WorkflowChannelCards({
           </Button>
         </div>
       )}
-      {snapshot.data.items.map((definition) => {
-        return (
-          <WorkflowCard
-            capability={capability}
-            channel={channel}
-            definition={definition}
-            key={`${definition.owner}:${definition.id}:${definition.revision}`}
-            locked={workflowOperationLocked(operations, definition)}
-            onError={setError}
-            onOpen={onOpen}
-            operations={operations}
-            viewer={viewer}
-          />
-        );
-      })}
-      {snapshot.data.partial && (
-        <div className="workflow-state-card text-body-sm text-secondary">
-          #{channel.name} returned a partial workflow list.
-        </div>
-      )}
+      {snapshot.data.items
+        .filter((definition) => definition.channelId === channel.id)
+        .map((definition) => {
+          return (
+            <WorkflowCard
+              capability={capability}
+              channel={channel}
+              definition={definition}
+              key={`${definition.owner}:${definition.id}:${definition.revision}`}
+              locked={workflowOperationLocked(operations, definition)}
+              onError={setError}
+              onOpen={onOpen}
+              operations={operations}
+              viewer={viewer}
+            />
+          );
+        })}
     </>
   );
 }
@@ -470,7 +346,6 @@ export function WorkflowLanding({
     capability.operations.snapshot,
     capability.operations.snapshot,
   );
-  const [retryRequest, setRetryRequest] = useState(0);
   const operationRefreshKey = operations
     .filter(
       (operation) =>
@@ -479,35 +354,76 @@ export function WorkflowLanding({
     )
     .map((operation) => `${operation.eventId}:${operation.outcome}`)
     .join(":");
-  const snapshots = useLandingDefinitions(
+  const { snapshot, refresh } = useLandingDefinitions(
     capability,
     channels,
-    refreshRequest + retryRequest,
+    refreshRequest,
     operationRefreshKey,
   );
-  return (
-    <div className="workflow-card-grid">
-      <Button
-        aria-label="New workflow"
-        data-workflow-create-card=""
-        disabled={!capability.availability.save || channels.length === 0}
-        onClick={onCreate}
-        variant="ghost"
+  if (
+    !snapshot ||
+    (snapshot.status === "loading" && !snapshot.data.items.length)
+  )
+    return (
+      <div
+        className="workflow-card-grid"
+        role="status"
+        aria-label="Loading workflows"
       >
-        <PlusIcon size={28} weight="bold" aria-hidden="true" />
-      </Button>
-      {channels.map((channel) => (
-        <WorkflowChannelCards
-          capability={capability}
-          channel={channel}
-          key={channel.id}
-          onOpen={onOpen}
-          onRetry={() => setRetryRequest((request) => request + 1)}
-          operations={operations}
-          snapshot={snapshots[channel.id]}
-          viewer={viewer}
-        />
-      ))}
-    </div>
+        {[0, 1, 2, 3].map((index) => (
+          <div
+            key={index}
+            className="workflow-state-card workflow-skeleton"
+            aria-hidden="true"
+          />
+        ))}
+      </div>
+    );
+  if (
+    snapshot.status === "error" ||
+    snapshot.status === "idle" ||
+    snapshot.status === "unavailable"
+  )
+    return (
+      <div className="workflow-page-state">
+        <p role={snapshot.status === "error" ? "alert" : "status"}>
+          {snapshot.error ??
+            (snapshot.status === "unavailable"
+              ? "Workflow access unavailable."
+              : "Refresh to load workflows.")}
+        </p>
+        {snapshot.status !== "unavailable" && (
+          <Button onClick={() => void refresh()}>Retry</Button>
+        )}
+      </div>
+    );
+  return (
+    <>
+      {snapshot.data.partial && (
+        <p className="text-secondary">The workflow list is partial.</p>
+      )}
+      <div className="workflow-card-grid">
+        <Button
+          aria-label="New workflow"
+          data-workflow-create-card=""
+          disabled={!capability.availability.save || channels.length === 0}
+          onClick={onCreate}
+          variant="ghost"
+        >
+          <PlusIcon size={28} weight="bold" aria-hidden="true" />
+        </Button>
+        {channels.map((channel) => (
+          <WorkflowChannelCards
+            capability={capability}
+            channel={channel}
+            key={channel.id}
+            onOpen={onOpen}
+            operations={operations}
+            snapshot={snapshot}
+            viewer={viewer}
+          />
+        ))}
+      </div>
+    </>
   );
 }

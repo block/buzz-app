@@ -66,6 +66,17 @@
   gap: var(--space-4);
   padding: var(--space-5);
 }
+.workflow-skeleton::before,
+.workflow-skeleton::after {
+  content: "";
+  height: var(--space-4);
+  width: 75%;
+  border-radius: var(--radius-control);
+  background: var(--surface-panel);
+}
+.workflow-skeleton::after {
+  width: 45%;
+}
 .buzz-button[data-workflow-card-open] {
   position: absolute;
   z-index: 0;

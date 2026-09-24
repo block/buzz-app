@@ -2,6 +2,8 @@ import { afterEach, expect, it, vi } from "vitest";
 import { createRelaySession } from "../relay/session";
 import type { RelayEvent } from "../relay/events";
 import type { LiveCallbacks } from "../relay/live";
+import type { ReadTransport } from "../relay/transport";
+import { matchesEvent } from "../relay/projection";
 import {
   flush,
   keypair,
@@ -27,7 +29,7 @@ const owners: ReturnType<typeof createRelaySession>[] = [];
 afterEach(() => {
   for (const owner of owners.splice(0)) owner.dispose();
 });
-function setup() {
+function setup(query?: ReadTransport["query"]) {
   const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
   let incoming!: (events: readonly RelayEvent[]) => void;
   let state!: LiveCallbacks["state"];
@@ -40,6 +42,7 @@ function setup() {
   );
   const owner = createRelaySession({
     ...wire.transport,
+    ...(query ? { query } : {}),
     workflows: { runs },
     subscribe(callbacks) {
       incoming = callbacks.receive;
@@ -77,43 +80,150 @@ it("workflow views start lazy and purge to unavailable before any channel/operat
   expect(definitions.snapshot().status).toBe("ready");
   expect(history.snapshot().status).toBe("idle");
 });
-it("authoritative revocation clears all saved and structured data before callbacks, rejects late results and denies fresh views", async () => {
+it.each([false, true])(
+  "authoritative revocation clears saved data before callbacks, rejects late results and denies fresh views (overview=%s)",
+  async (overview) => {
+    const h = setup();
+    h.emit([roster(relay, channelId, [viewer.pubkey], 1)]);
+    const definitions = h.session.workflows.definitions(
+        overview ? [channelId] : channelId,
+      ),
+      history = h.session.workflows.runs(reference);
+    const loading = definitions.refresh();
+    await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+    h.next().respond([definition]);
+    await loading;
+    expect(definitions.snapshot().data.items[0]?.revision).toBe(definition.id);
+    const reread = definitions.refresh();
+    await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+    const latePage = h.next();
+    const runRead = history.refresh();
+    await vi.waitFor(() => expect(h.runs).toHaveBeenCalledTimes(1));
+    const checked = vi.fn(() => {
+      expect(definitions.snapshot()).toMatchObject({
+        status: "unavailable",
+        data: { items: [] },
+      });
+      expect(history.snapshot()).toMatchObject({
+        status: "unavailable",
+        data: { runs: [] },
+      });
+      expect(h.session.workflows.operations.snapshot()).toEqual([]);
+    });
+    definitions.subscribe(checked);
+    history.subscribe(checked);
+    h.session.workflows.operations.subscribe(checked);
+    h.session.channels.subscribeList(checked);
+    h.emit([roster(relay, channelId, [], 2)]);
+    expect(checked).toHaveBeenCalled();
+    expect(h.runs.mock.calls[0]?.[2].aborted).toBe(true);
+    const denied = h.session.workflows.definitions(channelId);
+    expect(denied.snapshot().status).toBe("unavailable");
+    await denied.refresh();
+    expect(h.pending).toHaveLength(0);
+    expect(latePage.signal?.aborted).toBe(true);
+    latePage.respond([definition]);
+    await reread;
+    h.resolveRuns({ runs: [], next: null });
+    await runRead;
+    expect(history.snapshot().status).toBe("unavailable");
+  },
+);
+
+it("overview pages member channels through the session and includes every author", async () => {
   const h = setup();
-  h.emit([roster(relay, channelId, [viewer.pubkey], 1)]);
-  const definitions = h.session.workflows.definitions(channelId),
-    history = h.session.workflows.runs(reference);
-  const loading = definitions.refresh();
-  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
-  h.next().respond([definition]);
-  await loading;
-  expect(definitions.snapshot().data.items[0]?.revision).toBe(definition.id);
-  const runRead = history.refresh();
-  await vi.waitFor(() => expect(h.runs).toHaveBeenCalledTimes(1));
-  const checked = vi.fn(() => {
-    expect(definitions.snapshot()).toMatchObject({
-      status: "unavailable",
-      data: { items: [] },
-    });
-    expect(history.snapshot()).toMatchObject({
-      status: "unavailable",
-      data: { runs: [] },
-    });
-    expect(h.session.workflows.operations.snapshot()).toEqual([]);
+  const outside = "33333333-3333-4333-8333-333333333333";
+  h.emit([
+    roster(relay, channelId, [viewer.pubkey], 1),
+    roster(relay, outside, [], 1),
+  ]);
+  const page = Array.from({ length: 100 }, (_, index) =>
+    signed(relay, {
+      kind: 30620,
+      created_at: 20,
+      content: `Joined channel workflow ${index}`,
+      tags: [
+        ["h", channelId],
+        ["d", `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`],
+      ],
+    }),
+  ).sort((a, b) => a.id.localeCompare(b.id));
+  const shared = signed(relay, {
+    kind: 30620,
+    created_at: 10,
+    content: "Shared workflow",
+    tags: [
+      ["h", channelId],
+      ["d", id],
+    ],
   });
-  definitions.subscribe(checked);
-  history.subscribe(checked);
-  h.session.workflows.operations.subscribe(checked);
-  h.session.channels.subscribeList(checked);
-  h.emit([roster(relay, channelId, [], 2)]);
-  expect(checked).toHaveBeenCalled();
-  expect(h.runs.mock.calls[0]?.[2].aborted).toBe(true);
-  const denied = h.session.workflows.definitions(channelId);
-  expect(denied.snapshot().status).toBe("unavailable");
-  await denied.refresh();
+  const view = h.session.workflows.definitions([channelId]);
+  const loading = view.refresh();
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const first = h.next();
+  expect(first.filters).toEqual([
+    { kinds: [30620], "#h": [channelId], limit: 100 },
+  ]);
+  first.respond(page);
+  await vi.waitFor(() => expect(h.pending).toHaveLength(1));
+  const next = h.next();
+  expect(next.filters).toEqual([
+    {
+      kinds: [30620],
+      "#h": [channelId],
+      limit: 100,
+      until: 20,
+      before_id: page.at(-1)?.id,
+    },
+  ]);
+  next.respond([definition, shared]);
+  await loading;
+  expect(view.snapshot().status).toBe("ready");
+  expect(
+    [...new Set(view.snapshot().data.items.map((row) => row.owner))].sort(),
+  ).toEqual([viewer.pubkey, relay.pubkey].sort());
+  expect(
+    view.snapshot().data.items.every((row) => row.channelId === channelId),
+  ).toBe(true);
+  view.dispose();
+  const returned = h.session.workflows.definitions([channelId]);
+  await returned.refresh({ ifStale: true });
   expect(h.pending).toHaveLength(0);
-  h.resolveRuns({ runs: [], next: null });
-  await runRead;
-  expect(history.snapshot().status).toBe("unavailable");
+  expect(returned.snapshot().data.items).toHaveLength(102);
+});
+
+it("pages large valid workflow configurations within the shared reader's byte budget", async () => {
+  const yaml =
+    "name: Large\nenabled: false\ntrigger:\n  on: message_posted\nsteps:\n  - id: wait\n    action: delay\n    duration: 1s\n#".padEnd(
+      24_000,
+      "x",
+    );
+  const rows = Array.from({ length: 350 }, (_, index) =>
+    signed(viewer, {
+      kind: 30620,
+      created_at: 10,
+      content: yaml,
+      tags: [
+        ["h", channelId],
+        ["d", `22222222-2222-4222-8222-${String(index).padStart(12, "0")}`],
+      ],
+    }),
+  ).sort((a, b) => a.id.localeCompare(b.id));
+  const query = vi.fn<ReadTransport["query"]>(async (filters) =>
+    filters.flatMap((filter) =>
+      rows
+        .filter((event) => matchesEvent(event, filter))
+        .slice(0, filter.limit),
+    ),
+  );
+  const h = setup(query);
+  h.emit([roster(relay, channelId, [viewer.pubkey], 1)]);
+  const view = h.session.workflows.definitions([channelId]);
+  await view.refresh();
+  expect(view.snapshot().status).toBe("ready");
+  expect(view.snapshot().data.items).toHaveLength(350);
+  expect(view.snapshot().data.partial).toBe(false);
+  expect(query).toHaveBeenCalledTimes(4);
 });
 it("regrant cannot resurrect stale history; clear-cache and dispose cancel interest", async () => {
   const h = setup();

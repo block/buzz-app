@@ -422,7 +422,7 @@ test("real session page under StrictMode fences community changes, warns for dir
   expect(errors).toEqual([]);
 });
 
-test("landing bounds workflow reads across more than sixteen channels", async ({
+test("landing reads all member-channel workflows in one request and reuses them after detail", async ({
   page,
 }) => {
   const errors = [];
@@ -435,7 +435,41 @@ test("landing bounds workflow reads across more than sixteen channels", async ({
     .poll(() =>
       page.evaluate(() => window.workflowSessionFixture.definitionQueries()),
     )
-    .toBeGreaterThanOrEqual(17);
+    .toBe(1);
+  await expect(
+    page.getByRole("button", {
+      name: "Open Another author's helper",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "Open Fixture A helper", exact: true })
+    .click();
+  await expect(
+    page.getByRole("region", { name: "Workflow editor", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.definitionQueries()),
+    )
+    .toBe(2);
+  await page.getByRole("button", { name: "Close editor", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "Open Fixture A helper", exact: true }),
+  ).toBeVisible();
+  expect(
+    await page.evaluate(() =>
+      window.workflowSessionFixture.definitionQueries(),
+    ),
+  ).toBe(2);
+  await page
+    .getByRole("button", { name: "Refresh workflows", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.workflowSessionFixture.definitionQueries()),
+    )
+    .toBe(3);
   expect(errors).toEqual([]);
 });
 
@@ -450,18 +484,31 @@ test("landing scan survives channel presentation churn without restarting", asyn
       page.evaluate(() => window.workflowSessionFixture.definitionReadHeld()),
     )
     .toBe(true);
+  await expect(
+    page.getByRole("status", { name: "Loading workflows" }),
+  ).toBeVisible();
+  await expect(page.locator(".workflow-skeleton")).toHaveCount(4);
+  await expect(page.getByText(/Reading workflows in/)).toHaveCount(0);
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        window.workflowSessionFixture.definitionChannelCount(),
+      ),
+    )
+    .toBe(17);
   const startedReads = await page.evaluate(() =>
     window.workflowSessionFixture.definitionQueries(),
   );
-  await page.evaluate(async () => {
-    for (let index = 0; index < 8; index++) {
-      window.workflowSessionFixture.renameFirstChannel();
-      await new Promise((resolve) => setTimeout(resolve, 15));
-    }
-  });
-  await expect(
-    page.getByText("#First channel 8", { exact: true }),
-  ).toBeVisible();
+  await page.getByRole("combobox", { name: "Channel", exact: true }).click();
+  for (let index = 1; index <= 8; index++) {
+    await page.evaluate(() =>
+      window.workflowSessionFixture.renameFirstChannel(),
+    );
+    await expect(
+      page.getByRole("option", { name: `First channel ${index}`, exact: true }),
+    ).toBeVisible();
+  }
+  await page.keyboard.press("Escape");
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionQueries(),
@@ -470,6 +517,18 @@ test("landing scan survives channel presentation churn without restarting", asyn
   await page.evaluate(() =>
     window.workflowSessionFixture.releaseDefinitionRead(),
   );
+  await expect(
+    page
+      .getByRole("article")
+      .filter({
+        has: page.getByRole("button", {
+          name: "Open Fixture A helper",
+          exact: true,
+        }),
+      })
+      .getByText("#First channel 8", { exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".workflow-skeleton")).toHaveCount(0);
   await expect
     .poll(() =>
       page.evaluate(() =>

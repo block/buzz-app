@@ -10,6 +10,7 @@ import {
   signed,
 } from "../../features/relay/testing";
 import type { RelayEvent } from "../../features/relay/events";
+import { matchesEvent } from "../../features/relay/projection";
 import { Button } from "../../shared/design-system/ui/Button";
 import { useKeyboardFocusVisibility } from "../../shared/design-system/useKeyboardFocusVisibility";
 import type { LiveCallbacks } from "../../features/relay/live";
@@ -78,6 +79,20 @@ function session(scope: string) {
           }),
         ]),
   ]);
+  if (manyChannels)
+    events.push(
+      signed(authority, {
+        kind: 30620,
+        content: fixtureYaml.replace(
+          "Message helper",
+          "Another author's helper",
+        ),
+        tags: [
+          ["h", fixtureChannel],
+          ["d", "77777777-7777-4777-8777-777777777777"],
+        ],
+      }),
+    );
   activeEvents = events;
   return createRelaySession(
     {
@@ -112,7 +127,9 @@ function session(scope: string) {
           if (
             fixtureParams.has("hold") &&
             !definitionHoldReleased &&
-            filters.some((filter) => filter["#h"]?.includes(secondChannel))
+            filters.some(
+              (filter) => !filter["#h"] || filter["#h"].includes(secondChannel),
+            )
           )
             await new Promise<void>((resolve, reject) => {
               const abort = () => {
@@ -130,15 +147,13 @@ function session(scope: string) {
               signal?.addEventListener("abort", abort, { once: true });
             });
         }
-        return events.filter((event) =>
-          filters.some(
-            (filter) =>
-              (!filter.kinds || filter.kinds.includes(event.kind)) &&
-              (!filter["#h"] ||
-                event.tags.some(
-                  ([k, v]) => k === "h" && v && filter["#h"]?.includes(v),
-                )),
-          ),
+        return filters.flatMap((filter) =>
+          events
+            .filter((event) => matchesEvent(event, filter))
+            .sort(
+              (a, b) => b.created_at - a.created_at || a.id.localeCompare(b.id),
+            )
+            .slice(0, filter.limit),
         );
       },
       subscribe(callbacks) {

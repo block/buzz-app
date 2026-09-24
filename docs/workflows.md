@@ -47,6 +47,23 @@ Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.
 
 Reads begin on UI interest and stop on unmount or access loss; no background poll.
+The overview batches joined channels in groups of at most 128 IDs, using one
+`#h` filter per request, and reads all authors' workflows in 100-event pages.
+Each batch finishes paging before the next starts with a fresh cursor. Unrelated
+channels are excluded by the relay before its result limit. The existing page
+size keeps large valid configurations within the shared reader's 8 MiB response
+budget. Full pages continue with the relay's exact `until`/`before_id` cursor
+so same-timestamp definitions are not skipped. Results
+are restricted to the landing page's member channels, matching the old app.
+Overview paging uses the session's existing verified reader and access enforcement.
+Membership checks, cancellation and access-loss clearing remain in the workflow
+capability.
+Individual channel reads still include other authors and mark a 100-event result
+as partial. The workflow capability retains one overview per session:
+returning within ten seconds reuses it; older results stay
+visible while refreshing. Explicit refresh bypasses reuse. Configuration commands,
+receipts, disconnects, access loss and cache clearing invalidate that snapshot.
+Cold loading shows four neutral skeletons, not one loading tile per channel.
 Transient socket recovery cancels stale reads but retains the draft. Live-session
 commands use the shared socket's result-bearing OK receipt; disconnect after send
 leaves the outcome unknown and never automatically replays the command. The dev broker requires a live owner and matched frontend/host versions; only

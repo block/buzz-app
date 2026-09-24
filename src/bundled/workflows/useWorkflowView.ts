@@ -13,7 +13,7 @@ export function useWorkflowView<T>(create: () => WorkflowView<T>) {
         const owned = create();
         view = owned;
         const stop = owned.subscribe(listener);
-        void owned.refresh();
+        void owned.refresh({ ifStale: true });
         return () => {
           stop();
           owned.dispose();

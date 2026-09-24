@@ -29,7 +29,7 @@ export interface WorkflowView<T> {
     error?: string;
   }>;
   subscribe(listener: () => void): () => void;
-  refresh(): Promise<void>;
+  refresh(options?: { ifStale?: boolean }): Promise<void>;
   dispose(): void;
 }
 
@@ -82,7 +82,10 @@ export type WorkflowAvailability = Readonly<{
 /** Bundled UI contract. No socket, signer, arbitrary HTTP, scheduler or approval writes. */
 export interface WorkflowCapability {
   readonly availability: WorkflowAvailability;
-  definitions(channelId: string): WorkflowView<WorkflowDefinitions>;
+  /** Array reads page all authors' workflows in those member channels and reuse the session snapshot. */
+  definitions(
+    channelId: string | readonly string[],
+  ): WorkflowView<WorkflowDefinitions>;
   runs(
     workflow: WorkflowReference,
     cursor?: WorkflowRunCursor,

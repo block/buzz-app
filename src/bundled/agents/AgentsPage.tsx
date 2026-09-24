@@ -80,6 +80,7 @@ export function AgentsPage({
                       importedId={importedId}
                       control={control}
                       connection={connection}
+                      destination={importDestination}
                     />
                   )
                 }
@@ -106,6 +107,7 @@ function ManagedAgents({
   control,
   connection,
   label,
+  destination,
 }: {
   label(agent: AgentView): string;
   state: AgentControlState;
@@ -113,6 +115,7 @@ function ManagedAgents({
   importedId: string | null;
   control: AgentControl;
   connection: RelaySnapshot;
+  destination: string;
 }) {
   const library = connection.session.agentLibrary;
   const snapshot = useSyncExternalStore(
@@ -158,6 +161,10 @@ function ManagedAgents({
                 state={state}
                 control={control}
                 imported={agent.id === importedId}
+                destination={destination}
+                owner={
+                  connection.status === "ready" ? (connection.viewer ?? "") : ""
+                }
               />
             </AgentCard>
           );

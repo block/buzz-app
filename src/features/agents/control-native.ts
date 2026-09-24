@@ -23,6 +23,12 @@ export function nativeAgentControlHost(): AgentControlHost | null {
         action,
         ...(replayFloor === undefined ? {} : { replayFloor }),
       }),
+    configureHere: (id, resolution) =>
+      invoke("agent_control_use_here", { id, resolution }),
+    localCloneSettings: (id) =>
+      invoke("agent_control_local_clone_settings", { id }),
+    cloneSettings: (source, pubkey) =>
+      invoke("agent_control_clone_settings", { source, pubkey }),
     previewImport: (source, destination) =>
       invoke("agent_control_import_preview", { source, destination }),
     commitImport: (token, ids) =>

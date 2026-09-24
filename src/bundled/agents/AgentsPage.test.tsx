@@ -317,7 +317,7 @@ it("focuses the imported managed identity without starting it", async () => {
     await screen.findByRole("button", { name: "Import Fixture agent" }),
   );
   const notice = await screen.findByText(
-    "Imported, not started. Mention this agent in a channel to start it.",
+    "Imported, not started. Start it when you are ready.",
   );
   const imported = notice.closest("article");
   if (!imported) throw Error("Imported card missing");
@@ -752,9 +752,7 @@ it("credential import keeps real Stop controls reachable without trapping the ed
     });
     await waitFor(() => expect(control.snapshot().busy).toBe(false));
     expect(
-      screen.queryByText(
-        "Imported, not started. Mention this agent in a channel to start it.",
-      ),
+      screen.queryByText("Imported, not started. Start it when you are ready."),
     ).toBeNull();
     await act(async () => control.refresh());
     const imported = control
@@ -1124,5 +1122,53 @@ it("keeps collisions across different cross-community aliases and edits the exac
         }),
       }),
     ),
+  );
+});
+
+it("Use here retries owner confirmation and keeps setup stopped until a separate Start", async () => {
+  const request = vi
+    .spyOn(communityApi, "communityRequest")
+    .mockRejectedValueOnce(new Error("Confirmation unavailable"))
+    .mockResolvedValueOnce({
+      pubkey: "ab".repeat(32),
+      relayUrl: "wss://relay.example.test",
+      owner: "de".repeat(32),
+      signature: "fixture",
+    });
+  const { f } = setup("connected", (fixture) => {
+    Object.assign(fixture.agent, {
+      configured: false,
+      enabled: false,
+      status: "stopped",
+      runningRevision: null,
+    });
+  });
+  const cards = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  const card = cards.find((entry) =>
+    entry.textContent?.includes("wss://relay.example.test"),
+  );
+  if (!card) throw Error("Imported card missing");
+  expect(within(card).getByRole("button", { name: "Start" })).toBeDisabled();
+  fireEvent.click(within(card).getByRole("button", { name: "Use here" }));
+  await within(card).findByText("Confirmation unavailable");
+  expect(f.calls.some((call) => call.action === "configure")).toBe(false);
+  fireEvent.click(within(card).getByRole("button", { name: "Use here" }));
+  await waitFor(() =>
+    expect(within(card).getByRole("button", { name: "Start" })).toBeEnabled(),
+  );
+  expect(request).toHaveBeenLastCalledWith(
+    "https://relay.example.test",
+    "resolve-agent-community",
+    { pubkey: f.agent.pubkey, owner: "de".repeat(32), confirmed: true },
+  );
+  expect(f.agent.enabled).toBe(false);
+  expect(
+    f.calls.some((call) => call.action === "start" || call.action === "import"),
+  ).toBe(false);
+  fireEvent.click(within(card).getByRole("button", { name: "Start" }));
+  await waitFor(() =>
+    expect(f.calls.some((call) => call.action === "start")).toBe(true),
   );
 });

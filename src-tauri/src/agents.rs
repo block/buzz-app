@@ -14,8 +14,10 @@ use std::sync::{Arc, Mutex};
 pub(crate) struct Snapshot {
     #[serde(flatten)]
     data: ControlSnapshot,
+    inventory_warnings: Vec<String>,
     import_available: bool,
     create_available: bool,
+    local_inventory_actions: bool,
     default_workspace: String,
     harness_options: Vec<HarnessOption>,
     databricks_defaults: crate::agent_models::Defaults,
@@ -24,8 +26,10 @@ impl Snapshot {
     fn from(data: ControlSnapshot, import_available: bool, workspace: &std::path::Path) -> Self {
         Self {
             data,
+            inventory_warnings: Vec::new(),
             import_available,
             create_available: import_available,
+            local_inventory_actions: true,
             default_workspace: workspace.to_string_lossy().into_owned(),
             harness_options: harness_options(),
             databricks_defaults: crate::agent_models::defaults(),
@@ -175,6 +179,7 @@ fn installed_goose() -> Option<PathBuf> {
 }
 
 struct Host {
+    inventory_warnings: Vec<String>,
     controller: Controller,
     imports: Imports,
     legacy_parent: PathBuf,
@@ -194,7 +199,8 @@ impl Host {
         bundle: Result<RuntimeBundle, String>,
         credentials: Arc<dyn Credentials>,
     ) -> Result<Self, String> {
-        let store = Store::open(root)?;
+        let mut store = Store::open(root)?;
+        let inventory_warnings = store.migrate_legacy(&legacy_parent);
         let controller = Controller::new(
             store,
             credentials.clone(),
@@ -202,6 +208,7 @@ impl Host {
             legacy_parent.join("dev.local.buzz.agent-ownership"),
         );
         Ok(Self {
+            inventory_warnings,
             controller,
             imports: Imports::default(),
             legacy_parent,
@@ -215,9 +222,11 @@ impl Host {
         })
     }
     fn snapshot(&mut self) -> Result<Snapshot, String> {
-        self.controller
-            .snapshot()
-            .map(|data| Snapshot::from(data, cfg!(target_os = "macos"), &self.workspace))
+        self.controller.snapshot().map(|data| {
+            let mut snapshot = Snapshot::from(data, cfg!(target_os = "macos"), &self.workspace);
+            snapshot.inventory_warnings = self.inventory_warnings.clone();
+            snapshot
+        })
     }
     fn action(&mut self, id: &str, action: Action) -> Result<Snapshot, String> {
         self.starts.remove(id);
@@ -457,6 +466,39 @@ async fn start(
         host.controller
             .action_with_key(&id, action, revision, &key, replay_floor)?;
         host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_use_here(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+    resolution: buzz_agent_controller::CommunityResolution,
+) -> Result<Snapshot, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.use_here(&id, resolution)?;
+        host.snapshot()
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_local_clone_settings(
+    state: tauri::State<'_, AgentHost>,
+    id: String,
+) -> Result<buzz_agent_controller::CloneSettings, String> {
+    run(state.inner().clone(), move |host| {
+        host.controller.local_clone_settings(&id)
+    })
+    .await
+}
+#[tauri::command]
+pub(crate) async fn agent_control_clone_settings(
+    state: tauri::State<'_, AgentHost>,
+    source: LegacySource,
+    pubkey: String,
+) -> Result<buzz_agent_controller::CloneSettings, String> {
+    run(state.inner().clone(), move |host| {
+        Imports::clone_settings(source, host.legacy_parent.clone(), &pubkey)
     })
     .await
 }

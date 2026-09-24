@@ -1,22 +1,17 @@
 import { test, expect } from "@playwright/test";
-import { createServer } from "vite";
+import { createServer } from "./vite-server.mjs";
 import react from "@vitejs/plugin-react";
 import { fileURLToPath } from "node:url";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 // Real table geometry/scroll containment, modal portal/focus return and theme
 // rendering need a browser. Patch matrices and plugin failures stay in Vitest.
 test("diff preview expands in both layouts and keeps focus and scroll containment", async ({
   page,
 }) => {
-  const temp = await mkdtemp(join(tmpdir(), "buzz-diffs-"));
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
     envFile: false,
-    cacheDir: join(temp, "vite"),
     plugins: [react()],
     logLevel: "error",
     server: { host: "127.0.0.1", port: 0 },
@@ -80,6 +75,5 @@ test("diff preview expands in both layouts and keeps focus and scroll containmen
     expect(errors).toEqual([]);
   } finally {
     await server.close();
-    await rm(temp, { recursive: true, force: true });
   }
 });

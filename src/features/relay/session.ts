@@ -926,9 +926,38 @@ export function createRelaySession(
     transport?.relayAuthor,
     { read: (filters, settings) => readVerified(filters, settings, false) },
   );
+  // Roster authority invalidates in-flight reads, including account-owned
+  // preferences. Retry those once at the current epoch, never channel content
+  // or a read cancelled by its caller/session/cache clear.
+  const preferenceReader = {
+    async read(filters: readonly ReadFilter[], settings?: ReadOptions) {
+      const epoch = accessEpoch;
+      const cleared = cacheClearEpoch;
+      try {
+        return await verified.read(filters, settings);
+      } catch (error) {
+        if (
+          readErrorKind(error) !== "cancelled" ||
+          lifetime.signal.aborted ||
+          settings?.signal?.aborted ||
+          epoch === accessEpoch ||
+          cleared !== cacheClearEpoch ||
+          !filters.every(
+            (filter) =>
+              filter.kinds?.length === 1 &&
+              filter.kinds[0] === 30078 &&
+              filter.authors?.length === 1 &&
+              filter.authors[0] === transport?.viewer,
+          )
+        )
+          throw error;
+        return verified.read(filters, settings);
+      }
+    },
+  };
   const channelKit = createChannelKit({
     host: transport?.channelKit,
-    reader: verified,
+    reader: preferenceReader,
     outbox: writes?.outbox,
     local: writes?.local,
     ready: writes?.ready,
@@ -951,26 +980,7 @@ export function createRelaySession(
         ...(signal ? [signal] : []),
       ]);
       const legacy = await readSidebarPreferences(
-        {
-          read: async (filters, settings) => {
-            const epoch = accessEpoch;
-            const cleared = cacheClearEpoch;
-            try {
-              return await verified.read(filters, settings);
-            } catch (error) {
-              if (
-                readErrorKind(error) !== "cancelled" ||
-                combined.aborted ||
-                epoch === accessEpoch ||
-                cleared !== cacheClearEpoch
-              )
-                throw error;
-              // Initial roster authority can cancel this account-owned read.
-              // Retry once under current access, sharing the original deadline.
-              return verified.read(filters, settings);
-            }
-          },
-        },
+        preferenceReader,
         transport.viewer,
         decode,
         combined,

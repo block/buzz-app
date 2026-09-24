@@ -7,7 +7,7 @@ import {
   type KitRecord,
 } from "../channel-templates/model";
 import { matchesEvent } from "./projection";
-import { keypair, signed } from "./testing";
+import { flush, keypair, roster, scriptedTransport, signed } from "./testing";
 import type { ReadFilter, RelayEvent } from "./events";
 import type { SidebarPreferences } from "./sidebar-preferences";
 
@@ -255,3 +255,54 @@ it("preserves the personal schema limits and restores placement after a failed c
     f.dispose();
   }
 });
+
+it("retries a personal catalog read cancelled by initial roster authority", async () => {
+  const viewer = keypair(),
+    relay = keypair();
+  const wire = scriptedTransport(viewer.pubkey, relay.pubkey);
+  const owner = createRelaySession({
+    ...wire.transport,
+    channelKit: { decode: async () => [], prepare: async () => "" },
+  });
+  try {
+    const catalog = owner.session.channelKit.refresh();
+    await flush();
+    const interrupted = wire.next();
+    expect(interrupted.filters[0]?.["#t"]).toEqual([KIT_TAG]);
+    owner.session.channels.ensureList();
+    await flush();
+    wire.next().respond([roster(relay, channel, [viewer.pubkey])]);
+    await flush();
+    expect(interrupted.signal?.aborted).toBe(true);
+    const retry = wire.pending.find((entry) => entry.filters[0]?.["#t"]);
+    expect(retry?.filters).toEqual(interrupted.filters);
+    for (const entry of wire.pending.splice(0)) entry.respond([]);
+    await catalog;
+    expect(owner.session.channelKit.snapshot().status).toBe("ready");
+  } finally {
+    owner.dispose();
+  }
+});
+
+it.each(["clearCache", "dispose"] as const)(
+  "does not retry a personal catalog read cancelled by %s",
+  async (action) => {
+    const wire = scriptedTransport(keypair().pubkey, keypair().pubkey);
+    const owner = createRelaySession({
+      ...wire.transport,
+      channelKit: { decode: async () => [], prepare: async () => "" },
+    });
+    try {
+      const catalog = owner.session.channelKit.refresh();
+      await flush();
+      const interrupted = wire.next();
+      owner[action]();
+      await catalog;
+      await flush();
+      expect(interrupted.signal?.aborted).toBe(true);
+      expect(wire.pending).toHaveLength(0);
+    } finally {
+      owner.dispose();
+    }
+  },
+);

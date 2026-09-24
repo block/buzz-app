@@ -56,6 +56,20 @@ it("shows the CLI login guidance for a missing credential", async () => {
   expect(screen.getByText(/bl auth login/)).toBeInTheDocument();
 });
 
+it("shows environment configuration guidance when no BuilderLab URL is set", async () => {
+  vi.mocked(invoke).mockResolvedValue({ status: "notConfigured" });
+  render(<BuilderLabSettings />);
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "BuilderLab is not configured",
+    ),
+  );
+  expect(
+    screen.getByText(/environment used to launch the desktop app/),
+  ).toHaveTextContent("BUILDERLAB_URL");
+  expect(screen.queryByText(/bl auth login/)).toBeNull();
+});
+
 it("does not claim login when native configuration fails", async () => {
   vi.mocked(invoke).mockResolvedValue({
     status: "error",

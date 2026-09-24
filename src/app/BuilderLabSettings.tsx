@@ -60,7 +60,15 @@ export function BuilderLabSettings({ active = true }: { active?: boolean }) {
         <p role="status">Checking BuilderLab login…</p>
       ) : state.status === "available" ? (
         <p role="status">You are logged into BuilderLab</p>
-      ) : state.status === "notConfigured" || state.status === "loggedOut" ? (
+      ) : state.status === "notConfigured" ? (
+        <>
+          <p role="status">BuilderLab is not configured</p>
+          <p className="text-body-sm text-muted">
+            Set <code>BUILDERLAB_URL</code> to the HTTPS origin in the
+            environment used to launch the desktop app, then restart it.
+          </p>
+        </>
+      ) : state.status === "loggedOut" ? (
         <>
           <p role="status">Login to BuilderLab via the bl cli</p>
           <p className="text-body-sm text-muted">

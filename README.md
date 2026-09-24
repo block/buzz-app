@@ -15,6 +15,17 @@ just web
 just desktop
 ```
 
+BuilderLab Settings reads `BUILDERLAB_URL` from the desktop process environment.
+Set it to an HTTPS service origin before launching the desktop app, for example:
+
+```sh
+export BUILDERLAB_URL=https://app.builderlab.xyz
+just desktop
+```
+
+Restart the desktop app after changing the variable. BuilderLab login credentials
+come from the existing `bl auth login` CLI session.
+
 Or run `bin/just web` / `bin/just desktop` without activation. Tools download from
 public Hermit sources. Dependencies use npm's public registry by default; local
 registry and CA settings remain in effect. Desktop

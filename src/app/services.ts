@@ -7,6 +7,7 @@ import { provideAgentControl } from "../features/agents/control-service";
 import { HostService } from "../features/host/service";
 import { bindUnreadIndicator } from "../features/notifications/indicator-unread";
 import { provideNavigation } from "../features/navigation/service";
+import { bindDeepLinks } from "../features/navigation/deep-links";
 import { NotificationsService } from "../features/notifications/service";
 import {
   bindMessageNotifications,
@@ -19,6 +20,7 @@ import { createAppearance } from "../shared/theme/service";
 import { createCommunities } from "../features/communities/service";
 import { PanelsService } from "../features/panels/service";
 import { Context } from "@deepseek-ai/cordis";
+import { BrowserService } from "../features/browser/service";
 import { PagesService } from "../features/pages/service";
 import { bundledPlugins } from "../bundled";
 import { createPluginManager } from "../plugins/manager";
@@ -35,13 +37,14 @@ export function createServices() {
   const agentControl = provideAgentControl(ctx);
   const navigationHost = provideNavigation(ctx);
   const navigation = navigationHost.navigation;
+  const browser = new BrowserService(ctx);
   const shortcuts = new ShortcutsService(ctx, undefined, shortcutBindings);
   const pages = new PagesService(ctx);
   const panels = new PanelsService(ctx);
   const conversation = new ConversationService(ctx);
   const settingsCards = new SettingsCardsService(ctx);
   const channelTemplates = new TemplateProvidersService(ctx);
-  const identityNames = new IdentityNamesService(ctx);
+  const identityNames = new IdentityNamesService(ctx, agentControl);
   const communities = createCommunities(
     ctx,
     import.meta.env.VITE_BUZZ_LIVE === "1",
@@ -59,6 +62,8 @@ export function createServices() {
     (target) => notificationAuthorized(communities, target),
   );
   ctx.effect(() => bindMessageNotifications(notifications, communities));
+  // OS deep links; a no-op in the browser build.
+  ctx.effect(() => bindDeepLinks(navigationHost, communities));
   if (notifications.indicator.available)
     ctx.effect(() =>
       bindUnreadIndicator(communities, notifications.indicator.setUnread),
@@ -66,6 +71,7 @@ export function createServices() {
   let disposal: Promise<void> | undefined;
   return {
     agentControl,
+    browser,
     notifications,
     navigation,
     navigationHost,

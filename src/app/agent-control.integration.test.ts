@@ -16,6 +16,9 @@ vi.mock("../bundled", async () => ({
 vi.mock("@tauri-apps/api/core", () => ({
   invoke: vi.fn(),
   isTauri: () => true,
+  Channel: class {
+    constructor(public onmessage: (response: unknown) => void) {}
+  },
 }));
 let services: AppServices;
 let enabled: boolean;
@@ -28,6 +31,9 @@ beforeEach(() => {
   vi.mocked(invoke)
     .mockReset()
     .mockImplementation(async (cmd, args) => {
+      // Desktop startup drains OS deep links; none arrive in this fixture.
+      if (cmd === "deep_link_take") return [];
+      if (cmd === "deep_link_watch") return undefined;
       if (cmd === "agent_control_snapshot" || cmd === "agent_control_action")
         return { agents: [], runtimeAvailable: false, importAvailable: false };
       if (cmd === "plugin_change")
@@ -167,7 +173,6 @@ it("retains working injected control across Agents disable/re-enable and communi
     vi
       .mocked(invoke)
       .mock.calls.filter(([cmd]) => cmd.startsWith("agent_control_")),
-    // Four explicit reads plus five naming-provider activations (re-enable,
-    // then disconnected and connected sessions for each joined community).
-  ).toEqual(Array.from({ length: 9 }, () => ["agent_control_snapshot"]));
+    // Only four explicit reads: this fixture loads Agents without Identity Naming.
+  ).toEqual(Array.from({ length: 4 }, () => ["agent_control_snapshot"]));
 });

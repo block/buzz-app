@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
-import { createAgentDirectory } from "../../bundled/agents/directory";
+import { createAgentDirectory } from "../identity-names/testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import {
   act,
@@ -164,7 +164,7 @@ function mount(
     status: "ready" as const,
     channels: [{ id: "channel", members: [first.pubkey, second.pubkey] }],
   };
-  const session = {
+  const rawSession = {
     viewer,
     messages,
     typing: { snapshot: () => typing, subscribe: () => () => {} },
@@ -185,6 +185,7 @@ function mount(
         return () => libraryListeners.delete(listener);
       },
       refresh: vi.fn(async () => {}),
+      retain: () => () => {},
     },
     emoji: {
       snapshot: () => emoji,
@@ -221,6 +222,13 @@ function mount(
       subscribeList: () => () => {},
     },
   } as unknown as RelaySession;
+  const session = {
+    ...rawSession,
+    names: bindNames(rawSession, {
+      snapshot: () => [createAgentDirectory()],
+      subscribe: () => () => {},
+    }),
+  };
   const onSend = vi.fn();
   const inline: readonly Contribution<InlineRenderer>[] = [
     {
@@ -548,6 +556,7 @@ it("prefixes thread replies with the selected media time and clears it after sen
     "root",
     "⏱ 1:12 — trim this",
     [],
+    [],
   );
   expect(clearMediaTime).toHaveBeenCalledOnce();
   expect(h.input()).toHaveValue("");
@@ -583,6 +592,7 @@ it("hides the media time indicator while keeping the send prefix", async () => {
     "channel",
     "root",
     "⏱ 0:12 — hidden frame",
+    [],
     [],
   );
   expect(clearMediaTime).toHaveBeenCalledOnce();
@@ -698,6 +708,7 @@ it.each([undefined, "root"])(
     await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
     h.unmount();
     h = mount(options);
+    expect(h.input()).toHaveValue("Please help @Honey @Honey ");
     expect(
       within(h.input()).getAllByRole("img", {
         name: /^Person Honey, public key ending/,
@@ -831,8 +842,8 @@ it.each([
     });
     const text = `${prefix}@Honey @Honey ${suffix}`;
     const labels = [
-      "Person Honey, public key ending c a j",
-      "Person Honey, public key ending 4 h u",
+      "Person Honey, public key ending r c a j",
+      "Person Honey, public key ending 0 4 h u",
     ];
     const check = () => {
       expect(h.input()).toHaveValue(text);
@@ -915,19 +926,19 @@ it("qualifies both namesakes retroactively without changing source and removes q
   });
   expect(h.input().textContent).not.toContain("npub");
   act(() => {
-    h.commands().insertMention({ ...second, name: "honey" });
+    h.commands().insertMention(second);
   });
-  expect(h.input()).toHaveValue("@Honey @Honey @honey ");
+  expect(h.input()).toHaveValue("@Honey @Honey @Honey ");
   expect(
     within(h.input()).getAllByRole("img", {
-      name: "Person Honey, public key ending c a j",
+      name: "Person Honey, public key ending r c a j",
     }),
   ).toHaveLength(2);
   expect(
     within(h.input()).getByRole("img", {
-      name: "Person honey, public key ending 4 h u",
+      name: "Person Honey, public key ending 0 4 h u",
     }),
-  ).toHaveTextContent("honey · npub…4hu");
+  ).toHaveTextContent("Honey · 04hu");
   h.input().setSelectionRange(14, 20);
   act(() => {
     h.commands().insertText("");
@@ -977,6 +988,9 @@ it.each([0, 7])(
 it("replacing an inline mention with ordinary prose removes notification intent", async () => {
   const h = mount();
   await h.user.click(screen.getByRole("button", { name: "First Honey" }));
+  expect(
+    screen.getByRole("region", { name: "Explicit mentions" }),
+  ).toBeVisible();
   h.fill("no recipient now");
   h.submit();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([]);
@@ -1343,8 +1357,8 @@ it.each(
       await view.user.click(
         await screen.findByRole("menuitemradio", {
           name: parent
-            ? "Honey — adds to session and channel"
-            : "Honey — adds to session",
+            ? "Honey Adds to session and channel"
+            : "Honey Adds to session",
         }),
       );
     }
@@ -1775,25 +1789,26 @@ it("keeps inline recipient identity and source stable through directory collisio
   await h.user.click(screen.getByRole("button", { name: "Second Honey" }));
   const chips = () => within(h.input()).getAllByRole("img");
   const labels = () => chips().map((chip) => chip.textContent);
-  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  expect(labels()).toEqual(["@Honey · rcaj", "@Honey · 04hu"]);
   const source = h.input().value;
   act(() => {
     identities = [first, { ...second, name: "Renamed Honey" }];
     for (const notify of listeners) notify();
   });
-  // Selected chips disclose authored recipients, independently of live directory labels.
+  // Labels follow live facts; authored source and recipients do not change.
   expect(names.resolve(second.pubkey)).toBe("Renamed Honey");
-  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  expect(labels()).toEqual(["@Honey", "@Renamed Honey"]);
   expect(h.input()).toHaveValue(source);
   act(() => {
     identities = [first, second];
     for (const notify of listeners) notify();
   });
   expect(names.lookup(first.pubkey)?.qualifier).toBeTruthy();
-  expect(labels()).toEqual(["@Honey · npub…caj", "@Honey · npub…4hu"]);
+  expect(labels()).toEqual(["@Honey · rcaj", "@Honey · 04hu"]);
   h.input().setSelectionRange(7, 13);
   act(() => h.commands().insertText(""));
-  expect(labels()).toEqual(["@Honey"]);
+  // Removing a selected chip does not remove the other channel member from naming scope.
+  expect(labels()).toEqual(["@Honey · rcaj"]);
   h.submit();
   expect(h.messages.send.mock.calls[0]?.[2]).toEqual([first.pubkey]);
   h.unmount();
@@ -1875,6 +1890,24 @@ it.each([false, true])(
     }
   },
 );
+
+it("retargets within a thread without losing its draft and sends the selected parent", () => {
+  const h = mount({ threadRootId: "root" });
+  h.fill("keep this draft");
+  const input = h.input();
+  h.retarget({ threadRootId: "root", replyParentId: "parent" });
+  expect(h.input()).toBe(input);
+  expect(h.input()).toHaveValue("keep this draft");
+  fireEvent.keyDown(h.input(), { key: "Enter" });
+  expect(h.messages.reply).toHaveBeenCalledExactlyOnceWith(
+    "channel",
+    "root",
+    "keep this draft",
+    [],
+    [],
+    "parent",
+  );
+});
 
 it("toggles the whole draft spoiler with a collapsed caret and preserves selection/history", () => {
   const h = mount();
@@ -1983,6 +2016,7 @@ it.each([
     expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
       "c".repeat(64),
       markdown,
+      "c".repeat(64),
     );
     expect(h.messages.send).not.toHaveBeenCalled();
     expect(readView("scope", "draft:channel", "")).toBe("");
@@ -2017,6 +2051,7 @@ it("saves only once, locks until delivery, and restores the new-message composer
   expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
     row.id,
     "Revised message",
+    row.id,
   );
   expect(h.messages.send).not.toHaveBeenCalled();
   expect(h.input()).toHaveAttribute("contenteditable", "false");
@@ -2146,6 +2181,7 @@ it("inserts mention links without new notification recipients during edits", () 
   expect(h.messages.edit).toHaveBeenCalledWith(
     "c".repeat(64),
     expect.stringContaining("nostr:npub"),
+    "c".repeat(64),
   );
   expect(h.messages.send).not.toHaveBeenCalled();
 });
@@ -2277,3 +2313,84 @@ it.each([undefined, "thread-root"])(
     expect(h.messages.edit).not.toHaveBeenCalled();
   },
 );
+
+it("uses the full channel choice set for one selected chip and follows membership and policy changes", () => {
+  const h = mount();
+  const profiles = new Map([
+    [first.pubkey, { name: "Honey" }],
+    [second.pubkey, { name: "Honey", isAgent: true as const }],
+  ]);
+  let list = {
+    status: "ready" as const,
+    channels: [
+      {
+        id: "channel",
+        name: "General",
+        members: [first.pubkey, second.pubkey],
+      },
+    ],
+  };
+  const listeners = new Set<() => void>();
+  let policyChanged = () => {};
+  let providers = [createAgentDirectory()];
+  const session = {
+    ...h.session,
+    profiles: { ...h.session.profiles, snapshot: () => profiles },
+    channels: {
+      ...h.session.channels,
+      list: () => list,
+      subscribeList: (listener: () => void) => {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+    },
+  };
+  const names = bindNames(session, {
+    snapshot: () => providers,
+    subscribe: (listener) => {
+      policyChanged = listener;
+      return () => {};
+    },
+  });
+  h.retarget({ session: { ...session, names } });
+  act(() => h.commands().insertMention(second));
+  const label = () => within(h.input()).getByRole("img").textContent;
+  expect(label()).toBe("@Honey (agent)");
+  const source = h.input().value;
+  act(() => {
+    list = {
+      ...list,
+      channels: [{ id: "channel", name: "General", members: [second.pubkey] }],
+    };
+    for (const notify of listeners) notify();
+  });
+  expect(label()).toBe("@Honey");
+  act(() => {
+    providers = [
+      {
+        ...createAgentDirectory(),
+        resolve: () => "Alternative",
+        qualifier: () => undefined,
+      },
+    ];
+    policyChanged();
+  });
+  expect(label()).toBe("@Alternative");
+  act(() => {
+    providers = [];
+    policyChanged();
+  });
+  expect(label()).toBe("@Honey");
+  expect(h.input()).toHaveValue(source);
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledWith(
+    "channel",
+    source,
+    [second.pubkey],
+    [],
+  );
+  h.unmount();
+  names.dispose();
+});

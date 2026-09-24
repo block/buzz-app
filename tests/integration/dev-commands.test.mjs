@@ -27,6 +27,8 @@ function recipeWithRuntime(failRuntime, name, ...args) {
     );
     mkdirSync(path.join(directory, "scripts"));
     for (const file of [
+      "desktop-build.mjs",
+      "desktop-config.mjs",
       "desktop-dev.mjs",
       "worktree-icon.mjs",
       "worktree-port.mjs",
@@ -42,7 +44,7 @@ function recipeWithRuntime(failRuntime, name, ...args) {
     writeFileSync(
       path.join(directory, "pnpm"),
       `#!${process.execPath}\nrequire("node:fs").appendFileSync(process.env.BUZZ_TEST_CALLS, JSON.stringify(process.argv.slice(2)) + "\\n");
-if (process.argv[2] === "tauri" && !process.argv.includes("--help") && !process.argv.includes("-h")) {
+if (process.argv[2] === "tauri" && process.argv[3] === "dev" && !process.argv.includes("--help") && !process.argv.includes("-h")) {
   if (!require("node:fs").existsSync("src-tauri/resources/agent-runtime/manifest.json")) process.exit(19);
 }\n`,
       { mode: 0o755 },
@@ -79,10 +81,10 @@ if (process.argv[2] === "tauri" && !process.argv.includes("--help") && !process.
       ? readFileSync(callsFile, "utf8").trim().split("\n").map(JSON.parse)
       : [];
     const built = existsSync(path.join(directory, "build-calls.jsonl"));
-    // The fixture is not a Git checkout, so the launcher hashes its own root,
-    // which Node resolves through symlinks when loading the script.
-    const port = portForPath(realpathSync(directory));
-    return { ...result, calls, built, port };
+    // The fixture is not a Git checkout, so the launcher hashes its own root for
+    // its port; Node resolves that through symlinks when loading the script.
+    const root = realpathSync(directory);
+    return { ...result, calls, built, port: portForPath(root) };
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
@@ -115,9 +117,17 @@ const build = (port) => ({
   beforeDevCommand: `pnpm dev:desktop --port ${port}`,
 });
 
-const announced = (port) =>
+const overlay = (port) => ({
+  build: build(port),
+});
+
+const announced = (port, { derived = true } = {}) =>
   new RegExp(
-    `^Desktop dev server on http://localhost:${port} \\(derived from worktree path; pass --port to override\\)$`,
+    `^Desktop dev server on http://localhost:${port}` +
+      (derived
+        ? " \\(derived from the worktree path; pass --port to override\\)"
+        : "") +
+      "$",
     "m",
   );
 
@@ -125,13 +135,15 @@ test("web preserves the no-argument command", () => {
   assert.deepEqual(launched("web").call, ["dev"]);
 });
 
-test("desktop derives a port from the worktree path when none is given", () => {
+test("desktop derives a port from the worktree path and leaves the OS scheme alone", () => {
   const { call, port, stdout } = launched("desktop");
   assert.ok(port >= 10010 && port <= 65009, String(port));
   assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
   assert.equal(call.length, 4);
-  assert.deepEqual(JSON.parse(call[3]), { build: build(port) });
+  const config = JSON.parse(call[3]);
+  assert.deepEqual(config, overlay(port));
   assert.match(stdout, announced(port));
+  assert.doesNotMatch(stdout, /deep links open as/);
 });
 
 test("stock tauri.conf.json starts Vite on its own devUrl port without the launcher", () => {
@@ -166,10 +178,30 @@ for (const value of ["1431", "1", "65535", "01431"]) {
       const { call, stdout } = launched("desktop", ...args);
       assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
       assert.equal(call.length, 4);
-      assert.deepEqual(JSON.parse(call[3]), { build: build(Number(value)) });
-      assert.doesNotMatch(stdout, /derived from worktree path/);
+      assert.deepEqual(JSON.parse(call[3]), overlay(Number(value)));
+      // Nothing is derived, so nothing is offered for override.
+      assert.match(stdout, announced(Number(value), { derived: false }));
     });
   }
+}
+
+for (const args of [["--scheme", "buzz-dev"], ["--scheme=buzz-dev"]]) {
+  test(`launchers forward unsupported ${args.join(" ")} without overlaying a scheme`, () => {
+    const desktop = launched("desktop", ...args);
+    assert.deepEqual(JSON.parse(desktop.call[3]), overlay(desktop.port));
+    assert.deepEqual(desktop.call.slice(4), args);
+    assert.match(desktop.stdout, announced(desktop.port));
+    const bundle = launched("desktop-bundle", ...args);
+    assert.deepEqual(bundle.call, [
+      "tauri",
+      "build",
+      "--debug",
+      "--bundles",
+      "app",
+      ...args,
+    ]);
+    assert.doesNotMatch(bundle.stdout, /Bundling with deep links/);
+  });
 }
 
 test("desktop prepends port config and preserves user config and arguments", () => {
@@ -195,7 +227,7 @@ test("desktop prepends port config and preserves user config and arguments", () 
     ...runnerArgs,
   );
   assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
-  assert.deepEqual(JSON.parse(call[3]), { build: build(1432) });
+  assert.deepEqual(JSON.parse(call[3]), overlay(1432));
   assert.deepEqual(call.slice(4), [
     "--config",
     config,
@@ -204,16 +236,24 @@ test("desktop prepends port config and preserves user config and arguments", () 
   ]);
 });
 
-test("desktop derives a port for help and runner-only arguments", () => {
+test("desktop derives the port for help and runner-only arguments", () => {
   const help = launched("desktop", "--help");
   assert.deepEqual(help.call.slice(0, 3), ["tauri", "dev", "--config"]);
-  assert.deepEqual(JSON.parse(help.call[3]), { build: build(help.port) });
+  assert.deepEqual(JSON.parse(help.call[3]), overlay(help.port));
   assert.deepEqual(help.call.slice(4), ["--help"]);
   assert.doesNotMatch(help.stdout, /Desktop dev server/, "help starts nothing");
-  const args = ["--no-watch", "--", "--port", "application-port"];
+  // Arguments after -- belong to the application, not to the launcher.
+  const args = [
+    "--no-watch",
+    "--",
+    "--port",
+    "application-port",
+    "--scheme",
+    "x",
+  ];
   const runner = launched("desktop", ...args);
   assert.deepEqual(runner.call.slice(0, 3), ["tauri", "dev", "--config"]);
-  assert.deepEqual(JSON.parse(runner.call[3]), { build: build(runner.port) });
+  assert.deepEqual(JSON.parse(runner.call[3]), overlay(runner.port));
   assert.deepEqual(runner.call.slice(4), args);
   assert.match(runner.stdout, announced(runner.port));
 });
@@ -260,4 +300,53 @@ test("desktop config precedes Tauri's implicit runner-argument boundary", () => 
   assert.deepEqual(call.slice(0, 3), ["tauri", "dev", "--config"]);
   assert.equal(JSON.parse(call[3]).build.devUrl, "http://localhost:1431");
   assert.deepEqual(call.slice(4), ["--runner", "echo", "hello"]);
+});
+
+test("desktop-bundle builds a debug app bundle with no overlay by default", () => {
+  // The fixture is not a linked worktree, so it has no icon to overlay.
+  const { call, stdout } = launched("desktop-bundle");
+  assert.deepEqual(call, ["tauri", "build", "--debug", "--bundles", "app"]);
+  assert.doesNotMatch(stdout, /Bundling with deep links/);
+});
+
+test("desktop-bundle keeps a chosen bundle format and forwards the rest", () => {
+  const { call } = launched(
+    "desktop-bundle",
+    "--bundles",
+    "dmg",
+    "--verbose",
+    "--",
+    "--features",
+    "feature",
+  );
+  assert.deepEqual(call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "dmg",
+    "--verbose",
+    "--",
+    "--features",
+    "feature",
+  ]);
+});
+
+test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () => {
+  assert.deepEqual(launched("desktop-bundle", "--no-bundle").call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--no-bundle",
+  ]);
+  assert.deepEqual(launched("desktop-bundle", "--", "--bundles", "dmg").call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "app",
+    "--",
+    "--bundles",
+    "dmg",
+  ]);
 });

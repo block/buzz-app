@@ -1,9 +1,6 @@
-import {
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import type { useIdentityNames } from "../../features/identity-names/react";
+import { useAgentControl } from "../../features/agents/control-react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -16,6 +13,7 @@ import { AgentCard } from "./AgentCard";
 import { AgentEditor } from "./AgentEditor";
 import { AgentImport } from "./AgentImport";
 import { AgentCreateDialog } from "./AgentCreateDialog";
+import { AgentDeleteDialog } from "./AgentDeleteDialog";
 import "./AgentControls.css";
 
 /** No relay dependency. Page lifetime owns observation only, never native execution. */
@@ -23,20 +21,26 @@ export function AgentControlPanel({
   control,
   importDestination = "",
   createOwner,
+  resolveName,
   children,
 }: {
+  resolveName?: ReturnType<typeof useIdentityNames>;
   control: AgentControl;
   importDestination?: string;
   createOwner?: string | undefined;
   children?: (
     state: AgentControlState,
     edit: (agent: AgentView, avatar?: string) => void,
+    duplicate: (agent: AgentView) => void,
+    remove: (agent: AgentView) => void,
     importedId: string | null,
+    label: (agent: AgentView) => string,
   ) => ReactNode;
 }) {
   const [adding, setAdding] = useState<{
     destination: string;
     owner: string;
+    source?: AgentView;
   } | null>(null);
   const [importSections, setImportSections] = useState<string[]>([]);
   const [importedId, setImportedId] = useState<string | null>(null);
@@ -44,24 +48,17 @@ export function AgentControlPanel({
     id: string;
     avatar?: string;
   } | null>(null);
+  const [deleting, setDeleting] = useState<string | null>(null);
   const edit = (agent: AgentView, avatar?: string) =>
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
-  const state = useSyncExternalStore(
-    control.subscribe,
-    control.snapshot,
-    control.snapshot,
-  );
-  useEffect(() => {
-    void control.refresh();
-    const timer = setInterval(() => {
-      if (
-        document.visibilityState !== "hidden" &&
-        control.snapshot().status === "ready"
-      )
-        void control.refresh();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [control]);
+  const duplicate = (agent: AgentView) =>
+    setAdding({
+      destination: agent.relayUrl,
+      owner: createOwner ?? "",
+      source: agent,
+    });
+  const remove = (agent: AgentView) => setDeleting(agent.id);
+  const state = useAgentControl(control);
   useEffect(() => {
     if (
       state.data?.agents.some(
@@ -70,7 +67,22 @@ export function AgentControlPanel({
     )
       setImportedId(null);
   }, [state.data, importedId]);
+  const facts =
+    state.data?.agents.map((agent) => ({
+      pubkey: agent.pubkey,
+      name: agent.name,
+      isAgent: true,
+    })) ?? [];
+  const candidates = facts.map((agent) => agent.pubkey);
+  // One identity may have separate configurations in different communities.
+  // The edited row supplies its own configured name; control still uses agent.id.
+  const label = (agent: AgentView) =>
+    resolveName?.(agent.pubkey, agent.name, candidates, [
+      ...facts,
+      { pubkey: agent.pubkey, name: agent.name, isAgent: true },
+    ]) ?? agent.name;
   const editing = state.data?.agents.find((agent) => agent.id === selected?.id);
+  const deletion = state.data?.agents.find((agent) => agent.id === deleting);
   return (
     <section
       data-buzz-ui=""
@@ -101,16 +113,18 @@ export function AgentControlPanel({
         )}
       </header>
       {children ? (
-        children(state, edit, importedId)
+        children(state, edit, duplicate, remove, importedId, label)
       ) : (
         <div className="agent-grid">
           {state.data?.agents.map((agent) => (
             <AgentCard
               key={agent.id}
-              name={agent.name}
+              name={label(agent)}
               identities={[agent]}
               editable={[agent]}
               onEdit={edit}
+              onDuplicate={duplicate}
+              onDelete={control.delete ? remove : undefined}
             />
           ))}
         </div>
@@ -151,6 +165,7 @@ export function AgentControlPanel({
           state={state}
           destination={adding.destination}
           owner={adding.owner}
+          {...(adding.source ? { source: adding.source } : {})}
           onClose={() => setAdding(null)}
         />
       )}
@@ -176,10 +191,19 @@ export function AgentControlPanel({
         <AgentEditor
           key={editing.id}
           agent={editing}
+          displayName={label(editing)}
           control={control}
           state={state}
           avatar={selected?.avatar}
           onClose={() => setSelected(null)}
+        />
+      )}
+      {deletion && control.delete && (
+        <AgentDeleteDialog
+          agent={deletion}
+          control={control}
+          state={state}
+          onClose={() => setDeleting(null)}
         />
       )}
     </section>

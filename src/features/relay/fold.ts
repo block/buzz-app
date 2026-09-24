@@ -158,11 +158,15 @@ function parseSummary(
     const body = objectBody(event.content);
     if (!body) return { replyCount: 0, participants: Object.freeze([]) };
     const replyCount =
-      typeof body.reply_count === "number" &&
-      Number.isInteger(body.reply_count) &&
-      body.reply_count >= 0
-        ? body.reply_count
-        : 0;
+      typeof body.descendant_count === "number" &&
+      Number.isInteger(body.descendant_count) &&
+      body.descendant_count >= 0
+        ? body.descendant_count
+        : typeof body.reply_count === "number" &&
+            Number.isInteger(body.reply_count) &&
+            body.reply_count >= 0
+          ? body.reply_count
+          : 0;
     const participants = Array.isArray(body.participants)
       ? body.participants.filter(
           (value): value is string =>
@@ -254,7 +258,10 @@ export function foldMessages(
       const body = objectBody(content);
       if (typeof body?.content === "string") content = body.content;
     }
-    const imetaUrls = imetaAttachmentUrls(event);
+    const attachmentEvent =
+      edits.find((edit) => edit.tags.some(([name]) => name === "imeta")) ??
+      event;
+    const imetaUrls = imetaAttachmentUrls(attachmentEvent);
     // Every CommonMark image begins with `![`, and every attachment title link
     // needs an imeta URL match; avoid parsing ordinary messages.
     const projected =
@@ -273,6 +280,7 @@ export function foldMessages(
         id: event.id,
         channelId,
         threadRootId: threadReference(event)?.rootId,
+        replyParentId: threadReference(event)?.parentId,
         authorId: event.pubkey,
         createdAt: event.created_at,
         content: projected.content,
@@ -305,8 +313,11 @@ export function foldMessages(
             ),
           ),
         ]),
+        ...(attachmentEvent !== event
+          ? { attachmentSourceId: attachmentEvent.id }
+          : {}),
         attachments: Object.freeze(
-          parseAttachments(event, projected.urls, attachmentNames),
+          parseAttachments(attachmentEvent, projected.urls, attachmentNames),
         ),
         emoji: emojiTags(
           edits[0]?.tags.some(([name]) => name === "emoji") ? edits[0] : event,

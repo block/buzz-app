@@ -36,6 +36,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
     left.membership?.target === right.membership?.target &&
     left.edited === right.edited &&
     left.attachmentContentRemoved === right.attachmentContentRemoved &&
+    left.attachmentSourceId === right.attachmentSourceId &&
     sameArray(left.mentions, right.mentions) &&
     sameArray(
       left.attachments,
@@ -72,6 +73,7 @@ function sameRow(left: ChannelMessage, right: ChannelMessage) {
         ),
     ) &&
     left.threadRootId === right.threadRootId &&
+    left.replyParentId === right.replyParentId &&
     left.replyCount === right.replyCount &&
     sameArray(left.participants, right.participants)
   );

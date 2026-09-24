@@ -1,5 +1,8 @@
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
-import type { ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { SidebarIcon } from "../../shared/design-system/icons";
+import { Panel } from "../../shared/design-system/ui/Panel";
 import { isTauri } from "@tauri-apps/api/core";
 import type { RegisteredPage } from "../../features/pages/service";
 import type { Communities } from "../../features/communities/service";
@@ -19,6 +22,7 @@ export function AppShell({
   onSelect,
   tone,
   workspace,
+  sidebar,
   communities,
   searchServices,
   navigationControls,
@@ -32,6 +36,7 @@ export function AppShell({
   onSelect: (key: string) => void;
   tone: string;
   workspace?: boolean;
+  sidebar?: (pages: ReactNode) => ReactNode;
   communities: Communities;
   searchServices?: SearchServices;
   navigationControls?: ReactNode;
@@ -41,6 +46,33 @@ export function AppShell({
   children: ReactNode;
 }) {
   const fillsWorkspace = workspace || selected === "settings";
+  const [navigationOpen, setNavigationOpen] = useState(false);
+  const navigationToggle = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (selected !== "settings") setNavigationOpen(false);
+  }, [selected]);
+  const pageNavigation = (
+    <nav aria-label="Pages" className="shell-pages">
+      {orderPages(pages).map((page) => {
+        const { label, icon: Icon } = pagePresentation(page);
+        return (
+          <NavigationItem
+            type="button"
+            key={page.key}
+            onClick={() => {
+              onSelect(page.key);
+              document
+                .getElementById("main-content")
+                ?.focus({ preventScroll: true });
+            }}
+            selected={selected === page.key}
+            label={label}
+            icon={<Icon aria-hidden="true" size={20} />}
+          />
+        );
+      })}
+    </nav>
+  );
   return (
     <div
       data-shell-tone={tone}
@@ -69,24 +101,21 @@ export function AppShell({
           {...titleBarDragProps}
         >
           {navigationControls}
-        </div>
-        <nav aria-label="Pages" className="shell-pages">
-          {orderPages(pages).map((page) => {
-            const { label, icon: Icon } = pagePresentation(page);
-            return (
-              <NavigationItem
-                type="button"
-                key={page.key}
-                variant="pill"
-                aria-current={selected === page.key ? "page" : undefined}
-                onClick={() => onSelect(page.key)}
-                selected={selected === page.key}
-                label={label}
-                icon={<Icon aria-hidden="true" size={15} />}
+          {selected === "settings" && (
+            <span className="shell-navigation-toggle">
+              <IconButton
+                ref={navigationToggle}
+                aria-label={
+                  navigationOpen ? "Hide navigation" : "Show navigation"
+                }
+                aria-expanded={navigationOpen}
+                aria-controls="shell-navigation"
+                onClick={() => setNavigationOpen((open) => !open)}
+                icon={<SidebarIcon aria-hidden="true" size={20} />}
               />
-            );
-          })}
-        </nav>
+            </span>
+          )}
+        </div>
         <div
           className="shell-actions"
           data-tauri-drag-region={macDesktop ? undefined : true}
@@ -105,31 +134,64 @@ export function AppShell({
           />
         </div>
       </header>
+
       <div className="flex min-h-0 flex-1">
         <CommunityRail communities={communities} onSelect={onCommunitySelect} />
-        <main
-          id="main-content"
-          tabIndex={-1}
-          className="min-h-0 min-w-0 flex-1 overflow-hidden px-2 pb-2 sm:px-4 sm:pb-4"
+        <div
+          className={`shell-body ${selected === "settings" ? "shell-body-settings" : ""}`}
         >
-          <PanelFrame companion={companion}>
-            <div
-              className={
-                fillsWorkspace
-                  ? "h-full min-h-0"
-                  : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
+          {/* biome-ignore lint/a11y/noStaticElementInteractions: Delegated Escape from descendant controls closes the disclosure; the layout wrapper is not itself interactive. */}
+          <div
+            id="shell-navigation"
+            className="shell-navigation"
+            data-expanded={navigationOpen}
+            onKeyDown={(event) => {
+              if (
+                event.key === "Escape" &&
+                navigationOpen &&
+                !event.defaultPrevented
+              ) {
+                setNavigationOpen(false);
+                navigationToggle.current?.focus();
               }
-            >
+            }}
+          >
+            {sidebar ? (
+              sidebar(pageNavigation)
+            ) : (
+              <div className="shell-sidebar-default">
+                <Panel as="aside" aria-label="Page sidebar">
+                  <div className="p-2">{pageNavigation}</div>
+                </Panel>
+              </div>
+            )}
+          </div>
+          <main
+            id="main-content"
+            tabIndex={-1}
+            className="min-h-0 min-w-0 flex-1 overflow-hidden"
+          >
+            <PanelFrame companion={companion}>
               <div
                 className={
-                  fillsWorkspace ? "h-full min-h-0" : "mx-auto w-full max-w-4xl"
+                  fillsWorkspace
+                    ? "h-full min-h-0"
+                    : "h-full min-h-0 overflow-y-auto px-2 pt-10 pb-8 sm:px-4 sm:pt-14 sm:pb-10"
                 }
               >
-                {children}
+                <div
+                  className={
+                    fillsWorkspace
+                      ? "h-full min-h-0"
+                      : "mx-auto w-full max-w-4xl"
+                  }
+                >
+                  {children}
+                </div>
               </div>
-            </div>
-          </PanelFrame>
-        </main>
+            </PanelFrame>
+          </main>
+        </div>
       </div>
     </div>
   );

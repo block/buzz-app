@@ -110,9 +110,29 @@ test("thread buttons show observed unread independently, clear only after readin
   const queries = () =>
     app.report.queries.filter(({ filter }) => filter.depth_limit);
   expect(queries()).toHaveLength(0); // Merely displaying buttons never fetches threads.
+  // The sibling context trigger must not steal the activity button's props or
+  // focus. Exercise the real portals while unread activity is still present.
+  await alpha.click({ button: "right" });
+  const actions = page.getByRole("menu", { name: "Actions for Alpha" });
+  await expect(
+    actions.getByRole("menuitem", { name: "New session" }),
+  ).toBeVisible();
+  // Leave the hover trigger while the context menu still owns focus. Otherwise
+  // its delayed hover close can overlap the later keyboard-open assertion.
+  await page.mouse.move(0, 0);
+  await expect(popover).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await alpha.focus();
+  await expect(actions).toHaveCount(0);
+  await expect(alpha).toBeFocused();
+  await alpha.press("Shift+F10");
+  await expect(actions).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(actions).toHaveCount(0);
+  await expect(alpha).toBeFocused();
+  await expect(popover).toHaveCount(0);
+  await expect(alpha).toHaveAttribute("aria-expanded", "false");
   await alpha.press("Enter");
+  await expect(alpha).toHaveAttribute("aria-expanded", "true");
   await expect(popover).toBeVisible();
   const item = popover
     .getByRole("button", {
@@ -193,6 +213,30 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(replyComposer).toBeFocused();
   await expect(first).toHaveAccessibleName(/Observed unread replies/); // Click/composer focus is not reading.
   await history.focus();
+  // Finish a real read of a visible sibling before checking the hidden child.
+  // Loaded history is not read evidence: collapsed descendants stay unread.
+  const directId = await panel
+    .locator("[data-message-id]")
+    .filter({ hasText: "Unread reply 0" })
+    .getAttribute("data-message-id");
+  await expect
+    .poll(
+      () =>
+        app.report.readPublications.some(({ blob }) =>
+          Object.hasOwn(blob.contexts, `msg:${directId}`),
+        ),
+      { timeout: 12000 },
+    )
+    .toBe(true);
+  await expect(
+    panel.getByText("Broadcast descendant", { exact: true }),
+  ).toHaveCount(0);
+  await expect(first).toHaveAccessibleName(/Observed unread replies/);
+  await panel.getByRole("button", { name: /^View 1 reply/ }).click();
+  await expect(
+    panel.getByText("Broadcast descendant", { exact: true }),
+  ).toBeInViewport();
+  await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(broadcast).toHaveAccessibleName("View thread: 23 replies");
   await expect(dot(first)).toHaveCount(0);
@@ -231,4 +275,77 @@ test("thread buttons show observed unread independently, clear only after readin
           filter.kinds?.includes(39002) && filter["#d"]?.includes("alpha"),
       ),
   ).toEqual([]);
+});
+
+// Browser focus plus actual controller/React wiring: a same-target open must not
+// leave the timeline's trigger installed merely because the history entry is reused.
+test("same-thread sidebar activity replaces timeline focus return", async ({
+  page,
+  app,
+}) => {
+  await open(page, app);
+  const root = app.histories
+    .get("primary/alpha")
+    .find((row) => row.content === "Thread root 0");
+  const alpha = page.locator('button[data-channel-id="alpha"]');
+  await expect(
+    alpha.getByRole("img", { name: /unread threads?/ }),
+  ).toBeVisible();
+  let release;
+  const held = new Promise((resolve) => {
+    release = resolve;
+  });
+  let requested = false;
+  await page.route("**/api/relay/**/query", async (route) => {
+    if (
+      route
+        .request()
+        .postDataJSON()
+        .some((filter) => filter.depth_limit)
+    ) {
+      requested = true;
+      await held;
+    }
+    await route.continue().catch(() => {});
+  });
+  try {
+    const trigger = page
+      .locator(`[data-channel-timeline] [data-message-id="${root.id}"]`)
+      .getByRole("button", { name: /^View thread:/ });
+    await expect(trigger).toHaveCSS("pointer-events", "auto");
+    await trigger.click();
+    await expect.poll(() => requested).toBe(true);
+    const before = await page.evaluate(() => {
+      const { entry, attempt } = window.fixtureNavigation.snapshot();
+      return { entry: entry.id, attempt: attempt.id };
+    });
+    await alpha.hover();
+    const activity = page.getByRole("dialog", { name: "Activity in Alpha" });
+    await activity
+      .getByRole("button", { name: /Open unread thread from.*Broadcast reply/ })
+      .click();
+    await expect
+      .poll(() =>
+        page.evaluate((before) => {
+          const { entry, attempt } = window.fixtureNavigation.snapshot();
+          return {
+            sameEntry: entry.id === before.entry,
+            freshAttempt: attempt.id !== before.attempt,
+          };
+        }, before),
+      )
+      .toEqual({ sameEntry: true, freshAttempt: true });
+    release();
+    await expect
+      .poll(() =>
+        page.evaluate(() => window.fixtureNavigation.snapshot().status),
+      )
+      .toBe("opened");
+    await page
+      .getByRole("button", { name: "Close thread", exact: true })
+      .click();
+    await expect(alpha).toBeFocused();
+  } finally {
+    release();
+  }
 });

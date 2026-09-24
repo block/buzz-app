@@ -70,35 +70,37 @@ function ButtonMatrix({ kind }: { kind: "text" | "icon" }) {
             className={`component-specimen-frame ${variant === "inverted" ? "bg-surface-inverse" : ""}`}
           >
             <div className="component-specimen-row">
-              {sizes.map((size) => (
-                <div key={size} className="component-specimen">
-                  {kind === "icon" ? (
-                    <IconButton
-                      aria-label={`${variant} ${size}`}
-                      size={size}
-                      variant={variant}
-                      icon={<PlusIcon aria-hidden="true" />}
-                      disabled={state === "disabled"}
-                      loading={state === "loading"}
-                    />
-                  ) : (
-                    <Button
-                      size={size}
-                      variant={variant}
-                      aria-label={`${variant} ${size}`}
-                      disabled={state === "disabled"}
-                      loading={state === "loading"}
+              {(kind === "text" ? (["xs", ...sizes] as const) : sizes).map(
+                (size) => (
+                  <div key={size} className="component-specimen">
+                    {kind === "icon" ? (
+                      <IconButton
+                        aria-label={`${variant} ${size}`}
+                        size={size}
+                        variant={variant}
+                        icon={<PlusIcon aria-hidden="true" />}
+                        disabled={state === "disabled"}
+                        loading={state === "loading"}
+                      />
+                    ) : (
+                      <Button
+                        size={size}
+                        variant={variant}
+                        aria-label={`${variant} ${size}`}
+                        disabled={state === "disabled"}
+                        loading={state === "loading"}
+                      >
+                        <ArrowRightIcon aria-hidden="true" /> Continue
+                      </Button>
+                    )}
+                    <code
+                      className={`component-specimen-prop text-mono-sm ${variant === "inverted" ? "text-inverse" : "text-tertiary"}`}
                     >
-                      <ArrowRightIcon aria-hidden="true" /> Continue
-                    </Button>
-                  )}
-                  <code
-                    className={`component-specimen-prop text-mono-sm ${variant === "inverted" ? "text-inverse" : "text-tertiary"}`}
-                  >
-                    size="{size}"
-                  </code>
-                </div>
-              ))}
+                      size="{size}"
+                    </code>
+                  </div>
+                ),
+              )}
             </div>
           </div>
         </section>

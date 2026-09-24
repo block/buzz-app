@@ -62,28 +62,22 @@
   align-items: center;
   gap: var(--space-2);
 }
+.nameContent {
+  --user-status-emoji-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .row:has([data-channel-unread], [data-channel-activity]) .label {
   color: var(--text-standard);
   font-weight: var(--type-weight-medium);
 }
-.positioner {
-  z-index: var(--layer-popover);
-}
-.menu.menu {
-  position: relative;
-  width: max-content;
-  max-width: var(--available-width);
-  font-size: var(--text-body-sm);
-  outline: none;
-}
-.menuItem {
-  white-space: nowrap;
-  outline: none;
-}
-.menuItem[data-highlighted] {
-  background: var(--completion-highlight);
-}
-
 .row .disclosure {
   position: absolute;
   left: calc(var(--space-control-inset) - (var(--size-row) - 17px) / 2);

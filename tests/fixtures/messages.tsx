@@ -10,6 +10,7 @@ import { ThreadPanel } from "../../src/features/messages/ThreadPanel";
 import { MessageComposer } from "../../src/features/messages/MessageComposer";
 import { MediaReviewViewer } from "../../src/features/messages/MediaReviewViewer";
 import { ChannelTimeline } from "../../src/features/messages/ChannelTimeline";
+import styles from "../../src/features/messages/Messages.module.css";
 import { createRelaySession } from "../../src/features/relay/session";
 import { PublishRejected } from "../../src/features/relay/outbox";
 import { threadReference } from "../../src/features/relay/threads";
@@ -267,6 +268,7 @@ Object.assign(window, {
       events.push(event);
       incoming([event]);
     },
+    styles,
   },
 });
 function Fixture() {

@@ -8,8 +8,8 @@ bin/pnpm exec vite --config tests/fixtures/agent-control.vite.mjs --port 1447
 
 Open http://127.0.0.1:1447/tests/fixtures/dialog-gallery.html.
 
-The gallery imports production components and host CSS. Its 12 entries cover
-eight modal implementations and five workflow confirmation callers. Workflow
+The gallery imports production components and host CSS. Its 14 entries cover
+nine modal implementations and six workflow confirmation callers. Workflow
 strings in `catalog.ts` mirror those callers; update them when product copy changes.
 
 Use the inspector to compare light/dark themes, viewport widths, and text sizes.

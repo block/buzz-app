@@ -105,11 +105,6 @@
   .buzz-dialog-body {
     min-width: 0;
   }
-  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
-    min-height: 0;
-    flex: 1;
-    overflow: auto;
-  }
 
   .buzz-dialog-content {
     padding-block: var(--dialog-padding);
@@ -120,21 +115,72 @@
     justify-content: end;
     gap: var(--space-3);
   }
+  /* Opt in for searches and switching views, not content-sized forms. */
+  :where(.buzz-dialog[data-height="stable"]) {
+    height: min(36rem, calc(100dvh - 2 * var(--space-6)));
+  }
+  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-header,
+  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-actions {
+    flex-shrink: 0;
+  }
+  :where(.buzz-dialog[data-height="stable"]) > .buzz-dialog-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    /* Preserve inset row backgrounds and focus rings inside the scrollport. */
+    margin-inline: calc(-1 * var(--dialog-padding));
+    padding-inline: var(--dialog-padding);
+  }
+  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+  }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);
   }
   .buzz-tooltip {
-    @apply text-label-sm;
+    @apply text-caption;
     max-width: min(24rem, calc(100vw - 2rem));
     border-radius: var(--radius-pill);
-    padding: var(--space-2) var(--space-4);
+    padding: var(--space-1) var(--space-2);
     background: var(--affordance-prominent);
     color: var(--text-inverse);
     box-shadow: var(--shadow-sm);
     overflow-wrap: anywhere;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+    transform-origin: var(--transform-origin);
+    transition:
+      opacity var(--duration-state) var(--easing-state),
+      transform var(--duration-state) var(--easing-settle),
+      filter var(--duration-state) var(--easing-state);
+  }
+  .buzz-tooltip:is([data-starting-style], [data-ending-style]) {
+    opacity: 0;
+    transform: translateY(2px) scale(0.97);
+    filter: blur(2px);
+  }
+  .buzz-tooltip[data-ending-style] {
+    transition-duration: var(--duration-fast);
+  }
+  .buzz-tooltip[data-instant],
+  html[data-keyboard-navigation] .buzz-tooltip {
+    transition: none;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .buzz-tooltip {
+      transition-property: opacity;
+    }
+    .buzz-tooltip:is([data-starting-style], [data-ending-style]) {
+      transform: none;
+      filter: none;
+    }
   }
   .buzz-tab-panels {
     display: grid;
+    grid-template-columns: minmax(0, 1fr);
     gap: var(--space-4);
     min-width: 0;
   }
@@ -206,6 +252,8 @@
     );
     overflow-y: auto;
     padding: var(--space-1);
+    /* Only toast cards intercept clicks, not the empty viewport or its gaps. */
+    pointer-events: none;
   }
   @media (max-width: 700px) {
     .buzz-toast-viewport {

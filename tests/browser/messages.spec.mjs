@@ -35,6 +35,148 @@ function createMessagesServer() {
   });
 }
 
+async function withMessagesFixture(page, run) {
+  const server = await createMessagesServer();
+  await server.listen();
+  try {
+    const address = server.httpServer.address();
+    await page.goto(
+      `http://127.0.0.1:${address.port}/tests/fixtures/messages.html`,
+    );
+    await run();
+  } finally {
+    await server.close();
+  }
+}
+
+async function visibleBox(locator) {
+  await expect(locator).toBeVisible();
+  await expect
+    .poll(async () => {
+      const box = await locator.boundingBox();
+      return box && box.width > 0 && box.height > 0;
+    })
+    .toBeTruthy();
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("Expected nonzero layout box");
+  return box;
+}
+
+function containedWithin(inner, outer) {
+  const epsilon = 1;
+  expect(inner.x).toBeGreaterThanOrEqual(outer.x - epsilon);
+  expect(inner.y).toBeGreaterThanOrEqual(outer.y - epsilon);
+  expect(inner.x + inner.width).toBeLessThanOrEqual(
+    outer.x + outer.width + epsilon,
+  );
+  expect(inner.y + inner.height).toBeLessThanOrEqual(
+    outer.y + outer.height + epsilon,
+  );
+}
+
+test("media review stage contains portrait video and image media", async ({
+  page,
+}) => {
+  await withMessagesFixture(page, async () => {
+    await page.setViewportSize({ width: 900, height: 700 });
+    await page.evaluate(() => {
+      const styles = window.messagesFixture.styles;
+      const host = document.createElement("div");
+      host.dataset.testid = "portrait-video-harness";
+      host.style.cssText =
+        "position:fixed;inset:0;padding:24px;display:grid;grid-template-columns:minmax(0,1fr) 320px;grid-template-rows:auto minmax(0,1fr);";
+      host.innerHTML = `
+        <div style="grid-column:1 / -1;height:48px"></div>
+        <div data-testid="portrait-video-stage" class="${styles.mediaReviewStage}">
+          <video data-testid="portrait-video" style="aspect-ratio:9 / 16"></video>
+        </div>
+        <aside></aside>
+      `;
+      document.body.append(host);
+    });
+    const stage = page.getByTestId("portrait-video-stage");
+    const video = page.getByTestId("portrait-video");
+    containedWithin(await visibleBox(video), await visibleBox(stage));
+    await page
+      .getByTestId("portrait-video-harness")
+      .evaluate((host) => host.remove());
+
+    await page
+      .getByRole("button", { name: "Review image", exact: true })
+      .click();
+    const dialog = page.getByRole("dialog", { name: "Image viewer" });
+    await expect(dialog).toBeVisible();
+    const reviewStage = dialog.locator('[class*="mediaReviewStage"]');
+    const imageStage = dialog.locator('[class*="imageReviewStage"]');
+    const image = imageStage.locator("img");
+    await expect(image).toHaveJSProperty("complete", true);
+    containedWithin(
+      await visibleBox(imageStage),
+      await visibleBox(reviewStage),
+    );
+    containedWithin(await visibleBox(image), await visibleBox(imageStage));
+  });
+});
+
+test("inline video controls hide only while playing off-hover on fine pointers", async ({
+  page,
+}) => {
+  await withMessagesFixture(page, async () => {
+    await page.evaluate(() => {
+      const styles = window.messagesFixture.styles;
+      const host = document.createElement("div");
+      host.dataset.testid = "video-controls-harness";
+      host.style.cssText = "position:fixed;left:32px;top:32px;";
+      host.innerHTML = `
+        <div data-testid="playing-preview" class="${styles.mediaPreview}" data-playing="true" style="--media-ratio:16 / 9;width:320px">
+          <video class="${styles.mediaVideo}"></video>
+          <span data-testid="playing-play" class="${styles.mediaPlay}"><button type="button">Play</button></span>
+          <span data-testid="playing-time" class="${styles.mediaTime}">0:01</span>
+          <span data-testid="playing-expand" class="${styles.mediaExpand}"><button type="button">Expand</button></span>
+        </div>
+        <div data-testid="idle-preview" class="${styles.mediaPreview}" style="--media-ratio:16 / 9;width:320px;margin-top:24px">
+          <video class="${styles.mediaVideo}"></video>
+          <span data-testid="idle-play" class="${styles.mediaPlay}"><button type="button">Play</button></span>
+          <span data-testid="idle-time" class="${styles.mediaTime}">0:00</span>
+          <span data-testid="idle-expand" class="${styles.mediaExpand}"><button type="button">Expand</button></span>
+        </div>
+      `;
+      document.body.append(host);
+    });
+    const finePointer = await page.evaluate(
+      () => matchMedia("(hover: hover) and (pointer: fine)").matches,
+    );
+    test.skip(
+      !finePointer,
+      "Browser project does not expose a hover-capable fine pointer.",
+    );
+    const preview = page.getByTestId("playing-preview");
+    await visibleBox(preview);
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    }
+    await preview.hover();
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    }
+    await page.mouse.move(1, 1);
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    }
+    await page.getByTestId("playing-play").getByRole("button").focus();
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    }
+    await page.getByRole("button", { name: "First root" }).focus();
+    for (const control of ["playing-play", "playing-time", "playing-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "0");
+    }
+    for (const control of ["idle-play", "idle-time", "idle-expand"]) {
+      await expect(page.getByTestId(control)).toHaveCSS("opacity", "1");
+    }
+  });
+});
+
 // Independent source consumer proves safe ordinary-prop reuse, with real React,
 // thread reader and durable outbox. No developer env, broker, credentials or relay.
 test("media review hands off the thread draft, contains focus and keeps narrow controls reachable", async ({
@@ -169,9 +311,7 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       history.evaluate(
         (el) => el.scrollHeight - el.clientHeight - el.scrollTop,
       );
-    await expect(
-      panel.getByText("61 replies shown", { exact: true }),
-    ).toBeVisible();
+    await expect(history.locator("[data-message-id]")).toHaveCount(62);
     await expect(panel.getByRole("status")).toHaveCount(0);
     await expect(
       page.getByRole("button", { name: "Load more replies", exact: true }),
@@ -371,16 +511,12 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
       el.dispatchEvent(new Event("scroll"));
     });
     await page.evaluate(() => window.messagesFixture.live());
-    await expect(
-      panel.getByText("62 replies shown", { exact: true }),
-    ).toBeVisible();
+    await expect(history.locator("[data-message-id]")).toHaveCount(63);
     await expect.poll(() => history.evaluate((el) => el.scrollTop)).toBe(100);
     await draft.fill("keep first draft");
     await choose("Second root");
     await expect(draft).toHaveJSProperty("value", "");
-    await expect(
-      panel.getByText("60 replies shown", { exact: true }),
-    ).toBeVisible();
+    await expect(history.locator("[data-message-id]")).toHaveCount(61);
     await expect.poll(gap).toBeLessThan(2);
     await draft.fill("reject second reply");
     await draft.press("Enter");
@@ -426,9 +562,9 @@ test("shared thread UI auto-loads, follows live replies, retries and isolates re
     await expect(draft).toHaveJSProperty("value", "keep first draft");
     for (const [index, kind] of [9, 40002].entries()) {
       await page.evaluate((value) => window.messagesFixture.deep(value), kind);
-      await expect(
-        panel.getByText(`${63 + index} replies shown`, { exact: true }),
-      ).toBeVisible();
+      await expect(history.locator("[data-message-id]")).toHaveCount(
+        64 + index,
+      );
       const literal = history
         .getByText("literal deep message", { exact: false })
         .last();

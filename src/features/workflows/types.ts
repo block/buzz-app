@@ -19,6 +19,8 @@ export type WorkflowDefinitions = Readonly<{
   items: readonly WorkflowDefinition[];
   /** A bounded configuration snapshot is not a complete runtime inventory. */
   partial: boolean;
+  /** Channels that reached the per-channel limit before coordinate folding. */
+  partialChannelIds?: readonly string[];
 }>;
 
 /** Views belong to a captured session; dispose only releases this read interest. */
@@ -66,6 +68,8 @@ export type WorkflowOperation = Readonly<{
   outcome: "pending" | "succeeded" | "rejected" | "unknown";
   error?: string;
   runId?: string;
+  /** A one-time webhook secret awaits `takeWebhookSecret`; the value itself is never here. */
+  secretHeld?: boolean;
 }>;
 
 /** Host availability, NOT per-row permission; the relay remains authoritative. */
@@ -80,7 +84,9 @@ export type WorkflowAvailability = Readonly<{
 /** Bundled UI contract. No socket, signer, arbitrary HTTP, scheduler or approval writes. */
 export interface WorkflowCapability {
   readonly availability: WorkflowAvailability;
-  definitions(channelId: string): WorkflowView<WorkflowDefinitions>;
+  definitions(
+    channelId: string | readonly string[],
+  ): WorkflowView<WorkflowDefinitions>;
   runs(
     workflow: WorkflowReference,
     cursor?: WorkflowRunCursor,
@@ -98,6 +104,11 @@ export interface WorkflowCapability {
   ): string;
   delete(workflow: WorkflowDefinition): string;
   trigger(workflow: WorkflowDefinition): string;
+  /** One-shot: returns the secret a succeeded save received and forgets it.
+   * Memory only; it is never journaled, logged or placed on an operation. */
+  takeWebhookSecret(eventId: string): string | undefined;
+  /** Display-only hook address; undefined when the host advertised no relay HTTP base. */
+  webhookUrl(workflowId: string): string | undefined;
   operations: Readonly<{
     snapshot(): readonly WorkflowOperation[];
     subscribe(listener: () => void): () => void;

@@ -561,13 +561,19 @@ it("replaces unconfirmed quota recovery with a timeout and retains nonquota manu
   }
 });
 
-it("requests community emoji on the existing profile route and delivers verified updates", async () => {
+it("requests statuses and community emoji on the profile route and delivers verified updates", async () => {
   vi.useFakeTimers();
   const h = setup([]);
   await h.first.auth();
   const req = h.first.sent.find((entry) => entry[0] === "REQ");
   expect(req?.slice(2)).toEqual([
     { kinds: [0], since: expect.any(Number), limit: 500 },
+    {
+      kinds: [30315],
+      "#d": ["general"],
+      since: expect.any(Number),
+      limit: 500,
+    },
     {
       kinds: [30030],
       "#d": ["buzz:custom-emoji"],

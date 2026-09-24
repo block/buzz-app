@@ -11,6 +11,17 @@ declare module "@deepseek-ai/cordis" {
 }
 export type AgentAction = "start" | "stop" | "restart";
 export type ImportSource = "installed" | "development";
+/** Native-redacted saved-versus-running difference; raw values never cross IPC. */
+export type RestartChange =
+  | { kind: "value"; before: unknown; after: unknown }
+  | { kind: "text"; beforeChars: number | null; afterChars: number | null }
+  | { kind: "masked"; before: string | null; after: string | null }
+  | { kind: "added" }
+  | { kind: "removed" };
+export interface RestartDiffEntry {
+  field: string;
+  change: RestartChange;
+}
 export interface AgentView {
   id: string;
   pubkey: string;
@@ -33,6 +44,23 @@ export interface AgentView {
   error: string | null;
   diagnostics: string[];
   profilePending?: boolean;
+  /** Launch restore preference; saving it never changes the running process. */
+  startOnAppLaunch: boolean;
+  /** Effective response policy for the next start; null when it is invalid. */
+  respondTo: "owner-only" | "allowlist" | "anyone" | null;
+  /** Imported provider backend id; null for local agents. */
+  backend: string | null;
+  acpCommand: string | null;
+  mcpCommand: string | null;
+  /** Model/provider the next start uses from saved selectors or build
+   * defaults. Null when none applies or an environment override decides it. */
+  launchModel: string | null;
+  launchProvider: string | null;
+  /** Environment key deciding that selector; its value stays native. */
+  launchModelEnv: string | null;
+  launchProviderEnv: string | null;
+  /** Empty unless a running process was started with different saved settings. */
+  restartDiff: RestartDiffEntry[];
 }
 export interface ControlSnapshot {
   agents: AgentView[];
@@ -42,6 +70,8 @@ export interface ControlSnapshot {
   harnessOptions?: {
     command: string;
     label: string;
+    available?: boolean;
+    defaultArgs?: string[];
     providers: { value: string; label: string }[];
   }[];
   /** False while native credential/import acceptance is outstanding. */
@@ -50,6 +80,7 @@ export interface ControlSnapshot {
   defaultWorkspace?: string;
   runtimeMessage?: string | null;
   databricksDefaults?: { host: string; filter: string };
+  agentDefaults?: { provider: string; model: string; ownerOnly: boolean };
 }
 export interface AgentEdit {
   name: string;
@@ -78,12 +109,14 @@ export interface AgentControlHost {
     auth: string,
   ): Promise<ControlSnapshot>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): Promise<ControlSnapshot>;
   save(
     id: string,
     expectedRevision: number,
     edit: AgentEdit,
   ): Promise<ControlSnapshot>;
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   action(
     id: string,
     action: AgentAction,
@@ -115,10 +148,12 @@ export interface AgentControl {
     edit: AgentEdit,
   ): Promise<AgentView>;
   publishProfile?(id: string): Promise<ControlSnapshot>;
+  setStartOnAppLaunch?(id: string, enabled: boolean): Promise<ControlSnapshot>;
   snapshot(): AgentControlState;
   subscribe(listener: () => void): () => void;
   refresh(): Promise<void>;
   save: AgentControlHost["save"];
+  delete?(id: string, expectedRevision: number): Promise<ControlSnapshot>;
   action: AgentControlHost["action"];
   previewImport: AgentControlHost["previewImport"];
   commitImport: AgentControlHost["commitImport"];
@@ -129,6 +164,22 @@ export interface AgentControl {
     signal: AbortSignal,
   ): (earliestPending?: number) => Promise<void>;
   dismissMentionError(): void;
+}
+
+/** Shared launch availability; Stop intentionally has its own recovery policy. */
+export function agentLaunchBlock(
+  state: AgentControlState,
+  agent: AgentView,
+): string | null {
+  if (state.status !== "ready") return "Refresh status before starting.";
+  if (state.busy) return "Waiting for the current operation.";
+  if (!state.data?.runtimeAvailable)
+    return (
+      state.data?.runtimeMessage || "The bundled agent runtime is unavailable."
+    );
+  if (agent.status === "starting" || agent.status === "stopping")
+    return "Waiting for the process transition.";
+  return null;
 }
 
 /** Stop is recovery, not a launch: stale stopped/disabled evidence cannot veto it. */
@@ -290,6 +341,7 @@ export function createAgentControl(
       command === "stop" ? undefined : id,
     );
   };
+  const deleteAgent = host?.delete;
   return {
     models,
     ...(host?.prepareCreate && host.commitCreate
@@ -352,6 +404,16 @@ export function createAgentControl(
             ),
         }
       : {}),
+    ...(host?.setStartOnAppLaunch
+      ? {
+          setStartOnAppLaunch: (id: string, enabled: boolean) =>
+            run((native) => {
+              if (!native.setStartOnAppLaunch)
+                throw new Error("Startup preference is unavailable.");
+              return native.setStartOnAppLaunch(id, enabled);
+            }, ready),
+        }
+      : {}),
     snapshot: () => state,
     subscribe(listener) {
       listeners.add(listener);
@@ -362,6 +424,12 @@ export function createAgentControl(
     refresh,
     save: (id, revision, edit) =>
       run((native) => native.save(id, revision, edit), ready),
+    ...(deleteAgent
+      ? {
+          delete: (id: string, revision: number) =>
+            run(() => deleteAgent(id, revision), ready),
+        }
+      : {}),
     action,
     dismissMentionError: () => update({ mentionError: null }),
     prepareMention(pubkeys, relayUrl, replayFloor, signal) {

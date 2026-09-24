@@ -11,6 +11,7 @@ import {
   within,
 } from "@testing-library/react";
 import { assert, afterEach, beforeEach, expect, it, vi } from "vitest";
+import { foldMessages } from "../relay/fold";
 import { createRelaySession } from "../relay/session";
 import {
   bounds,
@@ -192,6 +193,13 @@ function editOwner(
             return [metadata(relay, "channel", "General")];
           if (filter.ids)
             return events.filter((event) => filter.ids?.includes(event.id));
+          if (filter.kinds?.includes(40003) && filter["#e"])
+            return events.filter((event) =>
+              event.tags.some(
+                ([name, id]) =>
+                  name === "e" && filter["#e"]?.includes(id ?? ""),
+              ),
+            );
           if (filter.depth_limit)
             return events.filter(
               (event) =>
@@ -286,6 +294,7 @@ it.each(["image", "video"] as const)(
         await authorize(owner);
         render(
           <MediaReviewViewer
+            onOpenLink={() => false}
             attachment={attachment}
             session={owner.session}
             scope={`media-edit-${kind}-${scenario}`}
@@ -323,6 +332,7 @@ it.each(["image", "video"] as const)(
             tags: [
               ["h", "channel"],
               ["e", expected.id],
+              ...expected.tags.filter(([name]) => name === "imeta"),
               ["client-id", expect.any(String)],
             ],
           }),
@@ -439,6 +449,101 @@ it.each(["reject", "commit"] as const)(
       expect(input).toHaveValue("");
     } finally {
       release();
+      cleanup();
+      owner.dispose();
+    }
+  },
+);
+
+it.each(["thread", "exact"])(
+  "%s composer preserves replaced attachments on a text re-edit",
+  async (surface) => {
+    const viewer = keypair(),
+      other = keypair();
+    const oldUrl = "https://fixture.test/old.png";
+    const url = "https://fixture.test/current.png";
+    const imeta = [
+      "imeta",
+      `url ${url}`,
+      "m image/png",
+      "dim 640x480",
+      "x retained-hash",
+    ];
+    const root = message(other, "channel", "Root", 10);
+    const reply = message(viewer, "channel", "Original", 11, [
+      ["e", root.id, "", "reply"],
+      ["imeta", `url ${oldUrl}`, "m image/png"],
+    ]);
+    const edit = signed(viewer, {
+      kind: 40003,
+      content: `Current caption\n\n![image](${url})`,
+      created_at: 12,
+      tags: [["h", "channel"], ["e", reply.id], imeta],
+    });
+    const events = [root, reply, edit];
+    const publish = vi.fn(async (_event: RelayEvent) => {});
+    const owner = editOwner(
+      viewer,
+      events,
+      undefined,
+      publish,
+      surface === "exact" ? reply.id : undefined,
+    );
+    try {
+      await authorize(owner);
+      const shared = {
+        session: owner.session,
+        scope: `replacement-${surface}`,
+        channelId: "channel",
+        channelName: "General",
+        close: () => {},
+        onOpenLink: () => false,
+      };
+      render(
+        surface === "thread" ? (
+          <ThreadPanel {...shared} messageId={root.id} />
+        ) : (
+          <MediaReviewViewer
+            {...shared}
+            messageId={reply.id}
+            attachment={{ url, kind: "image" }}
+            initialTime={0}
+          />
+        ),
+        { reactStrictMode: true },
+      );
+      await screen.findByText("Current caption");
+      const input = screen.getByRole<ComposerInputElement>("textbox", {
+        name: "Reply to thread",
+      });
+      fireEvent.keyDown(input, { key: "ArrowUp" });
+      expect(input).toHaveValue(edit.content);
+      const content = `New caption\n\n![image](${url})`;
+      act(() => {
+        input.value = content;
+        input.setSelectionRange(content.length, content.length);
+      });
+      fireEvent.input(input);
+      fireEvent.keyDown(input, { key: "Enter" });
+      await waitFor(() => expect(publish).toHaveBeenCalledTimes(1));
+      const sent = publish.mock.calls[0]?.[0];
+      assert(sent);
+      expect(sent.tags.filter(([name]) => name === "imeta")).toEqual([imeta]);
+      expect(sent.content).toBe(content);
+      const row = foldMessages("channel", "", [...events, sent], {
+        includeReplies: true,
+      }).find((row) => row.id === reply.id);
+      expect(row?.content).toBe("New caption");
+      expect(row?.attachments).toEqual([
+        {
+          url,
+          kind: "image",
+          mime: "image/png",
+          name: "current.png",
+          dimensions: { width: 640, height: 480 },
+        },
+      ]);
+    } finally {
       cleanup();
       owner.dispose();
     }

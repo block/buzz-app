@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { COMPONENTS } from "../../../src/shared/design-system/ui/registry";
 import { PHOSPHOR_ICONS } from "../../../src/shared/design-system/icons/inventory";
 
@@ -82,10 +82,58 @@ test("built viewer loads every specimen and foundation without app connections",
     }
   }
   await expect(
-    nav.getByRole("link", { name: /Composer|Conversation|Agent work/ }),
+    nav.getByRole("link", { name: /Conversation|Agent work/ }),
   ).toHaveCount(0);
   expect(failures).toEqual([]);
   expect(sockets).toEqual([]);
+});
+
+test("composer documents interactive, pending, failure and narrow states", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/composer`);
+  const interactive = page.getByRole("form", { name: "Interactive message" });
+  const input = interactive.getByRole("textbox", {
+    name: "Interactive message",
+  });
+  const send = interactive.getByRole("button", { name: "Send message" });
+
+  await expect(send).toBeDisabled();
+  await input.fill("Ready to review");
+  await expect(send).toBeEnabled();
+  await send.click();
+  await expect(input).toHaveValue("");
+  await expect(interactive.getByRole("status")).toHaveText(
+    "Message sent in this local preview.",
+  );
+
+  const sending = page.getByRole("form", { name: "Sending message" });
+  await expect(sending).toHaveAttribute("aria-busy", "true");
+  await expect(
+    sending.getByRole("button", { name: "Sending message" }),
+  ).toBeDisabled();
+
+  const failed = page.getByRole("form", { name: "Message with error" });
+  await expect(failed.getByRole("alert")).toContainText(
+    "Custom emoji could not be prepared.",
+  );
+  await failed.getByRole("button", { name: "Retry" }).click();
+  await expect(failed.getByRole("alert")).toHaveCount(0);
+  await expect(failed.getByRole("status")).toHaveText(
+    "Message preparation recovered.",
+  );
+
+  for (const width of [390, 800, 1280]) {
+    await page.setViewportSize({ width, height: 900 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    ).toBe(true);
+    await expect(
+      page.getByRole("form", { name: "Narrow message" }),
+    ).toBeVisible();
+  }
 });
 
 test("icon inventory is routed, complete, decorative, and responsive", async ({
@@ -1014,6 +1062,27 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
   const submenu = page.getByRole("menuitem", { name: "Sort", exact: true });
   const recent = page.getByRole("menuitemradio", { name: "Recent" });
   const alpha = page.getByRole("menuitemradio", { name: "A–Z" });
+  // Every position and grouped choice uses the shared full-round token.
+  const expectRounded = async (item: Locator) => {
+    const radius = await item.evaluate((element) => {
+      // The shared pill token is rem-based; computed corner values are pixels.
+      const rem = Number.parseFloat(
+        getComputedStyle(element).getPropertyValue("--radius-pill"),
+      );
+      const rootSize = Number.parseFloat(
+        getComputedStyle(document.documentElement).fontSize,
+      );
+      return `${rem * rootSize}px`;
+    });
+    for (const corner of [
+      "top-left",
+      "top-right",
+      "bottom-left",
+      "bottom-right",
+    ]) {
+      await expect(item).toHaveCSS(`border-${corner}-radius`, radius);
+    }
+  };
   const tab =
     browserName === "webkit" && process.platform === "darwin"
       ? "Alt+Tab"
@@ -1023,6 +1092,10 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
     if (await toggle.count()) await toggle.click();
     await trigger.click();
     await expect(page.getByRole("menu")).toHaveCSS("transform", "none");
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const item of [action, checkbox, submenu]) await expectRounded(item);
+    }
     await page.mouse.move(0, 0);
     await action.hover();
     // Programmatic focus following a pointer open must stay quiet too.
@@ -1042,6 +1115,10 @@ test("menu items retain keyboard navigation with hidden focus outlines in both m
     }
     await page.keyboard.press("ArrowRight");
     await expect(recent).toBeFocused();
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      for (const item of [recent, alpha]) await expectRounded(item);
+    }
     await expect(recent).toHaveCSS("outline-style", "none");
     await page.keyboard.press("ArrowDown");
     await expect(alpha).toBeFocused();
@@ -1159,6 +1236,109 @@ test("shared menus stay reachable near viewport edges and above a dialog", async
   await expect(page.getByRole("menu")).toHaveCount(0);
   await expect(dialog).toBeVisible();
   await expect(trigger).toBeFocused();
+});
+
+// Real iframe sizing, theme propagation, media decoding and built asset paths
+// require a browser; the specimen interactions only mutate local sample state.
+test("built Messages gallery renders isolated product states and follows viewer theme and width", async ({
+  page,
+}) => {
+  const failures: string[] = [];
+  const sockets: string[] = [];
+  page.on("pageerror", (error) => failures.push(error.message));
+  page.on("response", (response) => {
+    if (response.status() >= 400)
+      failures.push(`${response.status()} ${response.url()}`);
+  });
+  page.on("websocket", (socket) => sockets.push(socket.url()));
+  await page.goto(`${viewer}#/design/messages`);
+  const gallery = page.frameLocator('iframe[title="Message types and states"]');
+  await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
+  await expect(
+    gallery.getByRole("heading", { name: "Member removed", exact: true }),
+  ).toBeVisible();
+  await expect
+    .poll(() => page.locator("iframe").evaluate((el) => el.clientHeight))
+    .toBeLessThanOrEqual(900);
+  await gallery
+    .getByRole("button", { name: "Delivery states", exact: true })
+    .click();
+  const failed = gallery.getByRole("region", { name: "Failed", exact: true });
+  await expect(failed.getByRole("status")).toHaveText(
+    "Couldn’t send this message.",
+  );
+  await failed.getByRole("button", { name: "Retry", exact: true }).click();
+  await expect(failed.getByRole("status")).toHaveCount(0);
+  await gallery.getByRole("button", { name: "Reset examples" }).click();
+  await expect(failed.getByRole("status")).toHaveText(
+    "Couldn’t send this message.",
+  );
+  await gallery
+    .getByRole("button", { name: "Conversation context", exact: true })
+    .click();
+  await gallery.getByRole("button", { name: "View thread: 4 replies" }).click();
+  await expect(
+    gallery.getByRole("region", { name: "Sample thread replies" }),
+  ).toBeVisible();
+  await gallery.getByRole("button", { name: "Close replies" }).click();
+  await expect(
+    gallery.getByRole("region", { name: "Sample thread replies" }),
+  ).toHaveCount(0);
+  for (const mode of ["light", "dark"]) {
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    await expect(gallery.locator("html")).toHaveAttribute(
+      "data-color-mode",
+      mode,
+    );
+    await gallery
+      .getByRole("button", { name: "Attachments", exact: true })
+      .click();
+    const video = gallery
+      .getByRole("region", { name: "Video attachment", exact: true })
+      .locator("video");
+    await expect
+      .poll(() => video.evaluate((el) => (el as HTMLVideoElement).readyState))
+      .toBeGreaterThanOrEqual(2);
+    for (const width of [390, 800, 1280]) {
+      await page.setViewportSize({ width, height: 900 });
+      await expect
+        .poll(() =>
+          gallery
+            .locator("body")
+            .evaluate((el) => el.scrollWidth <= window.innerWidth),
+        )
+        .toBe(true);
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => document.documentElement.scrollWidth <= window.innerWidth,
+          ),
+        )
+        .toBe(true);
+    }
+  }
+  await gallery
+    .getByRole("button", { name: "Content and identity", exact: true })
+    .click();
+  await gallery.getByRole("button", { name: "Narrow preview" }).click();
+  await expect
+    .poll(() =>
+      gallery
+        .locator(".message-gallery-examples")
+        .evaluate((el) => el.clientWidth),
+    )
+    .toBeLessThanOrEqual(390);
+  await expect(
+    gallery.getByRole("button", { name: "View Sam Rivera profile" }),
+  ).toBeVisible();
+  await expect(
+    gallery.getByRole("img", { name: ":landscape:", exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(gallery.locator(".message-gallery-example")).toHaveCount(33);
+  expect(failures).toEqual([]);
+  expect(sockets).toEqual([]);
 });
 
 // Real layout/focus coverage: a DOM emulator cannot prove portal stacking or scroll reachability.
@@ -1288,6 +1468,59 @@ test("toast recovery stays reachable across themes, sizes, keyboard scrolling an
   await expect(region).toHaveCount(0); // Leaving the owner clears the stack.
 });
 
+// Cross-document fullscreen placement and native focus restoration require a browser.
+test("Messages gallery fullscreen stays reachable and returns focus to its trigger", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/messages`);
+  const gallery = page.frameLocator('iframe[title="Message types and states"]');
+  for (const width of [1280, 800, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    for (const category of ["All messages", "Attachments"]) {
+      await gallery
+        .getByRole("button", { name: category, exact: true })
+        .click();
+      const trigger = gallery
+        .getByRole("button", { name: "Open video fullscreen", exact: true })
+        .first();
+      await trigger.click();
+      const dialog = gallery.getByRole("dialog", {
+        name: "Video attachment",
+        exact: true,
+      });
+      const close = dialog.getByRole("button", {
+        name: "Close fullscreen viewer",
+        exact: true,
+      });
+      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await expect(close).toBeInViewport({ ratio: 1 });
+      await expect(close).toBeFocused();
+      await expect(dialog.locator("video")).toBeInViewport({ ratio: 1 });
+      await expect
+        .poll(() =>
+          dialog
+            .locator("video")
+            .evaluate(
+              (video) =>
+                video instanceof HTMLVideoElement &&
+                video.readyState >= 2 &&
+                video.videoWidth > 0 &&
+                video.currentTime > 0,
+            ),
+        )
+        .toBe(true);
+      await close.click();
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+      await trigger.press("Enter");
+      await expect(dialog).toBeInViewport({ ratio: 1 });
+      await page.keyboard.press("Escape");
+      await expect(dialog).toHaveCount(0);
+      await expect(trigger).toBeFocused();
+    }
+  }
+});
+
 // Real engines own transition presence, filtering, portal dismissal, and focus.
 test("form choice popups settle, retain exit presence, and respect immediate motion", async ({
   page,
@@ -1382,5 +1615,275 @@ test("form choice popups settle, retain exit presence, and respect immediate mot
     }
   } finally {
     await finish();
+  }
+});
+
+// Native portal focus and dismissal cannot be established by a DOM emulator.
+test("popovers return focus and nested popovers close before their dialog", async ({
+  page,
+}) => {
+  await page.goto(`${viewer}#/design/components/popover`);
+  const trigger = page.getByRole("button", {
+    name: "Edit workspace name",
+    exact: true,
+  });
+  await expect(trigger).toBeVisible();
+  await page.keyboard.press("Tab");
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  const popup = page.getByRole("dialog", {
+    name: "Edit workspace",
+    exact: true,
+  });
+  const input = popup.getByRole("textbox", { name: "Workspace name" });
+  await expect(input).toBeFocused();
+  await expect(popup).toHaveCSS("transition-duration", "0s");
+  await input.fill("Research studio");
+  await page.keyboard.press("Escape");
+  await expect(popup).toHaveCount(0);
+  await expect(trigger).toBeFocused();
+  await expect(page.getByRole("status")).toHaveText("Workspace: Design studio");
+  await trigger.click();
+  await expect(input).toHaveValue("Design studio");
+  await input.fill("Research studio");
+  await popup.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(page.getByRole("status")).toHaveText(
+    "Workspace: Research studio",
+  );
+  const activityTrigger = page.getByRole("button", {
+    name: "Recent activity",
+    exact: true,
+  });
+  await activityTrigger.hover();
+  const activity = page.getByRole("dialog", {
+    name: "Recent activity",
+    exact: true,
+  });
+  await expect(activity).toBeVisible();
+  await activity.hover();
+  await expect(activity).toBeVisible();
+  await activity.getByRole("button", { name: /Alex Morgan/ }).click();
+  await expect(activity).toHaveCount(0);
+  await page.getByRole("button", { name: "Open popover dialog" }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Workspace details",
+    exact: true,
+  });
+  const nestedTrigger = dialog.getByRole("button", {
+    name: "View access details",
+  });
+  await nestedTrigger.click();
+  const nested = page.getByRole("dialog", { name: "Invite only", exact: true });
+  await expect(nested.getByRole("button", { name: "Done" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(nested).toHaveCount(0);
+  await expect(dialog).toBeVisible();
+  await expect(nestedTrigger).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toHaveCount(0);
+});
+
+// Popup collision geometry, scrolling and text scaling need a layout engine.
+test("popover placements and rich choices fit narrow screens and enlarged text", async ({
+  page,
+}) => {
+  for (const mode of ["light", "dark"]) {
+    await page.goto(`${viewer}#/design/components/popover`);
+    const toggle = page.getByRole("button", { name: `Use ${mode} mode` });
+    if (await toggle.count()) await toggle.click();
+    await page.setViewportSize({ width: 390, height: 850 });
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    for (const side of ["top", "right", "bottom", "left"]) {
+      await page.getByRole("button", { name: side, exact: true }).click();
+      const popup = page.getByRole("dialog", {
+        name: `Anchored ${side}`,
+        exact: true,
+      });
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transform", "none");
+      const box = await popup.boundingBox();
+      if (!box) throw new Error("Popover has no visible bounds");
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(390);
+      expect(box.y).toBeGreaterThanOrEqual(0);
+      expect(box.y + box.height).toBeLessThanOrEqual(850);
+      await expect
+        .poll(() => popup.evaluate((e) => e.scrollWidth <= e.clientWidth))
+        .toBe(true);
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+    }
+    await page.goto(`${viewer}#/design/components/menu`);
+    await page.evaluate(() => {
+      document.documentElement.style.fontSize = "200%";
+    });
+    await page
+      .getByRole("button", { name: "Choose an agent", exact: true })
+      .click();
+    const menu = page.getByRole("menu", {
+      name: "Choose an agent",
+      exact: true,
+    });
+    await expect(menu).toHaveCSS("transform", "none");
+    await expect
+      .poll(() => menu.evaluate((e) => e.scrollWidth <= e.clientWidth))
+      .toBe(true);
+    const disabled = page.getByRole("menuitemradio", {
+      name: "Archive assistant Unavailable on this connection",
+    });
+    await expect(disabled.locator(".buzz-choice-row-label")).toHaveCSS(
+      "color",
+      await disabled.evaluate((e) => getComputedStyle(e).color),
+    );
+    await page.keyboard.press("Escape");
+    await page
+      .getByRole("button", { name: "Choose workspace", exact: true })
+      .click();
+    const list = page.getByRole("menu", {
+      name: "Choose workspace",
+      exact: true,
+    });
+    await expect(list).toHaveCSS("transform", "none");
+    await expect
+      .poll(() => list.evaluate((e) => e.scrollHeight > e.clientHeight))
+      .toBe(true);
+    await page.keyboard.press("End");
+    const last = page.getByRole("menuitemradio", {
+      name: "Workspace 24",
+      exact: true,
+    });
+    await expect(last).toBeFocused();
+    const listBox = await list.boundingBox();
+    const rowBox = await last.boundingBox();
+    if (!listBox || !rowBox)
+      throw new Error("Menu or last row has no visible bounds");
+    expect(rowBox.y).toBeGreaterThanOrEqual(listBox.y);
+    expect(rowBox.y + rowBox.height).toBeLessThanOrEqual(
+      listBox.y + listBox.height,
+    );
+    await page.keyboard.press("Enter");
+    await expect(list).toHaveCount(0);
+  }
+});
+
+// Reduced-motion preference must suppress popup animation in the browser.
+test("popover reduced motion and outside dismissal remain immediate", async ({
+  page,
+}) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.goto(`${viewer}#/design/components/popover`);
+  await page.getByRole("button", { name: "Open popover", exact: true }).click();
+  const popup = page.getByRole("dialog", {
+    name: "Workspace access",
+    exact: true,
+  });
+  await expect(popup).toBeVisible();
+  await expect(popup).toHaveCSS("transition-duration", "0s");
+  await page.getByRole("heading", { name: "Popover", exact: true }).click();
+  await expect(popup).toHaveCount(0);
+});
+
+// Hold real CSS transitions to inspect entry/exit frames and Base UI presence.
+test("menus and popovers reuse the dropdown unblur and placement offset", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    document.addEventListener(
+      "transitionrun",
+      (event) => {
+        if (
+          !(event.target instanceof HTMLElement) ||
+          !event.target.matches(".buzz-menu-popup, .buzz-popover-popup")
+        )
+          return;
+        for (const animation of event.target.getAnimations()) animation.pause();
+      },
+      true,
+    );
+  });
+  const finish = () =>
+    page.evaluate(() => {
+      for (const animation of document.getAnimations()) animation.finish();
+    });
+  for (const example of [
+    { page: "menu", trigger: "Open menu", selector: ".buzz-menu-popup" },
+    { page: "popover", trigger: "top", selector: ".buzz-popover-popup" },
+    { page: "popover", trigger: "right", selector: ".buzz-popover-popup" },
+  ]) {
+    await page.goto(`${viewer}#/design/components/${example.page}`);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const trigger = page.getByRole("button", {
+      name: example.trigger,
+      exact: true,
+    });
+    const popup = page.locator(example.selector);
+    const paused = () =>
+      expect
+        .poll(() =>
+          popup.evaluate((el) =>
+            el
+              .getAnimations()
+              .some((animation) => animation.playState === "paused"),
+          ),
+        )
+        .toBe(true);
+    try {
+      await trigger.click();
+      await paused();
+      await expect(popup).toHaveCSS(
+        "transition-duration",
+        "0.075s, 0.075s, 0.075s",
+      );
+      const side = await popup.getAttribute("data-side");
+      const offset =
+        side === "top"
+          ? "translateY(2px)"
+          : side === "right"
+            ? "translateX(-2px)"
+            : side === "left"
+              ? "translateX(2px)"
+              : "translateY(-2px)";
+      const frames = await popup.evaluate((el) =>
+        el
+          .getAnimations()
+          .flatMap((animation) =>
+            (animation.effect as KeyframeEffect).getKeyframes(),
+          ),
+      );
+      expect(frames.some((frame) => frame.filter === "blur(2px)")).toBe(true);
+      expect(frames.some((frame) => frame.transform === offset)).toBe(true);
+      await finish();
+      await expect(popup).toHaveCSS("filter", "blur(0px)");
+      await expect(popup).toHaveCSS("transform", "none");
+      await trigger.click();
+      await expect(popup).toHaveAttribute("data-ending-style", "");
+      await paused();
+      await expect(popup).toHaveCSS("transition-duration", "0.06s");
+      await finish();
+      await expect(popup).toHaveCount(0);
+
+      await page.keyboard.press("Tab");
+      await trigger.focus();
+      await trigger.press("Enter");
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await expect(popup).toHaveCSS("transform", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+
+      await page.emulateMedia({ reducedMotion: "reduce" });
+      await trigger.click();
+      await expect(popup).toBeVisible();
+      await expect(popup).toHaveCSS("transition-duration", "0s");
+      await expect(popup).toHaveCSS("filter", "none");
+      await expect(popup).toHaveCSS("transform", "none");
+      await page.keyboard.press("Escape");
+      await expect(popup).toHaveCount(0);
+    } finally {
+      await finish();
+    }
   }
 });

@@ -1,8 +1,10 @@
+import { isChannelRoute } from "../../features/channel-navigation/routes";
 import type { PluginModule } from "../../plugins/api";
 import { ChannelsPage } from "./ChannelsPage";
 import { ChannelSetupSettings } from "./ChannelSetupSettings";
 export const inject = [
   "pages",
+  "agentControl",
   "relay",
   "panels",
   "conversation",
@@ -12,6 +14,7 @@ export const inject = [
 ];
 export const apply: PluginModule["apply"] = (ctx) => {
   const extensions = ctx.conversation;
+  const agentControl = ctx.agentControl;
   const relay = ctx.relay;
   const panels = ctx.panels;
   const pages = ctx.pages;
@@ -34,9 +37,10 @@ export const apply: PluginModule["apply"] = (ctx) => {
     layout: "workspace",
     companion: true,
     handlesNavigation: true,
-    route: { version: 1, validate: (params) => params === "new-message" },
+    route: { version: 1, validate: isChannelRoute },
     component: ({ companion, navigation }) => (
       <ChannelsPage
+        agentControl={agentControl}
         providers={providers}
         navigation={navigation}
         navigator={navigator}

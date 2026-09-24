@@ -22,6 +22,16 @@ export function controlFixture() {
     status: "running",
     error: null,
     diagnostics: ["Listener process started; readiness is unverified."],
+    startOnAppLaunch: true,
+    respondTo: "owner-only",
+    backend: null,
+    acpCommand: "/fixture/bin/buzz-acp",
+    mcpCommand: "/fixture/bin/buzz-dev-mcp",
+    launchModel: "fixture-model",
+    launchProvider: "fixture-provider",
+    launchModelEnv: null,
+    launchProviderEnv: null,
+    restartDiff: [],
   };
   const data: ControlSnapshot = {
     runtimeAvailable: true,
@@ -37,6 +47,7 @@ export function controlFixture() {
   };
   const calls: { action: string; payload?: unknown }[] = [];
   let failSave = false;
+  let failStartOnAppLaunch = false;
   let importDestination = "";
   const host: AgentControlHost = {
     async snapshot() {
@@ -60,6 +71,12 @@ export function controlFixture() {
         harness: { ...edit.harness, environmentKeys: [...keys] },
         revision: agent.revision + 1,
       });
+      return structuredClone(data);
+    },
+    async setStartOnAppLaunch(id, enabled) {
+      calls.push({ action: "startOnAppLaunch", payload: { id, enabled } });
+      if (failStartOnAppLaunch) throw "The host could not save settings.";
+      agent.startOnAppLaunch = enabled;
       return structuredClone(data);
     },
     async action(id, action) {
@@ -107,6 +124,9 @@ export function controlFixture() {
     calls,
     failSave(value: boolean) {
       failSave = value;
+    },
+    failStartOnAppLaunch(value: boolean) {
+      failStartOnAppLaunch = value;
     },
   };
 }

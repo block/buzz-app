@@ -99,12 +99,18 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/todos/manifest.json"))
+            .expect("todos manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
             .expect("bundled diffs manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/channel-templates/manifest.json"
         ))
         .expect("channel templates manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/identity-naming/manifest.json"
+        ))
+        .expect("identity naming manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/agent-activity/manifest.json"
         ))
@@ -133,6 +139,14 @@ pub fn bundled_manifests() -> Vec<Manifest> {
             .expect("workflows manifest"),
         serde_json::from_str(include_str!("../../../src/bundled/sessions/manifest.json"))
             .expect("sessions manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/hosted-communities/manifest.json"
+        ))
+        .expect("hosted communities manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/moderation/manifest.json"
+        ))
+        .expect("moderation manifest"),
     ]
 }
 fn is_bundled(id: &str) -> bool {
@@ -334,7 +348,10 @@ impl Manager {
                         .bundled_overrides
                         .get(&manifest.id)
                         .copied()
-                        .unwrap_or(manifest.id != "buzz.channel-templates");
+                        .unwrap_or(!matches!(
+                            manifest.id.as_str(),
+                            "buzz.channel-templates" | "buzz.todos"
+                        ));
                 PluginInfo {
                     manifest,
                     source: "bundled",
@@ -829,6 +846,28 @@ mod tests {
             .unwrap()
             .commands
             .is_empty());
+    }
+
+    #[test]
+    fn todos_is_optional_and_keeps_explicit_enabled_intent() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "todos-test", false).unwrap();
+        let enabled = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.todos")
+                .unwrap()
+                .enabled
+        };
+        assert!(!enabled(&manager));
+        manager.change("enable", "buzz.todos").unwrap();
+        let reopened = Manager::open(Some(temp.path().into()), "todos-test", false).unwrap();
+        assert!(enabled(&reopened));
+        reopened.change("disable", "buzz.todos").unwrap();
+        assert!(!enabled(&manager));
     }
 
     #[test]

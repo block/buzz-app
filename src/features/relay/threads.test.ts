@@ -299,6 +299,7 @@ it("drops shared row identity when any compared field changes", () => {
       (row) => ({ ...row, reactions: [{ ...reaction, events: [] }] }),
     ],
     ["threadRootId", (row) => ({ ...row, threadRootId: replacementId })],
+    ["replyParentId", (row) => ({ ...row, replyParentId: replacementId })],
     ["replyCount", (row) => ({ ...row, replyCount: 2 })],
     ["participants", (row) => ({ ...row, participants: [replacementId] })],
   ];

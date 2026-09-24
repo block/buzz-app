@@ -6,6 +6,7 @@ import { Accordion } from "../../shared/design-system/ui/Accordion";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import {
   canStopAgent,
+  agentLaunchBlock,
   type AgentControl,
   type AgentControlState,
   type AgentView,
@@ -21,12 +22,14 @@ import {
 
 export function AgentEditor({
   agent,
+  displayName = agent.name,
   control,
   state,
   avatar,
   onClose,
 }: {
   agent: AgentView;
+  displayName?: string;
   control: AgentControl;
   state: AgentControlState;
   avatar?: string | undefined;
@@ -35,14 +38,13 @@ export function AgentEditor({
   const [draft, setDraft] = useState<AgentDraft | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const current = draft ?? agentDraft(agent, state.data?.databricksDefaults);
+  const current = draft ?? agentDraft(agent);
   const dirty = draft !== null;
   const stale = current.revision !== agent.revision;
   const blocked = state.busy || state.status !== "ready";
   const canClose =
     !state.busy || !!(state.pendingLaunch || state.pendingCredentialWrite);
-  const transitioning =
-    agent.status === "starting" || agent.status === "stopping";
+  const launchBlocked = !!agentLaunchBlock(state, agent) || dirty;
   const unapplied =
     agent.runningRevision !== null && agent.runningRevision !== agent.revision;
   const change = (patch: Partial<AgentDraft>) => {
@@ -83,19 +85,19 @@ export function AgentEditor({
             />
           </header>
           <Dialog.Description className="sr-only">
-            Edit {agent.name}. Save updates settings without restarting the
+            Edit {displayName}. Save updates settings without restarting the
             agent.
           </Dialog.Description>
           <div className="flex flex-col items-start gap-3 min-w-0">
             <Avatar
               alt=""
-              fallback={agent.name}
+              fallback={displayName}
               src={avatar ?? null}
               shape="squircle"
               size="large"
             />
             <div className="min-w-0 space-y-1">
-              <p className="text-label break-words">{agent.name}</p>
+              <p className="text-label break-words">{displayName}</p>
               <p className="text-body-sm text-subtle break-all">
                 {agent.relayUrl}
               </p>
@@ -149,21 +151,20 @@ export function AgentEditor({
                             </p>
                             <p className="text-body-sm text-subtle">
                               {agent.enabled
-                                ? state.data?.runtimeAvailable
-                                  ? "Enabled · starts with buzz-app"
-                                  : "Enabled intent saved · execution unavailable"
-                                : "Stopped · a later sent mention can start this agent"}
+                                ? !state.data?.runtimeAvailable
+                                  ? "Enabled intent saved · execution unavailable"
+                                  : agent.startOnAppLaunch
+                                    ? "Enabled · starts with buzz-app"
+                                    : "Enabled · manual-start only"
+                                : agent.startOnAppLaunch
+                                  ? "Stopped · starts with buzz-app"
+                                  : "Stopped · a later sent mention can start this agent"}
                             </p>
                           </div>
                           <div className="flex flex-wrap gap-2">
                             {agent.status !== "running" && (
                               <Button
-                                disabled={
-                                  blocked ||
-                                  transitioning ||
-                                  dirty ||
-                                  !state.data?.runtimeAvailable
-                                }
+                                disabled={launchBlocked}
                                 onClick={() => act("start")}
                               >
                                 Start
@@ -176,12 +177,7 @@ export function AgentEditor({
                               Stop
                             </Button>
                             <Button
-                              disabled={
-                                blocked ||
-                                transitioning ||
-                                dirty ||
-                                !state.data?.runtimeAvailable
-                              }
+                              disabled={launchBlocked}
                               onClick={() => act("restart")}
                             >
                               {unapplied ? "Restart to apply" : "Restart"}

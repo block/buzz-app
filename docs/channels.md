@@ -22,7 +22,8 @@ frontend hot reload alone is not enough.
 
 Settings independently enables/disables Channels and GitHub. Disabling GitHub
 removes its link handler and open panel; shared channel data remains available.
-Disabling Channels removes its page while the app-owned data survives.
+Channels is required by the current host; optional page removal does not dispose
+the app-owned sidebar or session data.
 
 The broker uses the existing authorized Buzz identity in the OS secret store (macOS
 Keychain, Linux secret service) and
@@ -45,7 +46,11 @@ This is not a new native login.
 - `features/messages` owns reusable `ChannelTimeline`, `MessageRow`, `ThreadPanel`,
   `MessageComposer`, delivery presentation, styles and reading geometry. They accept
   ordinary props over the shared session; none owns a connection or outbox.
-- `bundled/channels` owns page registration, channel selection/navigation, sidebar,
+- `features/channel-navigation` owns the persistent sidebar and its scoped UI handoff
+  for session draft rows and preparing DMs. App composes it beside independent pages;
+  sidebar actions use the normal navigation controller. It reuses session capabilities
+  and existing sidebar components without another relay/cache or plugin registry.
+- `bundled/channels` owns page registration, conversation selection/navigation,
   diagnostics, layout and panel placement. `shared/view-state.ts` partitions persisted
   drafts and view intent by community/viewer scope.
 - `bundled/github` registers and implements the panel. Channels uses the panel
@@ -60,12 +65,13 @@ Keep page-specific navigation and arrangement in the plugin; compose shared mess
 components rather than copying them. Session reconciliation, authorization, retained
 reads and durable outbox recovery remain host-owned even if Channels is disabled.
 
-The workspace React key includes community/viewer scope **and** connection
-generation. This resets session-owned component state on switching or reconnecting;
+The sidebar and Channels workspace React keys include community/viewer scope **and**
+connection generation. This resets their session-owned state on switching or
+reconnecting, not unrelated page drafts;
 drafts, channel selection and reading geometry retain their stable scope keys.
 
-Saved sidebar groups, ordering, assignments and stars live in the session's
-`sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
+Saved sidebar groups, ordering, assignments, stars, mutes and sorting live in the
+session's `sidebarPreferences` snapshot, not in the mounted Messages page. `ensure()` shares
 one initial read; `refresh()` explicitly reloads/retries while retaining the last
 good snapshot through loading/errors. Page exits neither restart nor cancel that
 read. Cache clearing and session disposal cancel it and discard decoded data;
@@ -73,12 +79,97 @@ late completion cannot repopulate a retired snapshot. These are account-owned
 preferences, not channel access grants: sidebar sections still intersect the
 authorized roster. There is no new disk cache or automatic cross-device sync.
 
+The browser/development host exposes one narrow **Mute/Unmute** command. It
+re-reads the viewer's signed encrypted `channel-mutes` coordinate, changes only the
+requested entry, publishes through existing relay admission, and confirms via
+readback. Publication uses the existing authenticated live socket, scoped to the
+requesting session/community; a missing or disconnected owner fails without HTTP
+fallback or automatic replay. Unrelated fields and explicit unmute tombstones
+survive. Invalid, unreadable, or over-budget heads fail closed; only a successful absent-head read
+can seed a record. Same-host writes serialize per relay. This is confirmed
+whole-record replacement, not atomic cross-device merging or a durable outbox;
+simultaneous writers on different hosts can still race. Failure requires explicit
+retry. No group/star mutation or alternate menu implementation is included;
+[section sorting](#sidebar-sort-persistence) uses its separate preference coordinate.
+
+Rows expose mute/read actions through right-click/long-press, Shift+F10, or the
+Context Menu key. They extend the persistent sidebar’s existing menu after
+**New session**, separated from session entry; DM removal stays separate.
+Mute closes immediately and optimistically changes the next menu action, not
+unread truth or notification policy before confirmation. Failure rolls back to
+confirmed state and shows an app notification with Retry (same intent) and Dismiss.
+Newer clicks supersede older completion UI; session-owned writes and sidebar
+pending/error presentation survive page switches. Session replacement discards
+that presentation. Cache clear/disposal abort
+pending work but cannot retract an accepted relay publication.
+
+Mark as Read delegates to the [durable unread owner](unread.md), without selecting
+the row, and closes after the local transaction commits. Observed unread or a
+manual mark offers **Mark as Read**; otherwise the menu offers **Mark as Unread**
+with its device-only tooltip. An open menu subscribes to the shared projection,
+without fetching history or inventing exact counts. Read errors remain in-menu
+for explicit retry. Focus resolves the current row by identity even if saved
+preferences relocated it during the transaction. Read actions require
+`frontier-sync`; hosts lacking mute writes keep read-only preference projection.
+Packaged hosts gain no speculative native preference writer.
+
 Collapsed section keys and sidebar scroll remain separate, scoped view intent.
-They are saved on page exit and restored before paint when the roster and groups
+They survive page switches in the same mounted sidebar, are saved when that
+sidebar exits its session, and restore before paint when the roster and groups
 are available; navigation history does not own them. Search lives in the top-bar
 palette; legacy sidebar filters are ignored. The saved-groups
 browser regression records every visible return frame and holds the redundant
 decode path, so eventual restoration cannot conceal a fallback-group/scroll jump.
+
+Channel row actions share one sidebar-owned `ContextMenuRoot` / `MenuPopup`, labelled
+`Actions for <channel>`. **New session** comes first; additional sidebar actions
+should extend that popup, with a separator only when another action group follows.
+`ChannelSidebarItem` owns the context trigger inside its memo boundary, using stable
+`onOpenMenu` props. It wraps the activity select surface rather than merging popup
+props onto the activity button; session disclosure and child rows stay outside.
+The popup and trigger are enabled only when `rowActions` supplies actual items;
+each action owns its eligibility, so Sessions availability never gates sibling
+actions. `useChannelRowMenu` owns channel id, the full rendered section key
+(`starred`, `channels`, `group:<id>`, etc.), and the keyboard anchor. It clears
+that state if the row leaves that section or loses its last action; moving back
+or restoring eligibility does not reopen the menu. For future group commands,
+derive the saved group id separately from `group:<id>` rather than conflating it
+with rendered placement. Right-clicking the separate session disclosure remains
+outside the parent menu trigger, as do child-session rows.
+
+Sidebar create-channel dialogs and partial-setup recovery stay available on other
+pages. Completion is fenced to the originating relay session and navigates to a
+normal conversation destination. New-session intent uses the Channels version-1
+page route `{ kind: "new-session", parentId }`; Channels checks parent access/type
+and Sessions availability. Only parent intent, never draft text, enters history.
+Preparing-DM suppression captures the pre-open roster and exact member set, hiding
+only newly prepared DMs until confirmation; leaving New message or replacing the
+session clears that handoff. Timeline readers and reading leases stay in visible
+conversation content and unmount when leaving Messages.
+
+## Sidebar sort persistence
+
+Each sidebar section can independently select **A–Z** (the default) or **Recent**.
+The development broker saves these choices in the desktop-compatible encrypted
+kind-30078 `channel-sort` record: `{ version: 1, groups: { ... } }`. A–Z removes
+that group's override. Saving preserves unrelated fields and choices present in
+the record read before publication.
+
+Persistence is **whole-record last-write-wins**, not conflict-safe per-section
+merging. Two devices can read the same record and save different sections; the
+winning replacement can silently erase the other device's choice even when both
+saves report success. The broker's mutation queue serializes its own writes only.
+Read-back checks the requested section at that moment; it cannot detect an unseen
+choice overwritten in another section or guarantee preservation against later
+writes. “Independent” describes selecting a mode per section, not simultaneous
+cross-device save guarantees. Retaining the shared record preserves compatibility
+with existing desktop writers; per-section conflict resolution would require a
+coordinated persistence change.
+
+`dev/sidebar-sort.test.mjs` deterministically exercises that accepted limitation
+through the real mutation helper: another section saves and confirms between a
+read and publication, then the stale whole-record replacement wins and also
+confirms. This is contract coverage, not a concurrency fix.
 
 ## Starting a direct message
 
@@ -158,6 +249,62 @@ Focused coverage lives in `NewMessage.test.tsx`, `direct-messages.test.ts`,
 `relay-broker-api.test.mjs`, and the Chromium/WebKit `new-message.spec.mjs` journey.
 The browser journey uses the production app and broker with ephemeral identities
 and modeled upstream I/O; it does not send messages to a live community.
+
+## Channel lifecycle
+
+Lifecycle actions extend the persistent sidebar’s existing context popup after
+New session and the mute/read group. Lifecycle items use shared leading icons and
+a separator only when they resolve and earlier actions exist. Right-click
+and keyboard access reuse the existing row trigger; no ⋮ control or second popup
+is added. Session creation, attention actions and child-session navigation keep
+their existing owners; sessions do not receive lifecycle actions. This slice adds
+no Move/Star/grouping controls or shared-menu restyling.
+
+The row menu resolves fresh relay-authored metadata (`39000`), administrators
+(`39001`) and membership (`39002`) at exact channel coordinates before offering
+Archive/Delete/Leave or DM Hide. Archive requires a direct owner/admin role;
+Delete requires a direct owner role; the last owner cannot Leave. The menu omits
+Leave when it is forbidden, without an ownership-transfer explanation. Action
+labels have no trailing ellipsis; confirmation dialogs are unchanged. DMs offer Hide
+only. Delegated owner-agent authority and community-admin overrides are not
+inferred or supported by this slice; the relay remains the final authority.
+Membership accepts NIP-29 `p` tags with optional relay and role fields
+(`["p", pubkey, relay_hint?, role?]`), including the relay's four-field roster.
+These fields never substitute for the separate administrator record. Invalid
+member keys and duplicate entries still fail closed. Failed menu permission reads
+show "Channel actions unavailable" with retry, not raw protocol errors. Pending
+permission reads show neither a loading row nor a lifecycle separator; the
+separator appears with the resolved actions or unavailable/retry section, and is
+omitted when there are no lifecycle items. Actions appear only after verification.
+
+Each command has explicit confirmation; Delete additionally requires the channel
+name. The lifecycle owner rechecks authority before signing and again before
+publication, validates the returned command, and confirms relay-owned state before
+removing a row. Archive retains membership; confirmed Delete/Leave use the existing
+access-loss purge. Commands use narrow development-broker routes, never the message
+outbox or automatic replay. Hosts without this capability display an unavailable
+notice; native/direct-signer parity is deferred.
+
+Main’s DM × remains local removal, including restoration on new message evidence.
+The separate, confirmed Hide conversation action publishes `41012`, not Leave or Delete. The separate relay-authored `30622`
+visibility snapshot (`d=viewer`, `p=viewer`, hidden DM `h` tags) only filters sidebar
+rows; it does not deny access or prevent exact conversation navigation. Visibility
+refreshes with the channel roster, preserves the last good set on failure and
+rejects older snapshots. Live cross-device visibility updates and an in-app DM
+reopen/unhide flow are deferred; opening a DM through another supported client's
+`41010` flow and refreshing restores the row.
+
+A definitive rejection offers retry without optimistic removal. If publication or
+confirmation has an uncertain outcome, the dialog warns that the command may have
+taken effect, disables blind resubmission and asks the user to close and refresh
+channels. Cancellation/cache clear/session replacement fence late results but cannot
+retract a request already sent. Cancellation returns focus to the originating row;
+confirmed removal moves an active conversation to another available destination
+(or the neutral Messages page) with a visible sidebar-row focus fallback. Last-row
+completion uses the explicit version-1 Channels route `"empty"`, which bypasses
+saved/default conversation selection, including after reload. Retained archived or
+hidden membership cannot reopen itself through that destination; intentional exact
+navigation to a hidden DM remains supported.
 
 ## Performance and correctness carried from Astra
 
@@ -255,17 +402,23 @@ The thread and a linked object panel share that slot; a companion can remain bel
 Close or Escape returns focus to the reply button when it is still mounted. Changing
 channel/community or disabling Channels disposes the owned thread view.
 
-The footer reuses `MessageComposer` and sends direct replies to the resolved root
-through `session.messages.reply`. Channel and thread drafts are separate and survive
-reconnection; failed replies remain inline with the shared retry action. Read-only
-connections keep the existing composer capability notice; missing/revoked roots do
-not expose a composer. Exact navigation can retain and focus a selected reply
-beyond the traversal range; it does not extend that range or promise complete history.
+The footer reuses `MessageComposer` and defaults to a direct reply to the resolved
+root through `session.messages.reply`. Reply on a child selects that message as the
+parent without changing the root-keyed draft; canceling the target returns to the
+root. Channel and thread drafts are separate and survive reconnection; failed
+replies remain inline with the shared retry action and retain their signed ancestry.
+Read-only connections keep the existing composer capability notice; missing/revoked
+roots do not expose a composer. Exact navigation can retain and focus a selected
+reply beyond the traversal range; it does not extend that range or promise complete history.
 
-Replies use ascending timestamp/event-ID order, including nested replies. Retry
-appears only after a failed read; there is no routine Refresh control. Names are
-optional shared background enrichment. The panel describes **replies shown**, not
-complete history.
+Replies form nested lists, with ascending timestamp/event-ID order among siblings.
+Branches start collapsed, expand one level at a time, and forget descendant expansion
+when collapsed. Labeled controls remain available when visual indentation is capped
+in narrow panels. Exact links reveal available ancestors; a reply whose parent is
+outside loaded history remains visible with a notice. Sessions remain inline.
+Retry appears only after a failed read; there is no routine Refresh control. Names
+are optional shared background enrichment. The panel describes **replies loaded**,
+not visible rows or complete history.
 The relay can filter rows after its limit, and summaries/EOSE are not proof of
 exhaustion. See [the thread owner and bounds](relay-queries.md#thread-views).
 
@@ -282,11 +435,11 @@ Channels supports plain-text Markdown authoring with a shared durable outbox and
 Channel and thread messages render CommonMark plus GFM headings, emphasis, lists, quotes,
 tables, task lists, strikethrough and code, while preserving chat-style single line breaks.
 Only credential-free HTTPS links are active; raw HTML is ignored and inline remote images
-are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji
-remain event-local and are not substituted inside links or code. Authenticated live traffic
-reconciles through the same session. Channel creation and composer preview/toolbars are not
-implemented. Reply counts open a bounded thread view; attachments are links. Routine freshness
-labels are not shown; Channel Settings → Diagnostics
+are not loaded. Existing image Markdown is projected as an attachment instead. Custom emoji remain
+event-local and are not substituted inside links or code.
+Authenticated live traffic reconciles through the same session. Channel creation and composer
+preview/toolbars are not implemented. Reply counts open a bounded thread view; attachments are
+links. Routine freshness labels are not shown; Channel Settings → Diagnostics
 exposes refresh, outbox inspection and timings. Packaged builds do not
 include the development relay broker. GitHub fetches public data only; signed-in
 GitHub actions remain on GitHub. A saved-groups/stars failure keeps its specific

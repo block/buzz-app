@@ -14,6 +14,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     envFile: false,
     plugins: [react()],
     logLevel: "error",
@@ -24,25 +25,70 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
   try {
     await server.listen();
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?test-controls`,
     );
+    await expect(page.getByRole("textbox")).toBeVisible();
     const keys = await page.evaluate(() => ({
       first: window.mentionFixture.first,
       second: window.mentionFixture.second,
     }));
+    // Real layout is required: the popup follows the whole composer, including
+    // multiple lines of text, rather than the trigger's toolbar position.
+    const expectComposerAnchor = async (popup) => {
+      await expect(popup).toHaveClass(/buzz-popover/);
+      expect(
+        await popup.evaluate((element) => element.closest("form") === null),
+      ).toBe(true);
+      await expect(popup).toHaveCSS("border-radius", "24px");
+      await expect
+        .poll(() =>
+          popup.evaluate((element) => {
+            const composer = document.querySelector("form");
+            return (
+              composer.getBoundingClientRect().top -
+              element.getBoundingClientRect().bottom
+            );
+          }),
+        )
+        .toBe(4);
+    };
     const choose = async (key) => {
       await page
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
-      const picker = page.getByRole("region", {
+      const picker = page.getByRole("dialog", {
         name: "Mention a member or agent",
       });
+      const search = picker.getByRole("searchbox");
+      await search.fill(key);
       await expect(
-        picker.getByRole("button", { name: `Honey ${key}`, exact: true }),
+        picker.getByRole("button", { name: new RegExp(key) }),
       ).toBeVisible();
-      await picker
-        .getByRole("button", { name: `Honey ${key}`, exact: true })
-        .click();
+      await expect(search).toBeFocused();
+      await expectComposerAnchor(picker);
+      await expect(picker).toHaveCSS("width", "380px");
+      expect((await picker.boundingBox()).height).toBeLessThanOrEqual(360);
+      await search.fill("");
+      const choice = picker.getByRole("button", {
+        name: new RegExp(key),
+      });
+      const index = await choice.evaluate((node) =>
+        [
+          ...node.parentElement.querySelectorAll("[data-mention-choice]"),
+        ].indexOf(node),
+      );
+      await search.press("ArrowDown");
+      for (let step = 0; step < index; step++)
+        await page.keyboard.press("ArrowDown");
+      await expect(choice).toBeFocused();
+      await expect(choice).toHaveCSS("padding", "8px");
+      await expect(choice.locator(".buzz-avatar")).toHaveCSS("width", "40px");
+      await choice.press("ArrowUp");
+      await page.keyboard.press("ArrowDown");
+      await expect(choice).toBeFocused();
+      await choice.press("Enter");
+      await expect(picker).toHaveCount(0);
+      await expect(page.getByRole("textbox")).toBeFocused();
     };
     const order = () =>
       page
@@ -51,51 +97,95 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
           buttons.map((button) => button.getAttribute("aria-label")),
         );
     await expect.poll(order).toEqual(["Mention a member", "Insert emoji"]);
+    // Browser-only contract: native shadow search and React search share their
+    // shape, typography, clear target and alignment in both appearance modes.
+    const searchAppearance = async (field) => {
+      // Main animates field focus; compare settled appearance, not an arbitrary frame.
+      await field.evaluate(async (element) => {
+        await Promise.all(
+          element
+            .getAnimations({ subtree: true })
+            .map((animation) => animation.finished),
+        );
+      });
+      return field.evaluate((element) => {
+        const nativeInput = element.querySelector("input");
+        // Both the React and vendor search use the shared field boundary.
+        const style = getComputedStyle(
+          element.matches(".search-field") ? element : nativeInput,
+        );
+        const input = getComputedStyle(nativeInput);
+        const clear = element.querySelector("button");
+        return {
+          height: style.height,
+          radius: style.borderRadius,
+          background: style.backgroundColor,
+          border: style.border,
+          color: input.color,
+          font: input.font,
+          clear: clear && {
+            width: getComputedStyle(clear).width,
+            height: getComputedStyle(clear).height,
+            radius: getComputedStyle(clear).borderRadius,
+            color: getComputedStyle(clear).color,
+          },
+        };
+      });
+    };
+    for (const mode of ["light", "dark"]) {
+      await page.evaluate((mode) => {
+        document.documentElement.dataset.colorMode = mode;
+      }, mode);
+      await page
+        .getByRole("button", { name: "Mention a member", exact: true })
+        .click();
+      const mention = page.getByRole("dialog", {
+        name: "Mention a member or agent",
+      });
+      const row = mention.getByRole("button", {
+        name: `Honey ${keys.first}`,
+        exact: true,
+      });
+      await expect(row).toHaveCSS("padding", "8px");
+      await row.hover();
+      await expect(row).toHaveCSS(
+        "background-color",
+        mode === "light" ? "rgb(232, 232, 232)" : "rgb(89, 89, 89)",
+      );
+      await mention.getByRole("searchbox").fill("");
+      const empty = await searchAppearance(mention.locator(".search-field"));
+      await mention.getByRole("searchbox").fill("Honey");
+      const filled = await searchAppearance(mention.locator(".search-field"));
+      await page
+        .getByRole("button", { name: "Insert emoji", exact: true })
+        .click();
+      const emojiField = page.locator("em-emoji-picker .search");
+      await expect(emojiField.getByRole("searchbox")).toBeFocused();
+      expect(await searchAppearance(emojiField)).toEqual(empty);
+      const emojiSearch = emojiField.getByRole("searchbox");
+      await emojiSearch.fill("face");
+      await expect(
+        emojiField.getByRole("button", { name: "Clear", exact: true }),
+      ).toBeVisible();
+      expect(await searchAppearance(emojiField)).toEqual(filled);
+      await emojiField
+        .getByRole("button", { name: "Clear", exact: true })
+        .click();
+      await expect(emojiSearch).toHaveValue("");
+      await expect(emojiSearch).toBeFocused();
+      await emojiSearch.press("Escape");
+    }
+    await page.evaluate(() => {
+      document.documentElement.dataset.colorMode = "light";
+    });
     const input = page.getByRole("textbox", { name: "Message #General" });
     await choose(keys.first);
     await expect(input.locator(".inline-chip")).toHaveText("@Honey");
-    await page.emulateMedia({ reducedMotion: "no-preference" });
-    await page.evaluate(() => {
-      window.qualifierReveals = [];
-      document.addEventListener("animationstart", (event) => {
-        if (event.animationName !== "inline-chip-qualifier-reveal") return;
-        window.qualifierReveals.push(event.target);
-        for (const animation of event.target.getAnimations()) {
-          animation.pause();
-          animation.currentTime = 0;
-        }
-      });
-    });
     await choose(keys.second);
-    const labels = [keys.first, keys.second].map(
-      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
-    );
+    const labels = ["@Honey", "@Honey (agent)"];
     await expect(input.locator(".inline-chip")).toHaveText(labels);
-    await expect
-      .poll(() => page.evaluate(() => window.qualifierReveals.length))
-      .toBe(1);
-    const widths = await input
-      .locator(".inline-chip-qualifier")
-      .first()
-      .evaluate((element) => {
-        const animation = element.getAnimations()[0];
-        const start = element.getBoundingClientRect().width;
-        const duration = animation.effect.getTiming().duration;
-        animation.currentTime = duration / 2;
-        const middle = element.getBoundingClientRect().width;
-        animation.finish();
-        return { start, middle, end: element.getBoundingClientRect().width };
-      });
-    expect(widths.start).toBeLessThan(widths.middle);
-    expect(widths.middle).toBeLessThan(widths.end);
-    await page.emulateMedia({ reducedMotion: "reduce" });
-    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
-      "animation-name",
-      "none",
-    );
-    await expect(
-      input.locator(".inline-chip-qualifier").last(),
-    ).not.toHaveAttribute("data-reveal");
+    // The complete choice set already qualifies the agent before selection.
+    await expect(input.locator("[data-reveal]")).toHaveCount(0);
     // Copy serializes authored source, not the visible namesake qualifiers.
     await input.focus();
     await input.press("ControlOrMeta+a");
@@ -129,10 +219,6 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(input).toHaveJSProperty("value", "@Honey @Honey ");
     await expect(input.locator(".inline-chip")).toHaveText(labels);
     await expect(input.locator("[data-reveal]")).toHaveCount(0);
-    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
-      "animation-name",
-      "none",
-    );
     // Undo restores the former selected range. Continue the original typing journey at its end.
     await input.evaluate((element) =>
       element.setSelectionRange(element.value.length, element.value.length),
@@ -149,6 +235,9 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(page.locator("em-emoji-picker #root")).toHaveAttribute(
       "data-theme",
       "dark",
+    );
+    await expectComposerAnchor(
+      page.getByRole("dialog", { name: "Emoji picker" }),
     );
     await search.fill("grinning");
     await page.getByRole("button", { name: "😀", exact: true }).click();
@@ -195,7 +284,7 @@ test("actual composer selects namesakes by exact key, publishes channel/reply ta
     await expect(emojiTool).toBeFocused();
     const chipRoles = await chip.evaluate((element) => {
       const probe = document.createElement("span");
-      probe.style.backgroundColor = "var(--affordance-accent)";
+      probe.style.backgroundColor = "var(--affordance-subtle)";
       probe.style.color = "var(--text-standard)";
       element.append(probe);
       const style = getComputedStyle(probe);
@@ -383,6 +472,7 @@ test("selected mentions inside code remain visible through draft restore and cha
   const server = await createServer({
     root: fileURLToPath(new URL("../../", import.meta.url)),
     configFile: false,
+    optimizeDeps: { entries: ["tests/fixtures/mentions.html"] },
     envFile: false,
     plugins: [react()],
     logLevel: "error",
@@ -391,16 +481,15 @@ test("selected mentions inside code remain visible through draft restore and cha
   try {
     await server.listen();
     await page.goto(
-      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html`,
+      `http://127.0.0.1:${server.httpServer.address().port}/tests/fixtures/mentions.html?test-controls`,
     );
+    await expect(page.getByRole("textbox")).toBeVisible();
     const keys = await page.evaluate(() => [
       window.mentionFixture.first,
       window.mentionFixture.second,
     ]);
     const input = page.getByRole("textbox");
-    const labels = keys.map(
-      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
-    );
+    const labels = ["@Honey", "@Honey (agent)"];
     for (const reply of [false, true]) {
       await input.fill("` `");
       await input.evaluate((element) => element.setSelectionRange(1, 1));
@@ -409,8 +498,8 @@ test("selected mentions inside code remain visible through draft restore and cha
           .getByRole("button", { name: "Mention a member", exact: true })
           .click();
         await page
-          .getByRole("region", { name: "Mention a member or agent" })
-          .getByRole("button", { name: `Honey ${key}`, exact: true })
+          .getByRole("dialog", { name: "Mention a member or agent" })
+          .getByRole("button", { name: new RegExp(key) })
           .click();
       }
       const source = "`@Honey @Honey  `";
@@ -497,19 +586,52 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
         .getByRole("button", { name: "Mention a member", exact: true })
         .tap();
       await page
-        .getByRole("region", { name: "Mention a member or agent" })
+        .getByRole("dialog", { name: "Mention a member or agent" })
         .getByRole("button", { name: new RegExp(key) })
         .tap();
     };
+    await page.evaluate(() => window.mentionFixture.collide(false));
     await choose(keys[0]);
     await choose(keys[1]);
     const input = page.getByRole("textbox");
     const chips = input.locator(".inline-chip");
-    const labels = keys.map(
-      (key) => `@Honey · npub…${npubEncode(key).slice(-3)}`,
-    );
-    await expect(chips).toHaveText(labels);
+    const labels = keys.map((key) => `@Honey · ${npubEncode(key).slice(-4)}`);
+    await expect(chips).toHaveText(["@Honey", "@Other Honey"]);
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    await page.evaluate(() => {
+      window.qualifierReveals = [];
+      document.addEventListener("animationstart", (event) => {
+        if (event.animationName !== "inline-chip-qualifier-reveal") return;
+        window.qualifierReveals.push(event.target);
+        for (const animation of event.target.getAnimations()) {
+          animation.pause();
+          animation.currentTime = 0;
+        }
+      });
+    });
     await page.evaluate(() => window.mentionFixture.collide(true));
+    await expect
+      .poll(() => page.evaluate(() => window.qualifierReveals.length))
+      .toBe(2);
+    const widths = await input
+      .locator(".inline-chip-qualifier")
+      .first()
+      .evaluate((element) => {
+        const animation = element.getAnimations()[0];
+        const start = element.getBoundingClientRect().width;
+        const duration = animation.effect.getTiming().duration;
+        animation.currentTime = duration / 2;
+        const middle = element.getBoundingClientRect().width;
+        animation.finish();
+        return { start, middle, end: element.getBoundingClientRect().width };
+      });
+    expect(widths.start).toBeLessThan(widths.middle);
+    expect(widths.middle).toBeLessThan(widths.end);
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await expect(input.locator(".inline-chip-qualifier").first()).toHaveCSS(
+      "animation-name",
+      "none",
+    );
     await expect(chips).toHaveText(labels);
     for (const chip of await chips.all()) {
       await expect(chip).toBeVisible();
@@ -525,11 +647,11 @@ test("namesake recipient qualifiers remain visible on touch after live name chan
     });
     await input.evaluate((el) => el.setSelectionRange(7, 13));
     await input.press("Backspace");
-    await expect(chips).toHaveText(["@Honey"]);
+    await expect(chips).toHaveText([labels[0]]);
     await choose(keys[1]);
     await expect(chips).toHaveText(labels);
     await page.evaluate(() => window.mentionFixture.collide(false));
-    await expect(chips).toHaveText(labels);
+    await expect(chips).toHaveText(["@Honey", "@Other Honey"]);
     await expect(input).toHaveJSProperty("value", "@Honey @Honey  ");
     await page.getByRole("button", { name: "Send message", exact: true }).tap();
     await expect

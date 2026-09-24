@@ -11,6 +11,7 @@ import {
 import userEvent from "@testing-library/user-event";
 import { StrictMode, useState } from "react";
 import { Button } from "./Button";
+import { ChoiceRow } from "./ChoiceRow";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -168,4 +169,45 @@ test("context menus reuse the shared popup and action boundary", async () => {
   await waitFor(() =>
     expect(screen.queryByRole("menu")).not.toBeInTheDocument(),
   );
+});
+
+test("rich choices retain their names and selected state while disabled choices reject activation", async () => {
+  const user = userEvent.setup();
+  const change = vi.fn();
+  render(
+    <MenuRoot>
+      <MenuTrigger render={<Button>Agents</Button>} />
+      <MenuPopup>
+        <MenuRadioGroup value="studio" onValueChange={change}>
+          <MenuRadioItem value="studio">
+            <ChoiceRow
+              label="Studio"
+              description="Already in this session"
+              leading={<span>S</span>}
+            />
+          </MenuRadioItem>
+          <MenuRadioItem value="archive" disabled>
+            <ChoiceRow
+              label="Archive"
+              description="Unavailable"
+              leading={<span>A</span>}
+            />
+          </MenuRadioItem>
+        </MenuRadioGroup>
+      </MenuPopup>
+    </MenuRoot>,
+  );
+  await user.click(screen.getByRole("button", { name: "Agents" }));
+  await screen.findByRole("menu");
+  expect(
+    screen.getByRole("menuitemradio", {
+      name: "Studio Already in this session",
+    }),
+  ).toBeChecked();
+  const unavailable = screen.getByRole("menuitemradio", {
+    name: "Archive Unavailable",
+  });
+  await user.click(unavailable);
+  expect(change).not.toHaveBeenCalled();
+  expect(unavailable).toHaveAttribute("aria-disabled", "true");
 });

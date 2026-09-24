@@ -1,3 +1,4 @@
+import { useIdentityNames } from "../../features/identity-names/react";
 import { useEffect, useSyncExternalStore } from "react";
 import { ArrowsClockwiseIcon } from "../../shared/design-system/icons/index";
 import { groupAgentLibrary } from "../../features/agents/library";
@@ -6,6 +7,7 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { AgentCard } from "./AgentCard";
 
 export function AgentLibrary({ session }: { session: RelaySession }) {
+  const resolveName = useIdentityNames(session.names);
   const library = session.agentLibrary;
   const archives = session.archives;
   const snapshot = useSyncExternalStore(
@@ -30,6 +32,13 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
     snapshot,
     (key) => archives.state(key) === "archived",
   );
+  const candidates = [
+    ...groups.flatMap((group) => group.identities),
+    ...custom,
+    ...unknown,
+  ].map((identity) => identity.pubkey);
+  const identityLabel = (identity: { pubkey: string; name: string }) =>
+    resolveName(identity.pubkey, identity.name, candidates);
   const loading = snapshot.status === "loading";
   return (
     <div className="mx-auto mt-2 max-w-6xl space-y-section-gap">
@@ -88,6 +97,7 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
                   avatar={group.avatar ?? group.identities[0]?.avatar}
                   identities={group.identities}
                   session={session}
+                  identityLabel={identityLabel}
                 />
               ))}
             </div>
@@ -99,10 +109,11 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
                 {custom.map((identity) => (
                   <AgentCard
                     key={identity.pubkey}
-                    name={identity.name}
+                    name={identityLabel(identity)}
                     avatar={identity.avatar}
                     identities={[identity]}
                     session={session}
+                    identityLabel={identityLabel}
                   />
                 ))}
               </div>
@@ -115,10 +126,11 @@ export function AgentLibrary({ session }: { session: RelaySession }) {
                 {unknown.map((identity) => (
                   <AgentCard
                     key={identity.pubkey}
-                    name={identity.name}
+                    name={identityLabel(identity)}
                     avatar={identity.avatar}
                     identities={[identity]}
                     session={session}
+                    identityLabel={identityLabel}
                   />
                 ))}
               </div>

@@ -104,7 +104,11 @@ export function useMessageEdit(session: RelaySession, restore: () => void) {
         return;
       }
       try {
-        const id = session.messages.edit(target.id, body);
+        const id = session.messages.edit(
+          target.id,
+          body,
+          current.attachmentSourceId ?? current.id,
+        );
         submitted.current = id;
         setOperation(id);
         setError(undefined);

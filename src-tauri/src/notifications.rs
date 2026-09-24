@@ -104,7 +104,7 @@ fn respond<R: tauri::Runtime>(
     }
 }
 
-fn focus<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
+pub(crate) fn focus<R: tauri::Runtime>(window: &tauri::WebviewWindow<R>) -> Result<(), String> {
     #[cfg(target_os = "linux")]
     {
         use gtk::prelude::GtkWindowExt;

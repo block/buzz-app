@@ -26,18 +26,34 @@ type Draft = {
   operationId?: string;
 };
 
+function draftFor(next: WorkflowDefinition | "new"): Draft {
+  const yaml =
+    next === "new"
+      ? formStateToYaml({ ...DEFAULT_FORM_STATE, name: "Untitled workflow" })
+      : next.yaml;
+  return {
+    original: next === "new" ? undefined : next,
+    yaml,
+    initial: yaml,
+  };
+}
+
 export function WorkflowChannel({
   capability,
   channelId,
   channelName,
+  initialSelection,
   viewer,
   onDraftRiskChange,
+  onClose,
 }: {
   capability: WorkflowCapability;
   channelId: string;
   channelName: string;
+  initialSelection?: WorkflowDefinition | "new" | undefined;
   viewer: string;
   onDraftRiskChange?: (atRisk: boolean) => void;
+  onClose?: () => void;
 }) {
   const { snapshot, refresh } = useWorkflowView(
     useCallback(
@@ -51,7 +67,10 @@ export function WorkflowChannel({
     capability.operations.snapshot,
   );
   const submission = useRef<string | null>(null);
-  const [draft, setDraft] = useState<Draft | null>(null);
+  const detailOnly = initialSelection !== undefined;
+  const [draft, setDraft] = useState<Draft | null>(() =>
+    initialSelection === undefined ? null : draftFor(initialSelection),
+  );
   const [pendingSelection, setPendingSelection] = useState<
     WorkflowDefinition | "new" | "close" | null
   >(null);
@@ -88,21 +107,11 @@ export function WorkflowChannel({
     return () => window.removeEventListener("beforeunload", warn);
   }, [atRisk]);
   const open = (next: WorkflowDefinition | "new" | "close") => {
-    const yaml =
-      next === "new"
-        ? formStateToYaml({ ...DEFAULT_FORM_STATE, name: "Untitled workflow" })
-        : next === "close"
-          ? ""
-          : next.yaml;
-    setDraft(
-      next === "close"
-        ? null
-        : {
-            original: typeof next === "string" ? undefined : next,
-            yaml,
-            initial: yaml,
-          },
-    );
+    if (next === "close" && onClose) {
+      onClose();
+      return;
+    }
+    setDraft(next === "close" ? null : draftFor(next));
     submission.current = null;
     setError(null);
     setReadRuns(false);
@@ -251,25 +260,27 @@ export function WorkflowChannel({
   if (!snapshot) return <p role="status">Reading configurations…</p>;
   return (
     <section aria-label={`Workflows in ${channelName}`}>
-      <div className="workflow-toolbar">
-        <h2 className="text-heading">Saved configurations</h2>
-        <Button
-          disabled={snapshot.status === "loading"}
-          onClick={() => void refresh()}
-        >
-          Refresh configurations
-        </Button>
-        <Button
-          disabled={
-            !capability.availability.save ||
-            snapshot.status === "unavailable" ||
-            snapshot.status === "idle"
-          }
-          onClick={() => select("new")}
-        >
-          New workflow
-        </Button>
-      </div>
+      {!detailOnly && (
+        <div className="workflow-toolbar">
+          <h2 className="text-heading">Saved configurations</h2>
+          <Button
+            disabled={snapshot.status === "loading"}
+            onClick={() => void refresh()}
+          >
+            Refresh configurations
+          </Button>
+          <Button
+            disabled={
+              !capability.availability.save ||
+              snapshot.status === "unavailable" ||
+              snapshot.status === "idle"
+            }
+            onClick={() => select("new")}
+          >
+            New workflow
+          </Button>
+        </div>
+      )}
       <p className="text-body-sm text-secondary">
         Configured activation may differ from the existing backend’s runtime
         state. Saving a disabled configuration does not confirm that automatic
@@ -299,32 +310,37 @@ export function WorkflowChannel({
           browse saved configurations, but cannot save changes here yet.
         </p>
       )}
-      {snapshot.status === "ready" && !snapshot.data.items.length && (
-        <p>
-          No saved configurations returned for this channel.
-          {capability.availability.save && " Create a disabled draft to start."}
-        </p>
+      {!detailOnly &&
+        snapshot.status === "ready" &&
+        !snapshot.data.items.length && (
+          <p>
+            No saved configurations returned for this channel.
+            {capability.availability.save &&
+              " Create a disabled draft to start."}
+          </p>
+        )}
+      {!detailOnly && (
+        <ul className="workflow-list">
+          {snapshot.data.items.map((definition) => {
+            const header = readWorkflowDocumentFields(definition.yaml);
+            return (
+              <li key={`${definition.owner}:${definition.id}`}>
+                <Button variant="ghost" onClick={() => select(definition)}>
+                  {header.name || "Unnamed or malformed workflow"}
+                </Button>
+                <span className="text-body-sm text-secondary">
+                  {header.editable
+                    ? header.enabled === false
+                      ? "Configured disabled"
+                      : "Configured enabled"
+                    : "Unreadable configuration"}
+                  {definition.owner !== viewer ? " · Read-only" : ""}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
       )}
-      <ul className="workflow-list">
-        {snapshot.data.items.map((definition) => {
-          const header = readWorkflowDocumentFields(definition.yaml);
-          return (
-            <li key={`${definition.owner}:${definition.id}`}>
-              <Button variant="ghost" onClick={() => select(definition)}>
-                {header.name || "Unnamed or malformed workflow"}
-              </Button>
-              <span className="text-body-sm text-secondary">
-                {header.editable
-                  ? header.enabled === false
-                    ? "Configured disabled"
-                    : "Configured enabled"
-                  : "Unreadable configuration"}
-                {definition.owner !== viewer ? " · Read-only" : ""}
-              </span>
-            </li>
-          );
-        })}
-      </ul>
       {draft &&
         snapshot.status !== "unavailable" &&
         snapshot.status !== "idle" && (

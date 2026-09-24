@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "./composer-testing";
+
+composerDOMFixture();
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { EventTemplate } from "nostr-tools";
@@ -86,6 +89,7 @@ async function setupReview({
   const user = userEvent.setup();
   render(
     <MediaReviewViewer
+      onOpenLink={() => false}
       attachment={attachment}
       session={owner.session}
       scope={`review-${kind}`}

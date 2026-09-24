@@ -112,24 +112,17 @@ test("playground distinguishes same-name people and agents in the real composer"
     ["Alice", ["a".repeat(64), "c".repeat(64)]],
     ["Honey", ["b".repeat(64), "d".repeat(64)]],
   ]) {
-    for (const [index, key] of keys.entries()) {
+    for (const key of keys) {
+      const label = `${name} · ${npubEncode(key).slice(-4)}`;
       await playground
         .getByRole("button", { name: "Mention a member", exact: true })
         .click();
       await page
-        .getByRole("region", { name: "Mention a member or agent" })
-        .getByRole("button", { name: `${name} ${key}`, exact: true })
+        .getByRole("dialog", { name: "Mention a member or agent" })
+        .getByRole("button", { name: `${label} ${key}`, exact: true })
         .click();
-      if (index === 0) {
-        await expect(chips).toHaveText([...labels, `@${name}`]);
-      } else {
-        labels.push(
-          ...keys.map(
-            (value) => `@${name} · npub…${npubEncode(value).slice(-3)}`,
-          ),
-        );
-        await expect(chips).toHaveText(labels);
-      }
+      labels.push(`@${label}`);
+      await expect(chips).toHaveText(labels);
     }
   }
 });

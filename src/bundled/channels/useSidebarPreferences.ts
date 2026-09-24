@@ -17,5 +17,8 @@ export function useSidebarPreferences(
     ...snapshot,
     status: snapshot.status === "idle" ? ("loading" as const) : snapshot.status,
     reload: queries.refresh,
+    sortWritable: queries.sortWritable,
+    setSort: queries.setSort,
+    dismissSortError: queries.dismissSortError,
   };
 }

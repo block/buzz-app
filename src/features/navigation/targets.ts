@@ -38,6 +38,8 @@ type Target<Scope> =
 
 const MAX_BYTES = 8192;
 const token = /^[a-z0-9][a-z0-9._-]{0,127}$/;
+// Built-in section, or a grouped plugin card's contribution key (`plugin/card`).
+const section = /^[a-z0-9][a-z0-9._-]{0,127}(?:\/[a-z0-9][a-z0-9._-]{0,127})?$/;
 const hex = /^[a-f0-9]{64}$/i;
 const invalid = () => new Error("Invalid or unsupported navigation target");
 function record(value: unknown): Record<string, unknown> {
@@ -126,7 +128,7 @@ function parseTarget<S>(
           version: 1,
           kind: "settings",
           ...(value.section !== undefined
-            ? { section: text(value.section) }
+            ? { section: text(value.section, section) }
             : {}),
         };
         break;

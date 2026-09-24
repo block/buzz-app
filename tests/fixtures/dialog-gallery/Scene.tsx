@@ -4,6 +4,7 @@ import { CommunityDialog } from "../../../src/features/communities/CommunityDial
 import { AgentCreateDialog } from "../../../src/bundled/agents/AgentCreateDialog";
 import { AgentEditor } from "../../../src/bundled/agents/AgentEditor";
 import { ConfirmAction } from "../../../src/bundled/workflows/ConfirmAction";
+import { WorkflowWebhookSecretDialog } from "../../../src/bundled/workflows/WorkflowWebhookSecretDialog";
 import { getWorkflowActivationWarning } from "../../../src/bundled/workflows/workflowActivationWarning";
 import { MediaAttachment } from "../../../src/features/messages/MediaAttachment";
 import { MediaReviewViewer } from "../../../src/features/messages/MediaReviewViewer";
@@ -137,6 +138,18 @@ export function Scene({ id }: { id: DialogId }) {
         />
       )}
       {open && id === "review" && <ReviewScene close={close} />}
+      {open && id === "webhook" && (
+        <WorkflowWebhookSecretDialog
+          workflowId="55555555-5555-4555-8555-555555555555"
+          hookUrl={
+            variant === "noaddress"
+              ? undefined
+              : "https://relay.example.test/hooks/55555555-5555-4555-8555-555555555555"
+          }
+          take={() => "0c2f7a1e-preview-4b9d-8e61-secret000000"}
+          onContinue={close}
+        />
+      )}
     </div>
   );
 }

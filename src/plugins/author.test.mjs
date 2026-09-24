@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-test("generated author package exposes injected agentControl and host operations", async () => {
+test("generated author package exposes agentControl, host, and identity names", async () => {
   const root = fileURLToPath(new URL("../../", import.meta.url));
   const dir = await mkdtemp(join(tmpdir(), "buzz-author-consumer-"));
   const env = {
@@ -32,7 +32,7 @@ test("generated author package exposes injected agentControl and host operations
     await writeFile(
       join(dir, "consumer.ts"),
       `
-import type { Context, AgentControl, Host, PluginManifest } from "@buzz/author";
+import type { Context, AgentControl, Host, PluginManifest, NamingPolicy } from "@buzz/author";
 export const manifest: PluginManifest = {
   id: "example.plugin", name: "Example", apiVersion: 1,
   host: {
@@ -40,8 +40,13 @@ export const manifest: PluginManifest = {
     networkOrigins: ["https://api.example.com"],
   },
 };
-export const inject = ["agentControl", "host"];
+export const inject = ["agentControl", "host", "identityNames"];
 export function apply(ctx: Context) {
+  const policy: NamingPolicy = {
+    id: "alternative",
+    resolve: (identities) => new Map(identities.map(({ pubkey, name }) => [pubkey, { name }])),
+  };
+  ctx.identityNames.register(policy);
   const control: AgentControl = ctx.agentControl;
   void control.refresh();
   void control.action("sample", "stop");

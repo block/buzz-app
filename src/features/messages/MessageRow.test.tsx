@@ -10,7 +10,7 @@ import { messageCopyText } from "./message-copy";
 import { profileTarget } from "../profiles/target";
 import { renderToStaticMarkup } from "react-dom/server";
 import { foldMessages } from "../relay/fold";
-import { keypair, message, signed } from "../relay/testing";
+import { keypair, message, signed, summary } from "../relay/testing";
 import { MessageRow } from "./MessageRow";
 import type { ChannelMessage } from "../relay/contracts";
 import type { UnreadCapability, UnreadSnapshot } from "../relay/unread";
@@ -141,6 +141,33 @@ function render(
   );
   return { html, snapshot };
 }
+it("renders the signed whole-thread total rather than only direct replies", () => {
+  const author = keypair(),
+    relay = keypair();
+  const root = message(author, "channel", "Root", 1);
+  const [folded] = foldMessages("channel", relay.pubkey, [
+    root,
+    summary(relay, "channel", root.id, {
+      reply_count: 1,
+      descendant_count: 3,
+      participants: [author.pubkey],
+    }),
+  ]);
+  if (!folded) throw new Error("Missing root");
+  const html = renderToStaticMarkup(
+    <MessageRow
+      row={folded}
+      profile={undefined}
+      media={() => undefined}
+      onOpenLink={() => false}
+      day={false}
+      retry={undefined}
+      onOpenThread={() => {}}
+    />,
+  );
+  expect(html).toContain('aria-label="View thread: 3 replies"');
+  expect(html).toContain("3 replies</span>");
+});
 it("selects this thread, adds an accessible unread cue and preserves the total reply count", () => {
   const { html, snapshot } = render({ observedCount: 2 });
   expect(snapshot).toHaveBeenCalledExactlyOnceWith({

@@ -1,3 +1,4 @@
+import styles from "./Messages.module.css";
 import { useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -127,23 +128,28 @@ export function MessageReactionControls(props: Props) {
             reaction.events.some((event) => event.authorId === session.viewer),
         );
         return (
-          <IconButton
-            key={content}
-            size="sm"
-            variant="ghost"
-            disabled={action.disabled}
-            aria-label={`${mine ? "Remove" : "React with"} ${content}`}
-            aria-pressed={mine}
-            onClick={() => select(content)}
-            icon={
-              <ReactionLabel
-                row={row}
-                inline={inline}
-                session={session}
-                reaction={{ content, ...(emoji ? { emoji } : {}), events: [] }}
-              />
-            }
-          />
+          <span key={content} className={styles.quickReaction}>
+            <IconButton
+              size="sm"
+              variant="ghost"
+              disabled={action.disabled}
+              aria-label={`${mine ? "Remove" : "React with"} ${content}`}
+              aria-pressed={mine}
+              onClick={() => select(content)}
+              icon={
+                <ReactionLabel
+                  row={row}
+                  inline={inline}
+                  session={session}
+                  reaction={{
+                    content,
+                    ...(emoji ? { emoji } : {}),
+                    events: [],
+                  }}
+                />
+              }
+            />
+          </span>
         );
       })}
       <ReactionTool

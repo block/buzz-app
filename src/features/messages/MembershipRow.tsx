@@ -15,6 +15,7 @@ export const MembershipRow = memo(function MembershipRow({
   media,
   agentPubkeys,
   day,
+  resolveName: scopedName,
 }: {
   row: TimelineRow;
   names?: IdentityNameView | undefined;
@@ -23,8 +24,10 @@ export const MembershipRow = memo(function MembershipRow({
   media(url: string, size?: "small"): string | undefined;
   agentPubkeys?: ReadonlySet<string> | undefined;
   day: boolean;
+  resolveName?: (pubkey: string, fallback: string) => string;
 }) {
-  const resolveName = useIdentityNames(names);
+  const globalName = useIdentityNames(names);
+  const resolveName = scopedName ?? globalName;
   const { targets, text, title } = membershipDescription(
     row.membershipRows ?? [row],
     profiles,

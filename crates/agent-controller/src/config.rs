@@ -13,6 +13,7 @@ pub(crate) const MAX_AGENTS: usize = 2000;
 #[serde(rename_all = "camelCase")]
 pub struct ControlSnapshot {
     pub agents: Vec<AgentView>,
+    pub parked: Vec<crate::store::ParkedIdentity>,
     pub runtime_available: bool,
     pub runtime_message: Option<String>,
 }

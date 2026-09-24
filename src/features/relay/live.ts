@@ -106,7 +106,7 @@ export type LiveSubscription = {
   observe?(generation: number | null): void;
   /** One ephemeral status: true = accepted, null = locally unsent, false = unconfirmed/refused. */
   publishPresence?(
-    status: "online" | "away",
+    status: "online" | "away" | "offline",
     signal: AbortSignal,
   ): Promise<boolean | null>;
   retry(): void;
@@ -587,7 +587,7 @@ export function subscribeRelayTraffic(
   return {
     async publishPresence(status, signal) {
       if (
-        (status !== "online" && status !== "away") ||
+        (status !== "online" && status !== "away" && status !== "offline") ||
         signal.aborted ||
         closed ||
         !authenticated

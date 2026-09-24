@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { createPresenceActivity } from "../presence/activity";
 import "@testing-library/jest-dom/vitest";
 import {
   cleanup,
@@ -12,7 +13,11 @@ import { afterEach, expect, it, vi } from "vitest";
 import { CommunitySwitcher } from "./CommunitySwitcher";
 import type { ClientSnapshot, Communities } from "./service";
 
-afterEach(cleanup);
+const activities: ReturnType<typeof createPresenceActivity>[] = [];
+afterEach(() => {
+  cleanup();
+  for (const activity of activities.splice(0)) activity.dispose();
+});
 
 it("recovers community artwork after failure and preserves named selection", async () => {
   let state: ClientSnapshot = {
@@ -24,7 +29,10 @@ it("recovers community artwork after failure and preserves named selection", asy
       { id: "team", name: "Product team" },
     ],
   };
+  const presence = createPresenceActivity();
+  activities.push(presence);
   const communities: Communities = {
+    presence,
     snapshot: () => state,
     subscribe: () => () => {},
     select: vi.fn(),

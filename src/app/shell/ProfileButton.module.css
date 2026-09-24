@@ -1,0 +1,21 @@
+.dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--surface-panel);
+  border-radius: 50%;
+  background: var(--text-success);
+}
+.dot[data-status="away"] {
+  background: linear-gradient(
+    90deg,
+    var(--text-warning) 50%,
+    var(--surface-panel) 50%
+  );
+}
+.dot[data-status="offline"] {
+  background: var(--surface-panel);
+  box-shadow: inset 0 0 0 1.5px var(--text-subtle);
+}

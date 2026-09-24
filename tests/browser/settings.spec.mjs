@@ -95,6 +95,10 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     name: "Settings",
     exact: true,
   });
+  const automatic = account.getByRole("radio", {
+    name: "Automatic",
+    exact: true,
+  });
   await expect(avatar).toHaveAttribute("aria-expanded", "false");
   await expect(button(page, "Settings")).toHaveCount(0);
   for (const width of [1280, 390]) {
@@ -103,7 +107,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(account).toBeInViewport();
     await expect(avatar).toHaveAttribute("aria-expanded", "true");
     await tab();
-    await expect(settings).toBeFocused();
+    await expect(automatic).toBeFocused();
     await page.keyboard.press("Escape");
     await expect(account).toBeHidden();
     await expect(avatar).toBeFocused();
@@ -122,7 +126,7 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
     await expect(avatar).toBeFocused();
     await page.keyboard.press("Enter");
     await tab();
-    await expect(settings).toBeFocused();
+    await expect(automatic).toBeFocused();
     await tab(true);
     await expect(avatar).toBeFocused();
     await expect(account).toBeVisible();
@@ -133,6 +137,9 @@ test("avatar Settings access dismisses cleanly and exposes Profile and Plugins",
   await avatar.focus();
   await page.keyboard.press("Enter");
   await tab();
+  await expect(automatic).toBeFocused();
+  await tab();
+  await expect(settings).toBeFocused();
   await page.keyboard.press("Enter");
   await expect(account).toBeHidden();
   await expect(page.getByRole("main")).toBeFocused();

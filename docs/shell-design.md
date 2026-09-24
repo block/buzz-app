@@ -77,7 +77,10 @@ handler, plus scoped HTTP(S) opening for
 The top-right group contains enabled plugin launchers (Bestie supplies the snake),
 a page finder, and the local avatar. `ProfileButton.tsx` subscribes to the community
 service's local default profile and opens an anchored account dropdown containing
-Settings; there is no separate top-bar Settings button. The disclosure uses native
+local presence controls and Settings; there is no separate top-bar Settings button.
+The avatar dot shows local intent (Active/Away/Offline); a shared radio group offers
+Automatic, Away and Appear offline with one Tab stop and arrow-key selection.
+See [presence ownership and limitations](presence.md). The disclosure uses native
 buttons and normal Tab order, dismisses on Escape/outside click/focus leaving, and
 returns focus to the avatar on Escape. Selecting Settings focuses the main region.
 The avatar does not display the selected community's profile. It uses a configured

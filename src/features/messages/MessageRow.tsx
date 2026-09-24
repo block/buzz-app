@@ -3,7 +3,6 @@ import { Button } from "../../shared/design-system/ui/Button";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
 import { IconButton } from "../../shared/design-system/ui/IconButton";
 import { memo, useCallback, useSyncExternalStore, type ReactNode } from "react";
-import { PresenceIndicator } from "../presence/react";
 import type { RelaySession } from "../relay/session";
 import type { UnreadCapability } from "../relay/unread";
 import { MediaAttachment, type MediaPlayback } from "./MediaAttachment";
@@ -217,12 +216,6 @@ export const MessageRow = memo(function MessageRow({
           )}
           <div className={styles.byline}>
             <strong>{name}</strong>
-            {session && (
-              <PresenceIndicator
-                presence={session.presence}
-                pubkey={row.authorId}
-              />
-            )}
             <time dateTime={new Date(row.createdAt * 1000).toISOString()}>
               {new Date(row.createdAt * 1000).toLocaleTimeString(undefined, {
                 hour: "numeric",

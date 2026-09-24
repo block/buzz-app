@@ -1178,3 +1178,28 @@ it("presence and ordinary publications correlate independently and share only re
     h.owner.dispose();
   }
 });
+
+it("publishes manual Offline on the authenticated presence socket with a correlated receipt", async () => {
+  vi.useFakeTimers();
+  const h = setup([]);
+  try {
+    await h.first.auth();
+    const result = h.owner.publishPresence?.(
+      "offline",
+      new AbortController().signal,
+    );
+    await vi.advanceTimersByTimeAsync(0);
+    const event = h.first.sent.find(([kind]) => kind === "EVENT")?.[1] as {
+      id: string;
+      kind: number;
+      content: string;
+      tags: string[][];
+    };
+    assert.exists(event);
+    expect(event).toMatchObject({ kind: 20001, content: "offline", tags: [] });
+    await h.first.receive(["OK", event.id, true]);
+    expect(await result).toBe(true);
+  } finally {
+    h.owner.dispose();
+  }
+});

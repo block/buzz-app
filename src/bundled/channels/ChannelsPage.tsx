@@ -135,7 +135,7 @@ export function ChannelsPage({
               {session.status === "connecting"
                 ? "Connecting to your relay…"
                 : (session.error ??
-                  "Use Switch community at the top left to choose or add a community. Your profile and settings work without a community.")}
+                  "Use the left community rail to choose or add a community. Your profile and settings work without a community.")}
             </p>
             {session.status === "error" && (
               <>

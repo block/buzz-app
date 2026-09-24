@@ -73,7 +73,9 @@ async function shellFits(page, width) {
   );
   near(tabs.x + tabs.width / 2, width / 2);
   const actions = await box(page.locator(".shell-actions"));
-  const communities = await box(button(page, "Switch community"));
+  const communities = await box(
+    page.getByRole("navigation", { name: "Communities", exact: true }),
+  );
   expect(actions.x + actions.width).toBeLessThanOrEqual(width);
   expect(communities.x + communities.width).toBeLessThan(actions.x);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(
@@ -144,7 +146,11 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
     exact: true,
   });
   const before = await box(conversation);
-  near(sidebar.x, 16);
+  const rail = await box(
+    page.getByRole("navigation", { name: "Communities", exact: true }),
+  );
+  near(rail.width, 56);
+  near(sidebar.x, rail.x + rail.width + 16);
   near(before.x - sidebar.x - sidebar.width, 8);
   near(before.y, 56);
   near(before.height, 760);
@@ -200,27 +206,26 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   await expect(panel(page)).toHaveCount(0);
   await button(page, "Alpha").click();
   await expect(composer).toHaveJSProperty("value", "Layout draft");
-  await button(page, "Switch community").click();
+  const railButtons = page.getByRole("navigation", {
+    name: "Communities",
+    exact: true,
+  });
   await expect(
-    page.getByRole("dialog", { name: "Communities", exact: true }),
+    railButtons.getByRole("button", { name: "Personal space" }),
   ).toBeVisible();
-  await expect(button(page, "Personal space")).toBeVisible();
-  await expect(button(page, "Add a community")).toBeVisible();
-  await page.keyboard.press("Escape");
-  await expect(button(page, "Switch community")).toBeFocused();
-  await button(page, "Switch community").click();
-  await button(page, "Add a community").click();
+  const add = railButtons.getByRole("button", { name: "Add a community" });
+  await add.click();
   await expect(
     page.getByRole("heading", { name: "Add a community", exact: true }),
   ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);
-  await expect(button(page, "Switch community")).toBeFocused();
-  await button(page, "Switch community").click();
-  await button(page, "Switch to Secondary").click();
+  await expect(add).toBeFocused();
+  await railButtons
+    .getByRole("button", { name: "Switch to Secondary" })
+    .click();
   await expect(composer).toHaveJSProperty("value", "");
-  await button(page, "Switch community").click();
-  await button(page, "Switch to Primary").click();
+  await railButtons.getByRole("button", { name: "Switch to Primary" }).click();
   await expect(composer).toHaveJSProperty("value", "Layout draft");
   for (const [width, height] of [
     [1200, 800],
@@ -247,8 +252,8 @@ test("bento surfaces, centered tabs, real link panel and compact community navig
   await link(page, app, "https://github.com/block/buzz/pull/3");
   await expect(button(page, "Close channel panel")).toBeInViewport();
   const narrow = await box(panel(page));
-  near(narrow.x, 8);
-  near(narrow.width, 374);
+  near(narrow.x, 8 + rail.width);
+  near(narrow.width, 374 - rail.width);
   await button(page, "Close channel panel").click();
   await expect(composer).toBeInViewport();
   await button(page, "Search Buzz").click();
@@ -550,7 +555,6 @@ test("Bestie owns the launcher and the reusable companion card across pages and 
   await expect(bestie).toHaveCount(1);
   await button(page, "Alpha").click();
   await expect(composer).toHaveJSProperty("value", "Companion draft");
-  await button(page, "Switch community").click();
   await button(page, "Personal space").click();
   await expect(
     page.getByRole("heading", { name: "Your channels, one conversation." }),

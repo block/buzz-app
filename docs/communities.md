@@ -14,7 +14,7 @@ Configure `BUZZ_DEV_VIEWER` with your existing Buzz public key in `.env.local`
 development broker runs on macOS and Linux and refuses an OS-store identity
 that does not match your explicit public pin.
 Click the avatar → **Settings → Profile** to edit and save a local default
-directly in the page, then **Switch community → Add a community** and type a **Relay URL**. There
+directly in the page, then use **Add a community** in the left rail and type a **Relay URL**. There
 is no destination dropdown. Accepts `wss://` or `https://` origins, for example
 `wss://relay.example.com` or `wss://other.example.com`, and other
 Buzz-compatible community relays. No community is pre-joined.
@@ -42,8 +42,10 @@ completed community setup seeds the local default only when it is still empty.
 Picture setup currently accepts HTTPS URLs, not uploads; a protected media URL
 from one community is not a portable public avatar for another.
 
-Open **Switch community** at the top left and select a community to switch. Personal space
-clears selection without forgetting memberships. Messages shows an intentional
+Use the persistent left community rail to select a saved community or Personal
+space. Personal space
+clears selection without forgetting memberships. The rail’s Add control opens the
+existing join dialog; displaying saved communities reads relay metadata but does not open sessions for them. Messages shows an intentional
 empty state there. Try drafting in A, switching to B, then returning to A.
 Selected channels, drafts and reading offsets are partitioned by the canonical
 community origin and viewer; channel IDs alone are not sufficient keys.

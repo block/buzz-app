@@ -34,7 +34,7 @@ pub enum ListAgentsError {
     InvalidConfiguration(String),
     Unauthenticated,
     KeychainUnavailable,
-    KeychainAccessDenied,
+    KeychainAccessFailure,
     Transport,
     HttpStatus(u16),
     InvalidResponse,
@@ -43,7 +43,7 @@ pub enum ListAgentsError {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum KeychainError {
     Unavailable,
-    AccessDenied,
+    AccessFailure,
 }
 
 pub trait Keychain: Send + Sync {
@@ -65,8 +65,7 @@ impl Keychain for SystemKeychain {
     ) -> Result<Option<Zeroizing<Vec<u8>>>, KeychainError> {
         use security_framework::os::macos::keychain::SecKeychain;
 
-        let keychain =
-            SecKeychain::default().map_err(|error| classify_keychain_access_error(error.code()))?;
+        let keychain = SecKeychain::default().map_err(|_| KeychainError::AccessFailure)?;
         match keychain.find_generic_password(service, account) {
             Ok((password, _)) => Ok(Some(Zeroizing::new(password.to_vec()))),
             Err(error) => classify_keychain_read_error(error.code()),
@@ -78,14 +77,7 @@ fn classify_keychain_read_error(code: i32) -> Result<Option<Zeroizing<Vec<u8>>>,
     if code == -25300 {
         Ok(None)
     } else {
-        Err(classify_keychain_access_error(code))
-    }
-}
-
-fn classify_keychain_access_error(code: i32) -> KeychainError {
-    match code {
-        -128 | -25293 | -25308 | -67869 => KeychainError::AccessDenied,
-        _ => KeychainError::Unavailable,
+        Err(KeychainError::AccessFailure)
     }
 }
 
@@ -232,7 +224,7 @@ enum SessionRequestError {
     InvalidConfiguration(String),
     Unauthenticated,
     KeychainUnavailable,
-    KeychainAccessDenied,
+    KeychainAccessFailure,
     Transport,
     HttpStatus(u16),
 }
@@ -245,7 +237,7 @@ impl From<SessionRequestError> for ListAgentsError {
             }
             SessionRequestError::Unauthenticated => Self::Unauthenticated,
             SessionRequestError::KeychainUnavailable => Self::KeychainUnavailable,
-            SessionRequestError::KeychainAccessDenied => Self::KeychainAccessDenied,
+            SessionRequestError::KeychainAccessFailure => Self::KeychainAccessFailure,
             SessionRequestError::Transport => Self::Transport,
             SessionRequestError::HttpStatus(status) => Self::HttpStatus(status),
         }
@@ -260,8 +252,8 @@ impl SessionRequestError {
             Self::KeychainUnavailable => SessionStatus::Error {
                 message: "BuilderLab login is unavailable on this platform".into(),
             },
-            Self::KeychainAccessDenied => SessionStatus::Error {
-                message: "Could not read the BuilderLab CLI credential from Keychain. Unlock your Keychain or check its access permissions.".into(),
+            Self::KeychainAccessFailure => SessionStatus::Error {
+                message: "Could not read the BuilderLab CLI credential from Keychain. Unlock your Keychain, check its access permissions, and try again.".into(),
             },
             Self::Transport => SessionStatus::Error {
                 message: "Could not connect to BuilderLab".into(),
@@ -286,7 +278,7 @@ async fn authenticated_request(
     let credential = session_credential(keychain, &account, now).map_err(|error| match error {
         CredentialLookupError::LoggedOut => SessionRequestError::Unauthenticated,
         CredentialLookupError::KeychainUnavailable => SessionRequestError::KeychainUnavailable,
-        CredentialLookupError::KeychainAccessDenied => SessionRequestError::KeychainAccessDenied,
+        CredentialLookupError::KeychainAccessFailure => SessionRequestError::KeychainAccessFailure,
     })?;
     let endpoint = format!("{base}{endpoint_path}");
     let response = match method {
@@ -310,7 +302,7 @@ async fn authenticated_request(
 enum CredentialLookupError {
     LoggedOut,
     KeychainUnavailable,
-    KeychainAccessDenied,
+    KeychainAccessFailure,
 }
 
 fn session_credential(
@@ -324,7 +316,7 @@ fn session_credential(
         }
         Ok(None) => Err(CredentialLookupError::LoggedOut),
         Err(KeychainError::Unavailable) => Err(CredentialLookupError::KeychainUnavailable),
-        Err(KeychainError::AccessDenied) => Err(CredentialLookupError::KeychainAccessDenied),
+        Err(KeychainError::AccessFailure) => Err(CredentialLookupError::KeychainAccessFailure),
     }
 }
 
@@ -531,22 +523,14 @@ mod tests {
     }
 
     #[test]
-    fn classifies_keychain_read_osstatus_codes() {
+    fn classifies_keychain_osstatus_codes_with_actionable_failures() {
         assert!(matches!(classify_keychain_read_error(-25300), Ok(None)));
-        for code in [-128, -25293, -25308, -67869] {
+        for code in [-128, -25293, -25308, -67869, -36, -1] {
             assert_eq!(
                 classify_keychain_read_error(code),
-                Err(KeychainError::AccessDenied)
+                Err(KeychainError::AccessFailure)
             );
         }
-        assert_eq!(
-            classify_keychain_access_error(-67869),
-            KeychainError::AccessDenied
-        );
-        assert_eq!(
-            classify_keychain_read_error(-1),
-            Err(KeychainError::Unavailable)
-        );
     }
 
     #[test]
@@ -728,13 +712,13 @@ mod tests {
 
         let transport = transport(200, br#"{"subject":"user"}"#);
         let denied_keychain = FakeKeychain {
-            error: Some(KeychainError::AccessDenied),
+            error: Some(KeychainError::AccessFailure),
             ..Default::default()
         };
         assert_eq!(
             check_auth_me_session(&denied_keychain, &transport, BASE, now()).await,
             SessionStatus::Error {
-                message: "Could not read the BuilderLab CLI credential from Keychain. Unlock your Keychain or check its access permissions.".into()
+                message: "Could not read the BuilderLab CLI credential from Keychain. Unlock your Keychain, check its access permissions, and try again.".into()
             }
         );
         assert!(transport.get_calls.lock().unwrap().is_empty());

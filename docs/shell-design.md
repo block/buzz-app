@@ -24,15 +24,25 @@ semantic tokens, UI authoring rules and the local component reference.
   Existing feature CSS variables remain available for incremental adoption.
 - `src/app/shell/presentation.ts` owns page labels, icons and navigation ordering.
   Messages comes first, then Projects; other contributed pages follow by
-  displayed label with a full contribution-key tie-breaker. Tabs and
+  displayed label with a full contribution-key tie-breaker. Sidebar navigation and
   page search share this policy, independent of plugin activation/re-enable order.
   Channels is presented as Messages. Legacy tone props are retained for
   compatibility; all pages share the supplied gradient and repeating CSS dots.
   Add recognized page presentation here without changing plugin contracts.
-- `AppShell.tsx` owns the 56px header, scrollable centered navigation, contributed panel
-  launchers, Settings access, community switcher, and page frames. Equal-width
-  left/right header tracks center tabs on the window, not the leftover space.
-  Below 700px the tab pill moves to a centered second row to avoid collisions.
+- `AppShell.tsx` owns the 56px header, vertical page navigation, contributed panel
+  launchers, Settings access, community rail, and page frames. Page navigation sits
+  above the persistent channel list on every page, using its saved sidebar width
+  and resize behavior. `App.tsx` composes `features/channel-navigation/ChannelSidebar`
+  through an ordinary render prop; there is no portal or plugin contract expansion.
+  Sidebar session state resets on scope/connection generation without remounting
+  unrelated pages. Its own error boundary keeps page navigation and Settings usable.
+  Page buttons use shared navigation rows and focus the main region on selection.
+  A scrollable page list leaves room for channels at short heights.
+  At widths up to 650px, Settings collapses this navigation behind the header’s
+  Show navigation button to preserve readable content at 200% text size. The
+  disclosure overlays Settings, supports Escape, and keeps sidebar state mounted.
+  Other pages and desktop Settings retain the visible sidebar.
+  The header keeps history and account/search actions, with no second navigation row.
   Full-height pages get a 16px outer gutter (8px on narrow screens) and own their
   card surfaces. The shell adds no white backing behind them. Document pages
   scroll inside the remaining viewport.
@@ -63,7 +73,7 @@ motion with Tailwind's `motion-reduce` variant.
 
 Tauri uses `titleBarStyle: Overlay` and `hiddenTitle` on macOS. Native traffic
 lights have a reserved 104px left area before the community switcher only in the
-macOS desktop runtime. This inset does not move the centered tabs. Web gets no
+macOS desktop runtime. Web gets no
 inset or imitation window controls. Other
 platforms retain their native decorations. Drag regions are limited to the
 header background; controls remain clickable. On macOS, double-clicking that
@@ -128,11 +138,12 @@ access in a built app.
 
 ## Messages
 
-The Messages feature owns separate rounded sidebar, conversation and contributed
-panel cards, with 16px gutters. A single right panel fills the conversation height;
+The host owns the persistent rounded sidebar card; Messages owns conversation
+and contributed panel cards, with 16px gutters. A single right panel fills the conversation height;
 the right-column grid splits available height evenly between a local link card
 and the launched companion card. Below 1000px
-the right column overlays the conversation; below 650px it fills the page area.
+the right column overlays the conversation; it also overlays when the content
+pane is too narrow for two columns. Below 650px it fills the page area.
 Each card contains its own overflow, keeping the composer and close control visible.
 Channels opts into the reusable companion prop and owns both cards, including a
 companion-only view without a selected channel or relay. Settings and legacy

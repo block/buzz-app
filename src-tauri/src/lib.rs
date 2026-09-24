@@ -599,3 +599,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../build_resources.rs"]
+mod build_resources_tests;

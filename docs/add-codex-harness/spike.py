@@ -36,8 +36,14 @@ def fixture():
 
 
 def spawn(command, context):
+    environment = {"HOME": context, "CODEX_HOME": context, "PATH": "/opt/homebrew/bin:/usr/bin:/bin"}
+    cli = os.environ.get("BUZZ_SPIKE_CODEX_PATH")
+    if cli:
+        if not Path(cli).is_absolute():
+            raise ValueError("BUZZ_SPIKE_CODEX_PATH must be absolute")
+        environment["CODEX_PATH"] = cli
     return subprocess.Popen(command, cwd=context, start_new_session=True,
-        env={"HOME": context, "CODEX_HOME": context, "PATH": "/opt/homebrew/bin:/usr/bin:/bin"},
+        env=environment,
         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
 

@@ -8,6 +8,30 @@ account entitlement. Live account, rendered desktop and inference acceptance
 remain outstanding; steps 0 and 3–7 are not declared fully accepted.
 Written 2026-09-23 for branch `pazar/add-codex-agent-harness`.
 
+See the [ACP boundary comparison](acp-boundary-comparison.md) for the subsequent
+non-reply investigation and current diagnostic gaps.
+
+## Step 3 checkpoint — September 24
+
+The selected adapter baseline is **@agentclientprotocol/codex-acp 1.3.0**,
+explicitly approved by Phil. Native discovery now requires that adapter identity,
+version and ACP v1; older, missing or unrecognized metadata cannot authorize
+creation. This is an exact tested baseline, not a promise of compatibility with
+future releases. The earlier 0.16.0 spike remains historical evidence only.
+
+The shared context validates the CLI/adapter interpreters and snapshots the
+restricted environment. Like original Buzz, it lets adapter 1.3.0 select its
+bundled CLI by default; version/login checks use `codex-acp cli` to check that
+same engine without requiring a separate `codex` installation.
+A saved absolute `CODEX_PATH` override selects the engine for both paths. No installation, credentials,
+user configuration or runtime pin is modified.
+
+CLI version/login probes are bounded to 15 seconds each and 16 KiB combined
+stdout/stderr per probe. Explicit `Not logged in`, configuration failure, unknown
+failure, timeout and oversized output remain distinct; child output never crosses
+the native boundary. Existing Refresh and manual executable editing are recovery.
+See [step 3 evidence](step-3-evidence.md) for checked behavior and remaining gaps.
+
 ## Follow-up fixes — September 23
 
 - [x] Hide the Provider input when Codex is selected, including an absolute
@@ -360,7 +384,7 @@ pending request. Locally confirm an existing Databricks agent still replies.
 ### Step 3 — Resolve Codex execution context and readiness
 
 - [ ] Add Codex metadata and resolve CLI, adapter, version, and required interpreter.
-- [ ] Build one native effective-context resolver for draft/saved discovery and
+- [x] Build one native effective-context resolver for draft/saved discovery and
   launch. Merge saved write-only patches natively with revision checks.
 - [ ] Preserve normal HOME/CODEX_HOME semantics without inheriting unrelated
   provider secrets. Honor configured context consistently, including GUI startup.
@@ -613,3 +637,16 @@ paid inference is part of unattended CI.
 - [ ] Databricks regression journey complete.
 - [ ] Documentation and final validation evidence current with the checked code.
 - [ ] Remaining packaging/platform limitations explicitly recorded.
+
+## Original-Buzz alignment follow-up
+
+The native listener now captures bounded, sanitized ACP milestones in the existing
+agent editor's **Host diagnostics**. Exit errors include the OS exit status and
+recent milestones. It retains at most 32 messages and reads at most 16 KiB per
+line; raw child output is discarded. These messages are diagnostic hints, not
+readiness acknowledgements. Unlike original Buzz's rotating raw logs, this
+history is in memory and lasts for the current listener (or its retained failure).
+
+Original setup-listener recovery, relay observer integration, and full-generation
+atomic resource staging remain outstanding. Credential isolation, owner-only
+authority, process containment, and runtime integrity checks remain in place.

@@ -55,6 +55,13 @@ impl Process {
             .map(|status| status.map(|s| s.success()))
             .map_err(|_| "Could not inspect subprocess status".into())
     }
+    /// Sanitized operating-system exit status, without child output.
+    pub fn exit_description(&mut self) -> Result<Option<String>> {
+        self.child
+            .try_wait()
+            .map(|status| status.map(|s| s.to_string()))
+            .map_err(|_| "Could not inspect subprocess status".into())
+    }
     /// Whether the process is still running.
     pub fn alive(&mut self) -> Result<bool> {
         if self.stopped {
@@ -79,42 +86,7 @@ impl Process {
         }
         #[cfg(unix)]
         {
-            // First let ACP cancel turns and shut down its workers itself.
-            signal_in_session(self.session, self.session, libc::SIGTERM)?;
-            let deadline = Instant::now() + Duration::from_secs(2);
-            loop {
-                let members = session_members(self.session)?;
-                if members.is_empty() {
-                    break;
-                }
-                if Instant::now() >= deadline {
-                    // Freeze first so a terminating child cannot create a fresh
-                    // descendant between the enumeration and the kill pass.
-                    for pid in &members {
-                        signal_in_session(*pid, self.session, libc::SIGSTOP)?;
-                    }
-                    let frozen = session_members(self.session)?;
-                    for pid in frozen {
-                        signal_in_session(pid, self.session, libc::SIGKILL)?;
-                    }
-                    break;
-                }
-                // Reap the leader if it exited; session ID is retained by living members.
-                self.child
-                    .try_wait()
-                    .map_err(|_| "Could not reap agent listener")?;
-                std::thread::sleep(Duration::from_millis(25));
-            }
-            self.child
-                .wait()
-                .map_err(|_| "Could not reap agent listener")?;
-            let deadline = Instant::now() + Duration::from_secs(2);
-            while !session_members(self.session)?.is_empty() {
-                if Instant::now() >= deadline {
-                    return Err("Agent descendants have not exited; shutdown is incomplete".into());
-                }
-                std::thread::sleep(Duration::from_millis(25));
-            }
+            stop_session(self.session, Some(&mut self.child))?;
             self.stopped = true;
             Ok(())
         }
@@ -174,4 +146,47 @@ fn session_members(session: u32) -> Result<Vec<u32>> {
         }
     }
     Ok(members)
+}
+
+#[cfg(unix)]
+pub(crate) fn stop_session(session: u32, mut child: Option<&mut Child>) -> Result<()> {
+    // First let ACP cancel turns and shut down its workers itself.
+    signal_in_session(session, session, libc::SIGTERM)?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    loop {
+        let members = session_members(session)?;
+        if members.is_empty() {
+            break;
+        }
+        if Instant::now() >= deadline {
+            // Freeze first so a terminating child cannot create a fresh
+            // descendant between the enumeration and the kill pass.
+            for pid in &members {
+                signal_in_session(*pid, session, libc::SIGSTOP)?;
+            }
+            let frozen = session_members(session)?;
+            for pid in frozen {
+                signal_in_session(pid, session, libc::SIGKILL)?;
+            }
+            break;
+        }
+        // Reap the leader if it exited; session ID is retained by living members.
+        if let Some(child) = child.as_deref_mut() {
+            child
+                .try_wait()
+                .map_err(|_| "Could not reap agent listener")?;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    if let Some(child) = child {
+        child.wait().map_err(|_| "Could not reap agent listener")?;
+    }
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !session_members(session)?.is_empty() {
+        if Instant::now() >= deadline {
+            return Err("Agent descendants have not exited; shutdown is incomplete".into());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Ok(())
 }

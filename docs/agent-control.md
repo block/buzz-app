@@ -160,7 +160,10 @@ resources. Production has no disposable storage override or preview launch mode.
   previous model. For Goose with Databricks v2, an explicit Browse asks Goose ACP
   for its live supported-model list and searches it in the existing picker. The
   exact returned ID is saved; an unlisted ID remains possible but is flagged
-  after discovery. Other Goose providers retain manual model entry. Existing Goose credentials
+  after discovery. Saved write-only `GOOSE_PROVIDER` overrides keep Browse
+  reachable; native checks the effective provider before asking Goose. Goose
+  has no separate Refresh action because its catalog lookup can start OAuth.
+  Other Goose providers retain manual model entry. Existing Goose credentials
   are reused; providers without local setup need `goose configure` before Start. Executable detection
   is not a sign-in or ACP readiness check. Custom command/provider values remain
   editable, including absolute paths. Buzz Agent retains on-demand Databricks

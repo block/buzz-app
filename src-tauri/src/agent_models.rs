@@ -255,6 +255,15 @@ pub(crate) async fn agent_models_run<R: tauri::Runtime>(
             == Some("goose")
     });
     if goose {
+        // Goose's catalog handler may start OAuth on a cache miss. Only the
+        // explicit Browse/Retry action may invoke it; Refresh stays headless.
+        if request.action != Operation::Connect {
+            return host
+                .run(ticket, async {
+                    Err("Goose model lookup requires explicit Browse or Retry".into())
+                })
+                .await;
+        }
         let prepared = request
             .edit
             .clone()

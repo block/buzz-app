@@ -59,9 +59,11 @@ it("Goose Databricks v2 browses live IDs and flags an unlisted short name", asyn
         action: "connect",
       }),
     );
-    expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
-      "aria-expanded",
-      "true",
+    await waitFor(() =>
+      expect(screen.getByRole("combobox", { name: "Model" })).toHaveAttribute(
+        "aria-expanded",
+        "true",
+      ),
     );
     await user.click(
       screen.getByRole("option", {

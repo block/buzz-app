@@ -320,14 +320,6 @@ export function AgentModelPicker({
                       }
                     />
                   </Field>
-                  {supported && goose && (
-                    <Button
-                      disabled={disabled || busy}
-                      onClick={() => void run("refresh")}
-                    >
-                      Refresh models
-                    </Button>
-                  )}
                   {supported && !goose && (
                     <>
                       <Field label="Databricks workspace (HTTPS origin)">

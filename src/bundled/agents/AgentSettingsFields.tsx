@@ -32,6 +32,12 @@ export function AgentSettingsFields({
   onChange(patch: Partial<AgentDraft>): void;
 }) {
   const goose = isGoose(draft.command);
+  const providerOverride = draft.environment.GOOSE_PROVIDER;
+  const provider = providerOverride ?? draft.provider;
+  const gooseCanBrowse =
+    provider === "databricks_v2" ||
+    (providerOverride === undefined &&
+      environmentKeys.includes("GOOSE_PROVIDER"));
   return (
     <div className="min-w-0">
       <div className="min-w-0 space-y-section-gap">
@@ -62,7 +68,7 @@ export function AgentSettingsFields({
             options={state.data?.harnessOptions ?? []}
             onChange={onChange}
           />
-          {goose && draft.provider !== "databricks_v2" ? (
+          {goose && !gooseCanBrowse ? (
             <div className="space-y-2">
               <Field label="Model">
                 <Input

@@ -418,6 +418,121 @@ it("selects installed Goose with ACP arguments and saves its provider and model"
   );
 });
 
+for (const source of ["saved", "draft"] as const) {
+  for (const provider of ["", "openai"] as const) {
+    it(`browses Goose models with a ${source} Databricks override and ${provider || "blank"} selector`, async () => {
+      const run = vi.fn(async () => ({
+        host: "",
+        models: [{ id: "catalog.schema.model", name: "catalog.schema.model" }],
+        modelOverridden: false,
+        disconnected: false,
+      }));
+      setup("ready", (fixture) => {
+        Object.assign(fixture.agent.harness, {
+          command: "/fixture/bin/goose",
+          args: ["acp"],
+          provider,
+          environmentKeys: source === "saved" ? ["GOOSE_PROVIDER"] : [],
+        });
+        fixture.data.harnessOptions?.push({
+          command: "/fixture/bin/goose",
+          label: "Goose",
+          available: true,
+          defaultArgs: ["acp"],
+          providers: [{ value: "databricks_v2", label: "Databricks v2" }],
+        });
+        fixture.host.models = {
+          begin: async () => 1,
+          cancel: async () => {},
+          run,
+        };
+      });
+      const [card] = await screen.findAllByRole("article", {
+        name: "Agent Fixture agent",
+      });
+      if (!card) throw Error("Missing managed card");
+      fireEvent.click(
+        within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+      );
+      fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+      const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+      if (source === "draft") {
+        expect(
+          within(dialog).queryByRole("button", { name: "Browse models" }),
+        ).not.toBeInTheDocument();
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Environment" }),
+        );
+        fireEvent.change(within(dialog).getByLabelText("Variable name"), {
+          target: { value: "GOOSE_PROVIDER" },
+        });
+        fireEvent.click(
+          within(dialog).getByRole("button", { name: "Add variable" }),
+        );
+        fireEvent.change(
+          within(dialog).getByLabelText("Replacement for GOOSE_PROVIDER"),
+          { target: { value: "databricks_v2" } },
+        );
+      }
+      expect(
+        within(dialog).queryByRole("button", { name: "Refresh models" }),
+      ).not.toBeInTheDocument();
+      fireEvent.click(
+        within(dialog).getByRole("button", { name: "Browse models" }),
+      );
+      await waitFor(() =>
+        expect(run).toHaveBeenCalledWith(
+          1,
+          expect.objectContaining({
+            action: "connect",
+            edit: expect.objectContaining({
+              harness: expect.objectContaining({ provider }),
+              environment:
+                source === "saved" ? {} : { GOOSE_PROVIDER: "databricks_v2" },
+            }),
+          }),
+        ),
+      );
+    });
+  }
+}
+
+it("uses a draft Goose provider override before the Databricks selector", async () => {
+  setup("ready", (fixture) => {
+    Object.assign(fixture.agent.harness, {
+      command: "/fixture/bin/goose",
+      args: ["acp"],
+      provider: "databricks_v2",
+      environmentKeys: [],
+    });
+  });
+  const [card] = await screen.findAllByRole("article", {
+    name: "Agent Fixture agent",
+  });
+  if (!card) throw Error("Missing managed card");
+  fireEvent.click(
+    within(card).getByRole("button", { name: "Actions for Fixture agent" }),
+  );
+  fireEvent.click(await screen.findByRole("menuitem", { name: "Edit" }));
+  const dialog = screen.getByRole("dialog", { name: "Edit agent" });
+  expect(
+    within(dialog).getByRole("button", { name: "Browse models" }),
+  ).toBeVisible();
+  fireEvent.click(within(dialog).getByRole("button", { name: "Environment" }));
+  fireEvent.change(within(dialog).getByLabelText("Variable name"), {
+    target: { value: "GOOSE_PROVIDER" },
+  });
+  fireEvent.click(within(dialog).getByRole("button", { name: "Add variable" }));
+  fireEvent.change(
+    within(dialog).getByLabelText("Replacement for GOOSE_PROVIDER"),
+    { target: { value: "openai" } },
+  );
+  expect(
+    within(dialog).queryByRole("button", { name: "Browse models" }),
+  ).not.toBeInTheDocument();
+  expect(within(dialog).getByLabelText("Model")).toBeVisible();
+});
+
 it("creates a stopped Goose agent with the selected provider", async () => {
   vi.spyOn(communityApi, "communityRequest").mockResolvedValue({ auth: [] });
   const commit = vi.fn();

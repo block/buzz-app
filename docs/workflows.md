@@ -52,6 +52,17 @@ Saving a configured enabled flag does not prove runtime activation or cancellati
 Legacy deletion can retain a visible definition; accepted delivery is not proof
 of runtime cleanup. These backend limitations are displayed, not repaired here.
 
+The landing discovers workflows once per channel ID, including authorized DMs,
+with one read at a time. Metadata renames/reordering do not restart discovery;
+new memberships add only their missing reads. One stable status replaces
+per-channel loading placeholders, and loaded cards remain visible during refresh.
+Refresh deliberately rereads the current roster; save outcomes request readback
+only for their affected channels. Read failures/interruption stop the queued scan
+and expose Retry without erasing already loaded configurations. Global clear
+purges copied results without automatic rereads; a changed membership set
+re-establishes authorized interest. At most two capability views remain live,
+including one invalidation observer when discovery is idle.
+
 Reads begin on UI interest and stop on unmount or access loss; no background poll.
 Transient socket recovery cancels stale reads but retains the draft. Live-session
 commands use the shared socket's result-bearing OK receipt; disconnect after send

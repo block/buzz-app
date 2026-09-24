@@ -456,30 +456,59 @@ test("landing scan survives channel presentation churn without restarting", asyn
   const startedReads = await page.evaluate(() =>
     window.workflowSessionFixture.definitionQueries(),
   );
-  await page.evaluate(async () => {
-    for (let index = 0; index < 8; index++) {
-      window.workflowSessionFixture.renameFirstChannel();
-      await new Promise((resolve) => setTimeout(resolve, 15));
-    }
+  const create = page.getByRole("button", {
+    name: "New workflow",
+    exact: true,
   });
-  await expect(
-    page.getByText("#First channel 8", { exact: true }),
-  ).toBeVisible();
+  const open = page.getByRole("button", {
+    name: "Open Fixture A helper",
+    exact: true,
+  });
+  await expect(open).toBeVisible();
+  // Browser-only boundary: progressive empty results must not move either
+  // actionable card under the pointer. Reads remain held until after metadata.
+  const createBounds = await create.boundingBox();
+  const openBounds = await open.boundingBox();
+  try {
+    await expect(page.getByRole("status")).toHaveText("Reading workflows…");
+    for (let index = 1; index <= 8; index++) {
+      await page.evaluate(() =>
+        window.workflowSessionFixture.renameFirstChannel(),
+      );
+      await expect(
+        page.getByText(
+          `#${index % 2 ? "Z-last" : "A-first"} channel ${index}`,
+          { exact: true },
+        ),
+      ).toBeVisible();
+    }
+    expect(
+      await page.evaluate(() =>
+        window.workflowSessionFixture.definitionQueries(),
+      ),
+    ).toBe(startedReads);
+    expect(await create.boundingBox()).toEqual(createBounds);
+    expect(await open.boundingBox()).toEqual(openBounds);
+  } finally {
+    await page.evaluate(() =>
+      window.workflowSessionFixture.releaseDefinitionRead(),
+    );
+  }
+  await expect(page.getByRole("status")).toHaveText(
+    "Workflow discovery complete.",
+  );
+  expect(
+    await page.evaluate(() =>
+      window.workflowSessionFixture.definitionChannelCount(),
+    ),
+  ).toBe(17);
   expect(
     await page.evaluate(() =>
       window.workflowSessionFixture.definitionQueries(),
     ),
-  ).toBe(startedReads);
-  await page.evaluate(() =>
-    window.workflowSessionFixture.releaseDefinitionRead(),
-  );
-  await expect
-    .poll(() =>
-      page.evaluate(() =>
-        window.workflowSessionFixture.definitionChannelCount(),
-      ),
-    )
-    .toBe(17);
+  ).toBe(17);
+  expect(await create.boundingBox()).toEqual(createBounds);
+  expect(await open.boundingBox()).toEqual(openBounds);
 });
 
 test("clearing the session cache purges landing workflow definitions", async ({

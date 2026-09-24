@@ -1,11 +1,4 @@
-import {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  useSyncExternalStore,
-} from "react";
+import { useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import type {
   WorkflowCapability,
@@ -37,7 +30,6 @@ import {
   readWorkflowDocumentFields,
   yamlWithWorkflowEnabled,
 } from "./workflowYamlDocument";
-import { useWorkflowView } from "./useWorkflowView";
 
 const ICONS: Record<WorkflowCardIcon, typeof LightningIcon> = {
   delay: TimerIcon,
@@ -93,119 +85,209 @@ function useLandingDefinitions(
   refreshRequest: number,
   operationRefreshKey: string,
 ) {
-  const [snapshots, setSnapshots] = useState<
-    Readonly<Record<string, DefinitionsSnapshot>>
-  >({});
-  const channelIdsKey = channels.map((channel) => channel.id).join(":");
-  const channelIds = useMemo(
-    () => (channelIdsKey ? channelIdsKey.split(":") : []),
-    [channelIdsKey],
-  );
-  const anchorChannelId = channelIds[0] ?? "";
-  const { snapshot: anchorSnapshot, refresh: refreshAnchor } = useWorkflowView(
-    useCallback(
-      () => capability.definitions(anchorChannelId),
-      [anchorChannelId, capability],
-    ),
-  );
-  const readEpoch = useRef(0);
-
-  useEffect(() => {
-    if (
-      anchorSnapshot?.status !== "idle" &&
-      anchorSnapshot?.status !== "unavailable"
-    )
-      return;
-    readEpoch.current++;
-    setSnapshots({});
-  }, [anchorSnapshot?.status]);
-
-  useEffect(() => {
-    void refreshRequest;
-    void operationRefreshKey;
-    const epoch = ++readEpoch.current;
-    let cancelled = false;
-    let activeView: WorkflowView<WorkflowDefinitions> | undefined;
-    const remainingChannelIds = channelIds.slice(1);
-    const activeIds = new Set(remainingChannelIds);
-    setSnapshots((current) =>
-      Object.fromEntries(
-        Object.entries(current).filter(([channelId]) =>
-          activeIds.has(channelId),
-        ),
-      ),
-    );
-    void refreshAnchor();
-
-    const read = async () => {
-      for (const channelId of remainingChannelIds) {
-        if (cancelled || readEpoch.current !== epoch) return;
-        setSnapshots((current) =>
-          current[channelId]
-            ? current
-            : {
-                ...current,
-                [channelId]: {
-                  status: "loading",
-                  data: EMPTY_DEFINITIONS,
-                },
-              },
-        );
-        let view: WorkflowView<WorkflowDefinitions> | undefined;
-        try {
-          view = capability.definitions(channelId);
-          activeView = view;
-          await view.refresh();
-          if (cancelled || readEpoch.current !== epoch) return;
-          const snapshot = view.snapshot();
-          setSnapshots((current) => ({
-            ...current,
-            [channelId]: snapshot,
-          }));
-        } catch {
-          if (cancelled || readEpoch.current !== epoch) return;
-          setSnapshots((current) => ({
-            ...current,
-            [channelId]: {
-              status: "error",
-              data: EMPTY_DEFINITIONS,
-              error:
-                "Workflow read unavailable. Retry; this is not proof of deletion.",
-            },
-          }));
-        } finally {
-          view?.dispose();
-          if (activeView === view) activeView = undefined;
+  const store = useMemo(() => {
+    let snapshots: Readonly<Record<string, DefinitionsSnapshot>> = {};
+    let channelIds: readonly string[] = [];
+    const queued = new Set<string>();
+    const listeners = new Set<() => void>();
+    type Read = {
+      id: string;
+      view: WorkflowView<WorkflowDefinitions>;
+      stop(): void;
+    };
+    let active: Read | undefined;
+    let invalidated = false;
+    // Retain one completed view to observe session clear/access loss even after
+    // discovery finishes. All other views are disposed; at most two are live.
+    let retained: Read | undefined;
+    const emit = () => {
+      for (const listener of listeners) listener();
+    };
+    const release = (read: Read | undefined) => {
+      read?.stop();
+      read?.view.dispose();
+    };
+    const purge = (snapshot: DefinitionsSnapshot) => {
+      invalidated = true;
+      queued.clear();
+      const previous = active;
+      active = undefined;
+      release(previous);
+      snapshots = Object.fromEntries(
+        channelIds.map((id) => [
+          id,
+          {
+            status: snapshot.status,
+            data: EMPTY_DEFINITIONS,
+            ...(snapshot.error ? { error: snapshot.error } : {}),
+          },
+        ]),
+      );
+      emit();
+    };
+    const failure = (id: string) => ({
+      status: "error" as const,
+      data: snapshots[id]?.data ?? EMPTY_DEFINITIONS,
+      error: "Workflow read unavailable. Retry; this is not proof of deletion.",
+    });
+    const pause = (owned: Read, snapshot: DefinitionsSnapshot) => {
+      // The view contract does not distinguish interruption from read failure.
+      // Stop this scan on either; keep usable results and expose explicit retry.
+      for (const id of queued) snapshots = { ...snapshots, [id]: failure(id) };
+      queued.clear();
+      if (active && active !== owned) {
+        snapshots = { ...snapshots, [active.id]: failure(active.id) };
+        release(active);
+      }
+      active = undefined;
+      if (retained !== owned) release(retained);
+      retained = owned;
+      snapshots = {
+        ...snapshots,
+        [owned.id]: {
+          ...snapshot,
+          data: snapshots[owned.id]?.data ?? snapshot.data,
+        },
+      };
+      emit();
+    };
+    const observe = (id: string): Read => {
+      const view = capability.definitions(id);
+      const owned = { id, view, stop: () => {} };
+      owned.stop = view.subscribe(() => {
+        if (active !== owned && retained !== owned) return;
+        const snapshot = view.snapshot();
+        if (snapshot.status === "idle" || snapshot.status === "unavailable") {
+          purge(snapshot);
+        } else if (snapshot.status === "error") {
+          pause(owned, snapshot);
+        } else {
+          snapshots = {
+            ...snapshots,
+            [id]:
+              snapshot.status === "loading"
+                ? { ...snapshot, data: snapshots[id]?.data ?? snapshot.data }
+                : snapshot,
+          };
+          emit();
         }
+      });
+      return owned;
+    };
+    const readNext = () => {
+      if (active) return;
+      const id = queued.values().next().value;
+      if (!id) return;
+      queued.delete(id);
+      let owned: Read;
+      try {
+        owned = observe(id);
+        active = owned;
+        void owned.view
+          .refresh()
+          .catch(() => {
+            if (active === owned) pause(owned, failure(id));
+          })
+          .finally(() => {
+            if (active !== owned) return;
+            snapshots = { ...snapshots, [id]: owned.view.snapshot() };
+            release(retained);
+            retained = owned;
+            active = undefined;
+            emit();
+            readNext();
+          });
+      } catch {
+        release(active);
+        active = undefined;
+        snapshots = { ...snapshots, [id]: failure(id) };
+        for (const queuedId of queued)
+          snapshots = { ...snapshots, [queuedId]: failure(queuedId) };
+        queued.clear();
+        emit();
       }
     };
-    void read();
-    return () => {
-      cancelled = true;
-      readEpoch.current++;
-      activeView?.dispose();
+    return {
+      snapshot: () => snapshots,
+      subscribe(listener: () => void) {
+        listeners.add(listener);
+        return () => {
+          listeners.delete(listener);
+        };
+      },
+      channels(ids: readonly string[]) {
+        // Membership changes re-establish authorized interest after a secure
+        // purge. A session clear alone never restarts discovery.
+        if (invalidated) snapshots = {};
+        invalidated = false;
+        channelIds = ids;
+        const wanted = new Set(ids);
+        if (active && !wanted.has(active.id)) {
+          const previous = active;
+          active = undefined;
+          release(previous);
+        }
+        if (retained && !wanted.has(retained.id)) {
+          release(retained);
+          retained = undefined;
+          // Keep copied snapshots subscribed to session invalidation without
+          // rereading a completed channel just to replace the observer.
+          const replacement = ids[0];
+          if (replacement && !active) retained = observe(replacement);
+        }
+        for (const id of queued) if (!wanted.has(id)) queued.delete(id);
+        snapshots = Object.fromEntries(
+          Object.entries(snapshots).filter(([id]) => wanted.has(id)),
+        );
+        for (const id of ids)
+          if (!snapshots[id]) {
+            snapshots = {
+              ...snapshots,
+              [id]: { status: "loading", data: EMPTY_DEFINITIONS },
+            };
+            queued.add(id);
+          }
+        emit();
+        readNext();
+      },
+      refresh(ids = channelIds, afterPending = false) {
+        invalidated = false;
+        for (const id of ids) if (channelIds.includes(id)) queued.add(id);
+        // A pending read already satisfies refresh; never cancel and repeat it.
+        if (active && !afterPending) queued.delete(active.id);
+        readNext();
+      },
+      dispose() {
+        const previous = active;
+        active = undefined;
+        queued.clear();
+        release(previous);
+        release(retained);
+        retained = undefined;
+        snapshots = {};
+      },
     };
-  }, [
-    capability,
-    channelIds,
-    operationRefreshKey,
-    refreshAnchor,
-    refreshRequest,
-  ]);
-
-  if (
-    anchorSnapshot?.status === "idle" ||
-    anchorSnapshot?.status === "unavailable"
-  )
-    return Object.fromEntries(
-      channelIds.map((channelId) => [
-        channelId,
-        { status: anchorSnapshot.status, data: EMPTY_DEFINITIONS },
-      ]),
-    );
-  return anchorSnapshot
-    ? { ...snapshots, [anchorChannelId]: anchorSnapshot }
-    : snapshots;
+  }, [capability]);
+  const channelIdsKey = channels
+    .map((channel) => channel.id)
+    .sort()
+    .join(":");
+  useEffect(() => () => store.dispose(), [store]);
+  useEffect(() => {
+    store.channels(channelIdsKey ? channelIdsKey.split(":") : []);
+  }, [channelIdsKey, store]);
+  useEffect(() => {
+    void refreshRequest;
+    store.refresh();
+  }, [refreshRequest, store]);
+  useEffect(() => {
+    if (operationRefreshKey)
+      store.refresh(
+        operationRefreshKey.split(":").map((key) => key.split("/")[0] ?? ""),
+        true,
+      );
+  }, [operationRefreshKey, store]);
+  return useSyncExternalStore(store.subscribe, store.snapshot, store.snapshot);
 }
 
 function WorkflowIcon({ kind }: { kind: WorkflowCardIcon }) {
@@ -394,33 +476,23 @@ function WorkflowChannelCards({
 }) {
   const [error, setError] = useState<string | null>(null);
 
-  if (!snapshot || snapshot.status === "loading") {
-    return (
-      <div
-        className="workflow-state-card text-body-sm text-secondary"
-        role="status"
-      >
-        Reading workflows in #{channel.name}…
-      </div>
-    );
-  }
-  if (snapshot.status === "error") {
-    return (
-      <div className="workflow-state-card">
-        <p className="text-body-sm text-danger">
-          {snapshot.error ?? `Workflows in #${channel.name} could not be read.`}
-        </p>
-        <Button size="sm" onClick={onRetry}>
-          Retry
-        </Button>
-      </div>
-    );
-  }
+  if (!snapshot) return null;
   if (snapshot.status === "idle" || snapshot.status === "unavailable")
     return null;
 
   return (
     <>
+      {snapshot.status === "error" && (
+        <div className="workflow-state-card">
+          <p className="text-body-sm text-danger">
+            {snapshot.error ??
+              `Workflows in #${channel.name} could not be read.`}
+          </p>
+          <Button size="sm" onClick={onRetry}>
+            Retry
+          </Button>
+        </div>
+      )}
       {error && (
         <div className="workflow-state-card" role="alert">
           <p className="text-body-sm text-danger">{error}</p>
@@ -480,7 +552,10 @@ export function WorkflowLanding({
         operation.action === "save" &&
         (operation.outcome === "unknown" || operation.outcome === "succeeded"),
     )
-    .map((operation) => `${operation.eventId}:${operation.outcome}`)
+    .map(
+      (operation) =>
+        `${operation.workflow.channelId}/${operation.eventId}/${operation.outcome}`,
+    )
     .join(":");
   const snapshots = useLandingDefinitions(
     capability,
@@ -494,6 +569,21 @@ export function WorkflowLanding({
         These switches change configuration, not confirmed runtime state. Saving
         a disabled configuration does not confirm that automatic runs have
         stopped or cancel work already running.
+      </p>
+      <p className="text-body-sm text-secondary" role="status">
+        {channels.some(
+          (channel) =>
+            !snapshots[channel.id] ||
+            snapshots[channel.id]?.status === "loading",
+        )
+          ? "Reading workflows…"
+          : channels.some(
+                (channel) =>
+                  snapshots[channel.id]?.status === "idle" ||
+                  snapshots[channel.id]?.status === "unavailable",
+              )
+            ? "Workflow data cleared or unavailable. Refresh to check access."
+            : "Workflow discovery complete."}
       </p>
       <div className="workflow-card-grid">
         <Button

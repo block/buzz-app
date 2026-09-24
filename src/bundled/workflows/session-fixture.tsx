@@ -203,7 +203,7 @@ Object.assign(window, {
         metadata(
           authority,
           fixtureChannel,
-          `First channel ${metadataSequence}`,
+          `${metadataSequence % 2 ? "Z-last" : "A-first"} channel ${metadataSequence}`,
           1_800_001_000 + metadataSequence,
         ),
       ]);

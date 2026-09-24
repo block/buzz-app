@@ -1,6 +1,8 @@
 import { Combobox as BaseCombobox } from "@base-ui/react/combobox";
 import { useId, type ComponentProps, type ReactNode } from "react";
-import { CaretDownIcon, CircleNotchIcon } from "../icons";
+import { CaretDownIcon, CircleNotchIcon, CheckIcon } from "../icons";
+import { Field } from "./Field";
+import { InputGroup } from "./InputGroup";
 import { IconButton } from "./IconButton";
 
 /** Shared presentation; callers retain filtering, custom values and async work. */
@@ -9,10 +11,14 @@ function Control({
   triggerLabel,
   loading = false,
   onBrowse,
+  description,
+  error,
   id,
   ...props
 }: Omit<ComponentProps<typeof BaseCombobox.Input>, "className" | "render"> & {
   label: string;
+  description?: ReactNode;
+  error?: ReactNode;
   triggerLabel: string;
   loading?: boolean;
   onBrowse?: () => void;
@@ -20,42 +26,57 @@ function Control({
   const generatedId = useId();
   const inputId = id ?? generatedId;
   return (
-    <div data-buzz-ui="" className="buzz-field">
-      <label htmlFor={inputId} className="buzz-field-label">
-        {label}
-      </label>
-      <div className="buzz-combobox-control" aria-busy={loading || undefined}>
+    <Field
+      label={label}
+      controlId={inputId}
+      description={description}
+      error={error}
+    >
+      <BaseCombobox.InputGroup
+        render={
+          <InputGroup
+            trailing={
+              <BaseCombobox.Trigger
+                tabIndex={0}
+                aria-labelledby={undefined}
+                aria-label={triggerLabel}
+                disabled={props.disabled || props.readOnly}
+                onClick={onBrowse}
+                render={
+                  <IconButton
+                    aria-label={triggerLabel}
+                    size="sm"
+                    icon={
+                      loading ? (
+                        <CircleNotchIcon
+                          size={16}
+                          className="motion-safe:animate-spin"
+                          aria-hidden="true"
+                        />
+                      ) : (
+                        <CaretDownIcon
+                          size={16}
+                          className="buzz-dropdown-chevron"
+                          aria-hidden="true"
+                        />
+                      )
+                    }
+                  />
+                }
+              />
+            }
+          />
+        }
+      >
         <BaseCombobox.Input
           {...props}
           id={inputId}
           data-buzz-ui=""
           className="buzz-input"
+          aria-busy={loading || undefined}
         />
-        <span className="buzz-combobox-trigger">
-          <BaseCombobox.Trigger
-            tabIndex={0}
-            onClick={onBrowse}
-            render={
-              <IconButton
-                aria-label={triggerLabel}
-                size="compact"
-                icon={
-                  loading ? (
-                    <CircleNotchIcon
-                      size={16}
-                      className="motion-safe:animate-spin"
-                      aria-hidden="true"
-                    />
-                  ) : (
-                    <CaretDownIcon size={16} aria-hidden="true" />
-                  )
-                }
-              />
-            }
-          />
-        </span>
-      </div>
-    </div>
+      </BaseCombobox.InputGroup>
+    </Field>
   );
 }
 
@@ -93,10 +114,18 @@ function Item({
       {...props}
       className="buzz-select-option buzz-combobox-option"
     >
-      <span>{children}</span>
-      {description && (
-        <span className="text-body-sm text-subtle">{description}</span>
-      )}
+      <span className="buzz-combobox-item-content">
+        <span>{children}</span>
+        {description && (
+          <span className="text-body-sm text-subtle">{description}</span>
+        )}
+      </span>
+      <BaseCombobox.ItemIndicator
+        className="buzz-combobox-indicator"
+        keepMounted
+      >
+        <CheckIcon size={16} aria-hidden="true" />
+      </BaseCombobox.ItemIndicator>
     </BaseCombobox.Item>
   );
 }

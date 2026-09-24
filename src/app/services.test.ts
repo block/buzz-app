@@ -136,12 +136,17 @@ function expectHostStopped() {
   for (const stream of streams) expect(stream.close).toHaveBeenCalledTimes(1);
   const added = vi.mocked(document.addEventListener).mock.calls;
   const removed = vi.mocked(document.removeEventListener).mock.calls;
-  expect(added).toHaveLength(9); // Existing host listeners + one app presence source.
+  expect(added).toHaveLength(10); // Host listeners plus capture-phase presence input.
   expect(removed).toHaveLength(added.length);
-  for (const [type, listener] of added)
+  const capture = (options?: boolean | EventListenerOptions) =>
+    typeof options === "boolean" ? options : !!options?.capture;
+  for (const [type, listener, options] of added)
     expect(
       removed.filter(
-        ([event, callback]) => event === type && callback === listener,
+        ([event, callback, removalOptions]) =>
+          event === type &&
+          callback === listener &&
+          capture(removalOptions) === capture(options),
       ),
     ).toHaveLength(1);
   expect(services.pages.snapshot()).toHaveLength(0);

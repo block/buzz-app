@@ -1,7 +1,13 @@
+import {
+  InputExamples,
+  TextareaExamples,
+  SearchExamples,
+  SelectExamples,
+  ComboboxExamples,
+} from "./FormSpecimens";
 import { ToastSpecimens } from "./ToastSpecimens";
 import { ButtonSpecimen, IconButtonSpecimen } from "./ButtonSpecimens";
 import { Dialog } from "../../../../src/shared/design-system/ui/Dialog";
-import { Combobox } from "../../../../src/shared/design-system/ui/Combobox";
 import { AlertDialog } from "../../../../src/shared/design-system/ui/AlertDialog";
 import { DialogSpecimens } from "./DialogSpecimens";
 import { Tooltip } from "../../../../src/shared/design-system/ui/Tooltip";
@@ -29,7 +35,6 @@ import type { ReactNode } from "react";
 import { useState } from "react";
 import { Switch } from "../../../../src/shared/design-system/ui/Switch";
 import { Accordion } from "../../../../src/shared/design-system/ui/Accordion";
-import { Select } from "../../../../src/shared/design-system/ui/Select";
 import {
   ContextMenuRoot,
   ContextMenuTrigger,
@@ -54,7 +59,6 @@ import { IconButton } from "../../../../src/shared/design-system/ui/IconButton";
 import { NavigationItem } from "../../../../src/shared/design-system/ui/NavigationItem";
 import { NavigationSection } from "../../../../src/shared/design-system/ui/NavigationSection";
 import { PanelHeader } from "../../../../src/shared/design-system/ui/PanelHeader";
-import { SearchField } from "../../../../src/shared/design-system/ui/SearchField";
 import { Tabs } from "../../../../src/shared/design-system/ui/Tabs";
 
 import { ComponentAnatomy } from "./ComponentAnatomy";
@@ -446,35 +450,6 @@ function PanelHeaderSpecimen() {
   );
 }
 
-function SearchFieldSpecimen() {
-  const [emptyQuery, setEmptyQuery] = useState("");
-  const [filledQuery, setFilledQuery] = useState("design");
-  return (
-    <div className="component-specimen-stack">
-      <SpecimenGroup label='value="" — the clear action is absent'>
-        <div className="component-field-demo">
-          <SearchField
-            value={emptyQuery}
-            onValueChange={setEmptyQuery}
-            label="Find a channel"
-            placeholder="Search"
-          />
-        </div>
-      </SpecimenGroup>
-      <SpecimenGroup label='value="design" — the clear action appears'>
-        <div className="component-field-demo">
-          <SearchField
-            value={filledQuery}
-            onValueChange={setFilledQuery}
-            label="Find a channel"
-            placeholder="Search"
-          />
-        </div>
-      </SpecimenGroup>
-    </div>
-  );
-}
-
 function NavigationSectionSpecimen() {
   return (
     <div className="component-specimen-stack">
@@ -757,12 +732,6 @@ function SwitchSpecimen() {
   );
 }
 
-const CHOICE_OPTIONS = [
-  { value: "channel", label: "Channel" },
-  { value: "session", label: "Session" },
-  { value: "dm", label: "Direct message" },
-];
-
 function ActionMenuSpecimen() {
   const [sort, setSort] = useState("recent");
   const [notifications, setNotifications] = useState(true);
@@ -828,72 +797,6 @@ function MenuSpecimen() {
       <Dialog open={open} onOpenChange={setOpen} title="Menu composition">
         <ActionMenuSpecimen />
       </Dialog>
-    </div>
-  );
-}
-
-function SelectSpecimen() {
-  const [value, setValue] = useState("channel");
-  const groups = [{ label: "Destination", options: CHOICE_OPTIONS }];
-  return (
-    <div className="component-specimen-stack">
-      <Select
-        label="Preview context"
-        value={value}
-        onValueChange={setValue}
-        groups={groups}
-      />
-      <Select
-        variant="field"
-        label="Destination"
-        value={value}
-        onValueChange={setValue}
-        groups={groups}
-      />
-      <Select
-        variant="field"
-        label="Destination (disabled)"
-        disabled
-        value={value}
-        onValueChange={setValue}
-        groups={groups}
-      />
-    </div>
-  );
-}
-
-function ComboboxSpecimen() {
-  return (
-    <div className="component-specimen-stack">
-      {(["default", "loading", "disabled"] as const).map((state) => (
-        <Combobox.Root
-          key={state}
-          items={state === "loading" ? [] : CHOICE_OPTIONS}
-          disabled={state === "disabled"}
-        >
-          <Combobox.Control
-            label={`Destination (${state})`}
-            triggerLabel={`Browse destinations (${state})`}
-            placeholder="Choose or search…"
-            loading={state === "loading"}
-          />
-          <Combobox.Popup
-            empty={
-              state === "loading"
-                ? "Loading destinations…"
-                : "No matching destinations."
-            }
-          >
-            <Combobox.List>
-              {(item: (typeof CHOICE_OPTIONS)[number]) => (
-                <Combobox.Item key={item.value} value={item}>
-                  {item.label}
-                </Combobox.Item>
-              )}
-            </Combobox.List>
-          </Combobox.Popup>
-        </Combobox.Root>
-      ))}
     </div>
   );
 }
@@ -1021,23 +924,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
       </Field>
     </SpecimenFrame>
   ),
-  input: () => (
-    <SpecimenFrame>
-      <Field label="Workspace name">
-        <Input placeholder="Project notes" />
-      </Field>
-      <Field label="Unavailable">
-        <Input disabled value="Example" />
-      </Field>
-    </SpecimenFrame>
-  ),
-  textarea: () => (
-    <SpecimenFrame>
-      <Field label="Description" description="A short summary.">
-        <Textarea id="description-control" rows={3} />
-      </Field>
-    </SpecimenFrame>
-  ),
+  input: InputExamples,
+  textarea: TextareaExamples,
   "radio-group": RadioGroupSpecimen,
   checkbox: () => (
     <SpecimenFrame>
@@ -1058,8 +946,8 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
   panel: PanelSpecimen,
   tabs: TabsSpecimen,
   menu: MenuSpecimen,
-  select: SelectSpecimen,
-  combobox: ComboboxSpecimen,
+  select: SelectExamples,
+  combobox: ComboboxExamples,
   switch: SwitchSpecimen,
   accordion: () => (
     <>
@@ -1116,7 +1004,7 @@ export const COMPONENT_SPECIMENS: Record<string, () => ReactNode> = {
     </>
   ),
   "panel-header": PanelHeaderSpecimen,
-  "search-field": SearchFieldSpecimen,
+  "search-field": SearchExamples,
   "navigation-section": NavigationSectionSpecimen,
   "navigation-item": NavigationItemSpecimen,
 };

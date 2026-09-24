@@ -80,10 +80,10 @@ export function createAgentLibrary(
     queries: Object.freeze({
       snapshot: () => snapshot,
       refresh,
-      retain() {
+      retain({ refresh: refreshOnRetain = true } = {}) {
         const demand = {};
         demands.add(demand);
-        void refresh();
+        if (refreshOnRetain) void refresh();
         return () => {
           demands.delete(demand);
         };

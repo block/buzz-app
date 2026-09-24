@@ -48,7 +48,12 @@ async function harness(respond, capabilities = {}) {
       const auth = authorization
         ? JSON.parse(Buffer.from(authorization.slice(6), "base64").toString())
         : undefined;
-      if (upstreamUrl !== fixtureRelayUrl) expect(auth).toBeDefined();
+      if (
+        upstreamUrl === fixtureRelayUrl ||
+        upstreamUrl === `${fixtureRelayUrl}/api/join-policy`
+      )
+        expect(auth).toBeUndefined();
+      else expect(auth).toBeDefined();
       if (auth) {
         expect(verifyEvent(auth)).toBe(true);
         expect(auth.created_at).toBe(Math.floor(Date.now() / 1000));
@@ -113,6 +118,36 @@ const success = (call) =>
       ? { accepted: true, event_id: call.body.id }
       : [],
   );
+
+test("saved icon discovery survives join-policy failure without changing join discovery", async () => {
+  const icon = "https://images.example/icon@2x.png";
+  const h = await harness((call) => {
+    if (call.url === fixtureRelayUrl) return Response.json({ icon });
+    if (call.url === `${fixtureRelayUrl}/api/join-policy`)
+      return new Response("unavailable", { status: 503 });
+    return new Response(null, { status: 404 });
+  });
+  try {
+    const iconResponse = await h.get("icon-info");
+    expect(iconResponse.status).toBe(200);
+    expect(await iconResponse.json()).toEqual({ icon });
+    expect(h.calls.map(({ url }) => url)).toEqual([fixtureRelayUrl]);
+
+    const joinResponse = await h.get("info");
+    const joinBody = await joinResponse.json();
+    expect([joinResponse.status, joinBody]).toEqual([
+      503,
+      { error: "Could not load join policy" },
+    ]);
+    expect(h.calls.map(({ url }) => url)).toEqual([
+      fixtureRelayUrl,
+      fixtureRelayUrl,
+      `${fixtureRelayUrl}/api/join-policy`,
+    ]);
+  } finally {
+    await h.close();
+  }
+});
 
 test("GIF capability discovery does not depend on join-policy availability", async () => {
   const h = await harness((call) => {
@@ -234,7 +269,7 @@ test("media proxy returns generic files as neutralized authenticated downloads",
     );
     expect(response.headers.get("content-disposition")).toBe("attachment");
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    expect(response.headers.get("accept-ranges")).toBeNull();
+    expect(response.headers.get("accept-ranges")).toBe("bytes");
     expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
     expect(h.calls).toHaveLength(1);
   } finally {
@@ -375,22 +410,107 @@ test("media proxy keeps raster images inline with exact bytes", async () => {
   }
 });
 
-test("media proxy rejects oversized generic files", async () => {
-  const h = await harness(
-    () =>
-      new Response(null, {
-        headers: {
-          "Content-Type": "application/zip",
-          "Content-Length": String(20 * 1024 * 1024 + 1),
-        },
-      }),
+test.each([
+  ["application/zip", 100],
+  ["image/png", 50],
+  ["image/gif", 10],
+  ["video/mp4", 500],
+])(
+  "media proxy rejects %s above its %i MiB declared budget",
+  async (type, mib) => {
+    let cancelled = false;
+    const h = await harness(
+      () =>
+        new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          {
+            headers: {
+              "Content-Type": type,
+              "Content-Length": String(mib * 1024 * 1024 + 1),
+            },
+          },
+        ),
+    );
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/file`)}`,
+      );
+      expect(response.status).toBe(413);
+      expect(await response.json()).toEqual({ error: "Media budget exceeded" });
+      expect(cancelled).toBe(true);
+    } finally {
+      await h.close();
+    }
+  },
+);
+
+test("unknown-length media is metered, cancelled on overflow and leaves the broker usable", async () => {
+  let cancelled = false;
+  let oversized = true;
+  const chunk = new Uint8Array(1024 * 1024);
+  const h = await harness(() =>
+    oversized
+      ? new Response(
+          new ReadableStream({
+            pull(controller) {
+              controller.enqueue(chunk);
+            },
+            cancel() {
+              cancelled = true;
+            },
+          }),
+          { headers: { "Content-Type": "image/gif" } },
+        )
+      : new Response("ok", { headers: { "Content-Type": "text/plain" } }),
   );
   try {
-    const response = await fetch(
-      `${h.base}/api/relay/media?url=${encodeURIComponent(`${fixtureRelayUrl}/media/archive.zip`)}`,
-    );
-    expect(response.status).toBe(413);
-    expect(await response.json()).toEqual({ error: "Media budget exceeded" });
+    // Either the initial read or the body must fail: an over-budget stream must
+    // never complete successfully after headers have already reached the client.
+    await expect(
+      (async () => {
+        const response = await h.get("media?url=/media/file.gif");
+        await response.arrayBuffer();
+      })(),
+    ).rejects.toThrow();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
+    oversized = false;
+    const next = await h.get("media?url=/media/file.txt");
+    expect(next.headers.get("content-disposition")).toBe("attachment");
+    expect(await next.text()).toBe("ok");
+  } finally {
+    await h.close();
+  }
+});
+
+test("media deadline cancels the response pipeline after headers", async () => {
+  const deadline = new AbortController();
+  vi.spyOn(AbortSignal, "timeout").mockReturnValue(deadline.signal);
+  let cancelled = false;
+  const h = await harness(
+    () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.enqueue(new Uint8Array([1]));
+          },
+          cancel() {
+            cancelled = true;
+          },
+        }),
+        { headers: { "Content-Type": "video/mp4" } },
+      ),
+  );
+  try {
+    const response = await h.get("media?url=/media/clip.mp4");
+    const reader = response.body.getReader();
+    expect((await reader.read()).value).toEqual(new Uint8Array([1]));
+    deadline.abort();
+    await expect(reader.read()).rejects.toThrow();
+    await vi.waitFor(() => expect(cancelled).toBe(true));
   } finally {
     await h.close();
   }
@@ -1096,3 +1216,171 @@ test.each(["sign", "publish"])(
     }
   },
 );
+
+test("edit capability signs and publishes canonical replacements, rejecting malformed edits locally", async () => {
+  const h = await harness(success);
+  try {
+    await h.start();
+    expect((await (await h.get("session")).json()).writeKinds).toContain(40003);
+    const template = {
+      ...h.event,
+      kind: 40003,
+      content: "corrected **message**",
+      tags: [
+        ["h", "c"],
+        ["e", h.event.id],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event).toMatchObject({
+      kind: 40003,
+      content: template.content,
+      tags: template.tags,
+      pubkey: h.event.pubkey,
+    });
+    expect((await h.post("publish", event)).status).toBe(200);
+    expect(h.publications).toEqual([JSON.parse(JSON.stringify(event))]);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [["h", "c"]],
+        [
+          ["h", "c"],
+          ["e", "bad"],
+        ],
+        [
+          ["h", "c"],
+          ["e", h.event.id, "", "reply"],
+        ],
+        [...event.tags, ["e", "a".repeat(64)]],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+      expect((await h.post(route, { ...event, content: " " })).status).toBe(
+        400,
+      );
+      expect(
+        (await h.post(route, { ...event, content: "x".repeat(32001) })).status,
+      ).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("message/reaction deletions pass real signing and publication without admitting workflow or arbitrary deletion shapes", async () => {
+  const h = await harness((call) =>
+    Response.json({ accepted: true, event_id: call.body.id }),
+  );
+  try {
+    await h.start();
+    const template = {
+      kind: 5,
+      content: "",
+      created_at: h.event.created_at,
+      tags: [
+        ["h", "c"],
+        ["e", "a".repeat(64)],
+        ["k", "7"],
+      ],
+    };
+    const response = await h.post("sign", template);
+    expect(response.status).toBe(200);
+    const event = await response.json();
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(5);
+    expect((await h.post("publish", event)).status).toBe(200);
+    for (const route of ["sign", "publish"]) {
+      for (const tags of [
+        [
+          ["h", "c"],
+          ["e", "invalid"],
+          ["k", "7"],
+        ],
+        [
+          ["h", "c"],
+          ["e", "a".repeat(64)],
+          ["k", "30030"],
+        ],
+        [...template.tags, ["a", `30620:${h.event.pubkey}:workflow`]],
+        [...template.tags, ["h", "other"]],
+        [
+          ["h", "c"],
+          ["k", "7"],
+        ],
+      ])
+        expect((await h.post(route, { ...event, tags })).status).toBe(400);
+    }
+    expect(h.publications).toHaveLength(1);
+  } finally {
+    await h.close();
+  }
+});
+
+test("direct-message transport signs only bounded participants and binds the returned channel to its receipt", async () => {
+  const channelId = "11111111-1111-4111-8111-111111111111";
+  const h = await harness((call) =>
+    Response.json({
+      accepted: true,
+      event_id: call.body.id,
+      message: `response:${JSON.stringify({ channel_id: channelId })}`,
+    }),
+  );
+  try {
+    const transport = await connectBrokerTransport(h.base);
+    const recipients = ["a".repeat(64), "b".repeat(64)];
+    await expect(
+      transport.openDirectMessage(recipients, new AbortController().signal),
+    ).resolves.toBe(channelId);
+    const event = h.calls[0].body;
+    expect(verifyEvent(event)).toBe(true);
+    expect(event.kind).toBe(41010);
+    expect(event.pubkey).toBe(h.event.pubkey);
+    expect(event.content).toBe("");
+    expect(event.tags.filter(([tag]) => tag === "p")).toEqual(
+      recipients.map((key) => ["p", key]),
+    );
+    await transport.openDirectMessage(recipients, new AbortController().signal);
+    expect(h.calls[1].body.id).not.toBe(event.id);
+    for (const pubkeys of [
+      [],
+      [h.event.pubkey],
+      [recipients[0], recipients[0]],
+      Array(9).fill(recipients[0]),
+      ["invalid"],
+    ]) {
+      expect((await h.post("direct-message", { pubkeys })).status).toBe(400);
+    }
+    expect(h.calls).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
+});
+
+test.each([
+  {
+    accepted: false,
+    message: 'response:{"channel_id":"11111111-1111-4111-8111-111111111111"}',
+  },
+  {
+    accepted: true,
+    event_id: "wrong",
+    message: 'response:{"channel_id":"11111111-1111-4111-8111-111111111111"}',
+  },
+  { accepted: true, message: 'response:{"channel_id":"not-a-channel"}' },
+])("direct-message rejects an invalid command receipt: %j", async (receipt) => {
+  const h = await harness((call) =>
+    Response.json({ event_id: call.body.id, ...receipt }),
+  );
+  try {
+    const response = await h.post("direct-message", {
+      pubkeys: ["a".repeat(64)],
+    });
+    expect(response.status).toBe(502);
+    expect(await response.json()).not.toHaveProperty("channelId");
+  } finally {
+    await h.close();
+  }
+});

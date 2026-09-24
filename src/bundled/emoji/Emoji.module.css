@@ -18,12 +18,7 @@
   --picker-container-radius: var(--radius-card);
   border-radius: var(--picker-container-radius);
   --picker-inner-radius: calc(var(--picker-container-radius) - var(--space-2));
-  --picker-search-radius: var(--radius-row);
   --picker-scrollbar-space: var(--space-4);
-  --picker-search-background: var(--surface-inset);
-  --picker-search-foreground: var(--text-standard);
-  --picker-search-muted: var(--text-subtle);
-  --picker-search-ring: var(--text-standard);
   --picker-tab-foreground: var(--text-standard);
   --picker-tab-muted: var(--text-subtle);
   --picker-tab-selected: var(--affordance-selected);
@@ -36,10 +31,10 @@
 }
 .sharedSearchIcon {
   position: absolute;
-  top: 15px;
-  left: 18px;
+  top: calc(var(--space-2) + (var(--size-control) - var(--space-4)) / 2);
+  left: calc(var(--space-2) + var(--space-control-inset));
   z-index: 4;
-  color: var(--picker-search-muted);
+  color: var(--text-subtle);
   pointer-events: none;
 }
 .reactionPositioner {

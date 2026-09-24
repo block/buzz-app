@@ -45,7 +45,12 @@ it("retries the failed library and updates the picker when a second agent joins"
     viewer,
     channels: { list: () => roster, subscribeList: subscribe },
     profiles: { snapshot: () => profiles, subscribe, ensure },
-    agentLibrary: { snapshot: () => library, subscribe, refresh },
+    agentChoices: {
+      snapshot: () => library,
+      subscribe,
+      refresh,
+      retain: () => () => {},
+    },
   } as unknown as RelaySession;
   render(
     <SessionAgentControl

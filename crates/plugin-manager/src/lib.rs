@@ -99,6 +99,12 @@ pub fn valid_id(id: &str) -> Result<()> {
 }
 pub fn bundled_manifests() -> Vec<Manifest> {
     vec![
+        serde_json::from_str(include_str!("../../../src/bundled/diffs/manifest.json"))
+            .expect("bundled diffs manifest"),
+        serde_json::from_str(include_str!(
+            "../../../src/bundled/channel-templates/manifest.json"
+        ))
+        .expect("channel templates manifest"),
         serde_json::from_str(include_str!(
             "../../../src/bundled/agent-activity/manifest.json"
         ))
@@ -322,11 +328,13 @@ impl Manager {
         let mut plugins: Vec<PluginInfo> = bundled_manifests()
             .into_iter()
             .map(|manifest| {
-                let enabled = registry
-                    .bundled_overrides
-                    .get(&manifest.id)
-                    .copied()
-                    .unwrap_or(true);
+                // Required even when an older profile saved a disabled override.
+                let enabled = manifest.id == "buzz.channels"
+                    || registry
+                        .bundled_overrides
+                        .get(&manifest.id)
+                        .copied()
+                        .unwrap_or(manifest.id != "buzz.channel-templates");
                 PluginInfo {
                     manifest,
                     source: "bundled",
@@ -405,6 +413,9 @@ impl Manager {
                         registry.bundled_overrides.insert(id.into(), true);
                     }
                     "disable" => {
+                        if id == "buzz.channels" {
+                            return Err("Channels is required and cannot be disabled".into());
+                        }
                         registry.bundled_overrides.insert(id.into(), false);
                     }
                     _ => return Err("Bundled pages can only be enabled or disabled".into()),
@@ -818,6 +829,30 @@ mod tests {
             .unwrap()
             .commands
             .is_empty());
+    }
+
+    #[test]
+    fn templates_default_off_and_preserve_explicit_overrides() {
+        let temp = tempfile::tempdir().unwrap();
+        let manager = Manager::open(Some(temp.path().into()), "templates-test", false).unwrap();
+        let enabled = |manager: &Manager| {
+            manager
+                .catalog()
+                .unwrap()
+                .plugins
+                .into_iter()
+                .find(|plugin| plugin.manifest.id == "buzz.channel-templates")
+                .unwrap()
+                .enabled
+        };
+        assert!(!enabled(&manager));
+        manager.change("enable", "buzz.channel-templates").unwrap();
+        let reopened = Manager::open(Some(temp.path().into()), "templates-test", false).unwrap();
+        assert!(enabled(&reopened));
+        reopened
+            .change("disable", "buzz.channel-templates")
+            .unwrap();
+        assert!(!enabled(&manager));
     }
 
     #[test]

@@ -49,6 +49,9 @@ for (const cold of [false, true]) {
         ).toBeVisible();
         app.relay.holdProfiles(app.participants);
       }
+      await expect((cold ? fallback : dm).locator(".buzz-avatar")).toHaveText(
+        cold ? app.participants[0][0].toUpperCase() : "A",
+      );
       const before = labelReads().length;
       app.omitChannel("beta");
       // The deployed deletion trigger is not under test. Exercise the real
@@ -81,6 +84,8 @@ for (const cold of [false, true]) {
           .getByRole("heading", { level: 2 }),
       ).toHaveText("Alice Fixture");
       expect(labelReads()).toHaveLength(before + 1);
+      await expect(dm.locator(".buzz-avatar")).toHaveText("A");
+      expect(app.report.presenceSnapshots).toHaveLength(0);
     } finally {
       app.relay.releaseProfiles();
     }

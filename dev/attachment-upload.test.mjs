@@ -23,17 +23,28 @@ const descriptor = (body, origin = relay) => {
   };
 };
 const deferred = () => Promise.withResolvers();
-async function harness(respond) {
+async function harness(respond, completed = () => {}) {
   const calls = [];
   let handler;
-  const server = createServer((req, res) => handler(req, res, () => res.end()));
+  const server = createServer(async (req, res) => {
+    try {
+      await handler(req, res, () => res.end());
+    } finally {
+      completed(req);
+    }
+  });
   const plugin = relayBrokerPlugin({
     relayUrl: relay,
     identity: () => key.slice(),
     authority: async () => ({ relayAuthor: getPublicKey(key) }),
     upstreamFetch: async (url, init) => {
-      calls.push({ url: String(url), init });
-      return respond(String(url), init);
+      // Consume the real streaming request before the fake relay returns a descriptor.
+      const received = init.body
+        ? Buffer.concat(await Array.fromAsync(init.body))
+        : undefined;
+      const observed = { ...init, body: received };
+      calls.push({ url: String(url), init: observed });
+      return respond(String(url), observed);
     },
   });
   await plugin.configureServer({
@@ -85,7 +96,7 @@ test("binary upload signs exact bytes for the captured community; existing proxy
       expect(init.headers["X-SHA-256"]).toBe(descriptor(bytes).sha256);
       expect(auth.tags).toContainEqual([
         "expiration",
-        String(auth.created_at + 300),
+        String(auth.created_at + Math.ceil(UPLOAD_TIMEOUT_MS / 1000) + 60),
       ]);
       return Response.json(descriptor(bytes, other));
     }
@@ -282,27 +293,45 @@ test("response budget cancels the upstream reader and releases admission", async
 test("two in-flight uploads bound admission; disconnect cancels upstream and frees its slot", async () => {
   const started = [deferred(), deferred(), deferred()];
   const aborted = deferred();
+  const settleAbort = deferred();
+  const completed = deferred();
   const release = deferred();
   let count = 0;
-  const h = await harness(async (_, init) => {
-    const index = count++;
-    started[index].resolve();
-    if (index === 0)
-      await new Promise((_, reject) =>
-        init.signal.addEventListener(
-          "abort",
-          () => {
-            aborted.resolve();
-            reject(init.signal.reason);
-          },
-          { once: true },
-        ),
-      );
-    else await release.promise;
-    return Response.json(descriptor(init.body));
-  });
+  const h = await harness(
+    async (_, init) => {
+      const index = count++;
+      started[index].resolve();
+      if (index === 0) {
+        await new Promise((resolve) => {
+          init.signal.addEventListener(
+            "abort",
+            () => {
+              aborted.resolve();
+              resolve();
+            },
+            { once: true },
+          );
+        });
+        // Hold cancellation settlement: an unrelated GET must not prove cleanup.
+        await settleAbort.promise;
+        throw init.signal.reason;
+      }
+      await release.promise;
+      return Response.json(descriptor(init.body));
+    },
+    (req) => {
+      if (req.headers["x-test-upload"] === "first") completed.resolve();
+    },
+  );
   const cancel = new AbortController();
-  const first = h.post("first", { signal: cancel.signal });
+  const first = h.post("first", {
+    signal: cancel.signal,
+    headers: {
+      Origin: h.base,
+      "Content-Type": "application/octet-stream",
+      "X-Test-Upload": "first",
+    },
+  });
   const failure = expect(first).rejects.toThrow();
   let second, third;
   try {
@@ -313,8 +342,11 @@ test("two in-flight uploads bound admission; disconnect cancels upstream and fre
     cancel.abort();
     await failure;
     await aborted.promise;
-    // A completed GET is the middleware turn barrier after abort cleanup.
     await fetch(`${h.base}/api/relay/identity`);
+    expect((await h.post()).status).toBe(429);
+    settleAbort.resolve();
+    // Await the actual middleware lifetime, including stream/disk cleanup and slot release.
+    await completed.promise;
     third = h.post("third");
     await started[2].promise;
     release.resolve();
@@ -322,6 +354,7 @@ test("two in-flight uploads bound admission; disconnect cancels upstream and fre
     expect((await third).status).toBe(200);
   } finally {
     cancel.abort();
+    settleAbort.resolve();
     release.resolve();
     await Promise.allSettled([first, second, third]);
     await h.close();
@@ -331,10 +364,14 @@ test("two in-flight uploads bound admission; disconnect cancels upstream and fre
 test("declared and streamed request budgets reject before signing or forwarding", async () => {
   const forward = vi.fn();
   for (const declared of [true, false]) {
-    const req = Readable.from([
-      Buffer.alloc(UPLOAD_MAX_BYTES),
-      Buffer.from("x"),
-    ]);
+    const req = Readable.from(
+      (function* () {
+        const chunk = Buffer.alloc(1024 * 1024);
+        for (let size = 0; size < UPLOAD_MAX_BYTES; size += chunk.length)
+          yield chunk;
+        yield Buffer.from("x");
+      })(),
+    );
     req.headers = declared
       ? { "content-length": String(UPLOAD_MAX_BYTES + 1) }
       : {};
@@ -373,3 +410,41 @@ test("the whole-operation timeout aborts a stalled body without forwarding", asy
     req.destroy();
   }
 });
+
+test.each(["application/pdf", "text/html"])(
+  "keeps range headers on inert %s downloads",
+  async (type) => {
+    const bytes = Buffer.from("partial");
+    const h = await harness((url, init) => {
+      expect(url).toBe(`${relay}/media/document.bin`);
+      expect(init.headers.Range).toBe("bytes=3-9");
+      return new Response(bytes, {
+        status: 206,
+        headers: {
+          "Content-Type": type,
+          "Content-Range": "bytes 3-9/20",
+          "Content-Length": String(bytes.length),
+          "Accept-Ranges": "bytes",
+        },
+      });
+    });
+    try {
+      const response = await fetch(
+        `${h.base}/api/relay/media?url=${encodeURIComponent(`${relay}/media/document.bin`)}`,
+        { headers: { Range: "bytes=3-9" } },
+      );
+      expect(response.status).toBe(206);
+      expect(response.headers.get("content-range")).toBe("bytes 3-9/20");
+      expect(response.headers.get("accept-ranges")).toBe("bytes");
+      expect(response.headers.get("content-length")).toBe(String(bytes.length));
+      expect(response.headers.get("content-type")).toBe(
+        "application/octet-stream",
+      );
+      expect(response.headers.get("content-disposition")).toBe("attachment");
+      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await h.close();
+    }
+  },
+);

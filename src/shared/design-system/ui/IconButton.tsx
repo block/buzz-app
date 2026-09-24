@@ -6,7 +6,11 @@ type IconButtonVariant =
   | "solid"
   | "tint"
   | "chrome";
-type IconButtonSize = NonNullable<ButtonProps["size"]> | "toolbar" | "large";
+type IconButtonSize =
+  | NonNullable<ButtonProps["size"]>
+  | "xs"
+  | "toolbar"
+  | "large";
 type IconButtonShape = "control" | "round";
 
 export type IconButtonProps = Omit<
@@ -37,7 +41,13 @@ export function IconButton({
             ? "ghost"
             : variant
       }
-      size={size === "toolbar" ? "sm" : size === "large" ? "lg" : size}
+      size={
+        size === "xs" || size === "toolbar"
+          ? "sm"
+          : size === "large"
+            ? "lg"
+            : size
+      }
       data-icon-variant={variant}
       data-icon-size={size}
       data-icon-shape={shape}

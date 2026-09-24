@@ -26,8 +26,8 @@ export function SessionAgentControl({
     session.profiles.snapshot,
   );
   const library = useSyncExternalStore(
-    session.agentLibrary.subscribe,
-    session.agentLibrary.snapshot,
+    session.agentChoices.subscribe,
+    session.agentChoices.snapshot,
   );
   const channel = list.channels.find((item) => item.id === channelId);
   const parent = list.channels.find(

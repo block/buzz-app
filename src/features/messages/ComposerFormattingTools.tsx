@@ -1,0 +1,234 @@
+import {
+  AnimatePresence,
+  motion,
+  useIsPresent,
+  useReducedMotion,
+} from "motion/react";
+import {
+  forwardRef,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactNode,
+  type ComponentProps,
+} from "react";
+import {
+  CodeBlockIcon,
+  CodeIcon,
+  DetectiveIcon,
+  LinkIcon,
+  ListBulletsIcon,
+  ListNumbersIcon,
+  QuotesIcon,
+  TextAaIcon,
+  TextBIcon,
+  TextItalicIcon,
+  TextStrikethroughIcon,
+  XIcon,
+} from "../../shared/design-system/icons/index";
+import { IconButton } from "../../shared/design-system/ui/IconButton";
+import { formatBinding, isApplePlatform } from "../shortcuts/format";
+import { composerFormats, type ComposerFormat } from "./composer-dom";
+import styles from "./ComposerFormattingTools.module.css";
+
+// Match old Buzz's MessageComposerToolbar: simultaneous pop-layout groups,
+// 400/28 spring, and a 150ms delay for the close control and formatting options.
+const spring = { type: "spring", stiffness: 400, damping: 28 } as const;
+const options = [
+  ["Bold", TextBIcon],
+  ["Italic", TextItalicIcon],
+  ["Strikethrough", TextStrikethroughIcon],
+  ["Code", CodeIcon],
+  ["Code block", CodeBlockIcon],
+  ["Link", LinkIcon],
+  ["Bullet list", ListBulletsIcon],
+  ["Ordered list", ListNumbersIcon],
+  ["Quote", QuotesIcon],
+  ["Spoiler", DetectiveIcon],
+] as const;
+
+// An exiting group is paint-only, never a second set of focusable controls.
+const ToolGroup = forwardRef<HTMLDivElement, ComponentProps<typeof motion.div>>(
+  function ToolGroup(props, ref) {
+    const present = useIsPresent();
+    return (
+      <motion.div
+        {...props}
+        ref={ref}
+        inert={!present}
+        aria-hidden={!present || undefined}
+      />
+    );
+  },
+);
+
+/** Toolbar controls share the editor commands and active state. */
+export function ComposerFormattingTools({
+  children,
+  disabled,
+  activeFormats,
+  toggleFormat,
+  editLink,
+}: {
+  children: ReactNode;
+  disabled: boolean;
+  activeFormats: readonly ComposerFormat[];
+  toggleFormat(format: ComposerFormat): void;
+  editLink(): void;
+}) {
+  const [open, setOpen] = useState(false);
+  const reduceMotion = useReducedMotion();
+  const openToggle = useRef<HTMLButtonElement>(null);
+  const closedToggle = useRef<HTMLButtonElement>(null);
+  const restoreFocus = useRef(false);
+  useLayoutEffect(() => {
+    if (restoreFocus.current) {
+      (open ? openToggle : closedToggle).current?.focus();
+      restoreFocus.current = false;
+    }
+  }, [open]);
+  const change = (next: boolean, keyboard: boolean) => {
+    restoreFocus.current = keyboard;
+    setOpen(next);
+  };
+  const transition = reduceMotion ? { duration: 0 } : spring;
+  const delayed = reduceMotion ? { duration: 0 } : { ...spring, delay: 0.15 };
+  const faded = { opacity: 0, scale: reduceMotion ? 1 : 0.95 };
+  const formatToggle = (
+    <IconButton
+      ref={open ? openToggle : closedToggle}
+      size="sm"
+      shape="control"
+      variant={open ? "tint" : "ghost"}
+      aria-label="Toggle formatting"
+      aria-pressed={open}
+      title="Formatting"
+      disabled={disabled}
+      onMouseDown={(event) => event.preventDefault()}
+      onClick={(event) => change(!open, event.detail === 0)}
+      icon={<TextAaIcon size={16} />}
+    />
+  );
+  return (
+    <div className={styles.tools} data-formatting-open={open || undefined}>
+      <AnimatePresence mode="popLayout" initial={false}>
+        {open ? (
+          <ToolGroup
+            key="formatting"
+            className={styles.expanded}
+            initial={false}
+            animate={{}}
+            exit={{ opacity: 0 }}
+            transition={transition}
+          >
+            <motion.div
+              className={styles.fixed}
+              initial={reduceMotion ? false : { x: 8, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: reduceMotion ? 0 : 8, opacity: 0 }}
+              transition={transition}
+            >
+              {formatToggle}
+            </motion.div>
+            <motion.div
+              className={styles.close}
+              initial={reduceMotion ? false : faded}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={faded}
+              transition={delayed}
+            >
+              <IconButton
+                size="sm"
+                shape="control"
+                aria-label="Close formatting"
+                title="Close formatting"
+                disabled={disabled}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={(event) => change(false, event.detail === 0)}
+                icon={<XIcon size={16} />}
+              />
+              <div className={styles.divider} aria-hidden="true" />
+            </motion.div>
+            <motion.div
+              className={styles.scroll}
+              initial={reduceMotion ? false : faded}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={faded}
+              transition={delayed}
+            >
+              <fieldset
+                className={styles.options}
+                aria-label="Formatting options"
+              >
+                {options.map(([label, Icon]) => {
+                  const format = composerFormats.find(
+                    (item) => item.label === label,
+                  );
+                  const isLink = label === "Link";
+                  const binding =
+                    format?.binding ??
+                    (isLink
+                      ? { key: "k", mod: true, shift: false }
+                      : undefined);
+                  const active = format && activeFormats.includes(format.mark);
+                  const apple = isApplePlatform(navigator.platform);
+                  return (
+                    <IconButton
+                      key={label}
+                      size="xs"
+                      shape="control"
+                      aria-label={label}
+                      title={
+                        binding
+                          ? `${label} (${formatBinding(binding, apple).text})`
+                          : `${label} (preview only)`
+                      }
+                      aria-disabled={binding ? undefined : true}
+                      aria-pressed={active}
+                      aria-keyshortcuts={
+                        binding
+                          ? `${apple ? "Meta" : "Control"}+${"alt" in binding && binding.alt ? "Alt+" : ""}${binding.shift ? "Shift+" : ""}${binding.key}`
+                          : undefined
+                      }
+                      variant={active ? "tint" : "ghost"}
+                      onClick={
+                        format
+                          ? () => toggleFormat(format.mark)
+                          : isLink
+                            ? editLink
+                            : undefined
+                      }
+                      disabled={disabled}
+                      onMouseDown={(event) => event.preventDefault()}
+                      icon={<Icon size={16} />}
+                    />
+                  );
+                })}
+              </fieldset>
+            </motion.div>
+          </ToolGroup>
+        ) : (
+          <ToolGroup
+            key="ingress"
+            className={styles.ingress}
+            initial={reduceMotion ? false : { opacity: 0, x: -12 }}
+            animate={{ opacity: 1, x: 0 }}
+            exit={{ opacity: 0, x: reduceMotion ? 0 : -12 }}
+            transition={transition}
+          >
+            {children}
+            <motion.div
+              className={styles.fixed}
+              initial={reduceMotion ? false : { x: -8, opacity: 0 }}
+              animate={{ x: 0, opacity: 1 }}
+              exit={{ x: reduceMotion ? 0 : -8, opacity: 0 }}
+              transition={transition}
+            >
+              {formatToggle}
+            </motion.div>
+          </ToolGroup>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}

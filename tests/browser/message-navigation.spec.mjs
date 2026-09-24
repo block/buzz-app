@@ -46,7 +46,7 @@ test("old root and reply beyond the first thread page open exactly; reclick and 
   // This navigation fixture deliberately registers a catch-all panel first.
   // Disable it before exercising the actual Profiles provider.
   await page.getByRole("button", { name: "Your profile", exact: true }).click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Plugins", exact: true }).click();
   await page
     .getByRole("switch", { name: "Enable Notes fixture", exact: true })
@@ -429,23 +429,96 @@ test("post-success membership loss removes the thread and live updates do not sn
 const readingTest = test.extend({ tallMessages: true });
 readingTest(
   "exact thread navigation leaves the ordinary channel reading anchor unchanged",
-  async ({ page, app }) => {
+  async ({ page, app }, testInfo) => {
     const { settle, anchor, expectAnchor } = await import("./timeline.mjs");
     await open(page, app);
     const history = page.getByRole("region", {
       name: "Channel message history",
     });
-    await history.hover();
-    await page.mouse.wheel(0, -650);
-    await settle(page);
-    const reading = await anchor(page);
-    expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
-    await page
-      .getByRole("button", { name: "Close thread", exact: true })
-      .click();
-    await expect(history).toBeVisible();
-    await settle(page);
-    await expectAnchor(page, reading);
+    // Keep writer evidence for the Linux-only displacement: ordinary Playwright
+    // snapshots show the resulting offset, but not who requested the scroll.
+    // These wrappers forward unchanged arguments; they never correct position.
+    await history.evaluate((element) => {
+      const records = [];
+      window.navigationScrollTrace = records;
+      const record = (kind, detail = {}) => {
+        const bounds = element.getBoundingClientRect();
+        const rows = Array.from(element.querySelectorAll("[data-message-id]"));
+        const visible = rows.filter((row) => {
+          const box = row.getBoundingClientRect();
+          return box.bottom > bounds.top && box.top < bounds.bottom;
+        });
+        if (records.length === 500) records.shift();
+        records.push({
+          time: performance.now(),
+          kind,
+          ...detail,
+          top: element.scrollTop,
+          height: element.scrollHeight,
+          viewport: [element.clientWidth, element.clientHeight],
+          list: element.querySelector("ol")?.style.height,
+          rows: visible.map((row) => ({
+            id: row.dataset.messageId,
+            y: row.getBoundingClientRect().top - bounds.top,
+          })),
+        });
+      };
+      const prototype = Element.prototype;
+      const scrollTop = Object.getOwnPropertyDescriptor(prototype, "scrollTop");
+      Object.defineProperty(prototype, "scrollTop", {
+        ...scrollTop,
+        set(value) {
+          if (this === element)
+            record("scrollTop:before", { value, stack: new Error().stack });
+          scrollTop.set.call(this, value);
+          if (this === element) record("scrollTop:after");
+        },
+      });
+      for (const name of ["scroll", "scrollTo", "scrollBy"]) {
+        const original = prototype[name];
+        prototype[name] = function (...args) {
+          if (this === element)
+            record(`${name}:before`, { args, stack: new Error().stack });
+          const result = original.apply(this, args);
+          if (this === element) record(`${name}:after`);
+          return result;
+        };
+      }
+      for (const name of ["wheel", "scroll", "scrollend"]) {
+        element.addEventListener(
+          name,
+          (event) =>
+            record(name, { deltaY: event.deltaY, trusted: event.isTrusted }),
+          { passive: true },
+        );
+      }
+      const resize = new ResizeObserver(() => record("resize"));
+      resize.observe(element);
+      resize.observe(element.querySelector("ol"));
+      record("installed");
+    });
+    try {
+      await history.hover();
+      await page.mouse.wheel(0, -650);
+      await settle(page);
+      const reading = await anchor(page);
+      expect(await openTarget(page, target(app))).toEqual({ status: "opened" });
+      await page
+        .getByRole("button", { name: "Close thread", exact: true })
+        .click();
+      await expect(history).toBeVisible();
+      await settle(page);
+      await expectAnchor(page, reading);
+    } finally {
+      await testInfo.attach("navigation-scroll-writers", {
+        body: JSON.stringify(
+          await page.evaluate(() => window.navigationScrollTrace),
+          null,
+          2,
+        ),
+        contentType: "application/json",
+      });
+    }
   },
 );
 

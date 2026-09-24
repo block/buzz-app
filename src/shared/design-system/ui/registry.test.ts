@@ -97,11 +97,12 @@ describe("component registry — Base UI backing", () => {
       { part: BASE_UI_PARTS.button, through: "Button" },
     ]);
 
-    // SearchField imports Field and Input directly and composes IconButton,
+    // SearchField imports Input directly and composes Buzz Field and IconButton,
     // which reaches Button — three distinct parts, none listed twice.
     const searchField = resolveBaseUiBacking("search-field");
-    expect(searchField.own).toEqual([BASE_UI_PARTS.field, BASE_UI_PARTS.input]);
+    expect(searchField.own).toEqual([BASE_UI_PARTS.input]);
     expect(searchField.inherited.map((entry) => entry.part.name)).toEqual([
+      "Field",
       "Button",
     ]);
 

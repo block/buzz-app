@@ -103,8 +103,8 @@ verified clean commit or source manifest.
 CI stays on `ubuntu-24.04`. `pnpm test:browser:ci` inherits the ordinary config and
 excludes only tests tagged `@local-webkit` from `webkit-measurements`. Their Chromium
 instances and every untagged WebKit case remain required. Both engines, serial
-measurement order, zero retries, all existing assertions and budgets, and the
-strict `CI required` aggregate remain in place.
+measurement order, zero retries, the documented functional assertions and
+measurement ceilings, and the strict `CI required` aggregate remain in place.
 
 CI shards each functional engine across two runners, without waiting for the
 separate measurement runner. Each job selects its engine with `--no-deps` and
@@ -124,7 +124,7 @@ The following **three WebKit cases are local-only**, not passing CI coverage:
 
 | Case | Reason and coverage gap |
 | --- | --- |
-| `channel-opening.spec.mjs`: cold opening / warm switching | Hosted Linux WebKit recorded 104ms against the unchanged <100ms warm budget. The whole case is local-only, including its cold opening under held DM labels and no-new-head-read assertions. This is runner-sensitive evidence, not proof of an app or engine cause. Chromium retains the full case in CI. |
+| `channel-opening.spec.mjs`: cold opening / warm switching | Originally excluded after hosted Linux WebKit recorded 104ms against the former <100ms budget. The warm gate now uses the target/ceiling policy below; this change does not revalidate Linux WebKit or restore its CI selection. The whole case remains local-only, including cold opening under held DM labels and no-new-head-read assertions. Chromium retains the full case in CI. |
 | `scroll.spec.mjs`: cursor paging / large-history virtualization | Linux WebKit repeatedly stops short of the requested wheel edge. The cause remains unresolved between engine/input handling and the harness. Its 31 unique cursor requests, 640-message traversal, 4px anchors and DOM ceilings remain local-only on WebKit; Chromium retains them in CI. |
 | `scroll.spec.mjs`: live edits / reading anchor | Linux WebKit's fetch reader can leave part of an edit undelivered while the SSE stream is open. WebKit growth/shrinkage and reading-anchor checks are local-only; Chromium retains the case in CI. The delivery defect is not fixed by this selection change. |
 
@@ -143,7 +143,8 @@ bin/pnpm test:browser            # complete original suite, including those case
 The full suite remains part of `pnpm test` and `just scan` on every local platform;
 these cases are not silently skipped on Linux. The local-only command may still
 fail there. No macOS CI runner is configured. To restore a case to CI, remove its
-tag only after unchanged Linux assertions and budgets pass repeatedly. Live-edit
+tag only after the documented Linux functional assertions and measurement
+ceilings pass repeatedly. Live-edit
 closure also needs complete delivery on the open stream without a later write,
 heartbeat or close rescuing it. Do not move ordinary app/test failures out of CI
 or grow this exception list merely to get a green run.
@@ -205,10 +206,31 @@ or attended live-account acceptance.
 `channel-opening.spec.mjs` uses the actual app/session and production broker with
 an offline upstream: 128 DMs and 1,001 uncached participants. Profile responses
 stay held while an unprepared channel opens. This checks the **actual sidebar
-label caller**, not just the reader's priority flag. Cached returns then require
-no new head request and less than **100ms** from a browser-clock button click to
-visible correct-channel rows across a paint opportunity. This is a controlled
-regression budget, not a universal device/relay SLA or hardware input measurement.
+label caller**, not just the reader's priority flag. Cached returns require no
+new head request and visible correct-channel rows with the matching composer
+across a paint opportunity. The existing **1s completion watchdog** still fails
+an unfinished switch.
+
+Warm timing keeps a **<100ms target** and a provisional **<200ms per-switch hard
+ceiling**. All four browser-clock samples and the functional checks complete
+before the ceiling is enforced; there are no retries or discarded outliers.
+Target misses add `performance` annotations to the downloadable Playwright JSON
+report (`ci-report.json` in CI), not the GitHub job-summary table. Raw timings,
+first-visible times and frame diagnostics remain in `evidence.json`, including on
+passing runs. Authors and reviewers should inspect target misses when changing
+opening/rendering paths; green CI does not mean the 100ms target was met.
+
+The ceiling is an explicit tolerance policy, not a statistically established
+flake-free limit. Hosted Chromium recorded intermittent 111–120.5ms misses across
+main and multiple PRs ([main](https://github.com/block/buzz-app/actions/runs/35925546559),
+[#182](https://github.com/block/buzz-app/actions/runs/35932973673),
+[#185](https://github.com/block/buzz-app/actions/runs/35936296156)). The 200ms ceiling
+leaves roughly 80ms above the largest observed miss while retaining an automatic
+slowdown alarm. The timer includes browser scheduling and layout observation as
+well as application work: those samples do not establish runner contention as the
+cause, and severe stalls can still fail. Regressions between 100ms and 200ms now
+require performance review rather than automatically failing CI. This is not a
+universal device/relay SLA or hardware input measurement.
 
 Run this focused journey when changing startup/sidebar scheduling:
 

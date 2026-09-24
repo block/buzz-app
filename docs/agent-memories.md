@@ -53,3 +53,19 @@ Actual relay-session tests exercise lazy reads, errors/retry, unsupported hosts,
 view limits, scope isolation and late-result rejection across revocation, disconnect,
 cache clear, release and disposal. These are synthetic identities/transport checks,
 not production memory reads or packaged-native acceptance.
+
+## Profile presentation
+
+The Profiles plugin adds a lazy Memories tab and an isolated `ProfileMemories`
+child. No request starts until that tab mounts. Core and slug entries use native
+text disclosures, not HTML or Markdown execution. Leaving the tab, closing the
+panel or disabling Profiles disposes its view; reopening requests new evidence.
+The tab does not rely on agent-shaped avatars to decide access. Unsupported hosts
+and self targets explain the limitation without issuing a read.
+
+RTL tests exercise actual React StrictMode, the profile tab, pending work, scope
+switches, retry states and unmount. The existing Chromium/WebKit profile journey
+adds keyboard disclosure and narrow-width wrapping checks through actual plugin
+registration. No browser cases were added or removed; authority permutations remain
+in the cheaper protocol/session tests. Live relay memory, packaged/native transport
+and cross-platform acceptance remain unverified/unsupported as described above.

@@ -1,12 +1,12 @@
 import { useEffect, useSyncExternalStore } from "react";
 import type { AgentControl } from "../../features/agents/control";
 import { sameCommunityAgents } from "../../features/agents/choices";
-import { Button } from "../../shared/design-system/ui/Button";
 import { agentProcessLabel } from "../agents/agent-edit";
 import styles from "./Profiles.module.css";
 
 /** Read-only native evidence for this exact key in the active community. Anything
- * else renders nothing, leaving the ordinary public profile. */
+ * else renders nothing, leaving the ordinary public profile. Errors, runtime
+ * availability and status recovery belong to ProfileAgentActions. */
 export function ProfileAgentRuntime({
   control,
   scope,
@@ -43,26 +43,12 @@ export function ProfileAgentRuntime({
     <section aria-label="Local agent" className={styles.runtime}>
       <h3 className="text-body">Local agent</h3>
       <p role="status">{agentProcessLabel(agent)}</p>
-      {state.status === "error" && (
-        <div role="alert">
-          <p>Last known host status. Current status could not be confirmed.</p>
-          <Button size="compact" onClick={() => void control.refresh()}>
-            Retry status
-          </Button>
-        </div>
-      )}
-      {!data.runtimeAvailable && (
-        <p>
-          {data.runtimeMessage ?? "This app's agent runtime is unavailable."}
-        </p>
-      )}
       {drift && (
         <p>
           Saved revision {agent.revision} is not running yet (running revision{" "}
           {agent.runningRevision}). Restart from Agents to apply.
         </p>
       )}
-      {agent.error && <p className={styles.runtimeError}>{agent.error}</p>}
       {!!facts.length && (
         <dl>
           {facts.map(([label, value]) => (

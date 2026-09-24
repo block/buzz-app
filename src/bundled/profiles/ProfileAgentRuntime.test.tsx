@@ -158,7 +158,11 @@ it("summarizes only the exact key in the active community, and drops it when the
   expect(summary).toHaveTextContent(
     "Saved revision 3 is not running yet (running revision 2).",
   );
-  expect(summary).toHaveTextContent("Last start exited early.");
+  // The host error is owned by the actions section, not repeated here.
+  expect(summary).not.toHaveTextContent("Last start exited early.");
+  expect(
+    screen.getByRole("region", { name: "Local agent actions" }),
+  ).toHaveTextContent("Last start exited early.");
   expect(summary).not.toHaveTextContent("Process stopped");
   await userEvent.click(within(summary).getByText("Instructions"));
   expect(within(summary).getByText("Help with the project.")).toBeVisible();
@@ -230,37 +234,36 @@ it("follows native status transitions and marks failed reads as unconfirmed evid
   let index = reads.length;
   void control.refresh();
   await settle(index, "host crashed");
+  // Last evidence stays; the actions section owns the unconfirmed notice and Retry.
   expect(status()).toHaveTextContent("Process failed");
-  const alert = within(
-    screen.getByRole("region", { name: "Local agent" }),
-  ).getByRole("alert");
-  expect(alert).toHaveTextContent("Current status could not be confirmed.");
-  expect(alert).not.toHaveTextContent("host crashed");
+  const summary = screen.getByRole("region", { name: "Local agent" });
+  expect(within(summary).queryByRole("alert")).toBeNull();
+  const actions = screen.getByRole("region", { name: "Local agent actions" });
+  expect(actions).toHaveTextContent("unconfirmed");
 
   agent.status = "running";
   index = reads.length;
   await userEvent.click(
-    within(alert).getByRole("button", { name: "Retry status" }),
+    within(actions).getByRole("button", { name: "Retry status" }),
   );
   await settle(index, data);
   expect(status()).toHaveTextContent("Process running");
-  expect(
-    within(screen.getByRole("region", { name: "Local agent" })).queryByRole(
-      "alert",
-    ),
-  ).toBeNull();
+  expect(within(actions).queryByRole("alert")).toBeNull();
+  expect(actions).not.toHaveTextContent("unconfirmed");
 });
 
-it("explains an unavailable runtime on a known agent", async () => {
+it("leaves the unavailable-runtime explanation to the actions section", async () => {
   const { control, settle, data, agent } = heldHost();
   agent.relayUrl = "wss://relay.example.test";
   data.runtimeAvailable = false;
   data.runtimeMessage = "Agent runtime resources are missing.";
   mount(control, relayAt(home).relay);
   await settle(0, data);
+  const summary = await screen.findByRole("region", { name: "Local agent" });
+  expect(summary).not.toHaveTextContent("Agent runtime resources are missing.");
   expect(
-    await screen.findByText("Agent runtime resources are missing."),
-  ).toBeVisible();
+    screen.getByRole("region", { name: "Local agent actions" }),
+  ).toHaveTextContent("Agent runtime resources are missing.");
 });
 
 it("requests a read on each Info open, coalescing re-entry while one is pending", async () => {

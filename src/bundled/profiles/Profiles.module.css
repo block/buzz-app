@@ -186,6 +186,3 @@
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-.runtimeError {
-  color: var(--text-danger);
-}

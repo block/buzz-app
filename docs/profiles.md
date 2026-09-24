@@ -13,10 +13,11 @@ custody is app-wide: the viewer is not an owner check, so any account in this
 app on the same relay sees the same local record. It
 shows process status (still "relay readiness unverified", not a listening badge),
 harness/provider/model/workspace, collapsible instructions, saved-vs-running
-revision drift, the host's sanitized error and diagnostics. Environment keys and
+revision drift and diagnostics. Environment keys and
 arguments are not shown. Opening the Info tab requests a status read; concurrent
-requests coalesce; there is no polling. A failed read keeps the last evidence,
-labels it unconfirmed and offers Retry. Browser/unavailable hosts, loading/error
+requests coalesce; there is no polling. A failed read keeps the last evidence.
+The host error, runtime-unavailable reason, unconfirmed-status notice and Retry
+are shown once, by the profile actions. Browser/unavailable hosts, loading/error
 without evidence, unknown keys and records saved for another community render
 nothing, leaving the public identity. Community switches re-filter immediately.
 Start/Stop/Restart are the separate profile actions above; Edit, harness logs and

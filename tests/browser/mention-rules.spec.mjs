@@ -76,3 +76,41 @@ test("an open list preserves keys and highlight when membership is revoked", asy
   ).toBe(0);
   expect(before).toHaveLength(2);
 });
+
+// The real editor, dialog focus contract, directory and signed writer must agree.
+test("outside people survive Cancel and send reference-only with Do nothing", async ({
+  page,
+}) => {
+  await page.goto("/tests/fixtures/mentions.html?nonmember-admission");
+  const input = page.getByRole("textbox", { name: "Message #General" });
+  await input.fill("@Outside");
+  await page.getByRole("option", { name: /^Outside Person / }).click();
+  await expect(input.locator(".inline-chip")).toHaveText("@Outside Person");
+  await input.pressSequentially("hello");
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  const dialog = page.getByRole("dialog", {
+    name: "Mention people outside this channel?",
+  });
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "Cancel", exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveJSProperty("value", "@Outside Person hello");
+  expect(await page.evaluate(() => window.mentionFixture.publications)).toEqual(
+    [],
+  );
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
+  await dialog.getByRole("button", { name: "Do nothing", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.mentionFixture.publications.length))
+    .toBe(1);
+  const { event, key } = await page.evaluate(() => ({
+    event: window.mentionFixture.publications[0],
+    key: window.mentionFixture.outsider,
+  }));
+  expect(event.kind).toBe(9);
+  expect(event.tags).toContainEqual(["mention", key]);
+  expect(event.tags.filter((tag) => tag[0] === "p")).toEqual([]);
+  expect(event.content).toBe("@Outside Person hello");
+  await expect(input).toHaveJSProperty("value", "");
+});

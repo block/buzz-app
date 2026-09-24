@@ -117,14 +117,18 @@ it("uses the same alphabetical and prefix ordering for typed and button mentions
     (publish.mock.lastCall?.[0] as CompletionResult | undefined)?.items.map(
       (item) => item.label,
     );
-  expect(completionNames()).toEqual(["Adam Avery", "Avery", "Zoe"]);
+  await waitFor(() =>
+    expect(completionNames()).toEqual(["Adam Avery", "Avery", "Zoe"]),
+  );
   view.rerender(
     <MentionCompletion
       {...props}
       query={{ start: 0, end: 6, query: "avery" }}
     />,
   );
-  expect(completionNames()).toEqual(["Avery", "Adam Avery"]);
+  await waitFor(() =>
+    expect(completionNames()).toEqual(["Avery", "Adam Avery"]),
+  );
   view.unmount();
   render(
     <MentionPicker
@@ -1060,6 +1064,7 @@ it("ignores a late directory result after the query changes and retries the curr
       ),
     ).toEqual(["New person"]),
   );
+});
 
 it("keeps installed rows and fresh authorization through rename, removal, arrivals and archive Retry", async () => {
   const test = setup();

@@ -43,11 +43,22 @@ export function useMentionChoices(
     session.channels.list,
   );
   const channel = list.channels.find((c) => c.id === channelId);
-  const directory = useMentionDirectory(session, channel, query, open && !roster && !invite);
+  const directory = useMentionDirectory(
+    session,
+    channel,
+    query,
+    open && !roster && !invite,
+  );
   const archives = useMentionArchives(session, open);
   const resolve = useIdentityNames(session.names);
   const current = useCallback(() => {
-    const candidates = mentionCandidates(session, channelId, invite, roster, directory.people);
+    const candidates = mentionCandidates(
+      session,
+      channelId,
+      invite,
+      roster,
+      directory.people,
+    );
     const keys = [
       ...new Set([
         ...candidates.map((c) => c.recipient.pubkey),
@@ -76,8 +87,9 @@ export function useMentionChoices(
   }, [current, profiles, list, agents, archives, resolve]);
   const pending =
     !roster &&
-    (directory.loading || ((list.status === "idle" || list.status === "loading") &&
-      !channel?.members) ||
+    (directory.loading ||
+      ((list.status === "idle" || list.status === "loading") &&
+        !channel?.members) ||
       (!!invite && agents.pending && agents.status !== "ready"));
   const [installed, install] = useState<{
     session: RelaySession;
@@ -100,6 +112,7 @@ export function useMentionChoices(
       ranked.length ||
       (!pending &&
         !missingNames &&
+        !directory.error &&
         (!invite || !agents.pending) &&
         list.status === "ready" &&
         !agents.error &&

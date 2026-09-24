@@ -33,7 +33,11 @@ export function mentionCandidates(
             session.outbox?.supports(9000),
           )))
       choices.set(person.pubkey, { pubkey: person.pubkey, name: person.name });
-    if (!roster && !inviteAgents && (channel?.channelType === "stream" || channel?.channelType === "forum"))
+    if (
+      !roster &&
+      !inviteAgents &&
+      (channel?.channelType === "stream" || channel?.channelType === "forum")
+    )
       for (const person of directory) choices.set(person.pubkey, person);
     for (const pubkey of members)
       choices.set(pubkey, {
@@ -53,7 +57,9 @@ export function mentionCandidates(
     .map((recipient) => ({
       recipient,
       member: members.includes(recipient.pubkey),
-      agent: known.has(recipient.pubkey) || directory.some((p) => p.pubkey === recipient.pubkey && p.isAgent),
+      agent:
+        known.has(recipient.pubkey) ||
+        directory.some((p) => p.pubkey === recipient.pubkey && p.isAgent),
       owned:
         !!session.viewer &&
         profiles.get(recipient.pubkey)?.ownerPubkey === session.viewer,
@@ -62,7 +68,8 @@ export function mentionCandidates(
         ...new Set(
           [
             profiles.get(recipient.pubkey)?.name ||
-              directory.find((person) => person.pubkey === recipient.pubkey)?.name ||
+              directory.find((person) => person.pubkey === recipient.pubkey)
+                ?.name ||
               roster?.find((person) => person.pubkey === recipient.pubkey)
                 ?.name,
             ...agents

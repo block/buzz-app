@@ -60,11 +60,14 @@ export function useMentionDirectory(
       ? state
       : undefined;
   const retry = useCallback(() => setAttempt((value) => value + 1), []);
-  return useMemo(() => ({
-    people: current?.people ?? empty,
-    loading: !!active && (!current || current.loading),
-    error: current?.error,
-    more: !!current?.more,
-    retry,
-  }), [current, active, retry]);
+  return useMemo(
+    () => ({
+      people: current?.people ?? empty,
+      loading: !!active && (!current || current.loading),
+      error: current?.error,
+      more: !!current?.more,
+      retry,
+    }),
+    [current, active, retry],
+  );
 }

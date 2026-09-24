@@ -85,7 +85,11 @@ export function MentionCompletion({
             alt=""
             fallback={label}
             src={session.media(
-              profiles.get(recipient.pubkey)?.picture ?? model.directory.people.find((person) => person.pubkey === recipient.pubkey)?.picture ?? "",
+              profiles.get(recipient.pubkey)?.picture ??
+                model.directory.people.find(
+                  (person) => person.pubkey === recipient.pubkey,
+                )?.picture ??
+                "",
               "small",
             )}
             size="default"
@@ -102,23 +106,26 @@ export function MentionCompletion({
       })),
       ...(model.pending
         ? { status: "Loading recipients…" }
-        : model.directory.error ? { status: model.directory.error } : model.archives.status === "error"
-          ? { status: "Archive information unavailable. Retry to refresh." }
-          : agents.status === "error" || agents.error
-            ? { status: "Could not load agents. Retry to refresh." }
-            : admitted && membershipMissing
-              ? { status: "Channel membership unavailable." }
-              : admitted && membershipError
-                ? { status: "Could not refresh channel membership." }
-                : error || missing
-                  ? {
-                      status:
-                        "Some names unavailable. Exact public keys still identify recipients.",
-                    }
-                  : model.directory.more || model.truncated
-                    ? { status: "Narrow your search to see more members." }
-                    : {}),
-      ...(model.directory.error || model.archives.status === "error" ||
+        : model.directory.error
+          ? { status: model.directory.error }
+          : model.archives.status === "error"
+            ? { status: "Archive information unavailable. Retry to refresh." }
+            : agents.status === "error" || agents.error
+              ? { status: "Could not load agents. Retry to refresh." }
+              : admitted && membershipMissing
+                ? { status: "Channel membership unavailable." }
+                : admitted && membershipError
+                  ? { status: "Could not refresh channel membership." }
+                  : error || missing
+                    ? {
+                        status:
+                          "Some names unavailable. Exact public keys still identify recipients.",
+                      }
+                    : model.directory.more || model.truncated
+                      ? { status: "Narrow your search to see more members." }
+                      : {}),
+      ...(model.directory.error ||
+      model.archives.status === "error" ||
       agents.status === "error" ||
       agents.error ||
       membershipMissing ||

@@ -23,7 +23,9 @@ test("cold destination waits for its enabled provider to activate", async ({
     await expect
       .poll(() => page.evaluate(() => window.delayFixture.started))
       .toBe(true);
-    await expect(page.getByRole("status")).toHaveText("Opening destination…");
+    await expect(page.getByRole("main").getByRole("status")).toHaveText(
+      "Opening destination…",
+    );
     await expect
       .poll(() =>
         page.evaluate(() => window.fixtureNavigation?.snapshot().status),

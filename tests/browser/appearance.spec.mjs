@@ -26,9 +26,15 @@ async function expectMode(page, mode) {
     "background-image",
     /linear-gradient/,
   );
+  const disclosure = button(page, "Show navigation");
+  const collapsed = await disclosure.isVisible();
+  if (collapsed) await disclosure.click();
   await expect(
-    page.getByRole("navigation", { name: "Pages", exact: true }),
-  ).toHaveCSS("backdrop-filter", /blur\(/);
+    page
+      .getByRole("complementary", { name: "Channel sidebar", exact: true })
+      .getByRole("navigation", { name: "Pages", exact: true }),
+  ).toHaveCSS("flex-direction", "column");
+  if (collapsed) await button(page, "Hide navigation").click();
 }
 
 test("Appearance changes and restores both modes, shared keyboard controls, dialogs and narrow layout", async ({
@@ -371,7 +377,7 @@ test("shared type and spacing reach the real message timeline", async ({
     sidebar.getByRole("button", { name: "Alpha", exact: true }),
   ).toHaveCSS("font-size", "14px");
   await expect(
-    sidebar.locator("..").getByRole("separator", {
+    page.getByRole("separator", {
       name: "Resize channel sidebar",
     }),
   ).toHaveCSS("width", "16px");

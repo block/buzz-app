@@ -1,6 +1,8 @@
+// FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
+import { ChannelSidebar } from "../features/channel-navigation/ChannelSidebar";
+import { ChannelNavigationProvider } from "../features/channel-navigation/ChannelNavigationState";
 import { ToastProvider } from "../shared/design-system/ui/Toast";
 import { Button } from "../shared/design-system/ui/Button";
-// FOUNDATION: Startup, navigation, contributed pages, and built-in Settings.
 import { AgentWakeNotice } from "../features/agents/AgentWakeNotice";
 import { useEffect, useSyncExternalStore } from "react";
 import { registerAppShortcuts } from "./shortcuts";
@@ -55,84 +57,99 @@ export function App({ services }: { services: AppServices }) {
   const pageOwnsCompanion = !!route.page?.companion;
   return (
     <ToastProvider>
-      <AppShell
-        navigationControls={
-          <NavigationControls navigation={services.navigation} />
-        }
-        onCommunitySelect={(id) => {
-          const recovering =
-            services.navigation.snapshot().ingress &&
-            services.navigation.snapshot().retryable;
-          services.communities.select(id);
-          if (!recovering) select("buzz.channels/channels");
-        }}
-        communities={services.communities}
-        searchServices={services}
-        launchers={
-          <PanelLaunchers
-            panels={launcher.available}
-            selected={selectedPanel}
-            launch={launcher.launch}
-          />
-        }
-        companion={pageOwnsCompanion ? undefined : companion}
-        pages={startup === "ready" ? route.pages : []}
-        selected={route.selected}
-        onSelect={select}
-        tone={presentation.tone}
-        workspace={startup === "ready" && route.page?.layout === "workspace"}
-      >
-        <AgentWakeNotice control={services.agentControl} />
-        {startup === "recovery" && !settings ? (
-          <RecoveryScreen plugins={plugins} />
-        ) : (!route.state.ingress && route.failure) ||
-          route.state.status === "failed" ? (
-          <div role="alert" className="notice">
-            <h1>This destination couldn’t open</h1>
-            <p>
-              {(route.state.reason ?? route.failure) === "denied"
-                ? "This target needs its original account and an already joined community."
-                : route.state.ingress && !route.state.retryable
-                  ? "This link is invalid or unsupported."
-                  : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
-            </p>
-            {(!route.state.ingress || route.state.retryable) && (
-              <Button type="button" onClick={route.retry}>
-                Retry navigation
+      <ChannelNavigationProvider relay={services.relay}>
+        <AppShell
+          sidebar={(pageNavigation) => (
+            <ChannelSidebar
+              relay={services.relay}
+              navigator={services.navigation}
+              providers={services.channelTemplates}
+              target={route.target}
+              sessionsEnabled={route.pages.some(
+                (page) => page.pluginId === "buzz.sessions",
+              )}
+            >
+              <div className="shell-page-navigation-slot">{pageNavigation}</div>
+            </ChannelSidebar>
+          )}
+          navigationControls={
+            <NavigationControls navigation={services.navigation} />
+          }
+          onCommunitySelect={(id) => {
+            const recovering =
+              services.navigation.snapshot().ingress &&
+              services.navigation.snapshot().retryable;
+            services.communities.select(id);
+            if (!recovering) select("buzz.channels/channels");
+          }}
+          communities={services.communities}
+          searchServices={services}
+          launchers={
+            <PanelLaunchers
+              panels={launcher.available}
+              selected={selectedPanel}
+              launch={launcher.launch}
+            />
+          }
+          companion={pageOwnsCompanion ? undefined : companion}
+          pages={startup === "ready" ? route.pages : []}
+          selected={route.selected}
+          onSelect={select}
+          tone={presentation.tone}
+          workspace={startup === "ready" && route.page?.layout === "workspace"}
+        >
+          <AgentWakeNotice control={services.agentControl} />
+          {startup === "recovery" && !settings ? (
+            <RecoveryScreen plugins={plugins} />
+          ) : (!route.state.ingress && route.failure) ||
+            route.state.status === "failed" ? (
+            <div role="alert" className="notice">
+              <h1>This destination couldn’t open</h1>
+              <p>
+                {(route.state.reason ?? route.failure) === "denied"
+                  ? "This target needs its original account and an already joined community."
+                  : route.state.ingress && !route.state.retryable
+                    ? "This link is invalid or unsupported."
+                    : "The destination is unavailable or isn’t supported yet. Your target has been kept for retry."}
+              </p>
+              {(!route.state.ingress || route.state.retryable) && (
+                <Button type="button" onClick={route.retry}>
+                  Retry navigation
+                </Button>
+              )}
+              <Button type="button" onClick={() => select("settings")}>
+                Open Settings
               </Button>
-            )}
-            <Button type="button" onClick={() => select("settings")}>
-              Open Settings
-            </Button>
-          </div>
-        ) : settings ? (
-          <Settings
-            plugins={plugins}
-            cards={services.settingsCards}
-            communities={services.communities}
-            appearance={services.appearance}
-            shortcuts={services.shortcuts}
-            shortcutBindings={services.shortcutBindings}
-            notifications={services.notifications}
-            navigation={route.request}
-            onSection={(section) =>
-              void services.navigation.open({
-                version: 1,
-                kind: "settings",
-                section,
-              })
-            }
-          />
-        ) : route.waiting || startup === "loading" ? (
-          <p role="status">Opening destination…</p>
-        ) : route.page ? (
-          <PageView
-            page={route.page}
-            navigation={route.request}
-            companion={pageOwnsCompanion ? companion : undefined}
-          />
-        ) : null}
-      </AppShell>
+            </div>
+          ) : settings ? (
+            <Settings
+              plugins={plugins}
+              cards={services.settingsCards}
+              communities={services.communities}
+              appearance={services.appearance}
+              shortcuts={services.shortcuts}
+              shortcutBindings={services.shortcutBindings}
+              notifications={services.notifications}
+              navigation={route.request}
+              onSection={(section) =>
+                void services.navigation.open({
+                  version: 1,
+                  kind: "settings",
+                  section,
+                })
+              }
+            />
+          ) : route.waiting || startup === "loading" ? (
+            <p role="status">Opening destination…</p>
+          ) : route.page ? (
+            <PageView
+              page={route.page}
+              navigation={route.request}
+              companion={pageOwnsCompanion ? companion : undefined}
+            />
+          ) : null}
+        </AppShell>
+      </ChannelNavigationProvider>
     </ToastProvider>
   );
 }

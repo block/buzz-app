@@ -1,0 +1,71 @@
+// Use the production sidebar/page ownership with real navigation in standalone fixtures.
+import { useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { ChannelNavigationProvider } from "../../src/features/channel-navigation/ChannelNavigationState";
+import { ChannelSidebar } from "../../src/features/channel-navigation/ChannelSidebar";
+import { ChannelsPage } from "../../src/bundled/channels/ChannelsPage";
+import type { RelayData } from "../../src/features/relay/service";
+import type { Panels } from "../../src/features/panels/service";
+import type { PagesReader } from "../../src/features/pages/service";
+import type { TemplateProviders } from "../../src/features/channel-templates/provider";
+import type {
+  PageNavigation,
+  provideNavigation,
+} from "../../src/features/navigation/service";
+
+export function ChannelWorkspaceFixture({
+  relay,
+  panels,
+  pages,
+  providers,
+  host,
+}: {
+  relay: RelayData;
+  panels: Panels;
+  pages: PagesReader;
+  providers: TemplateProviders;
+  host: ReturnType<typeof provideNavigation>;
+}) {
+  const state = useSyncExternalStore(
+    host.navigation.subscribe,
+    host.navigation.snapshot,
+  );
+  const [presentation, setPresentation] = useState<{
+    attempt: typeof state.attempt;
+    request: PageNavigation;
+  }>();
+  useLayoutEffect(() => {
+    const { request, dispose } = host.request(state.attempt, {
+      valid: () => true,
+      subscribe: () => () => {},
+    });
+    setPresentation({ attempt: state.attempt, request });
+    return dispose;
+  }, [host, state.attempt]);
+  const navigation =
+    presentation?.attempt === state.attempt ? presentation.request : undefined;
+  return (
+    <ChannelNavigationProvider relay={relay}>
+      <div style={{ display: "flex", height: "100%", minWidth: 0 }}>
+        <ChannelSidebar
+          relay={relay}
+          providers={providers}
+          navigator={host.navigation}
+          target={state.entry.target}
+          sessionsEnabled={false}
+        >
+          {null}
+        </ChannelSidebar>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <ChannelsPage
+            relay={relay}
+            providers={providers}
+            panels={panels}
+            pages={pages}
+            navigator={host.navigation}
+            navigation={navigation}
+          />
+        </div>
+      </div>
+    </ChannelNavigationProvider>
+  );
+}

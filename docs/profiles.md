@@ -45,6 +45,36 @@ add the agent again from the managed-agent profile. Older unguarded invitation
 records can be promoted to guarded intent when reused through that profile flow.
 Remove from outbox does not revoke an invitation already dispatched to the relay.
 
+## Agent identity
+
+For an identity with an agent hint (below), the Info tab adds a **Managed by**
+row, matching Buzz desktop. It shows only a verified owner and is otherwise
+absent:
+
+- The owner comes from the NIP-OA `auth` tag on the identity's own winning
+  signature-verified kind 0 (newest `created_at`, lower id on ties). A
+  session-owned `session.observe` view supplies that event: it merges live
+  events, refreshes on reconnect and resets on purge. While that view is live,
+  the profile directory's retained signed head also seeds that choice, so
+  reopening the pane after cache eviction never accepts an older response than
+  the profile the session already shows. The directory notifies subscribers
+  when that head changes even if display fields do not, so a head restored
+  from disk also updates the pane. Verification is bound to that exact event
+  id, so an auth-only change or a lagging older read never keeps or restores a
+  previous owner. It requires exactly one tag, owner ≠ agent, conditions
+  evaluated against the event, and a valid BIP-340 signature over
+  `nostr:agent-auth:<agent>:<conditions>`.
+- The row shows the owner's name (`formatPublicKey` without a profile name),
+  with "(you)" when the viewer is the owner. It opens the owner's profile in
+  the same slot when the host can open it.
+- A missing or invalid tag, a failed read, or no available view shows no row.
+  Without a view nothing can signal an auth-only change, so the retained head is
+  not trusted; reopening the profile retries. The existing `isAgent` shape
+  check, avatar shape and local library never supply an owner.
+
+Agent type and capabilities are not shown: buzz-app has no reader or contract
+for their source (old Buzz kind 10100). This row has no controls.
+
 ## Boundaries
 
 - Shared message UI recognizes author-avatar targets and identity-bound mentions.

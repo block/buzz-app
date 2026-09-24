@@ -82,7 +82,8 @@ export function createMessages(
         ],
       });
     },
-    edit(messageId: string, content: string) {
+    /** Supply the current folded attachmentSourceId, or the row ID for original media. */
+    edit(messageId: string, content: string, attachmentSourceId: string) {
       const original = find(messageId);
       if (!original || ![9, 40002].includes(original.kind))
         throw new Error("Load the message before editing it");
@@ -90,10 +91,32 @@ export function createMessages(
         throw new Error("Only your own messages can be edited");
       const channelId = original.tags.find((tag) => tag[0] === "h")?.[1];
       if (!channelId) throw new Error("Message has no channel");
+      // The displayed fold owns edit/deletion precedence. Resolve its provenance,
+      // never silently resurrect the original attachments if evidence was evicted.
+      const attachmentSource = find(attachmentSourceId);
+      if (
+        !attachmentSource ||
+        (attachmentSource.id !== original.id &&
+          (attachmentSource.kind !== 40003 ||
+            attachmentSource.pubkey !== original.pubkey ||
+            !attachmentSource.tags.some(
+              ([name, id]) => name === "e" && id === messageId,
+            ) ||
+            attachmentSource.tags.some(
+              ([name, id]) => name === "h" && id !== channelId,
+            ) ||
+            !attachmentSource.tags.some(([name]) => name === "imeta")))
+      )
+        throw new Error("Reload the message before editing its attachments.");
       return writer(40003, channelId).send({
         kind: 40003,
         content: text(content),
-        tags: [["h", channelId], ["e", messageId], ...emojiTags(content)],
+        tags: [
+          ["h", channelId],
+          ["e", messageId],
+          ...attachmentSource.tags.filter((tag) => tag[0] === "imeta"),
+          ...emojiTags(content),
+        ],
       });
     },
     react(messageId: string, content: string, emoji?: CustomEmoji) {

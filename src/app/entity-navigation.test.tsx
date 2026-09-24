@@ -47,6 +47,15 @@ afterEach(async () => {
   window.history.replaceState(null, "", "/");
 });
 it("keeps an OS entity intent through real community selection and Retry in App", async () => {
+  // jsdom has no layout observer; App now keeps its real sidebar mounted here.
+  vi.stubGlobal(
+    "ResizeObserver",
+    class {
+      observe() {}
+      unobserve() {}
+      disconnect() {}
+    },
+  );
   vi.stubEnv("VITE_BUZZ_LIVE", "1");
   localStorage.setItem(
     `buzz-client.v1:${viewer}`,

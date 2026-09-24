@@ -54,6 +54,8 @@ test("opt-in Todos saves ordinary Canvas and disabling leaves it editable", asyn
     await button("Plugins").click();
   };
   const messages = async () => {
+    const disclosure = button("Show navigation");
+    if (await disclosure.isVisible()) await disclosure.click();
     await page
       .getByRole("navigation", { name: "Pages", exact: true })
       .getByRole("button", { name: "Messages", exact: true })

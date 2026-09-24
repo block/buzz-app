@@ -28,8 +28,11 @@ for (const action of [
       element.scrollTop = 900;
       element.dispatchEvent(new Event("scroll"));
     });
-    await button(page, "Projects").first().click();
-    await expect(sidebar).toHaveCount(0);
+    await button(page, "Personal space").click();
+    await expect(button(page, "Personal space")).toHaveAttribute(
+      "aria-current",
+      "true",
+    );
     let release;
     const held = new Promise((resolve) => {
       release = resolve;
@@ -45,7 +48,7 @@ for (const action of [
     );
     try {
       await page.reload();
-      await button(page, "Messages").first().click();
+      await button(page, "Switch to Primary").click();
       await expect
         .poll(() => sidebar.locator("[data-channel-id]").count())
         .toBeGreaterThan(100);

@@ -23,7 +23,7 @@ Both experiences use real session capabilities. As AI integrations become availa
 
 | Area | Responsibility |
 | --- | --- |
-| Application host | Startup, plugin installation and activation, page navigation, Settings, and recovery. |
+| Application host | Startup, plugin installation and activation, page navigation, persistent channel sidebar, Settings, and recovery. |
 | Page plugin | Its complete React tree, local interaction state, internal navigation, and arrangement of panels. |
 | Panel plugin | Recognizing a supported target and implementing the content and interactions for that target. |
 | Shared capabilities | Session state, relay access, retained data, local agent controls, and eventually external connections. |
@@ -45,7 +45,8 @@ features/panels/        target resolution, launcher contract and reusable card/f
 features/shortcuts/     in-app binding dispatch, focus rules and plugin ownership
 features/relay/         shared channel data, queries, profiles and durable delivery
 features/messages/      reusable timeline, message, thread and composer UI
-bundled/channels/       Channels navigation, sidebar, page layout and panel placement
+features/channel-navigation/ persistent sidebar, scoped draft handoff, Channels routes
+bundled/channels/       conversation navigation, page layout and panel placement
 bundled/projects/       repository/project pages, issue/PR details and Git views
 features/projects/     entity route/data contracts and bounded Git read bridge
 bundled/agents/         local control UI and read-only current-Buzz library page
@@ -53,6 +54,12 @@ features/agents/        app-owned control capability; separate session-owned lib
 bundled/github/         builtin GitHub panel plugin
 bundled/bestie/         builtin companion panel and its snake launcher
 ```
+
+The host composes one channel sidebar beside independently mounted pages. It reuses
+session-owned roster, unread, creation and preferences capabilities; it does not
+retain a hidden Channels page or message reader. Sidebar and page render errors
+have separate boundaries. Sidebar presentation helpers currently remain importable
+from `bundled/channels`; no public sidebar contribution contract is introduced.
 
 Channels is the page-authoring example, not a thin registration wrapper over a
 host-owned product page. Keep page-specific components, styles, interactions and tests
@@ -113,13 +120,13 @@ exact registration identity and mounted lifetime revoke callbacks on removal.
 
 Templates & teams (`buzz.channel-templates`) is bundled **off by default** in both
 browser and desktop catalogs. Explicit saved overrides win. Enable it under
-Settings → Plugins, then manage recipes under Settings → Messages. Channels owns
+Settings → Plugins, then manage recipes under Settings → Messages. The host sidebar owns
 personal groups and the existing + creation buttons, independently of this plugin.
 
 `ctx.channelTemplates.register({ id, title, editor, groupDefault, saveAs })` supplies
 one optional composition provider. With zero or multiple active providers, no
 optional controls are selected. This host-matched preview is not a workflow API:
-Channels owns form/draft data and final dispatch; the session owns signing,
+The sidebar owns creation form/draft data and final dispatch; the session owns signing,
 membership, Canvas writes, exact receipts and partial-setup recovery. Settings and
 provider components must check `active()` before accepting delayed work or starting
 new writes; this lifecycle fence is not a sandbox or a replacement for access checks.
@@ -153,8 +160,8 @@ thread changes. The accessory remains usable on read-only connections.
 Agent Activity is the first consumer. Plugin activation owns its telemetry lease;
 multiple composers subscribe to the same session capability. No global selected
 channel or activity-specific dependency is added to reusable message components.
-Channels reads the same session activity snapshot for its quiet sidebar marker;
-it owns that page presentation, not capture or an additional activity lease.
+The persistent sidebar reads the same session activity snapshot for its quiet marker;
+it owns presentation, not capture or an additional activity lease.
 This is a host-matched preview addition, not cross-version capability negotiation.
 
 ### Channel-header launchers

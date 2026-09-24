@@ -462,7 +462,7 @@ html[data-keyboard-navigation] .fileAttachment:focus-visible {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
-.audioUnavailable {
+.attachmentUnavailable.audioUnavailable {
   border-color: var(--border-warning);
   background: var(--affordance-warning);
   color: var(--text-warning);

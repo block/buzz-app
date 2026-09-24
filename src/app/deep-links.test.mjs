@@ -21,19 +21,11 @@ it("registers single-instance ahead of deep-link in the native builder, with arg
 });
 
 it("registers exactly the in-app link scheme with the OS, and bundles so installers claim it", () => {
-  // Every build registers this unless a launcher is told otherwise: `tauri build`
-  // and `just desktop` alike pass no scheme overlay, so a shipped app claims this
-  // scheme, and it must be the one in-app links already use or **Copy link** would
-  // produce addresses the OS cannot route back. A `--scheme` override travels
-  // through `--config` and never lands here. The shell reads the merged value at
-  // runtime and rewrites accepted links to `buzz:`, so there is nothing for the
-  // webview to agree with.
+  // Development, bundled and released apps use the scheme in-app links produce.
   const config = JSON.parse(read("../../src-tauri/tauri.conf.json"));
   const schemes = config.plugins["deep-link"].desktop.schemes;
   expect(config.plugins["deep-link"]).toEqual({ desktop: { schemes } });
   expect(schemes).toEqual(["buzz"]);
-  // RFC 3986 scheme syntax; anything else registers nowhere and fails silently.
-  expect(schemes[0]).toMatch(/^[a-z][a-z0-9+.-]*$/);
   expect(isBuzzLink(`${schemes[0]}://channel/general`)).toBe(true);
   expect(config.bundle.active).toBe(true);
 });

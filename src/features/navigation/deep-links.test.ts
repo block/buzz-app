@@ -33,8 +33,6 @@ const message =
   "9a77911a6e94147b1ce2cdb3c4e87046c67a29f29f3dd25626134621a5f6924b";
 const root = "b".repeat(64);
 const client = { viewer, selected: origin };
-// The shell rewrites every accepted OS link to the in-app `buzz:` scheme, so that
-// is the only form this module ever receives, whatever scheme the OS routed.
 const messageLink = `buzz://message?channel=general&id=${message}&thread=${root}`;
 // What Copy link produces: this app's own in-app locator, which is not a Buzz link.
 const copied = targetLink({
@@ -111,8 +109,7 @@ it.each([
   "buzz://add-community?relay=example",
   "buzz://unknown/general",
   `buzz:agent-activity?agent=${"a".repeat(64)}`,
-  // Only the exact canonical scheme: no other case, prefix, suffix or padding, and
-  // never an OS scheme the shell should have rewritten before queueing the link.
+  // Only the exact buzz scheme: no other case, prefix, suffix or padding.
   "BUZZ://channel/general",
   `Buzz://message?channel=general&id=${message}`,
   "buzz-app://channel/general",

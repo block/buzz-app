@@ -117,26 +117,16 @@ const build = (port) => ({
   beforeDevCommand: `pnpm dev:desktop --port ${port}`,
 });
 
-// The OS scheme an explicit --scheme overlays. tauri.conf.json keeps the committed
-// value, so the overlay must replace the whole list rather than add to it. Without
-// --scheme the overlay says nothing about schemes, so the build registers the
-// committed one exactly as a release build does.
-const deepLink = (scheme) => ({
-  plugins: { "deep-link": { desktop: { schemes: [scheme] } } },
-});
-
-const overlay = (port, scheme) => ({
-  ...(scheme === undefined ? {} : deepLink(scheme)),
+const overlay = (port) => ({
   build: build(port),
 });
 
-const announced = (port, { derived = true, scheme } = {}) =>
+const announced = (port, { derived = true } = {}) =>
   new RegExp(
     `^Desktop dev server on http://localhost:${port}` +
       (derived
         ? " \\(derived from the worktree path; pass --port to override\\)"
         : "") +
-      (scheme === undefined ? "" : `; deep links open as ${scheme}://`) +
       "$",
     "m",
   );
@@ -152,7 +142,6 @@ test("desktop derives a port from the worktree path and leaves the OS scheme alo
   assert.equal(call.length, 4);
   const config = JSON.parse(call[3]);
   assert.deepEqual(config, overlay(port));
-  assert.equal(config.plugins, undefined, "no scheme overlay without --scheme");
   assert.match(stdout, announced(port));
   assert.doesNotMatch(stdout, /deep links open as/);
 });
@@ -196,59 +185,24 @@ for (const value of ["1431", "1", "65535", "01431"]) {
   }
 }
 
-for (const args of [
-  ["--scheme", "buzz"],
-  ["--scheme=buzz-dev-local"],
-  ["--scheme", "x"],
-]) {
-  test(`desktop overlays ${args.join(" ")} on the committed scheme`, () => {
-    const chosen = args.at(-1).replace(/^--scheme=/, "");
-    const { call, port, stdout } = launched("desktop", ...args);
-    assert.deepEqual(JSON.parse(call[3]), overlay(port, chosen));
-    assert.match(stdout, announced(port, { scheme: chosen }));
+for (const args of [["--scheme", "buzz-dev"], ["--scheme=buzz-dev"]]) {
+  test(`launchers forward unsupported ${args.join(" ")} without overlaying a scheme`, () => {
+    const desktop = launched("desktop", ...args);
+    assert.deepEqual(JSON.parse(desktop.call[3]), overlay(desktop.port));
+    assert.deepEqual(desktop.call.slice(4), args);
+    assert.match(desktop.stdout, announced(desktop.port));
+    const bundle = launched("desktop-bundle", ...args);
+    assert.deepEqual(bundle.call, [
+      "tauri",
+      "build",
+      "--debug",
+      "--bundles",
+      "app",
+      ...args,
+    ]);
+    assert.doesNotMatch(bundle.stdout, /Bundling with deep links/);
   });
 }
-
-test("desktop lets both the port and the scheme be chosen, and then derives nothing", () => {
-  const { call, stdout } = launched(
-    "desktop",
-    "--port",
-    "1431",
-    "--scheme",
-    "buzz-dev",
-  );
-  assert.deepEqual(JSON.parse(call[3]), overlay(1431, "buzz-dev"));
-  assert.match(stdout, announced(1431, { derived: false, scheme: "buzz-dev" }));
-});
-
-test("desktop rejects a scheme the OS could not register, before launching Tauri", () => {
-  for (const args of [
-    ["--scheme"],
-    ["--scheme", "--no-watch"],
-    ["--scheme="],
-    ...[
-      "",
-      "Buzz",
-      "BUZZ",
-      "1buzz",
-      "-buzz",
-      ".buzz",
-      "buzz app",
-      "buzz_app",
-      "buzz:",
-      "buzz://",
-      "buzz/general",
-      "buzz; pnpm injected",
-      "$(pnpm injected)",
-      "buzz\npnpm injected",
-    ].map((value) => ["--scheme", value]),
-  ]) {
-    const result = recipe("desktop", ...args);
-    assert.notEqual(result.status, 0, `Accepted ${JSON.stringify(args)}`);
-    assert.match(result.stderr, /--scheme must be a lowercase URL scheme/);
-    assert.deepEqual(result.calls, [["install", "--frozen-lockfile"]]);
-  }
-});
 
 test("desktop prepends port config and preserves user config and arguments", () => {
   const config =
@@ -288,7 +242,7 @@ test("desktop derives the port for help and runner-only arguments", () => {
   assert.deepEqual(JSON.parse(help.call[3]), overlay(help.port));
   assert.deepEqual(help.call.slice(4), ["--help"]);
   assert.doesNotMatch(help.stdout, /Desktop dev server/, "help starts nothing");
-  // A --scheme after -- belongs to the application, not to the launcher.
+  // Arguments after -- belong to the application, not to the launcher.
   const args = [
     "--no-watch",
     "--",
@@ -349,17 +303,15 @@ test("desktop config precedes Tauri's implicit runner-argument boundary", () => 
 });
 
 test("desktop-bundle builds a debug app bundle with no overlay by default", () => {
-  // Nothing to overlay here: no --scheme, and the fixture is not a linked worktree
-  // so it has no icon. The bundle then registers exactly what tauri.conf.json says.
+  // The fixture is not a linked worktree, so it has no icon to overlay.
   const { call, stdout } = launched("desktop-bundle");
   assert.deepEqual(call, ["tauri", "build", "--debug", "--bundles", "app"]);
   assert.doesNotMatch(stdout, /Bundling with deep links/);
 });
 
-test("desktop-bundle overlays --scheme, keeps a chosen bundle format, and forwards the rest", () => {
-  const { call, stdout } = launched(
+test("desktop-bundle keeps a chosen bundle format and forwards the rest", () => {
+  const { call } = launched(
     "desktop-bundle",
-    "--scheme=buzz-dev",
     "--bundles",
     "dmg",
     "--verbose",
@@ -371,8 +323,6 @@ test("desktop-bundle overlays --scheme, keeps a chosen bundle format, and forwar
     "tauri",
     "build",
     "--debug",
-    "--config",
-    JSON.stringify(deepLink("buzz-dev")),
     "--bundles",
     "dmg",
     "--verbose",
@@ -380,12 +330,23 @@ test("desktop-bundle overlays --scheme, keeps a chosen bundle format, and forwar
     "--features",
     "feature",
   ]);
-  assert.match(stdout, /^Bundling with deep links as buzz-dev:\/\/$/m);
 });
 
-test("desktop-bundle rejects an unregistrable scheme before building anything", () => {
-  const result = recipe("desktop-bundle", "--scheme", "Buzz");
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /--scheme must be a lowercase URL scheme/);
-  assert.deepEqual(result.calls, [["install", "--frozen-lockfile"]]);
+test("desktop-bundle preserves no-bundle and ignores bundle flags after --", () => {
+  assert.deepEqual(launched("desktop-bundle", "--no-bundle").call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--no-bundle",
+  ]);
+  assert.deepEqual(launched("desktop-bundle", "--", "--bundles", "dmg").call, [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "app",
+    "--",
+    "--bundles",
+    "dmg",
+  ]);
 });

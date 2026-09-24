@@ -75,6 +75,7 @@ function fixture(t) {
   for (const cwd of [main, linked]) {
     runtimeFixture(cwd);
     for (const file of [
+      "desktop-build.mjs",
       "desktop-config.mjs",
       "desktop-dev.mjs",
       "worktree-icon.mjs",
@@ -157,7 +158,7 @@ test("failed generation warns, removes partial output, and falls back", (t) => {
   );
 });
 
-test("macOS launcher combines icon, port and a chosen scheme before explicit config and runner arguments", {
+test("macOS launchers preserve icon, port, explicit config and runner arguments", {
   skip: process.platform !== "darwin",
 }, (t) => {
   const { linked, git, run, render } = fixture(t);
@@ -184,8 +185,7 @@ test("macOS launcher combines icon, port and a chosen scheme before explicit con
     devUrl: `http://localhost:${port}`,
     beforeDevCommand: `pnpm dev:desktop --port ${port}`,
   });
-  // The worktree's root selects its port; the OS scheme stays whatever
-  // tauri.conf.json declares unless --scheme is passed.
+  // The worktree's root selects its port.
   const root = git("-C", linked, "rev-parse", "--show-toplevel");
   const port = portForPath(root);
   // An explicit --port wins over the worktree-derived default.
@@ -210,15 +210,19 @@ test("macOS launcher combines icon, port and a chosen scheme before explicit con
       "m",
     ),
   );
-  // A chosen scheme joins the icon and port in the same overlay.
-  const chosen = launch("--scheme", "buzz-dev");
-  assert.deepEqual(JSON.parse(chosen.call[3]), {
-    plugins: { "deep-link": { desktop: { schemes: ["buzz-dev"] } } },
-    bundle: config.bundle,
-    build: build(port),
-  });
-  assert.deepEqual(chosen.call.slice(4), forwarded);
-  assert.match(chosen.stdout, /; deep links open as buzz-dev:\/\/$/m);
+  const bundle = JSON.parse(
+    run(linked, ["scripts/desktop-build.mjs", ...forwarded]).stdout.trim(),
+  );
+  assert.deepEqual(bundle.slice(0, 6), [
+    "tauri",
+    "build",
+    "--debug",
+    "--bundles",
+    "app",
+    "--config",
+  ]);
+  assert.deepEqual(JSON.parse(bundle[6]), { bundle: config.bundle });
+  assert.deepEqual(bundle.slice(7), forwarded);
   // A failed icon generation leaves the rest of the overlay in place.
   render("process.exit(1);");
   const fallback = launch();

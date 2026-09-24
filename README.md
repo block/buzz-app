@@ -60,10 +60,10 @@ Press Ctrl+C to stop the server.
 Desktop builds register `buzz://` with the OS, the scheme in-app links already use, so
 opening a `buzz://message?channel=…&id=…`, `buzz://channel/<id>`, or
 `buzz://channel/<id>/<event>` link outside the
-app focuses it and opens that conversation, on a cold start too. `just desktop`
-registers the same scheme; on a machine that also has the released Buzz installed,
-pass `--scheme <value>` to claim one of your own for test links. macOS only routes a
-scheme to a bundled app, so test there with `just desktop-bundle`; Windows and Linux
+app focuses it and opens that conversation, on a cold start too. Development,
+bundled, and released builds all use `buzz://` and compete for its OS handler.
+macOS only routes a scheme to a bundled app, so test there with
+`just desktop-bundle`; Windows and Linux
 dev builds register themselves at launch. See [OS deep links](docs/deep-links.md) for
 per-platform steps and limits.
 

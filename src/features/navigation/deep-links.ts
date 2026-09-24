@@ -33,10 +33,7 @@ export function deepLinkStep(
   url: string,
   client: Pick<Client, "viewer" | "selected">,
 ): DeepLinkStep {
-  // Which scheme the OS routed is the shell's business: it admits only the schemes
-  // the compiled config registers and rewrites them to `buzz:`, so a link arriving
-  // here is an ordinary in-app link. This guard is defence in depth, and matches the
-  // shell's exact comparison rather than URL normalization, so `BUZZ:` is refused.
+  // Match the shell's exact scheme check before parsing, so `BUZZ:` is refused.
   if (typeof url !== "string" || !url.startsWith("buzz:"))
     return { fail: "invalid-target" };
   const link = parseBuzzLink(url);

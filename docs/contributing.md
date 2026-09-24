@@ -69,12 +69,9 @@ need their own validation.
   Tauri's own `--port` is for its static-file server, not Vite. Without this flag,
   the adapter derives a stable port from the worktree path (the same derivation
   `just web` uses) and prints the chosen URL. Different paths can still collide.
-  It consumes `--scheme <value>` the same way, overlaying the URL scheme this build
-  registers with the OS; without it nothing is overlaid, and the build registers the
-  `buzz` that `tauri.conf.json` declares just as a release build does. See
-  [OS deep links](deep-links.md). Desktop requires the
-  exact port to be free; an occupied port fails rather than opening another copy's
-  server. Other arguments, including runner/application arguments after `--`, pass
+  All desktop builds use the `buzz` URL scheme. See [OS deep links](deep-links.md).
+  Desktop requires the exact port to be free; an occupied port fails rather than
+  opening another copy's server. Other arguments, including runner/application arguments after `--`, pass
   through unchanged. Port configuration is prepended so Tauri parses it even with
   implicit runner arguments. Explicit `--config` arguments merge afterward and can
   override it; keep their development URL and frontend command consistent. Use `--`
@@ -88,10 +85,9 @@ need their own validation.
   web and desktop captures.
 - `just desktop-bundle [args...]`: bundle a debug desktop app for testing OS deep
   links on macOS, where the OS routes a scheme only to a bundled application. It
-  takes the same `--scheme <value>`, defaults to a `.app` bundle unless `--bundles`
-  or `--no-bundle` says otherwise, and passes everything else to `tauri build`.
-  Without `--scheme` it overlays no scheme, so the bundle registers the one
-  `tauri.conf.json` declares, as release bundling, a plain `pnpm tauri build`, does.
+  defaults to a `.app` bundle unless `--bundles` or `--no-bundle` says otherwise,
+  and passes everything else to `tauri build`. The bundle uses `buzz`, as does
+  release bundling with `pnpm tauri build`.
 - `just design [args...]`: install locked dependencies, start the standalone
   design-system viewer, and open it in your browser. Arguments pass through to
   Vite, e.g. `just design --port 1444`. The default port is 1442; an occupied port

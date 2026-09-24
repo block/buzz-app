@@ -3,10 +3,9 @@
 Desktop builds register a URL scheme with the operating system, so a link opened
 outside the app brings it to the front and navigates, at cold start too. Every build
 registers `buzz://`, the same scheme in-app links and **Copy link** use; `just desktop`
-and `just desktop-bundle` claim it like a released build does. On a machine that also
-has the released Buzz installed, pass `--scheme <value>` to either launcher to claim
-a scheme of your own instead (see [current limits](#current-limits)). The browser
-build has no OS ingress and keeps its `#buzz=` address form.
+and `just desktop-bundle` claim it like a released build does. Builds share this
+scheme (see [current limits](#current-limits)). The browser build has no OS ingress
+and keeps its `#buzz=` address form.
 
 ## Accepted links
 
@@ -43,9 +42,7 @@ Write a link by hand, such as `buzz://channel/general` or
 `buzz://message?channel=general&id=<64-hex event id>`. A warm app should come to the
 front and open the conversation. A cold start should launch, show Home, then open the
 destination once the client is ready. A malformed link such as
-`buzz://join?relay=example` must show the failure notice. If the build was launched
-with `--scheme`, write the links under that scheme instead; the launcher prints it at
-startup.
+`buzz://join?relay=example` must show the failure notice.
 
 **macOS** only routes a scheme to a bundled app. `just desktop` binaries are never
 registered, so build a debug bundle and launch it once to register it with Launch
@@ -82,10 +79,7 @@ xdg-open "buzz://channel/general"
 
 - Development builds register `buzz` like released ones, so on a machine with Buzz
   installed the two compete for it: Windows and Linux route it to whichever binary
-  started last, and macOS to whichever registered bundle Launch Services picks. Pass
-  `--scheme <value>` to `just desktop` or `just desktop-bundle` to claim another
-  scheme for that build and write test links under it; a link copied from the app
-  then needs its prefix replaced by hand.
+  started last, and macOS to whichever registered bundle Launch Services picks.
 - Every local bundle keeps the same application identifier, so they share app data
   and Launch Services lists several bundles under one identifier.
 - Invite links (`buzz://join`, `https://<relay>/invite/<code>`), entity links

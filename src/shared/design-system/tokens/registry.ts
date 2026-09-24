@@ -1123,7 +1123,7 @@ export const RADII = [
     token: "radius-pill",
     variable: "--radius-pill",
     value: "round",
-    use: "Pills, avatars, and fully circular controls.",
+    use: "Pills, menu rows, avatars, and fully circular controls.",
   },
 ];
 

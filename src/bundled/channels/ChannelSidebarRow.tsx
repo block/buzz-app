@@ -3,16 +3,9 @@ import { IconButton } from "../../shared/design-system/ui/IconButton";
 import {
   CaretDownIcon,
   CaretRightIcon,
-  DotsThreeVerticalIcon,
   XIcon,
 } from "../../shared/design-system/icons/index";
-import { useId, useRef, type ReactElement, type ReactNode } from "react";
-import {
-  MenuRoot,
-  MenuTrigger,
-  MenuPopup,
-  MenuItem,
-} from "../../shared/design-system/ui/Menu";
+import { useId, type ReactElement, type ReactNode } from "react";
 import type { ChannelSummary } from "../../features/relay/contracts";
 import styles from "./ChannelSidebarRow.module.css";
 
@@ -23,7 +16,6 @@ export function ChannelSidebarRow({
   childContent,
   wrapSelect,
   selected,
-  sessionsEnabled,
   sessions,
   draft,
   draftSelected,
@@ -40,7 +32,6 @@ export function ChannelSidebarRow({
   childContent?: ((channel: ChannelSummary) => ReactNode) | undefined;
   wrapSelect?: ((trigger: ReactElement) => ReactNode) | undefined;
   selected?: string | undefined;
-  sessionsEnabled: boolean;
   sessions: readonly ChannelSummary[];
   draft: boolean;
   draftSelected: boolean;
@@ -51,15 +42,9 @@ export function ChannelSidebarRow({
   onNewSession: (id: string) => void;
   onHideDm?: (id: string) => void;
 }) {
-  const starting = useRef(false);
   const childrenId = useId();
   const hasChildren = draft || sessions.length > 0;
   const Chevron = collapsed ? CaretRightIcon : CaretDownIcon;
-  const canParent =
-    sessionsEnabled &&
-    channel.channelType !== "dm" &&
-    channel.channelType !== "session" &&
-    !channel.archived;
   const selectButton = (
     <NavigationItem
       type="button"
@@ -116,48 +101,6 @@ export function ChannelSidebarRow({
         <div className={styles.select}>
           {wrapSelect ? wrapSelect(selectButton) : selectButton}
         </div>
-        {canParent && (
-          <MenuRoot
-            onOpenChange={(open) => {
-              if (open) starting.current = false;
-            }}
-          >
-            <span className={styles.more}>
-              <MenuTrigger
-                render={
-                  <IconButton
-                    size="compact"
-                    shape="round"
-                    aria-label={`More options for ${channel.name}`}
-                    icon={<DotsThreeVerticalIcon size={15} />}
-                  />
-                }
-                aria-label={`More options for ${channel.name}`}
-              />
-            </span>
-            <MenuPopup
-              size="compact"
-              align="end"
-              finalFocus={() =>
-                starting.current
-                  ? (document
-                      .getElementById("new-session-prompt")
-                      ?.querySelector<HTMLElement>('[role="textbox"]') ?? false)
-                  : true
-              }
-              aria-label={`${channel.name} options`}
-            >
-              <MenuItem
-                onClick={() => {
-                  starting.current = true;
-                  onNewSession(channel.id);
-                }}
-              >
-                New session
-              </MenuItem>
-            </MenuPopup>
-          </MenuRoot>
-        )}
         {channel.channelType === "dm" && onHideDm && (
           <span className={`${styles.more} ${styles.remove}`}>
             <IconButton

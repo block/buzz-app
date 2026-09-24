@@ -547,10 +547,14 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   // must be gone before another New message starts.
   await page.reload();
   await expect(message).toBeVisible();
+  await expect(sidebarDm).toHaveAttribute("aria-current", "page");
   // Resolving an existing DM keeps its row visible while the next send is held.
   await page.getByText("DMs", { exact: true }).hover();
   await page.getByRole("button", { name: "New message", exact: true }).click();
   await page.getByRole("option", { name: "Avery Chen", exact: true }).click();
+  // Composing is a separate route, not the previously selected conversation.
+  await expect(sidebarDm).toBeVisible();
+  await expect(sidebarDm).not.toHaveAttribute("aria-current", "page");
   await page
     .getByRole("textbox", { name: "Message Avery Chen", exact: true })
     .fill("Another message");
@@ -564,5 +568,6 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   await expect(
     page.locator("[data-message-id]", { hasText: "Another message" }),
   ).toBeVisible();
+  await expect(sidebarDm).toHaveAttribute("aria-current", "page");
   expect(app.errors).toEqual([]);
 });

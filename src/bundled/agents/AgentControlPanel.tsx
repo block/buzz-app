@@ -1,10 +1,6 @@
 import type { useIdentityNames } from "../../features/identity-names/react";
-import {
-  useEffect,
-  useState,
-  useSyncExternalStore,
-  type ReactNode,
-} from "react";
+import { useAgentControl } from "../../features/agents/control-react";
+import { useEffect, useState, type ReactNode } from "react";
 import type {
   AgentControl,
   AgentControlState,
@@ -50,22 +46,7 @@ export function AgentControlPanel({
   } | null>(null);
   const edit = (agent: AgentView, avatar?: string) =>
     setSelected({ id: agent.id, ...(avatar ? { avatar } : {}) });
-  const state = useSyncExternalStore(
-    control.subscribe,
-    control.snapshot,
-    control.snapshot,
-  );
-  useEffect(() => {
-    void control.refresh();
-    const timer = setInterval(() => {
-      if (
-        document.visibilityState !== "hidden" &&
-        control.snapshot().status === "ready"
-      )
-        void control.refresh();
-    }, 5000);
-    return () => clearInterval(timer);
-  }, [control]);
+  const state = useAgentControl(control);
   useEffect(() => {
     if (
       state.data?.agents.some(

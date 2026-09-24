@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import type { RelaySession } from "../../features/relay/session";
@@ -73,7 +73,6 @@ function mount(selected = "child") {
         draft={true}
         draftSelected={false}
         selected={selected}
-        sessionsEnabled
         onSelect={onSelect}
         onPrepare={() => {}}
         onNewSession={onNewSession}
@@ -83,61 +82,6 @@ function mount(selected = "child") {
   render(<Row />);
   return { onSelect, onNewSession };
 }
-it("opens a compact action menu independently of selecting its channel", async () => {
-  const user = userEvent.setup();
-  const callbacks = mount();
-  const trigger = screen.getByRole("button", {
-    name: "More options for Engineering",
-  });
-  expect(trigger).toHaveAttribute("data-icon-shape", "round");
-  await user.click(trigger);
-  await user.click(
-    await screen.findByRole("menuitem", { name: "New session" }),
-  );
-  expect(callbacks.onNewSession).toHaveBeenCalledWith("parent");
-  expect(callbacks.onSelect).not.toHaveBeenCalled();
-  // The first close must finish before reopening, and keyboard dismissal must
-  // start after the popup has taken focus rather than racing its focus effect.
-  await waitFor(() =>
-    expect(
-      screen.queryByRole("menu", { name: "More options for Engineering" }),
-    ).not.toBeInTheDocument(),
-  );
-  await user.click(trigger);
-  await waitFor(() =>
-    expect(
-      screen.getByRole("menu", { name: "More options for Engineering" }),
-    ).toHaveFocus(),
-  );
-  await user.keyboard("{Escape}");
-  await waitFor(() => {
-    expect(
-      screen.queryByRole("menu", { name: "More options for Engineering" }),
-    ).not.toBeInTheDocument();
-    expect(trigger).toHaveFocus();
-  });
-});
-it("hides session actions when the Sessions plugin is unavailable", () => {
-  const onNewSession = vi.fn();
-  render(
-    <ChannelSidebarRow
-      channel={parent}
-      collapsed={false}
-      onToggle={() => {}}
-      icon={<svg />}
-      sessions={[]}
-      sessionsEnabled={false}
-      draft={false}
-      draftSelected={false}
-      onSelect={() => {}}
-      onPrepare={() => {}}
-      onNewSession={onNewSession}
-    />,
-  );
-  expect(
-    screen.queryByRole("button", { name: "More options for Engineering" }),
-  ).not.toBeInTheDocument();
-});
 it("offers a separate hide action only for DM rows", async () => {
   const onHideDm = vi.fn();
   const onSelect = vi.fn();
@@ -148,7 +92,6 @@ it("offers a separate hide action only for DM rows", async () => {
       onToggle={() => {}}
       icon={<svg />}
       sessions={[]}
-      sessionsEnabled={false}
       draft={false}
       draftSelected={false}
       onSelect={onSelect}
@@ -182,7 +125,6 @@ it("keeps focus in the sidebar when removing its last visible DM", async () => {
               onToggle={() => {}}
               icon={<svg />}
               sessions={[]}
-              sessionsEnabled={false}
               draft={false}
               draftSelected={false}
               onSelect={() => {}}

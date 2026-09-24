@@ -147,6 +147,11 @@
     width: var(--size-control-sm);
     height: var(--size-control-sm);
   }
+  /* Dense composer formatting options retain the original 28px layout. */
+  .buzz-button[data-icon-variant][data-icon-size="xs"] {
+    width: calc(var(--size-control-sm) - var(--space-1));
+    height: calc(var(--size-control-sm) - var(--space-1));
+  }
   .buzz-button[data-icon-variant][data-size="lg"] {
     width: var(--size-control-lg);
     height: var(--size-control-lg);

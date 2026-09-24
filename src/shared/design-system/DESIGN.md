@@ -130,6 +130,9 @@ colors while blocking activation; never swap in a differently sized loading labe
 Pointer hover uses shared state timing; expanded triggers retain pressed emphasis.
 Keep keyboard-only focus and reduced-motion behavior owned by the system.
 
+IconButton also offers `xs` (28px with 16px icons) for dense composer formatting
+options, preserving the original toolbar layout. Mode toggles remain `sm`.
+
 IconButton defaults to round across all sizes and variants. Use `shape="control"`
 only when a rectangular control shape is explicitly needed. Disabled ghost icons
 remain unfilled; their muted foreground communicates unavailability without

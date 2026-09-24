@@ -13,7 +13,11 @@
   cursor: text;
   outline: none;
 }
-.input[data-empty]::before {
+html[data-keyboard-navigation] .input:focus-visible {
+  outline: 2px solid var(--border-focus);
+  outline-offset: 2px;
+}
+.input [data-placeholder]::before {
   content: attr(data-placeholder);
   max-width: 100%;
   overflow: hidden;
@@ -61,4 +65,63 @@
   vertical-align: top;
   width: var(--size-emoji-display);
   height: var(--size-emoji-display);
+}
+
+.input p {
+  margin: 0;
+}
+
+.input code {
+  border-radius: var(--radius-chip);
+  background: var(--affordance-subtle);
+  padding: var(--space-half) var(--space-1h);
+}
+.input code,
+.input pre {
+  font-family: var(--font-system-mono);
+  font-size: var(--text-mono-sm);
+  line-height: var(--text-mono-sm--line-height);
+  letter-spacing: var(--text-mono-sm--letter-spacing);
+}
+.input a {
+  color: inherit;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: text;
+}
+
+.input blockquote {
+  margin: 0;
+  border-left: 3px solid var(--text-subtle);
+  padding-left: var(--space-3);
+}
+.input pre {
+  margin: 0;
+  border-radius: var(--radius-chip);
+  background: var(--affordance-subtle);
+  padding: var(--space-2) var(--space-3);
+  white-space: pre-wrap;
+}
+.input pre code {
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.input :is(ul, ol) {
+  margin: 0;
+  padding-left: var(--space-6);
+}
+.input ul {
+  list-style: disc;
+}
+.input ol {
+  list-style: decimal;
+}
+.input [data-spoiler] {
+  background: var(--affordance-subtle);
+  border-radius: var(--radius-chip);
+  box-decoration-break: clone;
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
 }

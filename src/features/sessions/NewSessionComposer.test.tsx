@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "../messages/composer-testing";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -7,6 +8,7 @@ import type { RelaySession } from "../relay/session";
 import { writeView } from "../../shared/view-state";
 import { NewSessionComposer } from "./NewSessionComposer";
 
+composerDOMFixture();
 afterEach(cleanup);
 beforeEach(() => localStorage.clear());
 const parent = {

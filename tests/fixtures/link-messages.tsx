@@ -208,6 +208,7 @@ if (readView(composerScope, "draft:design", null) === null) {
 }
 function Preview() {
   const [opened, setOpened] = useState("No link opened");
+  const [sentText, setSentText] = useState<string>();
   const [enabled, setEnabled] = useState("on");
   return (
     <main
@@ -267,8 +268,34 @@ function Preview() {
         session={previewSession}
         channelId="design"
         channelName="design"
-        onSend={() => setOpened(`Preview only: ${sent.at(-1)?.text}`)}
+        onSend={() => {
+          setSentText(sent.at(-1)?.text);
+          setOpened(`Preview only: ${sent.at(-1)?.text}`);
+        }}
       />
+      {sentText !== undefined && (
+        <section aria-label="Sent message preview">
+          <conversation.ui.Message
+            row={{
+              ...row,
+              id: "sent-preview",
+              content: sentText,
+              mentions: sent.at(-1)?.mentions ?? [],
+            }}
+            session={previewSession}
+            scope={composerScope}
+            profile={{ name: "Preview" }}
+            media={() => undefined}
+            onOpenLink={(url) => {
+              setOpened(url);
+              return true;
+            }}
+            canOpenLink={() => true}
+            day={false}
+            retry={undefined}
+          />
+        </section>
+      )}
     </main>
   );
 }

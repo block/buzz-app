@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
+import { composerDOMFixture } from "./composer-testing";
 import { bindNames } from "../identity-names/service";
 import { createAgentDirectory } from "../../bundled/agents/directory";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -38,6 +39,8 @@ import { emojiMatches, type CustomEmoji } from "../relay/emoji";
 import { CustomEmoji as CustomEmojiImage } from "../../bundled/emoji/CustomEmoji";
 import type { ComposerInputElement } from "./composer-dom";
 import { setRememberAgentsPreference } from "./mention-preferences";
+
+composerDOMFixture();
 
 const first = { pubkey: "a".repeat(64), name: "Honey" };
 const second = { pubkey: "b".repeat(64), name: "Honey" };
@@ -350,9 +353,11 @@ function mount(
     },
     fill(text: string) {
       const field = input();
-      act(() => field.focus());
-      field.value = text;
-      field.setSelectionRange(text.length, text.length);
+      act(() => {
+        field.focus();
+        field.value = text;
+        field.setSelectionRange(text.length, text.length);
+      });
       fireEvent.input(field);
       // Browsers queue selectionchange after the editor restores its native
       // selection. Deliver that boundary explicitly in this synchronous fixture.
@@ -602,13 +607,13 @@ it("labels simultaneous composers independently and prevents disabled or unsuppo
 it("subscribes to emoji changes and releases the subscription when unmounted", () => {
   const h = mount();
   h.fill(":party:");
-  expect(h.input().querySelectorAll("img")).toHaveLength(0);
+  expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(0);
   expect(h.emojiListeners.size).toBe(1);
   expect(h.session.emoji.ensure).toHaveBeenCalled();
   h.setEmoji([{ shortcode: "party", url: "https://emoji.test/party.png" }]);
-  expect(h.input().querySelectorAll("img")).toHaveLength(1);
+  expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(1);
   h.setEmoji([]);
-  expect(h.input().querySelectorAll("img")).toHaveLength(0);
+  expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(0);
   h.unmount();
   expect(h.emojiListeners.size).toBe(0);
 });
@@ -795,14 +800,18 @@ it.each([
 
 it.each([undefined, "root"])(
   "keeps an untouched mention when smart punctuation replaces text behind the caret in %s",
-  (root) => {
+  async (root) => {
     const h = mount(root ? { threadRootId: root } : {});
     act(() => {
       h.commands().insertMention(first);
       h.commands().insertText("can you see this is's");
     });
     const input = h.input();
-    const text = input.querySelector("[data-editor-text]")?.firstChild;
+    const paragraph = input.querySelector("p");
+    if (!paragraph) throw new Error("Missing editor paragraph");
+    const text = [...paragraph.childNodes].find(
+      (node) => node instanceof Text && node.data.includes("is's"),
+    );
     if (!(text instanceof Text)) throw new Error("Missing editable text");
     const quote = text.data.indexOf("'");
     expect(quote).toBeGreaterThan(0);
@@ -810,7 +819,7 @@ it.each([undefined, "root"])(
     target.setStart(text, quote);
     target.setEnd(text, quote + 1);
     // WebKit's replacement range is behind the caret, not the selection.
-    input.setSelectionRange(input.value.length, input.value.length);
+    act(() => input.setSelectionRange(input.value.length, input.value.length));
     const before = new InputEvent("beforeinput", {
       bubbles: true,
       inputType: "insertReplacementText",
@@ -825,7 +834,9 @@ it.each([undefined, "root"])(
       inputType: "insertReplacementText",
       data: "’",
     });
-    expect(input).toHaveValue("@Honey can you see this is’s");
+    await waitFor(() =>
+      expect(input).toHaveValue("@Honey can you see this is’s"),
+    );
     expect(
       within(input).getByRole("img", { name: "Person Honey" }),
     ).toBeVisible();
@@ -997,7 +1008,7 @@ it("keeps custom emoji text readable and sends repeated shortcodes unchanged", (
     expect(h.commands().insertText(":party:")).toBe(true);
   });
   expect(h.input()).toHaveValue(":party::party:");
-  expect(h.container.querySelectorAll("img")).toHaveLength(2);
+  expect(h.input().querySelectorAll("img[alt=':party:']")).toHaveLength(2);
   h.submit();
   expect(h.messages.send).toHaveBeenCalledExactlyOnceWith(
     "channel",
@@ -1810,6 +1821,20 @@ it.each([false, true])(
   },
 );
 
+it("toggles the whole draft spoiler with a collapsed caret and preserves selection/history", () => {
+  const h = mount();
+  h.fill("secret");
+  act(() => h.input().toggleFormat("spoiler"));
+  expect(h.input().querySelector("[data-spoiler]")).toHaveTextContent("secret");
+  expect(h.input().selectionStart).toBe(6);
+  expect(h.input().selectionEnd).toBe(6);
+  act(() => h.input().undo(false));
+  expect(h.input().querySelector("[data-spoiler]")).toBeNull();
+  act(() => h.input().undo(true));
+  h.submit();
+  expect(h.messages.send).toHaveBeenCalledWith("channel", "||secret||", [], []);
+});
+
 const editableMessage = (
   overrides: Partial<ChannelMessage> = {},
 ): ChannelMessage => ({
@@ -1838,13 +1863,91 @@ it("edits in the same composer, cancels without persisting edit text, and restor
   expect(input).toHaveValue("Original message");
   h.fill("Temporary edit");
   expect(readView("scope", "draft:channel", null)).toMatchObject({ text: "" });
-  fireEvent.keyDown(input, { key: "Escape" });
+  fireEvent.keyDown(input, { key: "Escape", keyCode: 27 });
   expect(input).toHaveValue("");
   expect(input).toHaveFocus();
   fireEvent.keyDown(input, { key: "z", ctrlKey: true });
   expect(input).toHaveValue("Unsent draft");
   expect(h.messages.edit).not.toHaveBeenCalled();
 });
+
+it.each(["cancel", "accepted"])(
+  "restores rich draft history and mention provenance after an edit is %s",
+  (finish) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    act(() => h.commands().insertMention(second));
+    act(() => {
+      h.input().setSelectionRange(0, 6);
+      h.input().toggleFormat("bold");
+    });
+    const formatted = h.input().innerHTML;
+    h.fill("");
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    // The temporary editor must not inherit the unsent draft's undo stack.
+    act(() => h.input().undo(false));
+    expect(h.input()).toHaveValue("Original message");
+    h.fill("Temporary edit");
+    if (finish === "cancel") fireEvent.keyDown(h.input(), { key: "Escape" });
+    else {
+      h.submit();
+      h.setDelivery("accepted");
+    }
+    act(() => h.input().undo(false));
+    expect(h.input().innerHTML).toBe(formatted);
+    expect(
+      screen.getByRole("region", { name: "Explicit mentions" }),
+    ).toBeVisible();
+    h.submit();
+    expect(h.messages.send).toHaveBeenCalledWith(
+      "channel",
+      "**@Honey** ",
+      [second.pubkey],
+      [],
+    );
+  },
+);
+
+it.each([
+  ["bold", "**Revised**"],
+  ["spoiler", "||Revised||"],
+  ["code", "`Revised`"],
+  ["bullet_list", "- Revised"],
+] as const)(
+  "serializes %s formatting when saving an edit",
+  (format, markdown) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    h.fill("Revised");
+    act(() => {
+      h.input().setSelectionRange(0, 7);
+      h.input().toggleFormat(format);
+    });
+    h.submit();
+    expect(h.messages.edit).toHaveBeenCalledExactlyOnceWith(
+      "c".repeat(64),
+      markdown,
+    );
+    expect(h.messages.send).not.toHaveBeenCalled();
+    expect(readView("scope", "draft:channel", "")).toBe("");
+  },
+);
+
+it.each(["bullet_list", "ordered_list", "code_block"] as const)(
+  "does not save a whitespace-only %s edit through Enter",
+  (format) => {
+    const h = mount({}, undefined, first.pubkey);
+    h.setRows([editableMessage()]);
+    fireEvent.keyDown(h.input(), { key: "ArrowUp" });
+    h.fill(" ");
+    act(() => h.input().toggleFormat(format));
+    expect(screen.getByRole("button", { name: "Save changes" })).toBeDisabled();
+    fireEvent.keyDown(h.input(), { key: "Enter", keyCode: 13 });
+    expect(h.messages.edit).not.toHaveBeenCalled();
+    expect(screen.getByText("Editing message")).toBeVisible();
+  },
+);
 
 it("saves only once, locks until delivery, and restores the new-message composer on acceptance", () => {
   const h = mount({}, undefined, first.pubkey);

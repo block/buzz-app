@@ -105,11 +105,6 @@
   .buzz-dialog-body {
     min-width: 0;
   }
-  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
-    min-height: 0;
-    flex: 1;
-    overflow: auto;
-  }
 
   .buzz-dialog-content {
     padding-block: var(--dialog-padding);
@@ -135,6 +130,11 @@
     /* Preserve inset row backgrounds and focus rings inside the scrollport. */
     margin-inline: calc(-1 * var(--dialog-padding));
     padding-inline: var(--dialog-padding);
+  }
+  .buzz-dialog[data-size="expanded"] .buzz-dialog-body {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
   }
   .buzz-tooltip-positioner {
     z-index: var(--layer-tooltip);

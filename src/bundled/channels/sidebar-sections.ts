@@ -6,8 +6,8 @@ export function isChannelSectionKey(key: string) {
 }
 
 /** Preferences only arrange the supplied authorized roster; they never add channels. */
-export function sidebarSections(
-  channels: readonly ChannelSummary[],
+export function sidebarSections<T extends ChannelSummary>(
+  channels: readonly T[],
   preferences?: SidebarPreferences,
   hiddenDms: ReadonlySet<string> = new Set(),
 ) {
@@ -58,7 +58,7 @@ export function sidebarSections(
     },
     {
       key: "dms",
-      title: "DMs",
+      title: "Messages",
       icon: undefined,
       rows: active.filter(
         (channel) => channel.channelType === "dm" && !hiddenDms.has(channel.id),

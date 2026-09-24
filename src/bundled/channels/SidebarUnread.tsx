@@ -143,11 +143,7 @@ export function SidebarUnread({
         return (
           <div className={styles.unreadEdge} data-edge={edge} key={edge}>
             <Button
-              variant={
-                edges[edge].some(({ attention }) => attention)
-                  ? "prominent"
-                  : "outline"
-              }
+              variant="prominent"
               aria-label={`Unread ${edge}`}
               data-edge={edge}
               data-attention={edges[edge].some(({ attention }) => attention)}

@@ -157,8 +157,66 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <SpecimenGroup label="Status badge and rounded cutout">
+        <div className="component-specimen-row">
+          {(["small", "default", "large"] as const).map((size) => (
+            <Specimen key={size} prop={`${size} · online`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Morgan Martin"
+                fallback="Morgan"
+                size={size}
+                statusBadge="online"
+              />
+            </Specimen>
+          ))}
+          {(["away", "offline"] as const).map((status) => (
+            <Specimen key={status} prop={`large · ${status}`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Morgan Martin"
+                fallback="Morgan"
+                size="large"
+                statusBadge={status}
+              />
+            </Specimen>
+          ))}
+          <Specimen prop="large · no badge">
+            <Avatar
+              src={avatarUrl}
+              alt="Morgan Martin"
+              fallback="Morgan"
+              size="large"
+            />
+          </Specimen>
+        </div>
+      </SpecimenGroup>
       <SpecimenGroup label="Agent shape (proposed)">
         <div className="component-specimen-row">
+          {(["small", "default", "large"] as const).map((size) => (
+            <Specimen key={size} prop={`squircle · ${size} · online`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size={size}
+                statusBadge="online"
+              />
+            </Specimen>
+          ))}
+          {(["away", "offline"] as const).map((status) => (
+            <Specimen key={status} prop={`squircle · large · ${status}`}>
+              <Avatar
+                src={avatarUrl}
+                alt="Agent artwork"
+                fallback="Agent"
+                shape="squircle"
+                size="large"
+                statusBadge={status}
+              />
+            </Specimen>
+          ))}
           <Specimen prop='shape="squircle"'>
             <Avatar
               src={avatarUrl}
@@ -172,6 +230,7 @@ function AvatarSpecimen() {
           </Specimen>
         </div>
       </SpecimenGroup>
+      <LiveAvatarStatusSpecimen />
       {/* No `src`, so the fallback initial shows. Same three sizes, because a
           fallback has to hold the ramp as well as an image does. */}
       <SpecimenGroup label="Fallback, with no src">
@@ -225,6 +284,34 @@ function AvatarSpecimen() {
         </div>
       </SpecimenGroup>
     </div>
+  );
+}
+
+function LiveAvatarStatusSpecimen() {
+  const [status, setStatus] = useState<
+    "online" | "away" | "offline" | undefined
+  >();
+  return (
+    <SpecimenGroup label="Status transitions">
+      <div className="component-specimen-row">
+        <Avatar
+          src={avatarUrl}
+          alt="Live agent artwork"
+          fallback="Agent"
+          shape="squircle"
+          size="large"
+          statusBadge={status}
+        />
+        {(["online", "away", "offline"] as const).map((next) => (
+          <Button key={next} size="compact" onClick={() => setStatus(next)}>
+            Set {next}
+          </Button>
+        ))}
+        <Button size="compact" onClick={() => setStatus(undefined)}>
+          Clear status
+        </Button>
+      </div>
+    </SpecimenGroup>
   );
 }
 function FullPageSurfaceSpecimen() {

@@ -499,7 +499,15 @@ readingTest(
     });
     try {
       await history.hover();
+      // Stable samples can fall between WebKit's inertial wheel frames. Capture
+      // the baseline only after this gesture has completed, then settle layout.
+      await history.evaluate((element) => {
+        window.navigationWheelFinished = new Promise((resolve) => {
+          element.addEventListener("scrollend", resolve, { once: true });
+        });
+      });
       await page.mouse.wheel(0, -650);
+      await page.evaluate(() => window.navigationWheelFinished);
       await settle(page);
       const reading = await anchor(page);
       expect(await openTarget(page, target(app))).toEqual({ status: "opened" });

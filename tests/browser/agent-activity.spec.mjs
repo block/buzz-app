@@ -373,6 +373,21 @@ test("profile activity opens the exact agent and originating channel before its 
   const avatar = page
     .locator(`[data-message-id="${message.id}"]`)
     .getByRole("button", { name: /profile/ });
+  await avatar.waitFor();
+  // Exercise the real read publication before opening the profile, rather than
+  // allowing its normal dwell/debounce to race this journey's teardown.
+  await page
+    .getByRole("region", { name: "Channel message history", exact: true })
+    .focus();
+  await expect
+    .poll(() =>
+      app.report.readPublications.some(
+        ({ community, blob }) =>
+          community === "primary" &&
+          blob.contexts[`msg:${message.id}`] === message.created_at,
+      ),
+    )
+    .toBe(true);
   await avatar.click();
   const profile = page.getByRole("complementary", {
     name: "Profile",

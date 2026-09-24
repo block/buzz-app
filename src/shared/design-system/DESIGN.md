@@ -57,6 +57,13 @@ Avatar `shape="circle"` or `shape="squircle"`; the shape carries identity meanin
 not density or emphasis. The caller supplies identity type from domain data,
 never a name or picture heuristic. `size="fill"` fills the owning layout’s
 available space. Shape clips the artwork, never the interactive focus target.
+Circular and squircle avatars can add `statusBadge="online" | "away" | "offline"`. The dot
+uses a semantic green, yellow, or grey role with light and dark values. Its inset
+cutout and dot scale with the existing avatar size; the dot is separate from the
+clipped artwork, and avatars without a badge retain their full shape. The agent
+cutout and badge follow the squircle contour; agent badges use live presence and leave
+unknown status unbadged. All three statuses use solid fills: green for Online,
+yellow for Away, and grey for Offline, with semantic light and dark values.
 
 ## Public identity text
 
@@ -514,7 +521,8 @@ it is the rule a generated theme is measured against.
   Apple ship theirs; raising them would draw the box the fill already implies.
   Error and warning boundary roles must reach 3:1 against surface-base,
   surface-panel, surface-inset and surface-popover in both themes. The contrast
-  guard checks these role mappings separately from text and decorative dividers.
+  guard checks these role mappings and status dots separately from text and
+  decorative dividers.
 
 ## Writing
 
@@ -529,7 +537,7 @@ it is the rule a generated theme is measured against.
 - **Contrast comes from the paired token, not from judgement.** Where a background is not neutral, its text is named for it.
 - **Keyboard, pointer, and shortcut paths must not diverge.** When adding an input handler, enumerate the ways a person can reach it and check the ones that are not the mouse.
 - **Focus rings are for keyboard navigation, not pointer navigation.** Gate every authored focus treatment with `html[data-keyboard-navigation]` and `:focus-visible`; the app-root input-modality owner supplies that attribute. Mouse, pen, and touch focus stays quiet, including programmatic focus during a drag. Keyboard focus remains clearly visible on the control itself.
-- **Colour is never the only carrier of meaning.** Pair it with text, shape, or position.
+- **Colour is never the only carrier of meaning by default.** Pair it with text, shape, or position. The solid avatar status badges in [Identity shapes](#identity-shapes) are an intentional product exception; preserve their solid fills and expose known status through the owning accessible label or description.
 
 ## Responsiveness
 

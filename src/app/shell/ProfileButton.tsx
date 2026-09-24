@@ -43,14 +43,16 @@ export function ProfileButton({
   const openingSettings = useRef(false);
   const accountLabel = useId();
   const avatar =
-    profile.picture.startsWith("https://") || profile.name ? (
+    viewer || profile.picture.startsWith("https://") || profile.name ? (
       <Avatar
         src={
           profile.picture.startsWith("https://") ? profile.picture : undefined
         }
         alt=""
         fallback={profile.name || "?"}
+        fallbackContent={profile.name ? undefined : <UserIcon size={19} />}
         size="fill"
+        {...(viewer ? { statusBadge: presence.status } : {})}
       />
     ) : (
       <UserIcon aria-hidden="true" size={19} />
@@ -77,19 +79,15 @@ export function ProfileButton({
             type="button"
             aria-label="Your profile"
             title={profile.name || "Your profile"}
-            variant="chrome"
+            variant={viewer ? "ghost" : "chrome"}
             shape="round"
             icon={
-              <span className="pointer-events-none relative flex size-full items-center justify-center rounded-full">
+              <span
+                className="pointer-events-none relative flex size-full items-center justify-center rounded-full"
+                role="img"
+                aria-label={viewer ? `Your status: ${label}` : "Your avatar"}
+              >
                 {avatar}
-                {viewer && (
-                  <span
-                    role="img"
-                    aria-label={`Your status: ${label}`}
-                    className={styles.dot}
-                    data-status={presence.status}
-                  />
-                )}
               </span>
             }
           />
@@ -114,7 +112,13 @@ export function ProfileButton({
             </p>
             {viewer && (
               <p className="m-0 text-body-sm text-subtle">
-                {label} · On this device
+                <span
+                  className={styles.statusText}
+                  data-status={presence.status}
+                >
+                  {label}
+                </span>{" "}
+                · On this device
               </p>
             )}
           </div>

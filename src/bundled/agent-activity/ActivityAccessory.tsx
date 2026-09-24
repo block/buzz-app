@@ -1,5 +1,10 @@
 import { useChannelIdentityNames } from "../../features/identity-names/react";
-import { useEffect, useMemo, useSyncExternalStore } from "react";
+import {
+  useEffect,
+  useMemo,
+  useSyncExternalStore,
+  type ReactNode,
+} from "react";
 import { Tooltip } from "../../shared/design-system/ui/Tooltip";
 import {
   DotsThreeIcon,
@@ -9,6 +14,7 @@ import type { ComposerAccessoryProps } from "../../features/conversation/contrac
 import { activityTarget } from "../../features/agents/activity-target";
 import { selectProfiles } from "../../features/relay/profile-selection";
 import { Avatar } from "../../shared/design-system/ui/Avatar";
+import { usePresenceStatus } from "../../features/presence/react";
 import { NavigationItem } from "../../shared/design-system/ui/NavigationItem";
 import styles from "./ActivityAccessory.module.css";
 
@@ -78,12 +84,11 @@ export function ActivityAccessory({
           const unknown = active.length - working;
           const isWorking =
             working > 0 || typing.some((entry) => entry.agent === agent);
-          const Icon = isWorking ? DotsThreeIcon : QuestionIcon;
           const picture = identities.get(agent)?.picture;
           return (
-            <Tooltip
+            <ActivityEntry
               key={agent}
-              content={
+              tooltip={
                 <>
                   <p className="text-body-sm">
                     {threadRootId ? (
@@ -107,40 +112,77 @@ export function ActivityAccessory({
                   <code className="font-mono text-mono">{agent}</code>
                 </>
               }
-            >
-              <NavigationItem
-                aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
-                onClick={() => open(target)}
-                icon={
-                  <Avatar
-                    src={picture ? (session.media(picture) ?? null) : null}
-                    alt=""
-                    fallback={name}
-                    size="small"
-                    shape="squircle"
-                  />
-                }
-                label={
-                  <>
-                    <span className={styles.name}>{name}</span>
-                    {" · "}
-                    <span className={styles.status}>
-                      {isWorking ? "working" : "status unknown"}
-                    </span>
-                  </>
-                }
-                trailing={
-                  <Icon
-                    className={styles.indicator}
-                    data-working={isWorking || undefined}
-                    size={18}
-                  />
-                }
-              />
-            </Tooltip>
+              session={session}
+              agent={agent}
+              src={picture ? (session.media(picture) ?? null) : null}
+              name={name}
+              isWorking={isWorking}
+              target={target}
+              open={open}
+            />
           );
         })}
       </div>
     </section>
+  );
+}
+
+function ActivityEntry({
+  session,
+  agent,
+  src,
+  name,
+  isWorking,
+  target,
+  open,
+  tooltip,
+}: {
+  session: ComposerAccessoryProps["session"];
+  agent: string;
+  src: string | null;
+  name: string;
+  isWorking: boolean;
+  target: ReturnType<typeof activityTarget>;
+  open: ComposerAccessoryProps["open"];
+  tooltip: ReactNode;
+}) {
+  const presence = usePresenceStatus(session.presence, agent);
+  const Icon = isWorking ? DotsThreeIcon : QuestionIcon;
+  return (
+    <Tooltip content={tooltip}>
+      <NavigationItem
+        aria-label={`View activity for ${name} ${agent.slice(0, 12)}`}
+        aria-description={
+          presence === "unknown" ? undefined : `Presence: ${presence}`
+        }
+        onClick={() => open(target)}
+        icon={
+          <Avatar
+            src={src}
+            alt=""
+            fallback={name}
+            size="small"
+            shape="squircle"
+            statusBadge={presence === "unknown" ? undefined : presence}
+          />
+        }
+        label={
+          <>
+            <span className={styles.name}>{name}</span>
+            {" · "}
+            <span className={styles.status}>
+              {isWorking ? "working" : "status unknown"}
+            </span>
+          </>
+        }
+        trailing={
+          <Icon
+            className={styles.indicator}
+            data-working={isWorking || undefined}
+            size={18}
+          />
+        }
+      />
+    </Tooltip>
   );
 }

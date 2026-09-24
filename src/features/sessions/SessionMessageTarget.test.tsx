@@ -2,7 +2,7 @@
 import "@testing-library/jest-dom/vitest";
 import { StrictMode } from "react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { RelaySession } from "../relay/session";
 import type { ThreadSnapshot } from "../relay/threads";
@@ -10,7 +10,8 @@ import type { PageNavigation } from "../navigation/service";
 import { SessionMessageTarget } from "./SessionMessageTarget";
 
 beforeEach(() => {
-  // Resize observation is a browser boundary; layout/focus is tested in Playwright.
+  // jsdom has no scrolling/layout; real geometry/focus is tested in Playwright.
+  HTMLElement.prototype.scrollIntoView = vi.fn();
   vi.stubGlobal(
     "ResizeObserver",
     class {
@@ -21,6 +22,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  delete (HTMLElement.prototype as Partial<HTMLElement>).scrollIntoView;
   vi.unstubAllGlobals();
 });
 function setup() {
@@ -194,6 +196,13 @@ it("keeps a verified exact target readable if unrelated thread context fails", a
     }),
   );
   expect(screen.getByText("Selected reply")).toBeVisible();
+  await waitFor(() =>
+    expect(HTMLElement.prototype.scrollIntoView).toHaveBeenCalledWith({
+      block: "start",
+      inline: "nearest",
+      behavior: "instant",
+    }),
+  );
   expect(navigation.complete).not.toHaveBeenCalled();
   await userEvent
     .setup()

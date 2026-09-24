@@ -75,8 +75,12 @@ export function RecipientPicker({
     if (!directory.loading && !directory.error)
       loadingRows.current = Math.max(1, Math.min(10, candidates.length));
   }, [directory.loading, directory.error, candidates.length]);
+  const initiallyFocused = useRef(false);
   useEffect(() => {
-    if (!disabled) input.current?.focus();
+    if (!disabled && !initiallyFocused.current) {
+      initiallyFocused.current = true;
+      input.current?.focus();
+    }
   }, [disabled]);
   useEffect(() => {
     if (open && highlight.keyboard)

@@ -501,6 +501,9 @@ test("empty compose, keyboard selection, pagination, removal effects, retry, the
   app.failOpening();
   await composer.press("Enter");
   await expect(page.getByRole("alert")).toBeVisible();
+  await expect(input).toBeEnabled();
+  await expect(input).not.toBeFocused();
+  await expect(picker).not.toBeVisible();
   await expect(composer).toHaveText("@Avery Chen Our first direct message");
   await expect(
     page.getByRole("button", { name: "Remove Avery Chen" }),

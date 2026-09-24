@@ -31,6 +31,12 @@ const keyFor = (people: readonly Recipient[]) =>
     .map((person) => person.pubkey)
     .sort()
     .join(":");
+// Persist identity and a bounded label, never the directory's full metadata.
+const recipientView = ({ pubkey, name, isAgent }: Recipient): Recipient => ({
+  pubkey,
+  name: name.slice(0, 500),
+  ...(isAgent === true ? { isAgent: true } : {}),
+});
 function savedRecipients(scope: string, viewer?: string) {
   return validRecipients(
     readView<unknown>(scope, "direct-message:recipients", []),
@@ -48,10 +54,9 @@ function validRecipients(saved: unknown, viewer?: string) {
             typeof person.pubkey === "string" &&
             /^[0-9a-f]{64}$/.test(person.pubkey) &&
             person.pubkey !== viewer &&
-            typeof person.name === "string" &&
-            person.name.length <= 500,
+            typeof person.name === "string",
         )
-        .map((person) => [person.pubkey, person]),
+        .map((person) => [person.pubkey, recipientView(person)]),
     ).values(),
   ].slice(0, 8);
 }
@@ -225,7 +230,7 @@ export function NewMessage({
     if (locked || attempt.current) return;
     prepared.current = undefined;
     setRecipients(people);
-    writeView(scope, "direct-message:recipients", people);
+    writeView(scope, "direct-message:recipients", people.map(recipientView));
     setError("");
   }
   async function send(draft: MentionDraft) {
@@ -283,11 +288,7 @@ export function NewMessage({
           {
             key: recoveryKey,
             value: JSON.stringify({
-              people: recipients.map(({ pubkey, name, isAgent }) => ({
-                pubkey,
-                name,
-                isAgent,
-              })),
+              people: recipients.map(recipientView),
               draft,
             }),
           },

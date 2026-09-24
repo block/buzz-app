@@ -404,6 +404,11 @@ it("preserves recipients and draft after opening fails and across remount", asyn
   await t.user.type(screen.getByRole("textbox"), "Try later");
   await t.user.click(send());
   await screen.findByRole("alert");
+  await waitFor(() => expect(send()).toBeEnabled());
+  expect(recipient()).not.toHaveFocus();
+  expect(
+    screen.queryByRole("listbox", { name: "People" }),
+  ).not.toBeInTheDocument();
   expect(t.messages.send).not.toHaveBeenCalled();
   view.unmount();
   t.mount();

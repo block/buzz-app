@@ -30,7 +30,7 @@ import { mentionQuery } from "../../bundled/mentions/mention-query";
 import { NewMessage } from "./NewMessage";
 import { OutboxStatus } from "../../bundled/channels/OutboxStatus";
 import { createRelayProfiler } from "../relay/profiling";
-import { writeView } from "../../shared/view-state";
+import { readView, writeView } from "../../shared/view-state";
 
 const viewer = keypair(),
   other = keypair(),
@@ -65,7 +65,9 @@ afterEach(() => {
   vi.unstubAllGlobals();
   delete (Element.prototype as Partial<Element>).scrollIntoView;
 });
-function setup() {
+function setup(
+  metadata: { name?: string; about?: string; picture?: string } = {},
+) {
   let records: readonly OutgoingEvent[] = [];
   const storage: OutboxStorage = {
     load: () => structuredClone(records),
@@ -77,7 +79,7 @@ function setup() {
     (event: RelayEvent, signal: AbortSignal) => Promise<void>
   >(async () => {});
   const events = [
-    profile(other, { name: "Avery" }),
+    profile(other, { name: "Avery", ...metadata }),
     profile(another, { name: "Zoe" }),
     signed(relay, {
       kind: 39000,
@@ -162,6 +164,47 @@ function setup() {
   };
 }
 const send = () => screen.getByRole("button", { name: "Send message" });
+
+it("restores a bounded recipient and draft when unused profile metadata exceeds the view quota", async () => {
+  const name = "A".repeat(600);
+  const t = setup({
+    name,
+    about: "x".repeat(2 * 1024 * 1024),
+    picture: `https://example.com/${"x".repeat(20000)}`,
+  });
+  const setItem = Storage.prototype.setItem;
+  const rejected = vi.fn();
+  vi.spyOn(Storage.prototype, "setItem").mockImplementation(function (
+    this: Storage,
+    key,
+    value,
+  ) {
+    if (value.length > 16000) {
+      rejected();
+      throw new DOMException("Quota exceeded", "QuotaExceededError");
+    }
+    setItem.call(this, key, value);
+  });
+  const owner = t.create();
+  const page = t.mount(owner);
+  await t.user.click(await screen.findByRole("option", { name }));
+  await t.user.type(screen.getByRole("textbox"), "Saved before sending");
+  expect(readView(scope, "direct-message:recipients", [])).toEqual([
+    { pubkey: other.pubkey, name: name.slice(0, 500) },
+  ]);
+  expect(rejected).not.toHaveBeenCalled();
+  page.unmount();
+  t.mount(owner);
+  await waitFor(() => expect(send()).toBeEnabled());
+  expect(
+    screen.getByRole("button", {
+      name: `Remove ${name.slice(0, 500)}`,
+    }),
+  ).toBeEnabled();
+  expect(screen.getByRole("textbox")).toHaveTextContent("Saved before sending");
+  expect(t.openDirectMessage).not.toHaveBeenCalled();
+  expect(t.publish).not.toHaveBeenCalled();
+});
 
 it("locks recipient edits until outbox hydration finishes, then accepts them", async () => {
   const t = setup();

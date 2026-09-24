@@ -153,7 +153,16 @@ export const MessageRow = memo(function MessageRow({
       {row.diff.description && (
         <p className="text-body-sm">{row.diff.description}</p>
       )}
-      <pre className={styles.rawDiff}>{row.content || "No diff content"}</pre>
+      {/* biome-ignore lint/a11y/useSemanticElements: The raw scroll region preserves preformatted text and needs keyboard access. */}
+      <pre
+        className={styles.rawDiff}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: The raw scroll owner must support keyboard scrolling.
+        tabIndex={0}
+        role="region"
+        aria-label="Raw diff"
+      >
+        {row.content || "No diff content"}
+      </pre>
       {row.diff.truncated && (
         <p className="text-body-sm">
           Diff truncated. View the full diff at the source repository.

@@ -14,7 +14,19 @@ export function DiffViewer({
   filePath?: string | undefined;
   viewType?: "unified" | "split";
 }) {
-  if (!files) return <pre className={styles.raw}>{content}</pre>;
+  if (!files)
+    return (
+      // biome-ignore lint/a11y/useSemanticElements: The raw scroll region preserves preformatted text and needs keyboard access.
+      <pre
+        className={styles.raw}
+        // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll owner must support keyboard panning.
+        tabIndex={0}
+        role="region"
+        aria-label="Raw diff"
+      >
+        {content}
+      </pre>
+    );
   if (!files.length) return <p className="text-body-sm">No diff content</p>;
   return (
     <div className={styles.viewer}>
@@ -33,6 +45,8 @@ export function DiffViewer({
             className={styles.file}
             key={`${file.oldPath}:${file.newPath}:${file.oldRevision}:${file.newRevision}`}
             aria-label={label}
+            // biome-ignore lint/a11y/noNoninteractiveTabindex: The scroll owner must support keyboard panning.
+            tabIndex={0}
           >
             {(files.length > 1 || label !== filePath || type !== "modify") && (
               <header className={styles.fileHeader}>

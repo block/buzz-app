@@ -121,8 +121,10 @@ export type CommunityResolution = {
   owner: string;
   signature: string;
 };
+export type CloneSettings = Pick<AgentEdit, "name" | "systemPrompt">;
 export interface AgentControlHost {
   readLog?(target: AgentLogTarget): Promise<string>;
+  cloneSettings?(source: ImportSource, pubkey: string): Promise<CloneSettings>;
   configureHere?(
     id: string,
     resolution: CommunityResolution,
@@ -172,6 +174,7 @@ export interface AgentControlState {
 export interface AgentControl {
   /** Sensitive local output. Native custody and exact community are rechecked per read. */
   readLog?(target: AgentLogTarget): Promise<string>;
+  cloneSettings?: AgentControlHost["cloneSettings"];
   configureHere?: AgentControlHost["configureHere"];
   models?: AgentModels;
   create?(
@@ -547,6 +550,19 @@ export function createAgentControl(
               false,
               undefined,
               true,
+            ),
+        }
+      : {}),
+    ...(host?.cloneSettings
+      ? {
+          cloneSettings: (source: ImportSource, pubkey: string) =>
+            run(
+              (native) => {
+                if (!native.cloneSettings)
+                  throw new Error("Clone settings are unavailable.");
+                return native.cloneSettings(source, pubkey);
+              },
+              () => {},
             ),
         }
       : {}),

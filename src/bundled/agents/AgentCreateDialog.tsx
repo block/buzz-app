@@ -3,6 +3,7 @@ import { Dialog } from "@base-ui/react/dialog";
 import type {
   AgentControl,
   AgentControlState,
+  CloneSettings,
   AgentView,
 } from "../../features/agents/control";
 import { Button } from "../../shared/design-system/ui/Button";
@@ -15,6 +16,7 @@ export function AgentCreateDialog({
   destination,
   owner,
   source,
+  initialSettings,
   onClose,
 }: {
   control: AgentControl;
@@ -22,6 +24,7 @@ export function AgentCreateDialog({
   destination: string;
   owner: string;
   source?: AgentView;
+  initialSettings?: CloneSettings | undefined;
   onClose(): void;
 }) {
   const [requestId] = useState(() => crypto.randomUUID());
@@ -33,8 +36,8 @@ export function AgentCreateDialog({
         }
       : {
           revision: 0,
-          name: "",
-          systemPrompt: "",
+          name: initialSettings?.name ?? "",
+          systemPrompt: initialSettings?.systemPrompt ?? "",
           workspace: state.data?.defaultWorkspace ?? "",
           command: "buzz-agent",
           args: "[]",
@@ -109,7 +112,11 @@ export function AgentCreateDialog({
         >
           <header className="buzz-dialog-header">
             <Dialog.Title className="text-heading">
-              {source ? `Duplicate ${source.name}` : "Create agent"}
+              {source
+                ? `Duplicate ${source.name}`
+                : initialSettings
+                  ? "Clone agent"
+                  : "Create agent"}
             </Dialog.Title>
           </header>
           <Dialog.Description className="buzz-dialog-description">
@@ -117,6 +124,14 @@ export function AgentCreateDialog({
             It stays stopped until you start it or send it a mention. No channel
             is joined automatically.
           </Dialog.Description>
+          {initialSettings && (
+            <p className="text-body-sm text-secondary">
+              Only the name and instructions were copied. Review them for
+              embedded secrets. Choose this computer’s workspace and runtime
+              settings. Identity keys, environment values, history and community
+              membership are not copied. The source stays unchanged.
+            </p>
+          )}
           <form
             className="buzz-dialog-body space-y-section-gap"
             onSubmit={(event) => {
@@ -186,7 +201,13 @@ export function AgentCreateDialog({
                 variant="primary"
                 disabled={blocked || runtimeBlocked || !available}
               >
-                {busy ? "Saving…" : saved ? "Retry profile" : "Create agent"}
+                {busy
+                  ? "Saving…"
+                  : saved
+                    ? "Retry profile"
+                    : initialSettings
+                      ? "Clone agent"
+                      : "Create agent"}
               </Button>
             </div>
           </form>

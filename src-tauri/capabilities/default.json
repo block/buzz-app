@@ -30,6 +30,7 @@
     "allow-agent-control-action",
     "allow-agent-control-import-preview",
     "allow-agent-control-import-commit",
+    "allow-agent-control-clone-settings",
     "allow-agent-control-use-here",
     "allow-agent-models-begin",
     "allow-agent-models-cancel",

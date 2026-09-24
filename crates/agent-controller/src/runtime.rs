@@ -377,6 +377,17 @@ impl Controller {
                 || !agent.imported.is_null(),
         )
     }
+    pub fn use_here(
+        &mut self,
+        id: &str,
+        resolution: crate::CommunityResolution,
+    ) -> Result<ControlSnapshot> {
+        self.store.use_here(id, resolution)?;
+        self.snapshot()
+    }
+    pub fn local_clone_settings(&self, id: &str) -> Result<crate::CloneSettings> {
+        self.store.local_clone_settings(id)
+    }
     pub fn prepare_import(
         &self,
         imports: &mut crate::Imports,
@@ -425,7 +436,12 @@ impl Controller {
         self.snapshot()
     }
     pub fn restore(&mut self) -> Result<ControlSnapshot> {
-        for a in self.store.agents()?.into_iter().filter(|a| a.enabled) {
+        for a in self
+            .store
+            .agents()?
+            .into_iter()
+            .filter(|a| a.enabled && a.configured())
+        {
             if let Err(error) = self.start(&a.id) {
                 self.errors.insert(a.id, error);
             }
@@ -439,6 +455,9 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if !agent.configured() {
+            return Err("Choose Use here before opening this identity’s credentials".into());
+        }
         let workspace = effective_databricks(&agent)?.map(|s| s.host);
         self.bundle.as_ref().map_err(Clone::clone)?;
         Ok((agent.credential_id, agent.pubkey, agent.revision, workspace))
@@ -476,7 +495,7 @@ impl Controller {
             .store
             .agents()?
             .into_iter()
-            .filter(|a| a.enabled)
+            .filter(|a| a.enabled && a.configured())
             .map(|a| a.id)
             .collect())
     }
@@ -501,6 +520,9 @@ impl Controller {
             .into_iter()
             .find(|a| a.id == id)
             .ok_or("Agent no longer exists")?;
+        if !agent.configured() {
+            return Err("Choose Use here before starting this imported identity".into());
+        }
         if !agent.enabled {
             return Err("Agent is disabled".into());
         }

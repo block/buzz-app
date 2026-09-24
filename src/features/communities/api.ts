@@ -1,4 +1,7 @@
-import { connectBrokerTransport } from "../relay/transport";
+import {
+  connectBrokerTransport,
+  registerBrokerCommunity,
+} from "../relay/transport";
 import type { PersonalProfile } from "./service";
 export type CommunityInfo = {
   name?: string;
@@ -14,7 +17,14 @@ export async function communityRequest<T>(
   id: string,
   route: string,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
+  signal = signal
+    ? AbortSignal.any([signal, AbortSignal.timeout(25000)])
+    : AbortSignal.timeout(25000);
+  // Scoped HTTP reads need broker registration, not an acquired relay session.
+  await registerBrokerCommunity(id, signal);
+  signal.throwIfAborted();
   const response = await fetch(
     `/api/relay/${encodeURIComponent(id)}/${route}`,
     {
@@ -25,7 +35,7 @@ export async function communityRequest<T>(
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(body),
           }),
-      signal: AbortSignal.timeout(25000),
+      signal,
     },
   );
   const result = await response.json();

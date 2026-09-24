@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { Context } from "@deepseek-ai/cordis";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, expect, it, vi } from "vitest";
 import { createPluginManager } from "../../plugins/manager";
 import { ConversationService } from "../../features/conversation/service";
@@ -17,6 +18,7 @@ const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
   cleanup();
   for (const dispose of cleanups.splice(0)) await dispose();
+  localStorage.removeItem("buzzodz.plugins.v1");
   vi.restoreAllMocks();
 });
 function mount(
@@ -121,4 +123,20 @@ it("keeps the host raw patch fallback after renderer failure, and removal", asyn
   expect(h.container.querySelector("img, script")).toBeNull();
   await act(() => h.plugins.change("disable", "buzz.diffs"));
   expect(h.container.querySelector("pre")?.textContent).toBe(content);
+});
+
+it("preserves unparsed trailing content as escaped raw text inline and expanded", async () => {
+  const patch = `${content}UNPARSED_TRAILER <img src=x onerror=alert(1)>\n`;
+  const h = mount(diffs, patch);
+  const expand = await screen.findByRole("button", { name: "Expand diff" });
+  expect(screen.getByRole("region", { name: "Raw diff" }).textContent).toBe(
+    patch,
+  );
+  expect(h.container.querySelector("table, img, script")).toBeNull();
+  await userEvent.setup().click(expand);
+  const dialog = await screen.findByRole("dialog");
+  expect(
+    within(dialog).getByRole("region", { name: "Raw diff" }).textContent,
+  ).toBe(patch);
+  expect(dialog.querySelector("table, img, script")).toBeNull();
 });

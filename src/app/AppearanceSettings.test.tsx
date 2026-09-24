@@ -59,3 +59,25 @@ it("hidden settings do not portal errors; returning retains both save recovery a
   expect(localStorage.getItem("buzz-font-scale.v1")).toBe("1.2");
   appearance.dispose();
 });
+
+it("retry saves the System choice even when its current palette is light", async () => {
+  const appearance = createAppearance();
+  const write = vi
+    .spyOn(Storage.prototype, "setItem")
+    .mockImplementationOnce(() => {
+      throw new Error("denied");
+    });
+  act(() => appearance.setMode("system"));
+  render(
+    <ToastProvider>
+      <AppearanceSettings appearance={appearance} />
+    </ToastProvider>,
+  );
+  expect(screen.getByRole("radio", { name: "System" })).toBeChecked();
+  fireEvent.click(
+    screen.getByRole("button", { name: "Retry saving appearance" }),
+  );
+  expect(write).toHaveBeenLastCalledWith("buzz-appearance.v1", "system");
+  expect(localStorage.getItem("buzz-appearance.v1")).toBe("system");
+  appearance.dispose();
+});

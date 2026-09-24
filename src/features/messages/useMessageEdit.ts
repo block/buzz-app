@@ -22,6 +22,7 @@ export function lastEditableMessage(
         row.authorId === session.viewer &&
         !row.membership &&
         !row.agentEnvelope &&
+        !row.diff &&
         (!row.delivery ||
           row.delivery === "accepted" ||
           row.delivery === "seen") &&

@@ -15,7 +15,6 @@ import {
 import type { Communities, PersonalProfile } from "./service";
 import { canSaveProfile, ProfileFields, profilesEqual } from "./ProfileFields";
 import { communityDestination, relayOrigin } from "./destination";
-import { registerBrokerCommunity } from "../relay/transport";
 import styles from "./Communities.module.css";
 
 // Exact relay claim refusal codes, forwarded unchanged by the broker.
@@ -87,7 +86,6 @@ export function CommunityDialog({
       await work(async () => {
         const next = communityDestination(relayOrigin(url));
         setDestination(next);
-        await registerBrokerCommunity(next.id, AbortSignal.timeout(12000));
         const value = await communityRequest<CommunityInfo>(next.id, "info");
         // Restoring an existing admitted profile is not a new join or policy acceptance.
         const found = await inspectProfile(next.id).catch(() => undefined);

@@ -60,6 +60,10 @@ export function createServices() {
     agentControl,
     identity?.ready,
   );
+  ctx.provide("communityReader", {
+    snapshot: communities.snapshot,
+    subscribe: communities.subscribe,
+  });
   const relay = communities.relay;
   ctx.effect(() => bindAgentMentions(agentControl, communities));
   const notifications = new NotificationsService(

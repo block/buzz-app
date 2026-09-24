@@ -38,7 +38,7 @@ export function ProfileAddChannel({
   const [selected, setSelected] = useState("");
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
-  const eligible = (id?: string) => {
+  const eligible = (id?: string, requireNonmember = true) => {
     const native = control.snapshot();
     const list = session.channels.list();
     const choices = session.agentChoices.snapshot();
@@ -64,7 +64,7 @@ export function ProfileAddChannel({
             (channel.channelType === "stream" ||
               channel.channelType === "forum") &&
             channel.members &&
-            !channel.members.includes(pubkey),
+            (!requireNonmember || !channel.members.includes(pubkey)),
         ))
     );
   };
@@ -105,7 +105,8 @@ export function ProfileAddChannel({
               onClick={() => {
                 if (!selectedChannel || pending) return;
                 const id = selectedChannel.id;
-                const active = () => eligible(id);
+                // Membership becoming true after submission is success, not revocation.
+                const active = () => eligible(id, false);
                 setPending(true);
                 setError("");
                 void (async () => {

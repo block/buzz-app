@@ -249,6 +249,33 @@ it("keeps channel permission failures and retries the same saved invitation", as
     test.owner.dispose();
   }
 });
+it("explains how to recover an expired failed invitation without republishing it", async () => {
+  const test = setup();
+  try {
+    await test.ready();
+    test.setDenied(true);
+    const now = Date.now;
+    vi.spyOn(Date, "now").mockReturnValue(1_700_000_000_000);
+    try {
+      await expect(
+        test.owner.session.workSessions.addAgents(test.parent, [test.agent]),
+      ).rejects.toThrow(/Only channel admins/);
+      expect(test.publish).toHaveBeenCalledOnce();
+      vi.mocked(Date.now).mockReturnValue(1_700_000_901_000);
+      test.setDenied(false);
+      await expect(
+        test.owner.session.workSessions.addAgents(test.parent, [test.agent]),
+      ).rejects.toThrow(/expired.*Outbox.*remove.*add the agent again/i);
+      expect(test.publish).toHaveBeenCalledOnce();
+    } finally {
+      vi.restoreAllMocks();
+      expect(Date.now).toBe(now);
+    }
+  } finally {
+    test.owner.dispose();
+  }
+});
+
 it("rejects nonmember identities outside the agent library before adding anyone", async () => {
   const test = setup();
   try {

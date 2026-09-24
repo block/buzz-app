@@ -93,6 +93,14 @@ function fixture(managed = true) {
         ),
       };
     },
+    addMembership: () => {
+      currentRows = {
+        ...rows,
+        channels: rows.channels.map((row) =>
+          row.id === "one" ? { ...row, members: [viewer, pubkey] } : row,
+        ),
+      };
+    },
     resolve: () => resolve(),
     reject: (message: string) => reject(new Error(message)),
   };
@@ -182,6 +190,17 @@ it("passes current native, session, and channel eligibility into admission", asy
   f.hideChannel();
   expect(active()).toBe(false);
   await act(async () => f.resolve());
+});
+
+it("keeps admission active when its own roster update adds the agent", async () => {
+  const f = show();
+  submit();
+  await waitFor(() => expect(f.addAgents).toHaveBeenCalledOnce());
+  const active = f.addAgents.mock.calls[0]?.[2] as unknown as () => boolean;
+  f.addMembership();
+  expect(active()).toBe(true);
+  await act(async () => f.resolve());
+  await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
 });
 
 it("invalidates an in-flight gate after the session scope changes", async () => {

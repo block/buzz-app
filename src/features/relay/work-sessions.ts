@@ -282,6 +282,13 @@ export function createWorkSessions(
               ) &&
               !item.event.tags.some(([name]) => name === "role"),
           );
+        if (
+          previous &&
+          Date.now() / 1000 - previous.event.created_at >= 15 * 60
+        )
+          throw new Error(
+            `This agent-add request expired. Open Outbox, remove the “Add agent ${key.slice(0, 12)}” item, then add the agent again. Check channel membership first if the request was unconfirmed.`,
+          );
         const operation =
           previous?.event.id ??
           writer(!!active).send(

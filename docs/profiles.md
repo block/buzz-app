@@ -12,9 +12,11 @@ is an owned/running agent. Missing telemetry is explained by the activity panel.
 Guarded invitations that fail or have an unknown outcome remain saved in the
 outbox. Its generic Retry action is withheld for these records: a renewed add
 through the channel composer or managed-agent profile rechecks current
-eligibility and reuses the exact saved event. Older unguarded invitation records
-are promoted to guarded intent when reused through this flow. Remove from
-outbox does not revoke an invitation already dispatched to the relay.
+eligibility and reuses the exact saved event while it is still within the relay's
+15-minute timestamp window. After that, check membership; if absent, remove the
+expired “Add agent” item from Outbox and add the agent again. Older unguarded
+invitation records are promoted to guarded intent when reused through this flow.
+Remove from outbox does not revoke an invitation already dispatched to the relay.
 
 ## Boundaries
 

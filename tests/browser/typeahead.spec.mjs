@@ -954,6 +954,9 @@ test("portal bounds hold when the focused composer moves outside the viewport", 
   await page.goto("/tests/fixtures/typeahead.html");
   const input = page.getByRole("textbox", { name: "Message #Test" });
   await input.fill("!geometry");
+  await expect
+    .poll(() => page.evaluate(() => window.completionFixture.queries().at(-1)))
+    .toBe("geometry");
   const index = await page.evaluate(
     () => window.completionFixture.queries().length - 1,
   );

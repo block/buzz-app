@@ -387,7 +387,6 @@ function ReadySidebar({
       <div className="shell-sidebar" style={{ width: sidebar.width }}>
         <Panel as="aside" aria-label="Channel sidebar">
           <div className={styles.sidebar}>
-            {children}
             {kitState.status === "error" && (
               <p role="alert">
                 {kitState.error}{" "}

@@ -36,7 +36,7 @@
   /* Figma specifies true Semibold for unread rows, rather than the legacy 500 alias. */
   --type-weight-semibold: 600;
   --size-row: var(--space-6);
-  --radius-row: var(--radius-control);
+  --radius-row: calc(var(--radius-panel) - var(--sidebar-padding));
   --affordance-selected: var(--affordance-subtle);
   --affordance-panel-hover: var(--affordance-navigation-quiet);
   --sidebar-padding: var(--space-2);
@@ -71,7 +71,7 @@
   min-height: calc(var(--space-6) + var(--space-1));
   padding: var(--space-half) calc(var(--space-1) + var(--space-half))
     var(--space-half) var(--space-2);
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-row);
   font-size: var(--text-body-sm);
   line-height: var(--text-body-sm--line-height);
   letter-spacing: var(--text-body-sm--letter-spacing);
@@ -663,10 +663,19 @@
 }
 
 /* Match the adjacent small avatars without creating image/profile demand. */
+.dmAvatar {
+  display: inline-grid;
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  place-items: center;
+}
+
 .dmCount {
   display: grid;
-  min-width: 1.5rem;
-  height: 1.5rem;
+  width: 22px;
+  min-width: 22px;
+  height: 22px;
   padding-inline: var(--space-half);
   flex-shrink: 0;
   place-items: center;

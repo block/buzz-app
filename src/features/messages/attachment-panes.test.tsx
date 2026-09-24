@@ -201,11 +201,10 @@ it.each([false, true])(
     } else {
       await waitFor(() =>
         expect(within(form).getByRole("status")).toHaveTextContent(
-          "notes.txt: 1 KB · Ready",
+          "notes.txt: 1 KB · Queued",
         ),
       );
-      expect(h.upload).toHaveBeenCalledTimes(1);
-      expect(h.upload.mock.calls[0]?.[0].name).toBe("notes.txt");
+      expect(h.upload).not.toHaveBeenCalled();
     }
     expect(other).not.toHaveBeenCalled();
   },
@@ -263,16 +262,16 @@ it.each([false, true])(
     } else {
       await waitFor(() =>
         expect(within(pane).getByRole("status")).toHaveTextContent(
-          "notes.txt: 1 KB · Ready",
+          "notes.txt: 1 KB · Queued",
         ),
       );
-      expect(h.upload).toHaveBeenCalledTimes(1);
+      expect(h.upload).not.toHaveBeenCalled();
     }
     expect(other).not.toHaveBeenCalled();
   },
 );
 
-it("announces preparation, upload and readiness politely while editor focus stays put", async () => {
+it("announces queued, preparation, upload and readiness politely while editor focus stays put", async () => {
   const h = await fixture();
   const header = deferred<ArrayBuffer>();
   const upload = deferred<typeof h.uploaded>();
@@ -297,9 +296,17 @@ it("announces preparation, upload and readiness politely while editor focus stay
   const status = screen.getByRole("status");
   expect(status).toHaveAttribute("aria-live", "polite");
   expect(status).toHaveAttribute("aria-atomic", "true");
-  expect(status).toHaveTextContent("notes.txt: 1 KB · Preparing…");
+  expect(status).toHaveTextContent("notes.txt: 1 KB · Queued");
   expect(editor).toHaveFocus();
   const send = screen.getByRole("button", { name: "Send message" });
+  expect(send).toBeEnabled();
+  expect(h.upload).not.toHaveBeenCalled();
+
+  fireEvent.click(send);
+  await waitFor(() =>
+    expect(status).toHaveTextContent("notes.txt: 1 KB · Preparing…"),
+  );
+  expect(editor).toHaveFocus();
   expect(send).toBeDisabled();
   await act(async () => {
     header.resolve(new ArrayBuffer(0));
@@ -310,11 +317,10 @@ it("announces preparation, upload and readiness politely while editor focus stay
   await act(async () => {
     upload.resolve(h.uploaded);
   });
-  expect(status).toHaveTextContent("notes.txt: 1 KB · Ready");
+  await waitFor(() => expect(screen.queryByRole("status")).toBeNull());
   expect(editor).toHaveFocus();
-  expect(send).toBeEnabled();
-  expect(screen.getAllByRole("status")).toHaveLength(1);
+  expect(screen.queryAllByRole("status")).toHaveLength(0);
   expect(
-    screen.getByRole("region", { name: "Attachments" }),
-  ).not.toHaveAttribute("aria-live");
+    screen.queryByRole("region", { name: "Attachments" }),
+  ).not.toBeInTheDocument();
 });

@@ -116,6 +116,16 @@ export function MessageComposer(props: MessageComposerProps) {
     />
   );
 }
+function sameAttachmentSelection(
+  left: readonly { id: string }[],
+  right: readonly { id: string }[],
+) {
+  return (
+    left.length === right.length &&
+    left.every((item, index) => item.id === right[index]?.id)
+  );
+}
+
 function Composer({
   session,
   extensions,
@@ -494,16 +504,32 @@ function Composer({
       attempt.signal.throwIfAborted();
       if (
         valueRef.current !== captured ||
-        attachments.store.snapshot() !== capturedAttachments
+        !sameAttachmentSelection(
+          attachments.store.snapshot(),
+          capturedAttachments,
+        )
+      )
+        return;
+      const uploaded = capturedAttachments.length
+        ? await (async () => {
+            setSending(true);
+            setError(undefined);
+            return attachments.store.prepareForSend(attempt.signal);
+          })()
+        : [];
+      attempt.signal.throwIfAborted();
+      if (
+        valueRef.current !== captured ||
+        !sameAttachmentSelection(
+          attachments.store.snapshot(),
+          capturedAttachments,
+        )
       )
         return;
       const content =
         threadRootId && mediaTimeSeconds !== undefined
           ? mediaTimeReply(mediaTimeSeconds, composerMarkdown(captured))
           : composerMarkdown(captured);
-      const uploaded = capturedAttachments.flatMap((item) =>
-        item.uploaded ? [item.uploaded] : [],
-      );
       const id = threadRootId
         ? session.messages.reply(
             channelId,

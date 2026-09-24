@@ -18,6 +18,7 @@ type AttachmentDraft = {
   snapshot(): readonly DraftAttachment[];
   subscribe(listener: () => void): () => void;
   add(files: readonly File[]): void;
+  prepareForSend(signal: AbortSignal): Promise<readonly UploadedAttachment[]>;
   remove(id: string): void;
   retry(id: string): void;
   cancel(): void;
@@ -54,10 +55,11 @@ function attachmentDraft(
     emit();
   };
   function cancelActive() {
+    const paused = new Set(active.keys());
     for (const controller of active.values()) controller.abort();
     active.clear();
     items = items.map((item) =>
-      ["queued", "preparing", "uploading"].includes(item.status)
+      paused.has(item.id)
         ? {
             ...item,
             status: "error",
@@ -67,46 +69,63 @@ function attachmentDraft(
     );
     emit();
   }
-  function pump() {
+  function abortReason(signal: AbortSignal) {
+    return signal.reason instanceof Error
+      ? signal.reason
+      : new DOMException("Upload cancelled.", "AbortError");
+  }
+  function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
+    if (signal.aborted) return Promise.reject(abortReason(signal));
+    return new Promise<T>((resolve, reject) => {
+      const abort = () => reject(abortReason(signal));
+      signal.addEventListener("abort", abort, { once: true });
+      work.then(
+        (value) => {
+          signal.removeEventListener("abort", abort);
+          if (signal.aborted) reject(abortReason(signal));
+          else resolve(value);
+        },
+        (error: unknown) => {
+          signal.removeEventListener("abort", abort);
+          reject(error);
+        },
+      );
+    });
+  }
+  async function prepareOne(
+    item: DraftAttachment,
+    signal: AbortSignal,
+  ): Promise<UploadedAttachment> {
+    if (item.uploaded) return item.uploaded;
     const attachments = session.attachments;
-    if (!listeners.size || !attachments) return;
-    for (const item of items) {
-      if (active.size >= 2) break;
-      if (item.status !== "queued") continue;
-      const controller = new AbortController();
-      active.set(item.id, controller);
-      replace(item.id, { status: "preparing", error: undefined });
-      void (async () => {
-        try {
-          const prepared = await prepareAttachment(
-            item.file,
-            controller.signal,
-          );
-          controller.signal.throwIfAborted();
-          replace(item.id, { status: "uploading" });
-          const uploaded = await attachments.upload(
-            prepared,
-            channelId,
-            controller.signal,
-          );
-          controller.signal.throwIfAborted();
-          replace(item.id, { status: "ready", uploaded });
-        } catch (error) {
-          if (!controller.signal.aborted)
-            replace(item.id, {
-              status: "error",
-              error:
-                error instanceof Error
-                  ? error.message
-                  : "Upload failed. Retry or remove this file.",
-            });
-        } finally {
-          if (active.get(item.id) === controller) {
-            active.delete(item.id);
-            pump();
-          }
-        }
-      })();
+    if (!attachments) throw new UploadError("unavailable");
+    const controller = new AbortController();
+    const combined = AbortSignal.any([signal, controller.signal]);
+    active.set(item.id, controller);
+    replace(item.id, { status: "preparing", error: undefined });
+    try {
+      const prepared = await prepareAttachment(item.file, combined);
+      combined.throwIfAborted();
+      replace(item.id, { status: "uploading" });
+      const uploaded = await abortable(
+        attachments.upload(prepared, channelId, combined),
+        combined,
+      );
+      combined.throwIfAborted();
+      replace(item.id, { status: "ready", uploaded });
+      return uploaded;
+    } catch (error) {
+      if (!combined.aborted)
+        replace(item.id, {
+          status: "error",
+          error:
+            error instanceof Error
+              ? error.message
+              : "Upload failed. Retry or remove this file.",
+        });
+      throw error;
+    } finally {
+      if (active.get(item.id) === controller) active.delete(item.id);
     }
   }
   const store = {
@@ -151,20 +170,27 @@ function attachmentDraft(
       ];
       owners.set(key, store);
       emit();
-      pump();
+    },
+    async prepareForSend(signal: AbortSignal) {
+      if (!items.length) return [];
+      const uploaded: UploadedAttachment[] = [];
+      for (const item of items) {
+        const current = items.find((candidate) => candidate.id === item.id);
+        if (!current) throw new UploadError("cancelled");
+        uploaded.push(await prepareOne(current, signal));
+      }
+      return uploaded;
     },
     remove(id: string) {
       active.get(id)?.abort();
       active.delete(id);
       items = items.filter((item) => item.id !== id);
       emit();
-      pump();
     },
     retry(id: string) {
       if (!items.some((item) => item.id === id && item.status === "error"))
         return;
       replace(id, { status: "queued", error: undefined });
-      pump();
     },
     cancel: cancelActive,
     clear() {
@@ -191,6 +217,8 @@ export function useAttachmentDraft(
   return {
     store,
     items,
-    blocked: items.some((item) => item.status !== "ready"),
+    blocked: items.some((item) =>
+      ["preparing", "uploading", "error"].includes(item.status),
+    ),
   };
 }

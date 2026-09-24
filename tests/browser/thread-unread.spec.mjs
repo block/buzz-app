@@ -125,7 +125,13 @@ test("thread buttons show observed unread independently, clear only after readin
   await page.keyboard.press("Escape");
   await expect(actions).toHaveCount(0);
   await expect(alpha).toBeFocused();
+  // Context-menu dismissal can leave Activity hover-open under the pointer.
+  // Leave hover and finish its exit before Enter tests keyboard opening rather
+  // than toggling it closed and observing the still-visible exit animation.
+  await page.mouse.move(0, 0);
+  await expect(popover).toHaveCount(0);
   await alpha.press("Enter");
+  await expect(alpha).toHaveAttribute("aria-expanded", "true");
   await expect(popover).toBeVisible();
   const item = popover
     .getByRole("button", {

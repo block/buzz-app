@@ -161,6 +161,9 @@ test("nested replies send, collapse, and reveal through links at readable panel 
           document.documentElement.setAttribute("data-color-mode", mode),
         theme,
       );
+      await expect(
+        panel.getByRole("button", { name: "Hide replies", exact: true }).last(),
+      ).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
       await panel.screenshot({
         path: test.info().outputPath(`nested-${width}-${theme}.png`),
       });

@@ -29,7 +29,7 @@ export function ReplyBranch({
       <Collapsible.Trigger
         ref={trigger}
         render={(props) => (
-          <Button {...props} variant="ghost" size="sm">
+          <Button {...props} variant="link" size="sm">
             {props.children}
           </Button>
         )}

@@ -213,6 +213,32 @@ test("thread buttons show observed unread independently, clear only after readin
   await expect(replyComposer).toBeFocused();
   await expect(first).toHaveAccessibleName(/Observed unread replies/); // Click/composer focus is not reading.
   await history.focus();
+  // Finish a real read of a visible sibling before checking the hidden child.
+  // Loaded history is not read evidence: collapsed descendants stay unread.
+  const directId = await panel
+    .locator("[data-message-id]")
+    .filter({ hasText: "Unread reply 0" })
+    .getAttribute("data-message-id");
+  await expect
+    .poll(
+      () =>
+        app.report.readPublications.some(({ blob }) =>
+          Object.hasOwn(blob.contexts, `msg:${directId}`),
+        ),
+      { timeout: 12000 },
+    )
+    .toBe(true);
+  await expect(
+    panel.getByText("Broadcast descendant", { exact: true }),
+  ).toHaveCount(0);
+  await expect(first).toHaveAccessibleName(/Observed unread replies/);
+  await panel
+    .getByRole("button", { name: "1 reply loaded", exact: true })
+    .click();
+  await expect(
+    panel.getByText("Broadcast descendant", { exact: true }),
+  ).toBeInViewport();
+  await history.focus();
   await expect(first).toHaveAccessibleName("View thread: 23 replies");
   await expect(broadcast).toHaveAccessibleName("View thread: 23 replies");
   await expect(dot(first)).toHaveCount(0);
